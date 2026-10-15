@@ -1,19 +1,18 @@
 # Current limitations
 
 This page states constraints of the checked-in implementation. Desired
-extensions belong in the [roadmap](roadmap.md), not in completed phase plans.
+extensions belong in the [roadmap](roadmap.md).
 
 ## Transport and routing
 
 - HTTP/3 is proxy-to-origin egress, not transparent browser QUIC interception.
-- There is no general blind CONNECT, arbitrary TCP tunnel, CONNECT-UDP, MASQUE,
-  or WebTransport support. CONNECT payloads are limited to intercepted TLS and
-  browser-style HTTP/1.1 WebSocket handshakes whose authority remains fixed to
-  the CONNECT target.
-- WebSocket inspection supports HTTP/1.1 Upgrade. HTTP/2 extended CONNECT,
-  HTTP/3 WebSockets, and application-owned upstream byte-stream upgrades are
-  not implemented. The no-hook path is byte-transparent for frame semantics it
-  does not need to understand.
+- Disabling HTTPS decryption permits opaque CONNECT tunnels with destination and
+  byte-count evidence only. With decryption enabled, CONNECT accepts intercepted
+  TLS or browser-style H1 WebSocket handshakes bound to the CONNECT target.
+  CONNECT-UDP, MASQUE and WebTransport are unsupported.
+- WebSocket inspection supports HTTP/1.1 Upgrade and HTTP/2 extended CONNECT.
+  HTTP/3 WebSockets and application-owned upstream byte-stream upgrades are not
+  implemented. Passive inspection preserves forwarded wire bytes.
 - QUIC 0-RTT and connection migration are disabled.
 - Automatic routing with a cached HTTP/3 alternative uses bounded whole-body
   buffering so an unsuccessful QUIC attempt can be replayed safely over
@@ -25,9 +24,10 @@ extensions belong in the [roadmap](roadmap.md), not in completed phase plans.
 ## TLS and identity
 
 - Certificate-pinned clients fail; Transmog never bypasses pinning.
-- The shared Chromium BoringSSL PKI verifier does not yet reproduce all Chrome
-  policies around that core, including CT, revocation, AIA and public-certificate
-  policy. See [the verifier contract](chromium-verifier.md) for the precise gaps.
+- The shared BoringSSL PKI verifier enforces public-certificate policy, CT,
+  CRLSet/stapled-OCSP checks and bounded AIA issuer retrieval. Remaining Chrome
+  differences include EV, optional online revocation, browser clock recovery,
+  MTC and QWAC support. See [the verifier contract](chromium-verifier.md).
 - Caller-process attribution is diagnostic and best effort. Windows and Linux
   have bounded system resolvers. Local callers on macOS and other unsupported
   platforms are reported as unknown unless an embedder supplies a resolver;

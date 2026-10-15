@@ -1,6 +1,5 @@
-# Client certificate implementation
+# Client certificates
 
-The handshake, Windows provider, production transport and desktop phases are implemented.
 Proxy and Composer transports support request-driven certificates on HTTP/1.1,
 HTTP/2 and HTTP/3, with connection ownership, pool isolation and a bounded pending
 decision broker, advanced desktop host rules and a nonmodal selection interface.
@@ -68,8 +67,9 @@ made when a pinned certificate was expected never enters its authenticated pool.
 Attribute-only renewal selectors and prompt decisions remain connection scoped;
 different server constraints can select a different identity. Policy and inventory
 changes replace Hyper pools and retire stale QUIC entries before new admissions.
-Already admitted exchanges can finish. TCP TLS session resumption is explicitly
-cleared after the connector applies its cache; QUIC does not restore sessions.
+Already admitted exchanges can finish. Prompt and automatic selection disable
+resumption so authorization follows a fresh CertificateRequest. Explicit
+No certificate policy permits anonymous resumption; see [negotiation](chromium-negotiation.md#resumption).
 
 The broker exposes public identities and actual server constraints without key
 material. Identical caller/origin/generation/constraints/choice sets coalesce into
@@ -88,8 +88,7 @@ seconds and observes cancellation for both buffered and file-streamed requests.
 
 The supported store is CurrentUser/My. The supported provider is Microsoft
 Software Key Storage Provider, with RSA and ECDSA P-256/P-384/P-521. Hardware,
-third-party providers, machine keys, legacy CAPI and PFX import are outside this
-phase. The accepted first-provider scope is Windows user store only.
+third-party providers, machine keys, legacy CAPI and PFX import are unsupported.
 
 Both curve-specific CNG identifiers and generic `ECDSA` keys are supported.
 Generic keys are classified by `ECCCurveName`, including the Windows names for
@@ -133,7 +132,7 @@ retain an abandoned owner.
 
 ## Chromium comparison
 
-Reviewed Chromium's [Windows platform key implementation](https://raw.githubusercontent.com/chromium/chromium/main/net/ssl/ssl_platform_key_win.cc),
+The reference implementations are Chromium's [Windows platform key implementation](https://raw.githubusercontent.com/chromium/chromium/main/net/ssl/ssl_platform_key_win.cc),
 [platform key worker](https://raw.githubusercontent.com/chromium/chromium/main/net/ssl/ssl_platform_key_util.cc),
 [certificate-store acquisition](https://raw.githubusercontent.com/chromium/chromium/main/net/ssl/client_cert_store_win.cc)
 and [algorithm preferences](https://raw.githubusercontent.com/chromium/chromium/main/net/ssl/ssl_private_key.cc).
@@ -153,7 +152,7 @@ separately from the acquired CNG handle tag in
 and the padding/prehash contract in
 [NCryptSignHash](https://learn.microsoft.com/en-us/windows/win32/api/ncrypt/nf-ncrypt-ncryptsignhash).
 
-## Verification and review
+## Verification
 
 Run the portable environment check before native builds, then:
 
@@ -167,86 +166,22 @@ python scripts/dev-env.py --run cargo test --locked -p transmog-runtime -p trans
 ./scripts/test-windows-client-certificate-ui.ps1
 ```
 
-The Windows test is explicitly ignored in ordinary runs because it creates owned
-non-exportable keys in CurrentUser/My. It proves PKCS#8 private export is rejected,
-then verifies real TLS 1.2/1.3 CertificateVerify signatures and different
-authenticated/anonymous application responses. It covers RSA PKCS#1 SHA-1/256/384/512,
-RSA-PSS SHA-256/384/512, ECDSA SHA-1 and all supported curves, including TLS 1.2
-P-384/P-521 with SHA-256. Locally available issuer paths retain their roots while
-the live server and queued public evidence confirm leaf-only transmission for
-directly issued identities. Key deletion rejects stale providers, invalidates the
-monitor generation and permits anonymous connections without falling through to
-another identity. Certificate removal is also checked. Owned keys and public
-issuers are removed on normal completion and test unwinding; no root trust is added.
-The Windows release gate invokes this test and the production Windows integration
-tests explicitly before signing credentials.
+The ignored Windows tests create owned, non-exportable keys in CurrentUser/My.
+They verify real TLS signatures, authenticated and anonymous responses, chain
+selection, key deletion and monitor invalidation through H1/H2/H3 proxy and
+Composer paths. They remove their keys and certificates on normal completion
+and unwinding; they do not install root trust. The Windows release gate runs them
+before signing credentials are available.
 
-Desktop acceptance uses a harness-owned profile, owned non-exportable CNG keys,
-and local H1/H2/H3 servers through actual WebView2/Tauri commands. It exercises
-certificate selection, anonymous continuation, cancellation, QUIC peer timeout,
-automatic pinned and renewal host rules, exact key deletion and restart persistence. Browser checks
-cover ordering, draft/save separation, renewal attributes, unavailable pins,
-errors, keyboard access and constrained layouts under enforced Trusted Types.
-The `desktop-test-fixtures` feature and isolated-profile environment flag are
-required for native fixture commands and embedded fixture trust; ordinary
-packages include neither. Fixture public thumbprints support exact cleanup
-after interruption, and no Windows root trust is changed.
+Native desktop acceptance uses an isolated profile and local H1/H2/H3 peers to
+exercise prompt selection, anonymous continuation, cancellation, automatic rules,
+key deletion and restart persistence. Fixture commands and trust require the
+`desktop-test-fixtures` feature and isolated-profile flag; ordinary packages
+include neither. Browser checks cover rule ordering, draft/save separation,
+errors, keyboard access and compact layouts under Trusted Types.
 
-Production integration tests use live TLS/HTTP and QUIC peers with different
-authenticated and anonymous response bytes. They cover H1/H2/H3 reuse, mandatory
-caller separation, authorization changes, missing pins, renewal selectors,
-session suppression, prompt coalescing/answers, owner abandonment, peer timeout,
-deadlines, controller shutdown, physical connection limits, and independent
-origins proceeding while another waits. Composer cancellation covers buffered
-and file-streamed requests on every explicit route. Two opt-in Windows tests
-exercise real non-exportable CNG keys through the intercepted proxy and Composer
-on all three protocols, then delete their exact owned keys and verify fresh
-anonymous responses after monitor invalidation. No root trust is added.
-
-Dual-stack regressions preserve certificate cancellation across address racing
-and prove the intercepted request cannot fall back to a TCP server that does not
-request a certificate. At the physical connection limit, retired idle QUIC
-drivers release their slots before replacement; admitted streaming exchanges
-finish before their slots are reclaimed. Public HTTP/3 constructors and request
-admission reject zero or unsupported queue/pool limits without panicking or
-starting network I/O.
-
-The real Windows suite also covers generic named-curve P-256/P-384/P-521 keys,
-verifies their `ECDSA` identifier, and performs TLS 1.2/1.3 signing with each.
-Gated live handshakes cover queued filtering/final eligibility during explicit
-cancellation, owner abort, deadline expiry and policy-generation changes.
-Worker tests distinguish aborting queued jobs from allowing a started call to
-finish and observe cancellation before continuing its batch.
-
-Live TLS 1.2/1.3 chain tests verify root omission with SHA-256 and SHA-1 root
-self-signatures, preservation of necessary intermediates (including a same-name
-cross-signed CA), and preservation of self-signed leaf identities with or without
-CA constraints. A terminal CA with an invalid self-signature is retained rather
-than classified as a verified self-signed root. Each scene validates possession,
-authenticated application bytes, the exact server-observed chain, matching capture
-evidence, and the unchanged complete local path. The QUIC acceptance scene also
-checks that its root is omitted.
-
-The post-implementation review covered native pointer/buffer lifetimes, property
-sizes and string termination, handle ownership, key pairing, algorithms, thread
-placement, cancellation, redaction, inventory changes and fixture cleanup. It
-corrected legacy-key-spec handling and bounded strings to Windows' returned byte
-count, including a regression that rejects a terminator found only in allocation
-padding. The reviewed source has no remaining actionable findings within this
-phase. The production integration review additionally covered pool identity and
-epoch admission, immutable downstream connection binding, retry suppression,
-TCP ciphertext buffering, QUIC registry and driver ownership, broker
-bounds/coalescing, wake-handle cleanup, controller shutdown and Composer
-cancellation. Resolver callbacks and pool construction run outside pool registry
-locks, and concurrent builders cannot roll back a newer authorization epoch.
-Hardware/device behavior remains a separate future acceptance gate.
-
-The desktop review covered narrow preference persistence, corrupt-state recovery,
-window command permissions, request identifier precision, late asynchronous results,
-focus and popover behavior, inventory metadata, recorded response evidence and
-window-close cancellation. Verification corrected native form restoration,
-removal undo, compact Composer space and the screen-reader announcement layout.
-Further regression checks cover durable recovery after a failed write, independent
-main/viewer closure, the idle header row and accessible request selection.
-Native acceptance waits for rendered controls and public choices before operating
-them or capturing populated prompts. No actionable findings remain in this phase.
+Portable integration tests cover caller and origin isolation, pool generations,
+resumption suppression, prompt coalescing, deadlines, owner cancellation,
+connection limits and exact wire/capture chains. Worker tests distinguish queued
+cancellation from native calls already running. Hardware and third-party key
+providers require separate implementation and acceptance coverage.

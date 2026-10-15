@@ -51,8 +51,9 @@ paused stream does not pause unrelated streams.
 Observers see monotonically sequenced events: exchange start, optional
 interceptor initialization diagnostics, finalized request head, selected route,
 finalized response head, requested body observations, and one terminal event.
-Credential headers are removed before dispatch. Body observation is
-metadata-only unless a finite prefix is explicitly requested. Graceful observer
+Sensitive header values are redacted by default; registrations must explicitly
+request access to them. Body observation is metadata-only unless payload interest
+is requested under the observer policy. Graceful observer
 shutdown drains events already accepted by its bounded queue.
 
 These Rust event types are internal library contracts, not a stable serialized

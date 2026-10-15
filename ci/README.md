@@ -13,8 +13,7 @@ for seven days; compiled targets and signing tools are never restored from cache
 The Python tooling requires Python 3.11 or newer and uses only the standard
 library. The hosted Windows image supplies Python; the packaging, release, and
 version-maintenance workflows set `PYTHONUTF8=1` so Python child output matches
-the tooling's UTF-8 subprocess decoder. Cache fixtures resolve temporary roots
-before containment checks because Windows may supply an 8.3 path alias.
+the tooling's UTF-8 subprocess decoder.
 
 Before dispatch, complete the mandatory
 [local release qualification](../docs/windows-release.md#local-release-qualification-before-dispatch)
@@ -25,7 +24,7 @@ Record the tested commit, resolve failures, and verify that the pushed source
 matches it.
 
 For each release, set and commit the version with
-`pwsh ./scripts/set-release-version.ps1 -Version <major.minor.patch>`,
+`python scripts/set-release-version.py --version <major.minor.patch>`,
 push it to the selected branch, then use
 **Actions > Windows signed release > Run workflow** and select that branch.
 **Branch default** uses the checked-in Canary/Beta/Stable track. A release branch
@@ -113,9 +112,9 @@ hash-verified unsigned baseline solely as a test application. Its optional fast
 smoke mode avoids recompiling Rust. This baseline is never used for a signed
 release; release artifacts still require same-run source/hash validation.
 
-The `release-signing` environment allows `main` and `release/*`. It requires
-`erik-anderson` approval, allows self-review for this solo repository, and disables
-administrator bypass. Approve the pending signing job after reviewing its source
+Configure the `release-signing` environment to allow `main` and `release/*`,
+require `erik-anderson` approval, allow self-review for this solo repository, and
+disable administrator bypass. Approve the pending signing job after reviewing its source
 commit and successful build. Azure uses a dedicated, secretless Entra application
 with one federated identity for this exact repository/environment subject and one
 Certificate Profile Signer assignment on the production certificate profile.
@@ -193,9 +192,9 @@ only `contents: read`. It skips private repositories to preserve the public
 repository's free runner usage. It has no Azure access or signing credentials,
 does not publish a GitHub Release, and retains its artifacts for seven days.
 
-## Run the first build
+## Run an unsigned build
 
-After the workflow is on the default branch, open GitHub **Actions > Windows
+Open GitHub **Actions > Windows
 unsigned installer > Run workflow** and select the revision to build. Leave
 **Reuse dependency downloads** disabled for the first cold build.
 

@@ -51,7 +51,7 @@ The mapping follows the [official NetLog viewer](https://chromium.googlesource.c
 HAR semantics follow the [HAR 1.2 specification](https://w3c.github.io/web-performance/specs/HAR/Overview.html).
 Regression tests use placeholder hosts and values.
 
-Run `cargo test --locked -p transmog-app browser_produced_archives` to verify
+Run `python scripts/dev-env.py --run cargo test --locked -p transmog-app browser_produced_archives` to verify
 real browser heads and response payloads with the tracked fixtures.
 
 `node scripts/generate-browser-archives.mjs --jsonl` generates only the sanitized

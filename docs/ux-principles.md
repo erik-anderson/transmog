@@ -1,545 +1,250 @@
 # UX design principles
 
-Transmog is a traffic inspection and editing workbench. Its interface should
-help users scan many entries, understand the selected item, and act without
-losing their place or work. A feature is complete when its ordinary flow,
-feedback, keyboard behavior, and constrained-window layout work together.
-
-Use these principles when changing user-visible behavior, including backend
-defaults and responses consumed by the desktop. The current implementation is
-a starting point for consistency; a new component should still be reviewed for
-its actual effect on the user's task. For a short per-change workflow, follow
-[Maintaining UX quality](ux-quality.md).
+Transmog is a traffic inspection and editing workbench. Help users scan entries,
+understand the selected item and act without losing their place or work. These
+principles apply to UI, commands, defaults, validation and asynchronous behavior.
+Use the [UX quality routine](ux-quality.md) for each change and the
+[UI instructions](../apps/desktop/ui/AGENTS.md) for implementation and verification.
+Topic guides define current flows and limits; keep them aligned when a deliberate
+product decision changes a convention.
 
 ## Organize around the task
 
-- Upstream TLS and HTTP offers follow Chrome's behavior by default. Offer
-  overrides belong in custom network profiles. Built-in profiles keep the Chromium
-  version against which they were compared. Selection previews a recipe; explicit
-  Use profile or Save and use activates it, while Save only preserves the active
-  revision. Keep the ordinary capture path direct and retain the effective recipe
-  and actual negotiated protocol and algorithms in connection evidence.
-  HTTP/2 and HTTP/3 ALPS are separate profile choices. Apply negotiated transport settings,
-  but leave Client Hint values and permissions with the caller; do not fabricate
-  hints or retry a caller's request to satisfy connection-level preferences.
-  Certificate-based Trust Anchor IDs are independent of PQC algorithm choices.
-  WebView2 (Chromium 154) is the default recipe: it differs from Chromium 154
-  only by discovering WebView2's installed public root store. Offer OS, bundled
-  Chromium, installed Chrome and installed WebView2 root sources in custom
-  profiles; installed sources fall back to the bundled public snapshot. The
-  choice governs actual certificate trust, independently of the ID offer. Keep
-  authored profiles and historical captures on their recorded trust source.
-  Record effective source/version/hash and verification restrictions for each
-  connection, including when IDs are off. Disabling IDs and choosing an explicit
-  crs.pb belong under More handshake options.
-  If the selected component has no supported Trust Anchor IDs, keep its roots,
-  omit the ID offer and record why; do not substitute another store's IDs.
-  Built-ins declare every setting explicitly. Trust-data updates refresh verification inputs
-  without editing recipes or custom profiles. Both built-ins add monitored local
-  Windows certificates. Keep one local trust switch beside the root selector in
-  Customize; OS mode already includes local roots. New work revalidates after
-  changes while admitted streams finish. Retain original local trust provenance.
-  Use one Chromium verifier across root choices; the selector changes trust
-  inputs, not verification rules. Record the actual selected path and PKI errors.
-  Chrome and WebView2 component lists share verification and freshness rules;
-  keep each source's contents separate. Put CT/CRLSet/OCSP outcomes and dataset
-  provenance in the existing connection-policy disclosure. Clearly distinguish
-  checked, stale, disabled, private trust and resumed-session states.
-  Encrypted Client Hello and ECH GREASE are separate custom-profile choices under
-  More handshake options. Record whether ECH was accepted and distinguish an
-  authenticated public-name rejection from an origin connection; no origin client
-  identity or HTTP request is sent to a rejection endpoint.
+- Keep collecting, filtering, selecting and inspecting traffic direct. Captured
+  responses are the primary source for auto-response rules; scratch authoring is
+  secondary. Use a few clearly named workspaces.
+- Use a compact list and one selected-item properties pane. Multiselection reveals
+  useful batch actions. Selection, editing, saving and activation are distinct.
+- Keep primary actions beside their content. Put occasional actions in menus,
+  advanced settings in disclosures and technical evidence behind readable summaries.
+  Avoid deep navigation and repeated toolbars.
+- Show recovery and risk acknowledgements when relevant. Name counts for what they
+  count: matching entries and occurrences within an entry are different measures.
+- In Traffic, **Details** groups Timings, Connection, Certificates and imported
+  Capture source; **Actions** groups request operations; **Files** groups import
+  and save; **View** groups columns, density and layout. Keep headers, bodies,
+  Copy URL and Copy headers directly accessible.
 
-- Start from the user's next action. Keep the ordinary path direct: captured
-  responses are the main source for auto-response rules; scratch authoring is
-  secondary. Group distinct tasks into a few clearly named workspace tabs.
-- Use a compact list and one selected-item properties pane for collections.
-  Multiselection exposes useful batch actions. Selection, editing, and rule
-  activation are separate operations and should have clear effects.
-- Keep the primary action visible near the content it affects. Put occasional
-  actions in the relevant action menu, advanced settings in disclosures, and
-  technical evidence
-  behind a readable summary. Avoid deep menu chains or hiding an essential
-  action merely to save space.
-- Show context when it becomes useful: selection actions after selection,
-  recovery actions when recovery is needed, and credential or replay risk
-  acknowledgements when the request requires them.
+## Density, layout and input
 
-- Name counts for what they count. Traffic search counts matching entries;
-  occurrence counts within an entry belong in the match view.
+- Remove repeated labels, excess spacing and unnecessary containers before reducing
+  text size or control targets. Use shared styles and align text baselines.
+- Keep Traffic cells on one line with ellipsis and complete values on hover.
+  Include stream badges when fitting columns. Important labels wrap or reflow;
+  essential actions and state must not depend on tooltips.
+- Keep actions outside list scrollers. Support wide comparison and narrow
+  list/detail or request/response switching within the available pane. The narrow
+  message selector belongs beside the URL/status. Scroll within workspaces.
+- Use native controls with accessible names, visible focus and logical tab order.
+  Restore focus after dialogs and editors close. State needs text or semantics as
+  well as color. Respect theme, forced colors, reduced motion, zoom and long labels.
+- Lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A and
+  Escape. Where supported, Ctrl+arrow moves focus, Del removes and Ctrl+Z undoes.
+  Text fields retain ordinary editing shortcuts; Ctrl+S saves an explicit draft.
+- Dragging shows the destination, preserves selected groups, supports edge scrolling
+  and restores selection on cancellation. Provide keyboard/menu moves and Undo.
+- Long-form editors keep resize/expand controls and reachable actions. Response
+  authoring starts with twelve body lines and ten header lines. Body dialogs use
+  Apply/Cancel, offer Save rule only when other properties are clean, and make
+  formatting explicit and undoable. Closing releases the editor and restores focus.
 
-## Increase density without losing readability
+## Preserve work and explain state
 
-- Remove repeated headings, duplicate status lines, oversized spacing, and
-  unnecessary cards before reducing text size or control targets. Preserve a
-  clear hierarchy through grouping, modest weight, and restrained color.
-- Reuse shared control styles and spacing. Align text baselines across related
-  labels, values, buttons, and table cells; centering their boxes is insufficient
-  when font sizes or padding differ. Align checkbox text naturally with its
-  control and keep labels close to their fields.
-- Identify top-level navigations with a small neutral Page badge beside the
-  traffic path and an accessible label. Use original client fetch metadata;
-  do not infer navigation from HTML content, method or URL alone.
-- Put fetch-destination filtering inside the existing Filters menu, using a
-  checkbox dropdown. Combine selected destinations with OR, combine that group
-  with other filters using AND, and show one removable chip for the group.
-  No selections shows all traffic; an explicit empty destination is recorded
-  fetch/XHR metadata, not missing metadata.
-- Traffic headers and cells stay on one line and clip with ellipsis when columns
-  are narrow. Keep complete values and stream state available on hover; column
-  fitting includes the protocol’s stream badge.
-- Give important labels room to wrap or reflow. Secondary URLs and metadata may
-  use deliberate abbreviation or ellipsis when the complete value is readily
-  available. A tooltip alone should not be necessary to discover an action's
-  name, purpose, or state.
-- Group editable response metadata under Response, with ten visible header lines.
-  Original response context uses neutral styling; keep rule usage separate from
-  source provenance.
-- Let long-form editing use the available space. Response-body authoring starts
-  at twelve lines. Preserve resize and expand affordances, with actions still
-  reachable and drafts intact after restoring the editor. Body dialogs use
-  Apply/Cancel; offer Save rule only when other properties have no unsaved changes.
-  Formatting is explicit and undoable. Closing releases the editor model and
-  returns focus to the opening action.
-- Keep selection actions outside the scrolling list so populated tables cannot
-  cover them. Empty-state presentation must not determine whether a populated
-  workspace is usable.
-- Reordering shows the insertion position before release, preserves selected
-  groups and drafts, and supports edge scrolling. Cancellation restores the
-  prior selection and focus; offer keyboard moves and Undo alongside dragging.
+- Preserve selection, scroll and drafts across live updates and workspace changes.
+  Resolve unsaved work before replacing it. Allocate one editor per visible task.
+- Distinguish draft, saved, validated, tested, enabled, active and paused states.
+  Saving a definition must not silently activate it. Pausing auto-responses preserves
+  individual rule enablement. Saved enabled switches may apply immediately.
+- Reject stale asynchronous results. Late validation, previews or responses cannot
+  overwrite newer edits, restore obsolete selection or steal focus. Prevent duplicate
+  submissions and retain useful input after failure.
+- Prefer Undo for reversible list actions. Confirm replacement of edited work and
+  consequential irreversible actions; keep routine selection fluid.
+- Put progress and actionable errors near their action. Significant explicit
+  open/import/save/export failures use a focused modal with details and Close;
+  Escape returns focus. Completed status messages can be dismissed. Cancellation
+  is ordinary feedback; background refresh errors must not repeatedly interrupt.
+- Distinguish empty, unavailable, incomplete, truncated, redacted and expired
+  evidence. Explain disabled actions. A terminal failure without a response is
+  Failed, not Pending. Body completeness is independent of later exchange failure.
 
-## Preserve the user's place and work
+## Traffic, streams and evidence
 
-- Interception root keys use protection bound to the operating-system user.
-  Protect new keys before writing files and migrate existing keys while preserving
-  the certificate and its trust identity. Protection failures retain existing
-  material and explain recovery; never silently replace a trusted root or save a
-  plaintext key as a fallback.
-  An inaccessible Windows DPAPI key is unlikely to recover. Explain this and
-  offer the explicit certificate-reset flow: remove the exact recorded trusted
-  root and old files before creating and asking Windows to trust a replacement.
+The [traffic guide](traffic-inspection.md), [stream guide](stream-inspection.md)
+and [timing guide](request-timings.md) define the detailed interactions.
 
-- Startup update checks must keep the workspace usable and avoid taking focus.
-  Keep version, manual checks, release details, the product website and Credits in
-  Settings → About. A toolbar update action appears only for an available or
-  pending update; background results never navigate away from the current task.
-  Update consent specifies when installation happens. Resolve unsaved drafts and
-  finish capture/proxy/host cleanup before installation can close the app. A
-  thirty-day reminder pauses automatic prompts across subsequent releases.
-  Update checks and downloads use the running proxy and its ordinary capture
-  policy, so the app's own requests can be inspected alongside other traffic.
-  Resolve the active route for each operation, including downloads after a check.
+- Use one continuous virtualized Traffic list. Filter and sort all retained
+  metadata before windowing. Selection, focus and range anchors use stable IDs and
+  the complete display order; leaving the DOM never deselects an entry. Ctrl+A
+  selects the current collection, including offscreen entries, without selecting
+  later arrivals. Search review reveals its request while preserving multiselection.
+- Live filtering covers URLs and processes. **Search contents** starts only with
+  Search or Enter and produces a snapshot. Skip binary bodies quietly and summarize
+  unavailable text once. Remove selected/unselected operates across the workspace.
+- Mark top-level pages only from original fetch metadata. Fetch-destination filters
+  use OR within the group and AND with other filters; recorded `empty` differs
+  from missing evidence. Show one removable filter chip.
+- WebSocket/SSE Active badges follow stream lifetime, including quiet intervals;
+  saved captures never appear live. Preserve complete messages and history for
+  retained sessions. Do not add silent per-message/count eviction. Page metadata
+  and load saved payloads on demand; honor explicit privacy and session retention.
+- Hex reaches every retained byte with exact offsets, paging, keyboard navigation
+  and Go to offset. Text-preview limits do not cap Hex. Bound clipboard selections
+  separately and offer Save as for larger data. Release owned temporary byte caches
+  with their readers.
+- Copy actions never execute requests. Use complete retained headers and encoded
+  bytes, explain command normalization and missing-data placeholders, and offer
+  body-file saving. Missing replay bodies require replacement or explicit empty use.
+- Composer preserves later draft edits during sends and keeps the last complete
+  response until replaced or closed. It uses the shared response inspector. Save as
+  leases the original bytes; previews and formatting never replace the source.
+- Show measured zero separately from unavailable, shared connection setup separately
+  from request work, and local queueing separately from remote delivery. Collapse
+  local proxy work under 1 ms. Keep imported timers with their original labels and
+  clocks; response wait is not server CPU time.
 
-- Keep selection, scroll position, and drafts stable across live updates and
-  workspace changes. Allocate one editor for the selected item rather than an
-  editor for every row. Switching items must preserve or explicitly resolve an
-  edited draft before replacing it.
-- Distinguish draft, saved, validated, tested, enabled, and active state when
-  those states differ. Saving must not silently activate a feature. A global
-  auto-response pause changes hook participation while preserving each rule's
-  enabled state.
-- File response sources explain whether bytes are copied on save (up to 25 MB)
-  or read directly per request. Keep linked paths visible, preserve missing-file
-  configurations, and retain text drafts when clearing a pending file choice.
-  Compression choices name the original type and apply consistently to edited
-  text and replacement files, including linked files and binary bodies.
-  Compression controls use canonical names: `x-gzip` is the `gzip` option.
-  Captured headers, source context, and Traffic metadata show the server's
-  actual coding token, including `x-gzip` when returned.
-- Reject stale asynchronous results. A late preview, validation, or response
-  must not overwrite newer edits, restore old selection, or switch the user
-  away from work in progress. Prevent duplicate submissions while an action
-  is pending, and retain usable input after errors.
-- Favor Undo for reversible list actions. Use a focused confirmation when
-  replacing edited work or taking a consequential irreversible action;
-  routine selection, navigation, and reversible editing should remain fluid.
+## Network profiles and certificate evidence
 
-## Explain state and consequences plainly
+Follow [root selection](trust-anchor-ids.md), [negotiation](chromium-negotiation.md),
+[ALPS](http2-alps.md) and [client certificates](client-certificates.md).
 
-- Use human-readable names, counts, times, units, and outcomes in ordinary UI.
-  Keep opaque IDs, revisions, paths, and raw JSON available as technical detail
-  when useful. Link to original Traffic only while the source is available;
-  a durable saved response remains editable after its source disappears.
-- Explain what changes and when it takes effect. Pattern placeholder names are
-  optional annotations and do not affect matching. Saved and active revisions,
-  global pause, disabled rules, and guaranteed shadowing must not look like the
-  same state. Do not infer guaranteed duplicate rules from example URLs alone.
-- Put progress, success, and actionable errors near the action that produced
-  them. Keep shared status for conditions that matter across workspaces. A
-  refresh must preserve an error instead of reporting success from stale state.
-- Significant failures of explicit actions, including opening, importing, saving
-  and exporting captures, open a modal error dialog with a clear title, failure
-  details and a Close action. Escape dismisses it and returns focus to the task.
-  Retained status and error messages have a dismiss control once work completes.
-  Cancellation is ordinary feedback, and background refresh errors do not
-  repeatedly interrupt the user.
-- Make empty, unavailable, incomplete, truncated, redacted, and expired states
-  distinguishable. Explain the next useful step. Disable an unavailable action
-  with an accessible explanation rather than presenting a broken interaction.
-- Mark active WebSocket and SSE streams with a compact protocol and Active
-  badge beside the HTTP version in Traffic’s Protocol column, using the observed
-  stream lifecycle. Quiet streams remain active; ended streams and saved captures have no live badge.
-- Pending traffic means the exchange is still active. A terminal failure without
-  an HTTP response shows Failed. Body completeness describes capture at its own
-  message boundary; a later exchange failure does not make a fully retained body
-  incomplete or establish whether the remote server processed it.
-- Keep captured markup inert in the workbench. A captured-page preview is an
-  explicit exception: open a separate isolated browser window after a warning,
-  with scripts disabled by default and an Enable scripts choice for that window.
-  Serve only captured responses; misses return an empty 404, and captured content
-  cannot access application commands. Distinguish preview content from complete
-  original data. Copy, save, edit, and export labels describe the data used.
-- Auto-response matching uses authored conditions; captured Vary headers must not
-  add implicit browser restrictions. Preview matching uses method and URL within
-  the chosen source scope, with body, browser/process, Origin/Referer, Sec- headers
-  and navigation timing as preferences. Prefer later captured responses for
-  repeated URLs during a load, reset progression on reload, and relax hints to
-  available method/URL matches instead of returning avoidable 404s.
-- Copying a request command only copies text; it never executes traffic. File
-  placeholders must explain what bytes are needed and offer Save as when complete
-  bytes are available. Use complete backend data for copy/replay, preserve encoded
-  bodies, and require an explicit replacement or empty-body choice for missing
-  captured data before sending.
+- Match the qualified Chromium version by default. Built-ins declare fixed settings;
+  overrides belong in custom profiles. Selection previews, **Use profile** and
+  **Save and use** activate, and **Save only** preserves the active revision.
+  Activation gives proxy and Composer fresh pools across windows; admitted work
+  keeps its original recipe. Certificate-data updates do not edit profile choices.
+- Default to **WebView2 (Chromium 154)**. Its root-source distinction selects
+  WebView2 components; Chromium selects Chrome components. Custom profiles expose
+  OS, bundled Chromium, installed Chrome and installed WebView2 sources, with the
+  documented bundled fallback. Keep one local-Windows-trust switch beside that
+  selector; disable it in OS mode, which already includes local roots.
+- Use one Chromium verifier for every source. Keep Chrome/WebView2 datasets
+  separate while applying the same semantics and freshness rules. Record selected
+  path, source/version/hash, local-trust provenance and actual CT/CRLSet/OCSP results.
+  Distinguish checked, stale, disabled, private-trust and restored-session states.
+- Trust Anchor IDs are independent of PQC choices. If the selected store has no
+  supported IDs, omit the offer and explain why; never borrow another store's IDs.
+  ID controls and an explicit `crs.pb` path belong in More handshake options.
+- Real ECH and ECH GREASE are separate controls. Record accepted ECH and authenticated
+  public-name rejection distinctly. Never send origin identities or requests on the
+  rejection connection.
+- H2 and H3 ALPS are separate controls. Apply server transport settings, but leave
+  Client Hint values and permissions with the caller. Do not fabricate hints or
+  retry requests to satisfy them. Show negotiated empty, declined and unavailable
+  ALPS distinctly, with readable ordered contents and complete original Hex.
+- Certificate views separate client-facing interception, origin paths and client
+  authentication. Use recorded trust, never imply a fresh verification on opening.
+  Prefer complete public bytes for matching fingerprints; expose no private keys
+  or session secrets. Default to the latest successful upstream connection, then
+  the latest failed attempt, with role/outcome/identity in selection labels.
+- Show each leg's actual algorithms, never infer them from keys, ciphers or settings.
+  Label restored authentication and TLS 1.2's original group. Hybrid exchange or
+  ML-DSA authentication alone does not establish a fully PQ-secure trust chain.
+  Keep policy in secondary disclosures, retain conflicting observations, escape
+  invisible controls for display and preserve original values in exports.
+- Client certificate rules are explicit saved authorization, defaulting to no
+  certificate. Prompt only for a real verified CertificateRequest. Use a nonmodal
+  connection indicator with public identity details; answers apply to live
+  connections only and never create rules. Expire late choices without losing
+  inspected context. Viewers refer selection to the main window; closing the main
+  window must not revoke unrelated viewer work.
 
-## Make input and layout predictable
+## Proxy lifecycle, privacy and persistence
 
-- Use native buttons, form controls, dialogs, popovers, and disclosures with
-  accessible names, visible focus, and logical focus order. Restore focus to a
-  useful control after closing an editor or dialog. State needs a text or
-  semantic indication as well as color; disabled text must remain readable.
-- Managed lists share selection conventions: Ctrl+click adds an item, Shift
-  selects a range, Shift+arrow and Ctrl+Shift+arrow extend selection, Ctrl+A
-  selects, and Escape clears selection. Where supported, Ctrl+arrow moves
-  focus independently, Del removes selected entries, and Ctrl+Z undoes a list
-  action. Text fields retain their normal editing shortcuts. Ctrl+S saves
-  drafts where there is an explicit Save action.
-- Adapt to the space available to a pane, including user-resized splits.
-  Preserve comparison in wide layouts; use list/detail or request/response
-  switching when narrow. Keep navigation and important actions reachable.
-  Scroll within the appropriate pane instead of letting content push the
-  application shell beyond the viewport.
-- Respect system theme, forced colors, reduced motion, zoom, and longer labels.
-  Do not rely on hover alone to expose essential information or on drag alone
-  to perform an action. A drag flow must have a reachable destination and a
-  keyboard or menu alternative.
+The [product-state guide](product-state-and-support.md) owns retention defaults;
+[product shell](product-shell.md) owns lifecycle and settings flows.
+
+- Keep Decrypt HTTPS and Profile above advanced settings. Decryption changes apply
+  at the next start; opaque CONNECT needs no interception CA and reports only known
+  destination, outcome and byte counts. Manual routing must not change OS settings
+  or require host trust; decrypted operation still validates and protects CA files.
+- Default to loopback, automatic port selection, caller isolation and server reuse.
+  Remote access requires explicit opt-in. Preserve authored ports and explain
+  conflicts. Disabling reuse affects subsequent requests, including viewer Composer.
+- Stop restores host routing first, then shows **Finishing requests** while admitted
+  work and streams finish. Start can resume the run. Once shutdown commits, expedite
+  idle cleanup rather than waiting for peer acknowledgements. Exit uses bounded
+  cleanup. Reject stale shutdown results after a new transition.
+- Protect CA keys before writing them; migration preserves public identity. Never
+  replace a trusted root silently or fall back to plaintext. An inaccessible DPAPI
+  key offers explicit exact-root reset and renewed Windows consent.
+- Live traffic is transient. Starting does not create a trace. Closing its owning
+  window releases live data. Clear covers the whole window: retain Undo for small
+  removals, expire it after five minutes at 100 MB, and release immediately at 1 GB.
+- Keep live-entry, HTTP-body and stream retention separate. Live entries default to
+  no count cap; optional eviction preserves active and imported entries. Display
+  resolved body limits and storage mode. New policies affect new boundaries or the
+  next recording, without spilling already retained memory bodies to disk.
+- Full queues backpressure capture rather than discard evidence. Capture limits
+  never stop forwarding; retain measured counts and mark prefixes incomplete.
+  Saved files have no fixed size/count ceiling, but indexing and processing stay bounded.
+- Narrow settings writes merge; stale layout saves cannot overwrite authorization.
+  Uncertain preference recovery disables remote access and recovered client-certificate
+  rules until explicitly re-enabled, including after interrupted recovery.
+- AppContainer exemptions preserve unselected OS entries. Separate selection from
+  enabled state, disclose hidden selections and keep bulk actions outside the scroller.
+  Closing the modal keeps result monitoring active without reopening it on completion.
+
+## Automation and safe previews
+
+Follow [automation](automation.md), [safe previews](safe-previews.md) and
+[captured-page preview](captured-page-preview.md).
+
+- Ordered auto-responses and User-Agent overrides use first enabled match. Do not
+  infer restrictions from captured Vary or duplicate behavior from example URLs.
+  Header presets replace existing fields only; preserve hints without authored
+  replacements and allow explicit stripping. Reordering and deletion preserve drafts
+  and offer Undo. Duplicate header-rule filters ask before replacement.
+- Explain copied response files versus linked per-request files, keep missing paths
+  repairable and preserve text drafts. Compression choices apply consistently to
+  text and binary sources; UI choices use canonical names while evidence retains
+  original coding tokens.
+- Captured markup stays inert in the workbench. Page preview requires an isolated
+  window, warning and per-preview script choice, initially off. Serve captured
+  resources only; misses return empty 404s and app commands remain inaccessible.
+- Preview matching uses method/URL in the chosen trace scope, with body, browser,
+  process, headers and timing as preferences. Advance repeated URLs through captured
+  responses, reset on reload and relax hints to available matches. Do not imply the
+  result reproduces the original browser state.
+
+## Files, viewers and updates
+
+Follow [trace saving](trace-saving.md) and [Windows release policy](windows-release.md).
+
+- Capture viewers contain Traffic and Composer; enforce main-window-only proxy,
+  trust, recording, breakpoint and automation commands in the host as well as UI.
+  Opening from outside asks merge/separate when the main window exists. Dropping
+  files imports into that window. Preserve original trace associations.
+- Drop targets name formats, offer a keyboard/click picker and highlight only when
+  accepting. The initial Traffic helper never returns after clearing/filtering.
+  Inspect metadata is read-only; Convert/Export suggests `exported` filenames.
+- File recording chooses a destination before switching from live capture, waits
+  for active work and offers cancellation. Use **Headers only** / **Headers and
+  bodies**. File-only recording does not populate Traffic; Stop seals and restores.
+- Save trace includes every retained entry except removed ones. Keep progress visible
+  after its dialog closes; closing is not cancellation. Preserve existing destinations
+  on failure, original source context on merged saves, and explicit incomplete evidence.
+- Offer TMCap, HAR and both SAZ profiles with honest fidelity limits. Label missing-head
+  placeholders and generated connection summaries, distinguish them from captured
+  server responses, and report their counts. Preserve full stream evidence in TMCap.
+- Export redaction, computer network context and password encryption are opt-in.
+  Explain residual private data and visible ZIP member names. New passwords require
+  confirmation; imports allow retry/cancel and publish nothing on failure. Never save
+  passwords in preferences or diagnostics. Context retains collector, time and source.
+- Updates stay nonmodal and leave the workspace usable. About owns version, checks,
+  release details, website and Credits. Automatic checks default on and save independently;
+  reminders pause prompts for thirty days. Checks/downloads use the active proxy route.
+  Resolve drafts, capture, proxy and host cleanup before installation.
+- Install updates in place. Preserve preferences, captures, handler choices and Windows
+  defaults; remove only registrations owned by the exact installation. Offer independent
+  TMCap/SAZ/HAR handlers, with TMCap selected initially. Uninstall-first is not the update flow.
 
 ## Review the whole flow
 
-Saved-capture windows are explicitly labeled **Capture viewer** and contain
-Traffic and Composer. Keep proxy, certificate, capture-recording, breakpoint,
-and automation controls in the main window; enforce these roles in the host as
-well as in the UI. Opening a capture while the main window exists asks whether
-to merge it into that session or open a separate viewer. Dropping a capture on
-the traffic list always imports it there. Imported entries retain their source
-trace association, with a direct action to view that trace's original metadata.
-
-Traffic's drop helper appears only before any entries have been loaded in that
-window. Clearing entries or filtering them out must not bring the helper back;
-the list remains a drop target. **Files** groups importing into the current
-window, saving a trace, importing into a separate viewer, and viewing current
-imports. Disable current-import metadata when this window has no imports, and
-return focus to **Files** after closing its metadata dialog.
-Copy URL beside Copy headers uses the complete corresponding request target from
-retained evidence, without display truncation.
-
-Composer keeps its request editor and uses the shared message inspector for live
-responses, including images, raw Hex, decoding, header actions and Save as. Keep
-the latest complete received response separate from Traffic and retain it until
-another response replaces it or the window closes. A pending send must preserve
-later draft edits and avoid switching an edited request to the response pane.
-Save as leases the original received body while the file dialog is open, so a
-later response or window closure cannot change the bytes being saved. Preserve
-the original captured-request association after editing and sending a draft.
-
-Trace drop targets name the accepted formats (TMCap, SAZ, HAR, and NetLog), offer
-a click/keyboard file picker, and highlight the actual accepting region during
-a supported file drag. Unsupported files, inactive workspaces, and busy imports
-do not show an accepting state. Captures' Inspect / recover workspace offers the
-same import target and a separate Import trace action; both bring the file into
-Traffic. Inspect trace metadata is read-only, shows the absolute source path and
-original context, and does not add Traffic entries. Convert/Export uses
-`exported` in suggested filenames, including recovered native prefixes.
-
-Desktop traffic is transient. Closing a main window releases its retained traffic
-and body cache; saved files remain. **Clear all** affects the whole window and
-retains Undo for small removals. For at least 100 MB, Undo expires after five
-minutes and releases the data; at least 1 GB is released immediately without Undo.
-
-The Capture Record flow chooses a destination before starting a file-only proxy
-run. It does not populate Traffic; Stop restores routing and seals that file.
-
-**Save trace** saves every retained entry in the current window, across the list and
-search results, excluding entries removed from Traffic. Save native traces as
-`.tmcap`; TMCap compresses individual chunks and opens payloads on demand.
-Offer SAZ compatibility and extended-fidelity choices alongside TMCap and HAR in
-Save trace. Extended SAZ preserves original source associations. SAZ includes
-retained WebSocket messages with explicitly disclosed framing normalization;
-TMCap preserves full stream evidence, including parsed SSE events. SAZ includes
-exchanges missing a request or response head using clearly labeled
-compatibility placeholders, with an explanation in Fiddler session comments and
-message headers. Missing responses use a labeled 599 status, or 502 for a recorded
-DNS, TCP or TLS setup failure, and explanatory
-text only when no response bytes were retained. Preserve captured heads and body
-bytes, report placeholder counts, and restore missing-head state on Transmog
-reimport. Clearly label generated connection summaries, report their count
-separately, and distinguish interception TLS from opaque CONNECT context without
-inventing handshake details. Export one summary per upstream physical connection,
-including its recorded failure, and interleave summaries with requests by start
-time. Distinguish the last observed snapshot from an unrecorded socket close.
-Save progress stays visible while writing, converting and finalizing,
-including after closing its dialog; closing does not cancel the save.
-Preserve original source metadata and request associations when saving merged
-captures. Network configuration from the saving computer is
-an explicit, unchecked option and stays separate from imported source context;
-show collection time, platform and failures in Trace metadata. Offer unchecked export-only sensitive-header redaction without changing retained
-evidence. Explain that URLs, bodies and metadata may still contain private data.
-Password encryption is an unchecked AES-256 option for saved traces, recordings
-and native/SAZ exports. Ask for confirmation of a new password and explain that
-it cannot be recovered. Encrypted imports ask only when required, allow retry
-and Cancel, and leave Traffic unchanged on failure. Keep passwords out of
-preferences, receipts, logs and initial UI state; clear dialog fields on close.
-ZIP member names remain visible. JSONL has no encryption option.
-
-Show collector, machine, purpose and time for newly collected network context;
-older context stays explicitly original without invented provenance. Report
-incomplete bodies and keep existing destination files intact when a save fails.
-
-The installer offers independent TMCap, SAZ and HAR handler choices, with TMCap
-checked on a first install. Preserve saved choices on updates and existing Windows
-defaults, explain how Windows may ask for a default-app choice, and remove only
-registrations owned by the uninstalling executable's exact path. Install upgrades
-over the existing version after proxy and capture cleanup, preserving preferences
-and saved captures; do not suggest uninstalling first.
-
-Turning the proxy off restores the host proxy settings first. Show **Finishing
-requests** while admitted requests, TLS handshakes or upgraded connections
-finish; idle clients do not delay shutdown. Keep **Start proxy** available during
-this state so turning it back on resumes the same run without disrupting work.
-Once active work finishes and the run commits to shutdown, **Start proxy** must
-expedite idle-connection cleanup and start a new run without waiting for peer
-acknowledgements.
-Open WebSockets and SSE responses remain active even between messages. Keep their
-HTTP result separate from stream lifetime, and include them in Active filters.
-Stop proxy preserves established streams; app exit interrupts them with bounded
-cleanup. Report open streams separately from ordinary requests and setup work.
-Preserve full stream history and complete messages for retained sessions. Large
-valid captures may use proportionate memory; do not silently truncate payloads or
-evict messages at fixed count or byte thresholds. Page the inspector and load
-saved content on demand. Honor explicit privacy and whole-session retention choices.
-Reject stale shutdown and status results after a new state transition.
-
-Honor explicit manual client routing: when system proxy configuration is disabled,
-starting the listener must not change host routing or require host-wide CA trust.
-Managed CA validation and private-key protection still apply; HTTPS clients supply
-their own trust. The ordinary desktop connection flow uses Windows routing.
-
-Outbound connections are isolated by caller process, with source IP as fallback,
-and by each HTTP/2 browser session. Keep the desktop control to one enabled-by-default
-checkbox in Advanced network settings. Outbound protocol and reuse choices belong
-to the network profile. Applying a profile gives new requests fresh origin pools
-in the proxy and Composer across open windows. In-flight requests and streams
-finish with their original recipe. Saving a definition alone must not activate
-it, restart the proxy or interrupt traffic.
-
-Client certificate authorization lives behind Advanced network settings. Its
-default continues without a certificate; ordered exact host/port rules can
-continue without one, pause for selection, or select one compatible Windows
-software identity automatically. Rule edits remain drafts until their explicit
-Save. Store only public identity fingerprints and authored subject/issuer
-attributes. Independent settings, layout and window saves must preserve this
-authorization. Recovery from an uncertain latest preference generation disables
-recovered certificate rules until the user reviews and re-enables them.
-That disabled state survives subsequent launches and interrupted recovery.
-
-Recovery from uncertain preference generations turns remote access off until
-the user explicitly enables it again.
-
-An actual verified server CertificateRequest can create a blocked-connection
-indicator. Keep selection nonmodal and preserve work in other panes. Show the
-host, owner, public certificate subject/issuer, expiration and fingerprint.
-Offer a certificate, continuation without one, or cancellation for those live
-connections only; answering never silently creates a saved host rule. Peer
-closure, deadlines, policy changes and closing the owning window expire the
-choice. Preserve an inspected expired context with disabled actions, reject
-late answers, and avoid stealing focus during background refresh or light
-dismissal. Capture viewers refer selection to the main window. Composer's
-received-response certificate view uses its actual recorded connection evidence.
-Closing the main window stops its own work while open viewers retain their
-connections and can reopen the main window for certificate selection.
-
-Disabling HTTPS decryption forwards opaque CONNECT bytes and records the destination,
-connection outcome and byte counts without implying knowledge of the tunneled protocol
-or contents. This choice applies on the next proxy start. Starting with decryption off
-does not require interception certificate creation, key protection or host CA trust.
-
-Live entries have no count limit by default. Offer an optional maximum that drops
-older completed live entries, preserves imported entries and lets active requests
-finish before eviction. Changing this limit applies immediately. Body bytes have
-a separate budget; the body limit is not a total application memory ceiling.
-
-Hex addresses every retained byte without a total display-size ceiling. Load
-visible pages on demand, keep exact offsets, and preserve selection while paging.
-The scrollbar spans the whole body; keyboard navigation and Go to offset reach
-exact positions even when native scrollbar pixels cannot. A preview limit belongs
-to bounded text and decoded previews, not the raw Hex view. Clipboard selections
-have a separate bounded budget with Save as guidance for larger selections.
-Compressed SAZ bodies may be validated and unpacked once into an owned temporary
-byte cache for random access; release it with the imported body and its readers.
-In a narrow Traffic inspector, put the request/response selector beside the URL
-and status so switching messages does not consume an extra row above the body.
-
-Live body retention uses a configurable circular buffer. Automatic chooses half
-installed physical RAM, stored in memory. Custom limits up to that threshold
-also stay in memory; larger limits and **No max size (writes to disk)** use an
-application-owned disk cache. Starting the proxy never implicitly records a
-trace. Save trace and explicit recording write files. Display the resolved limit,
-storage location and installed RAM in Settings. Changing storage applies to new
-body boundaries without spilling previously retained memory bodies to disk.
-
-Retaining Traffic and recording captures apply flow control: a full event or
-storage queue slows requests until the consumer catches up. Queue pressure must
-not silently discard entries, body chunks or completion evidence. Keep queues
-bounded and report actual storage failures; configured retention budgets and
-explicit body limits still govern what data is kept.
-
-Request-body retention defaults to **25 MB** (25,000,000 bytes). **Custom limit** accepts decimal MB values from 1 MB through 1 TB
-(1,000,000 MB) and preserves the authored choice on reload. **Unlimited**
-removes the per-request cap while preserving the selected circular buffer budget.
-Saved trace files have no byte-size or record-count ceiling; storage errors remain
-actionable failures. Keep individual encoded chunks bounded.
-Keep forwarding independent from capture limits; report a retained prefix as
-incomplete while preserving full measured byte counts. Explain that cache
-changes apply to new requests and recording changes to the next recording.
-
-Traffic defaults to a live metadata filter for URLs and processes, applied across
-all retained entries before virtual windowing. **Search contents** is an explicit
-mode that starts with **Search** or Enter, so typing does not repeatedly
-read and decode captured bodies. Results describe a completed search snapshot;
-new traffic remains capturable and a new search refreshes that snapshot. Search
-can select every matching entry across the entire list, and rerunning it replaces the
-selection with current matches. Remove selected and remove unselected act on
-the whole workspace and support Undo. Skip inapplicable binary bodies quietly;
-report unavailable text evidence once in the search summary.
-
-Traffic is one continuous virtualized list. Its native scrollbar represents the
-whole matching collection, with only a small window of rows rendered. Selection,
-keyboard focus and range anchors use stable request IDs and the complete display
-order; scrolling a row out of the DOM never deselects it. Ctrl+A selects the
-current filtered/search collection, including offscreen entries, at that moment.
-Later traffic is not automatically selected. Del and Undo act on those IDs.
-Keep row geometry predictable in compact and ordinary modes. Wrapped cells use
-measured heights with scroll anchoring to preserve the request being read.
-Search match review reveals and marks the current request in Traffic while
-preserving multiselection. Closing review returns focus to that request.
-
-User-Agent and client-hint overrides use a top-to-bottom list: the first enabled
-match wins, with drag handles and reachable Move up / Move down alternatives.
-Editing a draft does not affect live requests until Save. Identical filters ask
-before replacing the existing rule and retain its position. Deleted rules offer
-Undo. Preserve hints without authored replacements; allow explicit stripping.
-Preset replacements update existing headers only. Show enabled non-auto-response
-automation in navigation and enabled header rules beside Header overrides.
-
-The selected request’s **Details** dialog groups **Timings**, **Connection**,
-**Certificates**, and (for imports) **Capture source**. Keep headers, body inspection,
-and Copy URL directly accessible; occasional request operations belong in **Actions**.
-**Files** groups import and save; **View** groups columns, density, and layout.
-**Compare messages** is the default wide layout. Narrow inspectors show one message
-with a request/response selector. Header byte sizes are an optional disclosure.
-
-The Certificates tab opens the TLS context of that request's physical connections.
-Separate the client-facing proxy certificate from the origin server path and
-client authentication certificates. Show public certificate bytes, recorded
-verification and negotiation failures together. Label fingerprints or imported
-summaries whose certificate bytes were omitted. Recorded trust belongs to the
-original connection; opening the viewer must not imply verification against the
-current computer's trust or expose private keys or session secrets.
-Prefer complete public bytes when another reference to the same fingerprint
-contains them. Default to the latest successful upstream connection, then the
-latest failed attempt when none succeeded. Include the role, outcome and identity
-in the selector so attempts can be distinguished before selecting them.
-
-Show negotiated exchange groups and handshake signatures for each physical
-connection's own leg. Do not infer a missing algorithm from a certificate key,
-cipher or configured preference; older captures show Unavailable. Distinguish
-a resumed TLS 1.3 handshake's current group from its original authentication
-signature and restored certificate chain. For TLS 1.2 resumption, label the
-original session group and report that no fresh key exchange occurred.
-Hybrid exchange or ML-DSA authentication alone
-must not produce a claim that the whole trust chain is post-quantum secure.
-Start the connection view with a compact summary of the recorded protocol,
-current exchange group and cipher. Order negotiation details explicitly, placing
-resumption before the original-session facts it qualifies. Keep configured policy,
-trust provenance and additional imported metadata in secondary disclosures.
-Avoid duplicate protocol and cipher rows; surface conflicting observations
-without discarding their original text. Show invisible controls, including NUL,
-as Unicode escapes, noting when display text differs from the original.
-Preserve the original capture values in exports.
-
-Show ALPS use from the recorded TLS negotiation, independently of the profile's
-configured offer. Distinguish a negotiated empty value, a declined offer and
-unavailable evidence. Keep decoded server settings and Client Hint preferences
-in a secondary disclosure, with the complete original bytes in Hex. Client Hint
-preferences are read-only evidence and do not alter forwarded requests. Preserve
-frame order, duplicate parameters and unknown identifiers; explain malformed
-or shortened display content without discarding its original bytes.
-
-The Timings tab opens a snapshot of the selected exchange, with an explicit Refresh.
-Present measured local milestones and overlapping latency phases. Distinguish
-zero from unavailable, shared connection setup from per-request work, and bytes
-queued by the proxy from delivery to the client. Response wait does not identify
-server CPU time. Collapse local proxy work under 1 ms by default and explain
-measured call time once, without repeating it on every row. Keep original imported timers available with their own labels
-and clocks, without inventing missing measurements. Copied heads mark unrecorded versions
-as HTTP/[unavailable]; replay commands explain their compatible fallback.
-
-
-For a UI change, walk through the affected task with representative populated
-data as well as the empty state. Inspect wide and narrow layouts, resized panes,
-long labels and values, selection and multiselection, and relevant loading,
-error, and unavailable states. Check actual pointer reachability, keyboard
-navigation, focus restoration, baseline alignment, and editor/action visibility.
-A successful build or an empty-state screenshot does not establish these.
-
-Use the checks in [the UI instructions](../apps/desktop/ui/AGENTS.md), including
-real WebView2 checks when native behavior, accessibility, or layout is affected.
-Inspect screenshots for visual changes. Add behavior or layout regression
-coverage for important interactions, asynchronous state, or a discovered
-failure; avoid tests that merely repeat implementation details or lock in
-incidental pixel values. Documentation-only edits do not require app builds.
-
-Current flows and their semantics are described in
-[the product shell](product-shell.md), [automation](automation.md), and
-[product state and support](product-state-and-support.md). When a deliberate
-design change replaces a convention, update the relevant guidance along with
-the implementation so future changes have one current explanation to follow.
-
-File recording chooses a destination before stopping live capture. Switching waits
-for active requests to drain and offers cancellation while waiting. Label the
-content choice **Headers only** or **Headers and bodies**; recording writes new
-traffic to the file without adding it to Traffic.
-
-Desktop proxy access defaults to loopback only. Remote computers require an explicit
-persisted opt-in. The proxy port defaults to automatic selection; an authored
-port from 1 through 65535 is retained and an occupied port produces an actionable
-start failure. Address and port changes apply to the next fresh proxy start.
-Windows routes through loopback even when the listener accepts remote clients.
-
-Server connection reuse is enabled by default. Turning it off gives subsequent
-requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
-capture viewers. Active requests and streams finish normally. Keep HTTPS
-decryption visible at the top of Preferences, above the advanced disclosure.
-
-Automatic update checks are enabled by default. Settings → About saves this
-choice immediately, independently of ordinary settings and the thirty-day reminder.
-Turning it off prevents startup network checks; manual checks remain available.
-The installer offers the same choice and preserves it on updates and silent
-installs unless the user explicitly changes it.
-
-AppContainer loopback exemptions are managed in a modal from Connection.
-Keep installed metadata, users and existing Windows exemption status together;
-group repeated per-user records by AppContainer SID. Selection is independent of
-exemption status, supports the app's checkbox/range/keyboard conventions, and
-discloses selected rows hidden by a filter. Keep bulk actions outside the table's
-scroller. Preserve unselected Windows exemptions. Closing the dialog during an
-operation keeps monitoring its result; completion cannot reopen it or move focus.
+Exercise populated and empty states, wide and narrow layouts, resized panes,
+long values, multiselection, loading, errors and unavailable evidence. Check pointer
+reachability, keyboard navigation, focus restoration, alignment and editor actions.
+Use real WebView2 for native behavior, accessibility or layout, and inspect screenshots
+for visual changes. Add regressions for important behavior or reproduced failures;
+avoid tests tied to incidental pixels. A build alone does not establish UX quality.
+Documentation-only edits require content and link review, not app builds.

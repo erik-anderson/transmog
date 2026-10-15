@@ -3,22 +3,25 @@
 ## Build and launch the Windows desktop
 
 After installing the [Windows toolchain](#windows) and
-[desktop prerequisites](#windows-desktop-shell), run this from the repository
-root in PowerShell 7 or newer:
+[desktop prerequisites](#windows-desktop-shell), run from the repository root:
 
 ```powershell
-./scripts/run-desktop.ps1
+python scripts/dev-env.py --check
+python scripts/dev-env.py --run cargo fetch --locked
+npm ci --prefix apps/desktop/ui
+python scripts/build-desktop.py --configuration Debug --locked-dependencies
+python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
 ```
 
-This is the recommended desktop development entry point. It checks and configures
-the LLVM/Ninja environment, installs npm dependencies from the lockfile, checks
-and builds the UI, builds the desktop plus its script host and preview worker
-with locked Cargo dependencies, and launches `target/debug/transmog.exe`.
-It stops on setup or build failure. Repeated runs reuse Cargo's build artifacts.
-Use `./scripts/run-desktop.ps1 -Configuration Release` for an optimized build.
-`CARGO_TARGET_DIR` is honored when locating the executable, and `TRANSMOG_PYTHON`
-can select an explicit Python interpreter. The first build needs network access
-for dependencies that are not already cached.
+This checks the native tools, prepares locked dependencies, builds the UI and both
+sandbox helpers, and launches the desktop. Use `--configuration Release` and
+`cargo run --release` for an optimized build. `CARGO_TARGET_DIR` is honored.
+Initial dependency downloads require network access.
+
+PowerShell 7 users can also use `./scripts/run-desktop.ps1` after fetching Cargo
+dependencies. It configures tools, installs npm packages, builds and launches;
+`-Configuration Release` selects the optimized build. `TRANSMOG_PYTHON` selects
+an explicit interpreter for the wrapper.
 
 The following sections describe prerequisites and individual build commands.
 
@@ -87,17 +90,16 @@ the selected compiler. They provide the current Windows SDK, Universal CRT,
 C++ standard-library headers, and ABI-compatible import/static libraries that
 `clang-cl` and Rust's Windows ABI target consume. Native C/C++ compilation is
 configured to Clang, archiving to `llvm-lib`, and build execution to Ninja.
-Cargo's final PE link uses the current Windows SDK `link.exe` because quiche
-declares an auxiliary `cdylib` crate type for which LLD 22.1.4 reports a missing
-subsystem despite an explicit subsystem argument. Using the SDK linker avoids
-an otherwise unnecessary quiche manifest fork.
+Cargo's final PE link uses the current Windows SDK `link.exe` because the
+qualified quiche build includes an auxiliary `cdylib` that does not link with
+the reviewed LLD configuration.
 
 From Visual Studio Installer, choose **Modify**, then either import the checked-in
 `.vsconfig` or select the two individual components above. Installation requires
 administrator elevation and may require a restart. The library does not install
 or modify build tools at runtime.
 
-The repository-local bootstrap used during development pins official portable
+The repository-local tool setup pins official portable
 distributions under ignored `.tools`. Those binaries are intentionally not
 committed. A system installation of equivalent or newer compatible versions is
 also supported.
@@ -109,7 +111,7 @@ python ./scripts/dev-env.py --check
 python ./scripts/test.py
 ```
 
-`dev-env.ps1` prepends repository-local tools when present, selects `clang-cl`,
+`dev-env.py` prepends repository-local tools when present, selects `clang-cl`,
 `llvm-lib`, and Ninja, and discovers the Windows SDK linker and libraries from
 either a normal Visual Studio C++ toolchain or the SDK-scoped fallback used by
 managed development hosts. Cargo build scripts compile bundled zstd sources
@@ -119,7 +121,7 @@ generator. No separate zstd SDK or binary installation is required.
 ### Windows troubleshooting
 
 `linker 'link.exe' not found` means the current Windows SDK/VC tools are not on
-`PATH`. Run `dev-env.ps1` in the same PowerShell process before Cargo.
+`PATH`. Run Cargo through `python scripts/dev-env.py --run cargo ...`.
 
 An error in BoringSSL similar to this:
 
@@ -144,8 +146,7 @@ Release users can download the signed Windows binary and follow
 After installing the prerequisites above, build the CLI in the checkout:
 
 ```powershell
-. ./scripts/dev-env.ps1
-cargo build --locked --release -p transmog --bin transmog-cli
+python scripts/dev-env.py --run cargo build --locked --release -p transmog --bin transmog-cli
 .\target\release\transmog-cli.exe --help
 ```
 
@@ -172,7 +173,8 @@ without changing Windows host settings. Guided CLI `record` configures and
 restores the current-user proxy unless `--no-system-proxy` is specified, and
 asks for root installation unless manual setup is selected. See the
 [CLI guide](cli.md) for release-binary usage. The
-desktop Start action always uses the current-user system-proxy adapter, which
+desktop Start action uses the current-user system-proxy adapter unless manual
+routing is configured. The adapter
 requires Windows PowerShell 5.1 or newer and access to
 `HKCU\Software\Microsoft\Windows\CurrentVersion\Internet Settings`. Explicit
 CA installation/removal uses the current-user Root certificate store and can
@@ -185,27 +187,21 @@ interception** action asks the user to approve the public certificate trust
 dialog. Manual `serve` users and embedders manage their clients' certificate
 trust and routing themselves.
 
-The desktop dependency toolchain is pinned in both lockfiles:
+Desktop dependency versions are pinned in the [Cargo](../Cargo.lock) and
+[npm](../apps/desktop/ui/package-lock.json) lockfiles. See the
+[dependency map](dependencies.md) for their roles and ownership.
 
-- Tauri Rust crates and npm API/CLI 2.12.1;
-- Tauri single-instance plugin 2.4.5 (the last reviewed line compatible with
-  the workspace's Rust 1.88 minimum; 2.5 requires Rust 1.90);
-- Microsoft WebUI Rust and browser packages 0.0.30;
-- `deno_core` 0.412.0 and V8 150.4.0 for the isolated script host;
-- TypeScript 7.0.2 and esbuild 0.28.2.
-
-The reviewed Windows V8 archive is pinned by both URL and SHA-256 in
-`scripts/cache-v8.py`. Prime Cargo's documented `.rusty_v8` cache before an
-offline build:
+The reviewed Windows V8 archive URL and SHA-256 are pinned in
+[`scripts/cache-v8.py`](../scripts/cache-v8.py). Prime Cargo's `.rusty_v8` cache
+before an offline build:
 
 ```powershell
-python ./scripts/cache-v8.py
-# Or verify and cache an internally mirrored/downloaded copy:
-python ./scripts/cache-v8.py --archive-path C:\staging\rusty_v8.lib.gz
+python scripts/cache-v8.py
+# Verify and cache an internally mirrored/downloaded copy:
+python scripts/cache-v8.py --archive-path C:\staging\rusty_v8.lib.gz
 ```
 
-The script refuses any archive other than SHA-256
-`F231F82CBACB9AEFE6D9AF57E6DF2E8959A40E001F79306485133E3C075B98F0`.
+The script rejects bytes that do not match the pinned hash.
 Release packaging builds `transmog-script-host` and the isolated
 `transmog-preview-worker` beside the desktop executable.
 Production activation requires the host's Windows AppContainer plus Job Object;
@@ -215,11 +211,9 @@ Install build-time packages and generate the ESM bundle and WebUI
 projection manifest:
 
 ```powershell
-Push-Location ./apps/desktop/ui
-npm ci
-npm run build
-npm run check
-Pop-Location
+python scripts/dev-env.py --run cargo fetch --locked
+npm ci --prefix apps/desktop/ui
+npm --prefix apps/desktop/ui run check
 ```
 
 `ui/dist` is generated and ignored by Git. `npm run check` type-checks the UI
@@ -239,11 +233,9 @@ python ./scripts/build-desktop.py --configuration Debug --locked-dependencies
 Build, test, and run through the repository's LLVM/Ninja environment:
 
 ```powershell
-. ./scripts/dev-env.ps1
-cargo test --locked -p transmog-desktop
-cargo build --locked -p transmog-script-host
-cargo build --locked -p transmog-preview-worker
-cargo run --locked -p transmog-desktop
+python scripts/dev-env.py --run cargo test --locked -p transmog-desktop
+python scripts/build-desktop.py --configuration Debug --locked-dependencies
+python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
 ```
 
 The desktop locates `transmog-script-host.exe` beside its own executable. The
@@ -322,8 +314,8 @@ python ./scripts/test-pqc-browser-docker.py --live-url https://pq.cloudflarerese
 Use `--refresh-browser` when a cached image needs the available Chrome release.
 See [PQC verification](testing.md#post-quantum-tls) for assertions and reports.
 
-For a custom container, Playwright requires Node.js 20 or newer; the provided
-image uses Node.js 24. A distribution's older Node package can install npm
+Custom containers must meet the repository's Node.js 24 or newer baseline.
+A distribution's older Node package can install npm
 dependencies yet fail when Playwright starts. **Interception CA key protection
 is unavailable** means the CLI cannot reach an unlocked Secret Service in its
 D-Bus session. Supply that service and keep the CLI in the same session; the
@@ -335,8 +327,8 @@ Install Rust 1.97.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard
 library development package, and normal libc development headers. Then run:
 
 ```sh
-export CC=clang CXX=clang++ AR=llvm-ar CMAKE_GENERATOR=Ninja
-cargo test --workspace --all-features --locked
+python3 scripts/dev-env.py --check
+python3 scripts/dev-env.py --run cargo test --workspace --all-features --locked
 ```
 
 On Windows with Docker Desktop's WSL2 backend, the complete Linux format,
@@ -356,7 +348,7 @@ The standalone interoperability matrix additionally requires Docker Compose,
 a standalone `curl` executable, Node.js 24 or newer with npm, and Playwright
 Chromium. Node.js 24 is required because the fixture generator uses its built-in
 zstd support in addition to gzip, Brotli, and deflate. The runner builds with
-the same Windows LLVM/Ninja environment and starts digest-pinned Nginx, Apache,
+the configured native environment and starts digest-pinned Nginx, Apache,
 and Caddy containers on ephemeral loopback ports:
 
 ```powershell
@@ -381,7 +373,7 @@ It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because
 LLVM sanitizer-backed libFuzzer is Unix-only. See `fuzz/README.md`; the normal
 deterministic bomb and cancellation tests still run on Windows and macOS.
 Windows maintainers can run the Linux fuzz environment through Docker Desktop's
-WSL2 backend with `./scripts/fuzz-content-docker.ps1` without installing Rust
+WSL2 backend with `python scripts/fuzz-content-docker.py` without installing Rust
 inside the internal `docker-desktop` distribution.
 
 ## macOS
@@ -390,8 +382,8 @@ Install Rust 1.97.1+, Xcode Command Line Tools, CMake, Ninja, and NASM. Apple
 Clang is supported; upstream LLVM may be selected explicitly when matching CI.
 
 ```sh
-export CC=clang CXX=clang++ CMAKE_GENERATOR=Ninja
-cargo test --workspace --all-features --locked
+python3 scripts/dev-env.py --check
+python3 scripts/dev-env.py --run cargo test --workspace --all-features --locked
 ```
 
 ## Policy tools

@@ -45,11 +45,13 @@ future connections to a stale DNS address.
 
 ## Bounds and failure behavior
 
-- DNS resolution is delegated to the operating system and awaited once per new
-  pooled connection.
+- HTTPS service discovery uses system DNS servers; A/AAAA lookup uses the OS
+  resolver. Eligible service endpoints are tried in priority order, each with its
+  own address race and ECH configuration. See [ECH discovery](chromium-negotiation.md#encrypted-client-hello).
 - Duplicate results do not consume the candidate bound.
 - At most the configured number of handshake attempts can exist for one race.
 - Existing transport deadlines still bound individual attempts and the outer
   upstream deadline bounds the complete exchange.
-- If every candidate fails, the final typed transport error is returned. No
-  failed address-family attempt weakens TLS verification or protocol policy.
+- If every eligible endpoint fails, the final typed transport error is returned.
+  Certificate failures, client-authentication failures and failed authenticated
+  retries stop service fallback; racing never weakens verification policy.

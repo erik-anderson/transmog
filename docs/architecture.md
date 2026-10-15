@@ -4,7 +4,8 @@ Transmog is a desktop web-debugging application built over a layered exchange
 engine and explicit-proxy listener.
 Browser traffic currently enters as plain absolute-form HTTP or as HTTP/1.1 or
 HTTP/2 inside an intercepted `CONNECT`. HTTP/3 is an origin egress protocol;
-the project does not claim to intercept a browser's native QUIC packets.
+native downstream QUIC is unsupported. With HTTPS decryption disabled, CONNECT
+relays opaque bytes and records only tunnel metadata.
 
 ```text
 explicit H1 listener / CONNECT TLS (H1 or H2)
@@ -29,11 +30,11 @@ explicit H1 listener / CONNECT TLS (H1 or H2)
                     |
        bounded response body pipeline
 
-HTTP/1.1 101 upgrade
+H1 Upgrade / H2 extended CONNECT
         |
-        +-- no WebSocket hooks --> byte-transparent bidirectional copy
+        +-- no hooks --> byte-transparent relay, passive observation if requested
         |
-        +-- hooks installed ----> bounded frame/message/compression relay
+        +-- hooks ----> inspected frame/message/compression relay
 ```
 
 Observers receive immutable events beside the HTTP path through finite queues;
@@ -147,8 +148,8 @@ available to hooks, observers, the application session catalog, and native
 capture. See [client process attribution](client-process-attribution.md) for
 platform behavior and security constraints.
 
-The core owns protocol correctness state: exchange IDs, framing and flow
-control, route attempts, retry eligibility, connection pools, deadlines,
+The core, runtime and protocol adapters own protocol correctness state: exchange
+IDs, framing and flow control, route attempts, retry eligibility, connection pools, deadlines,
 cancellation, body bounds, pause permits, trust generation, certificate and
 Alt-Svc caches, and exactly-once terminal state. Capture databases, saved rules,
 UI state, IPC schemas, projects, replay collections, and scripting runtimes
@@ -165,8 +166,10 @@ service; see [the product shell](product-shell.md).
 ## Resource and failure model
 
 `RuntimeLimits`, `HookLimits`, `ContentLimits`, and `H3TransportLimits` make
-every queue, buffer, connection count, and paused-callback count finite. A slow
-observer uses one declared delivery policy: wait for capacity, backpressure with
+transport queues, connection counts, body-processing and paused-callback bounds
+explicit. Product retention policies are separate; stream history can grow with
+the retained session. A slow observer uses one declared delivery policy: wait for
+capacity, backpressure with
 a deadline, drop-newest with a visible counter, or disconnect. Desktop retention
 and CLI recordings wait for capacity throughout their bounded storage pipeline,
 slowing requests rather than losing evidence under pressure. Body bytes and
@@ -184,8 +187,8 @@ errors are never converted to success by a hook default.
 
 WebSocket inspection uses a separate session-local hook chain. Its two traffic
 directions are independently scheduled and backpressured. Disabling those
-hooks selects an exact byte-copy path, so merely linking the WebSocket crate
-does not reinterpret upgraded traffic.
+hooks preserves the wire bytes. Observers can passively decode messages without
+changing forwarding; without observers the relay performs an exact byte copy.
 
 Automatic routing streams directly when no HTTP/3 alternative is cached. With
 a cached alternative it uses an explicitly bounded replay buffer. Fallback is

@@ -40,10 +40,11 @@ the repository root, build the Rust dynamic library and managed application and
 copy the native library beside the managed executable:
 
 ```powershell
-pwsh ./scripts/build-dotnet-sample.ps1
+python scripts/dev-env.py --check
+python scripts/build-dotnet-sample.py
 ```
 
-Use `-Configuration Release` for optimized binaries. On Windows the script
+Use `--configuration Release` for optimized binaries. On Windows the script
 enters the repository's LLVM/Ninja environment automatically. Linux uses the
 active Clang/LLVM toolchain. macOS remains unqualified even though the build
 script recognizes its dynamic-library naming convention.

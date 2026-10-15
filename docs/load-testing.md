@@ -10,25 +10,25 @@ Reduced smoke runs are explicitly reported as **not scale qualification**.
 
 ## Run
 
-Prerequisites are the [native build tools](building.md), Node 24+, Python 3.10+
+Prerequisites are the [native build tools](building.md), Node 24+, Python 3.11+
 with its standard library, and WebView2 for desktop runs. Close Transmog first.
 The driver builds locked release binaries and installs the locked Playwright
 dependencies and Chromium. Dependency setup can download packages; the workload
 itself uses only the loopback fixture:
 
 ```powershell
-./scripts/test-load.ps1 -Smoke
-./scripts/test-load.ps1
+python scripts/test-load.py --smoke
+python scripts/test-load.py
 ```
 
 After setup, repeated runs can skip installation and building:
 
 ```powershell
-./scripts/test-load.ps1 -SkipBuild -SkipDependencyInstall -SkipBrowserInstall
-./scripts/test-load.ps1 -Target desktop -Storage memory -SkipBuild -SkipDependencyInstall -SkipBrowserInstall
+python scripts/test-load.py --skip-build --skip-dependency-install --skip-browser-install
+python scripts/test-load.py --target desktop --storage memory --skip-build --skip-dependency-install --skip-browser-install
 ```
 
-Use `-Python <path>` if Python is not on PATH; a Windows Store alias is not a
+Use `--python <path>` if Python is not on PATH; a Windows Store alias is not a
 Python installation. `PLAYWRIGHT_BROWSERS_PATH` can select an existing Chromium
 cache. CLI-only runs also work on Linux. The portable entry point and harness
 regression tests are:
@@ -41,11 +41,11 @@ node e2e/load/run.mjs --target both --smoke
 node e2e/load/run.mjs --help
 ```
 
-`-Navigations`, `-RequestsPerNavigation`, `-Concurrency`, `-TimeoutMinutes` and
-`-Output` control workload and evidence. The Node entry point also accepts
+`--navigations`, `--requests-per-navigation`, `--concurrency`, `--timeout-minutes`
+and `--output` control workload and evidence. The Node entry point also accepts
 explicit CLI/desktop binary paths. Full runs reject configurations below
 10,000 exchanges or 2 GiB combined entity bodies. Concurrency is bounded at 32;
-the default is eight browser fetch workers. `-Headed` shows the same single
+the default is eight browser fetch workers. `--headed` shows the same single
 Chromium instance. No browser is restarted between navigations within a target.
 
 ## Isolation and routing
@@ -100,7 +100,7 @@ shutdown. Shutdown uses the owned native window's CloseRequested path and must
 release its live body-cache files in either profile.
 
 Default desktop retention is unlimited disk storage so machines with modest RAM
-can complete the test. `-Storage memory` exercises Automatic retention and rejects
+can complete the test. `--storage memory` exercises Automatic retention and rejects
 hosts whose resolved budget cannot hold both observed boundaries of the entire
 workload. Entry retention remains unlimited in both modes. Allow several GiB of
 free disk space for live bodies and saved captures; keep more space for repeated

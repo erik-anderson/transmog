@@ -17,7 +17,7 @@ authoritative version records.
 | --- | --- | --- |
 | Asynchronous I/O | `tokio`, `bytes`, `futures-util`, `tower-service` | Sockets, tasks, timers, bounded channels, byte buffers, and service adapters throughout the transport layers. |
 | Canonical HTTP vocabulary | `http`, `http-body`, `http-body-util` | Standard method, URI, header, status, body-frame, and trailer types at adapter boundaries. Transmog converts these to its own validated canonical exchange model before invoking hooks. |
-| HTTP/1.1 and HTTP/2 | `hyper`, `hyper-util` | Downstream HTTP serving and pooled upstream clients, including HTTP/2 multiplexing and TCP Happy Eyeballs. The integration lives in `transmog-http`. |
+| HTTP/1.1 and HTTP/2 | `hyper`, `hyper-util`, `h2` | Downstream HTTP serving and pooled upstream clients, including HTTP/2 multiplexing and TCP Happy Eyeballs. The integration lives in `transmog-http`. |
 | TLS and cryptography | `boring`, `boring-sys`, `tokio-boring` | One BoringSSL family implements upstream TLS verification, downstream interception TLS, hybrid ML-KEM exchange, ML-DSA handshake authentication, certificate issuance, ALPN, and Transmog's Hyper TLS transport. BoringSSL is compiled from source as part of the native build. |
 | Operating-system trust roots | `rustls-native-certs` | Enumerates platform root certificates, which Transmog imports into its BoringSSL trust snapshot. Despite its name, it does **not** put rustls in the production TLS data path. |
 | QUIC and HTTP/3 | `quiche` | Pooled HTTP/3 origin egress, QUIC transport, and Alt-Svc upgrades in `transmog-h3`. The crate is built with `boringssl-boring-crate` so HTTP/3 shares the same BoringSSL bindings and trust policy as HTTP/1.1 and HTTP/2. |
@@ -36,8 +36,9 @@ repository, and ordinary registry dependencies remain required elsewhere.
 `hyper-boring` remains a test-only comparison connector; production uses
 Transmog's connector and stream adapter. The crypto-graph check enforces this.
 Cargo applies patches only at the consumer's workspace root, so independent
-embedding workspaces must repeat the same four patch entries. The repository's
-Rust and .NET examples already use the patched root workspace.
+embedding workspaces must repeat these Git entries and the vendored transport
+patches described below, with paths resolving to the reviewed source trees.
+The repository's Rust and .NET examples already use the patched root workspace.
 
 `transmog-tls-native` contains the narrow native boundary for client certificate
 requests, alternate server credentials and signature-algorithm GREASE omitted by
@@ -79,6 +80,12 @@ policy, schema and source-label changes, then run the qualification in the
 candidate before applying its patch. Profiles are not automatically activated or
 renamed by a data roll.
 
+Vendored `h2`, `hyper` and `quiche` use checksum-pinned registry archives and
+reproducible patches. Preflight validates both files and Cargo resolution; see
+[the transport inventory](../third_party/rust-transport/README.md). Desktop credits
+and generated notices include their licenses, and CycloneDX records archive and
+patch identities.
+
 Generated notices and CycloneDX artifacts identify Git packages by their full
 resolved commit, even when the package version matches a registry release.
 They record the native BoringSSL base revision, enabled binding features and
@@ -108,8 +115,12 @@ claim which patches are applied.
 | Code editing | `monaco-editor` | TypeScript automation editing and diagnostics in the desktop UI. |
 | Sandboxed script execution | `deno_core` and V8 | Executes user automation in a separate capability-restricted process with explicit time and memory containment. |
 | TypeScript parsing/transpilation | `deno_ast` | Validates and transpiles the supported TypeScript subset before isolated execution. |
-| Browser-side code | TypeScript and `esbuild` | The small client-side layer that cannot be rendered or handled in Rust. Generated bundles are reproducibly verified from the npm lockfile. |
+| Browser-side code | TypeScript and `esbuild` | Typed UI components, browser interactions and projections. Generated bundles are reproducibly verified from the npm lockfile. |
 | Windows integration | `windows-sys` | Current-user proxy settings, process attribution, AppContainer and Job Object sandboxing, console suppression, and related host APIs. |
+
+The desktop updater uses Tauri's separate HTTPS client, scoped to signed update
+retrieval. Its Rustls/Reqwest dependencies are allowed only on that desktop edge;
+they never supply proxy or Composer TLS. See [ADR 0001](adr/0001-native-stack.md).
 
 ## Build and supply-chain controls
 

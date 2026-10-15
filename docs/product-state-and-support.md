@@ -23,26 +23,13 @@ proxy and Composer, including already-open viewers. In-flight requests retain
 their original transports and recorded recipe. Built-in recipes do not silently
 advance when a new browser version is added. TLS 1.2-only profiles cannot enable
 HTTP/3; disabling all HTTP protocols intentionally blocks new work.
-The Chromium 154 recipe revision 2 adds HTTP/2 ALPS. Schema 7 state migrates to
-schema 8: the built-in recipe advances, while existing custom profiles retain
-ALPS disabled. Missing ALPS fields in older capture snapshots mean disabled,
-preserving the offer recorded at the time. See [HTTP/2 ALPS](http2-alps.md) for
-the intentional Client Hints limitation. Recipe revision 3 adds certificate-based Trust
-Anchor IDs; schema 8 migrates to schema 9, advancing the built-in recipe while
-preserving custom profiles with the previous offer. Absent Trust Anchor IDs fields
-in historical capture snapshots remain disabled. Effective PKI metadata provenance
-is separate from the measured browser profile; see [Trust Anchor IDs](trust-anchor-ids.md).
-Schema 9 migrates to schema 10, selecting WebView2 (Chromium 154) for the previous
-built-in default. Chromium revision 4 and WebView2 revision 1 share transport
-settings but discover separate installed public root stores, falling back to
-bundled Chromium. Older custom recipes and captures retain OS trust when the
-new root-store field is absent.
-Schema 10 migrates to schema 11: the pre-release Chromium revision 5 and WebView2
-revision 2 add monitored local Windows trust. Built-in settings are explicit and
-fixed; certificate updates do not edit recipes. Custom support has not shipped
-and has no automatic-default updater. Missing historical local-trust fields
-remain disabled. The Customize root selector has one local-trust switch, which
-is disabled in OS mode because that source already includes local roots.
+Both built-ins enable H2/H3 ALPS and certificate-based Trust Anchor IDs. Their
+transport settings match; WebView2 discovers its installed root store and Chromium
+discovers Chrome's, with a bundled Chromium fallback. Both add monitored local
+Windows trust. The Customize root selector exposes a local-trust switch, disabled
+in OS mode because that source already includes local roots. Certificate-data
+updates do not edit recipes. See [ALPS](http2-alps.md),
+[trust sources](trust-anchor-ids.md), and [verification](chromium-verifier.md).
 
 Advanced network settings contains remote access, an optional persistent proxy
 port, caller-process isolation and client certificate authorization. Isolation
@@ -68,22 +55,29 @@ settings so a stale workspace snapshot cannot overwrite newer preferences.
 Each save writes and flushes a temporary file, then atomically publishes a new
 numbered generation. Startup validates the newest generation and quarantines
 corrupt state, falling back to a retained valid generation or safe defaults.
-Schema 6 preferences migrate to schema 8: nondefault protocol or reuse choices
-become an active Current settings custom profile. Narrow profile writes merge
-with independent layout, window and certificate policy saves and reject stale
-catalog revisions. Other legacy schemas remain unsupported. Exact fields and validation belong to
-[the product-state model](../crates/app/src/product_state.rs).
-The legacy protocol and reuse fields are derived mirrors; network changes use
-the narrow profile API rather than whole-state saves.
+Narrow profile writes merge with independent layout, window and certificate-policy
+saves and reject stale catalog revisions. Exact fields, validation and supported
+state migrations belong to [the product-state model](../crates/app/src/product_state.rs).
+Network changes use the profile API rather than whole-state saves.
 
 On Windows preferences live under `%LOCALAPPDATA%\Transmog` in the
 `preferences.<generation>.json` family. Persistence errors remain visible and
 cannot participate in proxy shutdown or host restoration.
 
+Desktop proxy access defaults to loopback only. Remote computers require an explicit
+persisted opt-in. The proxy port defaults to automatic selection; an authored
+port from 1 through 65535 is retained and an occupied port produces an actionable
+start failure. Address and port changes apply to the next fresh proxy start.
+Windows routes through loopback even when the listener accepts remote clients.
+
+Server connection reuse is enabled by default. Turning it off gives subsequent
+requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
+capture viewers. Active requests and streams finish normally.
+
 ## Retention and privacy
 
 WebSocket/SSE history follows the request/client and response/server content
-privacy choices. Its bounded message history is separate from the HTTP body buffer;
+privacy choices. Its message history is separate from the HTTP body buffer;
 see [stream inspection](stream-inspection.md) for limits, lazy saved content and
 the distinction between active streams and open-at-capture evidence.
 
@@ -167,18 +161,7 @@ and save a `.tmcap` trace instead.
 
 ## Third-party credits
 
-**Settings → Credits** opens a scrollable modal inventory with dependency
+**Settings → About → Credits** opens a scrollable modal inventory with dependency
 versions, licenses, copyright notices and vendored native library notices. The
 notices ship with the app and are available offline. Builds require version-pinned
 license snapshots when published dependencies omit their license files.
-
-Desktop proxy access defaults to loopback only. Remote computers require an explicit
-persisted opt-in. The proxy port defaults to automatic selection; an authored
-port from 1 through 65535 is retained and an occupied port produces an actionable
-start failure. Address and port changes apply to the next fresh proxy start.
-Windows routes through loopback even when the listener accepts remote clients.
-
-Server connection reuse is enabled by default. Turning it off gives subsequent
-requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
-capture viewers. Active requests and streams finish normally. Keep HTTPS
-decryption visible at the top of Preferences, above the advanced disclosure.

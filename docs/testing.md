@@ -63,16 +63,15 @@ populated, wide/compact and keyboard review.
 For CLI changes, build the CLI and run its Windows console lifecycle probe:
 
 ```powershell
-. ./scripts/dev-env.ps1
-cargo build --locked -p transmog --bin transmog-cli
+python scripts/dev-env.py --run cargo build --locked -p transmog --bin transmog-cli
 python ./scripts/test-cli-support.py --executable ./target/debug/transmog-cli.exe --artifacts ./artifacts/cli-lifecycle
 ```
 
 It uses controlled loopback traffic, isolated profiles and owned hidden consoles.
 It checks Ctrl+C, ephemeral/persistent roots, encrypted streaming, memory/disk
 circular capture, crash recovery, command help, proof-ID validation, and
-destination safety. It exercises circular save recovery and rejects lossy or
-failed SAZ exports without leaving partial output, without installing roots or
+destination safety. It exercises circular save recovery, labeled SAZ placeholders and rejection of
+unsafe export fields without leaving partial output, without installing roots or
 changing the host proxy. User-facing workflows use the standalone binary; see
 [the CLI guide](cli.md). For SAZ encryption/import/export changes, run the
 independent reader:
@@ -90,7 +89,7 @@ without signing credentials. See [SAZ compatibility](saz-compatibility.md).
 With Docker Desktop available:
 
 ```powershell
-./scripts/test-interop.ps1
+python scripts/test-interop.py
 ```
 
 The runner puts independently distributed curl/Chromium clients and digest-pinned
@@ -186,7 +185,7 @@ proof, normalization and limitations. All measurements use isolated local
 origins; public fingerprint-checking sites are not involved.
 
 For repeatable browser scale qualification without public sites, run
-`./scripts/test-load.ps1`. The [load-testing guide](load-testing.md) documents
+`python scripts/test-load.py`. The [load-testing guide](load-testing.md) documents
 CLI/desktop modes, the smoke profile, per-browser routing and generated evidence.
 
 ## Live Chromium gate

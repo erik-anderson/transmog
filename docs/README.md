@@ -1,97 +1,66 @@
 # Transmog documentation
 
-This directory describes the code that is currently checked in and the work
-that is intentionally still ahead. Git history is the archive for completed
-implementation plans and migration notes; they are not maintained as parallel
-sources of truth.
+These guides describe the checked-in implementation. The [roadmap](roadmap.md)
+contains remaining work; Git history holds completed plans and migration notes.
 
 ## Start here
 
-- [Architecture](architecture.md) explains the layers, dependency direction,
-  transport model, and failure boundaries.
-- [Key dependencies](dependencies.md) identifies the major protocol, crypto,
-  application, and build libraries and explains where they are contained.
-- [Product shell](product-shell.md) describes the Windows desktop behavior and
-  its relationship to the reusable application facade.
-- [Maintaining UX quality](ux-quality.md) gives a short routine for changing,
-  verifying, and reviewing the desktop experience.
-- [UX design principles](ux-principles.md) guides interaction, density,
-  alignment, accessibility, and review of user-visible changes.
-- [Current limitations](limitations.md) states what the implementation does
-  not support.
-- [Roadmap](roadmap.md) contains only planned or deliberately deferred work.
+- [Architecture](architecture.md), [dependencies](dependencies.md) and [embedding](embedding.md)
+- [Windows desktop](product-shell.md) and [current limitations](limitations.md)
+- [Build prerequisites](building.md), [testing](testing.md) and [Windows releases](windows-release.md)
+- [UX principles](ux-principles.md) and [quality routine](ux-quality.md)
 
-## Library and protocol behavior
+## Traffic and automation
 
-- [Embedding](embedding.md): construct the runtime or application/session
-  service without the desktop shell.
-- [Interception lifecycle](interception-lifecycle.md): interceptor ordering,
-  short circuits, terminal delivery, and observer behavior.
-- [Application/session service](application-session-service.md): live catalog
-  retention, capture, interactive control, replay and host-integration seams.
-- [Automation](automation.md): declarative rules, ordered auto-responses, and
-  audit attribution.
-- [WebSocket inspection](websocket-inspection.md): transparent and inspected
-  upgrade paths.
-- [Certificate and trust model](certificate-model.md): upstream verification
-  and downstream interception certificates.
-- [Origin connection racing](networking.md): bounded Happy Eyeballs behavior
-  shared by TCP/TLS and QUIC origin transports.
-- [Client process attribution](client-process-attribution.md): local process
-  name/PID resolution and remote-client classification.
+- [Traffic inspection](traffic-inspection.md): headers, bodies, search, selection and replay.
+- [Request timings](request-timings.md): waterfalls and shared transport evidence.
+- [Streams](stream-inspection.md): WebSocket/SSE inspection and retained messages.
+- [Automation](automation.md): auto-responses, header overrides and scripts.
+- [Safe previews](safe-previews.md) and [captured-page preview](captured-page-preview.md).
+- [Product state and support](product-state-and-support.md): settings, retention, privacy and diagnostics.
+- [Client process attribution](client-process-attribution.md).
 
-## Traffic, captures and support
+## TLS and transports
 
-- [Traffic inspection](traffic-inspection.md): header sizes, authentication,
-  command copying, search, multiselection, removal and Composer replay.
-- [Request timings](request-timings.md): latency interpretation, shared connection
-  setup, waterfalls and transport counters.
-- [Trace saving](trace-saving.md): merged captures, encryption, redaction and
-  original trace metadata.
-- [Native capture encoding](native-capture-format.md): chunk compression,
-  authenticated frames, lazy body reads and recovery.
-- [SAZ compatibility](saz-compatibility.md): archive interoperability and fidelity.
-- [CLI guide](cli.md): release-binary commands, manual proxy setup, proof IDs,
-  capture inspection, recovery, exports, and input/output passwords.
-- [CLI support capture](cli-support-capture.md): guided recording, reproduce,
-  stop, review and share a trace; certificate ownership and cleanup.
-- [Product state and support](product-state-and-support.md): persistent
-  preferences, memory/disk circular retention, diagnostics and support bundles.
-- [Safe response previews](safe-previews.md): inert workbench content and
-  sandboxed image decoding.
-- [Captured-page preview](captured-page-preview.md): reconstruct a page from
-  captured resources in an isolated Windows browser window.
-- [Branding and identifiers](branding.md)
+- [Certificate model](certificate-model.md): algorithms, interception CA and recorded evidence.
+- [Trust Anchor IDs and root sources](trust-anchor-ids.md): component discovery and local trust.
+- [Chromium verifier](chromium-verifier.md): path building, certificate policy, CT and revocation.
+- [Chromium negotiation](chromium-negotiation.md): resumption, ECH and issuer retrieval.
+- [H2/H3 ALPS](http2-alps.md): settings, Client Hints and captured server contents.
+- [Client certificates](client-certificates.md): authorization, Windows keys and selection.
+- [Connection racing](networking.md) and [WebSocket transport](websocket-inspection.md).
+- [Local Chromium comparison](chromium-comparison.md) and [remaining alignment](chromium-transport-plan.md).
 
-## Build, test, and release
+## Captures and CLI
 
-- [Build prerequisites](building.md)
-- [Testing](testing.md)
-- [Performance harness](performance.md)
-- [Local Chromium load testing](load-testing.md)
-- [Windows release and qualification](windows-release.md)
-- [Desktop-specific development](../apps/desktop/README.md)
-- [Content fuzzing](../fuzz/README.md)
-- [Hosted release workflows and deferred automation](../ci/README.md)
-- [Verification artifacts](../verification/README.md)
+- [Save traces](trace-saving.md): formats, encryption, redaction and source metadata.
+- [Native capture overview](native-capture-format.md) and [TMCap wire specification](tmcap-format.md).
+- [SAZ compatibility](saz-compatibility.md) and [HAR/NetLog](json-archives.md).
+- [CLI commands](cli.md) and [guided support capture](cli-support-capture.md).
 
-## Architecture decisions
+## Library contracts and decisions
 
-Accepted decisions live in the [ADR index](adr/README.md). They explain
-constraints that still shape the implementation; completed task checklists and
-superseded API migrations do not belong there.
+- [Interception lifecycle](interception-lifecycle.md): ordering, short circuits and failures.
+- [Application/session service](application-session-service.md): catalog, capture, replay and host integration.
+- [Architecture decisions](adr/README.md): accepted constraints and rationale.
+- [.NET embedding example](../examples/dotnet-embedding/README.md).
+- [Branding and identifiers](branding.md).
 
-## Maintenance policy
+## Development and qualification
 
-- Describe shipped behavior in present tense in the relevant guide.
-- Put durable architectural rationale in an ADR.
-- Link to current source for field inventories, framing details, validation and
-  version pins rather than maintaining parallel copies in prose.
-- Document a behavior in its topic guide and link to it from overviews.
-- Keep per-run timings, hashes, screenshots and qualification transcripts in
-  generated evidence or CI run history, rather than maintained documentation.
-- Put work that has not been implemented in [the roadmap](roadmap.md).
-- Remove completed phase plans after their lasting behavior and decisions are
-  represented by the current guides and ADRs.
-- Do not use a plan, completion report, or dated status narrative as a second
-  specification for code that already exists.
+- [Desktop development](../apps/desktop/README.md) and [UI instructions](../apps/desktop/ui/AGENTS.md).
+- [Performance harnesses](performance.md), [capture benchmarks](tmcap-performance.md) and [browser load testing](load-testing.md).
+- [Fuzzing](../fuzz/README.md), [CI and deferred workflows](../ci/README.md), and [verification artifacts](../verification/README.md).
+- [Transport patches](../third_party/rust-transport/README.md), [PKI snapshot](../third_party/boringssl-pki/README.md),
+  [root data](../third_party/chromium-root-store/README.md), [certificate policy data](../third_party/chromium-certificate-policy/README.md)
+  and [Public Suffix List](../third_party/chromium-suffix-list/README.md).
+
+## Maintenance
+
+Describe current behavior in its topic guide and link to it from overviews.
+Keep architectural rationale in ADRs and unfinished work in the roadmap. Link
+to source for field inventories, validation, version pins and generated data.
+Remove completed plans after their lasting decisions are documented. Keep run
+hashes, timings, screenshots and review transcripts in generated evidence or CI
+history. Preserve upstream snapshot documents and license text; regenerate notices
+through their collectors rather than editing generated inventories by hand.

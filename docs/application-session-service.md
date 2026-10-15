@@ -69,7 +69,9 @@ Each snapshot may contain:
 - per-boundary observed byte counts and a bounded retained prefix;
 - terminal trailers, optional-hook diagnostics, attributed hook effects,
   route selection, and bounded route attempts;
-- completed or failed HTTP outcome and optional terminal WebSocket evidence.
+- completed or failed HTTP outcome, stream lifecycle state and optional terminal
+  WebSocket evidence. The product layer retains message payloads separately; see
+  [stream inspection](stream-inspection.md).
 
 The service defaults to redacting sensitive header values before catalog and
 capture publication. `set_redact_sensitive_headers` selects the caller's policy;

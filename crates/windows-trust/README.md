@@ -22,5 +22,5 @@ Tests create uniquely owned temporary registry stores outside Windows' system
 certificate locations. They exercise real notifications, property changes,
 removal and shutdown without modifying the computer's trusted roots.
 
-References: [Chromium TrustStoreWin](https://github.com/chromium/chromium/blob/main/net/cert/internal/trust_store_win.cc),
+References: [Chromium TrustStoreWin](https://github.com/chromium/chromium/blob/154.0.8037.99/net/cert/internal/trust_store_win.cc),
 [CertControlStore](https://learn.microsoft.com/en-us/windows/win32/api/wincrypt/nf-wincrypt-certcontrolstore).

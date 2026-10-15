@@ -12,8 +12,8 @@ remains `x86_64-pc-windows-msvc` because `msvc` describes the ABI and Windows
 SDK library ecosystem. `clang-cl` implements that ABI; Microsoft `cl.exe` is not
 the selected compiler.
 
-Pin `boring`, `tokio-boring` and `hyper-boring` to one reviewed BoringSSL family.
-Build quiche with only `boringssl-boring-crate`; the
+Pin `boring`, `boring-sys`, `tokio-boring` and the test-only `hyper-boring` to one
+reviewed BoringSSL family. Select quiche's `boringssl-boring-crate` TLS backend; the
 [dependency manifests](../dependencies.md) own current version pins. All origin TLS
 contexts derive from one `UpstreamTlsContextFactory` and immutable trust snapshot. A CI graph check fails
 on duplicate Boring families or a second proxy/replay TLS stack.

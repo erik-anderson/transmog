@@ -15,7 +15,7 @@ HTML content alone does not identify a top-level navigation.
 Use **Filter → Fetch destination** to narrow traffic by its original
 `Sec-Fetch-Dest` header. The checkbox dropdown accepts multiple destinations;
 matching any selected value includes an entry. The selection combines with other
-filters and content-search results across all retained entries before paging.
+filters and content-search results across all retained entries before virtual windowing.
 Clear the destination chip or all filters to restore the list. **Fetch / XHR
 (empty)** matches the recorded `empty` value; missing headers remain unknown.
 
@@ -50,7 +50,7 @@ unavailable. Service workers, WebSockets, WebTransport, peer connections,
 downloads, popups, device permissions and authentication prompts are disabled.
 The native context menu and DevTools are available. F5 reloads the frozen page;
 a failed top-level navigation closes the preview.
-The initial implementation is Windows-only; other platforms require their own
+The preview is Windows-only; other platforms require their own
 resource-interception boundary.
 
 ## Preview diagnostics

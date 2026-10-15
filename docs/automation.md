@@ -161,8 +161,8 @@ edits offers Save and continue, Discard changes or Keep editing. Traffic and
 rule lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A
 and Escape. Focus can move independently with Ctrl+arrow. Del removes selected
 list entries, while text fields retain their normal editing shortcuts. List
-actions can be undone with Undo or Ctrl+Z. Traffic selection survives page and
-refresh changes and reports selected entries on other pages; changing a filter
+actions can be undone with Undo or Ctrl+Z. Traffic selection survives scrolling and
+refresh changes and includes offscreen entries; changing a filter
 or search clears it. Removing Traffic entries hides them from the live catalog
 without deleting capture files or saved responses. Undo succeeds while the
 underlying entries remain retained.

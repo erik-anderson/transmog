@@ -1,12 +1,10 @@
 # Trust Anchor IDs and root-store selection
 
 The Chromium 154 recipe offers certificate-based Trust Anchor IDs in the TLS
-`trust_anchors` extension (0xca34), on TCP and QUIC. These describe X.509 anchors,
-not a choice of signature algorithm, so “non-PQC” would be misleading. Merkle
-Tree Certificate identifiers are not advertised. The bundled root-store version
-41 reproduces all 28 IDs observed in Chromium 154.0.8037.99, including raw-byte
-sorting and TLS-trusted additional certificates. IDs are assigned relative OIDs,
-not certificate hashes.
+`trust_anchors` extension (0xca34), on TCP and QUIC. IDs are assigned relative
+OIDs, not certificate hashes or signature-algorithm choices. Merkle Tree
+Certificate identifiers are not advertised. The bundled root store and its
+provenance are documented in the [snapshot guide](../third_party/chromium-root-store/README.md).
 
 ## Profiles and trust sources
 
@@ -45,10 +43,6 @@ extension; it does not borrow IDs from the Chromium bundle or send an empty
 offer. The bundled fallback applies when no newer usable root store is found.
 This follows [Chromium's nonempty-offer policy](https://github.com/chromium/chromium/blob/154.0.8037.99/net/ssl/ssl_config_service.cc)
 and its [component ID replacement](https://github.com/chromium/chromium/blob/154.0.8037.99/chrome/browser/component_updater/pki_metadata_component_installer.cc).
-A local check of Edge
-155.0.4283.45 through the proxy also found the extension absent in all eight
-ClientHellos, including isolated profiles seeded with its installed version 46
-component. No TLS feature flags or certificate-error overrides were used.
 
 **Customize → More handshake options** also allows disabling Trust Anchor IDs
 and providing an optional full path to `crs.pb`. That file replaces the bundled
@@ -59,14 +53,9 @@ files prevent activation when used for trust or IDs. If a saved file disappears,
 inspection and Settings remain usable while sends/proxy startup explain repair.
 Save and use reloads a repaired file even if the recipe is unchanged.
 
-Schema 9 selects WebView2 for the previous built-in default. Schema 10 migrates
-to schema 11 with Chromium revision 5 and WebView2 revision 2, adding local trust
-to the pre-release built-ins. Authored settings remain fixed; custom support has
-not shipped, so no custom-default updater is introduced. Built-ins declare fixed
-settings explicitly; OS and PKIMetadata updates only refresh certificate data.
-Historical
-captures missing the root-store field retain OS trust; missing Trust Anchor IDs
-remain disabled. Imported evidence is never rewritten to today's defaults.
+Built-in settings are explicit and fixed. Custom profiles preserve authored
+choices; OS and PKIMetadata updates refresh certificate data without editing
+profile settings.
 
 ## Windows local trust
 
@@ -109,27 +98,11 @@ selected public PKIMetadata.
 
 ## Verification limits and recovery
 
-Transmog uses one Chromium BoringSSL PKI path builder, including purpose,
-validity, strong certificate signatures and RFC 5280 constraints. Hostnames
-follow Chromium's SAN-only policy and ICANN wildcard boundary. Metadata's additional TLS anchors
-can terminate a verified path, enabling omitted-intermediate handling. OS mode
-keeps metadata certificates as untrusted helpers.
-
-This is root-store selection, not a complete implementation of Chrome's verifier.
-Metadata ConstraintSets are evaluated on candidate paths. Conditions within a
-set are combined with AND; any passing set suffices. Version bounds, DNS subtrees
-and leaf issuance-time bounds are enforced. MTC serial bounds are ignored for
-ordinary X.509, as in Chromium. SCT-dependent sets use cryptographically verified
-timestamps from currently qualified logs, and are skipped when CT is disabled or
-the selected log list is stale. Public anchors use the protobuf's
-`enforce_anchor_expiry` and `enforce_anchor_constraints` flags (both default to
-false), including additional TLS anchors. Eligible public trust overrides
-duplicate local trust flags; exact local distrust still wins. Windows local ROOT
-enforces expiry and X.509 constraints, including certificate policies.
-Chrome's additional policies remain tracked in [the verifier contract](chromium-verifier.md).
-The applied policy is retained in connection evidence; constrained anchors are
-no longer excluded as a group during loading. Conflicting duplicate policies
-and malformed version bounds prevent a component update from replacing last-good.
+All root sources use the same [BoringSSL PKI verifier](chromium-verifier.md),
+including SAN-only hostname checks, metadata constraints, CT and revocation.
+Additional TLS anchors can terminate a verified path; OS mode uses metadata
+certificates only as untrusted helpers. Conflicting duplicate policies and
+malformed version bounds prevent an update from replacing the last-good store.
 
 A server matching marker never authorizes a chain. After certificate rejection,
 available server IDs can trigger one retry before HTTP data is sent when the
@@ -153,11 +126,9 @@ there is no requested-ID list or selection recovery for that connection.
 Local trust adds inventory generation/hash, role counts, monitoring source and
 the verified path's trust role. Capture does not dump the private inventory;
 observed verification-path certificates remain inspectable. Native captures and
-SAZ retain these facts. Missing historical local-trust fields do not claim an overlay.
-Diagnostic metadata retains available server IDs and recovery status. ID lists
-display OIDs alongside wire hex. Resumed sessions identify the absence of a new
-certificate. Native captures and SAZ preserve these bounded public facts; missing
-historical evidence remains unavailable.
+SAZ retain these facts. Diagnostic metadata records available server IDs and
+recovery status; the inspector shows OIDs alongside wire hex. Resumed sessions
+identify the absence of a newly sent certificate. Missing evidence is unavailable.
 
 Embedders can use `PkiMetadata::from_file`, `PkiMetadataProvider::new` and
 `UpstreamTlsContextFactory::with_pki_metadata`. The network profile determines

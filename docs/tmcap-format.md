@@ -8,7 +8,7 @@ the container header version is `1`, and the record revision is `1`. Keep these
 at their initial values while the format is experimental; layout changes do not
 require a version bump or compatibility support during this period.
 
-For design choices, compression heuristics, buffering and performance results,
+For design choices, compression heuristics, buffering and benchmark methods,
 see [the native capture overview](native-capture-format.md) and
 [the compression benchmark](tmcap-performance.md). Those writer policies can
 change without changing the wire format described here.
@@ -290,8 +290,8 @@ schema and digest. The reference implementation is
 definition and transport-sample fields are rejected. This content digest is an
 identity/integrity check, not a substitute for the container's authentication.
 
-A `performance` payload still has `points`, `transports`, `protocols` and `work`.
-Each member of `transports` now has a `context` digest reference plus these
+A `performance` payload has `points`, `transports`, `protocols` and `work`.
+Each member of `transports` has a `context` digest reference plus these
 per-snapshot fields:
 
 ```text
@@ -321,8 +321,7 @@ Definitions and references receive the same encryption as other metadata.
 As with all metadata, each definition appears once in a compressed metadata page;
 there is no copy for each request. Private circular scratch storage uses expanded
 snapshots; final TMCap output builds the dictionary from retained snapshots, so
-contexts belonging only to evicted exchanges are absent. The initial format
-version and record revision are unchanged.
+contexts belonging only to evicted exchanges are absent.
 
 ## Index objects and footer
 
@@ -391,8 +390,7 @@ reader-wide codec, to `read_indexed_frame_with_codec`.
 
 Metadata-only opening intentionally does not validate unread bodies.
 `CaptureReader::sealed()` describes the selected footer; full validation must
-iterate all records and read their bodies. No compatibility reader accepts the
-earlier experimental duplicated-metadata layout.
+iterate all records and read their bodies.
 
 ## Checkpoint locators and crash recovery
 

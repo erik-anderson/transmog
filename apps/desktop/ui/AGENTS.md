@@ -72,16 +72,16 @@ when changing async state, persisted layouts, or editor lifecycle.
 From the repository root:
 
 ```powershell
-. ./scripts/dev-env.ps1
-cargo clippy --locked -p transmog-app -p transmog-session -p transmog-app-webui -p transmog-desktop --all-targets -- -D warnings
-cargo test --locked -p transmog-app -p transmog-session -p transmog-app-webui -p transmog-desktop
+python scripts/dev-env.py --check
+python scripts/dev-env.py --run cargo clippy --locked -p transmog-app -p transmog-session -p transmog-app-webui -p transmog-desktop --all-targets -- -D warnings
+python scripts/dev-env.py --run cargo test --locked -p transmog-app -p transmog-session -p transmog-app-webui -p transmog-desktop
 ```
 
 Use `scripts/test-windows-desktop.ps1` for real WebView2 checks. DevTools flags are
 test-only: isolate test app data and close only the process started for the check.
 Temporary UI mutations in probes must be restored immediately after measurement.
 The Docker-backed headless product test is ignored by ordinary Cargo runs; use
-`scripts/test-interop.ps1` when changing end-to-end proxy/interoperability behavior.
+`python scripts/test-interop.py` when changing end-to-end proxy/interoperability behavior.
 
 Keep README content about the tool's benefits and high-level architecture. Prefer
 rationale over documenting tunable constants or implementation details that are

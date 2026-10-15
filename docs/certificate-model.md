@@ -2,17 +2,16 @@
 
 Upstream verification and downstream signing are deliberately separate.
 
-Upstream root bytes are enumerated once from the operating system, parsed by
-the Chromium PKI parser, and placed in an immutable `TrustSnapshot`. Each reload creates a new
-generation, context factory, and connection-pool generation. Hyper and quiche
-receive contexts from the same factory. The operating system does not perform
-path building. One verifier based on Chromium's BoringSSL PKI path builder
-handles TCP, QUIC and Trust Anchor ID recovery for every root-source choice.
-The native bridge compiles the unmodified PKI target against the existing
-BoringSSL crypto instance; the legacy X.509 verifier and hand-written parallel
-certificate checks are removed from upstream verification. The adapters' TLS
-method still pre-parses wire certificates; moving to buffered TLS remains a
-separate integration gap described in the verifier contract.
+Root-source selection supplies an immutable `TrustSnapshot`; it does not change
+the verifier. TCP, QUIC and Trust Anchor ID recovery use the same BoringSSL PKI
+path builder and crypto instance. OS roots are enumerated as DER; the operating
+system does not build upstream verification paths. Chromium/WebView2 profiles use
+public component roots plus the optional monitored Windows local-trust overlay.
+See [root selection](trust-anchor-ids.md) and the [verifier contract](chromium-verifier.md).
+
+Production contexts use buffered TLS certificates. PKI parses the leaf and issuer
+candidates, so an irrelevant malformed intermediate can be ignored when a valid
+path exists. Every accepted path still satisfies the shared verification policy.
 
 The shared hostname check follows Chromium 154: SANs are mandatory; DNS
 wildcards match only a whole first label and respect ICANN registry boundaries;
@@ -30,54 +29,39 @@ finish, so connection pools never mix trust generations.
 
 ## Post-quantum TLS algorithms
 
-Transmog follows Chromium's supported post-quantum TLS algorithms without
-pinning a Chromium release. The shared
-[algorithm policy](../crates/proxy-tls/src/algorithms.rs) applies to upstream
-HTTP/1.1, HTTP/2 and HTTP/3 and to downstream interception TLS. Chromium's
-[group policy](https://github.com/chromium/chromium/blob/main/net/ssl/ssl_config_service.cc)
-and [signature preferences](https://github.com/chromium/chromium/blob/main/net/socket/ssl_client_socket_impl.cc)
-are the upstream references when that set changes.
+Built-in upstream offers target Chromium 154.0.8037.99. The shared
+[algorithm policy](../crates/proxy-tls/src/algorithms.rs) defines key exchange and
+transport-specific signature preferences. A profile roll must review the pinned
+Chromium [group policy](https://github.com/chromium/chromium/blob/154.0.8037.99/net/ssl/ssl_config_service.cc)
+and [TCP signature preferences](https://github.com/chromium/chromium/blob/154.0.8037.99/net/socket/ssl_client_socket_impl.cc).
 
-| Purpose | Supported post-quantum algorithms | Compatibility |
-| --- | --- | --- |
-| TLS 1.3 key exchange | `X25519MLKEM768` (`0x11ec`), combining X25519 and ML-KEM-768 | Preferred ahead of X25519, P-256 and P-384. The initial ClientHello carries hybrid and X25519 shares; classical peers negotiate a shared classical group. |
-| TLS 1.3 authentication | ML-DSA-44, ML-DSA-65 and ML-DSA-87 (`0x0904`–`0x0906`) | Upstream verification advertises all three followed by Chromium's classical signature preferences, excluding RSA/SHA-1. Downstream credential selection uses a compatible ML-DSA key or the ECDSA P-256 fallback. |
+| Purpose | Offer and behavior |
+| --- | --- |
+| TLS 1.3 key exchange | `X25519MLKEM768` (`0x11ec`), followed by X25519, P-256 and P-384. Initial shares cover the hybrid group and X25519. |
+| TCP TLS 1.3 authentication | ML-DSA-44/65/87 (`0x0904`–`0x0906`) precede the non-PQC signature preferences; RSA/SHA-1 is excluded. |
+| QUIC TLS authentication | Chromium's nine BoringSSL signature preferences, without ML-DSA. TLS 1.3 cannot select the advertised RSA PKCS#1 schemes. |
+| Downstream TLS authentication | BoringSSL selects a compatible ML-DSA leaf or ECDSA P-256 fallback from the client's offer. |
+
+QUIC's handshake offer does not disable ML-DSA issuer signatures in certificate
+paths. An RSA/ECDSA leaf issued by a locally trusted ML-DSA CA can verify through
+the shared PKI verifier. Installing a root does not change the ClientHello offer.
 
 Each TLS leg negotiates independently. An origin's algorithm does not force the
 client-facing leg to use the same algorithm, and downstream support does not
-change upstream certificate verification. TLS 1.2 retains classical behavior.
+change upstream certificate verification. TLS 1.2 uses non-PQC algorithms.
 
-Upstream TCP and QUIC ClientHellos prepend a reserved GREASE signature scheme
-to Chromium's real verification preferences. BoringSSL selects the placeholder
-for each handshake; peers ignore it and negotiate an existing real algorithm.
-Signature-algorithm GREASE is a separate native setting from ordinary GREASE,
-and does not change the server's CertificateRequest algorithm list.
+TCP ClientHellos enable ordinary GREASE and prepend a reserved GREASE signature
+scheme. QUIC omits those offers under the built-in recipe. Signature GREASE is
+independent of ordinary GREASE and does not change CertificateRequest algorithms.
+Both transports randomize extension order while preserving TLS ordering rules.
+Custom profiles expose GREASE choices separately from real algorithm preferences.
 
-The same upstream contexts enable ordinary GREASE in cipher suites, supported
-groups, key shares, versions and reserved extensions, and randomize extension
-order for each handshake. BoringSSL keeps the pre-shared-key extension last
-when resuming a session and preserves the permutation across a retry. These
-settings leave the real cipher, group and signature preferences unchanged.
-
-Upstream clients request stapled OCSP responses and signed certificate
-timestamps, matching Chromium's request extensions. These requests do not
-introduce revocation or Certificate Transparency enforcement; certificate
-acceptance continues to use the configured trust snapshot and identity checks.
-Desktop network profiles select the effective trust source. The default WebView2
-profile discovers its installed public roots, falling back to bundled Chromium;
-custom profiles can select OS, bundled Chromium or installed Chrome roots.
-Both built-ins include monitored Windows local trust, using registry-backed
-ROOT, CA, machine TrustedPeople and Disallowed collections. The OS public-root
-program is excluded. CA entries only help build chains; self-signed TrustedPeople
-entries authorize only the exact server certificate, and explicit distrust wins.
-Custom profiles can disable the overlay for public-only debugging.
-Chrome's policies around this PKI core are not all implemented yet. The exact
-remaining differences are listed in [the verifier contract](chromium-verifier.md);
-root metadata constraints are evaluated on candidate paths. The same verifier
-enforces CT and CRLSet/stapled-OCSP policies. Installed Chrome and WebView2 profiles
-source their own component lists with identical freshness rules; other root
-profiles use the bundled baseline. The connection-policy disclosure records
-the selected datasets and actual checks, including stale or disabled CT.
+TCP requests stapled OCSP and signed certificate timestamps; QUIC follows its
+separate Chromium offer. The shared verifier enforces CT and CRLSet/stapled-OCSP
+policy using the selected source's data. Chrome and WebView2 supply separate
+lists with the same semantics and freshness rules. Captures report the datasets
+and actual checks, including stale or disabled CT. See
+[verification policy and remaining gaps](chromium-verifier.md).
 
 Upstream TLS 1.3 clients also advertise Brotli certificate decompression
 (`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing
@@ -86,18 +70,18 @@ or trailing data, and passes the decoded certificate through the same trust
 and identity verification. Origins may still send an uncompressed certificate.
 Client certificates and downstream certificates remain uncompressed.
 
-The shared upstream contexts enable ECH GREASE before each TCP or QUIC
-handshake. BoringSSL sends a fresh dummy `encrypted_client_hello` extension
-when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
+Built-in profiles enable ECH GREASE on TCP and QUIC. When no real ECH
+configuration is used, BoringSSL sends a fresh dummy `encrypted_client_hello`
+extension when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
 exercises extension handling and matches Chromium's ECH GREASE behavior; it
-does not encrypt the server name or implement real ECH configuration discovery.
+does not encrypt the server name. Real ECH discovery and authenticated retry are
+separate settings and are documented in [negotiation](chromium-negotiation.md#encrypted-client-hello).
 
 The default TLS 1.2 cipher list uses Chromium's expression
 `ALL:!aPSK:!ECDSA+SHA1:!3DES`, including its CBC and static-RSA compatibility
 suites after the ECDHE/AEAD suites. RSA/SHA-1 server handshake signatures are
-excluded, matching Chromium's separate signature policy. Matching Chrome's
-offer is the product default; advanced offer overrides may be added later.
-Embedding applications can still supply an explicit cipher list.
+excluded on TCP, matching its separate signature policy. Custom profiles can
+disable compatibility ciphers; embedders can supply an explicit cipher list.
 
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
@@ -106,7 +90,7 @@ of its variants. BoringSSL
 selects a credential from the client's actual offered signature schemes.
 Existing custom resolvers may continue returning one certificate through
 `resolve`; `resolve_credentials` allows ordered alternatives for one identity.
-The standalone `ca issue` command continues to issue P-256 leaves.
+The standalone `ca issue` command issues P-256 leaves.
 
 Upstream client authentication accepts an ML-DSA credential only for TLS 1.3
 when its exact key variant matches a requested signature scheme. It retains the
@@ -115,7 +99,7 @@ Native credential registration and callback access stay inside
 [`transmog-tls-native`](../crates/tls-native/src/lib.rs), using the same BoringSSL
 instance as the rest of the TLS stack.
 
-The interception root remains classical. An ML-DSA leaf can sign the TLS
+The generated interception root uses ECDSA P-256. An ML-DSA leaf can sign the TLS
 handshake while its issuer signs the certificate with ECDSA. Hybrid exchange
 and an ML-DSA handshake therefore do not establish a fully post-quantum trust
 chain. Chromium's [post-quantum authentication roadmap](https://www.chromium.org/Home/chromium-security/post-quantum-auth-roadmap/)
@@ -128,7 +112,7 @@ TLS evidence belongs to a physical connection and its client or upstream leg.
 It also records whether HTTP/2 or HTTP/3 ALPS was negotiated and the exact server value.
 The Connection inspector decodes SETTINGS and read-only `ACCEPT_CH` preferences,
 retaining original bytes in Hex. Missing ALPS evidence is unavailable, rather
-than inferred from the configured offer. See [HTTP/2 ALPS](http2-alps.md).
+than inferred from the configured offer. See [H2/H3 ALPS](http2-alps.md).
 Successful handshakes record the negotiated group and ID, key-exchange type,
 local and peer handshake signature schemes when available, session resumption,
 HelloRetryRequest, protocol and cipher. Certificate inspection shows the
@@ -145,8 +129,7 @@ is labeled **Original peer handshake signature**; the current peer signature is
 requests retain the evidence of their shared physical connection.
 
 Native captures preserve these public facts through compression, encryption and
-random-access loading without a schema change. Older or imported captures with
-missing algorithm evidence show **Unavailable**, with no inference from the
+random-access loading. Missing algorithm evidence shows **Unavailable**, with no inference from the
 certificate key or cipher name. See [testing](testing.md#post-quantum-tls) and
 the [handshake benchmark](performance.md#post-quantum-tls-handshakes).
 
@@ -174,8 +157,9 @@ The original values remain unchanged in TMCap and SAZ exports.
 
 ## Interception root lifecycle
 
-The proxy CA is generated or loaded independently and is never added to the
-upstream store. Installing it is an explicit operator action. Test installers
+Generating or loading an interception CA does not itself grant upstream trust.
+Installing it is an explicit operator action; a root installed in a selected OS
+or local trust store can also be trusted for origin verification. Test installers
 use the current-user store, record the exact SHA-256 thumbprint, and remove only
 that certificate. The local live-browser harness may retain its explicitly
 installed test CA across runs to avoid repeated Windows consent dialogs; every

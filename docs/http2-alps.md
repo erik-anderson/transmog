@@ -24,7 +24,7 @@ existing state machine. Separate serialization controls use the reproducible
 
 Both built-in profiles also offer ALPS for `h3` at `0x44cd`, with an empty
 client value. **More handshake options → HTTP/3 ALPS** controls this separately
-in custom profiles. Existing authored profiles retain their previous offer.
+in custom profiles.
 
 The bounded quiche integration parses authenticated HTTP/3 frames and seeds
 peer SETTINGS before any request. A later control-stream SETTINGS updates only
@@ -61,10 +61,6 @@ replace the server's initial wire SETTINGS. Merely advertising the extension
 and discarding all received settings would be unsafe: a server could select
 flow-control or concurrency limits that the client never applies.
 
-Previously saved custom profiles retain ALPS disabled. The built-in Chromium
-154 recipe advances to revision 2 to include ALPS; the browser reference stays
-154.0.8037.99. Older captures retain ALPS disabled in their recorded provenance.
-
 ## Captured server contents
 
 Traffic → Details → Connection shows **HTTP/2 ALPS** or **HTTP/3 ALPS** as an observed negotiation
@@ -83,27 +79,26 @@ The readable view limits large content and explains truncation; Hex remains comp
 
 Native captures store the server value with the shared physical connection
 context. Both SAZ export profiles preserve it, including encrypted archives;
-strict SAZ uses bounded hex chunks in conventional SessionFlags. Earlier
-captures containing only the status text show that text and explain that
-the original payload was not recorded. Conflicting imported status text remains
-available alongside the typed negotiation evidence.
+strict SAZ uses bounded hex chunks in conventional SessionFlags. Missing payloads
+are reported as unavailable; imported status text remains separate from typed
+negotiation evidence.
 
 ## Qualification
 
-`cargo test --locked -p transmog-http --test alps` uses a local BoringSSL TLS
+`python scripts/dev-env.py --run cargo test --locked -p transmog-http --test alps` uses a local BoringSSL TLS
 origin to exercise the offer and toggle, HPACK and concurrency before the first
 request, a zero receive window, real SETTINGS acknowledgements, fallback, and
 malformed settings. Unit tests also exercise fragmented writes and backpressure.
 The Docker interoperability suite verifies that Caddy declines ALPS and still
 serves verified H2. Its nginx and Apache fixtures use plain HTTP.
 
-`cargo test --locked -p transmog-h3 h3_alps` checks real QUIC negotiation,
+`python scripts/dev-env.py --run cargo test --locked -p transmog-h3 h3_alps` checks real QUIC negotiation,
 decline, disable, empty values, captured bytes, malformed ALPS and limits before
 the first request. `python scripts/test-transport-patches.py` checks parser
 bounds, merging wire SETTINGS, and datagram transport-parameter validation.
 
 The external Google check is explicitly ignored in ordinary offline tests:
-`cargo test --locked -p transmog-http --test alps google_negotiates -- --ignored --nocapture`.
+`python scripts/dev-env.py --run cargo test --locked -p transmog-http --test alps google_negotiates -- --ignored --nocapture`.
 It sends one HEAD request to `https://www.google.com/`, verifies the certificate
 and H2 response, and requires recorded ALPS negotiation. This supplements the
 deterministic fixture; it is not a dependency of ordinary development tests.

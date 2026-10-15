@@ -91,8 +91,7 @@ conditions are evaluated against the retry's actual TLS leaf and verified SCTs.
 
 ## Remaining Chrome policies
 
-These are additional work on the same verifier, not reasons to maintain a
-legacy fallback:
+Remaining work on the shared verifier:
 
 - Chrome's optional online-revocation modes and EV-specific hard-fail checks.
   The ordinary policy matches Chrome's default offline CRLSet/stapled-OCSP use.

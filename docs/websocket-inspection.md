@@ -59,17 +59,17 @@ checks and bounded queues still apply.
 
 The inspected encoder currently supports the RFC default 15-bit DEFLATE
 window. If a peer explicitly selects a smaller window, inspected mode rejects
-the handshake before sending `101` downstream. Transparent mode remains
+the handshake before accepting the downstream upgrade. Transparent mode remains
 compatible because it never recompresses the stream.
 
 ## Current transport scope
 
 The runtime handles RFC 6455 HTTP/1.1 upgrades for direct absolute-form `ws://`
 proxy requests, browser-style plaintext HTTP/1.1 carried inside a `CONNECT` to
-the WebSocket origin, and `wss://` requests inside intercepted CONNECT TLS. The
-CONNECT preface detector preserves the first byte, accepts only TLS or a
-WebSocket `GET` preface, and retains the usual inner-authority validation; this
-is not a general blind TCP tunnel.
+the WebSocket origin, and `wss://` requests inside intercepted CONNECT TLS. With
+HTTPS decryption enabled, the CONNECT preface detector preserves the first byte,
+accepts only TLS or a WebSocket `GET` preface, and retains inner-authority
+validation. Disabling HTTPS decryption selects opaque CONNECT forwarding.
 
 Intercepted TLS H2 connections advertise RFC 8441 support. Extended CONNECT with
 `:protocol = websocket` uses the same authority checks, hooks, observation and

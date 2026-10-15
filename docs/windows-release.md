@@ -160,7 +160,7 @@ build.
    `release-version.json` records the semantic version, source channel, and default
    release track. `main` uses `Canary`; a release branch has the neutral `Release`
    source channel and a `Beta` or `Stable` track. The command preserves that track
-   unless `-ReleaseType` is supplied. It synchronizes Cargo, both lockfiles,
+   unless `--release-type` is supplied. It synchronizes Cargo, both lockfiles,
    Tauri, and the desktop UI package without updating external dependencies.
    `python ./scripts/set-release-version.py --check` verifies committed versions.
    The normal SemVer `major.minor.patch` is used unchanged in packages, tags,
@@ -303,9 +303,9 @@ Use a new patch or another unused semantic version for subsequent fixes.
 Before publication, **Re-run failed jobs** can reuse successful upstream jobs:
 downstream jobs receive the immutable artifact IDs from their producer jobs.
 This lets a transient signing or qualification failure retry without rebuilding
-or repeating a successful soak. Code changes require a fresh manual run or
-**Re-run all jobs**. Leave the current draft unpublished if it is not the candidate
-you want to ship.
+or repeating a successful soak. Code changes require a fresh dispatch from the
+new commit; rerunning jobs keeps the original run's source commit. Leave the
+current draft unpublished if it is not the candidate you want to ship.
 
 ### Branch creation, Beta-to-Stable promotion, and Canaries
 
@@ -541,7 +541,7 @@ NSIS declare per-monitor-v2 DPI awareness.
 Also run the complete repository gate and standalone interoperability matrix:
 
 ```powershell
-pwsh ./scripts/test.ps1
+python scripts/test.py
 python ./scripts/test-interop.py
 ```
 
@@ -592,9 +592,3 @@ Record OS build, WebView2 version, installer SHA-256, signer, test command
 outputs, and the pre/post proxy and certificate inventories in the release
 evidence. Certificate install/remove dialogs are intentionally manual; release
 automation must wait for the human action rather than bypass validation.
-
-Automatic update checks are enabled by default. Settings → About saves this
-choice immediately, independently of ordinary settings and the thirty-day reminder.
-Turning it off prevents startup network checks; manual checks remain available.
-The installer offers the same choice and preserves it on updates and silent
-installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.

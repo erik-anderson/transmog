@@ -9,8 +9,8 @@ for build commands.
 
 ## Software updates
 
-Startup checks run after the window is ready and keep the workspace usable. A
-new stable release exposes an update action in the toolbar without taking
+Startup checks run after the window is ready and keep the workspace usable. An
+available release for the installed channel exposes an update action in the toolbar without taking
 keyboard focus or navigating away from work. The user
 can update now, download an update for normal app exit, or pause automatic prompts
 for thirty days. Settings → About shows the installed version, update status, last successful
@@ -32,6 +32,12 @@ Windows host restoration. Close saved traffic viewer windows before installing
 so their drafts can be resolved. A deferred update installs when the user quits Transmog
 and does not reopen it. Crashes and operating-system shutdown do not launch an
 installer. A failed safe handoff keeps the app open with recovery feedback.
+
+Automatic update checks are enabled by default. Settings → About saves this
+choice immediately, independently of ordinary settings and the thirty-day reminder.
+Turning it off prevents startup network checks; manual checks remain available.
+The installer offers the same choice and preserves it on updates and silent
+installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.
 
 ## Start and stop
 
@@ -68,7 +74,7 @@ the saved recipe to new requests. **Customize** creates an editable copy of the
 built-in recipe. Custom profiles control HTTP/1, HTTP/2 and HTTP/3, TLS versions,
 compatibility ciphers, hybrid key exchange and connection reuse. **More handshake
 options** contains Trust Anchor IDs, an optional `crs.pb` path, HTTP/2 and HTTP/3 ALPS,
-GREASE, extension order, ECH GREASE and certificate compression.
+GREASE, extension order, real ECH, ECH GREASE and certificate compression.
 ECH GREASE sends a dummy extension and does not encrypt the server name.
 
 **Save only** preserves the active recipe; **Save and use** activates the saved
@@ -85,8 +91,8 @@ snapshot and automatically adopt a newer valid local Chrome or WebView2 PKIMetad
 store for fresh connections. A custom profile can choose OS, bundled Chromium,
 installed Chrome or installed WebView2 certificate trust. See
 [Trust Anchor IDs](trust-anchor-ids.md) for discovery, recovery and recorded evidence.
-HTTP/2 and HTTP/3 ALPS are enabled in the Chromium recipe and separately editable in custom
-profiles. It applies server settings without generating or forwarding
+HTTP/2 and HTTP/3 ALPS are enabled in both built-ins and separately editable in
+custom profiles. Transmog applies server settings without generating or forwarding
 connection-level requests for Client Hints; see [ALPS](http2-alps.md).
 
 **Advanced network settings** contains remote-client access (off by default),
@@ -94,11 +100,29 @@ an optional saved proxy port, caller-process isolation and client certificates.
 With no saved port, each start chooses an available port. Saving these connection
 choices preserves active work and does not restart the proxy.
 
+### AppContainer loopback access
+
+Settings → Connection → **Manage loopback exemptions…** lists Windows
+AppContainers with their display name, description, package, AppContainer name,
+SID and users. Filter or sort the inventory, then use checkboxes, Ctrl-click,
+Shift-click or keyboard range selection. **Exempt selected** allows those apps
+to connect to a proxy on this computer; **Remove exemptions** reverses the
+selection. Windows requests administrator approval. Canceling approval changes
+nothing; failed or completed operations refresh the authoritative Windows state.
+Saved exemptions with unavailable installed metadata remain visible for removal.
+
+Exemptions persist in Windows until explicitly removed. Transmog preserves
+unselected exemptions and their attributes rather than replacing them with the
+current selection. This follows the
+[NetworkIsolation configuration contract](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nf-netfw-networkisolationsetappcontainerconfig).
+The verification script `scripts/test-loopback.ps1` exercises change planning
+with fixture SIDs and only reads the real system inventory.
+
 ## Live traffic and saved viewers
 
 Traffic follows new exchanges until the user selects an entry or scrolls back.
 Capture continues while the view is pinned. Filtering and sorting operate on all
-retained metadata before pagination. Column visibility, inspector arrangement
+retained metadata before viewport windowing. Column visibility, inspector arrangement
 and pane sizes are saved preferences.
 
 Select a request to inspect its request and response together, or switch between
@@ -185,25 +209,3 @@ See [safe previews](safe-previews.md) and [captured-page preview](captured-page-
 Current support boundaries are in [limitations](limitations.md), future work in
 [the roadmap](roadmap.md), and interaction conventions in
 [UX design principles](ux-principles.md).
-
-Automatic update checks are enabled by default. Settings → About saves this
-choice immediately, independently of ordinary settings and the thirty-day reminder.
-Turning it off prevents startup network checks; manual checks remain available.
-The installer offers the same choice and preserves it on updates and silent
-installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.
-
-Settings → Connection → **Manage loopback exemptions…** lists Windows
-AppContainers with their display name, description, package, AppContainer name,
-SID and users. Filter or sort the inventory, then use checkboxes, Ctrl-click,
-Shift-click or keyboard range selection. **Exempt selected** allows those apps
-to connect to a proxy on this computer; **Remove exemptions** reverses the
-selection. Windows requests administrator approval. Canceling approval changes
-nothing; failed or completed operations refresh the authoritative Windows state.
-Saved exemptions with unavailable installed metadata remain visible for removal.
-
-Exemptions persist in Windows until explicitly removed. Transmog preserves
-unselected exemptions and their attributes rather than replacing them with the
-current selection. This follows the
-[NetworkIsolation configuration contract](https://learn.microsoft.com/en-us/windows/win32/api/netfw/nf-netfw-networkisolationsetappcontainerconfig).
-The verification script `scripts/test-loopback.ps1` exercises change planning
-with fixture SIDs and only reads the real system inventory.

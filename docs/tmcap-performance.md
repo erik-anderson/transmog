@@ -1,222 +1,70 @@
-# TMCap compression measurements
+# TMCap performance verification
 
-The synthetic test supports a lazy two-worker pool for compressible large
-bodies. One available CPU uses the writer thread. Initial probes, bypassed data,
-metadata and chunks smaller than 4 KiB stay on that thread. The live capture
-writer itself runs separately from asynchronous request handling. Eight pending
-records bound compression work and preserve output order.
+Use the capture benchmark to compare compression, writer throughput, append
+latency and file size. Keep results with the measured commit, workload and host
+configuration in generated evidence. Results from earlier experimental layouts
+are not a baseline for the current format.
 
-## Persistent SSE IDs
+## Run the benchmark
 
-TMCap stores a persistent SSE ID once and references its defining record
-from later messages. A regression fixture with one 64 KiB ID and 1,024 heartbeat
-messages occupies 82,776 bytes, compared with 17,302,771 bytes when the same
-compressor writes the ID inline in every message (about 209 times smaller).
-The ID uses deterministic pseudorandom hex text, so this measures sharing across
-metadata pages rather than an unusually compressible identifier. This is a
-storage-size comparison for that fixture, not a general compression ratio.
-
-Sequential indexing and later random payload reads also retain the same shared
-ID allocation. The test checks growth at 128 and 1,024 messages and does not
-truncate or evict recorded items. Reproduce it with:
-
-```text
-python scripts/dev-env.py --run cargo test --locked -p transmog-capture persistent_sse_ids_grow_once -- --nocapture
-```
-
-## Packed layout and runtime sharing update
-
-The current layout stores metadata once, packs index/body objects into common
-blocks, and shares body chunks between opposite boundaries of one exchange.
-The earlier tables below describe the previous experimental layout; this
-section records the new measurement, also on 2026-10-11 on the same Windows host.
-
-The actual plain container benchmark processed 128 MiB per run, three repeats,
-with CPU affinity and alternating worker order. No other tests or fuzz campaigns
-ran during the timing interval. Median input MiB/s:
-
-| CPUs | Workload | Inline | Two workers | Four workers |
-| --- | --- | ---: | ---: | ---: |
-| 1 | Text | 609 | 521 | 469 |
-| 1 | Binary | 833 | 802 | 842 |
-| 1 | Mixed | 615 | 681 | 718 |
-| 2 | Text | 693 | 996 | 1031 |
-| 2 | Binary | 820 | 842 | 819 |
-| 2 | Mixed | 753 | 861 | 834 |
-| 4 | Text | 683 | 1506 | 1391 |
-| 4 | Binary | 800 | 807 | 852 |
-| 4 | Mixed | 774 | 773 | 837 |
-
-With two CPUs, two workers improve text throughput by 44% and mixed throughput
-by 14%. One CPU still uses inline compression by default; incompressible streams
-still bypass the pool. These results support retaining the existing lazy
-two-worker policy. Affinity does not reproduce an actual older processor, and
-these short cached-file writes do not establish sustained disk throughput.
-
-```text
-python scripts/benchmark-capture.py --container --kinds text,binary,mixed --mib 128 --repeats 3 --output packed-container-perf.jsonl
-python scripts/dev-env.py --run cargo test -p transmog-capture --release --lib large_trace_metadata_io_measurement -- --ignored --nocapture
-```
-
-The deterministic large-trace test contains 2,000 paired responses, 4,001 records
-and a 65,813,972-byte file. Opening reads 17,172 bytes; indexing every record reads
-295,972 bytes total (0.45% of the file), without decompressing bodies. Selecting
-one 32 KiB body reads 82,000 bytes, including its metadata page and block edges.
-Release-mode times using an in-memory seekable file buffer were 0.15 ms to open,
-9.44 ms to index and 0.64 ms for that body. These are CPU/I/O-count measurements,
-not cold-disk latency measurements. The test asserts bounded reads, not timing.
-
-A private 43-exchange real-world fixture shrank from 2,149,173 bytes to about
-787,976 bytes (63.3% smaller), compared with 998,707 bytes for its extended SAZ.
-All 913 records and captured body digests survive repacking. Random header
-material can change size by a few bytes. The fixture is not included in the repo.
-The opt-in `repack_local_records_and_measure_metadata_open` test accepts local
-`TMCAP_RECORDS` JSONL and a `TMCAP_REPACKED` output path for reproducible analysis.
-
-Runtime regression tests separately verify that unchanged paired memory bodies
-use one allocation set, including interleaved/random chunk boundaries. They
-cover changed bytes, separate exchanges, quota pressure, eviction, clearing and
-read leases. Imported native bodies remain file references until read.
-
-## Method
-
-Measurements were collected on 2026-10-11 on Windows, on an Intel Core Ultra 7
-265K with eight logical processors available to the environment. The driver pins
-each child process to one, two or four of those processors before starting its
-workers. Affinity models constrained parallelism; it does not reproduce an older
-processor's instruction throughput, cache, memory bandwidth or storage.
-
-Each configuration processes 256 MiB three times, alternating worker-count order.
-Tables show median input MiB/s. Timings include buffer copies and OS file writes
-to a temporary file, with no fsync. They do not measure sustained media throughput
-after exhausting the OS cache, HTTP throughput or request latency. No concurrent
-builds or tests ran during these measurements. Other host activity and short run
-times still introduce variability.
-
-The deterministic workloads are:
-
-- `text`: varied JSON-like URLs, numbers and identifiers, approximately 16% of
-  original size after zstd level 1; independent 128 KiB chunks across 64 bodies.
-- `binary`: pseudorandom, incompressible 128 KiB chunks across 64 bodies. This
-  models compression futility, not a particular video codec.
-- `mixed`: 25% text and 75% binary bytes, with stable body identities.
-- `small`: independent 2 KiB text bodies, used in the compression-stage experiment.
-
-Two modes answer different questions. The default mode isolates adaptive zstd
-jobs, bounded channels and a buffered output consumer. Every job in this mode
-passes through a worker, including with `--workers 1`. `--container` uses the
-actual `CaptureWriter`: one means inline compression; two/four permit its lazy
-pool. This mode includes body digests, record metadata, index construction,
-block checksums or encryption, output batching and final sealing. Password
-derivation occurs before the timed steady-state interval. The benchmark can
-checkpoint every 8192 records; the 256 MiB large-body runs contain only 2048
-records and therefore measure final publication without an intermediate checkpoint.
-The live worker's timed checkpoints are covered separately by integration tests.
-
-The output records throughput, p95/p99 append or admission duration and file
-size. The isolated mode also counts bytes offered to zstd. Its binary workload
-compresses only 3.125% of input, the initial probe for each body, and stores every
-byte. A separate regression test covers re-probing after 8 MiB of bypassed data.
-
-## Encrypted container results
-
-| Available CPUs | Workload | Inline | Two workers | Four workers |
-| --- | --- | ---: | ---: | ---: |
-| 1 | Text | 532 | 546 | 570 |
-| 1 | Binary | 436 | 453 | 445 |
-| 1 | Mixed | 395 | 516 | 569 |
-| 2 | Text | 492 | 935 | 843 |
-| 2 | Binary | 414 | 438 | 419 |
-| 2 | Mixed | 382 | 531 | 631 |
-| 4 | Text | 498 | 1041 | 1267 |
-| 4 | Binary | 422 | 438 | 433 |
-| 4 | Mixed | 423 | 581 | 639 |
-
-With two CPUs, two workers improve text throughput by 90% and mixed throughput
-by 39%. Text runs ranged from 312–492 MiB/s inline and 817–1017 MiB/s with two
-workers. Binary runs overlap substantially and do not establish a gain; this
-workload never starts the production pool. Small file-size differences between
-repeats come from the randomized JSON bootstrap, not different retained bodies.
-
-More throughput does not imply lower individual append latency. Median measured
-percentiles on two CPUs, in microseconds:
-
-| Workload | Inline p95 | Two workers p95 | Inline p99 | Two workers p99 |
-| --- | ---: | ---: | ---: | ---: |
-| Text | 279 | 323 | 512 | 705 |
-| Mixed | 607 | 458 | 1063 | 766 |
-
-The dedicated live writer and bounded queues absorb ordinary bursts. When they
-fill, capture deliberately backpressures forwarding. This benchmark does not
-prove a request-latency bound.
-
-## Supporting measurements and default selection
-
-The unencrypted container also benefits with two CPUs:
-
-| Workload | Inline MiB/s | Two workers MiB/s | Four workers MiB/s |
-| --- | ---: | ---: | ---: |
-| Text | 480 | 786 | 895 |
-| Binary | 407 | 401 | 400 |
-| Mixed | 399 | 519 | 621 |
-
-That is a 64% text gain and 30% mixed gain for two workers. Encryption and plain
-checksums use different code paths; differences between those tables should not
-be interpreted as the cost of encryption in isolation.
-
-The isolated compression-stage experiment explains why a universal pool is a
-poor default. On one CPU, text falls from 814 to 654 MiB/s with two workers, and
-binary falls from 1225 to 724 MiB/s. On two CPUs, text rises from 775 to 1217 MiB/s,
-but binary does not benefit. Four workers sometimes improve the full writer,
-especially with four CPUs available, but have inconsistent results across the
-isolated workloads and consume more CPU resources. Two is a conservative default
-that already gives a substantial benefit with constrained parallelism.
-
-The isolated small-body experiment can benefit from parallelism on multiple
-CPUs, but the actual format also pays metadata/index costs and does not accumulate
-an entire response for classification. The production policy deliberately keeps
-small/new bodies on the writer thread; these measurements do not justify a claim
-that the chosen policy accelerates many independent tiny responses. Batching such
-responses for compression would need its own full-pipeline latency/memory study.
-
-## Reproduce
-
-Run from the repository root with Python 3.11 or newer:
+From the repository root, with Python 3.11 or newer:
 
 ```text
 python scripts/dev-env.py --check
-python scripts/benchmark-capture.py --mib 256 --repeats 3 --output compression.jsonl
-python scripts/benchmark-capture.py --no-build --container --kinds text,binary,mixed --mib 256 --repeats 3 --output container.jsonl
-python scripts/benchmark-capture.py --no-build --container --encrypted --kinds text,binary,mixed --mib 256 --repeats 3 --output encrypted.jsonl
+python scripts/benchmark-capture.py --mib 256 --repeats 3 --output artifacts/performance/compression.jsonl
+python scripts/benchmark-capture.py --no-build --container --kinds text,binary,mixed --mib 256 --repeats 3 --output artifacts/performance/container.jsonl
+python scripts/benchmark-capture.py --no-build --container --encrypted --kinds text,binary,mixed --mib 256 --repeats 3 --output artifacts/performance/encrypted.jsonl
 ```
 
-The first command through the benchmark driver builds its release executable.
-The executable also accepts `--sink null` to separate filesystem costs. The
-driver supports Windows process affinity and Linux `sched_setaffinity`; run the
-executable directly on other platforms. Raw JSONL from the review accompanies
-the review deliverable. Repeat on actual lower-end hardware when available,
-using longer runs and realistic concurrent traffic before tuning worker counts.
+The first invocation builds the release fixture. The driver constrains affinity
+to one, two and four available CPUs and alternates worker counts across repeats.
+It supports Windows process affinity and Linux `sched_setaffinity`; on other
+platforms, run the `capture_compression_benchmark` executable directly. Its
+`--sink null` option separates filesystem costs.
 
-## Shared connection metadata
+## Workloads and interpretation
 
-Run the deterministic storage comparison with:
+- `text`: deterministic JSON-like content, with independent 128 KiB chunks.
+- `binary`: pseudorandom incompressible chunks.
+- `mixed`: 25% text and 75% binary bytes.
+- `small`: independent 2 KiB text bodies for the isolated compression experiment.
+
+Default mode measures adaptive zstd jobs, bounded channels and buffered output;
+all jobs pass through a worker. `--container` measures the actual `CaptureWriter`,
+including digests, metadata, indexing, integrity protection and sealing. One
+worker means inline compression in container mode; larger counts allow its lazy
+pool. Password derivation occurs before the timed interval.
+
+Reports contain throughput, p95/p99 append or admission duration and file size.
+Writes use the OS cache without fsync, so these are not sustained storage-media
+measurements. CPU affinity limits parallelism but does not model an older CPU's
+cache or memory bandwidth. Repeat on an idle host and with realistic concurrent
+traffic before changing production defaults. More throughput does not guarantee
+lower individual-request latency.
+
+The production writer uses a lazy two-worker pool when at least two CPUs are
+available. Initial probes, metadata, bypassed bodies and chunks smaller than 4 KiB
+stay on the writer thread. Eight pending records preserve order and bound
+speculation. See [native capture encoding](native-capture-format.md#compression-and-scheduling)
+for policy and backpressure.
+
+## Storage and lazy-read regressions
+
+These deterministic tests check structural savings and read bounds, not fixed
+machine-dependent timings:
 
 ```text
-python scripts/dev-env.py --run cargo test -p transmog-capture shared_connection_storage_comparison -- --nocapture
+python scripts/dev-env.py --run cargo test --locked -p transmog-capture persistent_sse_ids_grow_once -- --nocapture
+python scripts/dev-env.py --run cargo test --locked -p transmog-capture shared_connection_storage_comparison -- --nocapture
+python scripts/dev-env.py --run cargo test --locked -p transmog-capture --release --lib large_trace_metadata_io_measurement -- --ignored --nocapture
 ```
 
-For 1,000 snapshots of one reused connection, with changing byte counters and a
-TLS context containing 32 offered cipher names, the compressed indexed file was
-443,576 bytes with shared context versus 919,172 bytes with inline transport
-metadata: 51.7% smaller. Both paths use the same container, zstd policy, index and
-seal. The control stores the former expanded payload under an opaque control
-kind so the writer does not normalize it; its kind name differs slightly.
-Certificates and bodies are excluded to isolate context storage. This is a
-synthetic metadata-heavy case, not a predicted saving for every workload: large
-bodies dominate file size, and connections used once offer little reuse.
+They cover persistent SSE ID sharing, reused connection metadata, metadata-only
+indexing and individual body reads. Related capture tests cover paired body
+sharing, encrypted/plain checkpoints, compaction, malformed references and
+circular eviction. Storage savings depend on reuse and workload; large bodies
+can dominate metadata savings.
 
-The comparison and regression fixtures also cover changing connection facts,
-request-relative measurements, encrypted and plain checkpoints/compaction,
-independent random frame reads, metadata-only opening, dictionary bounds,
-malformed references, canonical-metadata tampering and circular eviction. Reader and
-crypto fuzzers include connection definitions and pinned reference contexts.
+For a private local dataset, the opt-in `repack_local_records_and_measure_metadata_open`
+test accepts `TMCAP_RECORDS` JSONL and a `TMCAP_REPACKED` destination. Keep private
+captures and raw results out of source control.

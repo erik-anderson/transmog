@@ -17,8 +17,8 @@ supported by the same crate.
 ## Decision
 
 Use [`async-compression`](https://docs.rs/async-compression/latest/async_compression/)
-through its Tokio streaming adapters. Pin the exact reviewed release (currently
-0.4.50) and disable default features. Initially enable only `tokio`, `gzip`,
+through its Tokio streaming adapters. Pin the reviewed release in the workspace manifest and disable default features.
+Enable only `tokio`, `gzip`,
 `brotli`, `zlib`, `deflate`, and `zstd`; the crate publishes
 [no default feature set](https://docs.rs/crate/async-compression/latest/features),
 so the selected codec surface is explicit.
@@ -54,7 +54,7 @@ bounded signature policy avoids speculative decode-and-rewind buffering. A raw
 stream whose first two bytes accidentally form a valid zlib header remains a
 strict decode failure rather than triggering an ambiguous retry.
 
-Zstd uses `zstd` 0.14.0 and its bundled `libzstd` 1.5.7 sources. The existing
+Zstd uses the pinned `zstd` crate and its bundled `libzstd` sources. The existing
 Clang/LLVM native toolchain compiles those sources; this introduces no second
 TLS or networking stack and requires no system zstd installation. Each decoder
 sets `windowLogMax` from `ContentLimits::max_decoder_window_bytes`, rounding

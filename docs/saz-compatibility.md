@@ -106,9 +106,8 @@ resumption status and HelloRetryRequest in `x-transmog-client-tls-*` and
 the same facts for each physical leg. Import restores the recorded values without
 inferring an algorithm from a certificate, cipher or preference. TLS 1.2 resumed
 sessions retain their original group and explicitly report no fresh exchange.
-Older archives without these fields continue to show unavailable algorithm
-evidence. Complete public DER and additional connection evidence remain part of
-the Extended profile and native TMCap.
+Missing algorithm evidence remains unavailable. Complete public DER and additional
+connection evidence remain part of the Extended profile and native TMCap.
 
 Characters that XML 1.0 cannot represent, including NUL, are displayed as visible
 Unicode escapes such as `\u{0000}` in metadata and generated negotiation summaries.
@@ -194,7 +193,8 @@ Every exchange is exported, including exchanges missing request or response
 heads. Conventional `ui-comments` and `X-Transmog-Placeholder` headers explain
 uncaptured heads. A missing request uses a synthetic GET to
 `http://transmog.invalid/uncaptured-request`; a missing response uses
-`599 Transmog response not captured`. The response body explains that this is not
+`599 Transmog response not captured`, or a labeled 502 for recorded connection
+setup failures. The response body explains that this is not
 a server response only when there were no retained response bytes. Existing
 captured messages and retained body prefixes stay unchanged. Namespaced
 `x-transmog-missing-request-head`, `x-transmog-missing-response-head` and
@@ -231,7 +231,7 @@ limits are 1,000,000 exchanges and 256 MiB retained per direction per exchange;
 its source recovery retains decoded records in memory. Native capture remains
 the fidelity and recovery source even after a SAZ is produced.
 
-Run `scripts/test-saz-interop.py` to check exports with the independent native
+Run `python scripts/test-saz-interop.py` to check exports with the independent native
 7-Zip implementation. It authenticates strict and extended AES-256 archives,
 compares every decrypted file to its unencrypted reference, rejects a wrong
 password, and checks Transmog importing a 7-Zip ZipCrypto binary fixture. Windows

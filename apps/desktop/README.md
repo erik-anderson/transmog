@@ -26,17 +26,17 @@ for the framework and security choices.
 
 ## Build and run
 
-Follow [the build prerequisites](../../docs/building.md#windows-desktop-shell), then:
+From the repository root, follow the [build prerequisites](../../docs/building.md#windows-desktop-shell), then:
 
 ```powershell
-Push-Location ./apps/desktop/ui
-npm ci
-npm run check
-Pop-Location
-
-. ./scripts/dev-env.ps1
-cargo run --locked -p transmog-desktop
+python scripts/dev-env.py --check
+python scripts/dev-env.py --run cargo fetch --locked
+npm ci --prefix apps/desktop/ui
+python scripts/build-desktop.py --configuration Debug --locked-dependencies
+python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
 ```
+
+The build includes the script host and preview worker required by the desktop.
 
 The desktop Cargo package produces `transmog.exe` on Windows. The separate
 headless CLI package produces `transmog-cli.exe`.

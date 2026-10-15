@@ -8,10 +8,13 @@ system trust, bounded origin connection racing, and an allowed-protocol policy
 with HTTP/1.1 and HTTP/2 selected through ALPN plus an explicit HTTP/3 attempt.
 
 The examples in this repository share its pinned BoringSSL dependency graph.
-An independent Cargo workspace embedding Transmog must also copy the temporary
-four-crate `[patch.crates-io]` section from the repository's root `Cargo.toml`.
-It supplies the unreleased signature-algorithm GREASE API; patches in a
-dependency's manifest are not inherited. See [dependency policy](dependencies.md).
+An independent Cargo workspace must repeat the root manifest's full
+`[patch.crates-io]` section: the four BoringSSL Git entries and the vendored `h2`,
+`hyper` and `quiche` paths. Resolve those paths to the reviewed vendored trees;
+patches in a dependency's manifest are not inherited. Preserve the source
+receipts and use the portable environment wrapper for verification. See
+[dependency policy](dependencies.md) and the
+[transport inventory](../third_party/rust-transport/README.md).
 
 The [`embedded` example](../crates/proxy-runtime/examples/embedded.rs) constructs
 the proxy without CLI modules or global state. It supplies an interceptor that
@@ -20,8 +23,8 @@ certificate resolver, immutable content policy, and canonical streaming
 application upstream:
 
 ```powershell
-. ./scripts/dev-env.ps1
-cargo run --locked -p transmog-runtime --example embedded
+python scripts/dev-env.py --check
+python scripts/dev-env.py --run cargo run --locked -p transmog-runtime --example embedded
 ```
 
 `ProxyComponents` is consumed by bind and cannot be mutated after the listener

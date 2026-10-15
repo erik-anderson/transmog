@@ -12,7 +12,7 @@ can still contain mistakes or compromised dependencies.
 
 ## Decision
 
-1. The proxy core gains only a finite per-exchange registration-provider
+1. The proxy core exposes a finite per-exchange registration-provider
    contract. Product configuration remains outside the core. Each admitted
    exchange receives an immutable registration snapshot, and every rule or
    script keeps its own stable interceptor identity.

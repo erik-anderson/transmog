@@ -212,9 +212,10 @@ after conversion succeeds. Existing destinations remain intact, and failed
 conversions leave no partial destination. JSONL sent to stdout cannot provide
 that file-publication guarantee.
 
-Both SAZ modes reject the whole conversion if any exchange lacks a request or
-response head; no destination is published. Keep the native input to preserve
-those exchanges. Retained body prefixes can be exported and are disclosed with
+Both SAZ modes preserve exchanges with missing heads using explicitly labeled
+compatibility placeholders, and report `PLACEHOLDER_SESSIONS`. These are not
+captured server responses. Keep the TMCap input for original evidence. Retained
+body prefixes can be exported and are disclosed with
 SAZ completeness flags and an `INCOMPLETE_BODIES` report. SAZ conversion is
 limited to 1,000,000 exchanges and 256 MiB of retained body bytes per direction
 per exchange. Conversion also retains decoded source records in memory;

@@ -1,7 +1,7 @@
 # Saving and inspecting traces
 
-Use **Traffic → Save trace…** in the main window or a Capture viewer. It saves
-all retained entries across pages and search results; removed entries are excluded.
+Use **Traffic → Files → Save trace…** in the main window or a Capture viewer. It saves
+all retained entries across the list and search results; removed entries are excluded.
 Undo a removal before saving if those entries should be included. The file dialog
 confirms overwriting, and an existing destination is replaced only after a complete
 successful write. Failed reads or writes leave that destination intact. A progress
@@ -9,7 +9,7 @@ bar reports writing and SAZ conversion by entry, with indeterminate progress whi
 preparing or finalizing. Close the dialog to keep working; Traffic continues to
 show save progress, and **Save progress…** reopens the dialog.
 
-Select a request and choose **Certificates…** to inspect its original TLS
+Select a request and choose **Details → Certificates** to inspect its original TLS
 connections, server and client authentication chains, public PEM/DER and recorded
 verification failures. TMCap shares certificate definitions across requests.
 Extended SAZ stores them under `transmog/certificates/`; HAR uses a
@@ -58,12 +58,12 @@ without decrypting the entire file; see [native encoding](native-capture-format.
 **Include this computer’s network configuration** is optional and unchecked. It
 records bounded ipconfig /all output on Windows, interface/DNS/route context on
 macOS, or ip and resolvectl output on Linux. Collection time, platform and failures
-stay with this context. This option also exists when recording from Capture files,
+stay with this context. This option also exists when recording from Capture tools,
 and the CLI offers --include-network-context.
 
 Saving merged native traces preserves each original source's metadata, original
 request identifier, raw imported heads, timers and terminal time. Select a request
-and choose **Trace metadata** to reach its associated source. The source selector
+and choose **Details → Capture source** to reach its associated source. The source selector
 also offers the saved workspace's own context; network configuration from the
 saving computer does not replace the original machine's configuration. Imported
 source names, paths and session counts describe the original capture.
@@ -73,10 +73,10 @@ conversions in a namespaced JSON member ignored by ordinary SAZ readers. Native
 files preserve the full original source associations and measured transport
 observations; SAZ conversion reports its compatibility limitations.
 
-**Captures → Inspect / recover** offers a trace drop target and picker that import
+**Capture tools → Inspect / recover** offers a trace drop target and picker that import
 into Traffic, plus a separate **Import trace** button for a typed source path.
 **Inspect trace metadata** reads the file's original context and shows its full
-path without adding Traffic entries. **Captures → Convert/Export** converts native
+path without adding Traffic entries. **Capture tools → Convert / export** converts native
 files to TMCap, JSONL or SAZ and suggests filenames containing `exported`.
 
 Imports bound the index for each source and the combined index and metadata

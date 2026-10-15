@@ -9,11 +9,11 @@ Stored peer chains are reverified on TLS 1.2, TLS 1.3 and QUIC resumption, using
 current time and the connection's frozen trust inputs. Captures distinguish a
 restored verification path from a chain newly sent by the server.
 
-The TCP adapter owns its session cache rather than relying on hyper-boring's
-unbounded origin map. Caches hold at most 1024 origin partitions and two tickets
-per partition, prefer the newest ticket, consume native single-use tickets,
-check expiry on lookup, and sweep expired entries every 256 lookups. TLS 1.2
-session lifetime is one hour; TLS 1.3 uses the native/server lifetime.
+The TCP adapter owns a bounded session cache with at most 1024 origin partitions
+and two tickets per partition. It prefers the newest ticket, consumes native
+single-use tickets, checks expiry on lookup, and sweeps expired entries every
+256 lookups. TLS 1.2 session lifetime is one hour; TLS 1.3 uses the native/server
+lifetime.
 
 TCP contexts belong to an immutable caller/run pool. QUIC ticket keys additionally
 include origin and alternative ports, caller isolation, destination address,
@@ -53,16 +53,14 @@ does not impose a second parse requirement on unused entries.
 
 Credentials and requested CA names use buffer APIs. QUIC connections are created
 without quiche's legacy hostname setter; SNI and expected identity are installed
-separately before the first packet. The older `hyper_connector*` embedding helpers
-retain their legacy return types and use worker verification with async TLS
-drivers; blocking callers use `synchronous_connector*`. The production adapter
-uses `tcp_context_builder`.
+separately before the first packet. The `hyper_connector*` embedding helpers
+use worker verification with async TLS drivers; blocking callers use
+`synchronous_connector*`. The production adapter uses `tcp_context_builder`.
 
 ## Encrypted Client Hello
 
 Built-ins enable real ECH independently of ECH GREASE. Custom profiles can disable
-either under **More handshake options**. Old captures missing the real-ECH field
-retain false. TLS 1.2-only profiles do not attempt ECH.
+either under **More handshake options**. TLS 1.2-only profiles do not attempt ECH.
 
 The pinned Hickory resolver reads the configured system DNS servers. HTTPS records
 are bounded by a three-second discovery deadline, 64 service records
@@ -78,9 +76,10 @@ resolution and for port-prefixed owners. The original origin remains the
 certificate and HTTP authority.
 Bindings that change the requested destination port are ignored, matching the
 pinned Chromium recipe. An explicit Alt-Svc destination port remains supported.
-A/AAAA resolution uses the existing system resolver and Happy Eyeballs policy. DNS-cache TTLs apply;
-configuration changes refresh the resolver on subsequent lookups. This supplies
-ECH discovery, rather than Chromium's complete browser secure-DNS/DoH policy.
+A/AAAA resolution uses the existing system resolver and Happy Eyeballs policy.
+DNS-cache TTLs apply; configuration changes refresh the resolver on subsequent
+lookups. This supplies ECH discovery, rather than Chromium's complete browser
+secure-DNS/DoH policy.
 
 If an eligible endpoint cannot be reached, TCP and QUIC try the remaining service
 alternatives in order, each with its own ECH configuration. Exhausting ECH
@@ -126,7 +125,7 @@ expected identity, SCT/OCSP evidence and frozen trust inputs cross threads; the
 TLS object and capture publication stay on their owning thread. Low-level
 synchronous embedding contexts retain synchronous verification; `hyper_connector*`
 and async adapters install the worker callback and require a TLS task waker.
-Use `synchronous_connector*` for a blocking legacy TLS stream. Verification rules
+Use `synchronous_connector*` for a blocking TLS stream. Verification rules
 are identical; only execution differs.
 
 Only intermediates from fully accepted paths enter the bounded cache: up to 256

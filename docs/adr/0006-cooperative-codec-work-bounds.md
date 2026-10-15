@@ -57,7 +57,6 @@ must keep byte, ratio, window, and work limits conservative together.
 - Codec timeouts are typed, terminal, configurable, and independent of
   transport-specific idle deadlines.
 - Per-body work accounting does not penalize network idle time.
-- Decoder calls become async, which is an accepted pre-1.0 API change.
 - Deadline checks use monotonic elapsed time at codec/yield boundaries; they do
   not promise hard real-time scheduling or exact CPU accounting.
 - Tests cover configuration validation, exact time boundaries, cumulative

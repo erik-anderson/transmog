@@ -47,8 +47,8 @@ To begin recording, choose a new `.tmcap` destination:
    long-lived connection can keep the capture finishing; press **Ctrl+C again**
    to terminate unfinished work and save the available evidence instead.
 4. Approve the certificate removal prompt if one appears. Wait for **Trace
-   saved**, then open `support-trace.tmcap` through Transmog's **Import…** or
-   **Files → Open in a separate viewer…**. Review the capture and share that one
+   saved**, then open `support-trace.tmcap` through Transmog's **Files → Import traffic…** or
+   **Files → Import into separate viewer…**. Review the capture and share that one
    chunk-compressed file with your support contact.
 
 On first use, the CLI captures complete headers, including cookies and credentials, and
@@ -135,7 +135,7 @@ This restores an interrupted Windows proxy journal before certificate prompts.
 Persistent roots require `--include-persistent` to remove them. If cleanup is
 canceled, public recovery metadata stays available for another attempt.
 
-In Transmog, use **Import…** to open the leftover `.tmcap`. The viewer recovers
+In Transmog, use **Files → Import traffic…** to open the leftover `.tmcap`. The viewer recovers
 the valid prefix without changing the original and explains incomplete evidence
 in **Trace metadata**. Use **Save trace…** and choose a new filename such as
 `recovered-trace.tmcap`; each chunk is already compressed. Choose password

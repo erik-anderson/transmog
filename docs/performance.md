@@ -11,9 +11,9 @@ Run the harnesses from the Windows LLVM/Ninja environment on an otherwise idle
 host:
 
 ```powershell
-. ./scripts/dev-env.ps1
-cargo run --locked --release -p transmog-core --example hooks_benchmark
-cargo run --locked --release -p transmog-content --example content_benchmark
+python scripts/dev-env.py --check
+python scripts/dev-env.py --run cargo run --locked --release -p transmog-core --example hooks_benchmark
+python scripts/dev-env.py --run cargo run --locked --release -p transmog-content --example content_benchmark
 python ./scripts/benchmark-content.py
 ```
 
@@ -40,7 +40,7 @@ restoration of the original coding. It reports integer nanoseconds, bytes per
 second, encoded bytes consumed before first output, cancellation latency, and
 active work-limit configuration as JSON.
 
-The PowerShell runner also compares baseline and sixteen-pipeline child-process
+The Python runner also compares baseline and sixteen-pipeline child-process
 working sets, sampled every 5 ms by default. The incremental value subtracts the
 fixture-bearing baseline. The default 512 MiB ceiling and one-second
 cancellation deadline are correctness gates; peak working set is a portable
@@ -52,8 +52,8 @@ revision, dirty-tree state, OS, architecture, workload dimensions, and sampling
 configuration. Override output, interval, or ceiling through script parameters
 rather than changing production limits.
 
-The current harness is cross-platform Rust, but process working-set sampling is
-implemented by the Windows runner. A hosted performance workflow is parked
+The Rust harness and Python runner support Windows, Linux and macOS memory
+sampling through their host APIs. A hosted performance workflow is parked
 under `ci/github-actions/` and remains inactive until hosted automation is
 explicitly enabled.
 
@@ -64,8 +64,8 @@ python ./scripts/benchmark-pqc.py --operations 500
 ```
 
 The runner builds the release `pqc_benchmark` fixture and compares fresh TLS 1.3
-handshakes across classical, ML-DSA-44/65/87 and automatic credential selection,
-each with classical X25519 or hybrid X25519MLKEM768 exchange. The fixture uses
+handshakes across non-PQC, ML-DSA-44/65/87 and automatic credential selection,
+each with X25519 or hybrid X25519MLKEM768 exchange. The fixture uses
 the production context factories and validates the negotiated algorithms and
 an application-byte round trip. Keys stay in memory and its root is used only
 by the fixture's verifier.
@@ -96,5 +96,4 @@ virtualization/save/clear checks using a synthetic loopback website.
 
 A future transport benchmark should compare H1, H2, and H3 throughput,
 time-to-first-byte, cancellation, and memory return for no interceptors, no-op
-interceptors, bounded transforms, and saturated observers. This is tracked in
-the [roadmap](roadmap.md); it is not implied by the content harness.
+interceptors, bounded transforms, and saturated observers. The content and browser-scale harnesses do not establish those results.

@@ -67,7 +67,7 @@ Use Tauri with WebView2 on Windows and Microsoft WebUI behind a local adapter.
   and CSS from source in Rust's build script.
 - Keep the Tauri dependency and binary Windows-only. The library/render slice
   remains portable, while Linux desktop support waits for the declared
-  WebKitGTK qualification phase.
+  WebKitGTK qualification.
 
 ## Capability and data boundary
 

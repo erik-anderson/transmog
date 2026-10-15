@@ -11,6 +11,10 @@ replaced. Capture clocks use a synthetic 2026-01-01 epoch; generated page/frame
 identifiers and the local server port are normalized. Credential headers and
 cookies are rejected before the files are written.
 
+`placeholder.jsonl` exercises Chromium's typed JSONL writer; its constants
+record retains the producing browser version. Regenerate it separately with
+`node scripts/generate-browser-archives.mjs --jsonl`.
+
 The Rust import regression uses these files without launching a browser or
 accessing the network. To regenerate them using the repository's installed
 Playwright Chromium:
