@@ -48,7 +48,9 @@ pub fn record_ech_exit(ssl: &SslRef) {
     };
     // SAFETY: synchronous read of this thread's native error queue.
     let error = unsafe { boring_sys::ERR_peek_last_error() };
-    if (error >> 24) & 0xff != boring_sys::ERR_LIB_SSL.0.unsigned_abs()
+    // Bindgen represents this C enum's backing integer differently on Windows
+    // and Linux. Widen both nonnegative library IDs without a signed cast.
+    if i64::from((error >> 24) & 0xff) != i64::from(boring_sys::ERR_LIB_SSL.0)
         || error & 0xfff != boring_sys::SSL_R_ECH_REJECTED.unsigned_abs()
     {
         return;
