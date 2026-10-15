@@ -33,8 +33,8 @@ export async function checkNetworkProfiles(page,root) {
   await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).uncheck();
   await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).uncheck();
   await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).uncheck();
-  assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
-  await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).uncheck();
+  assert.equal(await dialog.getByLabel('Provide info about the certificates trusted by the root store',{exact:true}).isChecked(),true);
+  await dialog.getByLabel('Provide info about the certificates trusted by the root store',{exact:true}).uncheck();
   await dialog.getByLabel('PKI metadata file',{exact:true}).fill('C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
   await dialog.locator('.profile-handshake summary').click();
   await dialog.getByLabel('HTTP/3',{exact:true}).uncheck();
@@ -66,7 +66,7 @@ export async function checkNetworkProfiles(page,root) {
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
   assert.equal(await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium H3 ALPS');
-  assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
+  assert.equal(await dialog.getByLabel('Provide info about the certificates trusted by the root store',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
   assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true,'Reset did not restore ECH');
   const roots=dialog.getByRole('combobox',{name:'Profile root store',exact:true});
