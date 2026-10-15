@@ -1,0 +1,387 @@
+# Portable investigations: revision-0 design
+
+Status: K0 contract and fixture corpus, prepared for implementation. The desktop
+and CLI do not yet open, export or import these formats. Examples below describe
+the intended interface. [ADR 0009](adr/0009-portable-investigation-boundaries.md)
+records the architecture; [the roadmap](roadmap.md) tracks implementation.
+
+## Support policy
+
+Revision 0 is experimental and may change without migration. A consumer supports
+only the current documented revision-0 layout and declared capabilities; it
+rejects other schema versions rather than guessing a downgrade. Refresh design
+fixtures when the contract changes. No TMCap migration or earlier-layout adapter
+is part of this work. A supported public v1 and its support window require a
+separate recorded decision before release; neither this design nor additional
+consumers establishes such a promise. CLI result revision 0 follows the same
+experimental policy. Private persistence, script API and live control retain
+their own policies; control revision 0 remains outside this decision.
+
+## Current foundation
+
+The audited source is the response-editing closeout on `0df7fcf` (0.1.4).
+Revalidate these boundaries when implementing a consumer:
+
+| Area | Reuse and portability boundary |
+| --- | --- |
+| Automation | [Private workspace](../crates/app/src/automation.rs) schema 1, 4 MiB, validated generations and atomic activation; [named variants](../crates/app/src/experiments.rs) retain exact ordered revisions. Export intent and selected revisions, not generations, Undo state or active hook registrations. |
+| Response assets | [Asset storage](../crates/app/src/response_assets.rs) schema 1; explicit copy/link up to 1 GiB. Stored hashes identify encoded entities; linked configuration does not identify historical bytes. Omit absolute paths and copied-from paths. |
+| Match and action semantics | [Native compiler](../crates/proxy-automation/src/lib.rs), [URL matcher](../crates/proxy-automation/src/matching.rs) and [literal operation](../crates/proxy-automation/src/text_transform.rs) remain authoritative. Translate explicit portable fields; do not deserialize private rule enums as the interchange contract. |
+| Capture provenance | [Save trace](../crates/app/src/trace_save.rs) carries original source/entry associations, body boundaries, availability, actual hook outcomes and streams. [TMCap](tmcap-format.md) remains an independently versioned, experimental evidence format. No migration code is added. |
+| Comparison | [Runtime subjects](../crates/app/src/comparison.rs) contain session, draft, asset and preview handles. Export stable evidence references and options, not handles. Preserve unavailable/incomplete/not-compared states. |
+| Scripts | [API revision 1](../crates/proxy-script/src/lib.rs) is unstable. Save draft, activation and optional sandbox tests are distinct. Export source, declared handlers/capabilities/limits and asset references, never tokens, compiled state or cached validation authority. |
+| Privacy | [Export projection](../crates/app/src/export_privacy.rs) handles selected header/trailer redaction and raw-head omission. It does not sanitize arbitrary URLs, bodies, scripts or notes. |
+| Configuration/context | [Network collector](../crates/network/src/context.rs) captures bounded, opt-in tool output with collection time, purpose, platform and notes. [Trace save](../crates/app/src/trace_save.rs) distinguishes original source context from the saving machine's new context in `trace-metadata` / `trace-source`. Preserve that provenance; a case may also attach new context objects. |
+| Distribution | [Release packaging](../scripts/package-signed-windows-release.ps1) publishes a separate signed CLI; the desktop installer includes script/preview helpers. It does not bundle the CLI. Script declarations and a standalone CLI script-host distribution are not currently shipped contracts. |
+| CLI | [Dispatcher](../crates/proxy-cli/src/main.rs) has profile/record/serve/roots/CA/capture commands. Existing inspect output is KEY=VALUE and errors exit 2. New JSON/results must be explicit additions. [Password input](../crates/proxy-cli/src/passwords.rs) is masked or a protected UTF-8 file, never command-line password text. |
+
+## Package and working-copy decisions
+
+A case directory contains `manifest.json` and regular files at
+`objects/sha256/<64 lowercase hex digits>`. The digest is SHA-256 of the exact
+object bytes. Paths are derived from digests, never supplied filesystem locators.
+There are no absolute paths, URLs to fetch, links, scripts to run or environment
+variable substitutions in dependency resolution.
+
+Use `.tmcase` for a ZIP/ZIP64 archive of a case directory and `.tmrules` for a
+rule collection. Writers use Stored members: native captures and encoded assets
+already contain their own compression. Readers reject other ZIP compression,
+member encryption, directories, duplicate names, unsafe names, reparse points,
+symlinks, inconsistent local/central headers, overlapping entries and trailing
+archive data. Standard streaming data descriptors and ZIP64 size fields are
+allowed: their local placeholders must agree with the descriptor and central
+directory under ZIP's rules, rather than being rejected as mismatches. Only
+`manifest.json` and declared object members are allowed.
+Nested archive-looking asset bytes are ordinary response content, never extracted.
+
+Encrypted transfers are `.tmcase.tmcap` or `.tmrules.tmcap`: the exact ZIP byte
+stream stored as one logical artifact in an encrypted TMCap container. The inner
+ZIP is unchanged by wrapping/unwrapping and remains usable by standard archive
+tools after explicit decryption. The portable manifest does not depend on the
+encryption mode. Do not add ZIP member encryption or a second encryption format.
+
+Reuse [TMCap's encryption](tmcap-format.md#encryption-and-integrity): AES-256-GCM,
+Argon2id with 64 MiB, three iterations and one lane, domain-separated block keys,
+fresh salt/nonces, authenticated indexes and sealing. Reject unsupported KDF
+settings before password work; serialize password derivations. The public header
+retains its 4 KiB bound. Exposed information includes the TMCap file/document
+type, encryption parameters, salt/nonces, ciphertext size, external filename and
+filesystem metadata. The case manifest, member names and artifact descriptor
+are encrypted. No plaintext title, source list or notes are copied outside.
+
+This requires a **new generic artifact path**, not an existing capture feature:
+
+- Share the file/block/encryption layer below capture-record semantics. Define
+  a mandatory public document-kind discriminator for captures versus
+  `portable-archive`, authenticated with the rest of the header. Unsupported
+  document kinds fail before a capture importer can treat a case as empty
+  traffic. K3 specifies the wire extension and updates all current consumers and
+  fixtures together, without migration readers or earlier-layout adapters.
+- Store one typed logical ZIP payload with encrypted media type (case/rules),
+  checked unsigned-64-bit length, SHA-256 and a bounded chunk index. Reuse chunks
+  of at most 128 KiB and existing integrity checks. Do not invent HTTP exchanges,
+  embed Base64 archives in metadata, or allocate the entire ZIP as one blob.
+- Provide streaming writing and a logical `Read + Seek` view of the exact ZIP
+  bytes. ZIP creation must stream directly into the wrapper; inspection must
+  authenticate requested chunks before exposing them, without a persisted
+  decrypted temporary archive. Bound the ZIP directory before library indexing.
+- Emit Stored ZIP members; let the outer layer's existing adaptive compression
+  handle compressible chunks and bypass ineffective work. Do not decompress and
+  rebuild an existing ZIP to wrap it. K3 measures nested framing/index overhead
+  and read amplification on large archives and already compressed evidence.
+- Require a sealed outer artifact and complete inner ZIP for a valid transfer.
+  TMCap checkpoint recovery does not reconstruct a missing ZIP central directory.
+  Publish only after authenticated completion, exact length/hash verification and
+  package validation. Re-encrypting creates different outer bytes; inner object
+  hashes and portable source identities do not change when their bytes do not.
+
+This choice avoids a new encryption dependency but does not establish correctness
+of the new composition. K3 must qualify the generic payload, independent ZIP
+readability after unwrap, corruption/truncation detection, password handling,
+bounded random access, cancellation and clean-machine distribution. K0 ships no
+encrypted case writer/reader and does not change today's TMCap wire format.
+
+Read-only opening pins the source and uses authenticated bounded reads; it must
+not silently persist a decrypted working copy. Validate authenticated completion
+and all object hashes before publishing an imported case. Explicit **Save working
+copy** / `case unpack` creates a plaintext directory after disclosure. Source
+movement/deletion either leaves pinned reads valid or produces an explicit
+unavailable source; it never resolves a new file by its old name.
+
+Working copies have one current manifest and immutable objects. Save stages,
+flushes and atomically replaces the manifest; unreferenced staged objects are
+recoverable garbage, not a completed revision. Start with 32 explicit authored
+manifest revisions, reject further history saves at the limit, and offer explicit
+pruning. Do not silently discard evidence. Keep working manifest history under
+`history/<revision>/manifest.json` and retain objects referenced by any retained
+revision. Transfer includes one selected manifest, its selected experiment
+revisions and referenced objects; working manifest history and recovery files
+are excluded.
+
+## Manifest model
+
+UTF-8 JSON, no BOM, duplicate keys, non-finite numbers or unknown top-level fields.
+Required fields and a concrete example live in the [fixture corpus](../verification/fixtures/portable/README.md).
+This is a typed design, not the private persistence DTO or a stable public v1.
+Known nested types also reject unknown semantic fields; bounded namespaced
+`extensions` are the explicit preservation mechanism. An optional unsupported
+experiment can be retained opaquely within the manifest bound, but its unknown
+fields are never translated into rules or treated as supported configuration.
+
+| Field | Revision-0 meaning |
+| --- | --- |
+| `format` | `transmog-investigation`; `schemaVersion` is numeric `0`. |
+| `kind` | `case` or `rules`. Rules packages omit evidence, notes, context and runs, not rule dependencies. |
+| `id`, `revision` | Explicit portable identity and immutable revision; revision is a canonical positive decimal string. |
+| `title`, `createdAt`, `producer` | Authored title, UTC RFC3339 creation time and producer name/version. Descriptive data is not captured evidence. |
+| `requiredFeatures` | Package-wide required semantic identifiers. Unknown requirements prevent opening/import before mutation. |
+| `objects` | Unique SHA-256, decimal byte length and role (`capture`, `response-body`, `script-source`, `context`). All present members must match length/hash. |
+| `sources` | Capture object references, internal source keys, original/derived lineage and explicit loss/privacy context. |
+| `assets` | Exact asset ID/revision, status, ordered headers, encoded entity object and provenance/availability. |
+| `experiments` | Named variants and ordered immutable rule revisions with selected saved definitions and enabled/paused intent. |
+| `notes` | Authored text/reproduction steps and optional stable evidence references. |
+| `contexts` | Optional case-only inventory of source context references and separately collected immutable diagnostic objects, with collection origin, completeness and explicit failures/omissions. |
+| `runs` | Frozen experiment selection, actual retained response references/hashes, engine/script choice and authored outcomes with provenance. |
+| `extensions` | Optional namespaced descriptive JSON; bounded and preserved without executing or using it for matching. |
+
+Portable IDs use `[a-z0-9][a-z0-9._-]{0,127}` and are scoped to their owning graph.
+Labels may contain Unicode and duplicates. Revisions, byte lengths, ordinals,
+timing counters and large numeric identities use canonical decimal strings to
+avoid JavaScript precision loss. SHA-256 is exactly 64 lowercase hex digits.
+Object digests describe integrity/content identity, not publisher authenticity.
+The manifest has no self-hash; its exact stored bytes may be hashed externally.
+Within an entity's scope, repeated ID/revision pairs must have identical
+definitions. Identity remapping must remain consistent across all selected
+variant revisions and asset references. Known named experiments use
+`kind="response-variants"`; requirements on an optional experiment can make
+that experiment unavailable without invalidating known evidence.
+
+A source reference is `(artifactSha256, sourceKey, exchangeId, occurrence)` plus
+the requested message boundary. Hash the actual input artifact including its
+encryption/header bytes. `sourceKey="root"` names a standalone artifact without
+embedded sources; otherwise preserve its exact embedded source key. Native
+exchange IDs use 32 lowercase hex digits; imported non-native original IDs remain
+opaque strings and absent original IDs use JSON `null`, distinct from an empty
+string. `occurrence` is the zero-based source-local occurrence of that original
+ID (or of `null`), including duplicates. Runtime trace IDs and the Traffic
+`#` are never join keys. Reimporting the same bytes reuses a portable source
+reference; different bytes with the same filename/IDs remain different sources.
+
+Redaction, re-encoding, decryption into a new artifact or selected-entry export
+creates a new artifact digest. Record parent digests and explicit derivation
+operations. If the original artifact was omitted, keep the parent reference
+unavailable rather than pretending the derived object is the original. A derived
+file's internal associations and its parent entry mapping remain explicit.
+
+## Rule, asset and dependency semantics
+
+Every rule has an ID/revision, label, kind, evaluation boundary, authored enabled
+intent, match definition and typed action. Variants carry ordered rule references.
+Auto-responses use array order and first-enabled-match precedence. General header
+and literal rules carry an explicit signed numeric priority; equal-priority
+overlapping writes use the production compiler's conflict rejection. Preserve
+the original rule ID as provenance while allocating/remapping local import IDs.
+
+| Rule kind | Evaluation and action |
+| --- | --- |
+| `auto-response` | Original client method/URL/headers; `original-client-request`; exact asset ID/revision. |
+| `header-edit` | Request or response head at its native position; `effective-request-head` or `effective-response-head`; ordered set/append/remove operations. |
+| `literal-response` | `final-effective-response-heads`, fresh-origin response body; UTF-8 literal Find/Replacement, First/All, optional required total count, exact media type and decoded input/output bound. |
+
+This distinction is essential: a captured original request cannot establish
+effective-head predicates after earlier native/script edits. `rules test` must
+report **unknown** when it lacks that boundary, and must not execute other hooks
+to manufacture an answer. It evaluates matches/precedence, not response bodies
+or proof of browser behavior. Unavailable is different from no match.
+
+The portable matcher names the method (`null` means Any), address kind and scope,
+query mode, and ordered request/response header predicates. Exact URLs normalize
+implicit ports as desktop does. Address patterns retain literal scheme/host,
+segment placeholders, digit/rest forms and case choice. Query modes are exact,
+required decoded pairs (including duplicates), or ignore. Regex declares URL/path
+scope, whole/submatch and case choice, using the current bounded Rust matcher.
+Status/status-class predicates apply only to response phases. Examples contain
+explicit sample request fields and expected match decisions; they never influence
+matching. K1 must define field-level DTOs and round-trip this vocabulary through
+the existing validators, without expanding which rule kinds the product supports.
+
+Header names are ASCII tokens with original casing preserved. Header values use
+canonical padded RFC4648 Base64, including empty bytes. Arrays preserve duplicate
+names and order; no JSON dictionary conversion. Predicates use exists/exact/
+prefix/suffix/byte-regex. General header edits retain protected-field rejection.
+Do not silently omit redacted predicate values: mark that rule unavailable.
+
+Assets contain final status, ordered fields and exact **encoded entity** bytes,
+with their coding stack reflected in headers. SHA-256 identifies stored encoded
+bytes. Decoded hashes/text comparisons, if recorded, have their own representation
+labels. A future reader repairs framing through existing response-asset services,
+not by treating a bounded editor preview as complete content.
+
+Dependencies carry `state`: `present`, `missing`, `not-exported`, `unsupported` or
+`locked`, and a reason when unavailable. Evidence completeness separately records
+complete/truncated/redacted/evicted/not-retained/unknown; a present capture file
+can still have incomplete evidence. A missing asset is inspectable but prevents
+that experiment running. An absent body is not an empty object. Unknown optional
+experiment types remain inspectable as metadata with an unavailable result; they
+cannot be imported or executed. Unknown package-wide required features fail early.
+
+Linked files are exported as an explicitly acquired snapshot or an unavailable
+dependency. Do not export their absolute path, reopen an author's path on import,
+or claim an export-time copy was served earlier. A historical run needs retained
+boundary bytes matching its actual digest. Freeze failure aborts the selected
+experiment export; inspection-only export must explicitly report omissions.
+
+Scripts reference inert UTF-8 source objects, declared API revision, handlers,
+capabilities, limits and asset references. Imported scripts stay disabled drafts.
+Validation does not execute; explicit sandbox tests/activation use current backend
+validation and host startup. K5 must qualify helper discovery/versioning and ship
+declarations before advertising standalone script test commands.
+
+## Configuration and diagnostic context
+
+Use the same ZIP object store for case-level configuration output and diagnostic
+snapshots. A context attachment carries an ID, kind (`network-configuration`
+initially), collection time, collector name/version, platform, purpose, optional
+machine label, dependency state and completeness (`complete`, `partial` or
+`unknown`) with issues. Its `content` references exact bytes by object digest;
+JSON/text media types remain inert data. A successful collection is a snapshot,
+not proof that the same configuration held during every captured request.
+Unknown optional context kinds remain inspectable as unavailable metadata within
+the same bounds; they never acquire execution semantics. Package-wide required
+features still fail early when unsupported.
+
+Keep capture-time context associated with its source: standalone TMCap recording
+and recovery continue to carry `trace-metadata` / `trace-source`. Reference an
+existing snapshot by artifact digest, internal source key and known context kind
+rather than making a second authoritative copy in the case. If an implementation
+produces a separate display projection, label it derived and retain that source
+reference. Never substitute the importing or saving machine's current state for
+the original machine's snapshot. A new case-save collection has
+`origin.kind="collected-for-case"`, not a captured-source attribution.
+
+Collection stays opt-in and uses the existing bounded collector; packaging and
+opening do not run tool labels, shell commands or network probes. Preserve
+unavailable-tool, nonzero-exit, timeout and output-limit notes. Configuration
+output is included in privacy review and whole-package encryption along with
+notes and traffic. Omitting an attachment cannot remove context still embedded
+in a capture: privacy omission of that context needs an explicitly derived
+capture with new identity and lineage, or an honest warning that it remains.
+No collectors or existing native context records change in K0. K2 owns the
+inventory and source associations; K3 owns safe packaging/privacy qualification.
+
+## Limits, persistence and import
+
+| Resource | Initial processing bound |
+| --- | --- |
+| UTF-8 manifest, including descriptive extensions | 8 MiB; maximum nesting depth 32. |
+| Objects / ZIP file members | 16,384 objects plus one manifest; central directory at most 16 MiB, checked before ZIP index allocation. |
+| Member names | Exactly `manifest.json` or the derived ASCII digest path; no aliases, case variants, absolute/drive/UNC paths, `..`, backslashes or alternate data streams. |
+| Rules / operations / predicates / regex | 1,024 rules per compilation unit, 256 operations per rule/leg, 64 predicates per rule and 4 KiB per regex, matching current compiler limits. |
+| Response body object / script source | 1 GiB / 1 MiB, matching current serving/source limits. |
+| Context attachments | At most 256 per case; 8 MiB per JSON/text object and depth 32 for parsed JSON. Existing collector limits still apply (1 MiB stdout per tool, 8 KiB stderr and 10 seconds); report failures without claiming complete output. |
+| Notes / IDs / reference text | 64 KiB UTF-8 per note; IDs as above; original IDs/source keys at most 512 UTF-8 bytes. All still share the manifest bound. |
+| Object transfer | At most 1 MiB buffered chunks; checked unsigned-64-bit lengths/sums, cancellation, disk-space and I/O failure handling. |
+| Captures | No new small byte ceiling; stream exact objects. Existing native/SAZ/HAR metadata, decode and content-processing limits still apply and remain visible. |
+| Working history | 32 explicitly saved manifest revisions; immutable objects, explicit prune. |
+
+Do not allocate a buffer from declared object size. Validate the manifest and
+names, then stream and hash all selected objects into owned staging before
+publishing. Reject digest/length mismatch, missing mandatory structure, unsupported
+requirements, excessive metadata and duplicate JSON keys. Optional omissions are
+explicit; unexpected/unlisted members are errors. Readers never extract names
+directly against a destination. Create-new CLI output is the default; desktop
+replacement uses the established native confirmation and atomic publication.
+Failure/cancellation preserves originals and removes only owned staging.
+
+An import review distinguishes new, identical, conflicting, unsupported, locked
+and missing content. Differing content gets new local identities by default;
+remap every dependent reference in one transaction. Never replace by label or
+portable ID alone. Import disables rules and scripts, preserves authored intent
+as metadata, and leaves existing global gates, active revisions and drafts alone.
+Read-only viewers may inspect cases but cannot gain global automation privileges.
+
+Keep source capture encryption intact by default. Package and source passwords
+have separate roles; an unlocked outer case does not imply unlocked embedded
+captures. Passwords are never packaged. An explicit decrypted/derived copy must
+be reviewed and receive a new content identity. Privacy review includes notes,
+URLs, source labels, bodies, streams, script sources, assets and configuration
+snapshots with their source associations. Exclude private
+keys, passwords, supervisor tokens, root ledgers and product-state credentials.
+Package encryption does not erase plaintext working copies, previews or dumps.
+
+## Intended CLI interface
+
+These commands are **not implemented by K0**. K4 adds the first group; K5 adds
+script/compare tooling only after its dependencies are distributed and qualified.
+
+| Command | Intended behavior |
+| --- | --- |
+| `case inspect --input FILE --json` | Bounded inventory, source/dependency states and capabilities; no execution or import. |
+| `case validate --input FILE --json` | Verify structure, object hashes and references; separately report evidence completeness and runnable capabilities. |
+| `case pack --input DIR --output FILE [--encrypt]` | Create-new transactional package of the selected manifest and closure. |
+| `case unpack --input FILE --output DIR` | Explicit plaintext working copy, create-new directory and safe transactional extraction. |
+| `rules validate --input FILE --json` | Portable schema plus authoritative rule/action validation; no activation. |
+| `rules test --input FILE --capture FILE --json` | Original-request or available recorded-boundary matching, actual match/no-match/unknown, order and intent; no response/script execution or network. |
+| `capture inspect --input FILE --json` | Explicit structured addition; existing KEY=VALUE default remains. |
+| `capture compare --left FILE --right FILE --output FILE --json` | Existing comparison semantics with stable portable references; differences succeed unless `--fail-if-different`. |
+| `script types`, `script validate`, `script test` | Shipped declarations, side-effect-free validation, then explicitly invoked bounded sandbox tests. |
+
+Use existing support-profile JSON and validation; do not add a second capture
+profile language. All groups support `--help` before setup. Reject duplicate or
+unknown options before file mutation. Paths with spaces/Unicode remain ordinary
+quoted paths. No network service, source checkout, Cargo or Node requirement for
+binary-only workflows. K0 does not add a case management SDK or browser launcher.
+
+Password roles: `--input-password-file FILE` for the package, repeated
+`--source-password-file SOURCE_ID FILE` for separately encrypted captures, and
+`--password-file FILE` for encrypted output only. Use masked prompts when
+interactive; noninteractive missing passwords fail explicitly. Preserve the
+current 4096-byte UTF-8 file bound and newline trimming. Never accept plaintext
+password arguments. Diagnostics/progress/prompts go to stderr for new structured
+commands; stdout contains one UTF-8 JSON result and newline. Existing default
+output and existing command exit behavior remain unchanged.
+
+Results use `resultVersion:0`, `command`, `status` (`ok`/`error`), `diagnostics`
+(category, field path, human message) and command-specific `data`. Machine
+categories/counts are explicit; messages may evolve. Source references and large
+lengths use the manifest's exact string representations. Validation validity,
+evidence completeness and experiment runnability are separate fields. A valid
+inspection-only case succeeds with unavailable experiments. Define a separate
+streaming result mode before exposing enormous per-exchange JSON inventories.
+
+| Exit | New structured-command meaning |
+| --- | --- |
+| 0 | Successful operation, including ordinary comparison differences or known evidence gaps. |
+| 1 | Comparison differences with explicit `--fail-if-different`. |
+| 2 | Usage, invalid structure/integrity, authentication failure or missing password. Authentication errors do not identify a tampered ciphertext as a known wrong password. |
+| 3 | Unsupported format, required feature, encryption profile or unavailable execution capability. |
+| 4 | I/O, destination collision, disk-space or permission failure. |
+| 5 | Explicit sandbox/execution failure. |
+| 130 | Cancellation; no published partial output. |
+
+## Implementation and acceptance handoff
+
+K0's checked-in fixtures establish bytes, identities and expected future outcomes;
+they do not demonstrate an implemented package parser. The ordinary Python gate
+checks fixture consistency, digests, compression and scenario coverage. Current
+native readers verify real encrypted/stream/incomplete capture seeds separately.
+
+K1 introduces independent portable DTOs, field-level schema/semantic validation,
+selected rule/asset export and reviewed disabled import. Qualify exact/pattern/
+regex/query examples and each supported action phase through existing engines;
+unsupported kinds fail explicitly, without dropping rules. Import must preserve
+unrelated state and remap conflicts atomically.
+
+K2 adds evidence/notes/run inventory and working-copy persistence. K3 qualifies
+safe archive readers/writers, the typed TMCap wrapper, hostile corpus,
+transactional export and clean-profile import. K4 qualifies the documented CLI
+using shipped binaries in an empty directory. K5 integrates scripts, preview and
+comparison without claiming that packaging launches arbitrary browsers.
+
+Every reader must exercise the corpus through its production path once shipped:
+colliding sources and IDs; duplicate/binary headers and compression; missing and
+changed linked bytes; sensitive notes; encrypted sources; streams/loss/prefixes;
+unknown versions/features; invalid paths, duplicate members and corrupt digests.
+Add cancellation/full-disk/password retry and large streaming cases in K3/K4.
+Record actual compatibility, completeness and runnable state instead of a single
+"portable" success flag. Keep per-run results under ignored `artifacts`.

@@ -28,6 +28,11 @@ accepts `--help` or `-h`. Help shows accepted options, defaults, and password
 roles before any certificate, proxy, or output-file setup. The
 [help source](../crates/proxy-cli/src/help.rs) contains the full option reference.
 
+Future case/rule/script workflows and explicit JSON results are specified in the
+[portable investigation design](portable-investigations.md#intended-cli-interface).
+Those planned commands are not available in current binaries; existing command
+output and exit behavior remain unchanged.
+
 | Command | Task |
 | --- | --- |
 | `record` | Guided recording to a new `.tmcap` file; Ctrl+C stops and saves it. |

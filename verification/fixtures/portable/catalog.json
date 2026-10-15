@@ -1,0 +1,416 @@
+{
+  "corpusVersion": 0,
+  "contract": "docs/portable-investigations.md",
+  "scenarios": [
+    {
+      "id": "simple-css",
+      "manifest": "manifests/simple-css.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "css-experiment",
+        "passive-import",
+        "large-integer",
+        "retained-prefix",
+        "loss",
+        "sse"
+      ]
+    },
+    {
+      "id": "coded-duplicate-headers",
+      "manifest": "manifests/coded-duplicate-headers.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "encoded-entity",
+        "gzip",
+        "duplicate-headers",
+        "binary-header-value"
+      ]
+    },
+    {
+      "id": "missing-asset",
+      "manifest": "manifests/missing-asset.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "unavailable-missing-asset",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "missing-is-not-empty",
+        "inspection-only"
+      ]
+    },
+    {
+      "id": "linked-file-changed",
+      "manifest": "manifests/linked-file-changed.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "historical-run-bytes",
+        "export-snapshot",
+        "no-filesystem-authority"
+      ]
+    },
+    {
+      "id": "sensitive-notes",
+      "manifest": "manifests/sensitive-notes.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html",
+        "privacyReview": "required"
+      },
+      "covers": [
+        "notes-privacy",
+        "unicode",
+        "no-secret-scrubber-promise"
+      ]
+    },
+    {
+      "id": "network-context",
+      "manifest": "manifests/network-context.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html",
+        "context": "partial",
+        "privacyReview": "required"
+      },
+      "covers": [
+        "configuration-output",
+        "context-source-purpose",
+        "partial-context",
+        "inert-tool-labels",
+        "notes-privacy"
+      ]
+    },
+    {
+      "id": "encrypted-capture",
+      "manifest": "manifests/encrypted-capture.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "locked",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "encrypted-source",
+        "separate-password-roles"
+      ]
+    },
+    {
+      "id": "source-collision",
+      "manifest": "manifests/source-collision.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "same-label",
+        "same-original-id",
+        "distinct-artifact-digests",
+        "repeat-import-identity"
+      ]
+    },
+    {
+      "id": "derived-evidence",
+      "manifest": "manifests/derived-evidence.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "derived-source-identity",
+        "omitted-parent",
+        "no-source-backfill"
+      ]
+    },
+    {
+      "id": "future-version",
+      "manifest": "manifests/future-version.json",
+      "expected": {
+        "read": "unsupported-format",
+        "mutations": "none"
+      },
+      "covers": [
+        "future-version",
+        "no-migration"
+      ]
+    },
+    {
+      "id": "future-required",
+      "manifest": "manifests/future-required.json",
+      "expected": {
+        "read": "unsupported-feature",
+        "mutations": "none"
+      },
+      "covers": [
+        "unknown-required-feature"
+      ]
+    },
+    {
+      "id": "future-optional",
+      "manifest": "manifests/future-optional.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html",
+        "futureExperiment": "unavailable-unsupported"
+      },
+      "covers": [
+        "unknown-optional-experiment",
+        "inspect-known-evidence"
+      ]
+    },
+    {
+      "id": "rules-only",
+      "manifest": "manifests/rules-only.json",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "automationImport": "disabled"
+      },
+      "covers": [
+        "rule-collection",
+        "no-capture-required"
+      ]
+    },
+    {
+      "id": "zip64-streamed",
+      "package": "packages/zip64-streamed.tmcase",
+      "expected": {
+        "read": "ok",
+        "integrity": "valid",
+        "evidence": "incomplete",
+        "automationImport": "disabled",
+        "preview": "unavailable-missing-html"
+      },
+      "covers": [
+        "zip64-local-size-fields",
+        "streaming-data-descriptors",
+        "nonseekable-zip-output"
+      ]
+    },
+    {
+      "id": "traversal",
+      "package": "packages/traversal.tmcase",
+      "expected": {
+        "read": "invalid-package",
+        "mutations": "none"
+      },
+      "covers": [
+        "traversal"
+      ]
+    },
+    {
+      "id": "drive-path",
+      "package": "packages/drive-path.tmcase",
+      "expected": {
+        "read": "invalid-package",
+        "mutations": "none"
+      },
+      "covers": [
+        "drive-path"
+      ]
+    },
+    {
+      "id": "duplicate-member",
+      "package": "packages/duplicate-member.tmcase",
+      "expected": {
+        "read": "invalid-package",
+        "mutations": "none"
+      },
+      "covers": [
+        "duplicate-member"
+      ]
+    },
+    {
+      "id": "unlisted-member",
+      "package": "packages/unlisted-member.tmcase",
+      "expected": {
+        "read": "invalid-package",
+        "mutations": "none"
+      },
+      "covers": [
+        "unlisted-member"
+      ]
+    },
+    {
+      "id": "digest-mismatch",
+      "package": "packages/digest-mismatch.tmcase",
+      "expected": {
+        "read": "invalid-integrity",
+        "mutations": "none"
+      },
+      "covers": [
+        "digest-mismatch"
+      ]
+    }
+  ],
+  "captureSeeds": {
+    "source-a.tmcap": {
+      "sha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+      "bytes": "3892",
+      "role": "capture",
+      "mediaType": "application/vnd.transmog.tmcap"
+    },
+    "source-b.tmcap": {
+      "sha256": "e6db245da7101d605afb2bbcd34e2e8387f90f5ed0a4dc0b130efda652b2e755",
+      "bytes": "3894",
+      "role": "capture",
+      "mediaType": "application/vnd.transmog.tmcap"
+    },
+    "encrypted.tmcap": {
+      "sha256": "9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf",
+      "bytes": "3922",
+      "role": "capture",
+      "mediaType": "application/vnd.transmog.tmcap"
+    }
+  },
+  "fixturePassword": "portable-fixture-password",
+  "files": {
+    "examples/match-boundaries.json": {
+      "sha256": "0f7a1e7e86e9ffa85bfa02fe4c27aab651859fb7ff24bbba278fa4499130a771",
+      "bytes": "727"
+    },
+    "manifests/coded-duplicate-headers.json": {
+      "sha256": "56811f901915e5fc100d251432410535d66d2ef9a1ecf042c081e3d1d9658b2a",
+      "bytes": "5759"
+    },
+    "manifests/derived-evidence.json": {
+      "sha256": "5e9089c3e7b606505c391b8749f9f6aea10a6e54ca145882ac77b7a23e0787c4",
+      "bytes": "4853"
+    },
+    "manifests/encrypted-capture.json": {
+      "sha256": "9facd57dca81c6ea69c7ed245259217cb3392931e15c16f6500bb5fcb97715c0",
+      "bytes": "4588"
+    },
+    "manifests/future-optional.json": {
+      "sha256": "6185a0665903b63cf82f4bbf225ada6490a37227fa0645b7d532eb3c039b9535",
+      "bytes": "4816"
+    },
+    "manifests/future-required.json": {
+      "sha256": "45491f020c6b414c0948e2e6ae5cfaa2bd6b6ec7724487e5cfbdb9514177e58e",
+      "bytes": "4569"
+    },
+    "manifests/future-version.json": {
+      "sha256": "e6cb793799900477ed359678dd7e10ccef2d94a263696ebe44d0c319bb84d486",
+      "bytes": "4534"
+    },
+    "manifests/linked-file-changed.json": {
+      "sha256": "15b40461b3d4c70a112eb631b02d6ea396066f0bdce9337bbedf2d95aad6aba5",
+      "bytes": "5383"
+    },
+    "manifests/missing-asset.json": {
+      "sha256": "2140de134566e04edb79d887eee1f35f7571fa2814a5d385705f6a9e5e853d08",
+      "bytes": "4400"
+    },
+    "manifests/network-context.json": {
+      "sha256": "57950fe4337169046e6be224f098fbbd32e3f679262e915f314510bbcd2b3071",
+      "bytes": "5424"
+    },
+    "manifests/rules-only.json": {
+      "sha256": "84d425ad28889c8d7bd69c25cdfadf6ba5a0c0967ebb23fe486a61882f81fd74",
+      "bytes": "3172"
+    },
+    "manifests/sensitive-notes.json": {
+      "sha256": "ee9c8a01b523ee4125003f567864a225d323c76aed339095877db0e095e48e15",
+      "bytes": "4571"
+    },
+    "manifests/simple-css.json": {
+      "sha256": "18f8a3116c701d043407aea8de46fdf99b1678683e01c62eef99d1597a002eb8",
+      "bytes": "4534"
+    },
+    "manifests/source-collision.json": {
+      "sha256": "682317d99f0f138a0832ee6cbceb8e8cddc946ba217945009ba979cef3e3f03f",
+      "bytes": "5466"
+    },
+    "objects/sha256/00be90abe7030b59e320cef700758603b17805944093868d2acf1b970ae505ed": {
+      "sha256": "00be90abe7030b59e320cef700758603b17805944093868d2acf1b970ae505ed",
+      "bytes": "62"
+    },
+    "objects/sha256/2e985a68265bcbfe1b8cb5d5211eede0a6ccf02060e393d661ba4e9eb6423aa2": {
+      "sha256": "2e985a68265bcbfe1b8cb5d5211eede0a6ccf02060e393d661ba4e9eb6423aa2",
+      "bytes": "20"
+    },
+    "objects/sha256/95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b": {
+      "sha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+      "bytes": "3892"
+    },
+    "objects/sha256/9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf": {
+      "sha256": "9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf",
+      "bytes": "3922"
+    },
+    "objects/sha256/e6db245da7101d605afb2bbcd34e2e8387f90f5ed0a4dc0b130efda652b2e755": {
+      "sha256": "e6db245da7101d605afb2bbcd34e2e8387f90f5ed0a4dc0b130efda652b2e755",
+      "bytes": "3894"
+    },
+    "objects/sha256/e9e270886d0c6f505cc162c3bc81ac28153a3db2b418f09ad2a1383a6ce8922d": {
+      "sha256": "e9e270886d0c6f505cc162c3bc81ac28153a3db2b418f09ad2a1383a6ce8922d",
+      "bytes": "204"
+    },
+    "objects/sha256/f7d891fb00e73ad2d6ccc238a771f4c0e69a701dad896fa5a569d33f9c6603e0": {
+      "sha256": "f7d891fb00e73ad2d6ccc238a771f4c0e69a701dad896fa5a569d33f9c6603e0",
+      "bytes": "21"
+    },
+    "packages/digest-mismatch.tmcase": {
+      "sha256": "b1dcec6a2976a4b87134c9ef104c5e0d7a1648af7a5e9d6b8866d14009396544",
+      "bytes": "9041"
+    },
+    "packages/drive-path.tmcase": {
+      "sha256": "b2c12d4772b78204184658b9851b402de0aa7611b3c3a50f7b1e0df0fbe0be63",
+      "bytes": "9143"
+    },
+    "packages/duplicate-member.tmcase": {
+      "sha256": "6f26498093637a5c45cf77108de68b3035bceb3c06babd876b89dd9d4fd18668",
+      "bytes": "13674"
+    },
+    "packages/simple.tmcase": {
+      "sha256": "6f3c58ce1ac5cf78a902cea34002900a8e45a6ca8e70b2deefa5ae291ce23115",
+      "bytes": "9038"
+    },
+    "packages/traversal.tmcase": {
+      "sha256": "3d6b2de2f87f5fcdeddb689c7fc278350020d966a0fd176e0d932bf7cb93a6ea",
+      "bytes": "9143"
+    },
+    "packages/unlisted-member.tmcase": {
+      "sha256": "fef6df439111abe2cf3172f294c270adcb1638523c87f68b1f3f53e473ceead1",
+      "bytes": "9143"
+    },
+    "packages/zip64-streamed.tmcase": {
+      "sha256": "c36867377ad1fa0da373034561815f74770ad41657c2659bae44ddef7f8bdaf6",
+      "bytes": "9170"
+    }
+  }
+}

@@ -1,6 +1,8 @@
 fuzz/*.sh text eol=lf
 fuzz/corpus/** binary
 fuzz/seeds/** -text
+# Fixture hashes and archive recipes require exact bytes on every checkout.
+verification/fixtures/portable/** -text
 third_party/chromium-root-store/* text eol=lf
 third_party/chromium-root-store/crs.pb binary
 third_party/boringssl-pki/** text eol=lf -whitespace

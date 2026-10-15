@@ -168,3 +168,10 @@ scenes/reports. Keep reproduction steps and authored definitions separately when
 sharing an investigation today. A portable case format and binary-only rule
 management remain future work. See [response experiments](automation.md#response-experiments)
 for current authoring and activation behavior.
+
+The [portable investigation design](portable-investigations.md) specifies a
+separate case manifest, exact evidence references and whole-package encryption
+qualification. It does not change TMCap or add case commands in this increment.
+Its [context model](portable-investigations.md#configuration-and-diagnostic-context)
+puts separately collected diagnostics in package objects while retaining original
+capture context with its source and distinguishing the saving machine's snapshot.

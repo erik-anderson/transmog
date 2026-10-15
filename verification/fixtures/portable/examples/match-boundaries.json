@@ -1,0 +1,29 @@
+{
+  "resultVersion": 0,
+  "command": "rules.test",
+  "status": "ok",
+  "diagnostics": [],
+  "data": {
+    "samples": [
+      {
+        "kind": "auto-response",
+        "evaluation": "original-client-request",
+        "result": "match"
+      },
+      {
+        "kind": "header-edit",
+        "evaluation": "effective-response-head",
+        "result": "unknown",
+        "reason": "Only original request retained; prior head edits unavailable"
+      },
+      {
+        "kind": "literal-response",
+        "evaluation": "final-effective-response-heads",
+        "result": "unknown",
+        "reason": "Recorded final effective response head unavailable"
+      }
+    ],
+    "networkRequests": "0",
+    "scriptsExecuted": "0"
+  }
+}

@@ -126,6 +126,9 @@ F5 retains the current preview's frozen bytes. Earlier actual results remain
 inspectable under the existing Traffic body-retention policy and response file evidence.
 Selecting an old configuration does not recover missing, truncated or expired
 response bytes. Portable experiment packaging is a later increment.
+The [portable investigation design](portable-investigations.md) now defines its
+manifest, dependency and disabled-import boundaries; it adds no current export
+or import action.
 
 ## General rule ordering
 

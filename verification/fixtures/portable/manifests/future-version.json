@@ -1,0 +1,172 @@
+{
+  "format": "transmog-investigation",
+  "schemaVersion": 1,
+  "kind": "case",
+  "id": "case-css",
+  "revision": "1",
+  "title": "Synthetic CSS investigation · café",
+  "createdAt": "2026-10-15T00:00:00Z",
+  "producer": {
+    "name": "transmog-design-fixtures",
+    "version": "0.1.4"
+  },
+  "requiredFeatures": [
+    "response-assets/1",
+    "native-evidence/1"
+  ],
+  "objects": [
+    {
+      "sha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+      "bytes": "3892",
+      "role": "capture",
+      "mediaType": "application/vnd.transmog.tmcap"
+    },
+    {
+      "sha256": "2e985a68265bcbfe1b8cb5d5211eede0a6ccf02060e393d661ba4e9eb6423aa2",
+      "bytes": "20",
+      "role": "response-body",
+      "mediaType": "text/css"
+    }
+  ],
+  "sources": [
+    {
+      "id": "source-a",
+      "artifactSha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+      "sourceKey": "root",
+      "label": "customer.tmcap",
+      "dependency": {
+        "state": "present"
+      },
+      "lineage": {
+        "kind": "original"
+      },
+      "evidenceCompleteness": "incomplete"
+    }
+  ],
+  "assets": [
+    {
+      "id": "asset-css",
+      "revision": "1",
+      "status": 200,
+      "headers": [
+        {
+          "name": "Content-Type",
+          "valueBase64": "dGV4dC9jc3M="
+        },
+        {
+          "name": "Cache-Control",
+          "valueBase64": "bWF4LWFnZT02MA=="
+        },
+        {
+          "name": "X-Duplicate",
+          "valueBase64": "b25l"
+        },
+        {
+          "name": "x-duplicate",
+          "valueBase64": "dHdv"
+        },
+        {
+          "name": "X-Bytes",
+          "valueBase64": "gP8="
+        }
+      ],
+      "body": {
+        "state": "present",
+        "sha256": "2e985a68265bcbfe1b8cb5d5211eede0a6ccf02060e393d661ba4e9eb6423aa2",
+        "bytes": "20",
+        "representation": "encoded-entity"
+      },
+      "provenance": {
+        "kind": "authored",
+        "capturedSource": {
+          "artifactSha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+          "sourceKey": "root",
+          "exchangeId": "00000000000000000000000000000001",
+          "occurrence": "0",
+          "boundary": "client-response"
+        }
+      }
+    }
+  ],
+  "experiments": [
+    {
+      "id": "experiment-css",
+      "kind": "response-variants",
+      "requiredFeatures": [
+        "response-assets/1"
+      ],
+      "label": "Synthetic color change",
+      "pausedIntent": false,
+      "variants": [
+        {
+          "id": "baseline",
+          "label": "Baseline",
+          "revisions": [
+            {
+              "revision": "1",
+              "rules": []
+            }
+          ]
+        },
+        {
+          "id": "edited",
+          "label": "Blue",
+          "revisions": [
+            {
+              "revision": "1",
+              "rules": [
+                {
+                  "id": "rule-css",
+                  "revision": "9007199254740993",
+                  "label": "CSS hypothesis",
+                  "kind": "auto-response",
+                  "evaluation": "original-client-request",
+                  "enabledIntent": true,
+                  "match": {
+                    "method": "GET",
+                    "address": {
+                      "kind": "exact",
+                      "value": "https://portable.invalid/style.css"
+                    },
+                    "requestHeaders": [],
+                    "examples": [
+                      {
+                        "method": "GET",
+                        "url": "https://portable.invalid:443/style.css",
+                        "headers": [],
+                        "expected": "match"
+                      }
+                    ]
+                  },
+                  "action": {
+                    "assetId": "asset-css",
+                    "revision": "1"
+                  }
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "notes": [
+    {
+      "id": "note-steps",
+      "text": "SYNTHETIC ONLY: select the stylesheet, compare, then explicitly preview. Observed issue marker is an authored observation.",
+      "source": {
+        "artifactSha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+        "sourceKey": "root",
+        "exchangeId": "00000000000000000000000000000001",
+        "occurrence": "0",
+        "boundary": "client-response"
+      }
+    }
+  ],
+  "runs": [],
+  "extensions": {
+    "transmog.fixture": {
+      "synthetic": true
+    }
+  }
+}

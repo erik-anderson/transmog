@@ -25,6 +25,9 @@ Saving a trace preserves retained network evidence; it does not package these
 experiment definitions, script sources, linked files or temporary preview scenes.
 Copying the application state directory is not a portable investigation format.
 For sharing boundaries and unavailable bytes, see [trace saving](trace-saving.md#response-experiment-sharing).
+The [portable investigation design](portable-investigations.md) describes future
+case working copies and transfer privacy. Current persistence and retention are
+unchanged; a saved state directory is still not a portable case.
 
 Response assets persist the chosen copy/link behavior. Linked assets retain an
 absolute path even when the file is unavailable; they do not silently become

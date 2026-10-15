@@ -1,0 +1,7 @@
+{
+  "command": "ipconfig /all",
+  "output": "SYNTHETIC ONLY\r\nHost Name: synthetic-café\r\nIPv4 Address: 192.0.2.10\r\n",
+  "notes": [
+    "SYNTHETIC: route tool unavailable; context is partial."
+  ]
+}

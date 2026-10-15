@@ -11,7 +11,8 @@ are checked in.
 
 - Add a searchable capture library and project-level organization across saved
   captures, persisted automation, scripts, response assets and preferences.
-- Add bounded import/export and conflict handling for automation collections.
+- Implement bounded import/export and conflict handling for automation collections
+  from the [portable investigation design](portable-investigations.md).
 - Add request-body auto-response conditions only with explicit retention,
   privacy, resource, and replay semantics.
 - Extend headless tooling for persisted automation and script-workspace
@@ -20,8 +21,10 @@ are checked in.
 
 ## Capture and inspection fidelity
 
-- Define durable project formats and their support policy alongside the project
-  model, separately from the experimental live control protocol.
+- Implement the revision-0 [portable investigation contract](portable-investigations.md)
+  and qualify its archive/encryption, disabled import and binary-only workflows.
+  Broader project organization and any future format stability decision remain
+  separate from the experimental live control protocol.
 - Expand safe previews or semantic viewers only after a format-specific parser,
   sandbox, CSP, resource-limit, and hostile-corpus review.
 
