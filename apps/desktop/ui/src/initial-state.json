@@ -932,6 +932,7 @@
   "timingRows": [],
   "timingTransports": [],
   "timingSaved": [],
+  "responseEvidenceRows": [],
   "metadataNetworkSummary": "",
   "savingTrace": false,
   "saveTraceStatus": "",

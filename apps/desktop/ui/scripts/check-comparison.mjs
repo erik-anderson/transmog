@@ -54,9 +54,11 @@ export async function checkComparison(page,root){
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferComparison=true;delete globalThis.__workspaceFixture.releaseComparison;void document.querySelector('app-shell').comparison.refreshComparison();});
   await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseComparison);
   await page.keyboard.press('Escape');
+  await page.waitForFunction(()=>{const c=document.querySelector('app-shell').comparison;return !c.comparisonDialog.open&&c.comparisonResult===null;});
   const files=page.locator('traffic-workspace').getByRole('button',{name:'Files',exact:true});await files.focus();
+  const closedBeforeLateResult=await page.evaluate(()=>globalThis.__workspaceFixture.calls.close_comparison??0);
   await page.evaluate(()=>{globalThis.__workspaceFixture.releaseComparison();});
-  await page.waitForTimeout(50);assert.equal(await dialog.evaluate(d=>d.open),false);assert.equal(await files.evaluate(e=>e===e.getRootNode().activeElement),true);
+  await page.waitForFunction(count=>(globalThis.__workspaceFixture.calls.close_comparison??0)>count,closedBeforeLateResult);assert.equal(await dialog.evaluate(d=>d.open),false);assert.equal(await files.evaluate(e=>e===e.getRootNode().activeElement),true);
   assert.ok(await page.evaluate(()=>globalThis.__workspaceFixture.calls.cancel_comparison>=1));
   await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.trafficSelection.ids=new Set(['first']);t.updateTrafficSelection();t.setComparisonBaseline();t.trafficSelection.ids=new Set(['second']);t.updateTrafficSelection();});
   await page.locator('.content-search-status').getByRole('button',{name:'Compare with baseline',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.comparisonBusy);

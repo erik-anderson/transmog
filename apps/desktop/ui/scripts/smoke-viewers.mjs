@@ -1,3 +1,4 @@
+import {createHash} from 'node:crypto';
 import {smokeIncidentRecording,smokeIncidentIntake} from './smoke-incidents.mjs';
 import {smokeComparison,smokePreviewComparison} from './smoke-comparison.mjs';
 import assert from 'node:assert/strict';
@@ -98,6 +99,7 @@ try{
   await waitFor(()=>viewer.evaluate(`${traffic}.metadataTraceName==='viewer-fixture.saz'`),'Request trace metadata navigation failed');
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot,Buffer.from(image.data,'base64'));}
   await viewer.evaluate(`${traffic}.closeMetadata()`);
+  assert.equal(await viewer.evaluate(`${traffic}.matchedRuleId`),'','A saved rule identity must not navigate to an unrelated local definition');
   await viewer.evaluate(`${traffic}.showTimings()`);
   await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingSaved.length>0`),'Imported SAZ timer evidence did not appear');
   const timingState=await viewer.evaluate(`({open:${traffic}.timingDialog.open,summary:${traffic}.timingSummary,unknown:${traffic}.timingPhases[0].value})`);
@@ -110,6 +112,9 @@ try{
   const timingSource=join(dirname(source),'timing-fixture.tmcap');
   const perf={points:[{milestone:'request-headers',unixMillis:1800000000000,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000004,offsetMicros:4000}],protocols:[],transports:[{leg:'upstream',connectionId:'native-tcp-stats',shared:true,outcome:'connected',sampledOffsetMicros:3500,bytesRead:8192,bytesWritten:4096,tcpSampledOffsetMicros:3000,tcp:{rttMicros:2400,congestionWindow:65536,sendWindow:32768,retransmittedBytes:2048},socketIo:{writeWaitMicros:1750,writeWaits:2,lastWriteOffsetMicros:2800,lastFlushOffsetMicros:2900}}],work:[{kind:'hook',label:'Request headers · native support script',beganOffsetMicros:0,endedOffsetMicros:1000,busyNanos:1000000,calls:1},{kind:'transform',label:'Response body · native support script',beganOffsetMicros:1200,endedOffsetMicros:3500,busyNanos:500000,calls:3}]};
   const fixture=[{kind:'incident-marker',exchange_id:0,sequence:0,payload:{version:1,id:'1'.repeat(32),runId:'2'.repeat(32),unixMillis:1800000000000,offsetMillis:1,origin:'cli',creationKind:'user-mark',note:'Native issue <img src=x>'}},{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/native-waterfall',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'performance',payload:perf},{kind:'completed',payload:null}];
+  const responseHash=createHash('sha256').update('body').digest('hex');
+  Object.assign(fixture.find(row=>row.kind==='body-segment').payload,{byte_count:4,bytes:[98,111,100,121]});
+  fixture.splice(fixture.length-1,0,{kind:'hook-effect',payload:{hook_id:'automation/native-file@4/request/asset/native-style@2',hook_name:'Native linked-file experiment',phase:'request-head',action:'respond',changed:true,chain_position:0,response_snapshot:{status:200,bodyBytes:4,sha256:responseHash,contentCodings:[]}}});
   await writeFile(timingSource,nativeFixture(fixture,99));
   await viewer.evaluate(`void ${traffic}.importTrace(${JSON.stringify(timingSource)})`);
   await waitFor(async()=>{const state=await viewer.evaluate(`({busy:${traffic}.importingTrace,found:${traffic}.sessions.some(row=>row.path==='/native-waterfall'),status:${traffic}.importStatus})`);if(!state.busy){assert.ok(state.found,'Native timing fixture import failed: '+state.status);return true;}return false;},'Native timing fixture did not import');
@@ -125,6 +130,16 @@ try{
   await viewer.evaluate(`(()=>{const dialog=${traffic}.timingDialog;const section=Array.from(dialog.querySelectorAll('details')).find(node=>node.querySelector('summary')?.textContent==='Proxy ↔ upstream');section.open=true;const label=Array.from(section.querySelectorAll('dt')).find(node=>node.textContent==='TCP estimated round trip');label.scrollIntoView({block:'center'});})()`);
   assert.ok(await viewer.evaluate(`${traffic}.timingReportText.includes('TCP estimated round trip: 2.4 ms')`));
   if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-tcp.png'),Buffer.from(image.data,'base64'));}
+  await viewer.evaluate(`(()=>{const workspace=${traffic};workspace.showDetailsTab('timings');const evidence=workspace.timingDialog.querySelector('.response-file-evidence');evidence.querySelector('summary').click();evidence.scrollIntoView({block:'start'});})()`);
+  assert.ok(await viewer.evaluate(`${traffic}.timingDialog.querySelector('.response-file-evidence').textContent.includes('Complete response bytes are retained.')`));
+  assert.equal(await viewer.evaluate(`${traffic}.responseEvidenceRows.find(row=>row.id==='selected-hash').value`),responseHash);
+  const retainedBody=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('inspect_body',{request:{sessionId:${JSON.stringify(timingId)},boundary:'client-response',representation:'original-text',decodeContent:true,maxBytes:1024}})`);
+  assert.equal(retainedBody.display,'body');
+  if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-file-snapshot.png'),Buffer.from(image.data,'base64'));}
+  await viewer.call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+  assert.ok(await viewer.evaluate(`(()=>{const dialog=${traffic}.timingDialog,close=dialog.querySelector('footer').getBoundingClientRect();return dialog.getBoundingClientRect().height<=innerHeight&&close.bottom<=innerHeight;})()`));
+  if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-file-snapshot-compact.png'),Buffer.from(image.data,'base64'));}
+  await viewer.call('Emulation.clearDeviceMetricsOverride');
   await viewer.evaluate(`(async()=>{const workspace=${traffic};workspace.closeTimings();await window.__TAURI_INTERNALS__.invoke('remove_traffic_entries',{ids:[${JSON.stringify(timingId)}],restore:false});await workspace.refreshSessions(undefined,true);})()`);
 
   await viewer.evaluate(`${traffic}.closeTimings()`);

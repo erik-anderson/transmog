@@ -206,6 +206,15 @@ and columns. Bulk actions appear for multiple selected requests.
 
 ## Comparing captured evidence
 
+For linked auto-responses, **Details → Timings → Response file evidence** shows
+which encoded file snapshot the matched rule selected and whether complete
+client-response bytes remain retained. It distinguishes selected and captured
+hashes when later processing changes output. Compare the Traffic entries to
+compare historical iterations after external edits or deletion; selecting the
+saved response configuration instead acquires its current file. Save TMCap while
+complete evidence is retained to preserve it. See
+[linked-file evidence](automation.md#linked-file-snapshots-and-historical-evidence).
+
 Select exactly two Traffic requests and choose **Compare requests**, or use
 **Set as comparison baseline** and **Compare with baseline** from Actions/the
 selection menu. The baseline remains visible and clearable while selecting other

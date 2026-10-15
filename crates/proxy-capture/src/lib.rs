@@ -265,6 +265,10 @@ pub enum CaptureRecordKind {
         action: String,
         /// Whether canonical state changed.
         changed: bool,
+        /// Captured evaluation position, independent of subsequent rule reordering.
+        chain_position: usize,
+        /// Frozen local entity identity; contains no external file path.
+        response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
     },
     /// Selected route policy.
     RouteSelected {
@@ -513,6 +517,8 @@ struct HookPayload {
     phase: String,
     action: String,
     changed: bool,
+    chain_position: usize,
+    response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
 }
 
 #[derive(Deserialize, Serialize)]
@@ -1474,6 +1480,11 @@ pub fn record_from_observer(
             phase: hook_phase(effect.phase).to_owned(),
             action: hook_action(&effect.action).to_owned(),
             changed: effect.changed,
+            chain_position: effect.interceptor.chain_position,
+            response_snapshot: match &effect.action {
+                HookEffectAction::Respond { snapshot, .. } => snapshot.clone(),
+                _ => None,
+            },
         },
         ObserverEventKind::BodyChunk(chunk) => CaptureRecordKind::BodySegment {
             boundary: chunk.boundary,
@@ -1710,6 +1721,8 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
             phase,
             action,
             changed,
+            chain_position,
+            response_snapshot,
         } => (
             "hook-effect",
             json(HookPayload {
@@ -1718,6 +1731,8 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
                 phase: phase.clone(),
                 action: action.clone(),
                 changed: *changed,
+                chain_position: *chain_position,
+                response_snapshot: response_snapshot.clone(),
             })?,
         ),
         CaptureRecordKind::RouteSelected { policy_id, reason } => (
@@ -1853,6 +1868,8 @@ fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
                 phase: value.phase,
                 action: value.action,
                 changed: value.changed,
+                chain_position: value.chain_position,
+                response_snapshot: value.response_snapshot,
             }
         }
         "route-selected" => {

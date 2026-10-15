@@ -59,6 +59,15 @@ private headers and bodies before sharing. Saved traces have no fixed file-size
 or record-count ceiling; metadata indexing and body-processing budgets remain
 separate.
 
+For linked auto-responses, TMCap records the selected encoded entity's length,
+SHA-256 and compression stack with the historical rule/asset decision. It saves
+the retained client-response bytes independently, including their availability.
+Importing or comparing an earlier result never reads the external source path.
+The exchange ID, client-response boundary and complete body hash form the byte
+reference for future experiment packaging. A current path or configuration
+revision cannot replace missing, truncated or expired bytes. SAZ/HAR projections
+do not preserve the local snapshot selection record; use TMCap for that evidence.
+
 **Encrypt with a password (AES-256)** is optional. New passwords require
 confirmation and cannot be recovered. Encrypted imports ask only when needed,
 allow retry or Cancel, and leave Traffic unchanged on failure. Passwords are

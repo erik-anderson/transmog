@@ -37,6 +37,181 @@ static CURL_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 static WORKSPACE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through the interoperability driver with packaged helpers"]
+#[allow(clippy::too_many_lines)] // One complete acquisition/recording/save/import workflow.
+async fn linked_snapshot_history_survives_external_edits_and_native_save() {
+    use std::sync::Arc;
+    use transmog_app::comparison::{ComparisonOptions, ComparisonRequest, ComparisonSubject};
+    use transmog_app::{TraceImportRequest, TraceSaveOptions};
+    let environment = Environment::from_process();
+    let workspace = TestWorkspace::new();
+    let path = workspace.root.join("iteration.css");
+    std::fs::write(&path, b"first version").unwrap();
+    let application = Application::new(workspace.config(&environment)).unwrap();
+    let asset = application
+        .import_response_asset(ImportResponseAsset {
+            id: "iteration".into(),
+            revision: 1,
+            status: 200,
+            headers: HeaderBlock::new(),
+            body_path: path.clone(),
+            body_file_mode: transmog_app::ResponseBodyFileMode::Linked,
+            media_type: Some("text/css".into()),
+        })
+        .unwrap();
+    let candidate = application
+        .validate_automation(AutomationRuleSet {
+            rules: vec![autoresponse_rule(
+                "iteration-rule",
+                "/auto/history/",
+                &asset.asset_ref(),
+            )],
+            ..AutomationRuleSet::default()
+        })
+        .unwrap();
+    application
+        .activate_automation(&candidate.candidate_id)
+        .unwrap();
+    let listener = start(&application, &environment).await;
+    let recorded = workspace.root.join("recorded-iterations.tmcap");
+    application
+        .start_capture(CaptureStartRequest {
+            redact_sensitive_headers: false,
+            password: None,
+            include_network_context: false,
+            path: recorded.clone(),
+            max_file_bytes: 64 * 1024 * 1024,
+            retain_body_samples: true,
+        })
+        .await
+        .unwrap();
+    let mut results = Vec::new();
+    for (index, body) in [b"first version".as_slice(), b"other version".as_slice()]
+        .into_iter()
+        .enumerate()
+    {
+        let replacement = workspace.root.join("atomic-save.css");
+        std::fs::write(&replacement, body).unwrap();
+        std::fs::rename(replacement, &path).unwrap();
+        let suffix = format!("auto/history/{index}");
+        let response = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin(&suffix),
+            &[],
+        )
+        .await;
+        assert_success(&response);
+        assert_eq!(response.body, body);
+        let detail = wait_for_session(&application, &format!("/{suffix}"), "completed").await;
+        let matched = detail.auto_response.as_ref().unwrap();
+        assert_eq!(matched.asset_reference, asset.asset_ref());
+        let snapshot = matched.snapshot.as_ref().unwrap();
+        let captured = detail
+            .stored_bodies
+            .iter()
+            .find(|b| b.boundary == "client-response")
+            .unwrap();
+        assert_eq!(captured.sha256.as_deref(), Some(snapshot.sha256.as_str()));
+        assert_eq!(snapshot.body_bytes, body.len() as u64);
+        assert!(detail.route_attempts.is_empty());
+        results.push(detail);
+    }
+    assert_ne!(
+        results[0].auto_response.as_ref().unwrap().snapshot,
+        results[1].auto_response.as_ref().unwrap().snapshot
+    );
+    std::fs::remove_file(&path).unwrap();
+    assert_eq!(
+        application
+            .inspect_body(inspection(&results[0].id, "client-response"))
+            .await
+            .unwrap()
+            .display,
+        "first version"
+    );
+    let subject = |id: &str| ComparisonSubject::Exchange {
+        id: id.into(),
+        request_boundary: "client-request".into(),
+        response_boundary: "client-response".into(),
+    };
+    let comparison = application
+        .compare_evidence(
+            ComparisonRequest {
+                operation_id: "historical-files".into(),
+                left: subject(&results[0].id),
+                right: subject(&results[1].id),
+                options: ComparisonOptions::default(),
+            },
+            [None, None],
+        )
+        .await
+        .unwrap();
+    assert!(comparison.complete && comparison.different);
+    assert!(
+        comparison
+            .left
+            .notes
+            .iter()
+            .any(|note| note.contains("external file is never reopened"))
+    );
+    application.stop_capture().await.unwrap();
+    let saved = workspace.root.join("iterations.tmcap");
+    application
+        .save_traffic_trace(saved.clone(), TraceSaveOptions::default())
+        .await
+        .unwrap();
+    application.shutdown().await.unwrap();
+    for saved in [saved, recorded] {
+        let imported = Application::new(workspace.config(&environment)).unwrap();
+        imported
+            .import_trace(
+                TraceImportRequest {
+                    path: saved,
+                    password: None,
+                    operation_id: "iterations-import".into(),
+                    max_file_bytes: u64::MAX,
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        let entries = imported
+            .query_sessions(SessionQueryInput {
+                limit: Some(100),
+                ..SessionQueryInput::default()
+            })
+            .unwrap();
+        for original in &results {
+            let old_path = original.requests[0].target.as_ref().unwrap();
+            let row = entries
+                .sessions
+                .iter()
+                .find(|row| old_path.ends_with(&row.path))
+                .unwrap();
+            let detail = imported.session_detail(&row.id).unwrap();
+            assert_eq!(
+                detail.auto_response.as_ref().unwrap().snapshot,
+                original.auto_response.as_ref().unwrap().snapshot
+            );
+            assert_eq!(
+                imported
+                    .inspect_body(inspection(&row.id, "client-response"))
+                    .await
+                    .unwrap()
+                    .display,
+                application
+                    .inspect_body(inspection(&original.id, "client-response"))
+                    .await
+                    .unwrap()
+                    .display
+            );
+        }
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through scripts/test-interop.ps1 with Docker and packaged helpers"]
 #[allow(clippy::too_many_lines)]
 async fn linked_response_streams_compression_and_recovers_after_a_missing_file() {
@@ -130,6 +305,20 @@ async fn linked_response_streams_compression_and_recovers_after_a_missing_file()
             .display,
         "First external edit"
     );
+    let selected = detail
+        .auto_response
+        .as_ref()
+        .unwrap()
+        .snapshot
+        .as_ref()
+        .unwrap();
+    let captured = detail
+        .stored_bodies
+        .iter()
+        .find(|body| body.boundary == "client-response")
+        .unwrap();
+    assert_eq!(captured.sha256.as_deref(), Some(selected.sha256.as_str()));
+    assert_eq!(selected.content_codings, ["gzip"]);
     assert!(detail.route_attempts.is_empty());
     application.shutdown().await.unwrap();
     drop(application);

@@ -38,7 +38,7 @@ def main():
             TRANSMOG_PREVIEW_WORKER=str(output / native_name("transmog-preview-worker")),
         )
         try:
-            for test in ("linked_response_streams_compression_and_recovers_after_a_missing_file", "explicit_file_copy_above_old_cutoff_serves_saved_bytes"):
+            for test in ("linked_response_streams_compression_and_recovers_after_a_missing_file", "explicit_file_copy_above_old_cutoff_serves_saved_bytes", "linked_snapshot_history_survives_external_edits_and_native_save"):
                 command(["cargo", "test", "--locked", "-p", "transmog-app", "--test", "headless_product", test, "--", "--ignored", "--nocapture"], env=env)
             if origin.requests:
                 raise RuntimeError(f"Auto-response rules contacted the origin {origin.requests} times")

@@ -110,6 +110,7 @@ export interface AutoResponseMatch {
   assetReference: string;
   status: number;
   bodyBytes: number;
+  snapshot?: {status:number;bodyBytes:number;sha256:string;contentCodings:string[]} | null;
 }
 export interface StoredBodyMetadata {
   lengthKnown?:boolean;

@@ -29,6 +29,8 @@ const MAX_AUTHORED_BYTES: usize = 16 * 1024 * 1024;
 const BUFFERED_RESPONSE_BYTES: u64 = 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
 
+mod snapshot;
+
 /// Explicit selected-file behavior; size never changes this choice.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -249,6 +251,7 @@ pub struct ResponseAssetStore {
     assets: Arc<RwLock<BTreeMap<String, ResponseAsset>>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     file_errors: Arc<Mutex<BTreeMap<String, String>>>,
+    snapshots: Arc<snapshot::SnapshotPool>,
 }
 
 impl ResponseAssetStore {
@@ -266,6 +269,7 @@ impl ResponseAssetStore {
             assets: Arc::new(RwLock::new(assets)),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(generation)),
             file_errors: Arc::new(Mutex::new(BTreeMap::new())),
+            snapshots: Arc::default(),
         })
     }
 
@@ -993,7 +997,11 @@ impl ResponseAssetResolver for ResponseAssetStore {
         }
     }
 
-    fn resolve(&self, asset_id: &str) -> Result<AutomationResponse, String> {
+    fn resolve(
+        &self,
+        asset_id: &str,
+        canceled: &std::sync::atomic::AtomicBool,
+    ) -> Result<AutomationResponse, String> {
         let asset = self
             .assets
             .read()
@@ -1002,8 +1010,10 @@ impl ResponseAssetResolver for ResponseAssetStore {
             .cloned()
             .ok_or_else(|| "response asset revision is unavailable".to_owned())?;
         if let Some(linked) = &asset.linked_body {
-            let result = self.resolve_linked(&asset, linked);
-            if let Err(message) = &result {
+            let result = self.resolve_linked(&asset, linked, canceled);
+            if let Err(message) = &result
+                && !canceled.load(std::sync::atomic::Ordering::Acquire)
+            {
                 self.file_errors
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -1047,11 +1057,14 @@ impl ResponseAssetResolver for ResponseAssetStore {
             .name("transmog-response-asset".to_owned())
             .spawn(move || stream_file(path, expected, &sender))
             .map_err(|_| "response asset stream could not start".to_owned())?;
-        Ok(AutomationResponse::Streaming(LocalStreamingResponse {
-            head,
-            body,
-            body_length: Some(asset.body_bytes),
-        }))
+        Ok(AutomationResponse::Streaming {
+            response: LocalStreamingResponse {
+                head,
+                body,
+                body_length: Some(asset.body_bytes),
+            },
+            snapshot: None,
+        })
     }
 }
 
@@ -1079,7 +1092,13 @@ impl ResponseAssetStore {
                     .as_deref()
                     .map(|root| body_path(root, &asset.sha256))
             });
-        let file = path.and_then(|path| File::open(path).ok());
+        let file = path.and_then(|path| {
+            if asset.linked_body.is_some() {
+                snapshot::open(&path).ok()
+            } else {
+                File::open(path).ok()
+            }
+        });
         Ok((asset, file))
     }
     /// Materializes bounded, stable bytes without exposing an external path to a browser.
@@ -1106,58 +1125,24 @@ impl ResponseAssetStore {
                 &asset.sha256,
             ),
         };
-        let mut file = File::open(path).map_err(|_| {
-            unavailable(
-                "Response file is unavailable; select a readable file and save the rule again",
-            )
-        })?;
-        let before = file
-            .metadata()
-            .map_err(|_| unavailable("Response file metadata is unavailable"))?;
-        if !before.is_file() || before.len() > limit || limit == 0 {
-            return Err(unavailable(
-                "Response exceeds the preview limit (32 MiB per resource, 256 MiB total)",
-            ));
-        }
-        let read = |file: &mut File| -> Result<Vec<u8>, AppError> {
-            let mut bytes = Vec::new();
-            let mut buffer = vec![0; 16 * 1024];
-            loop {
-                if canceled.load(std::sync::atomic::Ordering::Acquire) {
-                    return Err(unavailable("Captured page preview canceled"));
-                }
-                let count = file
-                    .read(&mut buffer)
-                    .map_err(|_| unavailable("Response file could not be read"))?;
-                if count == 0 {
-                    break;
-                }
-                if bytes.len() as u64 + count as u64 > limit {
-                    return Err(unavailable("Response grew beyond the preview byte limit"));
-                }
-                bytes.extend_from_slice(&buffer[..count]);
-            }
-            Ok(bytes)
-        };
-        let bytes = read(&mut file)?;
-        file.rewind()
-            .map_err(|_| unavailable("Response file could not be verified"))?;
-        let verified = read(&mut file)?;
-        let after = file
-            .metadata()
-            .map_err(|_| unavailable("Response file metadata is unavailable"))?;
-        let digest = format!("{:x}", Sha256::digest(&bytes));
-        if bytes != verified
-            || before.len() != after.len()
-            || bytes.len() as u64 != before.len()
-            || before.modified().ok() != after.modified().ok()
-            || (asset.linked_body.is_none()
-                && (digest != asset.sha256 || bytes.len() as u64 != asset.body_bytes))
+        let file = snapshot::open(&path)?;
+        let frozen = snapshot::acquire(
+            file,
+            destination
+                .parent()
+                .ok_or_else(|| unavailable("Preview storage unavailable"))?,
+            limit,
+            || canceled.load(std::sync::atomic::Ordering::Acquire),
+        )?;
+        if asset.linked_body.is_none()
+            && (frozen.sha256 != asset.sha256 || frozen.bytes != asset.body_bytes)
         {
             return Err(unavailable(
-                "Response file changed during preparation; retry after saving the file",
+                "Stored response bytes do not match their immutable identity",
             ));
         }
+        let bytes = std::fs::read(frozen.file.path())
+            .map_err(|_| unavailable("Frozen response is unavailable"))?;
         let codings = if asset.linked_body.is_some() {
             Vec::new()
         } else {
@@ -1180,9 +1165,26 @@ impl ResponseAssetStore {
         &self,
         asset: &ResponseAsset,
         linked: &LinkedResponseBody,
+        canceled: &std::sync::atomic::AtomicBool,
     ) -> Result<AutomationResponse, String> {
-        let (file, info) = open_selected_file(&linked.path).map_err(|error| error.message)?;
-        let expected = info.bytes;
+        let root = self
+            .root
+            .as_deref()
+            .ok_or_else(|| "Response snapshot storage is unavailable".to_owned())?;
+        let preparation = self
+            .snapshots
+            .preparation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if canceled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("Response snapshot preparation canceled".into());
+        }
+        let file = snapshot::open(&linked.path).map_err(|error| error.message)?;
+        let input = snapshot::acquire(file, root, MAX_ASSET_BYTES, || {
+            canceled.load(std::sync::atomic::Ordering::Acquire)
+        })
+        .map_err(|error| error.message)?;
+        let expected = input.bytes;
         let mut headers = repair_headers(&asset.headers, expected, asset.media_type.as_deref())
             .map_err(|error| error.message)?;
         let codings = if linked.apply_original_compression {
@@ -1190,8 +1192,7 @@ impl ResponseAssetStore {
         } else {
             Vec::new()
         };
-        let encoders = content_encoders(&codings)?;
-        let compressed = !encoders.is_empty();
+        let compressed = !codings.is_empty();
         set_content_encoding(&mut headers, &codings).map_err(|error| error.message)?;
         if compressed {
             headers.remove_all("content-length");
@@ -1201,6 +1202,36 @@ impl ResponseAssetStore {
             headers,
             source_version: HttpLegVersion::Http1,
         };
+        let frozen = if compressed {
+            let encoded = encode_file_temporary(
+                input
+                    .file
+                    .reopen()
+                    .map_err(|_| "Response snapshot could not be read")?,
+                expected,
+                &codings,
+                root,
+            )
+            .map_err(|error| error.message)?;
+            snapshot::owned(encoded, MAX_ASSET_BYTES).map_err(|error| error.message)?
+        } else {
+            input
+        };
+        if canceled.load(std::sync::atomic::Ordering::Acquire) {
+            return Err("Response snapshot preparation canceled".into());
+        }
+        let frozen = self.snapshots.admit(frozen)?;
+        drop(preparation);
+        let evidence = transmog_core::intercept::LocalResponseSnapshot {
+            status: asset.status,
+            body_bytes: frozen.bytes,
+            sha256: frozen.sha256.clone(),
+            content_codings: codings,
+        };
+        let file = frozen
+            .file
+            .reopen()
+            .map_err(|_| "Response snapshot could not be opened")?;
         let (sender, body) =
             BodyStream::channel(NonZeroUsize::new(8).expect("file stream capacity is nonzero"));
         let errors = self.file_errors.clone();
@@ -1208,26 +1239,8 @@ impl ResponseAssetStore {
         std::thread::Builder::new()
             .name("transmog-linked-response".into())
             .spawn(move || {
-                let result = if compressed {
-                    tokio::runtime::Builder::new_current_thread()
-                        .enable_all()
-                        .build()
-                        .map_err(|_| {
-                            BodyStreamError::Failed(
-                                "Response compression worker could not start.".into(),
-                            )
-                        })
-                        .and_then(|runtime| {
-                            runtime.block_on(encode_file_frames(
-                                file,
-                                expected,
-                                encoders,
-                                EncodedSink::Stream(&sender),
-                            ))
-                        })
-                } else {
-                    stream_file_handle(file, expected, &sender)
-                };
+                let result = stream_file_handle(file, frozen.bytes, &sender);
+                drop(frozen);
                 if let Err(error) = result {
                     let message = error.to_string();
                     if !message.contains("consumer closed") {
@@ -1245,11 +1258,14 @@ impl ResponseAssetStore {
                 }
             })
             .map_err(|_| "Response file stream could not start. Try again.".to_owned())?;
-        Ok(AutomationResponse::Streaming(LocalStreamingResponse {
-            head,
-            body,
-            body_length: if compressed { None } else { Some(expected) },
-        }))
+        Ok(AutomationResponse::Streaming {
+            response: LocalStreamingResponse {
+                head,
+                body,
+                body_length: if compressed { None } else { Some(expected) },
+            },
+            snapshot: Some(evidence),
+        })
     }
 }
 
@@ -1285,31 +1301,15 @@ fn content_encoders(codings: &[String]) -> Result<Vec<ContentEncoder>, String> {
         .collect()
 }
 
-enum EncodedSink<'a> {
-    File(&'a mut File),
-    Stream(&'a transmog_core::BodyStreamSender),
-}
-impl EncodedSink<'_> {
-    async fn write(&mut self, frames: Vec<BodyFrame>) -> Result<(), BodyStreamError> {
-        for frame in frames {
-            match self {
-                Self::File(file) => {
-                    if let BodyFrame::Data(bytes) = frame {
-                        file.write_all(&bytes).map_err(|_| {
-                            BodyStreamError::Failed(
-                                "Compressed response file could not be written.".into(),
-                            )
-                        })?;
-                    }
-                }
-                Self::Stream(sender) => sender
-                    .send(Ok(frame))
-                    .await
-                    .map_err(|_| BodyStreamError::Failed("response consumer closed".into()))?,
-            }
+fn write_encoded_frames(file: &mut File, frames: Vec<BodyFrame>) -> Result<(), BodyStreamError> {
+    for frame in frames {
+        if let BodyFrame::Data(bytes) = frame {
+            file.write_all(&bytes).map_err(|_| {
+                BodyStreamError::Failed("Compressed response file could not be written.".into())
+            })?;
         }
-        Ok(())
     }
+    Ok(())
 }
 
 async fn encode_chain(
@@ -1335,7 +1335,7 @@ async fn encode_file_frames(
     file: File,
     expected: u64,
     mut encoders: Vec<ContentEncoder>,
-    mut sink: EncodedSink<'_>,
+    output: &mut File,
 ) -> Result<(), BodyStreamError> {
     let mut reader = ExactFileReader::new(file, expected);
     let mut buffer = vec![0; STREAM_CHUNK_BYTES];
@@ -1344,17 +1344,12 @@ async fn encode_file_frames(
         if read == 0 {
             break;
         }
-        if let EncodedSink::Stream(sender) = &sink
-            && sender.is_closed()
-        {
-            return Err(BodyStreamError::Failed("response consumer closed".into()));
-        }
         let frames = encode_chain(
             &mut encoders,
             vec![BodyFrame::Data(Bytes::copy_from_slice(&buffer[..read]))],
         )
         .await?;
-        sink.write(frames).await?;
+        write_encoded_frames(output, frames)?;
     }
     for index in 0..encoders.len() {
         let frames = encoders[index]
@@ -1362,12 +1357,30 @@ async fn encode_file_frames(
             .await
             .map_err(|error| BodyStreamError::Failed(error.to_string()))?;
         let frames = encode_chain(&mut encoders[index + 1..], frames).await?;
-        sink.write(frames).await?;
+        write_encoded_frames(output, frames)?;
     }
     Ok(())
 }
 
 fn encode_file_temporary(
+    file: File,
+    expected: u64,
+    codings: &[String],
+    root: &Path,
+) -> Result<tempfile::NamedTempFile, AppError> {
+    std::thread::scope(|scope| {
+        std::thread::Builder::new()
+            .name("transmog-snapshot-encoding".into())
+            .spawn_scoped(scope, move || {
+                encode_file_temporary_inner(file, expected, codings, root)
+            })
+            .map_err(|_| unavailable("Response compression worker could not start"))?
+            .join()
+            .map_err(|_| unavailable("Response compression worker failed"))?
+    })
+}
+
+fn encode_file_temporary_inner(
     file: File,
     expected: u64,
     codings: &[String],
@@ -1386,7 +1399,7 @@ fn encode_file_temporary(
             file,
             expected,
             encoders,
-            EncodedSink::File(output.as_file_mut()),
+            output.as_file_mut(),
         ))
         .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
     output
@@ -1458,11 +1471,15 @@ impl ScriptResponseAssetResolver for ResponseAssetStore {
     }
 
     fn resolve(&self, asset_ref: &str) -> Result<ScriptResolvedResponse, String> {
-        match ResponseAssetResolver::resolve(self, asset_ref)? {
+        match ResponseAssetResolver::resolve(
+            self,
+            asset_ref,
+            &std::sync::atomic::AtomicBool::new(false),
+        )? {
             AutomationResponse::Buffered(response) => {
                 Ok(ScriptResolvedResponse::Buffered(response))
             }
-            AutomationResponse::Streaming(response) => {
+            AutomationResponse::Streaming { response, .. } => {
                 Ok(ScriptResolvedResponse::Streaming(response))
             }
         }
@@ -1758,6 +1775,59 @@ mod preview_snapshot_tests {
     use std::sync::atomic::AtomicBool;
 
     #[tokio::test]
+    async fn live_snapshot_is_fixed_before_a_backpressured_response_is_consumed() {
+        let root = tempfile::tempdir().unwrap();
+        let store = ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
+        let path = root.path().join("linked.bin");
+        let original = vec![42; 3 * 1024 * 1024];
+        std::fs::write(&path, &original).unwrap();
+        let asset = store
+            .import_file(ImportResponseAsset {
+                id: "frozen".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body_path: path.clone(),
+                body_file_mode: ResponseBodyFileMode::Linked,
+                media_type: None,
+            })
+            .unwrap();
+        let original_files = std::fs::read_dir(root.path().join("assets"))
+            .unwrap()
+            .count();
+        let AutomationResponse::Streaming {
+            mut response,
+            snapshot: Some(snapshot),
+        } = ResponseAssetResolver::resolve(&store, &asset.asset_ref(), &AtomicBool::new(false))
+            .unwrap()
+        else {
+            panic!("Expected frozen stream")
+        };
+        std::fs::write(&path, b"changed while the consumer is paused").unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let mut received = Vec::new();
+        while let Some(frame) = response.body.recv().await {
+            if let BodyFrame::Data(bytes) = frame.unwrap() {
+                received.extend_from_slice(&bytes);
+            }
+        }
+        assert_eq!(received, original);
+        assert_eq!(snapshot.body_bytes, received.len() as u64);
+        assert_eq!(snapshot.sha256, format!("{:x}", Sha256::digest(&received)));
+        assert!(
+            ResponseAssetResolver::resolve(&store, &asset.asset_ref(), &AtomicBool::new(true))
+                .unwrap_err()
+                .contains("canceled")
+        );
+        assert_eq!(
+            std::fs::read_dir(root.path().join("assets"))
+                .unwrap()
+                .count(),
+            original_files
+        );
+    }
+
+    #[tokio::test]
     async fn linked_preview_copies_bytes_and_reports_missing_changed_limits_and_cancellation() {
         let root = tempfile::tempdir().unwrap();
         let store = ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
@@ -2029,7 +2099,14 @@ mod tests {
                     let missing =
                         ResponseAssetStore::load(Some(root.path().join("assets"))).unwrap();
                     assert!(ResponseAssetResolver::validate(&missing, &asset.asset_ref()).is_ok());
-                    assert!(ResponseAssetResolver::resolve(&missing, &asset.asset_ref()).is_err());
+                    assert!(
+                        ResponseAssetResolver::resolve(
+                            &missing,
+                            &asset.asset_ref(),
+                            &std::sync::atomic::AtomicBool::new(false)
+                        )
+                        .is_err()
+                    );
                     assert!(
                         missing
                             .inspect(&asset.asset_ref())
@@ -2240,10 +2317,22 @@ mod tests {
             Some(&b"5"[..])
         );
         assert!(matches!(
-            ResponseAssetResolver::resolve(&store, "saved@3").unwrap(),
+            ResponseAssetResolver::resolve(
+                &store,
+                "saved@3",
+                &std::sync::atomic::AtomicBool::new(false)
+            )
+            .unwrap(),
             AutomationResponse::Buffered(_)
         ));
-        assert!(ResponseAssetResolver::resolve(&store, "saved@2").is_err());
+        assert!(
+            ResponseAssetResolver::resolve(
+                &store,
+                "saved@2",
+                &std::sync::atomic::AtomicBool::new(false)
+            )
+            .is_err()
+        );
         drop(store);
         assert_eq!(
             ResponseAssetStore::load(Some(root.clone())).unwrap().list(),
@@ -2256,17 +2345,22 @@ mod tests {
         store: &ResponseAssetStore,
         asset: &ResponseAsset,
     ) -> (HeaderBlock, Vec<u8>) {
-        let (head, frames) =
-            match ResponseAssetResolver::resolve(store, &asset.asset_ref()).unwrap() {
-                AutomationResponse::Buffered(response) => (response.head, response.body),
-                AutomationResponse::Streaming(mut response) => {
-                    let mut frames = Vec::new();
-                    while let Some(frame) = response.body.recv().await {
-                        frames.push(frame.unwrap());
-                    }
-                    (response.head, frames)
+        let (head, frames) = match ResponseAssetResolver::resolve(
+            store,
+            &asset.asset_ref(),
+            &std::sync::atomic::AtomicBool::new(false),
+        )
+        .unwrap()
+        {
+            AutomationResponse::Buffered(response) => (response.head, response.body),
+            AutomationResponse::Streaming { mut response, .. } => {
+                let mut frames = Vec::new();
+                while let Some(frame) = response.body.recv().await {
+                    frames.push(frame.unwrap());
                 }
-            };
+                (response.head, frames)
+            }
+        };
         let mut body = Vec::new();
         for frame in frames {
             if let BodyFrame::Data(bytes) = frame {
@@ -2487,8 +2581,13 @@ mod tests {
             .unwrap();
         assert_eq!(asset.body_bytes, BUFFERED_RESPONSE_BYTES + 1);
         assert!(matches!(
-            ResponseAssetResolver::resolve(&store, "large@1").unwrap(),
-            AutomationResponse::Streaming(_)
+            ResponseAssetResolver::resolve(
+                &store,
+                "large@1",
+                &std::sync::atomic::AtomicBool::new(false)
+            )
+            .unwrap(),
+            AutomationResponse::Streaming { .. }
         ));
         let _ = std::fs::remove_dir_all(root);
     }

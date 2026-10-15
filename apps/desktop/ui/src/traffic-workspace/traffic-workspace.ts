@@ -1,3 +1,4 @@
+import { responseEvidence } from '../response-evidence.js';
 import '../incident-intake/incident-intake.js';
 import type {IncidentWindow} from '../incident-intake/incident-intake.js';
 import {timingView, type TimingRow, type TimelineRow, type TransportView, type WaterfallRow} from '../timings.js';
@@ -121,6 +122,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable timingRows:TimelineRow[]=[];
   @observable timingTransports:TransportView[]=[];
   @observable timingSaved:TimingRow[]=[];
+  @observable responseEvidenceRows:TimingRow[]=[];
   timingDialog!:HTMLDialogElement;
   private timingId="";
   private timingGeneration=0;
@@ -450,11 +452,11 @@ export class TrafficWorkspace extends WorkspaceElement {
     const active=(this.getRootNode() as ShadowRoot).activeElement;
     this.detailsReturnFocus=active instanceof HTMLElement&&active.closest('.selection-actions')?this.detailsButton:this.trafficTable;
     this.showDetailsTab('timings');this.detailsUrl=this.selectedUrlText;this.detailsHasSource=false;this.detailsSourceId='';this.detailsCertificateLoaded=false;
-    this.timingId=id;this.timingWaterfall=[];this.timingMinor=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.timingSummary='Loading measurements…';this.$flushUpdates();this.timingDialog.showModal();await this.refreshTimings();
+    this.timingId=id;this.timingWaterfall=[];this.timingMinor=[];this.timingWork=[];this.timingReportText='';this.timingReportVisible=false;this.timingStatus='';this.timingPhases=[];this.timingRows=[];this.timingTransports=[];this.timingSaved=[];this.responseEvidenceRows=[];this.timingSummary='Loading measurements…';this.$flushUpdates();this.timingDialog.showModal();await this.refreshTimings();
   }
   async refreshTimings():Promise<void> {
     const id=this.timingId,generation=++this.timingGeneration;this.timingBusy=true;this.timingError='';
-    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;this.sourceRequestIdentity='Workspace request '+detail.requestNumber+(detail.originalId?' · Original request ID: '+detail.originalId:'')+(detail.originalRequestNumber?' · Original number: '+detail.originalRequestNumber+' ('+detail.originalRequestNumberProvenance+')':'');const source=detail.traceId??'';this.detailsUrl=detail.requests[0]?.target??this.detailsUrl;if(source!==this.detailsSourceId){this.detailsSourceId=source;this.detailsHasSource=!!source;if(source)void this.loadDetailsSource(source);}const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
+    try {const detail=await invoke<SessionDetail>('session_detail',{id});if(!this.isConnected||generation!==this.timingGeneration)return;this.sourceRequestIdentity='Workspace request '+detail.requestNumber+(detail.originalId?' · Original request ID: '+detail.originalId:'')+(detail.originalRequestNumber?' · Original number: '+detail.originalRequestNumber+' ('+detail.originalRequestNumberProvenance+')':'');const source=detail.traceId??'';this.detailsUrl=detail.requests[0]?.target??this.detailsUrl;if(source!==this.detailsSourceId){this.detailsSourceId=source;this.detailsHasSource=!!source;if(source)void this.loadDetailsSource(source);}const view=timingView(detail);this.timingTitle='Timings and transport · '+(detail.requests[0]?.method??'Request');this.timingSummary=view.summary;this.timingPhases=view.phases;this.timingRows=view.timeline;this.timingTransports=view.transports;this.timingSaved=view.saved;this.responseEvidenceRows=responseEvidence(detail);this.timingWaterfall=view.waterfall;this.timingMinor=view.minor;this.timingWork=view.work;this.timingRange=view.range;this.timingReportText=view.report;this.timingReportPreview.value=view.report;}
     catch(error:unknown){if(generation===this.timingGeneration)this.timingError='Measurements unavailable: '+describeError(error);}
     finally {if(generation===this.timingGeneration)this.timingBusy=false;}
   }
@@ -1091,7 +1093,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.selectedStatusText = statusText(responseStatus);
     this.selectedTone = statusTone(responseStatus);
     this.reuseDisabled = !reusable; this.reuseTitle = reusable ? 'Create a rule from this response' : autoResponseUnavailableReason(detail);
-    this.matchedRuleId = detail.autoResponse?.ruleId ?? ''; this.matchedRuleLabel = detail.autoResponse ? 'Show '+detail.autoResponse.ruleName : 'Show matched rule';
+    this.matchedRuleId = detail.traceId ? '' : detail.autoResponse?.ruleId ?? ''; this.matchedRuleLabel = detail.autoResponse ? 'Show '+detail.autoResponse.ruleName : 'Show matched rule';
     this.$emit('selection-changed',{sessionId:detail.id,detail,reusable});
   }
   private async refreshInspection():Promise<void> {

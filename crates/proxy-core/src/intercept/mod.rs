@@ -16,7 +16,8 @@ pub use action::{
 };
 pub use audit::{
     BodyPlanKind, HeaderChanges, HookAuditTrail, HookEffect, HookEffectAction, HookPhase,
-    InterceptorId, InterceptorIdentity, RequestHeadChanges, ResponseHeadChanges,
+    InterceptorId, InterceptorIdentity, LocalResponseSnapshot, RequestHeadChanges,
+    ResponseHeadChanges,
 };
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,

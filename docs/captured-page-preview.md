@@ -91,6 +91,12 @@ representation for that URL; the preview's fresh browser profile has no original
 cache to satisfy them.
 
 This recreates captured evidence rather than a complete browser session.
+Linked-file freezing uses the same bounded coherent acquisition as live linked
+responses: Windows excludes in-place writers during acquisition, and input is
+verified by a second read/hash. Finish saving and retry when preparation detects
+a change. Preview hashes identify decoded frozen resources; live rule selection
+hashes identify the encoded local entity. Compare captured response boundaries
+to inspect the bytes retained from a historical live request after a file changes.
 Missing, incomplete or oversized resources remain unavailable. Original response
 policies such as CSP still apply. Auto-response CSP, CORS, content type and cache
 headers remain effective alongside mandatory preview isolation. Content coding

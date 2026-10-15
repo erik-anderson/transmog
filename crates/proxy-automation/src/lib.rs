@@ -6,7 +6,13 @@
 //! compiled rule phase receives a stable interceptor ID so the core audit trail
 //! attributes its effects without giving automation special privileges.
 
-use std::{collections::BTreeSet, sync::Arc};
+use std::{
+    collections::BTreeSet,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use bytes::Bytes;
 use regex::bytes::{Regex, RegexBuilder};
@@ -369,7 +375,12 @@ pub enum AutomationResponse {
     /// Small response represented by bounded in-memory frames.
     Buffered(CanonicalResponse),
     /// Large response represented by a backpressured stream.
-    Streaming(LocalStreamingResponse),
+    Streaming {
+        /// Backpressured local response.
+        response: LocalStreamingResponse,
+        /// Exact selected entity, when the resolver froze mutable input.
+        snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
+    },
 }
 
 /// Product-owned response asset resolver used by native automation.
@@ -386,7 +397,7 @@ pub trait ResponseAssetResolver: Send + Sync {
     ///
     /// # Errors
     /// Returns a bounded, operator-safe reason when an active asset cannot be served.
-    fn resolve(&self, asset_id: &str) -> Result<AutomationResponse, String>;
+    fn resolve(&self, asset_id: &str, canceled: &AtomicBool) -> Result<AutomationResponse, String>;
 }
 
 impl CompiledAutomation {
@@ -860,6 +871,13 @@ struct RuleInterceptor {
 
 struct UserAgentSelected;
 
+struct CancelAssetPreparation(Arc<AtomicBool>);
+impl Drop for CancelAssetPreparation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
 impl ExchangeInterceptor for RuleInterceptor {
     fn on_request_head(&self, event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         if self.direction != RuleDirection::Request
@@ -878,17 +896,28 @@ impl ExchangeInterceptor for RuleInterceptor {
             });
         }
         if let Some(asset_id) = &self.rule.request.response_asset {
-            let response = self
-                .resolver
-                .as_ref()
-                .ok_or_else(|| "response asset resolver is unavailable".to_owned())
-                .and_then(|resolver| resolver.resolve(asset_id));
+            let resolver = self.resolver.clone();
+            let asset_id = asset_id.clone();
             return Box::pin(async move {
+                let canceled = Arc::new(AtomicBool::new(false));
+                let _cancel = CancelAssetPreparation(canceled.clone());
+                // File acquisition and compression must not block the runtime or
+                // prevent its hook timeout/cancellation from being polled.
+                let response = tokio::task::spawn_blocking(move || {
+                    resolver
+                        .ok_or_else(|| "response asset resolver is unavailable".to_owned())
+                        .and_then(|resolver| resolver.resolve(&asset_id, &canceled))
+                })
+                .await
+                .unwrap_or_else(|_| Err("Response file preparation failed. Try again.".into()));
                 match response {
                     Ok(AutomationResponse::Buffered(response)) => {
                         RequestHeadAction::Respond(response)
                     }
-                    Ok(AutomationResponse::Streaming(response)) => {
+                    Ok(AutomationResponse::Streaming { response, snapshot }) => {
+                        if let Some(snapshot) = snapshot {
+                            event.context.extensions().insert(snapshot);
+                        }
                         RequestHeadAction::RespondStreaming(response)
                     }
                     Err(reason) => RequestHeadAction::Abort(
@@ -1119,7 +1148,11 @@ mod tests {
                 .ok_or_else(|| "missing".to_owned())
         }
 
-        fn resolve(&self, asset_id: &str) -> Result<AutomationResponse, String> {
+        fn resolve(
+            &self,
+            asset_id: &str,
+            _canceled: &AtomicBool,
+        ) -> Result<AutomationResponse, String> {
             self.validate(asset_id)?;
             Ok(AutomationResponse::Buffered(CanonicalResponse::local(
                 218,

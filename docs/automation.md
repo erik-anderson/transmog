@@ -203,8 +203,8 @@ Content-Length always reflects the final encoded
 body bytes. Compressed edits rebuild Content-Encoding from the applied stack;
 identity edits remove it. Apply original compression type names the original
 stack and applies it to text and binary replacement files. Copied files store
-encoded bytes; linked files stream encoding with bounded backpressure and
-unknown encoded length, without reusing a stale Content-Length. Pasted framing and encoding
+encoded bytes; linked files freeze and encode current input before streaming with
+bounded backpressure, without reusing a stale Content-Length. Pasted framing and encoding
 fields cannot override these choices in the editor. Response edits create an
 immutable configuration revision; copied bytes, earlier revisions and captured evidence remain
 intact. The response body editor
@@ -212,6 +212,7 @@ starts at twelve lines and automatically selects Text or Hex for complete editab
 bodies. Edit in dialog supports both representations and syntax editing for SVG,
 HTML, CSS, JavaScript, JSON or plain text. SVG uses HTML language services while
 retaining its content type; SVG formatting is disabled to preserve XML semantics.
+
 Formatting for supported languages is explicit and undoable. Monaco popups remain
 inside the modal dialog and can extend beyond the editor. Apply to draft updates
 the draft; Cancel retains its previous body. An existing
@@ -237,7 +238,9 @@ underlying entries remain retained.
 When a rule wins, session summary and detail data retain its friendly name,
 stable ID, revision, evaluation position, response asset, status, and body
 size. The traffic row is marked `AUTO`, and the response inspector links to the
-matching rule. That immutable evidence remains meaningful after a rule is
+matching live rule. Imported traces retain their historical rule identity in
+Details without mapping it onto a local rule definition. That immutable evidence
+remains meaningful after a rule is
 renamed, reordered, disabled, or deleted.
 
 Scripts have their own Automation tab. **Save & enable** validates, saves and
@@ -263,6 +266,38 @@ work. Late asynchronous results cannot mark newer edits saved or enabled. Pause
 is directly available while running; More offers comparison of both source and
 settings. Sandbox input can be authored or copied from a selected Traffic request
 with sensitive headers omitted.
+
+### Linked-file snapshots and historical evidence
+
+Each live linked response acquires an owned snapshot before returning response
+headers. Input is read with bounded buffers and verified by a second read/hash
+and unchanged length/modification time. Windows excludes in-place writers while
+the handle is open; atomic replacement is allowed, with the next request opening
+the replacement. A detected change or read/encoding failure fails the matching
+request without contacting the origin. Finish saving the file and retry; there
+is no automatic retry loop. On other platforms the verification detects changes
+but does not provide a filesystem transaction against uncooperative writers.
+
+Compression completes against the frozen input. The response pump reads owned
+bytes, so an external edit, deletion or rename during transfer cannot alter them.
+Active snapshots deduplicate identical encoded content and are bounded to 128
+files / 2 GiB, plus one preparation with at most 1 GiB input and 1 GiB encoded
+output. These are temporary serving files, released with their consumers; limit
+pressure fails the request with a retry notice. This bound is separate from
+historical capture retention and does not change the existing one-GiB file limit.
+
+In Traffic, **Details → Timings → Response file evidence** shows the captured
+rule/asset revisions, selected encoded entity length/codings/SHA-256, and the
+captured client-response hash and availability. Later response processing and
+HTTP no-body rules can change the output; selection is not proof of client
+receipt. Historical inspection and comparison use the exchange's retained
+client-response bytes, never its current external file. Different file versions
+under one configuration revision keep distinct identities. The existing body
+retention/privacy limits still apply: incomplete, disabled and evicted evidence
+cannot be reproduced by rereading a path. Complete imported bodies remain lazy;
+if their aggregate hash has not been computed, Details says **Not computed** and
+comparison reads their retained bytes to compute it. Save a TMCap trace while complete bytes
+remain available to preserve them and their selection identity.
 
 ## Body and script safety
 

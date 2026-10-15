@@ -371,6 +371,8 @@ pub struct AutoResponseMatchView {
     pub status: u16,
     /// Known response bytes, or zero for an unknown streaming length.
     pub body_bytes: usize,
+    /// Exact local entity selected before any later response processing.
+    pub snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
 }
 
 /// Requested safe representation of retained body bytes.
@@ -640,7 +642,10 @@ pub(crate) fn detail_from_snapshot(
 pub(crate) fn auto_response_match(snapshot: &SessionSnapshot) -> Option<AutoResponseMatchView> {
     snapshot.hook_effects.iter().find_map(|effect| {
         let HookEffectAction::Respond {
-            status, body_bytes, ..
+            status,
+            body_bytes,
+            snapshot: response_snapshot,
+            ..
         } = &effect.action
         else {
             return None;
@@ -657,6 +662,7 @@ pub(crate) fn auto_response_match(snapshot: &SessionSnapshot) -> Option<AutoResp
             asset_reference: asset_reference.to_owned(),
             status: *status,
             body_bytes: *body_bytes,
+            snapshot: response_snapshot.clone(),
         })
     })
 }

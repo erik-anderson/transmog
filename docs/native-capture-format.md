@@ -13,6 +13,14 @@ fresh workspace numbers. Entry provenance may separately retain an
 an explicit source request number, such as a SAZ session number. These optional
 extensions do not change the container schema or interpret opaque IDs as numbers.
 
+Hook-effect records carry the captured `chain_position` and an optional
+`response_snapshot` for frozen local response selections. Its camel-case fields
+are `status`, `bodyBytes`, `sha256` and `contentCodings`; the digest identifies
+content-encoded entity bytes before subsequent response hooks or HTTP no-body
+handling. The hook ID retains the rule/asset revisions. Body records remain
+independent evidence of the client-response output and its retention state.
+Snapshot metadata never grants filesystem access and contains no external path.
+
 TMCap is an indexed, block-based capture container. `TMCAP001\0`, header version
 `1`, and record schema revision `1` identify the current format. Stream lifecycle
 and WebSocket/SSE content are independently indexed. Persistent SSE IDs are

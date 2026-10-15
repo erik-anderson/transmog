@@ -546,7 +546,13 @@ impl ExchangeChain {
                     self.context.audit().record(
                         entry.identity,
                         HookPhase::RequestHead,
-                        super::audit::streaming_response_summary(&response),
+                        super::audit::streaming_response_summary(
+                            &response,
+                            self.context
+                                .extensions()
+                                .remove::<super::LocalResponseSnapshot>()
+                                .map(|value| (*value).clone()),
+                        ),
                         true,
                     );
                     return Ok(RequestHeadOutcome::RespondStreaming {

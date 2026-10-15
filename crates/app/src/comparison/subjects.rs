@@ -107,6 +107,11 @@ pub(super) async fn acquire(
                 ));
             }
             evidence.side.label = format!("Request #{}", snapshot.request_number);
+            if let Some(matched) = crate::inspector::auto_response_match(&snapshot)
+                && let Some(selected) = matched.snapshot
+            {
+                evidence.side.notes.push(format!("{} revision {} selected response {}: {} bytes, SHA-256 {}. Compared bytes come from the retained response boundary; the external file is never reopened for this result.", matched.rule_name, matched.rule_revision, matched.asset_reference, selected.body_bytes, selected.sha256));
+            }
             evidence.side.entry_id = Some(id.clone());
             evidence.side.notes.push(format!(
                 "Recorded capture start (UTC, source clock): {}",

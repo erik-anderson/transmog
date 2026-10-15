@@ -519,6 +519,23 @@ fn write_session<W: Write>(
         })?;
     }
     emit(CaptureRecordKind::Performance(session.performance.clone()))?;
+    for effect in &session.hook_effects {
+        if let transmog_core::intercept::HookEffectAction::Respond {
+            snapshot: Some(snapshot),
+            ..
+        } = &effect.action
+        {
+            emit(CaptureRecordKind::HookEffect {
+                hook_id: effect.interceptor.id.as_str().into(),
+                hook_name: effect.interceptor.name.to_string(),
+                phase: "request-head".into(),
+                action: "respond".into(),
+                changed: effect.changed,
+                chain_position: effect.interceptor.chain_position,
+                response_snapshot: Some(snapshot.clone()),
+            })?;
+        }
+    }
     if let Some(stream) = &session.stream {
         emit(CaptureRecordKind::StreamState(stream.clone()))?;
         for item in &session.stream_history.items {

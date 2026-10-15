@@ -1301,6 +1301,7 @@ fn generated_connection_outcomes(
 
 #[derive(Default)]
 struct NativeSession {
+    response_effects: Vec<transmog_core::intercept::HookEffect>,
     source_order: Option<u64>,
     stream: Option<transmog_core::stream::StreamState>,
     stream_history: transmog_core::stream::StreamHistory,
@@ -1852,12 +1853,52 @@ fn apply_native_frame(
                 .trailers = Some(trailers);
         }
         CaptureRecordKind::HookEffect {
+            hook_id,
             hook_name,
             phase,
             action,
             changed,
-            ..
+            chain_position,
+            response_snapshot,
         } => {
+            if let Some(snapshot) = response_snapshot {
+                use transmog_core::intercept::{
+                    HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
+                };
+                if action != "respond"
+                    || phase != "request-head"
+                    || !(200..600).contains(&snapshot.status)
+                    || snapshot.sha256.len() != 64
+                    || !snapshot.sha256.bytes().all(|b| b.is_ascii_hexdigit())
+                    || snapshot.content_codings.len() > 4
+                    || snapshot.content_codings.iter().any(|s| {
+                        s.len() > 32 || !s.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-')
+                    })
+                    || hook_id.len() > 512
+                    || hook_name.len() > 512
+                    || chain_position > 16_384
+                    || row.response_effects.len() >= 256
+                {
+                    return Err(invalid("Saved local response snapshot metadata is invalid"));
+                }
+                *budget = budget.saturating_add(hook_id.len() + hook_name.len() + 512);
+                row.response_effects.push(HookEffect {
+                    sequence: row.response_effects.len() as u64 + 1,
+                    interceptor: InterceptorIdentity {
+                        id: InterceptorId::new(hook_id),
+                        name: hook_name.clone().into(),
+                        chain_position,
+                    },
+                    phase: HookPhase::RequestHead,
+                    action: HookEffectAction::Respond {
+                        status: snapshot.status,
+                        body_frames: 0,
+                        body_bytes: usize::try_from(snapshot.body_bytes).unwrap_or(usize::MAX),
+                        snapshot: Some(snapshot),
+                    },
+                    changed,
+                });
+            }
             if row.diagnostics.len() < 64 {
                 row.diagnostics.push(format!(
                     "Saved hook {hook_name} / {phase}: {action} (changed: {changed})"
@@ -1963,6 +2004,7 @@ fn append_native(
         row.started.unwrap_or(SystemTime::UNIX_EPOCH),
     );
     let mut snapshot = empty_snapshot(metadata, request.clone(), response.clone(), None);
+    snapshot.hook_effects = row.response_effects;
     snapshot.stream = row.stream;
     snapshot.stream_history = row.stream_history;
     if let Some(stream) = &mut snapshot.stream

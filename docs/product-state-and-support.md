@@ -25,7 +25,17 @@ absolute path even when the file is unavailable; they do not silently become
 copies or fall through to the origin. Copied assets may retain their source path
 as informational provenance, but serving uses stored bytes and never reopens it.
 These file paths belong to explicitly authored response assets, not preferences
-or retained Traffic. No TMCap format change is involved.
+or retained Traffic. The copy/link choice lives in response asset storage.
+
+Linked responses use bounded temporary snapshots while serving. Identical active
+encoded snapshots share storage; files are released when their response consumers
+finish. Their hashes and selected rule/asset revisions are capture evidence,
+without the external file path. Historical body bytes use the ordinary capture
+store and its existing privacy, retention and eviction policy. Snapshot identity
+alone does not retain a complete body. Explicit TMCap recording/saving preserves
+the metadata and available body bytes; see [trace saving](trace-saving.md).
+Temporary serving files, like decoded preview files, may survive an abrupt exit;
+InPrivate is not a crash-erasure mechanism for those files.
 
 Settings provides Save, Revert and Ctrl+S. Narrow layout saves merge with other
 settings so a stale workspace snapshot cannot overwrite newer preferences.

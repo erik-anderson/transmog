@@ -114,6 +114,21 @@ pub enum BodyPlanKind {
     Discard,
 }
 
+/// Exact local entity selected by a hook, before later response hooks and no-body rules.
+/// Contains content identity only; never an external filesystem path.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct LocalResponseSnapshot {
+    /// Selected local response status.
+    pub status: u16,
+    /// Exact content-encoded entity length, excluding transfer framing.
+    pub body_bytes: u64,
+    /// SHA-256 of the selected content-encoded entity bytes.
+    pub sha256: String,
+    /// Ordered content-coding tokens applied to these bytes.
+    pub content_codings: Vec<String>,
+}
+
 /// Traffic-affecting action attributed to one interceptor callback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HookEffectAction {
@@ -136,6 +151,8 @@ pub enum HookEffectAction {
         body_frames: usize,
         /// Total response data bytes supplied by the hook.
         body_bytes: usize,
+        /// Optional exact byte identity supplied with a frozen local response.
+        snapshot: Option<LocalResponseSnapshot>,
     },
     /// The hook aborted the exchange.
     Abort(HookAbort),
@@ -255,10 +272,14 @@ pub(crate) fn response_summary(response: &CanonicalResponse) -> HookEffectAction
         status: response.head.status,
         body_frames: response.body.len(),
         body_bytes,
+        snapshot: None,
     }
 }
 
-pub(crate) fn streaming_response_summary(response: &LocalStreamingResponse) -> HookEffectAction {
+pub(crate) fn streaming_response_summary(
+    response: &LocalStreamingResponse,
+    snapshot: Option<LocalResponseSnapshot>,
+) -> HookEffectAction {
     HookEffectAction::Respond {
         status: response.head.status,
         body_frames: 0,
@@ -266,6 +287,7 @@ pub(crate) fn streaming_response_summary(response: &LocalStreamingResponse) -> H
             .body_length
             .and_then(|length| usize::try_from(length).ok())
             .unwrap_or(0),
+        snapshot,
     }
 }
 
