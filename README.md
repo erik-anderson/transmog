@@ -31,15 +31,8 @@ redact the exported copy. See [current limitations](docs/limitations.md).
 
 ## Run the Windows desktop
 
-Install the [build prerequisites](docs/building.md#windows), then run:
-
-```powershell
-python scripts/dev-env.py --check
-python scripts/dev-env.py --run cargo fetch --locked
-npm ci --prefix apps/desktop/ui
-python scripts/build-desktop.py --configuration Debug --locked-dependencies
-python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
-```
+Follow the [build-and-launch guide](docs/building.md#build-and-launch-the-windows-desktop)
+for the Windows toolchain, locked dependencies and desktop helpers. After launch:
 
 1. Choose **Set up HTTPS interception** and approve the current-user root
    certificate installation.
@@ -48,14 +41,9 @@ python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
 3. Inspect captured traffic in the Traffic workspace.
 4. Choose **Stop proxy** to restore proxy settings and let active streams finish.
 
-For an unsigned development installer:
-
-```powershell
-pwsh scripts/package-windows.ps1 -UnsignedDevelopment
-```
-
-See the [desktop guide](apps/desktop/README.md) and
-[Windows release guide](docs/windows-release.md) for packaging and qualification.
+See [building](docs/building.md#windows-desktop-shell) for an unsigned development
+installer and [Windows releases](docs/windows-release.md) for signed packaging
+and qualification.
 
 ## Record from the command line
 
@@ -95,19 +83,10 @@ WebUI, Monaco, and an isolated V8 process for scripts.
 
 ## Development
 
-Python 3.11 or newer is required. Use the portable repository commands:
-
-```powershell
-python scripts/test.py
-python scripts/test-interop.py
-python scripts/test-linux-docker.py
-```
-
-The interoperability suite uses curl, Chromium, and pinned Nginx, Apache and Caddy
-endpoints. The Linux container gate tests the workspace and release build; it does
-not qualify a native desktop, host proxy/trust integration, or desktop sandbox.
-See [building](docs/building.md), [testing](docs/testing.md), and the
-[documentation index](docs/README.md) for prerequisites and check scope.
+Python 3.11 or newer is required. [Building](docs/building.md) owns prerequisites
+and setup; [testing](docs/testing.md) lists repository, browser, interoperability
+and Linux container gates. See the [documentation index](docs/README.md) for
+feature guides and contracts.
 
 ## Security and license
 

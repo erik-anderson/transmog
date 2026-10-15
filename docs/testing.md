@@ -2,7 +2,10 @@
 
 Local deterministic fixtures are the primary correctness gate. Public sites and
 hosted CI are not required to validate ordinary changes. Generated results are
-per-run evidence, not maintained test-status reports.
+per-run evidence, not maintained test-status reports. This guide owns routine
+test selection and commands. Install [build prerequisites](building.md) first;
+[Windows release](windows-release.md#local-release-qualification-before-dispatch)
+owns the mandatory candidate qualification sequence.
 
 ## Repository gate
 
@@ -84,9 +87,25 @@ That gate authenticates AES-256 exports with native 7-Zip, compares decrypted
 members, rejects a wrong password and imports a 7-Zip ZipCrypto fixture. It runs
 without signing credentials. See [SAZ compatibility](saz-compatibility.md).
 
+### Direct WebView2 smoke probe
+
+For the local WebView2 delivery smoke test, launch the debug or release binary
+with a loopback DevTools port and, while it is running, execute:
+
+```powershell
+Push-Location ./apps/desktop/ui
+npm run smoke:webview -- --port 9333
+Pop-Location
+```
+
+The script reloads the real WebView, activates the TypeScript island, and fails
+on WebUI hydration, the typed status command, missing module/CSS assets, a CSP
+violation, or a browser error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
+test-only and must not be set for production launches.
+
 ## Protocol and product interoperability
 
-With Docker Desktop available:
+With the [interoperability prerequisites](building.md#interoperability-prerequisites) installed:
 
 ```powershell
 python scripts/test-interop.py
@@ -172,8 +191,8 @@ When Chromium changes its PQ algorithm set, update the
 [shared policy](../crates/proxy-tls/src/algorithms.rs), credential variants and
 wire/interoperability expectations together. Requalify the existing BoringSSL
 family before considering a dependency change. See the
-[certificate model](certificate-model.md#post-quantum-tls-algorithms) for the
-trust boundary and [performance harness](performance.md#post-quantum-tls-handshakes)
+[negotiation policy](chromium-negotiation.md#algorithms-and-clienthello) for offers
+and the [certificate model](certificate-model.md) for the trust boundary and [performance harness](performance.md#post-quantum-tls-handshakes)
 for measurements.
 
 ## Local Chromium load gate

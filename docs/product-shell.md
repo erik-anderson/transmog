@@ -48,7 +48,7 @@ state before binding. Certificate installation and exact-root removal can
 require Windows consent; private-key files belong to the desktop's user data.
 
 **Start proxy** binds the listener and applies its endpoint to the current user's
-Windows proxy settings. Traffic enters the configured body buffer; starting the
+Windows proxy settings unless manual routing is configured. Traffic enters the configured body buffer; starting the
 proxy does not implicitly create a trace file. Recording is a separate action.
 
 **Stop proxy** restores the prior proxy settings first, then shows **Finishing
@@ -65,40 +65,9 @@ proxy stuck in **Stopping** or prevent a new run.
 **Start proxy** expedites that idle-connection cleanup before binding a new run;
 it does not wait for the grace period to expire.
 
-**Settings → Preferences → Network** starts with **Decrypt HTTPS traffic**.
-Turning it off applies on the next proxy start, requires no interception
-certificate setup, and presents opaque CONNECT destination and transport evidence
-in Traffic. **Profile** defaults to **WebView2 (Chromium 154)**, based on the Chromium
-154.0.8037.99 comparison. Selecting a profile previews it; **Use profile** applies
-the saved recipe to new requests. **Customize** creates an editable copy of the
-built-in recipe. Custom profiles control HTTP/1, HTTP/2 and HTTP/3, TLS versions,
-compatibility ciphers, hybrid key exchange and connection reuse. **More handshake
-options** contains Trust Anchor IDs, an optional `crs.pb` path, HTTP/2 and HTTP/3 ALPS,
-GREASE, extension order, real ECH, ECH GREASE and certificate compression.
-ECH GREASE sends a dummy extension and does not encrypt the server name.
-
-**Save only** preserves the active recipe; **Save and use** activates the saved
-revision. Closing an editor keeps its draft; **Discard draft** removes it.
-The profile menu supports editing, duplication and deletion with Undo. Changes
-use fresh origin pools in the proxy and Composer, including open capture viewers;
-active requests and streams finish with their original recipe. HTTP/3 requires
-TLS 1.3. Clearing all HTTP protocols blocks new outbound requests.
-Profiles govern connections made by Transmog and Composer; opaque CONNECT
-tunnels use the original client's protocol and handshake.
-Built-in recipes keep their qualified version, and **Profile details** identifies
-the intentional Client Hints limitation. Trust Anchor IDs use a bundled Chromium
-snapshot and automatically adopt a newer valid local Chrome or WebView2 PKIMetadata root
-store for fresh connections. A custom profile can choose OS, bundled Chromium,
-installed Chrome or installed WebView2 certificate trust. See
-[Trust Anchor IDs](trust-anchor-ids.md) for discovery, recovery and recorded evidence.
-HTTP/2 and HTTP/3 ALPS are enabled in both built-ins and separately editable in
-custom profiles. Transmog applies server settings without generating or forwarding
-connection-level requests for Client Hints; see [ALPS](http2-alps.md).
-
-**Advanced network settings** contains remote-client access (off by default),
-an optional saved proxy port, caller-process isolation and client certificates.
-With no saved port, each start chooses an available port. Saving these connection
-choices preserves active work and does not restart the proxy.
+[Network profiles and connection settings](network-profiles.md) covers HTTPS
+decryption, built-in and custom profiles, trust sources, listener access and
+when changes take effect.
 
 ### AppContainer loopback access
 
@@ -110,6 +79,9 @@ to connect to a proxy on this computer; **Remove exemptions** reverses the
 selection. Windows requests administrator approval. Canceling approval changes
 nothing; failed or completed operations refresh the authoritative Windows state.
 Saved exemptions with unavailable installed metadata remain visible for removal.
+Selection is independent of exemption status; disclose selected rows hidden by a
+filter and keep bulk actions outside the table scroller. Closing the modal during
+an operation keeps monitoring its result; completion cannot reopen it or move focus.
 
 Exemptions persist in Windows until explicitly removed. Transmog preserves
 unselected exemptions and their attributes rather than replacing them with the
@@ -140,6 +112,7 @@ Stop/Start behavior and capture support.
 **Files → Import traffic…** loads TMCap, SAZ, HAR or Chromium NetLog files into the current window. Dropping files onto
 the traffic list always imports them there. The list's drop target highlights
 accepted files, names the formats, and opens a picker with a click or keyboard.
+The initial Traffic helper never returns after clearing or filtering.
 Each entry retains its source trace, with **Details → Capture source** leading to the
 original machine's network context and
 capture metadata. Imported bodies are read on demand from pinned source files;

@@ -22,14 +22,15 @@ contains remaining work; Git history holds completed plans and migration notes.
 
 ## TLS and transports
 
-- [Certificate model](certificate-model.md): algorithms, interception CA and recorded evidence.
-- [Trust Anchor IDs and root sources](trust-anchor-ids.md): component discovery and local trust.
-- [Chromium verifier](chromium-verifier.md): path building, certificate policy, CT and revocation.
-- [Chromium negotiation](chromium-negotiation.md): resumption, ECH and issuer retrieval.
-- [H2/H3 ALPS](http2-alps.md): settings, Client Hints and captured server contents.
+- [Network profiles](network-profiles.md): settings, customization and activation.
+- [Certificate model](certificate-model.md): interception CA and recorded evidence.
+- [Root stores](root-stores.md): component discovery, local trust and Trust Anchor IDs.
+- [Chromium verifier](chromium-verifier.md): path building, issuer retrieval, certificate policy, CT and revocation.
+- [Chromium negotiation](chromium-negotiation.md): algorithm offers, GREASE, resumption and ECH.
+- [H2/H3 ALPS](alps.md): settings, Client Hints and captured server contents.
 - [Client certificates](client-certificates.md): authorization, Windows keys and selection.
 - [Connection racing](networking.md) and [WebSocket transport](websocket-inspection.md).
-- [Local Chromium comparison](chromium-comparison.md) and [remaining alignment](chromium-transport-plan.md).
+- [Local Chromium comparison](chromium-comparison.md) and [remaining alignment](roadmap.md#chromium-transport-alignment).
 
 ## Captures and CLI
 
@@ -49,7 +50,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 ## Development and qualification
 
 - [Desktop development](../apps/desktop/README.md) and [UI instructions](../apps/desktop/ui/AGENTS.md).
-- [Performance harnesses](performance.md), [capture benchmarks](tmcap-performance.md) and [browser load testing](load-testing.md).
+- [Performance and capture benchmarks](performance.md) and [browser load testing](load-testing.md).
 - [Fuzzing](../fuzz/README.md), [CI and deferred workflows](../ci/README.md), and [verification artifacts](../verification/README.md).
 - [Transport patches](../third_party/rust-transport/README.md), [PKI snapshot](../third_party/boringssl-pki/README.md),
   [root data](../third_party/chromium-root-store/README.md), [certificate policy data](../third_party/chromium-certificate-policy/README.md)
@@ -58,6 +59,11 @@ contains remaining work; Git history holds completed plans and migration notes.
 ## Maintenance
 
 Describe current behavior in its topic guide and link to it from overviews.
+The network-profile guide owns settings usage; product state owns persistence
+and retention. Building owns setup, testing owns routine checks, and Windows
+release owns candidate qualification and publication. The UX principles guide
+owns general conventions; feature guides own their labels, defaults and limits.
+
 Keep architectural rationale in ADRs and unfinished work in the roadmap. Link
 to source for field inventories, validation, version pins and generated data.
 Remove completed plans after their lasting decisions are documented. Keep run

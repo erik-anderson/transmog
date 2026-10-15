@@ -1,7 +1,60 @@
 # Chromium negotiation contract
 
+Use [network profiles](network-profiles.md) to select and customize the offer.
 The reference profile is Chromium 154.0.8037.99. Both upstream transports use
 the shared native certificate verifier described in [chromium-verifier.md](chromium-verifier.md).
+
+## Algorithms and ClientHello
+
+Built-in upstream offers target Chromium 154.0.8037.99. The shared
+[algorithm policy](../crates/proxy-tls/src/algorithms.rs) defines key exchange and
+transport-specific signature preferences. A profile roll must review the pinned
+Chromium [group policy](https://github.com/chromium/chromium/blob/154.0.8037.99/net/ssl/ssl_config_service.cc)
+and [TCP signature preferences](https://github.com/chromium/chromium/blob/154.0.8037.99/net/socket/ssl_client_socket_impl.cc).
+
+| Purpose | Offer and behavior |
+| --- | --- |
+| TLS 1.3 key exchange | `X25519MLKEM768` (`0x11ec`), followed by X25519, P-256 and P-384. Initial shares cover the hybrid group and X25519. |
+| TCP TLS 1.3 authentication | ML-DSA-44/65/87 (`0x0904`–`0x0906`) precede the non-PQC signature preferences; RSA/SHA-1 is excluded. |
+| QUIC TLS authentication | Chromium's nine BoringSSL signature preferences, without ML-DSA. TLS 1.3 cannot select the advertised RSA PKCS#1 schemes. |
+
+QUIC's handshake offer does not disable ML-DSA issuer signatures in certificate
+paths. An RSA/ECDSA leaf issued by a locally trusted ML-DSA CA can verify through
+the shared PKI verifier. Installing a root does not change the ClientHello offer.
+
+TLS 1.2 uses non-PQC algorithms. Each TLS leg negotiates independently; see
+[interception credentials](certificate-model.md#interception-credentials) for
+downstream selection and trust-chain limits.
+
+TCP ClientHellos enable ordinary GREASE and prepend a reserved GREASE signature
+scheme. QUIC omits those offers under the built-in recipe. Signature GREASE is
+independent of ordinary GREASE and does not change CertificateRequest algorithms.
+Both transports randomize extension order while preserving TLS ordering rules.
+Custom profiles expose GREASE choices separately from real algorithm preferences.
+
+TCP requests stapled OCSP and signed certificate timestamps; QUIC follows its
+separate Chromium offer. The [verifier contract](chromium-verifier.md) defines
+CT/CRLSet/stapled-OCSP enforcement and recorded outcomes for every source.
+
+Upstream TLS 1.3 clients also advertise Brotli certificate decompression
+(`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing
+certificate size limit and exact output buffer, rejects malformed, truncated
+or trailing data, and passes the decoded certificate through the same trust
+and identity verification. Origins may still send an uncompressed certificate.
+Client certificates and downstream certificates remain uncompressed.
+
+Built-in profiles enable ECH GREASE on TCP and QUIC. When no real ECH
+configuration is used, BoringSSL sends a fresh dummy `encrypted_client_hello`
+extension when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
+exercises extension handling and matches Chromium's ECH GREASE behavior; it
+does not encrypt the server name. Real ECH discovery and authenticated retry are
+separate settings; see [Encrypted Client Hello](#encrypted-client-hello).
+
+The default TLS 1.2 cipher list uses Chromium's expression
+`ALL:!aPSK:!ECDSA+SHA1:!3DES`, including its CBC and static-RSA compatibility
+suites after the ECDHE/AEAD suites. RSA/SHA-1 server handshake signatures are
+excluded on TCP, matching its separate signature policy. Custom profiles can
+disable compatibility ciphers; embedders can supply an explicit cipher list.
 
 ## Resumption
 
@@ -41,21 +94,6 @@ Capture details record **TLS False Start: Used** and **Handshake completion:
 Waiting for server Finished**, then change completion to **Complete** when the
 native handshake-done callback fires. Connection setup timing ends when the
 connection becomes usable for writes, as it does in Chromium.
-
-## Buffered certificates
-
-Production TCP and QUIC contexts use `TLS_with_buffers_method`, as Chromium does.
-The shared PKI verifier parses the leaf and candidate issuers rather than having
-the TLS compatibility layer eagerly parse every wire entry. An irrelevant malformed
-issuer can be ignored when another valid trusted path exists; a malformed leaf or
-unusable required issuer still fails. H3 telemetry hashes raw certificate bytes and
-does not impose a second parse requirement on unused entries.
-
-Credentials and requested CA names use buffer APIs. QUIC connections are created
-without quiche's legacy hostname setter; SNI and expected identity are installed
-separately before the first packet. The `hyper_connector*` embedding helpers
-use worker verification with async TLS drivers; blocking callers use
-`synchronous_connector*`. The production adapter uses `tcp_context_builder`.
 
 ## Encrypted Client Hello
 
@@ -105,33 +143,3 @@ routing. Origin client identities and HTTP requests are never sent on a rejectio
 connection. Untrusted
 public-name certificates, damaged handshakes and repeated rejections fail closed.
 Both attempted connections and their actual ECH outcomes remain in captures.
-
-## Missing issuers
-
-The single PKI path builder consults supplied issuers and the intermediate cache
-first, then retrieves AIA CA-issuer URLs when it needs additional candidates.
-Like Chromium's issuer source, it starts at most five valid URLs per certificate,
-waits for their results in order, accepts individual DER, CMS/PKCS#7, or the first
-PEM certificate, limits decoded responses to 64 KiB, and bounds each batch to 10
-seconds. HTTP content encodings are decoded within that bound; encoded input is
-additionally limited to 256 KiB.
-Only HTTP is supported, including after redirects. Fetches send no cookies,
-caller headers or authentication and bypass the proxy's TLS machinery to avoid
-recursive verification. The path builder retains its 60-second and 20-iteration
-limits. Cancellation stops outstanding fetches.
-
-Production TCP and QUIC verification runs on bounded workers. Only owned DER,
-expected identity, SCT/OCSP evidence and frozen trust inputs cross threads; the
-TLS object and capture publication stay on their owning thread. Low-level
-synchronous embedding contexts retain synchronous verification; `hyper_connector*`
-and async adapters install the worker callback and require a TLS task waker.
-Use `synchronous_connector*` for a blocking TLS stream. Verification rules
-are identical; only execution differs.
-
-Only intermediates from fully accepted paths enter the bounded cache: up to 256
-certificates and 4 MiB, with seven days of inactivity expiry. Leaf certificates
-and anchors are excluded. Cached certificates remain untrusted candidates;
-every new path rechecks trust, expiry, constraints, hostname, CT and revocation.
-Capture details report AIA retrieval attempts and whether a cached candidate was
-used. This is a process-local intermediate cache, not Chromium's complete HTTP
-cache or browser-level certificate-verification cache.

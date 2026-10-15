@@ -3,7 +3,7 @@
 Traffic uses one selected-item inspector for live requests and imported captures.
 Selection and scroll position remain stable while new traffic arrives. Inspect
 request and response together in a wide pane or use the message selector when space is
-limited. Incomplete, unavailable, redacted and evicted evidence are distinct
+limited; the narrow selector sits beside the URL/status. Incomplete, unavailable, redacted and evicted evidence are distinct
 states; display previews can be shorter than the retained source.
 
 Traffic uses one continuous list and a native scrollbar spanning all matching
@@ -11,7 +11,9 @@ entries. Only rows near the viewport are rendered, so large captures remain
 usable. Compact and ordinary rows have consistent heights. Headers and cells
 stay on one line and clip with ellipsis when columns are narrow; hover shows
 the complete value. Protocol includes the active WebSocket or SSE badge beside
-the HTTP version.
+the HTTP version and participates in column fitting. Selection, focus and range
+anchors use stable IDs and the complete display order; leaving the rendered
+window never deselects an entry.
 
 ## Headers and sizes
 
@@ -36,6 +38,19 @@ Local requests show the best-effort process name and PID. A non-loopback client
 is marked remote and its recorded source IP appears in the request inspector. Loopback
 addresses do not reserve an extra field. See
 [client process attribution](client-process-attribution.md).
+
+## Body viewers and Composer evidence
+
+Hex reaches every retained byte with exact offsets, paging, keyboard navigation
+and Go to offset. Text-preview limits do not cap Hex. Clipboard selections have
+separate bounds; Save as handles larger data. Temporary byte caches are released
+with their readers. Save as leases original bytes; preview formatting never
+replaces the source.
+
+Composer preserves later draft edits during sends and keeps the last complete
+response until replaced or closed. It uses the same response inspector as
+Traffic. A terminal failure without a response displays Failed rather than
+Pending. Body completeness is independent of a later exchange failure.
 
 ## Copy a request
 

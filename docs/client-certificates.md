@@ -84,6 +84,15 @@ The QUIC registry is released before establishment, and its physical connection
 bound includes ephemeral prompt handshakes. Composer bounds execution to ten
 seconds and observes cancellation for both buffered and file-streamed requests.
 
+### ML-DSA credentials
+
+Upstream client authentication accepts an ML-DSA credential only for TLS 1.3
+when its exact key variant matches a requested signature scheme. It retains the
+existing issuer, validity, identity, trust-generation and selection checks.
+Native credential registration and callback access stay inside
+[`transmog-tls-native`](../crates/tls-native/src/lib.rs), using the same BoringSSL
+instance as the rest of the TLS stack.
+
 ## Windows source
 
 The supported store is CurrentUser/My. The supported provider is Microsoft

@@ -17,28 +17,12 @@ the tooling's UTF-8 subprocess decoder.
 
 Before dispatch, complete the mandatory
 [local release qualification](../docs/windows-release.md#local-release-qualification-before-dispatch)
-on the clean candidate commit. It matches the build job's formatting, Clippy,
-workspace/browser tests, Windows certificate checks, SAZ interoperability,
-optimized CLI qualification, full-PDB matching, and three-minute WebView soak.
-Record the tested commit, resolve failures, and verify that the pushed source
-matches it.
+on the clean candidate commit. Record the tested commit, resolve failures and
+verify that the pushed source matches it. The [manual release process](../docs/windows-release.md#manual-github-release-process)
+owns version selection, dispatch, signing approval, draft review and publication,
+including the GitHub CLI/REST fallback. Building and publication remain separate
+decisions; publishing the reviewed draft does not rebuild its assets.
 
-For each release, set and commit the version with
-`python scripts/set-release-version.py --version <major.minor.patch>`,
-push it to the selected branch, then use
-**Actions > Windows signed release > Run workflow** and select that branch.
-**Branch default** uses the checked-in Canary/Beta/Stable track. A release branch
-can override its build to Beta or Stable; main can only build Canary.
-Approve the signing environment after the build passes. Download and review the
-resulting draft's installer, then edit and publish that same draft when ready.
-The [manual release process](../docs/windows-release.md#manual-github-release-process)
-documents version selection, rebuilds, previews, and publication. The workflow
-checks that Cargo, Tauri, and desktop UI versions agree before compiling.
-For automation, prefer GitHub CLI or REST calls. If `gh` is missing, reuse the
-existing Git credential helper with the
-[PowerShell API fallback](../docs/windows-release.md#manual-github-release-process)
-before trying browser automation. The fallback preserves the source-commit check
-and the protected signing approval.
 The canonical semantic version, source channel, and release track live in `release-version.json`;
 Cargo/npm/Tauri, release tags, installer names, and product diagnostics use that same semantic version.
 Published versions, wrong branch lines/tracks, and reserved Canary lines fail

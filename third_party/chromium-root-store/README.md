@@ -22,4 +22,4 @@ trusted store; OS mode uses certificates as untrusted path-building helpers.
 No roots are installed into the OS. Chrome's complete verifier, EV and Merkle
 Tree Certificate trust are not claimed. Root metadata constraints are checked
 per path; SCT-dependent conditions use verified CT timestamps when the selected
-list is enabled and timely. See [root-store selection](../../docs/trust-anchor-ids.md).
+list is enabled and timely. See [root-store selection](../../docs/root-stores.md).

@@ -134,6 +134,9 @@ after the original Traffic entry disappears. Body replacement from a file also
 supports binary responses. Serve response body from file copies files up to
 25 MB on save; larger files retain their absolute path and read current bytes for
 each request. File mode disables text editing and offers Clear file choice.
+Clearing a pending file choice preserves the text draft. Compression controls
+use canonical names (`x-gzip` maps to `gzip`); captured headers and source context
+retain the original coding token.
 Missing files retain their rule and path across restart, fail the matched request
 without falling through to the origin, and explain recovery beside the rule.
 Content-Length always reflects the final encoded

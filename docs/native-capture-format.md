@@ -133,7 +133,7 @@ body demonstrates useful compression; chunks smaller than 4 KiB, initial probes,
 metadata and bypassed bytes remain on the writer thread. One-CPU machines use a
 single compression context. Up to eight pending records preserve write order and
 bound speculation; checkpoints and seals drain them. Benchmark callers can
-explicitly select 1–4 workers. See [the performance test](tmcap-performance.md).
+explicitly select 1–4 workers. See [the performance test](performance.md#tmcap-capture-benchmarks).
 
 The observer and live-capture queues each charge up to 32 MiB of retained payload
 and also enforce event-count bounds. One oversized input takes an entire byte

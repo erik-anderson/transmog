@@ -7,45 +7,10 @@ layers. Desktop and headless callers share those failure and privacy semantics.
 
 Preferences contain theme, table/pane layout, window geometry, connection
 configuration, live-entry/body-retention policy and explicit recent-path choices.
-The desktop start command honors `configureSystemProxy`: false binds the proxy
-for manually configured clients without changing Windows routing. This mode
-does not require installing the managed CA in Windows; clients configure their
-own HTTPS trust when needed. The ordinary Settings flow keeps system routing
-enabled. With HTTPS decryption enabled, both modes validate and protect CA files.
-Both always block pending host restoration.
+See [network profiles and connection settings](network-profiles.md) for choices,
+defaults and activation. Profile definitions and the active recipe snapshot have
+independent revisions; saving a definition does not activate it.
 
-Preferences starts with HTTPS decryption and the network profile in its main
-Network group. The default immutable recipe is WebView2 (Chromium 154). Profile definitions
-and the active recipe snapshot have independent revisions: Save only does not
-activate edits, even when editing the active profile's definition. Use profile
-and Save and use create fresh TLS contexts and pools for new work across the
-proxy and Composer, including already-open viewers. In-flight requests retain
-their original transports and recorded recipe. Built-in recipes do not silently
-advance when a new browser version is added. TLS 1.2-only profiles cannot enable
-HTTP/3; disabling all HTTP protocols intentionally blocks new work.
-Both built-ins enable H2/H3 ALPS and certificate-based Trust Anchor IDs. Their
-transport settings match; WebView2 discovers its installed root store and Chromium
-discovers Chrome's, with a bundled Chromium fallback. Both add monitored local
-Windows trust. The Customize root selector exposes a local-trust switch, disabled
-in OS mode because that source already includes local roots. Certificate-data
-updates do not edit recipes. See [ALPS](http2-alps.md),
-[trust sources](trust-anchor-ids.md), and [verification](chromium-verifier.md).
-
-Advanced network settings contains remote access, an optional persistent proxy
-port, caller-process isolation and client certificate authorization. Isolation
-falls back to source IP and also separates downstream HTTP/2 sessions. Saving
-preserves explicit manual routing and does not restart the proxy. Embedders can
-supply their own network-isolation key computation.
-
-Recorded CONNECT destinations also appear on decrypted connections. Traffic uses
-the request method, connection leg and TLS evidence to distinguish opaque tunnels
-from inspected messages, keeping decrypted bodies and TLS timings available.
-
-HTTPS decryption changes apply at the next proxy start. When disabled, CONNECT
-forwards opaque bytes without loading interception CA files or requiring CA trust.
-Traffic and TMCap retain the destination, connection outcome, endpoints and byte
-counts. The HTTP protocol recorded is the outer CONNECT protocol; the tunneled
-protocol and contents remain unknown.
 Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.
@@ -58,21 +23,13 @@ corrupt state, falling back to a retained valid generation or safe defaults.
 Narrow profile writes merge with independent layout, window and certificate-policy
 saves and reject stale catalog revisions. Exact fields, validation and supported
 state migrations belong to [the product-state model](../crates/app/src/product_state.rs).
-Network changes use the profile API rather than whole-state saves.
+Network changes use the profile API rather than whole-state saves. Uncertain
+preference recovery disables remote access and recovered client-certificate
+rules until explicitly re-enabled, including after interrupted recovery.
 
 On Windows preferences live under `%LOCALAPPDATA%\Transmog` in the
 `preferences.<generation>.json` family. Persistence errors remain visible and
 cannot participate in proxy shutdown or host restoration.
-
-Desktop proxy access defaults to loopback only. Remote computers require an explicit
-persisted opt-in. The proxy port defaults to automatic selection; an authored
-port from 1 through 65535 is retained and an occupied port produces an actionable
-start failure. Address and port changes apply to the next fresh proxy start.
-Windows routes through loopback even when the listener accepts remote clients.
-
-Server connection reuse is enabled by default. Turning it off gives subsequent
-requests dedicated HTTP/1, HTTP/2 and HTTP/3 connections, including Composer in
-capture viewers. Active requests and streams finish normally.
 
 ## Retention and privacy
 

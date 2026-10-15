@@ -10,7 +10,7 @@ require a version bump or compatibility support during this period.
 
 For design choices, compression heuristics, buffering and benchmark methods,
 see [the native capture overview](native-capture-format.md) and
-[the compression benchmark](tmcap-performance.md). Those writer policies can
+[the compression benchmark](performance.md#tmcap-capture-benchmarks). Those writer policies can
 change without changing the wire format described here.
 
 ## Conventions

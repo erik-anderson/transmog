@@ -1,17 +1,10 @@
-# Trust Anchor IDs and root-store selection
+# Root stores, local trust and Trust Anchor IDs
 
-The Chromium 154 recipe offers certificate-based Trust Anchor IDs in the TLS
-`trust_anchors` extension (0xca34), on TCP and QUIC. IDs are assigned relative
-OIDs, not certificate hashes or signature-algorithm choices. Merkle Tree
-Certificate identifiers are not advertised. The bundled root store and its
-provenance are documented in the [snapshot guide](../third_party/chromium-root-store/README.md).
+The [network profile](network-profiles.md#choose-certificate-trust) selects the
+trust source and controls whether IDs are offered. The source supplies trust inputs;
+all sources use the same [certificate verifier](chromium-verifier.md).
 
-## Profiles and trust sources
-
-**WebView2 (Chromium 154)** is the default profile. Its transport settings match
-**Chromium 154**; only the root-store source differs. Chromium uses installed
-Chrome metadata and WebView2 uses installed WebView2 metadata. Both fall back to
-the bundled public Chromium snapshot. Customize exposes four root-store choices:
+## Sources and component discovery
 
 | Choice | Certificate verification and metadata |
 | --- | --- |
@@ -20,10 +13,6 @@ the bundled public Chromium snapshot. Customize exposes four root-store choices:
 | Installed Chrome Root Store (fall back to bundled) | Newer valid `crs.pb` from `%LocalAppData%\Google\Chrome\User Data\PKIMetadata\<component-version>`. |
 | Installed WebView2 Root Store (fall back to Chromium bundled) | Newer valid `crs.pb` from `%LocalAppData%\Microsoft\Windows\SharedWebView\EBWebView\PKIMetadata\<component-version>`. |
 
-The root-store setting changes actual origin certificate trust independently of
-whether Trust Anchor IDs are enabled. Both built-ins also enable **Trust locally
-installed Windows certificates**. Customize can disable it to test the public
-store alone. OS mode already includes local roots, so its switch is disabled.
 Loading a store never installs certificates into Windows or modifies
 Chrome/WebView2 files. Transmog does not download Google's updater package or
 claim to verify a local component's CRX signature.
@@ -37,25 +26,20 @@ Fresh connections freeze their metadata and trusted store together. Established
 connections finish normally. TCP sessions authenticated under an older store
 cannot resume across a discovered trust change without certificate verification.
 
+## Trust Anchor ID offers
+
+The Chromium 154 recipe offers certificate-based Trust Anchor IDs in the TLS
+`trust_anchors` extension (0xca34), on TCP and QUIC. IDs are assigned relative
+OIDs, not certificate hashes or signature-algorithm choices. Merkle Tree
+Certificate identifiers are not advertised. The bundled root store and its
+provenance are documented in the [snapshot guide](../third_party/chromium-root-store/README.md).
+
 A valid installed component can contain roots without any supported Trust Anchor
 IDs. In that case Transmog keeps those roots and omits the `trust_anchors`
 extension; it does not borrow IDs from the Chromium bundle or send an empty
 offer. The bundled fallback applies when no newer usable root store is found.
 This follows [Chromium's nonempty-offer policy](https://github.com/chromium/chromium/blob/154.0.8037.99/net/ssl/ssl_config_service.cc)
 and its [component ID replacement](https://github.com/chromium/chromium/blob/154.0.8037.99/chrome/browser/component_updater/pki_metadata_component_installer.cc).
-
-**Customize → More handshake options** also allows disabling Trust Anchor IDs
-and providing an optional full path to `crs.pb`. That file replaces the bundled
-baseline; a newer copy from the chosen installed source takes precedence. With
-OS trust, it supplies only ID metadata/helpers. Save only preserves a definition;
-Save and use loads a file before activating fresh proxy/Composer pools. Invalid
-files prevent activation when used for trust or IDs. If a saved file disappears,
-inspection and Settings remain usable while sends/proxy startup explain repair.
-Save and use reloads a repaired file even if the recipe is unchanged.
-
-Built-in settings are explicit and fixed. Custom profiles preserve authored
-choices; OS and PKIMetadata updates refresh certificate data without editing
-profile settings.
 
 ## Windows local trust
 

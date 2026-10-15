@@ -1,103 +1,25 @@
-# Certificate and trust model
+# Interception certificates and recorded TLS evidence
 
-Upstream verification and downstream signing are deliberately separate.
+Interception signing and origin verification have separate inputs. This guide
+covers downstream credentials, the interception CA lifecycle and captured evidence.
+The [network profile](network-profiles.md) selects settings;
+[negotiation](chromium-negotiation.md) defines upstream offers, and
+[the verifier](chromium-verifier.md) applies the chosen [root stores](root-stores.md).
 
-Root-source selection supplies an immutable `TrustSnapshot`; it does not change
-the verifier. TCP, QUIC and Trust Anchor ID recovery use the same BoringSSL PKI
-path builder and crypto instance. OS roots are enumerated as DER; the operating
-system does not build upstream verification paths. Chromium/WebView2 profiles use
-public component roots plus the optional monitored Windows local-trust overlay.
-See [root selection](trust-anchor-ids.md) and the [verifier contract](chromium-verifier.md).
+## Interception credentials
 
-Production contexts use buffered TLS certificates. PKI parses the leaf and issuer
-candidates, so an irrelevant malformed intermediate can be ignored when a valid
-path exists. Every accepted path still satisfies the shared verification policy.
-
-The shared hostname check follows Chromium 154: SANs are mandatory; DNS
-wildcards match only a whole first label and respect ICANN registry boundaries;
-IP literals require the exact IP SAN. The pinned Chromium Public Suffix List
-and its maintenance script are described in [the verifier contract](chromium-verifier.md).
-Expected peer names are independent of SNI and capture collection. Embedders
-using raw TCP SSL objects should call `configure_ssl_metadata_for_peer`,
-particularly for IP origins or when disabling SNI.
-
-Live reload is exposed through `ProxyServer::control().reload_trust(...)`. A
-reload must use a strictly increasing generation number. The runtime constructs
-new Hyper HTTP/1.1/HTTP/2 and quiche HTTP/3 clients before atomically publishing
-the generation; existing exchanges retain their original clients until they
-finish, so connection pools never mix trust generations.
-
-## Post-quantum TLS algorithms
-
-Built-in upstream offers target Chromium 154.0.8037.99. The shared
-[algorithm policy](../crates/proxy-tls/src/algorithms.rs) defines key exchange and
-transport-specific signature preferences. A profile roll must review the pinned
-Chromium [group policy](https://github.com/chromium/chromium/blob/154.0.8037.99/net/ssl/ssl_config_service.cc)
-and [TCP signature preferences](https://github.com/chromium/chromium/blob/154.0.8037.99/net/socket/ssl_client_socket_impl.cc).
-
-| Purpose | Offer and behavior |
-| --- | --- |
-| TLS 1.3 key exchange | `X25519MLKEM768` (`0x11ec`), followed by X25519, P-256 and P-384. Initial shares cover the hybrid group and X25519. |
-| TCP TLS 1.3 authentication | ML-DSA-44/65/87 (`0x0904`–`0x0906`) precede the non-PQC signature preferences; RSA/SHA-1 is excluded. |
-| QUIC TLS authentication | Chromium's nine BoringSSL signature preferences, without ML-DSA. TLS 1.3 cannot select the advertised RSA PKCS#1 schemes. |
-| Downstream TLS authentication | BoringSSL selects a compatible ML-DSA leaf or ECDSA P-256 fallback from the client's offer. |
-
-QUIC's handshake offer does not disable ML-DSA issuer signatures in certificate
-paths. An RSA/ECDSA leaf issued by a locally trusted ML-DSA CA can verify through
-the shared PKI verifier. Installing a root does not change the ClientHello offer.
-
-Each TLS leg negotiates independently. An origin's algorithm does not force the
-client-facing leg to use the same algorithm, and downstream support does not
-change upstream certificate verification. TLS 1.2 uses non-PQC algorithms.
-
-TCP ClientHellos enable ordinary GREASE and prepend a reserved GREASE signature
-scheme. QUIC omits those offers under the built-in recipe. Signature GREASE is
-independent of ordinary GREASE and does not change CertificateRequest algorithms.
-Both transports randomize extension order while preserving TLS ordering rules.
-Custom profiles expose GREASE choices separately from real algorithm preferences.
-
-TCP requests stapled OCSP and signed certificate timestamps; QUIC follows its
-separate Chromium offer. The shared verifier enforces CT and CRLSet/stapled-OCSP
-policy using the selected source's data. Chrome and WebView2 supply separate
-lists with the same semantics and freshness rules. Captures report the datasets
-and actual checks, including stale or disabled CT. See
-[verification policy and remaining gaps](chromium-verifier.md).
-
-Upstream TLS 1.3 clients also advertise Brotli certificate decompression
-(`compress_certificate`, algorithm `0x0002`). Decoding uses BoringSSL's existing
-certificate size limit and exact output buffer, rejects malformed, truncated
-or trailing data, and passes the decoded certificate through the same trust
-and identity verification. Origins may still send an uncompressed certificate.
-Client certificates and downstream certificates remain uncompressed.
-
-Built-in profiles enable ECH GREASE on TCP and QUIC. When no real ECH
-configuration is used, BoringSSL sends a fresh dummy `encrypted_client_hello`
-extension when TLS 1.3 is offered, including when an origin negotiates TLS 1.2. This
-exercises extension handling and matches Chromium's ECH GREASE behavior; it
-does not encrypt the server name. Real ECH discovery and authenticated retry are
-separate settings and are documented in [negotiation](chromium-negotiation.md#encrypted-client-hello).
-
-The default TLS 1.2 cipher list uses Chromium's expression
-`ALL:!aPSK:!ECDSA+SHA1:!3DES`, including its CBC and static-RSA compatibility
-suites after the ECDHE/AEAD suites. RSA/SHA-1 server handshake signatures are
-excluded on TCP, matching its separate signature policy. Custom profiles can
-disable compatibility ciphers; embedders can supply an explicit cipher list.
+BoringSSL selects a compatible ML-DSA leaf or ECDSA P-256 fallback from the
+client's offer. Each TLS leg negotiates independently: an origin's algorithm
+does not force the client-facing leg to use it, and downstream support does not
+change upstream verification.
 
 The default interception resolver caches in-memory ML-DSA-44/65/87 and P-256
 leaves per validated host. Capacity counts hosts, with at most four key variants
 per host. Expired variants are removed before reuse; host eviction removes all
-of its variants. BoringSSL
-selects a credential from the client's actual offered signature schemes.
+of its variants.
 Existing custom resolvers may continue returning one certificate through
 `resolve`; `resolve_credentials` allows ordered alternatives for one identity.
 The standalone `ca issue` command issues P-256 leaves.
-
-Upstream client authentication accepts an ML-DSA credential only for TLS 1.3
-when its exact key variant matches a requested signature scheme. It retains the
-existing issuer, validity, identity, trust-generation and selection checks.
-Native credential registration and callback access stay inside
-[`transmog-tls-native`](../crates/tls-native/src/lib.rs), using the same BoringSSL
-instance as the rest of the TLS stack.
 
 The generated interception root uses ECDSA P-256. An ML-DSA leaf can sign the TLS
 handshake while its issuer signs the certificate with ECDSA. Hybrid exchange
@@ -109,10 +31,12 @@ outside the supported model.
 ## Recorded connection evidence
 
 TLS evidence belongs to a physical connection and its client or upstream leg.
-It also records whether HTTP/2 or HTTP/3 ALPS was negotiated and the exact server value.
+Certificate views distinguish interception credentials, origin paths and client
+authentication, using recorded trust rather than re-verifying on inspection.
+Connection evidence also records whether H2/H3 ALPS was negotiated and the exact server value.
 The Connection inspector decodes SETTINGS and read-only `ACCEPT_CH` preferences,
 retaining original bytes in Hex. Missing ALPS evidence is unavailable, rather
-than inferred from the configured offer. See [H2/H3 ALPS](http2-alps.md).
+than inferred from the configured offer. See [H2/H3 ALPS](alps.md).
 Successful handshakes record the negotiated group and ID, key-exchange type,
 local and peer handshake signature schemes when available, session resumption,
 HelloRetryRequest, protocol and cipher. Certificate inspection shows the

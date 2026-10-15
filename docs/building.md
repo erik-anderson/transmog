@@ -1,4 +1,4 @@
-# Build prerequisites
+# Building and prerequisites
 
 ## Build and launch the Windows desktop
 
@@ -23,7 +23,9 @@ dependencies. It configures tools, installs npm packages, builds and launches;
 `-Configuration Release` selects the optimized build. `TRANSMOG_PYTHON` selects
 an explicit interpreter for the wrapper.
 
-The following sections describe prerequisites and individual build commands.
+This guide owns prerequisites and build commands. Use [testing](testing.md) to
+select verification gates and [Windows release qualification](windows-release.md#local-release-qualification-before-dispatch)
+before dispatching a signed release.
 
 Transmog compiles BoringSSL, quiche, and the bundled zstd C sources from
 source. A Rust-only installation is therefore insufficient even for
@@ -107,8 +109,7 @@ also supported.
 After installing prerequisites, open a new PowerShell and run:
 
 ```powershell
-python ./scripts/dev-env.py --check
-python ./scripts/test.py
+python scripts/dev-env.py --check
 ```
 
 `dev-env.py` prepends repository-local tools when present, selects `clang-cl`,
@@ -230,17 +231,12 @@ task generates the assets before Cargo consumes them:
 python ./scripts/build-desktop.py --configuration Debug --locked-dependencies
 ```
 
-Build, test, and run through the repository's LLVM/Ninja environment:
-
-```powershell
-python scripts/dev-env.py --run cargo test --locked -p transmog-desktop
-python scripts/build-desktop.py --configuration Debug --locked-dependencies
-python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
-```
+For build-and-launch commands, use the [entry point above](#build-and-launch-the-windows-desktop).
+Choose validation from [desktop and capture tests](testing.md#desktop-and-capture-workflows).
 
 The desktop locates `transmog-script-host.exe` beside its own executable. The
-repository build script builds both binaries into the same Cargo profile
-directory. Release packaging copies the exact release host to Tauri's
+repository build script builds the desktop and both helpers into the same
+Cargo profile directory. Release packaging copies the exact release host to Tauri's
 target-qualified `externalBin` inputs and removes those staging copies
 afterward; the NSIS bundle therefore always installs both AppContainer helpers
 beside Transmog.
@@ -260,20 +256,6 @@ its user cache. After that cache and all Cargo/npm dependencies exist, the same
 command succeeds with Cargo offline and network access blocked. Node and the
 Tauri CLI are build tools only; neither the optimized executable nor the
 NSIS-installed application starts a Node process or a development server.
-
-For the local WebView2 delivery smoke test, launch the debug or release binary
-with a loopback DevTools port and, while it is running, execute:
-
-```powershell
-Push-Location ./apps/desktop/ui
-npm run smoke:webview -- --port 9333
-Pop-Location
-```
-
-The script reloads the real WebView, activates the TypeScript island, and fails
-on WebUI hydration, the typed status command, missing module/CSS assets, a CSP
-violation, or a browser error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
-test-only and must not be set for production launches.
 
 ## Container validation requirements
 
@@ -304,15 +286,8 @@ for the Rust and C/C++ artifacts. The PQC runner writes public reports under
 and browser profiles stay inside the disposable container. It does not install
 roots or configure proxies on the host.
 
-Run the trust and optional live gates with:
-
-```powershell
-python ./scripts/test-pqc-browser-docker.py
-python ./scripts/test-pqc-browser-docker.py --live-url https://pq.cloudflareresearch.com/
-```
-
-Use `--refresh-browser` when a cached image needs the available Chrome release.
-See [PQC verification](testing.md#post-quantum-tls) for assertions and reports.
+Use [PQC verification](testing.md#post-quantum-tls) for trust/live gate commands,
+browser refresh options, assertions and reports.
 
 Custom containers must meet the repository's Node.js 24 or newer baseline.
 A distribution's older Node package can install npm
@@ -328,53 +303,30 @@ library development package, and normal libc development headers. Then run:
 
 ```sh
 python3 scripts/dev-env.py --check
-python3 scripts/dev-env.py --run cargo test --workspace --all-features --locked
+python3 scripts/dev-env.py --run cargo build --workspace --all-features --locked
 ```
 
-On Windows with Docker Desktop's WSL2 backend, the complete Linux format,
-strict-Clippy, all-target test, and release-build gate is reproducible without
-installing a separate WSL distribution:
+On Windows, the [Linux container gate](testing.md#repository-gate) qualifies the
+workspace without a separate WSL distribution. See
+[container requirements](#container-validation-requirements) for tools and volumes.
 
-```powershell
-python ./scripts/test-linux-docker.py
-```
+## Interoperability prerequisites
 
-The runner uses the same digest-pinned tool image as content fuzzing, clears
-the fuzz-only sanitizer flags, selects Clang plus `llvm-ar` and Ninja, mounts
-the checkout read-only, and keeps Cargo downloads and build output in named
-Docker volumes.
+The standalone interoperability matrix requires the native build environment,
+Docker Compose, a standalone `curl`, Node.js 24 or newer with npm, and Playwright
+Chromium. Node.js 24 supplies the fixture generator's built-in zstd support.
+The first run can download container images, npm packages and the pinned browser.
+Docker must be running; on Windows use Docker Desktop's Linux container mode.
 
-The standalone interoperability matrix additionally requires Docker Compose,
-a standalone `curl` executable, Node.js 24 or newer with npm, and Playwright
-Chromium. Node.js 24 is required because the fixture generator uses its built-in
-zstd support in addition to gzip, Brotli, and deflate. The runner builds with
-the configured native environment and starts digest-pinned Nginx, Apache,
-and Caddy containers on ephemeral loopback ports:
+The product gate requires permission to create and launch an AppContainer profile.
+It keeps temporary certificates, application state, body caches, captures, exports
+and sandbox identities in its per-run directory and cleans them up. It does not
+install host roots or change system proxy settings. Use the
+[interoperability guide](testing.md#protocol-and-product-interoperability) for the
+command, scope and proof requirements.
 
-```powershell
-python ./scripts/test-interop.py
-```
-
-The first run can download the container images, npm packages, and the pinned
-browser. Docker Desktop must be running. No CA installation or administrator
-access is required; the suite creates an ephemeral CA and exact-IP origin leaf
-inside its per-run directory and deletes them during cleanup.
-
-The runner also builds release copies of the proxy, script host, and preview
-worker, then runs the UI-neutral product workflow with the production
-AppContainer/Job Object requirement. The current user must be allowed to create
-and launch an AppContainer profile, but no trust-store, system-proxy, registry,
-or administrator mutation is performed. The test keeps all application state,
-body-cache data, captures, exports, and temporary sandbox identities under its
-per-run directory and removes them during cleanup.
-
-Content fuzzing is an optional maintainer workflow, not a build prerequisite.
-It requires a nightly Rust toolchain and the pinned `cargo-fuzz` driver because
-LLVM sanitizer-backed libFuzzer is Unix-only. See `fuzz/README.md`; the normal
-deterministic bomb and cancellation tests still run on Windows and macOS.
-Windows maintainers can run the Linux fuzz environment through Docker Desktop's
-WSL2 backend with `python scripts/fuzz-content-docker.py` without installing Rust
-inside the internal `docker-desktop` distribution.
+Content fuzzing is optional and has its own nightly Rust and `cargo-fuzz`
+[prerequisites and runner](../fuzz/README.md).
 
 ## macOS
 
@@ -383,21 +335,18 @@ Clang is supported; upstream LLVM may be selected explicitly when matching CI.
 
 ```sh
 python3 scripts/dev-env.py --check
-python3 scripts/dev-env.py --run cargo test --workspace --all-features --locked
+python3 scripts/dev-env.py --run cargo build --workspace --all-features --locked
 ```
 
 ## Policy tools
 
-Install `cargo-deny` and run the complete dependency policy plus the dedicated
-normal-graph TLS check:
+Install `cargo-deny` for dependency-policy checks:
 
 ```powershell
 cargo install cargo-deny --locked
-cargo deny check
-python ./scripts/check-crypto-graph.py
 ```
 
-The normal dependency graph must contain exactly one package identity, including
-source and version, for each of `boring` and `boring-sys`, and no second production
-TLS implementation. Platform certificate enumeration packages are permitted only
-as sources of DER bytes; BoringSSL performs all path and endpoint verification.
+Release maintainers use the pinned `scripts/setup-release-validation-tools.ps1`
+setup required by [release qualification](windows-release.md#local-release-qualification-before-dispatch).
+The [repository gate](testing.md#repository-gate) runs policy, crypto-graph and
+supply-chain checks; [dependency policy](dependencies.md) defines the allowed graph.

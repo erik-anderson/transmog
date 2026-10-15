@@ -519,35 +519,19 @@ the proxy is active.
 
 ## Desktop qualification gates
 
-Run the release WebView gate (the default fast soak uses 100 bounded refreshes):
+Complete [local release qualification](#local-release-qualification-before-dispatch)
+on the candidate commit, including its three-minute WebView soak. The
+[desktop test guide](testing.md#desktop-and-capture-workflows) owns standalone
+main-window and viewer commands for development. The release gate verifies
+startup, absence of CSP violations and browser errors, semantic landmarks and accessible names, the
+Chromium accessibility tree, native keyboard controls, forced colors, reduced
+motion, 200% scale, long labels, bounded heap/working-set growth and second-launch
+handoff. Tauri and NSIS declare per-monitor-v2 DPI awareness.
 
-```powershell
-pwsh ./scripts/test-windows-desktop.ps1
-```
-
-Release qualification defaults to a three-minute soak:
-
-```powershell
-pwsh ./scripts/test-windows-desktop.ps1 -SoakMinutes 3
-```
-
-The gate uses the packaged WebView technology and verifies startup, CSP and
-browser-error absence, semantic landmarks and accessible names, the Chromium
-accessibility tree, keyboard-focusable native controls, forced-colors behavior,
-reduced motion, 200% device scale, long localized labels, bounded JavaScript
-heap, bounded process working-set growth, and second-launch handoff. Tauri and
-NSIS declare per-monitor-v2 DPI awareness.
-
-Also run the complete repository gate and standalone interoperability matrix:
-
-```powershell
-python scripts/test.py
-python ./scripts/test-interop.py
-```
-
-The interoperability matrix proves the proxy observed the exchange and covers
-standalone curl/Chromium with Nginx, Apache, and Caddy across supported HTTP and
-content-coding paths. Certificate validation remains enabled.
+Also run the [repository gate](testing.md#repository-gate) and
+[standalone interoperability matrix](testing.md#protocol-and-product-interoperability).
+The latter proves the proxy observed exchanges between independent curl/Chromium
+clients and Nginx, Apache and Caddy with certificate validation enabled.
 
 ## Clean-machine release checklist
 

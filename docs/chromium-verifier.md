@@ -27,17 +27,69 @@ the default policy. Valid stapled responses use the same signature, issuer and
 freshness checks. This malformed-input difference is not full byte-for-byte
 browser parity.
 
+## Trust and verification contexts
+
+[Root-source selection](root-stores.md) supplies an immutable `TrustSnapshot`.
+OS roots are enumerated as DER; the operating system does not build upstream
+verification paths. Chromium/WebView2 profiles use public component roots plus
+the optional monitored Windows local-trust overlay.
+
+Expected peer names are independent of SNI and capture collection. Embedders
+using raw TCP SSL objects should call `configure_ssl_metadata_for_peer`,
+particularly for IP origins or when disabling SNI.
+
+Live reload is exposed through `ProxyServer::control().reload_trust(...)`. A
+reload must use a strictly increasing generation number. The runtime constructs
+new Hyper HTTP/1.1/HTTP/2 and quiche HTTP/3 clients before atomically publishing
+the generation; existing exchanges retain their original clients until they
+finish, so connection pools never mix trust generations.
+
+## Buffered certificates
+
+Production TCP and QUIC contexts use `TLS_with_buffers_method`, as Chromium does.
+The shared PKI verifier parses the leaf and candidate issuers rather than having
+the TLS compatibility layer eagerly parse every wire entry. An irrelevant malformed
+issuer can be ignored when another valid trusted path exists; a malformed leaf or
+unusable required issuer still fails. H3 telemetry hashes raw certificate bytes and
+does not impose a second parse requirement on unused entries.
+
+Credentials and requested CA names use buffer APIs. QUIC connections are created
+without quiche's legacy hostname setter; SNI and expected identity are installed
+separately before the first packet. The production TCP adapter uses
+`tcp_context_builder`; worker and synchronous embedding APIs are described below.
+
+## Missing issuers
+
+The single PKI path builder consults supplied issuers and the intermediate cache
+first, then retrieves AIA CA-issuer URLs when it needs additional candidates.
+Like Chromium's issuer source, it starts at most five valid URLs per certificate,
+waits for their results in order, accepts individual DER, CMS/PKCS#7, or the first
+PEM certificate, limits decoded responses to 64 KiB, and bounds each batch to 10
+seconds. HTTP content encodings are decoded within that bound; encoded input is
+additionally limited to 256 KiB.
+Only HTTP is supported, including after redirects. Fetches send no cookies,
+caller headers or authentication and bypass the proxy's TLS machinery to avoid
+recursive verification. The path builder retains its 60-second and 20-iteration
+limits. Cancellation stops outstanding fetches.
+
+Production TCP and QUIC verification runs on bounded workers. Only owned DER,
+expected identity, SCT/OCSP evidence and frozen trust inputs cross threads; the
+TLS object and capture publication stay on their owning thread. Low-level
+synchronous embedding contexts retain synchronous verification; `hyper_connector*`
+and async adapters install the worker callback and require a TLS task waker.
+Use `synchronous_connector*` for a blocking TLS stream. Verification rules
+are identical; only execution differs.
+
+Only intermediates from fully accepted paths enter the bounded cache: up to 256
+certificates and 4 MiB, with seven days of inactivity expiry. Leaf certificates
+and anchors are excluded. Cached certificates remain untrusted candidates;
+every new path rechecks trust, expiry, constraints, hostname, CT and revocation.
+Capture details report AIA retrieval attempts and whether a cached candidate was
+used. This is a process-local intermediate cache, not Chromium's complete HTTP
+cache or browser-level certificate-verification cache.
+
 ## Implemented core policy
 
-- Production TCP and QUIC use buffered TLS certificates, allowing PKI to ignore
-  malformed unused issuer entries while rejecting malformed leaves and required
-  issuers. Certificate credentials and evidence use the corresponding buffer APIs.
-- Missing issuers can be retrieved through bounded AIA HTTP requests. A bounded
-  intermediate cache retains only intermediates from fully accepted paths; they
-  remain untrusted candidates on every subsequent verification. Production
-  verification runs on workers with owned inputs and cancellation. See the
-  [negotiation contract](chromium-negotiation.md#missing-issuers) for fetch bounds,
-  parsing, caching and embedding details.
 - Chromium parse options, RSA minimum 1024 bits and `kStrong` certificate
   signature policy; supported curves and signatures are decided by PKI.
 - RFC 5280 path building and validation, including alternate paths, name

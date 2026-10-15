@@ -26,17 +26,9 @@ for the framework and security choices.
 
 ## Build and run
 
-From the repository root, follow the [build prerequisites](../../docs/building.md#windows-desktop-shell), then:
-
-```powershell
-python scripts/dev-env.py --check
-python scripts/dev-env.py --run cargo fetch --locked
-npm ci --prefix apps/desktop/ui
-python scripts/build-desktop.py --configuration Debug --locked-dependencies
-python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
-```
-
-The build includes the script host and preview worker required by the desktop.
+Follow the [Windows build-and-launch guide](../../docs/building.md#build-and-launch-the-windows-desktop).
+It prepares locked dependencies and builds the desktop plus its script host and
+preview worker. That guide also covers prerequisites and individual build steps.
 
 The desktop Cargo package produces `transmog.exe` on Windows. The separate
 headless CLI package produces `transmog-cli.exe`.
@@ -45,6 +37,7 @@ headless CLI package produces `transmog-cli.exe`.
 
 UI checks use the repository's Playwright installation; native desktop checks
 cover WebView2, accessibility, display scaling, and application lifecycle.
+Choose commands from [the test guide](../../docs/testing.md#desktop-and-capture-workflows).
 Development guidance is in [ui/AGENTS.md](ui/AGENTS.md).
 
 Use [the Windows release guide](../../docs/windows-release.md) for packaging and

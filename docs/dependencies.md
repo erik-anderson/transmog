@@ -45,7 +45,8 @@ requests, alternate server credentials and signature-algorithm GREASE omitted by
 the safe wrapper. It owns native references and selected public-chain evidence
 using that same BoringSSL instance. Algorithm and trust policy remain in
 `transmog-tls`; see the
-[certificate model](certificate-model.md#post-quantum-tls-algorithms).
+[negotiation policy](chromium-negotiation.md#algorithms-and-clienthello) and
+[verifier contract](chromium-verifier.md).
 
 Transmog deliberately rejects a second production TLS implementation. The
 dependency policy bans OpenSSL, native-tls, rustls, and webpki data-plane

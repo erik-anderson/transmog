@@ -148,5 +148,5 @@ QUICHE commit `80bf9559d3a4c08dde4b85abc46d190a88ffef64`, pinned by Chromium
 These receive credits are finite protocol limits, independent of application
 body limits and bounded request queues.
 
-The [remaining transport plan](chromium-transport-plan.md) covers H2 startup ACK
+The [remaining transport plan](roadmap.md#chromium-transport-alignment) covers H2 startup ACK
 ordering, H3 dynamic QPACK and datagrams, and broader comparison cases.
