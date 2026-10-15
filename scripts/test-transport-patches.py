@@ -27,7 +27,11 @@ def main():
     with tempfile.TemporaryDirectory(prefix="case-", dir=parent) as temporary:
         directory = Path(temporary)
         for name in ("h2", "hyper", "quiche"):
-            shutil.copytree(ROOT / "third_party/rust-transport/vendor" / name, directory / name)
+            # Fresh mtimes force the selected crate to rebuild in this location.
+            # Otherwise Cargo can reuse a binary whose env!(CARGO_MANIFEST_DIR)
+            # still points at an already deleted earlier temporary workspace.
+            shutil.copytree(ROOT / "third_party/rust-transport/vendor" / name,
+                            directory / name, copy_function=shutil.copyfile)
         manifest = '[workspace]\nresolver = "2"\nmembers = ["h2", "hyper", "quiche"]\n[patch.crates-io]\n'
         for name in FAMILY:
             pin = cargo["patch"]["crates-io"][name]
