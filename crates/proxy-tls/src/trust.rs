@@ -1076,7 +1076,7 @@ impl UpstreamTlsContextFactory {
         if matches!(frozen.connection_local, Some(Err(_))) {
             frozen.bootstrap_trust_failure = true;
         }
-        frozen.configure_frozen(&mut builder, context_offer)?;
+        frozen.configure_frozen(&mut builder, context_offer, false)?;
         transmog_tls_native::enable_false_start(&mut builder);
         builder.set_alpn_protos(alpn_wire_format)?;
         Ok(builder)
@@ -1089,7 +1089,8 @@ impl UpstreamTlsContextFactory {
     /// Returns [`TrustError`] when the configured TLS policy cannot be applied.
     pub fn quiche_context_builder(&self) -> Result<SslContextBuilder, TrustError> {
         let mut builder = transmog_tls_native::buffered_context_builder()?;
-        self.configure(&mut builder)?;
+        self.for_connection()
+            .configure_frozen(&mut builder, true, true)?;
         Ok(builder)
     }
 
@@ -1109,20 +1110,17 @@ impl UpstreamTlsContextFactory {
         if matches!(frozen.connection_local, Some(Err(_))) {
             frozen.bootstrap_trust_failure = true;
         }
-        frozen.configure_frozen(&mut builder, false)?;
+        frozen.configure_frozen(&mut builder, false, false)?;
         transmog_tls_native::enable_false_start(&mut builder);
         builder.set_alpn_protos(alpn)?;
         Ok(builder)
-    }
-
-    fn configure(&self, builder: &mut SslContextBuilder) -> Result<(), TrustError> {
-        self.for_connection().configure_frozen(builder, true)
     }
 
     fn configure_frozen(
         &self,
         builder: &mut SslContextBuilder,
         context_offer: bool,
+        quic: bool,
     ) -> Result<(), TrustError> {
         crate::evidence::configure_completion(builder);
         transmog_tls_native::configure_session_lifetime(builder);
@@ -1156,13 +1154,21 @@ impl UpstreamTlsContextFactory {
         } else {
             builder.set_curves_list("X25519:P-256:P-384")?;
         }
-        crate::algorithms::configure_authentication(builder)?;
-        builder.set_grease_enabled(
-            settings.grease != transmog_core::network_profile::TlsGrease::Disabled,
-        );
+        if quic {
+            crate::algorithms::configure_quic_authentication(builder)?;
+        } else {
+            crate::algorithms::configure_authentication(builder)?;
+        }
+        builder.set_grease_enabled(match settings.grease {
+            transmog_core::network_profile::TlsGrease::Chromium => !quic,
+            transmog_core::network_profile::TlsGrease::NoSignature => true,
+            transmog_core::network_profile::TlsGrease::Disabled => false,
+        });
         builder.set_permute_extensions(settings.randomize_extensions);
-        builder.enable_ocsp_stapling();
-        builder.enable_signed_cert_timestamps();
+        if !quic {
+            builder.enable_ocsp_stapling();
+            builder.enable_signed_cert_timestamps();
+        }
         if settings.certificate_compression {
             builder.add_certificate_compression_algorithm(
                 crate::certificate_compression::BrotliCertificateDecoder,
@@ -1170,7 +1176,7 @@ impl UpstreamTlsContextFactory {
         }
         transmog_tls_native::set_signature_algorithm_grease(
             builder,
-            settings.grease == transmog_core::network_profile::TlsGrease::Chromium,
+            !quic && settings.grease == transmog_core::network_profile::TlsGrease::Chromium,
         );
         builder.set_cipher_list(&self.policy.cipher_list)?;
         if let Some(authentication) = &self.client_authentication {

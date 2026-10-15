@@ -37,6 +37,9 @@ use transmog_core::performance::{
 };
 
 const MAX_DATAGRAM_SIZE: usize = 1_350;
+// Chromium advertises the Ethernet MTU minus IPv4/UDP overhead. Sending is
+// still bounded independently; Initial padding is handled by quiche.
+const MAX_RECEIVE_UDP_PAYLOAD: usize = 1_472;
 const MAX_UDP_PACKET_SIZE: usize = 65_535;
 
 /// Evidence captured from one verified quiche HTTP/3 exchange.
@@ -845,14 +848,21 @@ impl H3ConnectionDriver {
             Some(&capture),
             authentication.as_ref(),
         )?;
-        config.set_max_recv_udp_payload_size(MAX_DATAGRAM_SIZE);
+        config.set_max_recv_udp_payload_size(MAX_RECEIVE_UDP_PAYLOAD);
         config.set_max_send_udp_payload_size(MAX_DATAGRAM_SIZE);
-        let mut source_connection_id = [0_u8; quiche::MAX_CONN_ID_LEN];
-        rand_bytes(&mut source_connection_id)?;
-        let source_connection_id = quiche::ConnectionId::from_ref(&source_connection_id);
-        let mut connection = quiche::connect(
+        // Chromium requests zero-length server-to-client CIDs. The connected
+        // UDP socket demultiplexes this connection; observation identity must
+        // remain independent of a wire CID that is deliberately empty.
+        let mut observation_id = [0_u8; 16];
+        rand_bytes(&mut observation_id)?;
+        let source_connection_id = quiche::ConnectionId::from_ref(&[]);
+        let mut destination_id = [0_u8; 8];
+        rand_bytes(&mut destination_id)?;
+        let destination_id = quiche::ConnectionId::from_ref(&destination_id);
+        let mut connection = quiche::connect_with_dcid(
             None,
             &source_connection_id,
+            &destination_id,
             local_addr,
             peer_addr,
             &mut config,
@@ -905,7 +915,7 @@ impl H3ConnectionDriver {
                 h3_config: crate::config::http3_config()?,
                 transport: TransportObservation {
                     leg: "upstream".into(),
-                    connection_id: format!("quic-{}", hex_lower(source_connection_id.as_ref())),
+                    connection_id: format!("quic-{}", hex_lower(&observation_id)),
                     peer: Some(peer_addr.to_string()),
                     local: Some(local_addr.to_string()),
                     outcome: TransportOutcome::Connected,
@@ -2315,6 +2325,8 @@ mod tests {
                 assert_eq!(params.initial_max_stream_data_uni, 6_291_456);
                 assert_eq!(params.initial_max_streams_bidi, 100);
                 assert_eq!(params.initial_max_streams_uni, 103);
+                assert_eq!(params.max_udp_payload_size, 1_472);
+                assert_eq!(connection.destination_id().len(), 0);
                 let names = headers
                     .iter()
                     .take(4)
@@ -3782,6 +3794,10 @@ mod tests {
                     quiche::Header::from_slice(&mut recv_buffer[..read], quiche::MAX_CONN_ID_LEN)
                         .unwrap();
                 assert_eq!(header.ty, quiche::Type::Initial);
+                if probe.is_some() {
+                    assert_eq!(header.dcid.len(), 8);
+                    assert_eq!(header.scid.len(), 0);
+                }
                 let mut source_id = [0_u8; quiche::MAX_CONN_ID_LEN];
                 rand_bytes(&mut source_id).unwrap();
                 let source_id = quiche::ConnectionId::from_ref(&source_id);

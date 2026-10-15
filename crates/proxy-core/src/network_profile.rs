@@ -29,10 +29,10 @@ pub enum TlsVersions {
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum TlsGrease {
-    /// Ordinary GREASE and signature-algorithm GREASE.
+    /// Chromium's transport policy: ordinary/signature GREASE on TCP, neither on QUIC.
     #[default]
     Chromium,
-    /// Ordinary GREASE without a reserved signature algorithm.
+    /// Ordinary GREASE without a reserved signature algorithm, on either transport.
     NoSignature,
     /// Disable both forms of GREASE.
     Disabled,

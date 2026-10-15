@@ -31,10 +31,9 @@ not independent bugs: one header-order change affects several reported fields.
 
 ## 1. Qualify the remaining wire targets
 
-Add an explicitly versioned browser image/input to the local harness and record
-its binary digest. Qualify Chromium 154 against the existing recipe, with newer
-browser versions reported as separate comparisons. Keep this recipe's named
-target fixed rather than silently rolling it to the latest installed Chrome.
+Chromium 154 and 155 use the same wire targets for this work. Use the recorded
+Chrome 155 binary for comparison while keeping the named recipe fixed. A future
+recipe roll should record the browser binary digest and qualify changed targets.
 
 Expand the local cases beyond a fresh GET: repeated requests and connection
 reuse, HEAD/POST, duplicate headers and cookies, edits/reroutes, ALPS accepted
@@ -47,6 +46,16 @@ Acceptance: each remaining difference has a pinned source or repeatable wire
 expectation, with protocol fallback and missing evidence remaining hard errors.
 
 ## 2. Align QUIC's TLS offer and packet policy
+
+The first increment uses existing APIs: QUIC has Chromium's nine signature
+schemes, no ordinary TLS/signature GREASE or OCSP/SCT request, a zero-length
+client source CID, eight-byte initial destination CID, and advertised UDP
+receive size 1472. Explicit custom `NoSignature` mode still enables ordinary
+GREASE. Observation IDs are independent random values so zero wire CIDs cannot
+collapse separate physical connections. ECH GREASE and the common verifier are
+unchanged. Review round 1 corrected regression-test assumptions and CID
+identity coverage; round 2 found no further significant issues. The complete
+H3 suite, TLS PQC/wire suite and strict Clippy passed.
 
 Keep the common certificate verifier and trust inputs. Introduce a
 transport-specific offer policy at the shared TLS-context boundary, so QUIC

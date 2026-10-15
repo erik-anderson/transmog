@@ -36,6 +36,9 @@ const GROUPS: &str = "X25519MLKEM768:X25519:P-256:P-384";
 const CHROMIUM_SIGNATURE_ALGORITHMS: [u16; 11] = [
     0x0904, 0x0905, 0x0906, 0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601,
 ];
+const CHROMIUM_QUIC_SIGNATURE_ALGORITHMS: [u16; 9] = [
+    0x0403, 0x0804, 0x0401, 0x0503, 0x0805, 0x0501, 0x0806, 0x0601, 0x0201,
+];
 const ML_DSA: [(i32, SslSignatureAlgorithm); 3] = [
     (
         boring_sys::EVP_PKEY_ML_DSA_44,
@@ -374,7 +377,7 @@ fn custom_profile_controls_quic_context_before_capture_callback_reinstallation()
     let observed = observed.lock().unwrap();
     assert_eq!(
         signature_algorithms(observed[0][0].as_ref().unwrap()),
-        CHROMIUM_SIGNATURE_ALGORITHMS
+        CHROMIUM_QUIC_SIGNATURE_ALGORITHMS
     );
     let groups = signature_algorithms(observed[0][1].as_ref().unwrap());
     assert!(is_grease(groups[0]));
@@ -1016,13 +1019,12 @@ fn quic_config(tls: SslContextBuilder) -> quiche::Config {
 }
 
 #[test]
-fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() {
+fn chromium_quic_offer_reaches_the_peer_and_preserves_handshakes() {
     let ca = ProxyCa::generate("Signature GREASE QUIC root", 2).unwrap();
     let leaf = ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
-    let mut expected = Vec::new();
-    for enabled in [false, true] {
+    for ordinary_grease in [false, true] {
         let observed = Arc::new(Mutex::new(Vec::new()));
         let recorder = observed.clone();
         let mut server = SslContext::builder(SslMethod::tls()).unwrap();
@@ -1041,7 +1043,7 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
                 ExtensionType::ENCRYPTED_CLIENT_HELLO,
             ]
             .into_iter()
-            .map(|kind| hello.get_extension(kind).unwrap().to_vec())
+            .map(|kind| hello.get_extension(kind).map(<[u8]>::to_vec))
             .collect();
             recorder.lock().unwrap().push(extensions);
             Ok(())
@@ -1049,8 +1051,9 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         let mut client = factory(&ca).quiche_context_builder().unwrap();
         let capture = factory(&ca).capture(Some("localhost".into()), vec!["h3".into()]);
         capture.attach_context(&mut client).unwrap();
-        if !enabled {
-            transmog_tls_native::set_signature_algorithm_grease(&mut client, false);
+        // Explicit NoSignature custom mode can still request ordinary GREASE.
+        if ordinary_grease {
+            client.set_grease_enabled(true);
         }
         let (mut client, _) = quic_handshake(quic_config(client), quic_config(server));
         assert_eq!(client.as_mut().curve(), Some(HYBRID_GROUP));
@@ -1059,27 +1062,22 @@ fn production_quic_signature_grease_reaches_the_peer_and_preserves_handshakes() 
         ));
         let observed = observed.lock().unwrap();
         assert_eq!(observed.len(), 1);
-        let advertised = signature_algorithms(&observed[0][0]);
-        let groups = signature_algorithms(&observed[0][1]);
-        assert!(is_grease(groups[0]));
-        assert_eq!(&groups[1..], [HYBRID_GROUP, 29, 23, 24]);
-        assert!(is_grease(u16_be(&observed[0][2][1..])));
-        assert_eq!(&observed[0][2][3..], [3, 4]);
-        assert!(is_grease(u16_be(&observed[0][3][2..])));
-        assert_eq!(u16_be(&observed[0][3][4..]), 1);
-        assert_eq!(observed[0][4], [1, 0, 0, 0, 0]);
-        assert!(observed[0][5].is_empty());
-        assert_eq!(observed[0][6], [2, 0, 2]);
-        assert_ech_grease(&observed[0][7]);
+        let advertised = signature_algorithms(observed[0][0].as_ref().unwrap());
+        let groups = signature_algorithms(observed[0][1].as_ref().unwrap());
+        let offset = usize::from(ordinary_grease);
+        assert_eq!(is_grease(groups[0]), ordinary_grease);
+        assert_eq!(&groups[offset..], [HYBRID_GROUP, 29, 23, 24]);
+        let versions = observed[0][2].as_ref().unwrap();
+        assert_eq!(is_grease(u16_be(&versions[1..])), ordinary_grease);
+        assert_eq!(&versions[1 + offset * 2..], [3, 4]);
+        let shares = observed[0][3].as_ref().unwrap();
+        assert_eq!(is_grease(u16_be(&shares[2..])), ordinary_grease);
+        assert_eq!(observed[0][4], None);
+        assert_eq!(observed[0][5], None);
+        assert_eq!(observed[0][6].as_deref(), Some([2, 0, 2].as_slice()));
+        assert_ech_grease(observed[0][7].as_ref().unwrap());
         assert!(capture.snapshot().valid());
-        if enabled {
-            assert!(is_grease(advertised[0]));
-            assert_eq!(&advertised[1..], expected);
-        } else {
-            assert!(advertised.iter().all(|&value| !is_grease(value)));
-            assert_eq!(advertised, CHROMIUM_SIGNATURE_ALGORITHMS);
-            expected = advertised;
-        }
+        assert_eq!(advertised, CHROMIUM_QUIC_SIGNATURE_ALGORITHMS);
     }
 }
 
@@ -1184,11 +1182,7 @@ fn quic_pair(
 fn resumed_quic_records_the_new_group_and_the_original_signature_separately() {
     let ca = ProxyCa::generate("Resumed PQC QUIC root", 2).unwrap();
     let leaf = ca
-        .issue_with_algorithm(
-            EndpointIdentity::parse("localhost").unwrap(),
-            1,
-            LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa44),
-        )
+        .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();
     let mut server = SslContext::builder(SslMethod::tls()).unwrap();
     server.set_certificate(&leaf.certificate).unwrap();
@@ -1223,7 +1217,7 @@ fn resumed_quic_records_the_new_group_and_the_original_signature_separately() {
         );
         assert_eq!(
             evidence.details["Original peer handshake signature"],
-            "mldsa44"
+            "ecdsa_secp256r1_sha256"
         );
         assert_eq!(
             evidence.chain_source.as_deref(),
@@ -1255,11 +1249,14 @@ fn hybrid_quic_recovers_lost_initial_with_a_large_ml_dsa_certificate() {
     server.set_certificate(&leaf.certificate).unwrap();
     server.set_private_key(&leaf.private_key).unwrap();
     server.set_curves_list(GROUPS).unwrap();
-    let (mut client, mut server) = quic_handshake_with_loss(
-        quic_config(factory(&ca).quiche_context_builder().unwrap()),
-        quic_config(server),
-        true,
-    );
+    // Stress the verifier and retransmission with an experimental signature
+    // offer; Chromium's production QUIC list does not advertise ML-DSA yet.
+    let mut client = factory(&ca).quiche_context_builder().unwrap();
+    client
+        .set_verify_algorithm_prefs(&[SslSignatureAlgorithm::ML_DSA_87])
+        .unwrap();
+    let (mut client, mut server) =
+        quic_handshake_with_loss(quic_config(client), quic_config(server), true);
     assert_eq!(client.as_mut().curve(), Some(HYBRID_GROUP));
     assert_eq!(server.as_mut().curve(), Some(HYBRID_GROUP));
     assert_eq!(
@@ -1354,7 +1351,7 @@ fn production_quic_context_negotiates_hybrid_and_classical_origins() {
 }
 
 #[test]
-fn production_upstream_verifies_all_ml_dsa_variants_over_tcp_and_quic() {
+fn shared_verifier_accepts_ml_dsa_over_tcp_and_explicit_experimental_quic() {
     let ca = ProxyCa::generate("ML-DSA production root", 2).unwrap();
     let factory = factory(&ca);
     for variant in [
@@ -1390,6 +1387,9 @@ fn production_upstream_verifies_all_ml_dsa_variants_over_tcp_and_quic() {
         server.set_curves_list(GROUPS).unwrap();
         let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
         let mut context = factory.quiche_context_builder().unwrap();
+        context
+            .set_verify_algorithm_prefs(&[variant.signature_algorithm()])
+            .unwrap();
         capture.attach_context(&mut context).unwrap();
         let (mut client, _) = quic_handshake(quic_config(context), quic_config(server));
         assert_eq!(

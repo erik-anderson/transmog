@@ -1,4 +1,4 @@
-//! Shared algorithm preferences for TCP TLS and QUIC.
+//! Transport-specific handshake offers; certificate verification stays shared.
 use boring::{
     error::ErrorStack,
     ssl::{SslContextBuilder, SslSignatureAlgorithm},
@@ -28,5 +28,24 @@ pub(crate) fn configure_authentication(context: &mut SslContextBuilder) -> Resul
         SslSignatureAlgorithm::RSA_PKCS1_SHA384,
         SslSignatureAlgorithm::RSA_PSS_RSAE_SHA512,
         SslSignatureAlgorithm::RSA_PKCS1_SHA512,
+    ])
+}
+
+pub(crate) fn configure_quic_authentication(
+    context: &mut SslContextBuilder,
+) -> Result<(), ErrorStack> {
+    // Chromium's QUIC stack uses BoringSSL's legacy preference list, rather
+    // than TCP's ML-DSA offer. SHA-1 is advertised for compatibility but TLS 1.3
+    // cannot select PKCS#1 signatures. This does not change certificate policy.
+    context.set_verify_algorithm_prefs(&[
+        SslSignatureAlgorithm::ECDSA_SECP256R1_SHA256,
+        SslSignatureAlgorithm::RSA_PSS_RSAE_SHA256,
+        SslSignatureAlgorithm::RSA_PKCS1_SHA256,
+        SslSignatureAlgorithm::ECDSA_SECP384R1_SHA384,
+        SslSignatureAlgorithm::RSA_PSS_RSAE_SHA384,
+        SslSignatureAlgorithm::RSA_PKCS1_SHA384,
+        SslSignatureAlgorithm::RSA_PSS_RSAE_SHA512,
+        SslSignatureAlgorithm::RSA_PKCS1_SHA512,
+        SslSignatureAlgorithm::RSA_PKCS1_SHA1,
     ])
 }

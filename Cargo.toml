@@ -74,7 +74,7 @@ h2 = "0.4.19"
 hyper-boring = "=5.2.0"
 hickory-resolver = { version = "=0.26.3", default-features = false, features = ["tokio", "system-config"] }
 hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server", "service", "tokio"] }
-quiche = { version = "=0.30.0", default-features = false, features = ["boringssl-boring-crate"] }
+quiche = { version = "=0.30.0", default-features = false, features = ["boringssl-boring-crate", "custom-client-dcid"] }
 rustls-native-certs = "0.8.4"
 serde = { version = "1.0.228", features = ["derive", "rc"] }
 serde_json = "1.0.145"
