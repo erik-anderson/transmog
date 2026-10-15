@@ -179,6 +179,12 @@ for measurements.
 
 ## Local Chromium load gate
 
+For repeatable origin-facing TLS, HTTP and TCP fingerprint comparisons across
+H1.1, H2 and H3, run `python scripts/compare-chromium.py`. The
+[comparison guide](chromium-comparison.md) documents signal coverage, protocol
+proof, normalization and limitations. All measurements use isolated local
+origins; public fingerprint-checking sites are not involved.
+
 For repeatable browser scale qualification without public sites, run
 `./scripts/test-load.ps1`. The [load-testing guide](load-testing.md) documents
 CLI/desktop modes, the smoke profile, per-browser routing and generated evidence.

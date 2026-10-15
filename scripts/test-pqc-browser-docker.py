@@ -1,10 +1,8 @@
 """Validate PQC and certificate verification with Chrome and isolated Linux trust."""
 import argparse
-import shutil
-import tempfile
-from pathlib import Path
 from urllib.parse import urlsplit
-from docker_tools import build_image, container_arguments
+from docker_tools import container_arguments
+from browser_tools import build_browser_image
 from repo_tools import ROOT, command, main_guard
 
 
@@ -18,17 +16,9 @@ def main():
         destination = urlsplit(args.live_url)
         if destination.scheme != "https" or not destination.hostname or destination.username or destination.password:
             parser.error("--live-url requires an HTTPS URL without credentials")
-    docker = build_image("transmog-linux-tools:rust-1.97.1-nightly-2026-10-01")
+    docker = build_browser_image(args.image, refresh=args.refresh_browser)
     artifacts = ROOT / ".local/pqc-browser-verified"
     artifacts.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(prefix="build-", dir=artifacts) as temporary:
-        context = Path(temporary)
-        shutil.copyfile(ROOT / "e2e/pqc/Dockerfile", context / "Dockerfile")
-        for name in ("package.json", "package-lock.json"):
-            shutil.copyfile(ROOT / "e2e/playwright" / name, context / name)
-        for name in ("pqc-browser.mjs", "pqc-live.mjs"):
-            shutil.copyfile(ROOT / "e2e/playwright/support" / name, context / name)
-        command([docker, "build", *(["--no-cache"] if args.refresh_browser else []), "--tag", args.image, context])
     argv = container_arguments(docker, args.image,
         environment=("CFLAGS=", "CXXFLAGS=", "CARGO_TARGET_DIR=/work-target"),
         mounts=("type=volume,source=transmog-linux-cargo-registry,target=/usr/local/cargo/registry",
