@@ -23,6 +23,18 @@ function Require-Rejection([scriptblock]$Action, [string]$Reason) {
 }
 Set-TestManifest
 Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+$arm64 = $baseline | ConvertFrom-Json
+$arm64.Target = 'aarch64-pc-windows-msvc'
+$armSymbolsPath = Join-Path $symbolsDirectory 'Transmog_0.1.0_windows-arm64-symbols.zip'
+Move-Item -LiteralPath $symbolsPath -Destination $armSymbolsPath
+$arm64.Files[-1].Path = 'evidence/Transmog_0.1.0_windows-arm64-symbols.zip'
+$arm64 | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+$arm64.Target = 'x86_64-pc-windows-msvc'
+$arm64 | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'symbols from a different architecture'
+Move-Item -LiteralPath $armSymbolsPath -Destination $symbolsPath
+Set-TestManifest
 Push-Location (Split-Path -Parent $fixture)
 try {
     Assert-ReleasePayload -PayloadRoot (Split-Path -Leaf $fixture) -Commit 'test-commit' -RunId '123' | Out-Null
@@ -72,6 +84,7 @@ function Invoke-EnvironmentIsolatedFixture([string]$Script) {
 Invoke-EnvironmentIsolatedFixture 'test-release-publication.ps1'
 Invoke-EnvironmentIsolatedFixture 'test-hosted-client-certificate-policy.ps1'
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
+& (Join-Path $PSScriptRoot 'test-windows-release-target.ps1')
 & (Join-Path $PSScriptRoot 'test-signing-retry.ps1')
 & (Get-TransmogPython) -m unittest discover -s (Join-Path $PSScriptRoot 'tests') -v
 if ($LASTEXITCODE) { throw 'Portable tooling and release lifecycle fixtures failed.' }

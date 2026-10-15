@@ -1,12 +1,19 @@
-param([Parameter(Mandatory)][string]$ReleaseRoot, [Parameter(Mandatory)][string]$ReportPath)
+param([Parameter(Mandatory)][string]$ReleaseRoot, [Parameter(Mandatory)][string]$ReportPath,
+    [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target = 'x86_64-pc-windows-msvc')
 . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
 . (Join-Path $PSScriptRoot 'windows-maintenance-process.ps1')
 $manifest = Assert-SignedRelease -ReleaseRoot $ReleaseRoot -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID
+$package = @($manifest.Packages | Where-Object Target -CEQ $Target)
+if ($package.Count -ne 1) { throw 'Expected one installer package for this target.' }
+$hostArchitecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+if (($Target -ceq 'aarch64-pc-windows-msvc' -and $hostArchitecture -cne 'Arm64') -or
+    ($Target -ceq 'x86_64-pc-windows-msvc' -and $hostArchitecture -cne 'X64')) { throw 'Installer qualification requires a native runner for this target.' }
 if ($env:ACTIONS_ID_TOKEN_REQUEST_TOKEN) { throw 'Installer execution must not have Azure OIDC permission.' }
-$installer = Join-Path $ReleaseRoot $manifest.Installer
+$installer = Join-Path $ReleaseRoot $package[0].Installer
 $signatures = [System.Collections.Generic.List[object]]::new()
 $signatures.Add((Get-WindowsSignatureEvidence -FilePath $installer -ExpectedPublisher $manifest.Publisher))
-$cli = Join-Path $ReleaseRoot $manifest.Cli
+$cli = Join-Path $ReleaseRoot $package[0].Cli
+Assert-WindowsBinaryTarget -Path $cli -Target $Target
 $signatures.Add((Get-WindowsSignatureEvidence -FilePath $cli -ExpectedPublisher $manifest.Publisher))
 if ((Get-Item -LiteralPath $cli).VersionInfo.FileVersion -cne $manifest.Version) { throw 'Standalone CLI resource version differs from the release.' }
 $installDirectory = Join-Path $env:RUNNER_TEMP "transmog-install-$env:GITHUB_RUN_ID"
@@ -43,6 +50,7 @@ foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
 }
 Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--verify-update-artifact', ('"' + (Resolve-Path -LiteralPath $installer).Path + '"'), ('"' + (Resolve-Path -LiteralPath "$installer.sig").Path + '"'), (ConvertTo-ReleaseSemVer $manifest.Version))
 foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
+    if ($name -cne 'uninstall.exe') { Assert-WindowsBinaryTarget -Path (Join-Path $installDirectory $name) -Target $Target }
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }
 Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--prepare-update')
@@ -53,17 +61,17 @@ if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog.exe')) { throw
 $after = Get-HostState
 New-Item -ItemType Directory -Force -Path (Split-Path -Parent $ReportPath) | Out-Null
 [ordered]@{ Before = ($before | ConvertFrom-Json); After = ($after | ConvertFrom-Json) } |
-    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path (Split-Path -Parent $ReportPath) 'installer-host-state.json') -Encoding utf8NoBOM
+    ConvertTo-Json -Depth 6 | Set-Content -LiteralPath (Join-Path (Split-Path -Parent $ReportPath) "installer-host-state-$((Get-WindowsReleaseTarget $Target).Architecture).json") -Encoding utf8NoBOM
 if ($after -cne $before) {
     $beforeState = $before | ConvertFrom-Json -AsHashtable
     $afterState = $after | ConvertFrom-Json -AsHashtable
     $changed = @($beforeState.Keys | Where-Object {
         ($beforeState[$_] | ConvertTo-Json -Depth 3 -Compress) -cne ($afterState[$_] | ConvertTo-Json -Depth 3 -Compress)
     })
-    throw "Installer qualification changed host state: $($changed -join ', '). See installer-host-state.json."
+    throw "Installer qualification changed host state: $($changed -join ', '). See the installer-host-state report for this architecture."
 }
 [ordered]@{
-    Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; InstallerSha256 = $signatures[0].Sha256
+    Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; Target = $Target; InstallerSha256 = $signatures[0].Sha256
     CliRuntimeVerified = $true
     UpdaterSignatureVerified = $true
     InstallVerified = $true; UpgradeInPlaceVerified = $true; CaptureHandlersVerified = $true; MaintenanceVerified = $true; UninstallVerified = $true; HostStateUnchanged = $true

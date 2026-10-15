@@ -32,13 +32,14 @@ function Get-WindowsSymbolEvidence {
 
 function New-WindowsReleaseSymbolArchive {
     param([Parameter(Mandatory)][string]$BuildDirectory, [Parameter(Mandatory)][string]$OutputPath,
+        [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target = 'x86_64-pc-windows-msvc',
         [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$RunId)
     if (Test-Path -LiteralPath $OutputPath) { throw 'A symbols archive already exists; use a fresh release build.' }
     $records = @(foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         $pdb = [IO.Path]::GetFileNameWithoutExtension($binary).Replace('-', '_') + '.pdb'
         Get-WindowsSymbolEvidence -Binary (Join-Path $BuildDirectory $binary) -Pdb (Join-Path $BuildDirectory $pdb)
     })
-    $manifest = [ordered]@{ Version = $Version; Commit = $Commit; RunId = $RunId; Target = 'x86_64-pc-windows-msvc'; Files = $records } | ConvertTo-Json -Depth 5
+    $manifest = [ordered]@{ Version = $Version; Commit = $Commit; RunId = $RunId; Target = $Target; Files = $records } | ConvertTo-Json -Depth 5
     $archive = [IO.Compression.ZipFile]::Open([IO.Path]::GetFullPath($OutputPath), [IO.Compression.ZipArchiveMode]::Create)
     try {
         foreach ($record in $records) {

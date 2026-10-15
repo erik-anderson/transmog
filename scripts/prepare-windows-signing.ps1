@@ -2,8 +2,10 @@ param([Parameter(Mandatory)][string]$PayloadRoot)
 . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $manifest = Assert-ReleasePayload -PayloadRoot $PayloadRoot -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID
+$platform = Get-WindowsReleaseTarget $manifest.Target
 foreach ($entry in $manifest.Files | Where-Object { $_.Path -match '^(target/release/|apps/desktop/ui/dist/)' }) {
-    $destination = Join-Path $repositoryRoot $entry.Path
+    $relativePath = $entry.Path -replace '^target/release', $platform.BuildSubdirectory
+    $destination = Join-Path $repositoryRoot $relativePath
     New-Item -ItemType Directory -Force -Path (Split-Path -Parent $destination) | Out-Null
     Copy-Item -LiteralPath (Join-Path $PayloadRoot $entry.Path) -Destination $destination -Force
 }

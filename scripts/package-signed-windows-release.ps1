@@ -2,7 +2,8 @@ param([Parameter(Mandatory)][string]$PayloadRoot, [Parameter(Mandatory)][string]
 . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
 $build = Assert-ReleasePayload -PayloadRoot $PayloadRoot -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID
-$releaseRoot = Join-Path $repositoryRoot 'artifacts\windows-signed'
+$platform = Get-WindowsReleaseTarget $build.Target
+$releaseRoot = Join-Path $repositoryRoot "artifacts/windows-signed-$($platform.Architecture)"
 New-Item -ItemType Directory -Force -Path $releaseRoot | Out-Null
 $metadata = [ordered]@{
     Endpoint = $env:SIGNING_ENDPOINT
@@ -17,9 +18,9 @@ foreach ($required in @('Endpoint', 'CodeSigningAccountName', 'CertificateProfil
 if (-not $env:SIGNING_PUBLISHER -or -not $env:SIGNING_DENIED_PROFILE -or $env:SIGNING_DENIED_PROFILE -eq $env:SIGNING_CERTIFICATE_PROFILE) { throw 'Publisher and a different denied probe profile are required.' }
 $metadataPath = Join-Path $repositoryRoot 'artifacts\signing-metadata.json'
 $metadata | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $metadataPath -Encoding utf8NoBOM
-$env:TRANSMOG_SIGNING_JOURNAL = Join-Path $repositoryRoot 'artifacts\signatures.jsonl'
+$env:TRANSMOG_SIGNING_JOURNAL = Join-Path $repositoryRoot "artifacts/signatures-$($platform.Architecture).jsonl"
 try {
-    $package = & (Join-Path $PSScriptRoot 'package-windows.ps1') -BundleOnly -SigningMetadataPath $metadataPath -SigningClientDll $ClientDll -ExpectedPublisher $env:SIGNING_PUBLISHER |
+    $package = & (Join-Path $PSScriptRoot 'package-windows.ps1') -Target $build.Target -BundleOnly -SigningMetadataPath $metadataPath -SigningClientDll $ClientDll -ExpectedPublisher $env:SIGNING_PUBLISHER |
         ForEach-Object { if ($null -ne $_.PSObject.Properties['Installer']) { $_ } else { $_ | Out-Host } }
     if (@($package).Count -ne 1) { throw 'Signed packaging did not return one installer.' }
     $installerEvidence = Get-WindowsSignatureEvidence -FilePath $package.Installer -ExpectedPublisher $env:SIGNING_PUBLISHER
@@ -29,7 +30,7 @@ try {
         if (-not ($journal | Where-Object { $_.Name -ceq $name })) { throw "Missing signature evidence for $name" }
     }
     Copy-Item -LiteralPath $package.Installer -Destination (Join-Path $releaseRoot $installerEvidence.Name)
-    Invoke-TransmogPython 'create-update-manifest.py' @('--installer', $package.Installer, '--version', $build.Version, '--output-directory', $releaseRoot)
+    Invoke-TransmogPython 'create-update-manifest.py' @('--target', $build.Target, '--installer', $package.Installer, '--version', $build.Version, '--output-directory', $releaseRoot)
     Copy-Item -LiteralPath $package.Cli -Destination (Join-Path $releaseRoot $cliEvidence.Name)
     Copy-Item -Path (Join-Path $PayloadRoot 'evidence\*') -Destination $releaseRoot
     [ordered]@{ Publisher = $env:SIGNING_PUBLISHER; Files = $journal; Installer = $installerEvidence } | ConvertTo-Json -Depth 6 |
@@ -54,7 +55,7 @@ try {
     $files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object {
         [pscustomobject]@{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash }
     })
-    [ordered]@{ Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; SourceBranch = $build.SourceBranch; Version = $build.Version; Channel = $build.Channel; ReleaseType = $build.ReleaseType; Publisher = $env:SIGNING_PUBLISHER; Installer = $installerEvidence.Name; Cli = $cliEvidence.Name; Symbols = "Transmog_$($build.Version)_windows-x64-symbols.zip"; CleanWindows11Checklist = 'deferred by maintainer'; Files = $files } |
+    [ordered]@{ Commit = $env:GITHUB_SHA; RunId = $env:GITHUB_RUN_ID; SourceBranch = $build.SourceBranch; Version = $build.Version; Channel = $build.Channel; ReleaseType = $build.ReleaseType; Publisher = $env:SIGNING_PUBLISHER; Target = $build.Target; Installer = $installerEvidence.Name; Cli = $cliEvidence.Name; Symbols = "Transmog_$($build.Version)_windows-$($platform.Architecture)-symbols.zip"; CleanWindows11Checklist = 'deferred by maintainer'; Files = $files } |
         ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json') -Encoding utf8NoBOM
     $files | ForEach-Object { "$($_.Sha256.ToLowerInvariant())  $($_.Name)" } | Set-Content -LiteralPath (Join-Path $releaseRoot 'SHA256SUMS') -Encoding utf8NoBOM
     if ($env:GITHUB_STEP_SUMMARY) { "Signed **$($installerEvidence.Name)** as **$env:SIGNING_PUBLISHER** with RFC 3161 timestamps. Other-profile signing returned HTTP 403. SHA-256: $($installerEvidence.Sha256)." | Add-Content -LiteralPath $env:GITHUB_STEP_SUMMARY }

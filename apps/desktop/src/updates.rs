@@ -110,7 +110,11 @@ fn update_checker<R: tauri::Runtime>(
     let application = application.clone();
     let ca_certificate_path = ca_certificate_path.to_owned();
     app.updater_builder()
-        .target("windows-x86_64-nsis")
+        .target(if cfg!(target_arch = "aarch64") {
+            "windows-aarch64-nsis"
+        } else {
+            "windows-x86_64-nsis"
+        })
         .endpoints(vec![endpoint])
         .map_err(|_| "The update feed could not be configured.".to_owned())?
         .timeout(Duration::from_secs(20))
@@ -487,7 +491,8 @@ fn now_ms() -> u64 {
 fn valid_download(version: &str, url: &str) -> bool {
     semver::Version::parse(version).is_ok_and(|version| {
         if !version.pre.is_empty() || !version.build.is_empty() { return false; }
-        url == format!("https://github.com/erik-anderson/transmog/releases/download/v{version}/Transmog_{version}_x64-setup.exe")
+        let architecture = if cfg!(target_arch = "aarch64") { "arm64" } else { "x64" };
+        url == format!("https://github.com/erik-anderson/transmog/releases/download/v{version}/Transmog_{version}_{architecture}-setup.exe")
     })
 }
 
@@ -602,7 +607,17 @@ mod tests {
 
     #[test]
     fn installers_are_bound_to_the_repository_tag_version_and_architecture() {
-        let url = "https://github.com/erik-anderson/transmog/releases/download/v1.2.3/Transmog_1.2.3_x64-setup.exe";
+        let url = if cfg!(target_arch = "aarch64") {
+            "https://github.com/erik-anderson/transmog/releases/download/v1.2.3/Transmog_1.2.3_arm64-setup.exe"
+        } else {
+            "https://github.com/erik-anderson/transmog/releases/download/v1.2.3/Transmog_1.2.3_x64-setup.exe"
+        };
+        let other_architecture = if cfg!(target_arch = "aarch64") {
+            url.replace("_arm64-setup", "_x64-setup")
+        } else {
+            url.replace("_x64-setup", "_arm64-setup")
+        };
+        assert!(!valid_download("1.2.3", &other_architecture));
         assert!(valid_download("1.2.3", url));
         assert!(!valid_download("1.2.4", url));
         assert!(!valid_download(

@@ -3,20 +3,26 @@ $ErrorActionPreference = 'Stop'
 $fixture = Join-Path ([System.IO.Path]::GetTempPath()) ('transmog-publication-test-' + [Guid]::NewGuid().ToString('N'))
 $releaseRoot = Join-Path $fixture 'release'
 $evidenceRoot = Join-Path $fixture 'evidence'
-New-Item -ItemType Directory -Force $releaseRoot, $evidenceRoot | Out-Null
-$installerName = 'Transmog_0.1.0_x64-setup.exe'
-'fixture, never executable' | Set-Content -LiteralPath (Join-Path $releaseRoot $installerName)
-'standalone CLI fixture' | Set-Content -LiteralPath (Join-Path $releaseRoot 'transmog-cli.exe')
-'symbols archive fixture' | Set-Content -LiteralPath (Join-Path $releaseRoot 'Transmog_0.1.0_windows-x64-symbols.zip')
-$cliHash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot 'transmog-cli.exe')).Hash
-$hash = (Get-FileHash -LiteralPath (Join-Path $releaseRoot $installerName)).Hash
-'fixture signature' | Set-Content -LiteralPath (Join-Path $releaseRoot "$installerName.sig")
-[ordered]@{ version = '0.1.0'; platforms = @{ 'windows-x86_64-nsis' = @{ url = "https://github.com/erik-anderson/transmog/releases/download/v0.1.0/$installerName"; signature = 'fixture signature' } } } | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'latest.json')
-$files = @(Get-ChildItem -LiteralPath $releaseRoot -File | ForEach-Object { @{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash } })
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0.1'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Installer = $installerName; Cli = 'transmog-cli.exe'; Symbols = 'Transmog_0.1.0_windows-x64-symbols.zip'; Files = $files } |
-    ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
-[ordered]@{ Commit = 'fixture-commit'; RunId = '123'; InstallVerified = $true; UninstallVerified = $true; CliRuntimeVerified = $true; UpdaterSignatureVerified = $true; InstallerSha256 = $hash } |
-    ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'installer-test.json')
+New-Item -ItemType Directory -Force $evidenceRoot | Out-Null
+. (Join-Path $PSScriptRoot 'windows-release-common.ps1')
+foreach ($target in @('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')) {
+    $platform = Get-WindowsReleaseTarget $target
+    $root = Join-Path $fixture $platform.Architecture
+    New-Item -ItemType Directory -Path $root | Out-Null
+    $installerName = "Transmog_0.1.0_$($platform.Architecture)-setup.exe"
+    $symbols = "Transmog_0.1.0_windows-$($platform.Architecture)-symbols.zip"
+    foreach ($name in @($installerName, $platform.Cli, $symbols)) { "fixture $target $name, never executable" | Set-Content -LiteralPath (Join-Path $root $name) }
+    "signature report for $target" | Set-Content -LiteralPath (Join-Path $root 'signature-report.json')
+    'fixture signature' | Set-Content -LiteralPath (Join-Path $root "$installerName.sig")
+    [ordered]@{ version = '0.1.0'; platforms = @{ $platform.UpdaterPlatform = @{ url = "https://github.com/erik-anderson/transmog/releases/download/v0.1.0/$installerName"; signature = 'fixture signature' } } } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'latest.json')
+    $files = @(Get-ChildItem -LiteralPath $root -File | ForEach-Object { @{ Name = $_.Name; Sha256 = (Get-FileHash -LiteralPath $_.FullName).Hash } })
+    [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; SourceBranch = 'release/0.1'; Version = '0.1.0'; Channel = 'Release'; ReleaseType = 'Beta'; Publisher = 'Fixture'; Target = $target; Installer = $installerName; Cli = $platform.Cli; Symbols = $symbols; Files = $files } |
+        ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $root 'release-manifest.json')
+    $hash = (Get-FileHash -LiteralPath (Join-Path $root $installerName)).Hash
+    [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; Target = $target; InstallVerified = $true; UninstallVerified = $true; CliRuntimeVerified = $true; UpdaterSignatureVerified = $true; InstallerSha256 = $hash } |
+        ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot "installer-test-$($platform.Architecture).json")
+}
 [ordered]@{ Commit = 'fixture-commit'; RunId = '123'; UnprotectedJobAuthenticationDenied = $true } |
     ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceRoot 'identity-permission-test.json')
 '{}' | Set-Content -LiteralPath (Join-Path $evidenceRoot 'provenance.sigstore.json')
@@ -36,6 +42,31 @@ try {
     $env:GITHUB_REF = 'refs/heads/release/0.1'
     $env:GITHUB_TOKEN = 'fixture'
     $env:ACTIONS_ID_TOKEN_REQUEST_TOKEN = $null
+    & (Join-Path $PSScriptRoot 'merge-windows-releases.ps1') -X64Root (Join-Path $fixture 'x64') -Arm64Root (Join-Path $fixture 'arm64') -OutputRoot $releaseRoot
+    $merged = Assert-SignedRelease -ReleaseRoot $releaseRoot -Commit 'fixture-commit' -RunId '123'
+    if (@($merged.Packages).Count -ne 2) { throw 'Merged release lost an architecture.' }
+    $updates = Get-Content -Raw -LiteralPath (Join-Path $releaseRoot 'latest.json') | ConvertFrom-Json
+    if (@($updates.platforms.PSObject.Properties).Count -ne 2) { throw 'Merged updater lost an architecture.' }
+    if ((Get-Content -Raw -LiteralPath (Join-Path $releaseRoot 'arm64-signature-report.json')) -notmatch 'aarch64' -or
+        (Get-Content -Raw -LiteralPath (Join-Path $releaseRoot 'signature-report.json')) -notmatch 'x86_64') { throw 'Architecture evidence was overwritten during merge.' }
+    function Require-PublicationRejection([scriptblock]$Action, [string]$Reason) {
+        $rejected = $false
+        try { & $Action | Out-Null } catch { $rejected = $true }
+        if (-not $rejected) { throw "Publication accepted $Reason." }
+        Write-Host "Rejected $Reason."
+    }
+    function Invoke-RestMethod { throw 'Invalid evidence reached the GitHub API.' }
+    $armReportPath = Join-Path $evidenceRoot 'installer-test-arm64.json'
+    $report = Get-Content -Raw -LiteralPath $armReportPath
+    foreach ($field in @('Target', 'InstallerSha256', 'Commit', 'RunId')) {
+        $invalid = $report | ConvertFrom-Json
+        $invalid.$field = 'wrong'
+        $invalid | ConvertTo-Json | Set-Content -LiteralPath $armReportPath
+        Require-PublicationRejection { & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot } "ARM64 evidence with the wrong $field"
+    }
+    Remove-Item -LiteralPath $armReportPath
+    Require-PublicationRejection { & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot } 'missing ARM64 qualification'
+    $report | Set-Content -LiteralPath $armReportPath
     function Invoke-RestMethod {
         param($Uri, $Headers, $Method, $ContentType, $Body, $InFile)
         if ($Method -or $Uri -notlike '*/releases?per_page=100&page=*') { throw 'A publication mutation was attempted by the fixture.' }
@@ -59,12 +90,17 @@ try {
         if (-not $Method -and $Uri -like '*/git/ref/*') {
             throw [Microsoft.PowerShell.Commands.HttpResponseException]::new('No reserved fixture major', [Net.Http.HttpResponseMessage]::new([Net.HttpStatusCode]::NotFound))
         }
-        if (-not $Method -and $Uri -like '*/releases?per_page=100&page=1') { Write-Output -NoEnumerate @(); return }
-        if ($Method -ceq 'Post' -and $Uri -like '*/releases') {
+        if (-not $Method -and $Uri -like '*/releases?per_page=100&page=1') {
+            $existing = if ($publicationFixture.ExistingDraft) { @([pscustomobject]@{ tag_name='v0.1.0'; draft=$true; id=10 }) } else { @() }
+            Write-Output -NoEnumerate $existing; return
+        }
+        if (($Method -ceq 'Post' -and $Uri -like '*/releases') -or ($Method -ceq 'Patch' -and $Uri -like '*/releases/10')) {
             $publicationFixture.Body = $Body | ConvertFrom-Json
             if (-not $publicationFixture.Body.draft -or $publicationFixture.Body.target_commitish -cne 'fixture-commit') { throw 'Draft or source pin was lost.' }
-            return [pscustomobject]@{ id=10; draft=$true; assets=@(); upload_url='https://uploads.github.com/fixture{?name}'; html_url='https://github.com/fixture/draft' }
+            $oldAssets = if ($publicationFixture.ExistingDraft) { @([pscustomobject]@{ id=777; name='installer-test.json' }, [pscustomobject]@{ id=778; name='signature-report.json' }) } else { @() }
+            return [pscustomobject]@{ id=10; draft=$true; assets=$oldAssets; upload_url='https://uploads.github.com/fixture{?name}'; html_url='https://github.com/fixture/draft' }
         }
+        if ($Method -ceq 'Delete' -and $Uri -like '*/releases/assets/*') { $publicationFixture.Deleted += [int]($Uri -split '/')[-1]; return }
         if ($Method -ceq 'Post' -and $InFile) { $publicationFixture.Uploads++; return }
         if (-not $Method -and $Uri -like '*/releases/10') { return [pscustomobject]@{ draft=$true; assets=@(1..$publicationFixture.Uploads); html_url='https://github.com/fixture/draft' } }
         throw 'Unexpected publication fixture request.'
@@ -79,9 +115,11 @@ try {
             $candidate.SourceBranch = if ($type -ceq 'Canary') { 'main' } else { 'release/0.1' }
             $candidate | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $releaseRoot 'release-manifest.json')
             $env:GITHUB_REF = "refs/heads/$($candidate.SourceBranch)"
-            $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0 }
+            $publicationFixture = [pscustomobject]@{ Body=$null; Uploads=0; ExistingDraft=($type -ceq 'Beta'); Deleted=@() }
             & (Join-Path $PSScriptRoot 'publish-windows-draft.ps1') -ReleaseRoot $releaseRoot -EvidenceRoot $evidenceRoot
-            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne 9) { throw 'Wrong release track flags or asset count.' }
+            $expectedAssets = @(Get-ChildItem -LiteralPath $releaseRoot -File).Count + @(Get-ChildItem -LiteralPath $evidenceRoot -File).Count
+            if ($publicationFixture.Body.prerelease -ne ($type -cne 'Stable') -or $publicationFixture.Uploads -ne $expectedAssets) { throw 'Wrong release track flags or asset count.' }
+            if ($publicationFixture.ExistingDraft -and ($publicationFixture.Deleted -join ',') -cne '777,778') { throw 'The rebuilt draft retained obsolete or replaced assets.' }
             if ($publicationFixture.Body.body -match '(?is)(?:checklist.{0,120}defer|defer.{0,120}checklist)') { throw 'Release notes contain an internal checklist deferral.' }
         }
         Write-Host 'Beta, Stable, and Canary publication retain drafts, source pins, assets, and expected prerelease flags.'

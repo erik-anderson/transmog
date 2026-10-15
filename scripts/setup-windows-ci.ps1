@@ -36,6 +36,12 @@ $nativeTools = @(
         Sha256 = '161D0BFAFF53C2F9E9F3E69FD0672323EBABAFD1268976A5CEC11BE92A19AEE7'
     }
 )
+if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [Runtime.InteropServices.Architecture]::Arm64) {
+    # bindgen loads libclang into the Rust build process, so LLVM must be native.
+    $nativeTools[0].File = 'LLVM-22.1.4-woa64.exe'
+    $nativeTools[0].Url = 'https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.4/LLVM-22.1.4-woa64.exe'
+    $nativeTools[0].Sha256 = '09924875CDF239F7A96E3258ED8D289A050BA385240AC8255A34EA4D2CBFB56C'
+}
 
 New-Item -ItemType Directory -Force -Path $downloadsRoot | Out-Null
 foreach ($tool in $nativeTools) {

@@ -2,6 +2,7 @@
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 . (Join-Path $PSScriptRoot 'release-version-common.ps1')
+. (Join-Path $PSScriptRoot 'windows-release-target.ps1')
 
 function Resolve-WindowsSignTool {
     $sdkBin = 'C:\Program Files (x86)\Windows Kits\10\bin'
@@ -49,9 +50,10 @@ function Assert-ReleasePayload {
     param([Parameter(Mandatory)][string]$PayloadRoot, [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$RunId)
     $PayloadRoot = (Get-Item -LiteralPath $PayloadRoot).FullName
     $manifest = Get-Content -Raw -LiteralPath (Join-Path $PayloadRoot 'build-manifest.json') | ConvertFrom-Json
-    if ($manifest.Commit -cne $Commit -or $manifest.RunId -cne $RunId -or $manifest.Target -ne 'x86_64-pc-windows-msvc') {
+    if ($manifest.Commit -cne $Commit -or $manifest.RunId -cne $RunId) {
         throw 'Build payload provenance does not match this release run.'
     }
+    $platform = Get-WindowsReleaseTarget $manifest.Target
     $root = [System.IO.Path]::GetFullPath($PayloadRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
     $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
     foreach ($entry in $manifest.Files) {
@@ -72,7 +74,7 @@ function Assert-ReleasePayload {
         $expectedPath = 'target/release/' + $binary
         if (@($manifest.Files | Where-Object { $_.Path -ceq $expectedPath }).Count -ne 1) { throw "Missing or duplicate payload binary: $binary" }
     }
-    $symbolsPath = "evidence/Transmog_$($manifest.Version)_windows-x64-symbols.zip"
+    $symbolsPath = "evidence/Transmog_$($manifest.Version)_windows-$($platform.Architecture)-symbols.zip"
     if (@($manifest.Files | Where-Object { $_.Path -ceq $symbolsPath }).Count -ne 1) { throw 'Missing or ambiguous release PDB archive.' }
     return $manifest
 }
@@ -87,18 +89,22 @@ function Assert-SignedRelease {
         if ($entry.Name -notmatch '^[A-Za-z0-9_.-]+$' -or $entry.Sha256 -notmatch '^[A-Fa-f0-9]{64}$') { throw 'Invalid release asset.' }
         if ((Get-FileHash -LiteralPath (Join-Path $ReleaseRoot $entry.Name) -Algorithm SHA256).Hash -ne $entry.Sha256) { throw "Release asset checksum mismatch: $($entry.Name)" }
     }
-    if (@($manifest.Files | Where-Object { $_.Name -ceq $manifest.Installer }).Count -ne 1 -or $manifest.Installer -notmatch '^Transmog_.+-setup\.exe$') { throw 'Missing or ambiguous release installer.' }
     $update = Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot 'latest.json') | ConvertFrom-Json
-    $platform = $update.platforms.'windows-x86_64-nsis'
-    $signature = (Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot "$($manifest.Installer).sig")).Trim()
-    if ($update.version -cne (ConvertTo-ReleaseSemVer $manifest.Version) -or
-        $platform.url -cne "https://github.com/erik-anderson/transmog/releases/download/v$($manifest.Version)/$($manifest.Installer)" -or
-        -not $signature -or $platform.signature -cne $signature) { throw 'Updater manifest version, URL, or signature differs from the signed release.' }
-    foreach ($name in @('latest.json', "$($manifest.Installer).sig")) {
-        if (@($manifest.Files | Where-Object Name -CEQ $name).Count -ne 1) { throw "Updater asset is missing from the release checksums: $name" }
+    if ($update.version -cne (ConvertTo-ReleaseSemVer $manifest.Version)) { throw 'Updater manifest version differs from the signed release.' }
+    $packages = if ($manifest.Packages) { @($manifest.Packages) } else { @($manifest) }
+    $targets = [Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($package in $packages) {
+        $platform = Get-WindowsReleaseTarget $package.Target
+        if (-not $targets.Add($platform.Target)) { throw 'Duplicate release target.' }
+        if ($package.Installer -cne "Transmog_$($manifest.Version)_$($platform.Architecture)-setup.exe" -or
+            $package.Cli -cne $platform.Cli -or $package.Symbols -cne "Transmog_$($manifest.Version)_windows-$($platform.Architecture)-symbols.zip") { throw 'Release asset architecture differs from its target.' }
+        foreach ($name in @($package.Installer, $package.Cli, $package.Symbols, "$($package.Installer).sig", 'latest.json')) {
+            if (@($manifest.Files | Where-Object Name -CEQ $name).Count -ne 1) { throw "Missing or ambiguous release asset: $name" }
+        }
+        $entry = $update.platforms.($platform.UpdaterPlatform)
+        $signature = (Get-Content -Raw -LiteralPath (Join-Path $ReleaseRoot "$($package.Installer).sig")).Trim()
+        if ($entry.url -cne "https://github.com/erik-anderson/transmog/releases/download/v$($manifest.Version)/$($package.Installer)" -or
+            -not $signature -or $entry.signature -cne $signature) { throw 'Updater URL or signature differs from the signed release.' }
     }
-    if ($manifest.Cli -cne 'transmog-cli.exe' -or @($manifest.Files | Where-Object { $_.Name -ceq $manifest.Cli }).Count -ne 1) { throw 'Missing or ambiguous standalone CLI release asset.' }
-    if ($manifest.Symbols -cne "Transmog_$($manifest.Version)_windows-x64-symbols.zip" -or
-        @($manifest.Files | Where-Object { $_.Name -ceq $manifest.Symbols }).Count -ne 1) { throw 'Missing or ambiguous public release PDB archive.' }
     return $manifest
 }

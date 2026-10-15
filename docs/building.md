@@ -75,7 +75,8 @@ its fingerprint together with its artifacts lets Cargo rebuild coherently.
 The supported profile is named **Windows LLVM/Ninja**. It uses LLVM for all
 native compilation and Rust's official Windows ABI target:
 
-- Rust 1.97.1, target `x86_64-pc-windows-msvc`;
+- Rust 1.97.1, target `x86_64-pc-windows-msvc` on x64 or
+  `aarch64-pc-windows-msvc` on ARM64;
 - LLVM/Clang 22.1.4 or newer (`clang-cl` and `llvm-lib`; `lld-link` is retained
   for diagnostics but is not Cargo's final PE linker);
 - Ninja 1.13.2 or newer;
@@ -83,6 +84,7 @@ native compilation and Rust's official Windows ABI target:
 - NASM 3.02 or newer;
 - Visual Studio 2022 or newer Build Tools/Community with:
   - **MSVC x64/x86 build tools** (`Microsoft.VisualStudio.Component.VC.Tools.x86.x64`);
+    ARM64 hosts use **MSVC ARM64 build tools** (`Microsoft.VisualStudio.Component.VC.Tools.ARM64`);
   - **Windows 11 SDK 10.0.26100** (`Microsoft.VisualStudio.Component.Windows11SDK.26100`).
 
 The technical `msvc` suffix names the ABI and system-library ecosystem; it does not select
@@ -105,6 +107,15 @@ The repository-local tool setup pins official portable
 distributions under ignored `.tools`. Those binaries are intentionally not
 committed. A system installation of equivalent or newer compatible versions is
 also supported.
+
+On ARM64, `setup-windows-ci.ps1` installs the pinned native ARM64 LLVM distribution
+so Rust build scripts can load its libclang DLL. CMake, Ninja and NASM use the
+same verified portable tools through Windows emulation. `dev-env.py` selects the
+ARM64 linker, CRT and Windows SDK libraries. `cache-v8.py` selects the pinned
+archive for the native host, or accepts `--target` explicitly. To package ARM64,
+run `package-windows.ps1 -Target aarch64-pc-windows-msvc` on an ARM64 build host;
+optimized outputs are under `target/aarch64-pc-windows-msvc/release`. The signed
+release workflow can bundle these prebuilt outputs on its protected x64 signer.
 
 After installing prerequisites, open a new PowerShell and run:
 

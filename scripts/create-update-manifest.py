@@ -11,12 +11,14 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--installer", type=Path, required=True)
     parser.add_argument("--version", required=True)
+    parser.add_argument("--target", choices=("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"), default="x86_64-pc-windows-msvc")
     parser.add_argument("--output-directory", type=Path, required=True)
     parser.add_argument("--notes", default="Download the verified release and update now, or when you quit Transmog.")
     args = parser.parse_args()
     semver(args.version)
     installer = args.installer.resolve(strict=True)
-    expected = f"Transmog_{args.version}_x64-setup.exe"
+    architecture, platform = ("arm64", "windows-aarch64-nsis") if args.target == "aarch64-pc-windows-msvc" else ("x64", "windows-x86_64-nsis")
+    expected = f"Transmog_{args.version}_{architecture}-setup.exe"
     if installer.name != expected:
         raise ValueError("Unexpected updater installer name.")
     if not os.environ.get("TAURI_SIGNING_PRIVATE_KEY") and not os.environ.get("TAURI_SIGNING_PRIVATE_KEY_PATH"):
@@ -34,7 +36,7 @@ def main():
     if destination.resolve() != signature_path:
         shutil.copy2(signature_path, destination)
     write_json(args.output_directory / "latest.json", {"version": args.version, "notes": args.notes,
-        "platforms": {"windows-x86_64-nsis": {"url": f"https://github.com/erik-anderson/transmog/releases/download/v{args.version}/{expected}", "signature": signature}}})
+        "platforms": {platform: {"url": f"https://github.com/erik-anderson/transmog/releases/download/v{args.version}/{expected}", "signature": signature}}})
     print(f"Prepared the signed update manifest for Transmog {args.version}.")
 
 

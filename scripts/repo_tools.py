@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import platform as host_platform
 from pathlib import Path
 import shutil
 import subprocess
@@ -75,6 +76,7 @@ def development_environment(*, root=ROOT, environment=None, platform=None) -> di
     windows = (os.name == "nt") if platform is None else platform == "win32"
     bins = []
     if windows:
+        architecture = "arm64" if host_platform.machine().lower() in {"arm64", "aarch64"} else "x64"
         bins = [root / ".tools/llvm/bin", root / ".tools/cmake/cmake-4.4.4-windows-x86_64/bin",
                 root / ".tools/ninja", root / ".tools/nasm/nasm-3.02"]
         bins = [directory for directory in bins if directory.is_dir()]
@@ -84,7 +86,7 @@ def development_environment(*, root=ROOT, environment=None, platform=None) -> di
         if vswhere.is_file():
             installation = subprocess.run(
                 [str(vswhere), "-latest", "-products", "*", "-requires",
-                 "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
+                 "Microsoft.VisualStudio.Component.VC.Tools.ARM64" if architecture == "arm64" else "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"],
                 env=env, capture_output=True, text=True, check=True).stdout.strip()
             if installation:
                 tools = Path(installation) / "VC/Tools/MSVC"
@@ -95,16 +97,21 @@ def development_environment(*, root=ROOT, environment=None, platform=None) -> di
             if not versions:
                 raise RuntimeError("Windows SDK headers are missing.")
             version = max(preferred or versions, key=version_key).name
-            bins += [vc / "bin/Hostx64/x64", sdk / f"bin/{version}/x64"]
-            env["LIB"] = ";".join(map(str, [vc / "lib/x64", sdk / f"Lib/{version}/ucrt/x64", sdk / f"Lib/{version}/um/x64"]))
+            # Select the native linker and target libraries for this Rust host.
+            host_tools = "Hostarm64" if architecture == "arm64" else "Hostx64"
+            bins += [vc / f"bin/{host_tools}/{architecture}", sdk / f"bin/{version}/{architecture}"]
+            env["LIB"] = ";".join(map(str, [vc / f"lib/{architecture}", sdk / f"Lib/{version}/ucrt/{architecture}", sdk / f"Lib/{version}/um/{architecture}"]))
             env["INCLUDE"] = ";".join(map(str, [vc / "include", *[sdk / f"Include/{version}/{part}" for part in ("ucrt", "shared", "um", "winrt")]]))
-        elif not vc:
+        elif not vc and architecture == "x64":
             scope = Path("C:/Program Files/Microsoft Visual Studio/18/Community/SDK/ScopeCppSDK/vc15")
             if scope.is_dir():
                 bins += [scope / "VC/bin", scope / "SDK/bin"]
                 env["LIB"] = ";".join(map(str, [scope / "VC/lib", scope / "SDK/lib"]))
                 env["INCLUDE"] = ";".join(map(str, [scope / "VC/include", *[scope / f"SDK/include/{part}" for part in ("ucrt", "shared", "um")]]))
         env.update(CC="clang-cl", CXX="clang-cl", AR="llvm-lib")
+        if architecture == "arm64":
+            env.setdefault("CFLAGS", "--target=aarch64-pc-windows-msvc")
+            env.setdefault("CXXFLAGS", "--target=aarch64-pc-windows-msvc")
     else:
         env.setdefault("CC", "clang")
         env.setdefault("CXX", "clang++")

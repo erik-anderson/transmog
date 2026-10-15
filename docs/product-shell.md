@@ -9,6 +9,9 @@ for build commands.
 
 ## Software updates
 
+Windows x64 and ARM64 builds use the installer matching the installed app's
+architecture. The existing update controls and channel preferences apply to both.
+
 Startup checks run after the window is ready and keep the workspace usable. An
 available release for the installed channel exposes an update action in the toolbar without taking
 keyboard focus or navigating away from work. The user

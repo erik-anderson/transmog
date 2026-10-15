@@ -1,4 +1,6 @@
 param(
+    [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')]
+    [string]$Target = 'x86_64-pc-windows-msvc',
     [string]$SigningCertificateThumbprint,
     [string]$TimestampUrl = 'http://timestamp.digicert.com',
     [switch]$UnsignedDevelopment,
@@ -29,6 +31,9 @@ if (-not $UnsignedDevelopment -and -not $SigningMetadataPath -and $SigningCertif
 }
 
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'windows-release-target.ps1')
+$platform = Get-WindowsReleaseTarget $Target
+$buildDirectory = Join-Path $repositoryRoot $platform.BuildSubdirectory
 . (Join-Path $PSScriptRoot 'release-version-common.ps1')
 $releaseState = Get-ReleaseVersionState $repositoryRoot
 $desktopRoot = Join-Path $repositoryRoot 'apps\desktop'
@@ -60,6 +65,7 @@ if (-not $SkipTests) {
 
 if (-not $BuildOnly) {
     $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
+    if ($platform.Architecture -ceq 'arm64') { $hostBuildArguments += @('--target', $Target) }
     if ($Offline) { $hostBuildArguments += '--offline' }
     & cargo @hostBuildArguments
     if ($LASTEXITCODE -ne 0) { throw "Script host release build failed with exit code $LASTEXITCODE" }
@@ -67,16 +73,16 @@ if (-not $BuildOnly) {
 }
 
 $binaryDirectory = Join-Path $desktopRoot 'binaries'
-$standaloneCli = Join-Path $repositoryRoot 'target\release\transmog-cli.exe'
+$standaloneCli = Join-Path $buildDirectory 'transmog-cli.exe'
 if (-not $BuildOnly -and -not (Test-Path -LiteralPath $standaloneCli -PathType Leaf)) { throw 'The standalone CLI release executable is missing.' }
-$bundledHost = Join-Path $binaryDirectory 'transmog-script-host-x86_64-pc-windows-msvc.exe'
-$bundledPreview = Join-Path $binaryDirectory 'transmog-preview-worker-x86_64-pc-windows-msvc.exe'
+$bundledHost = Join-Path $binaryDirectory "transmog-script-host-$Target.exe"
+$bundledPreview = Join-Path $binaryDirectory "transmog-preview-worker-$Target.exe"
 if (-not $BuildOnly) { New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null }
 if ($SigningMetadataPath) {
     $SigningMetadataPath = (Resolve-Path -LiteralPath $SigningMetadataPath).Path
     $SigningClientDll = (Resolve-Path -LiteralPath $SigningClientDll).Path
     foreach ($helperName in @('transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
-        & (Join-Path $PSScriptRoot 'sign-windows-file.ps1') -FilePath (Join-Path $repositoryRoot "target\release\$helperName") -MetadataPath $SigningMetadataPath -ClientDll $SigningClientDll -ExpectedPublisher $ExpectedPublisher | Out-Host
+        & (Join-Path $PSScriptRoot 'sign-windows-file.ps1') -FilePath (Join-Path $buildDirectory $helperName) -MetadataPath $SigningMetadataPath -ClientDll $SigningClientDll -ExpectedPublisher $ExpectedPublisher | Out-Host
     }
 }
 if (-not $BuildOnly) {
@@ -87,14 +93,15 @@ if (-not $BuildOnly) {
         $cliSignature = Get-AuthenticodeSignature -LiteralPath $standaloneCli
         if ($cliSignature.Status -ne 'Valid' -or $cliSignature.SignerCertificate.Thumbprint -ine $SigningCertificateThumbprint -or -not $cliSignature.TimeStamperCertificate) { throw 'Standalone CLI signature verification failed.' }
     }
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-script-host.exe') -Destination $bundledHost -Force
-    Copy-Item -LiteralPath (Join-Path $repositoryRoot 'target\release\transmog-preview-worker.exe') -Destination $bundledPreview -Force
+    Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-script-host.exe') -Destination $bundledHost -Force
+    Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-preview-worker.exe') -Destination $bundledPreview -Force
 }
 
 $tauriArguments = if ($BuildOnly) { @('build', '--no-bundle', '--no-sign', '--ci') }
     elseif ($BundleOnly) { @('bundle', '--bundles', 'nsis', '--ci') }
     else { @('build', '--bundles', 'nsis', '--ci') }
 if ($UnsignedDevelopment -and -not $BuildOnly) { $tauriArguments += '--no-sign' }
+if ($platform.Architecture -ceq 'arm64') { $tauriArguments += @('--target', $Target) }
 $overridePath = Join-Path $artifactRoot 'signing-config.json'
 $override = @{
     bundle = @{
@@ -148,7 +155,7 @@ try {
     if (-not $BuildOnly -and $UnsignedDevelopment) {
         & (Join-Path $PSScriptRoot 'test-capture-associations.ps1')
         & (Join-Path $PSScriptRoot 'test-capture-upgrade.ps1')
-        & (Join-Path $PSScriptRoot 'test-update-check-preferences.ps1') -ExecutablePath (Join-Path $repositoryRoot 'target\release\transmog.exe')
+        & (Join-Path $PSScriptRoot 'test-update-check-preferences.ps1') -ExecutablePath (Join-Path $buildDirectory 'transmog.exe')
         & (Join-Path $PSScriptRoot 'test-loopback.ps1')
     }
 } finally {
@@ -164,16 +171,16 @@ try {
 }
 
 if ($BuildOnly) {
-    [pscustomobject]@{ BuildDirectory = (Join-Path $repositoryRoot 'target\release'); Version = $releaseState.Version; Channel = $releaseState.Channel; Target = 'x86_64-pc-windows-msvc' }
+    [pscustomobject]@{ BuildDirectory = $buildDirectory; Version = $releaseState.Version; Channel = $releaseState.Channel; Target = $Target }
     return
 }
 
-$installerPath = Join-Path $repositoryRoot "target\release\bundle\nsis\Transmog_$($bundleConfig.version)_x64-setup.exe"
+$installerPath = Join-Path $buildDirectory "bundle/nsis/Transmog_$($bundleConfig.version)_$($platform.Architecture)-setup.exe"
 if (-not (Test-Path -LiteralPath $installerPath -PathType Leaf)) {
     throw 'The NSIS installer was not produced.'
 }
 $installer = Get-Item -LiteralPath $installerPath
-$releaseInstallerPath = Join-Path $installer.DirectoryName "Transmog_$($releaseState.Version)_x64-setup.exe"
+$releaseInstallerPath = Join-Path $installer.DirectoryName "Transmog_$($releaseState.Version)_$($platform.Architecture)-setup.exe"
 if ($installer.FullName -cne $releaseInstallerPath) {
     Move-Item -LiteralPath $installer.FullName -Destination $releaseInstallerPath -Force
     $installer = Get-Item -LiteralPath $releaseInstallerPath
@@ -185,7 +192,7 @@ if (-not $UnsignedDevelopment -and $signature.Status -ne 'Valid') {
 }
 
 if (-not $UnsignedDevelopment -and (Get-AuthenticodeSignature -LiteralPath $standaloneCli).Status -ne 'Valid') { throw 'Standalone CLI signature is not valid.' }
-$cliArtifact = Join-Path $artifactRoot 'transmog-cli.exe'
+$cliArtifact = Join-Path $artifactRoot $platform.Cli
 Copy-Item -LiteralPath $standaloneCli -Destination $cliArtifact -Force
 
 $hash = Get-FileHash -Algorithm SHA256 -LiteralPath $installer.FullName

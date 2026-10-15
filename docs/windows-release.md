@@ -6,10 +6,20 @@ present on the supported Windows host. The app does not bundle a browser or
 WebView runtime, require administrator installation, or fetch runtime UI assets.
 
 Each release also builds, signs, timestamps and publishes `transmog-cli.exe` as
-a separate asset. It has the same semantic version and is covered by
+a separate x64 asset and `transmog-cli-arm64.exe` for Windows ARM64. Both have
+the same semantic version and are covered by
 release checksums, signature evidence and provenance. Qualification verifies its
 version command and confirms that the app installer contains no CLI executable.
 Local packaging returns both the installer and the standalone CLI paths.
+
+The signed workflow builds and qualifies x64 on `windows-2025` and ARM64 on
+`windows-11-arm`, using native Rust toolchains and LLVM for each host. Both builds
+must pass the repository, browser, CLI, and WebView soak gates before the protected
+signing job bundles them on x64. Signed installers are then installed, upgraded,
+and uninstalled on their matching native runners. A single draft contains both
+`Transmog_<version>_x64-setup.exe` and `Transmog_<version>_arm64-setup.exe`, their
+standalone CLIs, symbols, checksums, and architecture-specific qualification
+reports. Publication requires successful evidence for both architectures.
 
 The interactive installer offers independent **Use Transmog** choices for TMCap,
 SAZ and HAR, with TMCap checked on a first install. These add current-user
@@ -32,8 +42,9 @@ downgrades are rejected in every install mode.
 
 ## Crash investigation symbols
 
-Every hosted release publishes `Transmog_<version>_windows-x64-symbols.zip` as a
-public GitHub Release asset. It contains full PDBs for the desktop executable,
+Every hosted release publishes `Transmog_<version>_windows-x64-symbols.zip` and
+`Transmog_<version>_windows-arm64-symbols.zip` as public GitHub Release assets.
+Each contains full PDBs for its architecture's desktop executable,
 script host, preview worker, and standalone CLI. The build verifies each PDB's
 GUID and age against its executable before signing, then preserves the archive
 through the same-run artifact checks, release checksums, and provenance
@@ -108,6 +119,12 @@ python ./scripts/generate-supply-chain-artifacts.py
 After those checks pass, build the optimized app and helpers once, qualify the
 CLI, check all four matching full PDBs, and run the release's three-minute WebView
 soak. `SkipTests` here follows the complete gate above:
+
+Run this qualification on each native architecture available to you; the hosted
+pipeline repeats the full gate on both. On an ARM64 host, add
+`-Target aarch64-pc-windows-msvc` to `package-windows.ps1` below and pass
+`-ExecutablePath (Join-Path $releaseBuild.BuildDirectory 'transmog.exe')` to the
+desktop probe so it uses the target-specific output directory.
 
 ```powershell
 $releaseBuild = & ./scripts/package-windows.ps1 -UnsignedDevelopment -BuildOnly -SkipTests |
@@ -253,7 +270,7 @@ build.
 
 4. When the build passes, open the run's **Review deployments** prompt and approve
    `release-signing` after checking the source commit. This authorizes signing;
-   it does not publish a release. Wait for all six jobs to succeed, then follow
+   it does not publish a release. Wait for every job to succeed, then follow
    the signed-draft link in the final job summary or open
    [Releases](https://github.com/erik-anderson/transmog/releases).
 
@@ -448,8 +465,10 @@ pwsh ./scripts/package-windows.ps1 `
 The desktop checks its channel's feed after the window is ready. Stable and Beta
 builds use GitHub's latest stable release. Canary builds use the rolling `canary`
 release at `/releases/download/canary/latest.json`, so Stable publications do not
-move Canary users onto the Stable track. `latest.json` identifies the NSIS installer
-and its updater signature. The signed
+move Canary users onto the Stable track. The combined `latest.json` identifies
+the NSIS installers and updater signatures under `windows-x86_64-nsis` and
+`windows-aarch64-nsis`. The installed app selects and accepts only its own
+architecture's installer, including when running x64 under ARM64 emulation. The signed
 release pipeline creates these assets from the final Authenticode-signed bytes,
 binds the semantic version into the signature, and qualifies the signature against
 the public key embedded in the installed app. Drafts and prereleases are excluded

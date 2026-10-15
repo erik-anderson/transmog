@@ -1,8 +1,10 @@
 [CmdletBinding()]
-param()
+param([ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target = 'x86_64-pc-windows-msvc')
 $ErrorActionPreference = 'Stop'
 $PSNativeCommandUseErrorActionPreference = $true
 $repositoryRoot = Split-Path -Parent $PSScriptRoot
+. (Join-Path $PSScriptRoot 'windows-release-target.ps1')
+$platform = Get-WindowsReleaseTarget $Target
 $payloadRoot = Join-Path $repositoryRoot 'artifacts\windows-build'
 if (Test-Path -LiteralPath $payloadRoot) { throw 'Build payload directory already exists; use a fresh checkout.' }
 New-Item -ItemType Directory -Force -Path (Join-Path $payloadRoot 'target\release'), (Join-Path $payloadRoot 'apps\desktop\ui'), (Join-Path $payloadRoot 'evidence') | Out-Null
@@ -39,7 +41,7 @@ try {
     } finally { Write-Host '::endgroup::' }
     Write-Host '::group::Optimized application and helpers (one release build)'
     try {
-        $buildResult = & (Join-Path $PSScriptRoot 'package-windows.ps1') -UnsignedDevelopment -BuildOnly -SkipTests |
+        $buildResult = & (Join-Path $PSScriptRoot 'package-windows.ps1') -Target $Target -UnsignedDevelopment -BuildOnly -SkipTests |
             ForEach-Object { if ($null -ne $_.PSObject.Properties['BuildDirectory']) { $_ } else { $_ | Out-Host } }
         if (@($buildResult).Count -ne 1) { throw 'The release build did not produce one build result.' }
     } finally { Write-Host '::endgroup::' }
@@ -50,15 +52,16 @@ try {
             Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence/cli-gate.json') -Encoding utf8NoBOM
     } finally { Write-Host '::endgroup::' }
     . (Join-Path $PSScriptRoot 'windows-release-symbols.ps1')
-    New-WindowsReleaseSymbolArchive -BuildDirectory $buildResult.BuildDirectory -Version $buildResult.Version -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -OutputPath (Join-Path $payloadRoot "evidence/Transmog_$($buildResult.Version)_windows-x64-symbols.zip")
+    New-WindowsReleaseSymbolArchive -Target $Target -BuildDirectory $buildResult.BuildDirectory -Version $buildResult.Version -Commit $env:GITHUB_SHA -RunId $env:GITHUB_RUN_ID -OutputPath (Join-Path $payloadRoot "evidence/Transmog_$($buildResult.Version)_windows-$($platform.Architecture)-symbols.zip")
     Write-Host '::group::Release WebView validation and 3-minute soak'
     try {
-        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -SkipReleaseBuild -SoakMinutes 3 -HostedRunnerDevToolsPolicy |
+        $desktopGate = & (Join-Path $PSScriptRoot 'test-windows-desktop.ps1') -ExecutablePath (Join-Path $buildResult.BuildDirectory 'transmog.exe') -SkipReleaseBuild -SoakMinutes 3 -HostedRunnerDevToolsPolicy |
             ForEach-Object { if ($null -ne $_.PSObject.Properties['StartupVerified']) { $_ } else { $_ | Out-Host } }
     } finally { Write-Host '::endgroup::' }
     $desktopGate | ConvertTo-Json -Depth 4 | Set-Content -LiteralPath (Join-Path $payloadRoot 'evidence\desktop-gate.json') -Encoding utf8NoBOM
     foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         $sourceBinary = Join-Path $buildResult.BuildDirectory $binary
+        Assert-WindowsBinaryTarget -Path $sourceBinary -Target $Target
         if ((Get-AuthenticodeSignature -LiteralPath $sourceBinary).Status -ne 'NotSigned') { throw "Build output is unexpectedly signed: $binary" }
         Copy-Item -LiteralPath $sourceBinary -Destination (Join-Path $payloadRoot "target\release\$binary") -Force
     }

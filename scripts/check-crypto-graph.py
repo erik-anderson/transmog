@@ -5,7 +5,7 @@ from tls_dependencies import reject_native_overrides, verify_stack
 from repo_tools import ROOT
 import os
 
-TARGETS = ("x86_64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin")
+TARGETS = ("x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc", "x86_64-unknown-linux-gnu", "aarch64-apple-darwin")
 FORBIDDEN = {"openssl", "openssl-sys", "native-tls", "rustls", "rustls-webpki", "webpki", "hyper-boring"}
 
 
