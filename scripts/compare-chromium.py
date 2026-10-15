@@ -101,7 +101,7 @@ def main():
               "type=volume,source=transmog-linux-cargo-git,target=/usr/local/cargo/git",
               "type=volume,source=transmog-linux-target,target=/work-target")
     build = container_arguments(docker, image, mounts=mounts,
-        environment=("CFLAGS=", "CXXFLAGS=", "CARGO_TARGET_DIR=/work-target"))
+        environment=("CFLAGS=", "CXXFLAGS=", "CARGO_TARGET_DIR=/work-target", "RUST_MIN_STACK=16777216"))
     command([*build, "python3", "scripts/dev-env.py", "--check"])
     command([*build, "python3", "scripts/dev-env.py", "--run", "cargo", "build", "--locked", "-p", "transmog-runtime", "--example", "browser-fingerprint"])
     if command(["git", "rev-parse", "HEAD"], capture=True).stdout.strip() != revision or command(["git", "diff", "HEAD"], capture=True).stdout != diff:

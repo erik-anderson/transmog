@@ -1090,7 +1090,8 @@ async fn serve_explicit_connection(
         .timer(TokioTimer::new())
         .header_read_timeout(header_read_timeout)
         .max_headers(max_header_count)
-        .max_buf_size(max_header_bytes);
+        .max_buf_size(max_header_bytes)
+        .preserve_header_case(true);
     let connection = builder
         .serve_connection(TokioIo::new(stream), service)
         .with_upgrades();
@@ -1307,7 +1308,8 @@ impl ProxyState {
                 .timer(TokioTimer::new())
                 .header_read_timeout(header_read_timeout)
                 .max_headers(max_header_count)
-                .max_buf_size(max_header_bytes);
+                .max_buf_size(max_header_bytes)
+                .preserve_header_case(true);
             let connection = builder
                 .serve_connection(TokioIo::new(stream), service)
                 .with_upgrades();
@@ -4954,7 +4956,7 @@ fn canonical_head(
     Ok(RequestHead {
         method: request.method().as_str().to_owned(),
         target,
-        headers: block_from_headers(request.headers())?,
+        headers: transmog_http::header_block_from_hyper(request.headers(), request.extensions())?,
         source_version,
     })
 }

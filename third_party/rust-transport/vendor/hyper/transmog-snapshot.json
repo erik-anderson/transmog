@@ -3,7 +3,7 @@
     "version": "1.11.1",
     "archiveSha256": "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
   },
-  "patchSha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  "patchSha256": "87b8870bd0a78c31498f5fba20b96a5a08a3e685cb53b79dedba602fb80a9843",
   "files": {
     ".cargo_vcs_info.json": "8e08544c1e6778d3606bb6a827f7ea6496033bc9b3356289710d1954fb71a5cc",
     "Cargo.lock": "ce0c4521c833d3f57ac27a27c99f5bd6791d0d00e34773bb6417f609494a3b13",
@@ -36,7 +36,7 @@
     "src/error.rs": "d5ebaa35a6a8464d1474023d9aa756dc9632145aeab812879f7cc35dae10b795",
     "src/ext/h1_reason_phrase.rs": "db6fed7c4aec000af820989f0508a2534d864f3cce32cb19a12aca59b0705a22",
     "src/ext/informational.rs": "83a9b2a9cd7086f2be65d508d4cf0f45a2977fb90f94926d6a3cfbc98bdba073",
-    "src/ext/mod.rs": "45e4e184394742eaf2c53b9d856639c72fefbb8d89ef790215581903760db03c",
+    "src/ext/mod.rs": "00881a0e36f1cfdce9a18e4d66bdb7578660352b8ff7461c8dd1f3a668e3c465",
     "src/ffi/body.rs": "614955cfca938025a7b471d9bc91004edfd1ff028b66553ce757b5b0ec040dce",
     "src/ffi/client.rs": "7da8af38624d2059e6a7f03eeaeeff44bb6424fb580ad41a361663c9342ce5bf",
     "src/ffi/error.rs": "dd269cd749cfe2679ba499e9dc0832469cbf4f8101157fd88d00c0fb526868d8",
@@ -54,7 +54,7 @@
     "src/proto/h1/encode.rs": "b9b09f703b81d72732ca59103276bb6be0d8311e512e5d173c333f41a64f75f5",
     "src/proto/h1/io.rs": "cac4d3cb97e48fa1ba3ee9ca5901a7ff9eaa178693af3df6f2e8dc991ca7f344",
     "src/proto/h1/mod.rs": "bdb49167f68428e34b9b60a46c535fa44d9a3a6a849b1f232a466f8379efd792",
-    "src/proto/h1/role.rs": "4741a413b947a72da0f58a2ef73bc9b209e1dfebe1a110e6ed5752745db93b07",
+    "src/proto/h1/role.rs": "f950008391a4d05a942841915ef7ef536762e258164b0da5a8ec5106233ba959",
     "src/proto/h2/client.rs": "56d715d09cdeddb91606dd0a9cfaa3de360ef31c07179ab9df6d24d9da0868af",
     "src/proto/h2/mod.rs": "807897186588cdd0096c5c927278e0760610e83946c3b1296c82542e23067ba5",
     "src/proto/h2/ping.rs": "8a7bdddca6389f3481cce5e219037459a07693e6d0aad3ae94d84969323d021d",

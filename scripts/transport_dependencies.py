@@ -79,8 +79,9 @@ def regenerate(sources, archive_dir):
                 # Prevent Git from treating the parent repository as this
                 # crate's working tree. No hooks or commits are involved.
                 subprocess.run(["git", "init", "--quiet", str(staged)], check=True)
-                subprocess.run(["git", "-C", str(staged), "apply", "--check", str(patch)], check=True)
-                subprocess.run(["git", "-C", str(staged), "apply", str(patch)], check=True)
+                apply = ["git", "-c", "core.autocrlf=false", "-c", "core.eol=lf", "-C", str(staged), "apply"]
+                subprocess.run([*apply, "--check", str(patch)], check=True)
+                subprocess.run([*apply, str(patch)], check=True)
                 # Only this freshly created, verified staging metadata is removed.
                 import shutil
                 shutil.rmtree(staged / ".git")
@@ -109,8 +110,8 @@ def record_patches(sources, archive_dir):
                 after = new.read_bytes() if new.exists() else b""
                 if before != after:
                     changes.extend(difflib.unified_diff(
-                        before.decode("utf-8").splitlines(keepends=True),
-                        after.decode("utf-8").splitlines(keepends=True),
+                        before.decode("utf-8").replace("\r\n", "\n").splitlines(keepends=True),
+                        after.decode("utf-8").replace("\r\n", "\n").splitlines(keepends=True),
                         fromfile="a/" + filename if old.exists() else "/dev/null",
                         tofile="b/" + filename if new.exists() else "/dev/null"))
             (BASE / "patches" / f"{name}.patch").write_text("".join(changes), encoding="utf-8", newline="\n")

@@ -18,7 +18,6 @@ use crate::body::DecodedLength;
 use crate::common::date;
 use crate::error::Parse;
 use crate::ext::HeaderCaseMap;
-#[cfg(feature = "ffi")]
 use crate::ext::OriginalHeaderOrder;
 use crate::headers;
 use crate::proto::h1::{
@@ -248,8 +247,10 @@ impl Http1Transaction for Server {
             None
         };
 
+        let preserve_order = ctx.preserve_header_case;
         #[cfg(feature = "ffi")]
-        let mut header_order = if ctx.preserve_header_order {
+        let preserve_order = preserve_order || ctx.preserve_header_order;
+        let mut header_order = if preserve_order {
             Some(OriginalHeaderOrder::default())
         } else {
             None
@@ -334,8 +335,6 @@ impl Http1Transaction for Server {
             if let Some(header_case_map) = &mut header_case_map {
                 header_case_map.append(&name, slice.slice(header.name.0..header.name.1));
             }
-
-            #[cfg(feature = "ffi")]
             if let Some(header_order) = &mut header_order {
                 header_order.append(&name);
             }
@@ -357,8 +356,6 @@ impl Http1Transaction for Server {
         if let Some(header_case_map) = header_case_map {
             extensions.insert(header_case_map);
         }
-
-        #[cfg(feature = "ffi")]
         if let Some(header_order) = header_order {
             extensions.insert(header_order);
         }
@@ -1108,8 +1105,10 @@ impl Http1Transaction for Client {
                 None
             };
 
+            let preserve_order = ctx.preserve_header_case;
             #[cfg(feature = "ffi")]
-            let mut header_order = if ctx.preserve_header_order {
+            let preserve_order = preserve_order || ctx.preserve_header_order;
+            let mut header_order = if preserve_order {
                 Some(OriginalHeaderOrder::default())
             } else {
                 None
@@ -1136,8 +1135,6 @@ impl Http1Transaction for Client {
                 if let Some(header_case_map) = &mut header_case_map {
                     header_case_map.append(&name, slice.slice(header.name.0..header.name.1));
                 }
-
-                #[cfg(feature = "ffi")]
                 if let Some(header_order) = &mut header_order {
                     header_order.append(&name);
                 }
@@ -1150,8 +1147,6 @@ impl Http1Transaction for Client {
             if let Some(header_case_map) = header_case_map {
                 extensions.insert(header_case_map);
             }
-
-            #[cfg(feature = "ffi")]
             if let Some(header_order) = header_order {
                 extensions.insert(header_order);
             }
@@ -1225,7 +1220,15 @@ impl Http1Transaction for Client {
         }
         extend(dst, b"\r\n");
 
-        if let Some(orig_headers) = msg.head.extensions.get::<HeaderCaseMap>() {
+        if let Some(order) = msg.head.extensions.get::<OriginalHeaderOrder>() {
+            write_headers_ordered(
+                &msg.head.headers,
+                msg.head.extensions.get::<HeaderCaseMap>(),
+                order,
+                dst,
+                msg.title_case_headers,
+            );
+        } else if let Some(orig_headers) = msg.head.extensions.get::<HeaderCaseMap>() {
             write_headers_original_case(
                 &msg.head.headers,
                 orig_headers,
@@ -1615,6 +1618,37 @@ pub(crate) fn write_headers(headers: &HeaderMap, dst: &mut Vec<u8>) {
 }
 
 #[cold]
+#[cfg(feature = "client")]
+fn write_headers_ordered(
+    headers: &HeaderMap,
+    orig_case: Option<&HeaderCaseMap>,
+    order: &OriginalHeaderOrder,
+    dst: &mut Vec<u8>,
+    title_case_headers: bool,
+) {
+    let mut emitted = std::collections::HashSet::new();
+    let fallback = headers.keys().flat_map(|name| {
+        (0..headers.get_all(name).iter().count()).map(move |index| (name, index))
+    });
+    for (name, index) in order.get_in_order().map(|(name, index)| (name, *index)).chain(fallback) {
+        if !emitted.insert((name, index)) {
+            continue;
+        }
+        if let Some(value) = headers.get_all(name).iter().nth(index) {
+            if let Some(original) = orig_case.and_then(|map| map.get_all(name).nth(index)) {
+                extend(dst, original.as_ref());
+            } else if title_case_headers {
+                title_case(dst, name.as_str().as_bytes());
+            } else {
+                extend(dst, name.as_str().as_bytes());
+            }
+            extend(dst, if value.is_empty() { b":" } else { b": " });
+            extend(dst, value.as_bytes());
+            extend(dst, b"\r\n");
+        }
+    }
+}
+
 #[cfg(feature = "client")]
 fn write_headers_original_case(
     headers: &HeaderMap,

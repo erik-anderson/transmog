@@ -1,5 +1,6 @@
 import io
 import json
+import os
 from pathlib import Path
 import sys
 import tarfile
@@ -12,6 +13,27 @@ import transport_dependencies as transport
 
 
 class TransportSnapshots(unittest.TestCase):
+    def test_regeneration_ignores_git_user_line_ending_preferences(self):
+        with tempfile.TemporaryDirectory() as temporary, patch.object(transport, "BASE", Path(temporary)):
+            root = Path(temporary)
+            (root / "patches").mkdir()
+            data = self.archive("h2-1.0.0/file")
+            (root / "h2-1.0.0.crate").write_bytes(data)
+            (root / "patches/h2.patch").write_bytes(b"--- a/file\n+++ b/file\n@@ -1 +1 @@\n-x\n+y\n")
+            # Give the archive's text file a final newline for the patch.
+            output = io.BytesIO()
+            with tarfile.open(fileobj=output, mode="w:gz") as archive:
+                member = tarfile.TarInfo("h2-1.0.0/file")
+                member.size = 2
+                archive.addfile(member, io.BytesIO(b"x\n"))
+            data = output.getvalue()
+            (root / "h2-1.0.0.crate").write_bytes(data)
+            sources = {"h2": {"version": "1.0.0", "archiveSha256": transport.digest(data)}}
+            with patch.dict(os.environ, {"GIT_CONFIG_COUNT": "1", "GIT_CONFIG_KEY_0": "core.autocrlf", "GIT_CONFIG_VALUE_0": "true"}):
+                transport.regenerate(sources, root)
+            self.assertEqual((root / "vendor/h2/file").read_bytes(), b"y\n")
+            transport.check(sources)
+
     def archive(self, name, *, kind=tarfile.REGTYPE):
         output = io.BytesIO()
         with tarfile.open(fileobj=output, mode="w:gz") as archive:

@@ -90,11 +90,25 @@ can prove ALPS limits are applied before request allocation. Round 1 review
 added extended-CONNECT and terminal-error coverage and resolved-graph checks;
 round 2 found no further significant issues.
 
+H1 now preserves original case and interleaved duplicate ordering through the
+Hyper parser, canonical model and outgoing serializer. Host comes from the
+authorized target; Connection is generated from reuse/upgrade policy after
+hop-by-hop filtering. Auto leaves Host synthesis to protocol selection so H2
+does not receive a redundant Host beside `:authority`. Tests cover forced/Auto
+H1, reuse, duplicates, stale Host, connection-nominated headers and injection.
+The local Chrome run has no H1 HTTP differences, only sampled ECH padding.
+Three review rounds fixed feature gating, Windows Git line-ending effects,
+and the H2 Host regression. Minimal Hyper client/server/http1 feature builds,
+HTTP tests, runtime checks and strict Clippy pass. The QUIC runtime PQC fixture
+now distinguishes hybrid exchange from ML-DSA signatures, matching the real
+Chromium QUIC offer without changing verifier coverage.
+
 Transport registry archives are checksum-pinned and preserved with their
 licenses under `third_party/rust-transport`. The complete patches and file
 receipts are reproducible with `scripts/vendor-transport.py`; portable build
-preflight checks both bytes and the resolved Cargo sources. Hyper and quiche
-are unmodified starting snapshots for the following increments.
+preflight checks both bytes and the resolved Cargo sources. Regeneration forces
+LF independently of Git's user settings. Quiche is the unmodified starting
+snapshot for the following increments.
 
 For H2, add focused encoder controls for Chromium's pseudo-header order and the
 HEADERS priority fields. Investigate startup-frame ordering alongside the ALPS

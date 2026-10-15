@@ -326,6 +326,41 @@ impl HyperOriginClient {
         Ok(response)
     }
 
+    fn set_wire_headers(
+        &self,
+        outgoing: &mut Request<CanonicalHttpBody>,
+        headers: &HeaderBlock,
+    ) -> Result<(), HyperOriginError> {
+        use http::header::{CONNECTION, UPGRADE};
+        // Forced H1 already rebuilt Host from the authorized target. Auto lets
+        // the legacy connector synthesize it only after selecting H1, avoiding
+        // a redundant Host field on H2 (which uses :authority).
+        if !outgoing.headers().contains_key(UPGRADE) {
+            let reusable = self
+                .factory
+                .network_profile()
+                .is_none_or(|p| p.settings.reuse_connections);
+            outgoing.headers_mut().insert(
+                CONNECTION,
+                HeaderValue::from_static(if reusable { "keep-alive" } else { "close" }),
+            );
+        }
+        let mut cases = hyper::ext::HeaderCaseMap::default();
+        let mut order = hyper::ext::OriginalHeaderOrder::default();
+        for name in ["Host", "Connection"].into_iter().map(str::as_bytes).chain(
+            headers
+                .iter()
+                .filter(|field| !field.name_eq("host") && !field.name_eq("connection"))
+                .map(HeaderField::name),
+        ) {
+            cases.append_name(Bytes::copy_from_slice(name))?;
+            order.append(HeaderName::from_bytes(name)?);
+        }
+        outgoing.extensions_mut().insert(cases);
+        outgoing.extensions_mut().insert(order);
+        Ok(())
+    }
+
     /// Builds all Hyper pools from one immutable TLS policy generation.
     ///
     /// # Errors
@@ -487,6 +522,7 @@ impl HyperOriginClient {
             .uri(uri)
             .body(CanonicalHttpBody::new(request.body)?.observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
+        self.set_wire_headers(&mut outgoing, &headers)?;
 
         let mut response = self.request(outgoing, mode).await?;
         let source_version = protocol_version(response.version())?;
@@ -570,6 +606,7 @@ impl HyperOriginClient {
             .uri(uri)
             .body(CanonicalHttpBody::streaming(request.body).observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
+        self.set_wire_headers(&mut outgoing, &headers)?;
 
         let response = self.request(outgoing, mode).await?;
         let source_version = protocol_version(response.version())?;
@@ -674,6 +711,7 @@ impl HyperOriginClient {
             .version(Version::HTTP_11)
             .body(CanonicalHttpBody::new(Vec::new())?.observed(self.performance.clone()))?;
         append_headers(outgoing.headers_mut(), &headers)?;
+        self.set_wire_headers(&mut outgoing, &headers)?;
 
         let sent_request = RequestHead {
             headers,

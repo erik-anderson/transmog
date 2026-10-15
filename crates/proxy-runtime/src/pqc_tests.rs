@@ -35,7 +35,9 @@ mod pqc_tests {
     }
 
     async fn origin(ca: &ProxyCa, route: RoutePolicy, hybrid: bool) -> (SocketAddr, OriginTask) {
-        let algorithm = if hybrid {
+        // Chromium QUIC offers hybrid exchange but does not advertise ML-DSA
+        // signatures. Keep those two negotiated properties independent.
+        let algorithm = if hybrid && route != RoutePolicy::Http3Only {
             LeafKeyAlgorithm::MlDsa(MlDsaVariant::MlDsa44)
         } else {
             LeafKeyAlgorithm::EcdsaP256
@@ -188,7 +190,7 @@ mod pqc_tests {
             .unwrap()
             .unwrap();
         origin.finish().await;
-        verify_facts(&recorded, browser_hybrid, origin_hybrid);
+        verify_facts(&recorded, browser_hybrid, origin_hybrid, route);
     }
 
     type PqcClient = hyper::client::conn::http1::SendRequest<Full<Bytes>>;
@@ -237,11 +239,13 @@ mod pqc_tests {
         recorded: &[transmog_core::performance::PerformanceEvidence],
         browser_hybrid: bool,
         origin_hybrid: bool,
+        route: RoutePolicy,
     ) {
         for (leg, hybrid, signature) in [
             ("client", browser_hybrid, "Local handshake signature"),
             ("upstream", origin_hybrid, "Peer handshake signature"),
         ] {
+            let pq_signature = hybrid && (leg == "client" || route != RoutePolicy::Http3Only);
             let tls = recorded
                 .iter()
                 .flat_map(|sample| &sample.transports)
@@ -262,7 +266,7 @@ mod pqc_tests {
             );
             assert_eq!(
                 tls.details[signature],
-                if hybrid {
+                if pq_signature {
                     "mldsa44"
                 } else {
                     "ecdsa_secp256r1_sha256"
@@ -274,7 +278,7 @@ mod pqc_tests {
                 .unwrap();
             assert_eq!(
                 MlDsaVariant::for_key(&key),
-                hybrid.then_some(MlDsaVariant::MlDsa44)
+                pq_signature.then_some(MlDsaVariant::MlDsa44)
             );
         }
     }

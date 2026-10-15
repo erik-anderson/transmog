@@ -3,6 +3,7 @@
 mod alps;
 mod authority;
 mod client;
+mod header_wire;
 mod metrics;
 mod service;
 mod tls_connector;
@@ -13,6 +14,7 @@ pub use authority::{AuthorityError, ConnectAuthority};
 pub use client::{
     HyperOriginClient, HyperOriginError, HyperUpgradeResponse, WebSocketIo, WebSocketUpgrade,
 };
+pub use header_wire::header_block_from_hyper;
 pub use service::HyperUpstreamService;
 pub use tls_connector::ChromiumHttpsConnector;
 pub use tls_stream::MaybeHttpsStream;
