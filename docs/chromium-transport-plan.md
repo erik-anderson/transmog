@@ -1,5 +1,32 @@
 # Remaining Chromium transport alignment
 
+## Latest qualification
+
+Transport commit `520e02e` was compared with Chrome 155.0.8059.79 using three
+fresh direct/proxied pairs per protocol. All 18 navigations proved their
+protocol and routing; JA4 matches in every pair for H1.1, H2 and H3. Evidence
+run: `.local/chromium-comparison/20261015T034928Z-4668e2`.
+
+| Protocol | Remaining stable differences |
+| --- | --- |
+| H1.1 | None in the measured signals. |
+| H2 | A real initial SETTINGS ACK appears before WINDOW_UPDATE and HEADERS. Header bytes, priority and SETTINGS values match. |
+| H3 | Dynamic QPACK capacity/blocked-stream settings and H3_DATAGRAM are absent, along with the QUIC datagram transport parameter. |
+
+Sampled ECH GREASE padding lengths and the reserved version's insertion slot
+also differ between some pairs; both are randomized. The report retains those
+observations rather than hiding them. JA4 equality alone does not establish
+complete transport or verifier equivalence. The local origin declines ALPS;
+separate QUIC fixtures qualify accepted settings, invalid values and capture.
+
+The affected Rust suites passed 725 tests, along with strict Clippy, formatting,
+68 portable-tooling tests, 170 upstream H3 tests on consecutive runs, browser
+profile/inspection checks at wide and compact sizes, and native WebView2 smoke
+checks. Distinct increments completed their review/fix loops before commit;
+the combined review finished with no further actionable issues in scope.
+The H2 ACK needs a qualified peer-settings bootstrap API. Dynamic QPACK and
+datagrams remain the capability work described below.
+
 ## Verified starting point
 
 The local harness compared transport commit `ac9d6ea` with Chrome
