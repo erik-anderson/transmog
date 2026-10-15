@@ -101,7 +101,9 @@ async fn headers_without_alps_ack(io: &mut (impl AsyncRead + Unpin)) -> (u32, Ve
     loop {
         let (kind, flags, stream, payload) = read_frame(io).await;
         if kind == 1 {
-            return (stream, payload);
+            assert_eq!(flags & 0x20, 0x20);
+            assert_eq!(&payload[..5], &[0x80, 0, 0, 0, 255]);
+            return (stream, payload[5..].to_vec());
         }
         assert_ne!(
             (kind, flags),

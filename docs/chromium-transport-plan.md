@@ -80,6 +80,22 @@ pinned browser; authenticated retry and certificate rejection tests still pass.
 
 ## 3. Align HTTP serialization
 
+The second increment adds opt-in h2 request extensions for pseudo-header order
+and root priority. The normal origin client and extended CONNECT use them.
+Completed body channels expose end-of-stream without discarding queued errors
+or trailers, allowing HEADERS to carry END_STREAM. In the local Chrome run all
+H2 headers and HEADERS bytes match; the remaining startup difference is the
+early real SETTINGS ACK. Keep the initial concurrency gate until an alternative
+can prove ALPS limits are applied before request allocation. Round 1 review
+added extended-CONNECT and terminal-error coverage and resolved-graph checks;
+round 2 found no further significant issues.
+
+Transport registry archives are checksum-pinned and preserved with their
+licenses under `third_party/rust-transport`. The complete patches and file
+receipts are reproducible with `scripts/vendor-transport.py`; portable build
+preflight checks both bytes and the resolved Cargo sources. Hyper and quiche
+are unmodified starting snapshots for the following increments.
+
 For H2, add focused encoder controls for Chromium's pseudo-header order and the
 HEADERS priority fields. Investigate startup-frame ordering alongside the ALPS
 bootstrap: the current SETTINGS ACK precedes some initial frames. Preserve

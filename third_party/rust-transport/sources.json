@@ -1,0 +1,14 @@
+{
+  "h2": {
+    "version": "0.4.19",
+    "archiveSha256": "ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16"
+  },
+  "hyper": {
+    "version": "1.11.1",
+    "archiveSha256": "27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43"
+  },
+  "quiche": {
+    "version": "0.30.0",
+    "archiveSha256": "52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a"
+  }
+}

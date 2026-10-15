@@ -163,6 +163,12 @@ impl Pool {
         append_headers(outgoing.headers_mut(), &headers)?;
         outgoing
             .extensions_mut()
+            .insert(h2::ext::RequestWirePreferences {
+                authority_first: true,
+                root_priority: Some((255, true)),
+            });
+        outgoing
+            .extensions_mut()
             .insert(h2::ext::Protocol::from_static("websocket"));
         let observation = peer.observation.clone().and_then(|connection| {
             let shared = connection.claim();

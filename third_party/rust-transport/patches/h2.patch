@@ -1,0 +1,161 @@
+--- a/src/ext.rs
++++ b/src/ext.rs
+@@ -4,6 +4,16 @@
+ 
+ use bytes::Bytes;
+ use std::fmt;
++
++/// Optional request serialization preferences. Flow control and scheduling are
++/// unaffected; absent this extension the upstream encoding is unchanged.
++#[derive(Clone, Copy, Debug, Default)]
++pub struct RequestWirePreferences {
++    /// Encode `:authority` before `:scheme`.
++    pub authority_first: bool,
++    /// Add a dependency on stream zero, with wire weight (0..255) and exclusivity.
++    pub root_priority: Option<(u8, bool)>,
++}
+ 
+ /// Represents the `:protocol` pseudo-header used by
+ /// the [Extended CONNECT Protocol].
+--- a/src/frame/headers.rs
++++ b/src/frame/headers.rs
+@@ -79,6 +79,7 @@
+ 
+ #[derive(Debug)]
+ pub struct Iter {
++    authority_first: bool,
+     /// Pseudo headers
+     pseudo: Option<Pseudo>,
+ 
+@@ -88,6 +89,7 @@
+ 
+ #[derive(Debug, PartialEq, Eq)]
+ struct HeaderBlock {
++    authority_first: bool,
+     /// The decoded header fields
+     fields: HeaderMap,
+ 
+@@ -116,12 +118,20 @@
+ // ===== impl Headers =====
+ 
+ impl Headers {
++    pub(crate) fn set_wire_preferences(&mut self, wire: crate::ext::RequestWirePreferences) {
++        self.header_block.authority_first = wire.authority_first;
++        if let Some((weight, exclusive)) = wire.root_priority {
++            self.stream_dep = Some(StreamDependency::new(StreamId::zero(), weight, exclusive));
++            self.flags.0 |= PRIORITY;
++        }
++    }
+     /// Create a new HEADERS frame
+     pub fn new(stream_id: StreamId, pseudo: Pseudo, fields: HeaderMap) -> Self {
+         Headers {
+             stream_id,
+             stream_dep: None,
+             header_block: HeaderBlock {
++                authority_first: false,
+                 field_size: calculate_headermap_size(&fields),
+                 fields,
+                 is_over_size: false,
+@@ -139,6 +149,7 @@
+             stream_id,
+             stream_dep: None,
+             header_block: HeaderBlock {
++                authority_first: false,
+                 field_size: calculate_headermap_size(&fields),
+                 fields,
+                 is_over_size: false,
+@@ -204,6 +215,7 @@
+             stream_id: head.stream_id(),
+             stream_dep,
+             header_block: HeaderBlock {
++                authority_first: false,
+                 fields: HeaderMap::new(),
+                 field_size: 0,
+                 is_over_size: false,
+@@ -287,7 +299,11 @@
+ 
+         self.header_block
+             .into_encoding(encoder)
+-            .encode(&head, dst, Some(encoder), |_| {})
++            .encode(&head, dst, Some(encoder), |dst| {
++                if let Some(dependency) = self.stream_dep {
++                    dependency.encode(dst);
++                }
++            })
+     }
+ 
+     fn head(&self) -> Head {
+@@ -364,6 +380,7 @@
+         PushPromise {
+             flags: PushPromiseFlag::default(),
+             header_block: HeaderBlock {
++                authority_first: false,
+                 field_size: calculate_headermap_size(&fields),
+                 fields,
+                 is_over_size: false,
+@@ -455,6 +472,7 @@
+         let frame = PushPromise {
+             flags,
+             header_block: HeaderBlock {
++                authority_first: false,
+                 fields: HeaderMap::new(),
+                 field_size: 0,
+                 is_over_size: false,
+@@ -719,6 +737,12 @@
+         if let Some(ref mut pseudo) = self.pseudo {
+             if let Some(method) = pseudo.method.take() {
+                 return Some(Method(method));
++            }
++
++            if self.authority_first {
++                if let Some(authority) = pseudo.authority.take() {
++                    return Some(Authority(authority));
++                }
+             }
+ 
+             if let Some(scheme) = pseudo.scheme.take() {
+@@ -993,6 +1017,7 @@
+         let mut hpack = encoder.take_scratch();
+         hpack.clear();
+         let headers = Iter {
++            authority_first: self.authority_first,
+             pseudo: Some(self.pseudo),
+             fields: self.fields.into_iter(),
+         };
+--- a/src/frame/priority.rs
++++ b/src/frame/priority.rs
+@@ -44,6 +44,11 @@
+ // ===== impl StreamDependency =====
+ 
+ impl StreamDependency {
++    pub(crate) fn encode(&self, dst: &mut impl bytes::BufMut) {
++        let id = u32::from(self.dependency_id) | if self.is_exclusive { 1 << 31 } else { 0 };
++        dst.put_u32(id);
++        dst.put_u8(self.weight);
++    }
+     pub fn new(dependency_id: StreamId, weight: u8, is_exclusive: bool) -> Self {
+         StreamDependency {
+             dependency_id,
+--- a/src/proto/streams/streams.rs
++++ b/src/proto/streams/streams.rs
+@@ -269,6 +269,7 @@
+         use http::Method;
+ 
+         let protocol = request.extensions_mut().remove::<Protocol>();
++        let wire = request.extensions_mut().remove::<crate::ext::RequestWirePreferences>();
+ 
+         // Clear before taking lock, incase extensions contain a StreamRef.
+         request.extensions_mut().clear();
+@@ -317,8 +318,11 @@
+         }
+ 
+         // Convert the message
+-        let headers =
++        let mut headers =
+             client::Peer::convert_send_message(stream_id, request, protocol, end_of_stream)?;
++        if let Some(wire) = wire {
++            headers.set_wire_preferences(wire);
++        }
+ 
+         let mut stream = me.store.insert(stream.id, stream);
+ 

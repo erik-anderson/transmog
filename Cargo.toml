@@ -1,4 +1,5 @@
 [workspace]
+exclude = ["third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche"]
 resolver = "2"
 members = [
     "apps/desktop",
@@ -69,8 +70,8 @@ image = { version = "=0.25.10", default-features = false, features = ["gif", "ic
 libc = "=0.2.190"
 percent-encoding = "2.3.2"
 prost = "=0.14.4"
-hyper = { version = "1.11.1", features = ["client", "http1", "http2", "server"] }
-h2 = "0.4.19"
+hyper = { version = "=1.11.1", features = ["client", "http1", "http2", "server"] }
+h2 = "=0.4.19"
 hyper-boring = "=5.2.0"
 hickory-resolver = { version = "=0.26.3", default-features = false, features = ["tokio", "system-config"] }
 hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server", "service", "tokio"] }
@@ -97,6 +98,9 @@ zip = { version = "=8.6.0", default-features = false, features = ["deflate-flate
 zstd = { version = "=0.14.0", default-features = false }
 
 [patch.crates-io]
+h2 = { path = "third_party/rust-transport/vendor/h2" }
+hyper = { path = "third_party/rust-transport/vendor/hyper" }
+quiche = { path = "third_party/rust-transport/vendor/quiche" }
 # Unreleased BoringSSL update supplies signature-algorithm GREASE. Keep the
 # entire family on one immutable revision, including quiche's transitive TLS.
 boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }

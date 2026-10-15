@@ -38,6 +38,11 @@ impl std::fmt::Debug for BodyStream {
 }
 
 impl BodyStream {
+    /// Whether all producers have finished and no frames or errors remain.
+    /// A temporarily empty live stream is not complete.
+    pub fn is_end_stream(&self) -> bool {
+        self.receiver.is_closed() && self.receiver.is_empty()
+    }
     /// Creates one bounded body channel with an explicit nonzero frame limit.
     pub fn channel(capacity: NonZeroUsize) -> (BodyStreamSender, Self) {
         let (sender, receiver) = mpsc::channel(capacity.get());
@@ -275,6 +280,20 @@ mod tests {
             })
         );
         assert_eq!(buffer.len(), 3);
+    }
+
+    #[tokio::test]
+    async fn stream_completion_preserves_pending_frames_and_errors() {
+        let (sender, mut stream) = BodyStream::channel(NonZeroUsize::new(1).unwrap());
+        assert!(!stream.is_end_stream());
+        sender
+            .send(Err(super::BodyStreamError::Failed("test".into())))
+            .await
+            .unwrap();
+        drop(sender);
+        assert!(!stream.is_end_stream());
+        assert!(stream.recv().await.unwrap().is_err());
+        assert!(stream.is_end_stream());
     }
 
     #[tokio::test]

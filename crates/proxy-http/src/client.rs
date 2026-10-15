@@ -246,6 +246,12 @@ impl HyperOriginClient {
         mut outgoing: Request<CanonicalHttpBody>,
         mode: HyperEgressMode,
     ) -> Result<http::Response<Incoming>, HyperOriginError> {
+        outgoing
+            .extensions_mut()
+            .insert(h2::ext::RequestWirePreferences {
+                authority_first: true,
+                root_priority: Some((255, true)),
+            });
         let client = self.authorized_client(outgoing.uri(), mode).await?;
         let mut captured = hyper_util::client::legacy::connect::capture_connection(&mut outgoing);
         let response = client.request(outgoing);
@@ -791,10 +797,10 @@ impl Body for CanonicalHttpBody {
     }
 
     fn is_end_stream(&self) -> bool {
-        let empty = matches!(
-            &self.inner,
-            CanonicalHttpBodyInner::Buffered(frames) if frames.is_empty()
-        );
+        let empty = match &self.inner {
+            CanonicalHttpBodyInner::Buffered(frames) => frames.is_empty(),
+            CanonicalHttpBodyInner::Streaming(body) => body.is_end_stream(),
+        };
         if empty && let Some(performance) = &self.performance {
             performance.mark(Milestone::UpstreamRequestConsumed);
         }

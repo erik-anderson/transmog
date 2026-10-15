@@ -172,3 +172,5 @@ def preflight(cargo, arguments, cwd, environment):
             # qualified receipt, with the consumer's actual resolved graph.
             owner = Path(native[0]["manifest_path"]).parent.parent.parent
             verify_stack(metadata, owner)
+            from transport_dependencies import check_repository
+            check_repository(owner, metadata)
