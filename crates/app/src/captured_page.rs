@@ -329,14 +329,18 @@ impl CapturedPage {
             }
         }
         reason.push_str(&overlay_reason);
-        self.diagnostics.outcome(
-            method,
-            url,
-            selected.map(|(variant, _)| variant.entry_id.clone()),
-            None,
-            selected.map(|(variant, _)| variant.resource.sha256.clone()),
-            &reason,
-        );
+        if let Some((variant, _)) = selected {
+            self.diagnostics.supplied(
+                method,
+                url,
+                Some(variant.entry_id.clone()),
+                None,
+                &variant.resource,
+                &reason,
+            );
+        } else {
+            self.diagnostics.request(method, url, None, &reason);
+        }
         selected.map(|(variant, _)| variant.resource.clone())
     }
 }

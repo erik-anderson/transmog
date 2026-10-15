@@ -534,6 +534,18 @@ impl SessionCatalog {
         state.by_id.get(&exchange_id).map(MutableSession::snapshot)
     }
 
+    /// Reads a retained entry's revision without cloning headers or stream history.
+    pub fn sequence(&self, exchange_id: ExchangeId) -> Option<u64> {
+        let state = self.lock_state();
+        if state.dismissed.contains(&exchange_id) {
+            return None;
+        }
+        state
+            .by_id
+            .get(&exchange_id)
+            .map(|entry| entry.last_sequence)
+    }
+
     /// Atomically adds immutable saved sessions without evicting live evidence.
     /// Saved entries have a separate 100,000-entry bound and support ordinary
     /// queries, selection, dismissal and Undo. Observer events cannot change them.

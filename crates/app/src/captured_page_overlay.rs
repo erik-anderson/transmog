@@ -69,12 +69,12 @@ impl Overlay {
                 if document && matches!(resource.status, 204 | 205 | 304) {
                     diagnostics.failed_response(method, url, frozen.rule.id.clone(), reason);
                 } else {
-                    diagnostics.outcome(
+                    diagnostics.supplied(
                         method,
                         url,
                         None,
                         Some(frozen.rule.id.clone()),
-                        Some(resource.sha256.clone()),
+                        &resource,
                         reason,
                     );
                 }

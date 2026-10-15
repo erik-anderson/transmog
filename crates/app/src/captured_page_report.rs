@@ -130,10 +130,13 @@ pub struct CapturedPageReport {
 }
 /// Shared diagnostics survive the preview's close while its owner shows them.
 #[derive(Clone)]
-pub struct CapturedPageDiagnostics(Arc<Mutex<CapturedPageReport>>);
+pub struct CapturedPageDiagnostics(
+    Arc<Mutex<CapturedPageReport>>,
+    Arc<Mutex<std::collections::VecDeque<(u64, crate::CapturedResource)>>>,
+);
 impl CapturedPageDiagnostics {
     pub(super) fn new(report: CapturedPageReport) -> Self {
-        Self(Arc::new(Mutex::new(report)))
+        Self(Arc::new(Mutex::new(report)), Arc::default())
     }
     /// Records the script choice made in the trusted warning before navigation.
     pub fn script_choice(&self, enabled: bool) {
@@ -179,7 +182,7 @@ impl CapturedPageDiagnostics {
         rule_id: Option<String>,
         sha256: Option<String>,
         reason: &str,
-    ) {
+    ) -> u64 {
         let outcome = if rule_id.is_some() {
             "auto-response"
         } else if entry_id.is_some() {
@@ -196,9 +199,51 @@ impl CapturedPageDiagnostics {
             rule_id,
             sha256,
             reason: reason.into(),
-        });
+        })
     }
-    fn record(&self, mut request: CapturedPreviewRequest) {
+    /// Read-only lookup; callers must retain the owning scene while reading its file.
+    pub fn supplied_response(&self, observation: u64) -> Option<crate::CapturedResource> {
+        let report = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !report.requests.iter().any(|r| r.id == observation) {
+            return None;
+        }
+        self.1
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|(id, _)| *id == observation)
+            .map(|(_, resource)| resource.clone())
+    }
+    pub(super) fn supplied(
+        &self,
+        method: &str,
+        url: &str,
+        entry: Option<String>,
+        rule: Option<String>,
+        resource: &crate::CapturedResource,
+        reason: &str,
+    ) {
+        let id = self.outcome(
+            method,
+            url,
+            entry,
+            rule,
+            Some(resource.sha256.clone()),
+            reason,
+        );
+        let mut responses = self
+            .1
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if responses.len() == 256 {
+            responses.pop_front();
+        }
+        responses.push_back((id, resource.clone()));
+    }
+    fn record(&self, mut request: CapturedPreviewRequest) -> u64 {
         let mut report = self
             .0
             .lock()
@@ -217,6 +262,8 @@ impl CapturedPageDiagnostics {
         if report.requests.len() == 256 {
             report.requests.remove(0);
         }
+        let id = request.id;
         report.requests.push(request);
+        id
     }
 }

@@ -246,3 +246,25 @@ scene or selected complete HTML response. Existing previews and F5 retain their
 original rules and linked-file bytes; **Open updated preview…** freezes the new saved
 versions. Diagnostics retain historical rule/asset revisions and byte hashes even
 when the current saved rule changes or is deleted.
+
+## Compare a response draft
+
+The response editor offers **Compare draft**, **Compare with captured source**,
+and **Compare with previous saved revision** when its source/revision is retained.
+The shared comparison freezes the current status, ordered headers and proposed
+body without saving or activating the rule. Invalid status remains visible as
+proposed input. Header/byte editing errors stay beside the editor and preserve the
+draft. If the original capture was removed, its comparison side is unavailable;
+an earlier saved revision is offered only when it exists.
+
+Saved assets and drafts are response-only subjects. Their request/outcome/timing
+fields are not applicable. Copied assets preserve their encoded entity bytes,
+with separate decoded/text verdicts. Draft/linked-file input is labeled as decoded
+bytes. Generated framing/compression stays distinct from original captured entity
+bytes; this is not proof of a downstream observed response. Current linked
+file bytes are acquired coherently and labeled with acquisition time. A later file
+edit cannot change an open result. **Preview captured page…** still uses explicitly
+saved rule snapshots; comparing does not save a draft for preview.
+
+See [Traffic comparison](traffic-inspection.md#comparing-captured-evidence) for
+representation, coverage, exclusion and processing limits.

@@ -146,3 +146,29 @@ missing resources and cancellation. Browser checks exercise the warning, scripts
 choice, Escape and compact layout. The native viewer probe uses a captured
 HTML/CSS/image fixture, verifies both script choices, rejected missing requests,
 blocked app commands and zero requests to a controlled uncaptured endpoint.
+
+## Compare supplied responses
+
+**Compare response** on a retained browser-request observation opens the shared
+response comparison. Use **Set response baseline** in baseline diagnostics, open
+an updated preview, then compare its chosen response against that exact retained
+observation. Clear the baseline explicitly when finished. No URL-based pairing is
+inferred from shortened diagnostics. Captured observations link to their original exchange when
+available. Rule-supplied observations use the exact immutable response from that
+run; its revision/hash is not replaced by a current asset or linked file. The
+comparison adapter copies selected frozen bytes without running matching again,
+advancing repeated-resource positions, or incrementing browser-request counters.
+
+The evidence describes the response supplied at interception. It does not prove
+browser completion or CORS/CSP acceptance. Missing resources remain network
+failures with no synthetic HTTP response; genuine captured/authored 404 responses
+remain HTTP responses. Unsupported responses, unavailable bytes and missing
+observations are distinct. A missing-resource observation has no response body to
+compare. Read-only lookup remains restricted to the preview's owning window.
+
+Reports retain only the last 256 intercepted requests and at most 256 preparation
+decisions. The host retains eight reports and scene handles for the latest three.
+Older response handles/bytes can expire while diagnostics remain. Comparison
+shows unavailable evidence rather than rereading a current file or claiming the
+whole run was compared. Closing a comparison releases its copied bytes without
+extending preview-scene retention. See [comparison limits](traffic-inspection.md#comparison-limits).

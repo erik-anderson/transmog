@@ -17,6 +17,7 @@ mod captured_page_overlay;
 mod captured_page_report;
 mod certificates;
 mod client_certificates;
+pub mod comparison;
 mod composer;
 mod composer_response;
 mod diagnostics;
@@ -333,6 +334,7 @@ pub struct Application {
     traces: traces::TraceRegistry,
     searches: search::SearchRegistry,
     traffic_views: Arc<std::sync::Mutex<sessions::TrafficViews>>,
+    comparisons: comparison::ComparisonRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -480,6 +482,7 @@ impl Application {
             traces: traces::TraceRegistry::default(),
             searches: search::SearchRegistry::default(),
             traffic_views: Arc::new(std::sync::Mutex::new(sessions::TrafficViews::default())),
+            comparisons: comparison::ComparisonRegistry::default(),
         })
     }
 

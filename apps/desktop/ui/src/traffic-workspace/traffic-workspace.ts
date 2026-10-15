@@ -9,6 +9,7 @@ import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusTe
 import {ListSelection,isTextEditing} from '../list-selection.js';
 import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
+import type {ComparisonOpen,ComparisonSubject,ScopeChoice} from '../comparison-models.js';
 import type { CertificateInspector } from '../certificate-inspector/certificate-inspector.js';
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport, PreviewRuleSnapshot } from '../models.js';
 
@@ -16,6 +17,26 @@ type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  private emitComparison(detail:ComparisonOpen):void{this.$emit('comparison-request',detail);}
+  @observable comparisonBaseline='';
+  @observable comparisonBaselineLabel='';
+  setComparisonBaseline():void{const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedSessionId;if(!id)return;this.comparisonBaseline=id;this.comparisonBaselineLabel=this.selectedDetail?.id===id?`#${this.selectedDetail.requestNumber} · ${this.selectedMethodText} ${this.selectedUrlText}`:'Selected request';this.trafficMenu.hidePopover();}
+  clearComparisonBaseline():void{this.comparisonBaseline='';this.comparisonBaselineLabel='';}
+  compareSelected():void{const ids=[...this.trafficSelection.ids];if(ids.length!==2){this.diagnostic='Select exactly two requests, including requests outside the visible table window.';return;}this.trafficMenu.hidePopover();this.emitComparison({left:{kind:'exchange',id:ids[0]!},right:{kind:'exchange',id:ids[1]!}});}
+  compareWithBaseline():void{const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedSessionId;if(!id||!this.comparisonBaseline)return;this.trafficMenu.hidePopover();this.emitComparison({left:{kind:'exchange',id:this.comparisonBaseline},right:{kind:'exchange',id}});}
+  async compareCaptureScopes():Promise<void>{this.filesMenu.hidePopover();const sources=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);const choices:ScopeChoice[]=sources.map(s=>({value:s.id,label:`${s.name} · ${s.sessions} imported entries`,scope:{kind:'source',traceId:s.id}}));choices.push({value:'live',label:'Live traffic · retained entries',scope:{kind:'source',traceId:null}});if(this.trafficSelection.ids.size)choices.push({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries before virtual windowing`,scope:{kind:'filtered',query:{search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});this.$emit('capture-comparison-request',{choices});}
+  @observable previewComparisonBaselineLabel='';
+  private previewComparisonBaseline:ComparisonSubject|null=null;
+  setPreviewResponseBaseline(observation:string):void{this.previewComparisonBaseline={kind:'preview',run:this.previewReportLabel,observation:Number(observation)};this.previewComparisonBaselineLabel=`${this.previewReportLabel} · response ${observation}`;}
+  clearPreviewResponseBaseline():void{this.previewComparisonBaseline=null;this.previewComparisonBaselineLabel='';}
+  comparePreviewResponse(observation:string,sourceId:string,ruleId:string):void{
+    if(!this.previewReportLabel)return;
+    const asset=this.previewRuleRows.find(rule=>rule.id===ruleId)?.asset;
+    const left:ComparisonSubject|null=this.previewComparisonBaseline??(sourceId?{kind:'exchange',id:sourceId}:asset?{kind:'asset',reference:asset}:null);
+    if(!left){this.previewReportError='Choose a captured source or set a response baseline from another retained preview.';return;}
+    this.emitComparison({left,right:{kind:'preview',run:this.previewReportLabel,observation:Number(observation)}});
+  }
+
   certificateInspector!:CertificateInspector;
   detailsButton!:HTMLButtonElement;
   actionsButton!:HTMLButtonElement;
@@ -93,7 +114,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable previewReportSummary='';
   @observable previewReportUrl='';
   @observable previewResourceRows:Array<{id:string;sourceId:string;sourceAvailable:boolean;method:string;url:string;source:string;size:string;time:string;decision:string}>=[];
-  @observable previewRequestRows:Array<{id:string;method:string;url:string;outcome:string;reason:string;ruleId:string;sourceId:string;sha256:string}>=[];
+  @observable previewRequestRows:Array<{id:string;method:string;url:string;outcome:string;reason:string;ruleId:string;sourceId:string;sha256:string;comparable:boolean}>=[];
   @observable previewRuleRows:PreviewRuleSnapshot[]=[];
   @observable previewSceneAvailable=false;
   @observable previewPageMode='captured';
@@ -1181,7 +1202,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     try {const report=await invoke<CapturedPageReport>('captured_page_report',{label});if(generation!==this.previewReportGeneration||!this.isConnected)return;
       this.previewSceneUrl=report.url;this.previewSceneScope=report.scope;this.previewRuleRows=report.rules??[];this.previewSceneAvailable=report.bytesAvailable!==false;this.previewReportUrl=report.url;this.previewReportSummary=(this.previewRuleRows.length?'Modified':'Baseline')+' · '+(report.runtime??'WebView2')+' · '+(report.bytesAvailable===false?'Related preview bytes expired · ':'')+(report.scope==='all-loaded'?'All loaded traffic':report.source)+' · '+report.available+' frozen variants · '+report.skipped+' skipped · '+report.hits+' served · '+report.misses+' network failures · '+(report.failures??0)+' failed · '+Math.max(0,report.available+report.skipped-report.resources.length)+' omitted resource decisions · '+Math.max(0,report.hits+report.misses+(report.failures??0)-report.requests.length)+' older requests'+(report.scriptsEnabled==null?'':report.scriptsEnabled?' · Scripts enabled':' · Scripts disabled');
       this.previewResourceRows=report.resources.map((row,index)=>({id:String(index),sourceId:row.entryId,sourceAvailable:row.sourceAvailable!==false,method:row.method,url:row.url,source:row.source,size:row.bytes==null?'Unavailable':row.bytes.toLocaleString()+' bytes',time:row.unixMillis==null||!Number.isFinite(new Date(row.unixMillis).getTime())?'Time unavailable':new Date(row.unixMillis).toISOString(),decision:row.decision+(row.sha256?' · SHA-256 '+row.sha256:'')}));
-      this.previewRequestRows=report.requests.map(row=>({id:String(row.id),method:row.method,url:row.url,outcome:row.outcome==='failed/unavailable'?'Failed / unavailable':row.outcome==='auto-response'?'Auto-response':row.outcome==='captured'||row.outcome==='served'?'Captured':'Missing · Network failure',reason:row.reason,ruleId:row.ruleId??'',sourceId:row.entryId??'',sha256:row.sha256??''}));
+      this.previewRequestRows=report.requests.map(row=>({id:String(row.id),method:row.method,url:row.url,outcome:row.outcome==='failed/unavailable'?'Failed / unavailable':row.outcome==='auto-response'?'Auto-response':row.outcome==='captured'||row.outcome==='served'?'Captured':'Missing · Network failure',reason:row.reason,ruleId:row.ruleId??'',sourceId:row.entryId??'',sha256:row.sha256??'',comparable:row.outcome==='captured'||row.outcome==='auto-response'||row.outcome==='served'}));
     }catch(error:unknown){if(generation===this.previewReportGeneration)this.previewReportError='Preview diagnostics could not be read: '+describeError(error);}finally{if(generation===this.previewReportGeneration)this.previewReportBusy=false;}
   }
   async showPreviewSource(id:string):Promise<void> {try{await invoke('session_detail',{id});this.closePreviewReport();await this.revealSession(id);}catch{this.previewReportError='The source entry is no longer retained. Its resource decision remains in this report.';}}

@@ -1019,6 +1019,32 @@ impl ResponseAssetResolver for ResponseAssetStore {
 }
 
 impl ResponseAssetStore {
+    /// Opens the exact configured byte source for read-only comparison acquisition.
+    /// Missing files retain their saved metadata; callers must distinguish encoded
+    /// copied bytes from decoded linked-file input and validate a coherent read.
+    pub(crate) fn comparison_source(
+        &self,
+        reference: &str,
+    ) -> Result<(ResponseAsset, Option<File>), AppError> {
+        let asset = self
+            .assets
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(reference)
+            .cloned()
+            .ok_or_else(|| unavailable("Saved response revision is unavailable"))?;
+        let path = asset
+            .linked_body
+            .as_ref()
+            .map(|link| link.path.clone())
+            .or_else(|| {
+                self.root
+                    .as_deref()
+                    .map(|root| body_path(root, &asset.sha256))
+            });
+        let file = path.and_then(|path| File::open(path).ok());
+        Ok((asset, file))
+    }
     /// Materializes bounded, stable bytes without exposing an external path to a browser.
     pub(crate) async fn freeze_preview(
         &self,

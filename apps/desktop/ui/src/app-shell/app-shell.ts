@@ -1,4 +1,7 @@
 import initialState from '../initial-state.json';
+import '../comparison-workspace/comparison-workspace.js';
+import type {ComparisonWorkspace} from '../comparison-workspace/comparison-workspace.js';
+import type {ComparisonOpen,CaptureOpen} from '../comparison-models.js';
 import '../autoresponse-switch/autoresponse-switch.js';
 import '../app-updates/app-updates.js';
 import '../client-certificate-requests/client-certificate-requests.js';
@@ -22,6 +25,18 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  comparison!:ComparisonWorkspace;
+  onComparison(event:CustomEvent<ComparisonOpen>):void{event.stopPropagation();void this.comparison.open(event.detail);}
+  onCaptureComparison(event:CustomEvent<CaptureOpen>):void{event.stopPropagation();void this.comparison.openCaptures(event.detail);}
+  async onComparisonSource(event:CustomEvent<string>):Promise<void>{
+    event.stopPropagation();
+    try{
+      if(!await this.activateView('traffic')){this.comparison.comparisonStatus='Navigation canceled; comparison and editor draft preserved.';return;}
+      if(!await this.traffic.revealSession(event.detail)){this.comparison.comparisonStatus='The source is no longer retained. Frozen comparison evidence remains available.';return;}
+      this.comparison.sourceOpened();if(this.traffic.previewReportDialog.open)this.traffic.closePreviewReport();this.traffic.trafficTable.focus({preventScroll:true});
+    }catch(error:unknown){this.comparison.comparisonStatus='Source could not be opened: '+describeError(error);}
+  }
+
   async openClientCertificateSettings():Promise<void> {await this.activateView('settings');this.settings.showSettingsSection('client-certificates');}
   certificatePanelClosed():void {this.workspaceContent.focus();}
   @observable automationEnabledCount=0;
@@ -281,7 +296,8 @@ export class AppShell extends WebUIElement {
   async onAutoResponseBatch(event:CustomEvent<string[]>):Promise<void> {if(await this.activateView('automation'))await this.automation.beginBatch(event.detail);}
   async onSourceTraffic(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('traffic')) {
-      if (!await this.traffic.revealSession(event.detail)) await this.automation.refreshSourceAvailability?.();
+      if(this.traffic.previewReportDialog.open)this.traffic.closePreviewReport();
+      if (!await this.traffic.revealSession(event.detail)) await this.automation?.refreshSourceAvailability?.();
     }
   }
   onTrafficRefreshed(): void {

@@ -2,6 +2,8 @@
 
 #[path = "captured_preview.rs"]
 mod captured_preview;
+#[path = "comparison.rs"]
+mod comparison;
 #[path = "window_workspaces.rs"]
 mod workspaces;
 
@@ -2063,6 +2065,16 @@ pub fn run() {
                 captured_preview::open_captured_page,
                 captured_preview::captured_page_report,
                 captured_preview::cancel_captured_page,
+                comparison::compare_evidence,
+                comparison::close_comparison,
+                comparison::cancel_comparison,
+                comparison::comparison_page,
+                comparison::comparison_stale,
+                comparison::comparison_bytes,
+                comparison::compare_captures,
+                comparison::capture_comparison_page,
+                comparison::capture_comparison_entries,
+                comparison::close_capture_comparison,
                 workspaces::take_opened_traces,
                 workspaces::pick_trace_path,
                 import_trace,

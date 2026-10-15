@@ -95,3 +95,16 @@ across merged files. Publication is atomic: rejected files add neither partial
 traffic nor partial source metadata. Removing an entry keeps evidence available
 for Undo, so its imported index remains retained until Clear releases it or its window
 closes. Large Clear operations expire Undo and release source context too.
+
+## Comparison snapshots
+
+Investigation comparisons retain exact loaded source identities, original IDs,
+selected boundaries and acquisition times. Two imports of the same file remain
+distinct loaded instances. Filenames, paths, URLs and workspace request numbers
+are descriptive and do not become cross-capture identities. Removed evidence is
+reported unavailable; a former path does not authorize loading a replacement file.
+
+Comparison bodies, pairing decisions and exclusions are bounded transient window
+state. Saving a trace does not currently persist them or duplicate payloads in a
+comparison-result JSON file. Portable cases and public CLI comparison belong to
+their separate API/artifact work. See [Traffic comparison](traffic-inspection.md#comparing-captured-evidence).

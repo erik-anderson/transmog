@@ -1,3 +1,4 @@
+import {smokeComparison,smokePreviewComparison} from './smoke-comparison.mjs';
 import assert from 'node:assert/strict';
 import {smokePreviewRules} from './smoke-preview-rules.mjs';
 import {writeFile, readFile, glob} from 'node:fs/promises';
@@ -83,6 +84,7 @@ try{
   const main=await connect(mainTarget);
   await waitFor(()=>main.evaluate(`${root} && !${root}.viewerMode && ${traffic}?.queryLoaded`),'Main window did not initialize');
   assert.equal(await main.evaluate(`${traffic}.sessions.length`),0,'Viewer imported into the main catalog');
+  await smokeComparison(viewer,main,traffic,screenshot);
   process.stdout.write('Main window opened with an independent catalog.\n');
   const child=spawn(executable,[source],{windowsHide:true,stdio:'ignore'});
   await new Promise((resolve,reject)=>{child.once('error',reject);child.once('exit',code=>code===0?resolve():reject(new Error('File handoff exited '+code)));});
@@ -331,6 +333,7 @@ try{
     assert.deepEqual(await enabled.evaluate(`globalThis.sequenceResults`),sequence);
     const report=await second.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}})`);assert.ok(report.hits>=5&&report.misses>=1);assert.equal(report.scriptsEnabled,true);assert.equal(report.scope,'all-loaded');assert.ok(report.requests.some(row=>row.method==='POST'&&row.outcome==='captured'));
     assert.equal(await main.evaluate(`window.__TAURI_INTERNALS__.invoke('captured_page_report',{label:${JSON.stringify(enabledLabel)}}).then(()=>false,()=>true)`),true,'Another window read a preview report');
+    await smokePreviewComparison(second,main,enabledLabel);
     await second.evaluate(`(async()=>{const workspace=${traffic};workspace.previewReportLabel=${JSON.stringify(enabledLabel)};await workspace.showPreviewReport();})()`);
     if(screenshot){const image=await second.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-preview-report.png'),Buffer.from(image.data,'base64'));}
     await second.call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});assert.ok(await second.evaluate(`${traffic}.previewReportDialog.querySelector('footer').getBoundingClientRect().bottom<=innerHeight`));

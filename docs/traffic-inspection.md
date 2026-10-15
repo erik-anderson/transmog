@@ -189,7 +189,7 @@ metadata. Switch to **Search contents**, then press Search or Enter to inspect
 headers and bodies. Content searches remain snapshots; filtering never decodes
 bodies on each keystroke.
 
-**Compare messages** is the wide default, with the list above request and response
+**Request and response** is the wide default, with the list above request and response
 inspectors. Narrow panes show one message and a request/response selector.
 Headers show Name and Value by default; **Header options** reveals byte sizes
 and ordering. **Body options** groups decoding and preview limits.
@@ -198,3 +198,99 @@ and ordering. **Body options** groups decoding and preview limits.
 **Actions** groups replay, auto-response creation, page preview, and request copy
 commands. **Files** groups importing and saving; **View** groups layout, density,
 and columns. Bulk actions appear for multiple selected requests.
+
+## Comparing captured evidence
+
+Select exactly two Traffic requests and choose **Compare requests**, or use
+**Set as comparison baseline** and **Compare with baseline** from Actions/the
+selection menu. The baseline remains visible and clearable while selecting other
+traffic. Selection order determines left and right; **Swap sides** reverses them.
+Comparisons are read-only and available in capture viewers as well as the main
+window. Closing returns to the original Traffic selection and scroll position.
+The existing inspector layout is named **Request and response**.
+
+The comparison opens original client requests and final client-visible responses.
+**Boundaries and comparison options** explicitly selects client or upstream stages;
+a missing stage remains unavailable. Source/fidelity retains original identifiers,
+recorded capture starts and saved-rule/asset attribution where available.
+Overview, Request, Response, Timings and
+Source/fidelity rows share **Next change / Previous change** (Alt+Down/Alt+Up).
+Rows and original byte ranges are paged. Wide windows show values together;
+compact windows stack labeled values. Source actions return to original evidence;
+if the source was removed or a view switch is canceled, the comparison stays open.
+
+Equality uses complete original fields and bytes, including duplicate header
+occurrences, rather than shortened inspector text. Redacted values are unknown.
+Exact encoded bytes, decoded bytes and faithfully decoded text have separate
+verdicts. Newline normalization is an explicit derived view. Header exclusions are
+explicit comma-separated names; none are enabled by default. Differences can be
+known while other evidence is incomplete or not compared. Matching retained
+prefixes never prove complete-body equality. HTTP 304 has no captured cached
+representation; absent evidence is distinct from empty bytes. Imported HAR/NetLog
+decoded payloads and source-adjusted bytes do not establish equality of original
+encoded entity bytes. Protocol values require observations at the selected boundary.
+Available stream lifecycle/count metadata is compared; message/event content is
+explicitly excluded, with source stream inspection available for it.
+
+A comparison freezes its evidence. **Source changed or expired** offers a deliberate
+refresh; late or canceled work cannot replace a newer result. Canceling preserves
+the previous completed result. Closing releases the snapshot. Subjects, criteria,
+and manual pairings are transient investigation state, separate from global layout
+preferences; they are not saved into captures or restored after app restart.
+
+### Comparing capture scopes
+
+Use **Files → Compare capture scopes…** to select two loaded original sources,
+live traffic, the selected requests, or all current filter results. Filters apply
+before virtual windowing. Scope counts in a completed result describe its frozen
+membership; later traffic does not join silently. Frozen labels retain the source
+or filter settings. **Frozen scope times and fidelity** shows recorded start ranges
+in each source clock, unavailable times, stored formats and known limitations.
+Import another capture into this
+window to include it. Removed or expired sources never become invented failures.
+
+Pairing starts with exact method and absolute URL, normalizing host/scheme case
+and default ports while preserving path case/escaping and query order/duplicates.
+Unique keys and unambiguous shared provenance identify counterparts. Repeated keys
+remain proposed/unresolved, including count mismatches and possible missing middle
+requests. Occurrence proposals use recorded source order, independent of display
+sorting or the order in which requests were selected. Response status or body never chooses a counterpart. **Change pairing…**
+searches the frozen opposite scope; **Keep unmatched**, **Undo pairing correction**
+and **Reset proposed pairs** allow explicit correction. Each entry has at most one
+counterpart. Manual choices survive criteria changes on the same frozen scopes.
+Starting another scope comparison creates new membership and pairing state.
+
+Pairing criteria can exclude named query fields, require selected request header
+values, or require a complete request-body digest. These criteria choose pairs;
+they do not hide differences in a pair's detail. Header exclusions in the detail
+are separate. Summaries distinguish changed/equal compared metadata, unresolved,
+left-only/right-only and unavailable evidence. Bodies start **not compared**;
+**Compare pair** acquires them on demand. Only observed in scope does not mean
+another browser never made that request. Timing deltas use matching locally
+measured intervals, including preserved native-capture measurements; other imported
+definitions remain in source timing details. Capture pairs show a request-header
+to local-completion delta only when both sides have that measured interval.
+
+### Comparison limits
+
+Two workers run per window, with cooperative cancellation and a 30-second work
+limit checked between bounded reads/processing stages. At most four completed
+exchange comparisons and four capture comparisons are retained. Each body snapshot
+is bounded to 32 MiB, four bodies per exchange pair (128 MiB, up to 512 MiB across
+retained exchange results). Larger/incomplete sources offer a frozen prefix up to
+64 KiB and retain the source Hex/Save as flows for complete retained evidence.
+Text decoding has a 16 MiB input/output bound with the existing codec expansion
+and work limits. Line alignment uses at most 200,000 lines, a 32-line lookahead and
+128 text hunks per body. Exact byte verdicts remain separate from diff output.
+
+Original headers are bounded to 4 MiB / 16,384 fields; an exchange's selected
+request/response headers share that budget. Request methods/targets have a 64 KiB
+input bound and remain unavailable for pairing above it. Results retain
+at most 512 evidence rows and 1 MiB of serialized row data; pages contain 64 rows,
+and byte pages contain 256 bytes per side. Omitted output is disclosed and does
+not change an already established difference verdict. Capture scopes are bounded
+to 50,000 entries and 32 MiB of charged metadata per side; pairing pages contain
+100 rows. Undo retains at most 20 corrections within a 4 MiB history budget.
+Narrow scopes when acquisition exceeds a limit. Limits do not constrain
+existing source Hex/Save as. Cancellation cooperates with file/codec work; an
+in-progress operating-system file read must return before its worker can stop.

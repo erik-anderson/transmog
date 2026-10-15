@@ -14,6 +14,7 @@ import type { ResponseBodyFileInfo, MatchExample, MatchTestResult, UrlCondition,
 import { describeError, optionalText, parseHeaderLines, encodeHeaders, shortUrl, implicitDefaultPort, formatContentCodings, supportedContentCodings, editableCharacterEncoding, responseTextEncoding, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import { defaultWorkspace, formatBytes } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
+import type {ComparisonSubject,ComparisonOpen} from '../comparison-models.js';
 import {decodeBodyBase64,encodeBody,equalBodyBytes,renderBodyBytes,type BodyMode} from '../response-body-codec.js';
 
 const AUTORESPONSE_PRIORITY_BASE = -1_000_000;
@@ -23,6 +24,24 @@ type BatchRow={included:boolean;order:number;id:string;name:string;method:string
 type CapturedDraft={sessionId:string;detail:SessionDetail;headers:ResponseAsset['headers'];inspection:BodyInspection|null};
 
 export class AutomationWorkspace extends WorkspaceElement {
+  compareResponseDraft(mode:string):void{
+    const data=new FormData(this.autoResponseForm),saved=this.savedResponse,source=this.autoResponseSourceState;
+    try{
+      let base:ComparisonSubject|null=saved?{kind:'asset',reference:`${saved.asset.id}@${saved.asset.revision}`}:this.capturedDraft?{kind:'exchange',id:this.capturedDraft.sessionId}:null;
+      let left=base;
+      if(mode==='source'&&saved?.asset.provenance.kind==='session')left={kind:'exchange',id:saved.asset.provenance.exchange_id,responseBoundary:saved.asset.provenance.boundary};
+      if(mode==='previous'&&saved){const previous=[...this.assetsIndex.values()].filter(a=>a.id===saved.asset.id&&a.revision<saved.asset.revision).sort((a,b)=>b.revision-a.revision)[0];if(!previous)throw new Error('No earlier saved response revision is retained.');left={kind:'asset',reference:`${previous.id}@${previous.revision}`};}
+      if(!left)throw new Error('Choose a captured source or saved response before comparing this draft.');
+      const parsed=this.parseEditorHeaders('responseHeaders',data).filter(h=>!['content-length','content-encoding','content-type'].includes(h.name.toLowerCase()));
+      const headers=this.mergeResponseHeaders(String(data.get('responseHeaders')??''),parsed);
+      const media=String(data.get('mediaType')??'').trim();if(media)headers.push(...encodeHeaders([{name:'Content-Type',value:media}]));
+      const editable=source?.kind==='captured'?this.autoResponseEditBody.checked:!this.editBodyDisabled;
+      const currentBytes=!this.responseBodyPath&&editable?this.currentBodyBytes():null;
+      const decodedBody=currentBytes&&this.bodyOriginalBytes&&equalBodyBytes(currentBytes,this.bodyOriginalBytes)?null:currentBytes;
+      const right:ComparisonSubject={kind:'draft',label:String(data.get('name')??'Response draft'),status:String(data.get('status')??''),headers,decodedBody,base,bodyPath:this.responseBodyPath};
+      const comparison:ComparisonOpen={left,right};this.$emit('comparison-request',comparison);
+    }catch(error:unknown){this.autoResponseError=describeError(error);this.openResponseForError();}
+  }
   userAgentOverrides!:UserAgentOverrides;
   @observable headerOverrideCount=0;
   scriptEditor!: ScriptEditor;

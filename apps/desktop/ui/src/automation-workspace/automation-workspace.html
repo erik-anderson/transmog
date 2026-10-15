@@ -105,7 +105,7 @@
             <output class="field-error" aria-live="polite" ?hidden="{{!autoResponseError}}">{{autoResponseError}}</output>
             <div class="actions"><button type="submit" ?disabled="{{changingAutoResponse || loadingSavedResponse}}"><if condition="savingAutoResponse">Saving…</if><if condition="!savingAutoResponse">Save rule</if></button>
             <button type="button" class="secondary" @click="{cancelAutoResponseEdit()}">Cancel</button>
-            <button type="button" class="secondary" ?disabled="{{!editingAutoResponseId || changingAutoResponse}}" @click="{previewSavedRule()}">Preview captured page…</button><button type="button" class="secondary" ?hidden="{{!draftDirty}}" @click="{revertAutoResponse()}">Revert</button>
+            <button type="button" class="secondary" ?disabled="{{loadingSavedResponse || changingAutoResponse}}" @click="{compareResponseDraft('saved')}">Compare draft</button><button type="button" class="secondary" ?disabled="{{loadingSavedResponse || changingAutoResponse}}" @click="{compareResponseDraft('source')}">Compare with captured source</button><button type="button" class="secondary" ?hidden="{{!existingResponse}}" @click="{compareResponseDraft('previous')}">Compare with previous saved revision</button><button type="button" class="secondary" ?disabled="{{!editingAutoResponseId || changingAutoResponse}}" @click="{previewSavedRule()}">Preview captured page…</button><button type="button" class="secondary" ?hidden="{{!draftDirty}}" @click="{revertAutoResponse()}">Revert</button>
             </div>
           </div>
           </fieldset>

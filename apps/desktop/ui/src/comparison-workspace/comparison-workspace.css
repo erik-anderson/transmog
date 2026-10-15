@@ -1,0 +1,30 @@
+comparison-workspace .comparison-dialog{width:min(1180px,calc(100% - 2rem));max-width:calc(100% - 2rem);max-height:calc(100% - 2rem);padding:1rem;border:1px solid var(--border,#888);border-radius:8px;color:var(--text,#222);background:var(--panel,#fff)}
+comparison-workspace .comparison-dialog[open]{display:flex;flex-direction:column;gap:.65rem;overflow:hidden}
+comparison-workspace .comparison-dialog::backdrop{background:#0007}
+comparison-workspace header h2{margin:0;font-size:1.2rem}
+comparison-workspace header p,comparison-workspace footer p{margin:.4rem 0;overflow-wrap:anywhere}
+comparison-workspace .comparison-scroll{overflow:auto;min-height:0;overscroll-behavior:contain;overflow-wrap:anywhere}
+comparison-workspace .comparison-sides,comparison-workspace .comparison-values{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:.75rem}
+comparison-workspace .comparison-sides section{display:flex;flex-direction:column;align-items:start;gap:.3rem;overflow-wrap:anywhere}
+comparison-workspace label{display:flex;flex-direction:column;gap:.25rem;margin:.35rem 0;min-width:0}
+comparison-workspace label:has(input[type=checkbox]){display:block}
+comparison-workspace input,comparison-workspace select{max-width:100%;min-width:0;padding:.3rem;font:inherit;color:inherit;background:inherit;border:1px solid #888;border-radius:3px}
+comparison-workspace input[type=checkbox]{margin-right:.4rem}
+comparison-workspace .comparison-controls,comparison-workspace .comparison-boundaries{display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;margin:.4rem 0}
+comparison-workspace article{border-top:1px solid #8888;padding:.6rem .15rem;overflow-wrap:anywhere}
+comparison-workspace article h3{font-size:.95rem;margin:.2rem 0}
+comparison-workspace article h3 small{font-weight:normal}
+comparison-workspace article p{font-size:.875rem;margin:.25rem 0;white-space:pre-wrap}
+comparison-workspace pre{margin:.3rem 0;padding:.4rem;white-space:pre-wrap;overflow-wrap:anywhere;max-height:16rem;overflow:auto;background:#8881;font-size:.85rem;tab-size:4}
+comparison-workspace article[data-state=different]{border-inline-start:3px solid light-dark(#b05a00,#f3b24b);padding-inline-start:.5rem}
+comparison-workspace article[data-active]{outline:2px solid Highlight;outline-offset:-2px}
+comparison-workspace .comparison-warning,comparison-workspace .comparison-counterpart{border:1px solid #888;padding:.6rem}
+comparison-workspace footer{flex:none;border-top:1px solid #8888;padding-top:.5rem}
+comparison-workspace button{white-space:normal}
+comparison-workspace progress{max-width:8rem}
+@media(max-width:850px){comparison-workspace .comparison-values{grid-template-columns:1fr}comparison-workspace .comparison-values pre:first-child::before{content:'Left\A';font-weight:bold}comparison-workspace .comparison-values pre:last-child::before{content:'Right\A';font-weight:bold}}
+@media(forced-colors:active){comparison-workspace article[data-state=different]{border-color:Highlight}}
+
+comparison-workspace .comparison-dialog > .comparison-controls{flex:none;margin:0}
+comparison-workspace .comparison-position{flex:none;margin:0}
+@media(max-width:520px){comparison-workspace .comparison-sides{grid-template-columns:1fr}}

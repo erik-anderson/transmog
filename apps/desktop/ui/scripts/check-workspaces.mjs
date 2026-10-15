@@ -17,6 +17,7 @@ import {checkRequestOrder,checkRequestOrderModel} from './check-request-order.mj
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
 import { checkTraceSave } from './check-trace-save.mjs';
+import {checkComparison} from './check-comparison.mjs';
 import {checkPagePreviewRules} from './check-page-preview-rules.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import {checkNetworkProfiles} from './check-network-profiles.mjs';
@@ -142,6 +143,18 @@ await page.addInitScript((configuration) => {
         case 'pick_trace_path': return state.pickedTrace??null;
         case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
         case 'open_main_window': return;
+        case 'compare_evidence': {
+          state.comparisonInput=structuredClone(args.input);const generation=(state.comparisonGeneration??0)+1;state.comparisonGeneration=generation;
+          if(state.deferComparison){state.deferComparison=false;await new Promise(resolve=>state.releaseComparison=resolve);}
+          const rows=Array.from({length:70},(_,index)=>({index,section:'Response',field:'Evidence '+index,state:index===2||index===67?'different':index===3?'incomplete':'equal',left:index===3?'No source body retained':'<script>inert source</script>',right:index===2?'Changed header':'Same evidence',note:index===3?'Incomplete is distinct from empty':''}));
+          return {id:'comparison-'+generation,left:{label:'Request #1',source:'fixture-left.saz',entryId:'first',acquiredAt:1800000000000,boundary:'client-request / client-response',notes:[]},right:{label:'Request #2',source:'fixture-right.saz',entryId:'second',acquiredAt:1800000000001,boundary:'client-request / client-response',notes:[]},different:true,complete:false,changed:2,unknown:1,excluded:0,totalRows:70,moreChanges:false,rows:rows.slice(0,64),allRows:rows,bodySections:['Response'],options:args.input.options};
+        }
+        case 'comparison_page': {const rows=Array.from({length:70},(_,index)=>({index,section:'Response',field:'Evidence '+index,state:index===2||index===67?'different':index===3?'incomplete':'equal',left:index===3?'No source body retained':'Left',right:'Right',note:''}));return {rows:rows.slice(args.offset,args.offset+64),nextOffset:args.offset+64<rows.length?args.offset+64:null};}
+        case 'comparison_stale': return false;
+        case 'close_comparison': case 'cancel_comparison': case 'close_capture_comparison': return;
+        case 'comparison_bytes': return {left:'00 01',right:'00 02',offset:args.offset,nextOffset:null,note:'Frozen original bytes'};
+        case 'compare_captures': case 'capture_comparison_page': state.lastPairAction=args.action;return {id:'capture-comparison',leftLabel:'Left fixture snapshot',rightLabel:'Right fixture snapshot',leftDetails:'Recorded starts unavailable. Stored formats: saz: 2.',rightDetails:'Recorded starts unavailable. Stored formats: har: 1.',canUndo:true,leftCount:2,rightCount:1,changed:0,equalMetadata:0,unresolved:1,leftOnly:1,rightOnly:0,unavailable:0,total:1,rows:[{index:0,left:'first',right:'second',leftLabel:'GET /retry (left)',rightLabel:'GET /retry (right)',reason:'Proposed occurrence order; missing middle request',state:'unresolved',group:'GET /retry'}],options:args.options??{excludedQueryNames:[],requestHeaders:[],requestBodyDigest:false},note:'Bodies not compared; only observed within selected scopes.'};
+        case 'capture_comparison_entries': return [{id:'first',label:'Counterpart 1'},{id:'second',label:'Counterpart 2'}];
         case 'captured_page_report': return {url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return 'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
@@ -506,6 +519,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--comparison-only')) {await checkComparison(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Comparison interactions, races, pairing and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--network-profiles')) {
     await page.goto('https://workspace.test/');
     await view('settings');
@@ -2303,6 +2317,7 @@ try {
   await page.evaluate(async()=>{await document.querySelector('app-shell').traffic.clearTraffic();});
   assert.equal(await emptyDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Clear all restored the initial import helper');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
+  await checkComparison(page,root);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

@@ -56,6 +56,64 @@ struct RetainedPreview {
 fn reports() -> &'static std::sync::Mutex<std::collections::VecDeque<RetainedPreview>> {
     REPORTS.get_or_init(|| std::sync::Mutex::new(std::collections::VecDeque::new()))
 }
+pub(super) fn comparison_evidence(
+    owner: &str,
+    subject: &transmog_app::comparison::ComparisonSubject,
+) -> Result<
+    (
+        Option<Arc<CapturedPage>>,
+        Option<transmog_app::comparison::PreviewComparisonEvidence>,
+    ),
+    AppError,
+> {
+    let transmog_app::comparison::ComparisonSubject::Preview { run, observation } = subject else {
+        return Ok((None, None));
+    };
+    let reports = reports()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let report = reports
+        .iter()
+        .find(|r| r.owner == owner && &r.label == run)
+        .ok_or_else(|| error("Preview report expired or belongs to another window"))?;
+    let Some(page) = report.page.clone() else {
+        return Ok((None, None));
+    };
+    let snapshot = report.diagnostics.snapshot();
+    let request = snapshot.requests.iter().find(|r| r.id == *observation);
+    let evidence = report
+        .diagnostics
+        .supplied_response(*observation)
+        .map(
+            |resource| transmog_app::comparison::PreviewComparisonEvidence {
+                resource,
+                source_id: request.and_then(|r|r.entry_id.clone()),
+                notes:{let mut notes=vec![format!("Frozen preview {} · observation {} · browser-safe headers include preparation framing/content-coding repairs",run,observation)];
+                    if let Some(rule)=request.and_then(|r|r.rule_id.as_ref()).and_then(|id|snapshot.rules.iter().find(|rule|&rule.id==id)){notes.push(format!("Winning saved rule: {} · {}@{} · response asset {}",rule.name,rule.id,rule.revision,rule.asset));}
+                    notes
+                },
+                label: {
+                    format!(
+                        "{} · {} · {} · scripts {} · response {}",
+                        if snapshot.rules.is_empty() {
+                            "Baseline"
+                        } else {
+                            "Modified"
+                        },
+                        snapshot.source,
+                        snapshot.runtime,
+                        match snapshot.scripts_enabled {
+                            Some(true) => "on",
+                            Some(false) => "off",
+                            None => "unrecorded",
+                        },
+                        observation
+                    )
+                },
+            },
+        );
+    Ok((Some(page), evidence))
+}
 #[tauri::command]
 pub(super) fn captured_page_report(
     label: String,
