@@ -889,6 +889,12 @@ impl H3ConnectionDriver {
             &mut config,
         )?;
         transmog_tls::configure_quic_server_name(connection.as_mut(), &host)?;
+        if tls
+            .network_profile()
+            .is_none_or(|profile| profile.settings.http3_alps)
+        {
+            transmog_tls::configure_h3_application_settings(connection.as_mut(), &[])?;
+        }
         let verification_ready = Arc::new(tokio::sync::Notify::new());
         connection
             .as_mut()
@@ -1030,7 +1036,6 @@ impl H3ConnectionDriver {
                 },
             );
         }
-        self.capture.completed(self.connection.as_mut(), false);
         self.transport.tls_resumed = Some(self.connection.is_resumed());
         self.transport.cipher = self
             .connection
@@ -1038,6 +1043,9 @@ impl H3ConnectionDriver {
             .current_cipher()
             .map(|cipher| cipher.name().into());
         self.transport.tls = Some(self.capture.snapshot());
+        if let Some(performance) = performance {
+            performance.transport(quic_observation(&self.connection, &self.transport));
+        }
         self.cache_ticket();
         Ok(self)
     }
@@ -1094,6 +1102,14 @@ impl H3ConnectionDriver {
         flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
         loop {
             if self.connection.is_established() {
+                // TLS authenticated these bytes even if HTTP/3 rejects their
+                // semantics. Preserve that evidence before parsing ALPS.
+                self.capture.completed(self.connection.as_mut(), false);
+                if let Some(settings) =
+                    transmog_tls::peer_application_settings(self.connection.as_mut())
+                {
+                    self.h3_config.set_peer_application_settings(settings)?;
+                }
                 self.connection.as_mut().set_task_waker(None);
                 self.setup_timings.push(ConnectionSetupTime {
                     phase: "quic",
@@ -1282,7 +1298,22 @@ fn dispatch_pending(
                 pending.push_front(command);
                 break;
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => {
+                if let Some(performance) = &command.performance {
+                    let mut transport = physical.clone();
+                    transport.shared = *uses > 0;
+                    performance.project_connection_setup(&mut transport, setup_timings);
+                    performance.transport(quic_observation(connection, &transport));
+                }
+                if error == quiche::h3::Error::ExcessiveLoad {
+                    // A peer header limit rejects this request, not other
+                    // streams sharing the established connection.
+                    command.response.fail(error.into());
+                    continue;
+                }
+                pending.push_front(command);
+                return Err(error.into());
+            }
         };
         let mut transport = physical.clone();
         transport.shared = *uses > 0;
@@ -2329,6 +2360,151 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn h3_alps_negotiation_and_exact_server_bytes_are_captured() {
+        for (enabled, payload) in [
+            (true, None),
+            (false, Some(vec![4, 2, 6, 1])),
+            (true, Some(vec![])),
+            (true, Some(vec![4, 2, 7, 0, 0x40, 0x89, 0])),
+        ] {
+            check_h3_alps(enabled, payload, true).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn h3_alps_rejects_malformed_or_restrictive_settings_before_request() {
+        // Duplicate SETTINGS, truncated framing, malformed ACCEPT_CH, and a
+        // field-section limit too small for even the first request.
+        for payload in [
+            vec![4, 0, 4, 0],
+            vec![4, 2, 6],
+            vec![0x40, 0x89, 1, 1],
+            vec![4, 2, 6, 1],
+        ] {
+            check_h3_alps(true, Some(payload), false).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn h3_alps_header_limit_rejects_one_request_without_retiring_the_pool() {
+        let ca = ProxyCa::generate("H3 ALPS request limit", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (origin, server) = spawn_origin_configured(
+            leaf,
+            "127.0.0.1".parse().unwrap(),
+            1,
+            None,
+            Some(vec![4, 3, 6, 0x41, 0]), // max field section: 256 bytes
+        )
+        .await;
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 1).unwrap(),
+        );
+        let client = H3OriginClient::new(
+            UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default()),
+            H3TransportLimits::default(),
+        );
+        let mut oversized = h3_request(origin, "/proof");
+        oversized.head.headers = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("x-h3-proof", "yes").unwrap(),
+            HeaderField::try_new("x-large", "a".repeat(500)).unwrap(),
+        ]);
+        let error = client
+            .execute(oversized, origin.port(), 1024)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("ExcessiveLoad"), "{error}");
+        let before = client
+            .pool
+            .lock()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .sender
+            .clone();
+        let response = client
+            .execute(h3_request(origin, "/proof"), origin.port(), 1024)
+            .await
+            .unwrap();
+        assert_eq!(response.response.head.status, 200);
+        let after = client
+            .pool
+            .lock()
+            .await
+            .values()
+            .next()
+            .unwrap()
+            .sender
+            .clone();
+        assert!(before.same_channel(&after));
+        server.finish().await;
+    }
+
+    async fn check_h3_alps(enabled: bool, payload: Option<Vec<u8>>, succeeds: bool) {
+        let ca = ProxyCa::generate("H3 ALPS", 2).unwrap();
+        let leaf = ca
+            .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
+            .unwrap();
+        let (origin, server) = spawn_origin_configured(
+            leaf,
+            "127.0.0.1".parse().unwrap(),
+            1,
+            (!succeeds).then_some(|_, _| panic!("request preceded ALPS validation")),
+            payload.clone(),
+        )
+        .await;
+        let trust = Arc::new(
+            TrustSnapshot::load(&StaticTrust(vec![ca.certificate().to_der().unwrap()]), 1).unwrap(),
+        );
+        let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
+        profile.settings.root_store = transmog_core::network_profile::RootStore::Os;
+        profile.settings.http3_alps = enabled;
+        let tls = UpstreamTlsContextFactory::new(trust, UpstreamTlsPolicy::default())
+            .with_network_profile(profile)
+            .unwrap();
+        let recorder = PerformanceRecorder::new(std::time::SystemTime::now(), Instant::now());
+        let client = H3OriginClient::new(tls, H3TransportLimits::default())
+            .with_performance(Some(recorder.clone()));
+        let result = timeout(
+            std::time::Duration::from_secs(5),
+            client.execute(h3_request(origin, "/proof"), origin.port(), 1024),
+        )
+        .await
+        .expect("H3 ALPS stalled");
+        assert_eq!(result.is_ok(), succeeds, "{result:?}");
+        let snapshot = recorder.snapshot();
+        let evidence = snapshot
+            .transports
+            .iter()
+            .find_map(|transport| {
+                transport
+                    .tls
+                    .as_ref()
+                    .and_then(|tls| tls.http3_alps.as_ref())
+            })
+            .unwrap_or_else(|| {
+                panic!("H3 ALPS evidence missing for {payload:?}: {snapshot:?}; {result:?}")
+            });
+        assert_eq!(evidence.negotiated, enabled && payload.is_some());
+        assert_eq!(
+            evidence.peer_settings.as_ref(),
+            if enabled {
+                payload.as_deref().unwrap_or_default()
+            } else {
+                &[]
+            }
+        );
+        if succeeds {
+            server.finish().await;
+        } else {
+            server.abort();
+        }
+    }
+
+    #[tokio::test]
     async fn chromium_h3_headers_and_transport_credit_reach_the_origin() {
         let ca = ProxyCa::generate("Chromium H3 wire policy", 2).unwrap();
         let leaf = ca
@@ -3326,6 +3502,16 @@ mod tests {
         requests: usize,
         probe: Option<RequestProbe>,
     ) -> (SocketAddr, TestOrigin) {
+        spawn_origin_configured(leaf, bind_ip, requests, probe, None).await
+    }
+
+    async fn spawn_origin_configured(
+        leaf: transmog_tls::IssuedLeaf,
+        bind_ip: std::net::IpAddr,
+        requests: usize,
+        probe: Option<RequestProbe>,
+        alps: Option<Vec<u8>>,
+    ) -> (SocketAddr, TestOrigin) {
         let mut tls = SslContext::builder(SslMethod::tls()).unwrap();
         tls.set_certificate(&leaf.certificate).unwrap();
         tls.set_private_key(&leaf.private_key).unwrap();
@@ -3350,7 +3536,7 @@ mod tests {
         let local = socket.local_addr().unwrap();
         let task_socket = Arc::clone(&socket);
         let task = tokio::spawn(async move {
-            run_origin(task_socket, local, config, requests, probe).await;
+            run_origin(task_socket, local, config, requests, probe, alps).await;
         });
         (local, TestOrigin { socket, task })
     }
@@ -3804,6 +3990,7 @@ mod tests {
         mut config: quiche::Config,
         requests: usize,
         probe: Option<RequestProbe>,
+        alps: Option<Vec<u8>>,
     ) {
         let mut peers = HashMap::new();
         let h3_config = quiche::h3::Config::new().unwrap();
@@ -3832,10 +4019,13 @@ mod tests {
                 let mut source_id = [0_u8; quiche::MAX_CONN_ID_LEN];
                 rand_bytes(&mut source_id).unwrap();
                 let source_id = quiche::ConnectionId::from_ref(&source_id);
-                (
-                    quiche::accept(&source_id, None, local, from, &mut config).unwrap(),
-                    None,
-                )
+                let mut connection =
+                    quiche::accept(&source_id, None, local, from, &mut config).unwrap();
+                if let Some(bytes) = &alps {
+                    transmog_tls::configure_h3_application_settings(connection.as_mut(), bytes)
+                        .unwrap();
+                }
+                (connection, None)
             });
             let info = quiche::RecvInfo { from, to: local };
             match connection.recv(&mut recv_buffer[..read], info) {

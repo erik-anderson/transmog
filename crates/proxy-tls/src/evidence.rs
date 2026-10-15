@@ -350,6 +350,15 @@ impl TlsCapture {
 }
 
 fn collect_alps(data: &mut TlsEvidence, ssl: &SslRef) {
+    if ssl.selected_alpn_protocol() == Some(b"h3") {
+        let peer = transmog_tls_native::peer_application_settings(ssl);
+        let alps = transmog_core::Http3AlpsEvidence {
+            negotiated: peer.is_some(),
+            peer_settings: peer.unwrap_or_default().into(),
+        };
+        insert_detail(data, "HTTP/3 ALPS", &alps.summary());
+        data.http3_alps = Some(alps);
+    }
     if ssl.selected_alpn_protocol() == Some(b"h2") {
         let alps = transmog_tls_native::peer_application_settings(ssl);
         let alps = transmog_core::Http2AlpsEvidence {

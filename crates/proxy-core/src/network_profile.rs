@@ -84,6 +84,9 @@ pub struct NetworkProfileSettings {
     /// Older capture metadata omitted ALPS because it was not offered.
     #[serde(default)]
     pub http2_alps: bool,
+    /// Negotiate HTTP/3 settings during TLS; Client Hint preferences stay with the caller.
+    #[serde(default)]
+    pub http3_alps: bool,
     /// Offer certificate-based Chrome Trust Anchor IDs from the selected metadata.
     /// Historical captures omitted the extension; do not infer an old offer.
     #[serde(default)]
@@ -114,6 +117,7 @@ impl Default for NetworkProfileSettings {
             encrypted_client_hello: true,
             certificate_compression: true,
             http2_alps: true,
+            http3_alps: true,
             trust_anchor_ids: true,
             pki_metadata_file: None,
             root_store: RootStore::Os,
@@ -169,8 +173,8 @@ impl NetworkProfileSnapshot {
     #[must_use]
     pub fn builtin(id: &str) -> Option<Self> {
         let (name, revision, root_store) = match id {
-            CHROMIUM_154 => ("Chromium 154", 6, RootStore::ChromeInstalled),
-            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 3, RootStore::Webview2Installed),
+            CHROMIUM_154 => ("Chromium 154", 7, RootStore::ChromeInstalled),
+            WEBVIEW2_154 => ("WebView2 (Chromium 154)", 4, RootStore::Webview2Installed),
             _ => return None,
         };
         Some(Self {
@@ -194,6 +198,7 @@ impl NetworkProfileSnapshot {
                 encrypted_client_hello: true,
                 certificate_compression: true,
                 http2_alps: true,
+                http3_alps: true,
                 trust_anchor_ids: true,
                 pki_metadata_file: None,
                 root_store,
@@ -210,7 +215,10 @@ impl NetworkProfileSnapshot {
             name: "Chromium 154".into(),
             revision,
             base_profile: CHROMIUM_154.into(),
-            settings: NetworkProfileSettings::default(),
+            settings: NetworkProfileSettings {
+                http3_alps: false,
+                ..Default::default()
+            },
         }
     }
     /// Checks finite public provenance before accepting imported capture metadata.
@@ -282,8 +290,13 @@ mod tests {
             .as_object_mut()
             .unwrap()
             .remove("http2Alps");
+        value["settings"]
+            .as_object_mut()
+            .unwrap()
+            .remove("http3Alps");
         let historical: NetworkProfileSnapshot = serde_json::from_value(value).unwrap();
         assert!(!historical.settings.http2_alps);
+        assert!(!historical.settings.http3_alps);
         assert_eq!(historical.revision, 1);
         assert!(historical.valid());
         assert!(NetworkProfileSnapshot::default().settings.http2_alps);

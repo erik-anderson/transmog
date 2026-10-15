@@ -574,6 +574,7 @@ fn parse_settings_frame(
     let mut connect_protocol_enabled = None;
     let mut h3_datagram = None;
     let mut raw = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     let mut additional_settings: Option<Vec<(u64, u64)>> = None;
 
     // Reject SETTINGS frames that are too long.
@@ -584,6 +585,9 @@ fn parse_settings_frame(
     while b.off() < settings_length {
         let identifier = b.get_varint()?;
         let value = b.get_varint()?;
+        if !seen.insert(identifier) {
+            return Err(super::Error::SettingsError);
+        }
 
         // MAX_SETTINGS_PAYLOAD_SIZE protects us from storing too many raw
         // settings.

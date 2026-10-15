@@ -125,7 +125,7 @@ outside the supported model.
 ## Recorded connection evidence
 
 TLS evidence belongs to a physical connection and its client or upstream leg.
-It also records whether HTTP/2 ALPS was negotiated and the exact server value.
+It also records whether HTTP/2 or HTTP/3 ALPS was negotiated and the exact server value.
 The Connection inspector decodes SETTINGS and read-only `ACCEPT_CH` preferences,
 retaining original bytes in Hex. Missing ALPS evidence is unavailable, rather
 than inferred from the configured offer. See [HTTP/2 ALPS](http2-alps.md).

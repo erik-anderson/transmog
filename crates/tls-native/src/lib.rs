@@ -17,7 +17,9 @@ pub use security::{
 };
 mod trust_anchors;
 mod verifier;
-pub use application_settings::{configure_h2_application_settings, peer_application_settings};
+pub use application_settings::{
+    configure_h2_application_settings, configure_h3_application_settings, peer_application_settings,
+};
 pub use credentials::{
     MlDsaVariant, add_client_credential, add_server_credential,
     add_server_credential_for_trust_anchor, decode_session_for_context, local_buffer_chain,

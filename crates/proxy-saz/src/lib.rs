@@ -39,7 +39,7 @@ pub use import::{
     ArchiveBody, ArchiveMessage, ArchiveMetadata, ArchiveSession, SazArchive, SazImportLimits,
     SazIndex, SazIssue,
 };
-pub use tls::{tls_alps, tls_negotiation_details, tls_network_profile};
+pub use tls::{tls_alps, tls_http3_alps, tls_negotiation_details, tls_network_profile};
 
 const CONTENT_TYPES: &str = concat!(
     "<?xml version=\"1.0\" encoding=\"utf-8\"?>",

@@ -183,6 +183,7 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
                         "Negotiated TLS version"
                             | "Negotiated cipher"
                             | "HTTP/2 ALPS"
+                            | "HTTP/3 ALPS"
                             | "Trust Anchor IDs"
                             | "PKI metadata source"
                             | "PKI metadata version"

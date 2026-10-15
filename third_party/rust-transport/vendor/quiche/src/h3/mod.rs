@@ -575,6 +575,7 @@ impl From<octets::BufferTooShortError> for Error {
 
 /// An HTTP/3 configuration.
 pub struct Config {
+    peer_application_settings: Option<ConnectionSettings>,
     max_field_section_size: Option<u64>,
     qpack_max_table_capacity: Option<u64>,
     qpack_blocked_streams: Option<u64>,
@@ -590,6 +591,7 @@ impl Config {
     /// Creates a new configuration object with default settings.
     pub const fn new() -> Result<Config> {
         Ok(Config {
+            peer_application_settings: None,
             max_field_section_size: Some(SETTINGS_MAX_FIELD_SECTION_SIZE_DEFAULT),
             qpack_max_table_capacity: None,
             qpack_blocked_streams: None,
@@ -618,6 +620,56 @@ impl Config {
     /// [`Error::ExcessiveLoad`]: enum.Error.html#variant.ExcessiveLoad
     pub fn set_max_field_section_size(&mut self, v: u64) {
         self.max_field_section_size = Some(v);
+    }
+
+    /// Seeds peer SETTINGS authenticated by TLS ALPS before any request can be
+    /// encoded. Does not replace or acknowledge the peer's control-stream
+    /// SETTINGS. Later wire values override only settings they include.
+    pub fn set_peer_application_settings(
+        &mut self,
+        bytes: &[u8],
+    ) -> Result<()> {
+        if bytes.len() > 65535 {
+            return Err(Error::ExcessiveLoad);
+        }
+        let mut input = octets::Octets::with_slice(bytes);
+        let mut settings = None;
+        while input.cap() > 0 {
+            let kind = input.get_varint()?;
+            let length = input.get_varint()?;
+            let length =
+                usize::try_from(length).map_err(|_| Error::FrameError)?;
+            let payload = input.get_bytes(length)?;
+            if kind == frame::SETTINGS_FRAME_TYPE_ID {
+                if settings.is_some() {
+                    return Err(Error::SettingsError);
+                }
+                let decoded = frame::Frame::from_bytes(
+                    kind,
+                    length as u64,
+                    payload.as_ref(),
+                )?;
+                settings = Some(ConnectionSettings::from_frame(decoded)?);
+            } else if matches!(kind, 0..=3 | 5..=9 | 0xd | 0x4d | 0xf0700 | 0xf0701)
+            {
+                return Err(Error::FrameUnexpected);
+            } else if kind == 0x89 {
+                // Chromium validates ACCEPT_CH framing even when preferences
+                // are not forwarded to the caller. Both strings use varints.
+                let mut entries = payload;
+                while entries.cap() > 0 {
+                    for _ in 0..2 {
+                        let length = usize::try_from(entries.get_varint()?)
+                            .map_err(|_| Error::FrameError)?;
+                        entries.get_bytes(length)?;
+                    }
+                }
+            }
+            // Unknown extensions, ACCEPT_CH and ORIGIN are bounded and ignored
+            // by the transport. Their exact bytes remain the caller's evidence.
+        }
+        self.peer_application_settings = settings;
+        Ok(())
     }
 
     /// Sets the `SETTINGS_QPACK_MAX_TABLE_CAPACITY` setting.
@@ -939,6 +991,7 @@ impl TryFrom<&[u8]> for Priority {
     }
 }
 
+#[derive(Clone, Default)]
 struct ConnectionSettings {
     pub max_field_section_size: Option<u64>,
     pub qpack_max_table_capacity: Option<u64>,
@@ -949,6 +1002,75 @@ struct ConnectionSettings {
     pub raw: Option<Vec<(u64, u64)>>,
 }
 
+impl ConnectionSettings {
+    fn from_frame(frame: frame::Frame) -> Result<Self> {
+        if let frame::Frame::Settings {
+            max_field_section_size,
+            qpack_max_table_capacity,
+            qpack_blocked_streams,
+            connect_protocol_enabled,
+            h3_datagram,
+            additional_settings,
+            raw,
+            ..
+        } = frame
+        {
+            Ok(Self {
+                max_field_section_size,
+                qpack_max_table_capacity,
+                qpack_blocked_streams,
+                connect_protocol_enabled,
+                h3_datagram,
+                additional_settings,
+                raw,
+            })
+        } else {
+            Err(Error::FrameUnexpected)
+        }
+    }
+
+    fn apply(&mut self, update: Self) {
+        if update.max_field_section_size.is_some() {
+            self.max_field_section_size = update.max_field_section_size;
+        }
+        if update.qpack_max_table_capacity.is_some() {
+            self.qpack_max_table_capacity = update.qpack_max_table_capacity;
+        }
+        if update.qpack_blocked_streams.is_some() {
+            self.qpack_blocked_streams = update.qpack_blocked_streams;
+        }
+        if update.connect_protocol_enabled.is_some() {
+            self.connect_protocol_enabled = update.connect_protocol_enabled;
+        }
+        if update.h3_datagram.is_some() {
+            self.h3_datagram = update.h3_datagram;
+        }
+        if let Some(update) = update.raw {
+            let raw = self.raw.get_or_insert_with(Vec::new);
+            for (id, value) in update {
+                if let Some(existing) =
+                    raw.iter_mut().find(|entry| entry.0 == id)
+                {
+                    existing.1 = value;
+                } else {
+                    raw.push((id, value));
+                }
+            }
+        }
+        if let Some(update) = update.additional_settings {
+            let values = self.additional_settings.get_or_insert_with(Vec::new);
+            for (id, value) in update {
+                if let Some(existing) =
+                    values.iter_mut().find(|entry| entry.0 == id)
+                {
+                    existing.1 = value;
+                } else {
+                    values.push((id, value));
+                }
+            }
+        }
+    }
+}
 #[derive(Default)]
 struct QpackStreams {
     pub encoder_stream_id: Option<u64>,
@@ -1116,6 +1238,13 @@ impl Connection {
         let mut http3_conn =
             Connection::new(config, conn.is_server, conn.dgram_enabled())?;
 
+        if let Some(settings) = &config.peer_application_settings {
+            if settings.h3_datagram == Some(1) && conn.dgram_max_writable_len().is_none() {
+                return Err(Error::SettingsError);
+            }
+            http3_conn.peer_settings = settings.clone();
+        }
+
         match http3_conn.send_settings(conn) {
             Ok(_) => (),
 
@@ -1160,6 +1289,7 @@ impl Connection {
     pub fn send_request<T: NameValue, F: BufFactory>(
         &mut self, conn: &mut super::Connection<F>, headers: &[T], fin: bool,
     ) -> Result<u64> {
+        self.field_section_size(headers)?;
         // If we received a GOAWAY from the peer, MUST NOT initiate new
         // requests.
         if self.peer_goaway_id.is_some() {
@@ -1460,12 +1590,27 @@ impl Connection {
         Ok(())
     }
 
+    fn field_section_size<T: NameValue>(&self, headers: &[T]) -> Result<usize> {
+        let size = headers.iter().try_fold(0usize, |size, header| {
+            size.checked_add(header.name().len())
+                .and_then(|size| size.checked_add(header.value().len()))
+                .and_then(|size| size.checked_add(32))
+                .ok_or(Error::ExcessiveLoad)
+        })?;
+        if self
+            .peer_settings
+            .max_field_section_size
+            .is_some_and(|limit| size as u64 > limit)
+        {
+            return Err(Error::ExcessiveLoad);
+        }
+        Ok(size)
+    }
+
     fn encode_header_block<T: NameValue>(
         &mut self, headers: &[T],
     ) -> Result<Vec<u8>> {
-        let headers_len = headers
-            .iter()
-            .fold(0, |acc, h| acc + h.value().len() + h.name().len() + 32);
+        let headers_len = self.field_section_size(headers)?;
 
         let mut header_block = vec![0; headers_len];
         let len = self
@@ -1485,12 +1630,12 @@ impl Connection {
         let mut d = [42; 10];
         let mut b = octets::OctetsMut::with_slice(&mut d);
 
+        let header_block = self.encode_header_block(headers)?;
+
         if !self.frames_greased && conn.grease {
             self.send_grease_frames(conn, stream_id)?;
             self.frames_greased = true;
         }
-
-        let header_block = self.encode_header_block(headers)?;
 
         let overhead = octets::varint_len(frame::HEADERS_FRAME_TYPE_ID) +
             octets::varint_len(header_block.len() as u64);
@@ -3051,7 +3196,7 @@ impl Connection {
                 raw,
                 ..
             } => {
-                self.peer_settings = ConnectionSettings {
+                self.peer_settings.apply(ConnectionSettings {
                     max_field_section_size,
                     qpack_max_table_capacity,
                     qpack_blocked_streams,
@@ -3059,7 +3204,7 @@ impl Connection {
                     h3_datagram,
                     additional_settings,
                     raw,
-                };
+                });
 
                 if let Some(1) = h3_datagram {
                     // The peer MUST have also enabled DATAGRAM with a TP
@@ -6065,6 +6210,10 @@ mod tests {
 
         s.handshake().unwrap();
 
+        // Deliberately violate the server's advertised limit to exercise the
+        // receive-side check, bypassing our new outbound enforcement.
+        s.client.peer_settings.max_field_section_size = None;
+
         let req = vec![
             Header::new(b":method", b"GET"),
             Header::new(b":scheme", b"https"),
@@ -6852,6 +7001,83 @@ mod tests {
 
         assert!(s.client.peer_settings_raw().is_some());
         assert!(s.server.peer_settings_raw().is_some());
+    }
+
+    #[test]
+    fn transmog_alps_validation_and_wire_settings_merge() {
+        let mut config = Config::new().unwrap();
+        // Unknown extension followed by SETTINGS and an empty ACCEPT_CH frame.
+        config
+            .set_peer_application_settings(&[
+                0x21, 1, 0, 4, 4, 6, 1, 7, 2, 0x40, 0x89, 0,
+            ])
+            .unwrap();
+        let mut peer = config.peer_application_settings.clone().unwrap();
+        assert_eq!(peer.max_field_section_size, Some(1));
+        assert_eq!(peer.qpack_blocked_streams, Some(2));
+        let update = frame::Frame::from_bytes(4, 2, &[6, 5]).unwrap();
+        peer.apply(ConnectionSettings::from_frame(update).unwrap());
+        assert_eq!(peer.max_field_section_size, Some(5));
+        assert_eq!(peer.qpack_blocked_streams, Some(2));
+        assert_eq!(peer.raw, Some(vec![(6, 5), (7, 2)]));
+        for invalid in [
+            vec![4, 0, 4, 0],       // repeated SETTINGS frame
+            vec![4, 4, 6, 1, 6, 2], // repeated setting
+            vec![4, 1, 6],          // missing value
+            vec![4, 2, 8, 2],       // invalid boolean
+            vec![4, 2, 2, 0],       // HTTP/2 setting
+            vec![0, 0],             // DATA forbidden in ALPS
+            vec![0x40, 0x89, 1, 1], // truncated ACCEPT_CH string
+            vec![0x40],             // truncated frame type
+            vec![4, 2, 6],          // truncated payload
+        ] {
+            assert!(
+                config.set_peer_application_settings(&invalid).is_err(),
+                "{invalid:?}"
+            );
+            assert_eq!(
+                config
+                    .peer_application_settings
+                    .as_ref()
+                    .unwrap()
+                    .max_field_section_size,
+                Some(1)
+            );
+        }
+        assert!(config
+            .set_peer_application_settings(&vec![0; 65536])
+            .is_err());
+        config.set_peer_application_settings(&[]).unwrap();
+        assert!(config.peer_application_settings.is_none());
+    }
+
+    #[test]
+    fn transmog_alps_limits_apply_before_requests_and_require_datagram_tp() {
+        let mut session = Session::new().unwrap();
+        session.pipe.handshake().unwrap();
+        let mut config = Config::new().unwrap();
+        config.set_peer_application_settings(&[4, 2, 6, 1]).unwrap();
+        let mut client =
+            Connection::with_transport(&mut session.pipe.client, &config)
+                .unwrap();
+        let request = [Header::new(b":method", b"GET")];
+        assert_eq!(
+            client.send_request(&mut session.pipe.client, &request, true),
+            Err(Error::ExcessiveLoad)
+        );
+
+        let (mut transport, empty_h3) = Session::default_configs().unwrap();
+        transport.enable_dgram(false, 0, 0);
+        let mut session =
+            Session::with_configs(&mut transport, &empty_h3).unwrap();
+        session.pipe.handshake().unwrap();
+        config
+            .set_peer_application_settings(&[4, 2, 0x33, 1])
+            .unwrap();
+        assert!(matches!(
+            Connection::with_transport(&mut session.pipe.client, &config),
+            Err(Error::SettingsError)
+        ));
     }
 
     #[test]

@@ -6,14 +6,14 @@ import type {NetworkProfiles, NetworkProfileSnapshot, NetworkProfileSettings, Pr
 import {describeError} from '../utilities.js';
 
 const webview2:NetworkProfileSnapshot=initialState.networkProfiles.activeProfile as NetworkProfileSnapshot;
-const chromium:NetworkProfileSnapshot={...structuredClone(webview2),id:'chromium-154',name:'Chromium 154',revision:6,settings:{...structuredClone(webview2.settings),rootStore:'chrome-installed'}};
+const chromium:NetworkProfileSnapshot={...structuredClone(webview2),id:'chromium-154',name:'Chromium 154',revision:7,settings:{...structuredClone(webview2.settings),rootStore:'chrome-installed'}};
 const builtins=[webview2,chromium];
 const rootStoreNames:Record<NetworkProfileSettings['rootStore'],string>={os:'Public OS root store','chromium-bundled':'Bundled Chromium root store','chrome-installed':'Installed Chrome root store (fall back to bundled)','webview2-installed':'Installed WebView2 root store (fall back to Chromium bundled)'};
 type ChangeFlags=Record<keyof NetworkProfileSettings,boolean>;
 const differenceLabels:Record<keyof NetworkProfileSettings,string>={
   protocols:'HTTP protocols',reuseConnections:'Connection reuse',tlsVersions:'TLS versions',
   compatibilityCiphers:'Compatibility ciphers',hybridKeyExchange:'Key exchange',grease:'GREASE',
-  randomizeExtensions:'Extension order',echGrease:'ECH GREASE',encryptedClientHello:'Encrypted Client Hello',certificateCompression:'Certificate compression',http2Alps:'HTTP/2 ALPS',trustAnchorIds:'Trust Anchor IDs',pkiMetadataFile:'PKI metadata file',rootStore:'Root store',localCertificates:'Local certificate trust'
+  randomizeExtensions:'Extension order',echGrease:'ECH GREASE',encryptedClientHello:'Encrypted Client Hello',certificateCompression:'Certificate compression',http2Alps:'HTTP/2 ALPS',http3Alps:'HTTP/3 ALPS',trustAnchorIds:'Trust Anchor IDs',pkiMetadataFile:'PKI metadata file',rootStore:'Root store',localCertificates:'Local certificate trust'
 };
 
 /** Independent profile saves do not submit or overwrite ordinary preference drafts. */
@@ -125,7 +125,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     const s=this.networkDraft.settings;
     this.networkOsRoots=s.rootStore==='os';
     for(const key of ['http1','http2','http3'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s.protocols[key];
-    for(const key of ['reuseConnections','compatibilityCiphers','hybridKeyExchange','randomizeExtensions','echGrease','encryptedClientHello','certificateCompression','http2Alps','trustAnchorIds','localCertificates'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s[key];
+    for(const key of ['reuseConnections','compatibilityCiphers','hybridKeyExchange','randomizeExtensions','echGrease','encryptedClientHello','certificateCompression','http2Alps','http3Alps','trustAnchorIds','localCertificates'] as const)(fields.namedItem(key) as HTMLInputElement).checked=s[key];
     (fields.namedItem('pkiMetadataFile') as HTMLInputElement).value=s.pkiMetadataFile??'';
     (fields.namedItem('tlsVersions') as HTMLSelectElement).value=s.tlsVersions;
     (fields.namedItem('grease') as HTMLSelectElement).value=s.grease;
@@ -137,7 +137,7 @@ export class NetworkProfileSettingsPanel extends WorkspaceElement {
     const s=this.networkDraft.settings;
     const settings:NetworkProfileSettings={...s,protocols:{http1:data.has('http1'),http2:data.has('http2'),http3:data.has('http3')},
       reuseConnections:data.has('reuseConnections'),compatibilityCiphers:data.has('compatibilityCiphers'),hybridKeyExchange:data.has('hybridKeyExchange'),
-      randomizeExtensions:data.has('randomizeExtensions'),echGrease:data.has('echGrease'),encryptedClientHello:data.has('encryptedClientHello'),certificateCompression:data.has('certificateCompression'),http2Alps:data.has('http2Alps'),
+      randomizeExtensions:data.has('randomizeExtensions'),echGrease:data.has('echGrease'),encryptedClientHello:data.has('encryptedClientHello'),certificateCompression:data.has('certificateCompression'),http2Alps:data.has('http2Alps'),http3Alps:data.has('http3Alps'),
       trustAnchorIds:data.has('trustAnchorIds'),pkiMetadataFile:String(data.get('pkiMetadataFile')??'').trim()||null,
       rootStore:String(data.get('rootStore')) as NetworkProfileSettings['rootStore'],
       localCertificates:this.networkOsRoots?s.localCertificates:data.has('localCertificates'),

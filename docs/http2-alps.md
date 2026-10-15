@@ -1,4 +1,4 @@
-# HTTP/2 ALPS and Client Hints
+# HTTP/2 and HTTP/3 ALPS and Client Hints
 
 The Chromium 154 network recipe offers HTTP/2 Application-Layer Protocol
 Settings (ALPS) at the measured `0x44cd` codepoint. **More handshake options →
@@ -17,7 +17,27 @@ The current h2 crate has no ALPS bootstrap API. A private, bounded connection
 adapter feeds one local SETTINGS frame into its existing decoder and consumes
 that frame's ACK locally. Requests wait for these settings before encoding.
 This keeps flow control, concurrency, HPACK and extended CONNECT in h2's
-existing state machine without maintaining a dependency fork.
+existing state machine. Separate serialization controls use the reproducible
+[transport patches](../third_party/rust-transport/README.md).
+
+## HTTP/3
+
+Both built-in profiles also offer ALPS for `h3` at `0x44cd`, with an empty
+client value. **More handshake options → HTTP/3 ALPS** controls this separately
+in custom profiles. Existing authored profiles retain their previous offer.
+
+The bounded quiche integration parses authenticated HTTP/3 frames and seeds
+peer SETTINGS before any request. A later control-stream SETTINGS updates only
+the values it includes; it remains required. Field-section limits apply before
+header serialization. Duplicate settings, forbidden frames, malformed framing
+and invalid setting values fail before requests. ACCEPT_CH entries are
+structurally checked and retained for inspection, with the same caller-owned
+Client Hints policy as HTTP/2. Unknown extensions are ignored and preserved.
+QPACK dynamic-table and datagram capabilities remain unadvertised.
+
+This follows the pinned Google QUICHE `AlpsFrameDecoder`, `OnAlpsData` and
+`OnSettingsFrameViaAlps` in
+[`quic_spdy_session.cc`](https://github.com/google/quiche/blob/80bf9559d3a4c08dde4b85abc46d190a88ffef64/quiche/quic/core/http/quic_spdy_session.cc).
 
 ## Why Client Hint processing is deferred
 
@@ -47,13 +67,13 @@ Previously saved custom profiles retain ALPS disabled. The built-in Chromium
 
 ## Captured server contents
 
-Traffic → Details → Connection shows **HTTP/2 ALPS** as an observed negotiation
+Traffic → Details → Connection shows **HTTP/2 ALPS** or **HTTP/3 ALPS** as an observed negotiation
 fact: negotiated with a byte count, not negotiated, or unavailable when it was
 not recorded or the TLS handshake did not reach that point. The configured
 profile's offer is separate from this evidence. An empty negotiated server
 value still means ALPS was used.
 
-**Server ALPS contents** decodes the original server value into ordered H2
+**Server ALPS contents** decodes the original server value into ordered H2 or H3
 frames, named SETTINGS parameters, and each `ACCEPT_CH` origin and requested
 hint list. The Client Hint lists are read-only and ignored when forwarding.
 Unknown settings retain their numeric identifiers; unknown frame payloads have
@@ -76,6 +96,11 @@ request, a zero receive window, real SETTINGS acknowledgements, fallback, and
 malformed settings. Unit tests also exercise fragmented writes and backpressure.
 The Docker interoperability suite verifies that Caddy declines ALPS and still
 serves verified H2. Its nginx and Apache fixtures use plain HTTP.
+
+`cargo test --locked -p transmog-h3 h3_alps` checks real QUIC negotiation,
+decline, disable, empty values, captured bytes, malformed ALPS and limits before
+the first request. `python scripts/test-transport-patches.py` checks parser
+bounds, merging wire SETTINGS, and datagram transport-parameter validation.
 
 The external Google check is explicitly ignored in ordinary offline tests:
 `cargo test --locked -p transmog-http --test alps google_negotiates -- --ignored --nocapture`.

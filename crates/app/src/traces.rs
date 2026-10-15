@@ -800,6 +800,7 @@ fn import_saz(
                     }
                 }
                 let http2_alps = transmog_saz::tls_alps(&session.metadata.flags, leg);
+                let http3_alps = transmog_saz::tls_http3_alps(&session.metadata.flags, leg);
                 let outcome = session
                     .metadata
                     .flags
@@ -825,7 +826,11 @@ fn import_saz(
                             })
                             .flatten()
                     });
-                if !details.is_empty() || outcome.is_some() || http2_alps.is_some() {
+                if !details.is_empty()
+                    || outcome.is_some()
+                    || http2_alps.is_some()
+                    || http3_alps.is_some()
+                {
                     // Read primary properties independently of the capped annotation
                     // map. Extra diagnostics must not displace protocol, cipher or SNI.
                     let value = |suffix: &str, limit: usize| {
@@ -904,9 +909,11 @@ fn import_saz(
                             },
                             tls: (!details.is_empty()
                                 || network_profile.is_some()
-                                || http2_alps.is_some())
+                                || http2_alps.is_some()
+                                || http3_alps.is_some())
                             .then(|| transmog_core::TlsEvidence {
                                 http2_alps,
+                                http3_alps,
                                 network_profile,
                                 server_name,
                                 details,

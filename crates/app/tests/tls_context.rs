@@ -46,16 +46,25 @@ fn evidence(state: u8) -> PerformanceEvidence {
         .into_iter()
         .map(|leg| {
             let mut details = negotiation_details(leg, state);
-            let http2_alps = (leg == "upstream").then(|| transmog_core::Http2AlpsEvidence {
-                negotiated: state != 2,
-                peer_settings: if state == 0 {
-                    alps_payload().into()
-                } else {
-                    vec![].into()
-                },
-            });
+            let http2_alps =
+                (leg == "upstream" && state != 3).then(|| transmog_core::Http2AlpsEvidence {
+                    negotiated: state != 2,
+                    peer_settings: if state == 0 {
+                        alps_payload().into()
+                    } else {
+                        vec![].into()
+                    },
+                });
             if let Some(alps) = &http2_alps {
                 details.insert("HTTP/2 ALPS".into(), alps.summary());
+            }
+            let http3_alps =
+                (leg == "upstream" && state == 3).then(|| transmog_core::Http3AlpsEvidence {
+                    negotiated: true,
+                    peer_settings: vec![4, 2, 7, 0, 0x40, 0x89, 0].into(),
+                });
+            if let Some(alps) = &http3_alps {
+                details.insert("HTTP/3 ALPS".into(), alps.summary());
             }
             let (version, cipher) = version_cipher(state);
             TransportObservation {
@@ -68,6 +77,7 @@ fn evidence(state: u8) -> PerformanceEvidence {
                 tls_resumed: Some(resumed),
                 tls: Some(TlsEvidence {
                     http2_alps,
+                    http3_alps,
                     network_profile: (leg == "upstream")
                         .then(transmog_app::NetworkProfileSnapshot::default),
                     server_name: Some("localhost".into()),
@@ -300,7 +310,7 @@ fn only_id(app: &Application) -> String {
 #[tokio::test]
 async fn tls_facts_survive_native_and_both_saz_profiles_with_encryption() {
     let root = tempfile::tempdir().unwrap();
-    for state in 0..3 {
+    for state in 0..4 {
         let expected = evidence(state);
         let source = root.path().join(format!("source-{state}.tmcap"));
         write_capture(&source, std::slice::from_ref(&expected));
@@ -404,7 +414,18 @@ fn assert_inspection(
             transport.tls.as_ref().unwrap().http2_alps,
             original.tls.as_ref().unwrap().http2_alps
         );
-        if let Some(alps) = &original.tls.as_ref().unwrap().http2_alps {
+        assert_eq!(
+            transport.tls.as_ref().unwrap().http3_alps,
+            original.tls.as_ref().unwrap().http3_alps
+        );
+        if let Some(alps) = original
+            .tls
+            .as_ref()
+            .unwrap()
+            .http3_alps
+            .as_ref()
+            .or(original.tls.as_ref().unwrap().http2_alps.as_ref())
+        {
             assert_eq!(connection.alps.is_some(), alps.negotiated);
             if let Some(contents) = &connection.alps {
                 assert_eq!(contents.peer_bytes, alps.peer_settings.len());

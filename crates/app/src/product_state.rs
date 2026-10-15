@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use crate::workspace::WorkspacePreferences;
 use crate::{AppError, ErrorCategory};
 
-const CURRENT_SCHEMA: u32 = 11;
+const CURRENT_SCHEMA: u32 = 12;
 const MAX_STATE_BYTES: u64 = 256 * 1024;
 const MAX_RECENT_ARTIFACTS: usize = 20;
 const MAX_GENERATIONS: usize = 3;
@@ -417,6 +417,10 @@ pub(crate) fn validate(mut state: ProductState) -> Result<ProductState, AppError
         state.preferences.network_profiles.migrate_local_trust()?;
         state.schema_version = CURRENT_SCHEMA;
     }
+    if state.schema_version == 11 {
+        state.preferences.network_profiles.migrate_http3_alps()?;
+        state.schema_version = CURRENT_SCHEMA;
+    }
     if state.schema_version != CURRENT_SCHEMA {
         return Err(invalid("unsupported product-state schema"));
     }
@@ -574,7 +578,7 @@ fn read_state(path: &Path) -> Result<ProductState, ()> {
         .get("schemaVersion")
         .and_then(serde_json::Value::as_u64)
         .ok_or(())?;
-    if schema != u64::from(CURRENT_SCHEMA) && !(6..=10).contains(&schema) {
+    if schema != u64::from(CURRENT_SCHEMA) && !(6..=11).contains(&schema) {
         return Err(());
     }
     if schema >= 7
@@ -677,6 +681,51 @@ fn quarantine(path: &Path) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn schema_eleven_upgrades_builtins_but_preserves_authored_alps_offers() {
+        for id in [crate::CHROMIUM_154, crate::WEBVIEW2_154] {
+            let builtin = crate::NetworkProfileSnapshot::builtin(id).unwrap();
+            let mut previous = builtin.clone();
+            previous.revision -= 1;
+            previous.settings.http3_alps = false;
+            let mut custom = previous.clone();
+            custom.id = "custom-before-h3-alps".into();
+            custom.name = "Before H3 ALPS".into();
+            for active in [previous, custom.clone()] {
+                let mut state = ProductState {
+                    schema_version: 11,
+                    ..Default::default()
+                };
+                state.preferences.network_profiles.active_profile = active.clone();
+                state.preferences.network_profiles.custom_profiles = vec![custom.clone()];
+                let mut json = serde_json::to_value(state).unwrap();
+                let profiles = &mut json["preferences"]["networkProfiles"];
+                profiles["activeProfile"]["settings"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("http3Alps");
+                profiles["customProfiles"][0]["settings"]
+                    .as_object_mut()
+                    .unwrap()
+                    .remove("http3Alps");
+                let migrated = validate(serde_json::from_value(json).unwrap()).unwrap();
+                assert_eq!(migrated.schema_version, CURRENT_SCHEMA);
+                assert_eq!(
+                    migrated.preferences.network_profiles.custom_profiles,
+                    [custom.clone()]
+                );
+                assert_eq!(
+                    migrated.preferences.network_profiles.active_profile,
+                    if active.id == custom.id {
+                        custom.clone()
+                    } else {
+                        builtin.clone()
+                    }
+                );
+            }
+        }
+    }
 
     #[test]
     fn schema_seven_alps_migration_preserves_custom_profiles_and_activates_the_builtin_revision() {

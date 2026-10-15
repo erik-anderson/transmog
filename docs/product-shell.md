@@ -67,7 +67,7 @@ in Traffic. **Profile** defaults to **WebView2 (Chromium 154)**, based on the Ch
 the saved recipe to new requests. **Customize** creates an editable copy of the
 built-in recipe. Custom profiles control HTTP/1, HTTP/2 and HTTP/3, TLS versions,
 compatibility ciphers, hybrid key exchange and connection reuse. **More handshake
-options** contains Trust Anchor IDs, an optional `crs.pb` path, HTTP/2 ALPS,
+options** contains Trust Anchor IDs, an optional `crs.pb` path, HTTP/2 and HTTP/3 ALPS,
 GREASE, extension order, ECH GREASE and certificate compression.
 ECH GREASE sends a dummy extension and does not encrypt the server name.
 
@@ -85,9 +85,9 @@ snapshot and automatically adopt a newer valid local Chrome or WebView2 PKIMetad
 store for fresh connections. A custom profile can choose OS, bundled Chromium,
 installed Chrome or installed WebView2 certificate trust. See
 [Trust Anchor IDs](trust-anchor-ids.md) for discovery, recovery and recorded evidence.
-HTTP/2 ALPS is enabled in the Chromium recipe and separately editable in custom
+HTTP/2 and HTTP/3 ALPS are enabled in the Chromium recipe and separately editable in custom
 profiles. It applies server settings without generating or forwarding
-connection-level requests for Client Hints; see [HTTP/2 ALPS](http2-alps.md).
+connection-level requests for Client Hints; see [ALPS](http2-alps.md).
 
 **Advanced network settings** contains remote-client access (off by default),
 an optional saved proxy port, caller-process isolation and client certificates.

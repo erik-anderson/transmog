@@ -1,7 +1,7 @@
 //! Negotiated facts carried in conventional `SessionFlag` members.
 use std::collections::BTreeMap;
 
-pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 44] = [
+pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 45] = [
     ("Certificate verifier", "certificate-verifier"),
     ("Public trust program", "public-trust-program"),
     ("Certificate Transparency", "ct-result"),
@@ -37,6 +37,7 @@ pub(crate) const NEGOTIATION_FIELDS: [(&str, &str); 44] = [
     ("PKI metadata SHA-256", "pki-metadata-sha256"),
     ("Trust Anchor ID recovery", "trust-anchor-recovery"),
     ("HTTP/2 ALPS", "alps"),
+    ("HTTP/3 ALPS", "h3-alps"),
     ("Key exchange", "key-exchange"),
     ("Negotiated group", "group"),
     ("Negotiated group ID", "group-id"),
@@ -103,6 +104,21 @@ pub fn tls_alps(
     leg: &str,
 ) -> Option<transmog_core::Http2AlpsEvidence> {
     let prefix = flag_prefix(leg)?;
+    parse_alps_flags(flags, prefix)
+}
+
+/// Restores the separate HTTP/3 ALPS byte envelope from conventional SAZ flags.
+pub fn tls_http3_alps(
+    flags: &BTreeMap<String, String>,
+    leg: &str,
+) -> Option<transmog_core::Http3AlpsEvidence> {
+    parse_alps_flags(flags, &format!("{}h3-", flag_prefix(leg)?))
+}
+
+fn parse_alps_flags(
+    flags: &BTreeMap<String, String>,
+    prefix: &str,
+) -> Option<transmog_core::AlpsEvidence> {
     let negotiated = match unique_flag(flags, &format!("{prefix}alps-negotiated"), 5)? {
         "true" => true,
         "false" => false,
@@ -141,7 +157,7 @@ pub fn tls_alps(
             raw.push(u8::from_str_radix(text, 16).ok()?);
         }
     }
-    Some(transmog_core::Http2AlpsEvidence {
+    Some(transmog_core::AlpsEvidence {
         negotiated,
         peer_settings: raw.into(),
     })
@@ -349,5 +365,20 @@ mod tests {
             )
             .is_empty()
         );
+    }
+
+    #[test]
+    fn http3_alps_round_trips_independently_of_http2_and_tls_leg() {
+        let evidence = transmog_core::Http3AlpsEvidence {
+            negotiated: true,
+            peer_settings: vec![4, 2, 7, 0, 0x40, 0x89, 0].into(),
+        };
+        let flags = alps_flags(
+            &evidence,
+            &format!("{}h3-", flag_prefix("upstream").unwrap()),
+        );
+        assert_eq!(tls_http3_alps(&flags, "upstream"), Some(evidence));
+        assert!(tls_alps(&flags, "upstream").is_none());
+        assert!(tls_http3_alps(&flags, "client").is_none());
     }
 }

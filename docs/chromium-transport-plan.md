@@ -88,6 +88,24 @@ raw/decoded contents. Extending the existing H2-only ALPS offer just to change
 the JA4 hash would leave settings semantics unqualified. Determine the required
 quiche settings-injection API before advertising it.
 
+That integration now offers `h3` ALPS with an independent custom-profile switch.
+Authenticated SETTINGS seed quiche before requests; later wire SETTINGS merge
+only supplied values. Field-section limits apply before serialization. The
+driver rejects one oversized request without retiring other streams or losing
+the real error. Failed ALPS parsing retains the authenticated payload for
+inspection. Native and both SAZ formats preserve exact bytes, and the existing
+readable/Hex inspector decodes H3 SETTINGS and ACCEPT_CH. Existing authored
+profiles retain their prior offer. The built-in
+definition revisions advance without changing the named Chromium release.
+Three review rounds fixed outbound limit enforcement, failure evidence,
+request-error ownership and the GREASE help styling. Local QUIC acceptance,
+malformed/empty/declined/disabled cases, reuse after a rejected request,
+save/reopen coverage, and profile keyboard/layout checks pass.
+
+The isolated upstream-test runner now refreshes source mtimes so cached binaries
+cannot reference a deleted temporary fixture directory. All 170 upstream H3
+tests pass on consecutive runs.
+
 Then align initial datagram size, client/server connection-ID lengths, advertised
 UDP receive size, ACK parameters, QUIC reserved transport parameters and version
 information. Prefer existing quiche APIs. Where a value is fixed internally,

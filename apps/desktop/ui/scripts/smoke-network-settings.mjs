@@ -52,6 +52,8 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     localTrust.checked=false;profiles.edit(new Event('change',{bubbles:true}));
     if(!original.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('Chromium ALPS default is disabled');
     const alps=profileForm.elements.namedItem('http2Alps');
+    const h3Alps=profileForm.elements.namedItem('http3Alps');
+    if(!original.preferences.networkProfiles.activeProfile.settings.http3Alps||!h3Alps.checked)throw new Error('Chromium HTTP/3 ALPS default is disabled');
     if(!original.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Chromium Trust Anchor IDs default is disabled');
     const trustAnchors=profileForm.elements.namedItem('trustAnchorIds');
     profiles.querySelector('.profile-handshake').open=true;
@@ -65,6 +67,10 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     const alpsBox=alps.getBoundingClientRect();
     if(alps.getRootNode().activeElement!==alps||alps.getRootNode().elementFromPoint(alpsBox.x+alpsBox.width/2,alpsBox.y+alpsBox.height/2)!==alps)throw new Error('ALPS profile control is not reachable');
     alps.checked=false;
+    h3Alps.scrollIntoView({block:'center'});h3Alps.focus();
+    const h3AlpsBox=h3Alps.getBoundingClientRect();
+    if(h3Alps.getRootNode().activeElement!==h3Alps||h3Alps.getRootNode().elementFromPoint(h3AlpsBox.x+h3AlpsBox.width/2,h3AlpsBox.y+h3AlpsBox.height/2)!==h3Alps)throw new Error('HTTP/3 ALPS control is not reachable');
+    h3Alps.checked=false;
     trustAnchors.scrollIntoView({block:'center'});trustAnchors.focus();
     const anchorBox=trustAnchors.getBoundingClientRect();
     if(trustAnchors.getRootNode().activeElement!==trustAnchors||trustAnchors.getRootNode().elementFromPoint(anchorBox.x+anchorBox.width/2,anchorBox.y+anchorBox.height/2)!==trustAnchors)throw new Error('Trust Anchor IDs control is not reachable');
@@ -80,6 +86,7 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     await settings.saveSettings(new Event('submit',{cancelable:true}));
     const saved=await window.__TAURI_INTERNALS__.invoke('product_state');
     if(saved.preferences.networkProfiles.activeProfile.settings.http2Alps)throw new Error('ALPS profile toggle did not persist');
+    if(saved.preferences.networkProfiles.activeProfile.settings.http3Alps)throw new Error('HTTP/3 ALPS profile toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.encryptedClientHello)throw new Error('ECH profile toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.trustAnchorIds)throw new Error('Trust Anchor IDs toggle did not persist');
     if(saved.preferences.networkProfiles.activeProfile.settings.localCertificates)throw new Error('Local trust toggle did not persist');

@@ -44,7 +44,9 @@ pub use transmog_tls_native::configure_quic_server_name;
 pub use transmog_tls_native::decode_session_for_context;
 pub use transmog_tls_native::restore_client_session;
 pub use transmog_tls_native::{authenticated_ech_retry, configure_ech};
-pub use transmog_tls_native::{configure_h2_application_settings, peer_application_settings};
+pub use transmog_tls_native::{
+    configure_h2_application_settings, configure_h3_application_settings, peer_application_settings,
+};
 pub use trust::{
     CompositeTrustSource, LoadedTrust, PemTrustSource, SystemTrustSource, TrustError,
     TrustSnapshot, TrustSource, UpstreamTlsContextFactory, UpstreamTlsPolicy,

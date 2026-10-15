@@ -11,7 +11,7 @@ const MAX_FIELDS: usize = 128;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct AlpsContents {
-    /// Exact server value size, including HTTP/2 frame headers.
+    /// Exact server value size, including the negotiated protocol's frame headers.
     pub peer_bytes: usize,
     /// Frame and parameter order is retained, including duplicate settings.
     pub fields: Vec<CertificateField>,
@@ -23,11 +23,21 @@ pub struct AlpsContents {
 
 pub(super) fn organize(connection: &mut CertificateConnection, transport: &TransportObservation) {
     let tls = transport.tls.as_ref();
-    let recorded = tls.and_then(|tls| tls.details.get("HTTP/2 ALPS"));
-    let actual = tls.and_then(|tls| tls.http2_alps.as_ref());
+    let h3 = transport.alpn.as_deref() == Some("h3")
+        || tls
+            .is_some_and(|tls| tls.http3_alps.is_some() || tls.details.contains_key("HTTP/3 ALPS"));
+    let label = if h3 { "HTTP/3 ALPS" } else { "HTTP/2 ALPS" };
+    let recorded = tls.and_then(|tls| tls.details.get(label));
+    let actual = tls.and_then(|tls| {
+        if h3 {
+            tls.http3_alps.as_ref()
+        } else {
+            tls.http2_alps.as_ref()
+        }
+    });
     let summary = actual.map(Http2AlpsEvidence::summary);
     connection.fields.push(field(
-        "HTTP/2 ALPS",
+        label,
         summary
             .as_deref()
             .or(recorded.map(String::as_str))
@@ -37,11 +47,15 @@ pub(super) fn organize(connection: &mut CertificateConnection, transport: &Trans
         if recorded.is_some_and(|recorded| Some(recorded.as_str()) != summary.as_deref()) {
             connection
                 .diagnostic_fields
-                .push(field("HTTP/2 ALPS", recorded.unwrap()));
+                .push(field(label, recorded.unwrap()));
             connection.errors.push("Recorded ALPS status values disagree; additional metadata retains the other value.".into());
         }
         if actual.negotiated {
-            connection.alps = Some(decode(&actual.peer_settings));
+            connection.alps = Some(if h3 {
+                decode_h3(&actual.peer_settings)
+            } else {
+                decode(&actual.peer_settings)
+            });
         }
     } else if recorded.is_some() {
         connection.diagnostic_fields.push(field(
@@ -187,6 +201,133 @@ fn settings(view: &mut AlpsContents, payload: &[u8], offset: usize) {
     }
 }
 
+fn h3_integer(data: &mut &[u8]) -> Option<u64> {
+    let size = 1_usize << (data.first()? >> 6);
+    let encoded = data.get(..size)?;
+    let mut value = u64::from(encoded[0] & 63);
+    for byte in &encoded[1..] {
+        value = (value << 8) | u64::from(*byte);
+    }
+    *data = &data[size..];
+    Some(value)
+}
+
+fn h3_string<'a>(data: &mut &'a [u8]) -> Option<&'a [u8]> {
+    let length = usize::try_from(h3_integer(data)?).ok()?;
+    let value = data.get(..length)?;
+    *data = &data[length..];
+    Some(value)
+}
+
+#[allow(clippy::too_many_lines)] // Bounded, read-only projection keeps malformed bytes inspectable.
+fn decode_h3(raw: &[u8]) -> AlpsContents {
+    let mut view = AlpsContents {
+        peer_bytes: raw.len(),
+        fields: vec![],
+        notes: vec![],
+        payload_base64: STANDARD.encode(raw),
+    };
+    if raw.is_empty() {
+        view.add("Server value", "Empty (ALPS was negotiated)");
+    }
+    let mut data = raw;
+    let mut frame = 0;
+    let mut settings_seen = false;
+    while !data.is_empty() && !view.full() {
+        let offset = raw.len() - data.len();
+        let Some((kind, length)) = h3_integer(&mut data).zip(h3_integer(&mut data)) else {
+            view.warn(offset, "Truncated HTTP/3 frame header");
+            break;
+        };
+        let Some(length) = usize::try_from(length)
+            .ok()
+            .filter(|length| *length <= data.len())
+        else {
+            view.warn(offset, "Truncated HTTP/3 frame payload");
+            break;
+        };
+        let (mut payload, remaining) = data.split_at(length);
+        data = remaining;
+        frame += 1;
+        let name = match kind {
+            4 => "SETTINGS".into(),
+            0x89 => "ACCEPT_CH".into(),
+            0xc => "ORIGIN".into(),
+            _ => format!("Type 0x{kind:x}"),
+        };
+        view.add(
+            &format!("Frame {frame} · {name}"),
+            format!("{length} payload bytes"),
+        );
+        match kind {
+            4 => {
+                if settings_seen {
+                    view.warn(offset, "Multiple ALPS SETTINGS frames");
+                }
+                settings_seen = true;
+                let mut seen = std::collections::HashSet::new();
+                while !payload.is_empty() && !view.full() {
+                    let Some((id, value)) = h3_integer(&mut payload).zip(h3_integer(&mut payload))
+                    else {
+                        view.warn(offset, "Truncated HTTP/3 setting");
+                        break;
+                    };
+                    if !seen.insert(id) {
+                        view.warn(offset, "Duplicate HTTP/3 setting");
+                    }
+                    let label = match id {
+                        1 => "QPACK table capacity",
+                        6 => "Maximum field section size",
+                        7 => "QPACK blocked streams",
+                        8 => "Extended CONNECT",
+                        0x33 | 0x276 => "HTTP/3 datagrams",
+                        _ => "Unknown setting",
+                    };
+                    view.add(
+                        &format!("{label} (0x{id:x})"),
+                        if matches!(id, 1 | 6) {
+                            format!("{value} bytes")
+                        } else {
+                            value.to_string()
+                        },
+                    );
+                    if matches!(id, 0 | 2..=5) || matches!(id, 8 | 0x33 | 0x276) && value > 1 {
+                        view.warn(offset, "Invalid HTTP/3 setting");
+                    }
+                }
+            }
+            0x89 => {
+                while !payload.is_empty() && !view.full() {
+                    let Some((origin, hints)) =
+                        h3_string(&mut payload).zip(h3_string(&mut payload))
+                    else {
+                        view.warn(offset, "Truncated ACCEPT_CH entry");
+                        break;
+                    };
+                    for (label, bytes) in [
+                        ("Client Hint origin", origin),
+                        ("Requested Client Hints (ignored)", hints),
+                    ] {
+                        if view.full() {
+                            break;
+                        }
+                        view.add(label, String::from_utf8_lossy(bytes));
+                    }
+                }
+            }
+            _ => {
+                if matches!(kind, 0..=3 | 5..=9 | 0xd | 0x4d | 0xf0700 | 0xf0701) {
+                    view.warn(offset, "This HTTP/3 frame type is forbidden in ALPS");
+                }
+                if !view.full() {
+                    view.add("Frame payload (hex)", preview_hex(payload));
+                }
+            }
+        }
+    }
+    view
+}
+
 fn string<'a>(data: &mut &'a [u8]) -> Option<&'a [u8]> {
     let length = usize::from(u16::from_be_bytes(data.get(..2)?.try_into().ok()?));
     let value = data.get(2..2 + length)?;
@@ -300,6 +441,43 @@ mod tests {
                 .iter()
                 .any(|field| field.label == "Frame payload (hex)" && field.value == "01 02 03")
         );
+    }
+
+    #[test]
+    fn http3_contents_decode_settings_hints_and_malformed_bytes() {
+        let mut raw = vec![4, 4, 6, 32, 7, 0, 0x40, 0x89, 24, 20];
+        raw.extend_from_slice(b"https://example.test");
+        raw.extend_from_slice(&[2, b'U', b'A']);
+        let view = decode_h3(&raw);
+        assert!(view.notes.is_empty(), "{:?}", view.notes);
+        assert!(
+            view.fields
+                .iter()
+                .any(|field| field.label == "Maximum field section size (0x6)"
+                    && field.value == "32 bytes")
+        );
+        assert!(
+            view.fields
+                .iter()
+                .any(|field| field.label == "Requested Client Hints (ignored)"
+                    && field.value == "UA")
+        );
+        assert_eq!(STANDARD.decode(&view.payload_base64).unwrap(), raw);
+        for bytes in [
+            vec![0x40],
+            vec![4, 0, 4, 0],
+            vec![4, 2, 6],
+            vec![4, 4, 6, 1, 6, 2],
+            vec![0x40, 0x89, 1, 1],
+        ] {
+            let view = decode_h3(&bytes);
+            assert!(!view.notes.is_empty(), "{bytes:?}");
+            assert_eq!(STANDARD.decode(view.payload_base64).unwrap(), bytes);
+        }
+        let bytes = [4, 0].repeat(1000);
+        let view = decode_h3(&bytes);
+        assert_eq!(view.fields.len(), MAX_FIELDS);
+        assert_eq!(STANDARD.decode(view.payload_base64).unwrap(), bytes);
     }
     #[test]
     fn malformed_and_large_contents_remain_bounded_with_original_bytes() {

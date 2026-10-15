@@ -312,6 +312,11 @@ pub(crate) fn render(
                         negotiation_flags.extend(crate::tls::alps_flags(alps, prefix));
                         negotiation_flags.insert(format!("{prefix}alps"), alps.summary());
                     }
+                    if let Some(alps) = &tls.http3_alps {
+                        negotiation_flags
+                            .extend(crate::tls::alps_flags(alps, &format!("{prefix}h3-")));
+                        negotiation_flags.insert(format!("{prefix}h3-alps"), alps.summary());
+                    }
                     if let Some(profile) = &tls.network_profile
                         && let Ok(value) = serde_json::to_string(profile)
                     {

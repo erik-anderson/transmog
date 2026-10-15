@@ -33,16 +33,21 @@ impl PublicCertificate {
     }
 }
 
-/// Observed HTTP/2 ALPS negotiation and the exact public server settings bytes.
+/// Observed ALPS negotiation and exact public server settings bytes.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Http2AlpsEvidence {
+pub struct AlpsEvidence {
     /// True only when TLS negotiated ALPS, including an empty server value.
     pub negotiated: bool,
     /// Original server value, without TLS headers or the client settings value.
     pub peer_settings: Arc<[u8]>,
 }
-impl Http2AlpsEvidence {
+/// HTTP/2 evidence uses HTTP/2 frame encoding inside the common byte envelope.
+pub type Http2AlpsEvidence = AlpsEvidence;
+/// HTTP/3 evidence uses HTTP/3 frame encoding inside the common byte envelope.
+pub type Http3AlpsEvidence = AlpsEvidence;
+
+impl AlpsEvidence {
     /// Checks the TLS extension's finite byte bound without rejecting malformed
     /// recorded payloads that users may need to inspect after a failed connection.
     #[must_use]
@@ -64,6 +69,9 @@ impl Http2AlpsEvidence {
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TlsEvidence {
+    /// Actual HTTP/3 ALPS negotiation; absent when not recorded or not reached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http3_alps: Option<Http3AlpsEvidence>,
     /// Actual HTTP/2 ALPS negotiation; absent when not recorded or not reached.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http2_alps: Option<Http2AlpsEvidence>,
@@ -103,6 +111,10 @@ impl TlsEvidence {
         self.http2_alps
             .as_ref()
             .is_none_or(Http2AlpsEvidence::valid)
+            && self
+                .http3_alps
+                .as_ref()
+                .is_none_or(Http2AlpsEvidence::valid)
             && self
                 .network_profile
                 .as_ref()

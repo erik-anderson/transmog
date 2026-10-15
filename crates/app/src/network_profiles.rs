@@ -34,7 +34,7 @@ fn invalid(message: impl Into<String>) -> AppError {
 }
 
 impl NetworkProfiles {
-    pub(crate) fn migrate_local_trust(&mut self) -> Result<(), AppError> {
+    pub(crate) fn migrate_http3_alps(&mut self) -> Result<(), AppError> {
         let Some(builtin) = NetworkProfileSnapshot::builtin(&self.active_profile.id) else {
             return Ok(());
         };
@@ -43,7 +43,30 @@ impl NetworkProfiles {
         }
         let mut previous = builtin.clone();
         previous.revision -= 1;
+        previous.settings.http3_alps = false;
+        if self.active_profile != previous {
+            return Err(invalid(
+                "The saved built-in network profile is not a supported recipe.",
+            ));
+        }
+        self.active_profile = builtin;
+        self.revision = self
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| invalid("Network profile catalog revision is exhausted."))?;
+        Ok(())
+    }
+    pub(crate) fn migrate_local_trust(&mut self) -> Result<(), AppError> {
+        let Some(builtin) = NetworkProfileSnapshot::builtin(&self.active_profile.id) else {
+            return Ok(());
+        };
+        if self.active_profile == builtin {
+            return Ok(());
+        }
+        let mut previous = builtin.clone();
+        previous.revision -= 2;
         previous.settings.local_certificates = false;
+        previous.settings.http3_alps = false;
         if self.active_profile != previous {
             return Err(invalid(
                 "The saved built-in network profile is not a supported recipe.",
@@ -62,6 +85,7 @@ impl NetworkProfiles {
                 revision: 1,
                 settings: NetworkProfileSettings {
                     http2_alps: false,
+                    http3_alps: false,
                     trust_anchor_ids: false,
                     ..Default::default()
                 },
@@ -89,6 +113,7 @@ impl NetworkProfiles {
                 revision: 2,
                 settings: NetworkProfileSettings {
                     trust_anchor_ids: false,
+                    http3_alps: false,
                     ..Default::default()
                 },
                 ..NetworkProfileSnapshot::legacy_chromium(2)
@@ -269,8 +294,9 @@ mod tests {
         for id in [CHROMIUM_154, WEBVIEW2_154] {
             let builtin = NetworkProfileSnapshot::builtin(id).unwrap();
             let mut prior = builtin.clone();
-            prior.revision -= 1;
+            prior.revision -= 2;
             prior.settings.local_certificates = false;
+            prior.settings.http3_alps = false;
             let mut custom = prior.clone();
             custom.id = "custom-public-only".into();
             custom.name = "Public only".into();

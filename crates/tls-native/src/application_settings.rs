@@ -10,14 +10,32 @@ pub fn configure_h2_application_settings(
     ssl: &mut SslRef,
     settings: &[u8],
 ) -> Result<(), ErrorStack> {
+    configure_application_settings(ssl, b"h2", settings)
+}
+
+/// Offers HTTP/3 ALPS at Chromium's codepoint with copied local settings.
+/// # Errors
+/// Returns a native configuration error.
+pub fn configure_h3_application_settings(
+    ssl: &mut SslRef,
+    settings: &[u8],
+) -> Result<(), ErrorStack> {
+    configure_application_settings(ssl, b"h3", settings)
+}
+
+fn configure_application_settings(
+    ssl: &mut SslRef,
+    protocol: &[u8],
+    settings: &[u8],
+) -> Result<(), ErrorStack> {
     // SAFETY: SSL is exclusively borrowed and live; BoringSSL copies both slices
     // synchronously. The codepoint setter retains no borrowed data.
     let result = unsafe {
         boring_sys::SSL_set_alps_use_new_codepoint(ssl.as_ptr(), 1);
         boring_sys::SSL_add_application_settings(
             ssl.as_ptr(),
-            b"h2".as_ptr(),
-            2,
+            protocol.as_ptr(),
+            protocol.len(),
             settings.as_ptr(),
             settings.len(),
         )

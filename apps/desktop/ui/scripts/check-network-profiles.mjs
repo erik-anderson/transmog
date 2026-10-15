@@ -28,9 +28,11 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.locator('.profile-handshake').getAttribute('open'),null);
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true);
+  assert.equal(await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true);
   await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).uncheck();
   await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).uncheck();
+  await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).uncheck();
   assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
   await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).uncheck();
   await dialog.getByLabel('PKI metadata file',{exact:true}).fill('C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
@@ -47,6 +49,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http3Alps),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.encryptedClientHello),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.trustAnchorIds),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.localCertificates),false);
@@ -62,6 +65,7 @@ export async function checkNetworkProfiles(page,root) {
   assert.equal(await dialog.getByLabel('Profile TLS versions').inputValue(),'tls12-and13');
   await dialog.locator('.profile-handshake summary').click();
   assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
+  assert.equal(await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium H3 ALPS');
   assert.equal(await dialog.getByLabel('Offer Trust Anchor IDs',{exact:true}).isChecked(),true);
   assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
   assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true,'Reset did not restore ECH');
