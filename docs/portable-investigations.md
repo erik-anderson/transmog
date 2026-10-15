@@ -31,7 +31,7 @@ Revalidate these boundaries when implementing a consumer:
 | Comparison | [Runtime subjects](../crates/app/src/comparison.rs) contain session, draft, asset and preview handles. Export stable evidence references and options, not handles. Preserve unavailable/incomplete/not-compared states. |
 | Scripts | [API revision 1](../crates/proxy-script/src/lib.rs) is unstable. Save draft, activation and optional sandbox tests are distinct. Export source, declared handlers/capabilities/limits and asset references, never tokens, compiled state or cached validation authority. |
 | Privacy | [Export projection](../crates/app/src/export_privacy.rs) handles selected header/trailer redaction and raw-head omission. It does not sanitize arbitrary URLs, bodies, scripts or notes. |
-| Configuration/context | [Network collector](../crates/network/src/context.rs) captures bounded, opt-in tool output with collection time, purpose, platform and notes. [Trace save](../crates/app/src/trace_save.rs) distinguishes original source context from the saving machine's new context in `trace-metadata` / `trace-source`. Preserve that provenance; a case may also attach new context objects. |
+| Configuration/context | [Network collector](../crates/network/src/context.rs) captures bounded, opt-in tool output with collection time, purpose, platform and notes. [Trace save](../crates/app/src/trace_save.rs) currently distinguishes original source context from the saving machine's new context in `trace-metadata` / `trace-source`. Preserve that provenance in the shared context object model, without requiring this existing record layout. |
 | Distribution | [Release packaging](../scripts/package-signed-windows-release.ps1) publishes a separate signed CLI; the desktop installer includes script/preview helpers. It does not bundle the CLI. Script declarations and a standalone CLI script-host distribution are not currently shipped contracts. |
 | CLI | [Dispatcher](../crates/proxy-cli/src/main.rs) has profile/record/serve/roots/CA/capture commands. Existing inspect output is KEY=VALUE and errors exit 2. New JSON/results must be explicit additions. [Password input](../crates/proxy-cli/src/passwords.rs) is masked or a protected UTF-8 file, never command-line password text. |
 
@@ -43,9 +43,10 @@ object bytes. Paths are derived from digests, never supplied filesystem locators
 There are no absolute paths, URLs to fetch, links, scripts to run or environment
 variable substitutions in dependency resolution.
 
-Use `.tmcase` for a ZIP/ZIP64 archive of a case directory and `.tmrules` for a
-rule collection. Writers use Stored members: native captures and encoded assets
-already contain their own compression. Readers reject other ZIP compression,
+Use `.tmcase` for a bare ZIP/ZIP64 interchange export of a case directory and
+`.tmrules` for a rule collection. Writers use Stored members so ZIP entries remain
+seekable and TMCap owns package compression. Native captures and many encoded
+response assets already compress internally. Readers reject other ZIP compression,
 member encryption, directories, duplicate names, unsafe names, reparse points,
 symlinks, inconsistent local/central headers, overlapping entries and trailing
 archive data. Standard streaming data descriptors and ZIP64 size fields are
@@ -54,13 +55,17 @@ directory under ZIP's rules, rather than being rejected as mismatches. Only
 `manifest.json` and declared object members are allowed.
 Nested archive-looking asset bytes are ordinary response content, never extracted.
 
-Encrypted transfers are `.tmcase.tmcap` or `.tmrules.tmcap`: the exact ZIP byte
-stream stored as one logical artifact in an encrypted TMCap container. The inner
+Native transfers default to `.tmcase.tmcap` or `.tmrules.tmcap`: the exact ZIP byte
+stream stored as one logical artifact in a compressed TMCap container, with
+optional password encryption. Compression does not require encryption. The inner
 ZIP is unchanged by wrapping/unwrapping and remains usable by standard archive
-tools after explicit decryption. The portable manifest does not depend on the
-encryption mode. Do not add ZIP member encryption or a second encryption format.
+tools after explicit unwrap/decryption. The portable manifest does not depend on
+the compression/encryption mode. Do not add ZIP member encryption or a second
+encryption format. Bare ZIP is an explicit interchange option and leaves its
+Stored members uncompressed; it is not the native compression path.
 
-Reuse [TMCap's encryption](tmcap-format.md#encryption-and-integrity): AES-256-GCM,
+When encryption is enabled, reuse
+[TMCap's encryption](tmcap-format.md#encryption-and-integrity): AES-256-GCM,
 Argon2id with 64 MiB, three iterations and one lane, domain-separated block keys,
 fresh salt/nonces, authenticated indexes and sealing. Reject unsupported KDF
 settings before password work; serialize password derivations. The public header
@@ -77,23 +82,26 @@ This requires a **new generic artifact path**, not an existing capture feature:
   document kinds fail before a capture importer can treat a case as empty
   traffic. K3 specifies the wire extension and updates all current consumers and
   fixtures together, without migration readers or earlier-layout adapters.
-- Store one typed logical ZIP payload with encrypted media type (case/rules),
+- Store one typed logical ZIP payload with media type (case/rules),
   checked unsigned-64-bit length, SHA-256 and a bounded chunk index. Reuse chunks
-  of at most 128 KiB and existing integrity checks. Do not invent HTTP exchanges,
+  of at most 128 KiB and existing integrity checks; encrypt the descriptor with
+  the payload when encryption is selected. Do not invent HTTP exchanges,
   embed Base64 archives in metadata, or allocate the entire ZIP as one blob.
 - Provide streaming writing and a logical `Read + Seek` view of the exact ZIP
   bytes. ZIP creation must stream directly into the wrapper; inspection must
-  authenticate requested chunks before exposing them, without a persisted
-  decrypted temporary archive. Bound the ZIP directory before library indexing.
+  verify requested chunks (including authentication when encrypted) before
+  exposing them, without a persisted decrypted temporary archive. Bound the ZIP
+  directory before library indexing.
 - Emit Stored ZIP members; let the outer layer's existing adaptive compression
   handle compressible chunks and bypass ineffective work. Do not decompress and
   rebuild an existing ZIP to wrap it. K3 measures nested framing/index overhead
   and read amplification on large archives and already compressed evidence.
 - Require a sealed outer artifact and complete inner ZIP for a valid transfer.
   TMCap checkpoint recovery does not reconstruct a missing ZIP central directory.
-  Publish only after authenticated completion, exact length/hash verification and
-  package validation. Re-encrypting creates different outer bytes; inner object
-  hashes and portable source identities do not change when their bytes do not.
+  Publish only after completion/integrity checks, authentication when encrypted,
+  exact length/hash verification and package validation. Re-encrypting creates
+  different outer bytes; inner object hashes and portable source identities do
+  not change when their bytes do not.
 
 This choice avoids a new encryption dependency but does not establish correctness
 of the new composition. K3 must qualify the generic payload, independent ZIP
@@ -101,10 +109,41 @@ readability after unwrap, corruption/truncation detection, password handling,
 bounded random access, cancellation and clean-machine distribution. K0 ships no
 encrypted case writer/reader and does not change today's TMCap wire format.
 
-Read-only opening pins the source and uses authenticated bounded reads; it must
-not silently persist a decrypted working copy. Validate authenticated completion
-and all object hashes before publishing an imported case. Explicit **Save working
-copy** / `case unpack` creates a plaintext directory after disclosure. Source
+### Compression and performance qualification
+
+Keep compression at the TMCap layer for native packages, with independent
+level-1 zstd chunks and existing raw bypass. Stored ZIP members allow direct
+seeking into an embedded native capture through the logical ZIP view; the
+installed ZIP reader's seek API rejects compressed members. Deflating a whole
+capture member would require a separate decompression/spooling strategy before
+its internal indexes could serve bounded random reads. Double compression also
+spends work on captures and encoded response bodies that already compress
+internally. Do not apply HTTP paired-boundary deduplication to an archive.
+
+The generic writer must reset/re-evaluate compression at member boundaries, or
+use equivalent bounded sampling that prevents an incompressible capture from
+suppressing compression of subsequent text/configuration members. Boundary hints
+must preserve the exact ZIP bytes and must not force padded physical blocks for
+every small member. Measure both whole-stream and boundary-aware policies in K3.
+
+Before shipping, compare Stored ZIP + TMCap against ZIP Deflate with outer
+compression disabled on the same synthetic and representative workloads: large
+native/encrypted captures, encoded assets, large plain text, small config/notes,
+and mixed member order. Record package size, pack/validate/open times, random
+entry/body latency, CPU and peak memory; report password derivation separately.
+Current capture benchmarks qualify the existing codec, not this future wrapper.
+No package-level throughput or size advantage is claimed by K0.
+
+Unencrypted TMCap uses its existing corruption checks, not authenticated
+encryption; it provides no confidentiality or publisher identity.
+
+### Opening and working copies
+
+Read-only opening pins the source and uses integrity-checked bounded reads,
+authenticated when encrypted; it must not silently persist a decrypted working
+copy. Validate authenticated completion when encrypted, and all object hashes
+before publishing an imported case. Explicit **Save working copy** / `case unpack`
+creates a plaintext directory after disclosure. Source
 movement/deletion either leaves pinned reads valid or produces an explicit
 unavailable source; it never resolves a new file by its old name.
 
@@ -140,7 +179,7 @@ fields are never translated into rules or treated as supported configuration.
 | `assets` | Exact asset ID/revision, status, ordered headers, encoded entity object and provenance/availability. |
 | `experiments` | Named variants and ordered immutable rule revisions with selected saved definitions and enabled/paused intent. |
 | `notes` | Authored text/reproduction steps and optional stable evidence references. |
-| `contexts` | Optional case-only inventory of source context references and separately collected immutable diagnostic objects, with collection origin, completeness and explicit failures/omissions. |
+| `contexts` | Optional case-only inventory of immutable capture-time and separately collected diagnostic objects, with original source association, collection origin, completeness and explicit failures/omissions. |
 | `runs` | Frozen experiment selection, actual retained response references/hashes, engine/script choice and authored outcomes with provenance. |
 | `extensions` | Optional namespaced descriptive JSON; bounded and preserved without executing or using it for matching. |
 
@@ -239,9 +278,10 @@ declarations before advertising standalone script test commands.
 
 ## Configuration and diagnostic context
 
-Use the same ZIP object store for case-level configuration output and diagnostic
-snapshots. A context attachment carries an ID, kind (`network-configuration`
-initially), collection time, collector name/version, platform, purpose, optional
+Use the same ZIP object store for saved configuration output and diagnostic
+snapshots, including capture-time context in the new format. A context attachment
+carries an ID, kind (`network-configuration` initially), collection time,
+collector name/version, platform, purpose, optional
 machine label, dependency state and completeness (`complete`, `partial` or
 `unknown`) with issues. Its `content` references exact bytes by object digest;
 JSON/text media types remain inert data. A successful collection is a snapshot,
@@ -250,22 +290,32 @@ Unknown optional context kinds remain inspectable as unavailable metadata within
 the same bounds; they never acquire execution semantics. Package-wide required
 features still fail early when unsupported.
 
-Keep capture-time context associated with its source: standalone TMCap recording
-and recovery continue to carry `trace-metadata` / `trace-source`. Reference an
-existing snapshot by artifact digest, internal source key and known context kind
-rather than making a second authoritative copy in the case. If an implementation
-produces a separate display projection, label it derived and retain that source
-reference. Never substitute the importing or saving machine's current state for
-the original machine's snapshot. A new case-save collection has
-`origin.kind="collected-for-case"`, not a captured-source attribution.
+Keep capture-time context associated with its source through artifact digest and
+internal source key, with collection purpose/time/machine recorded separately.
+Never substitute the importing or saving machine's current state for the original
+machine's snapshot. A new case-save collection has
+`origin.kind="collected-for-case"`, not a captured-source attribution. A
+capture-only bundle can use the same case manifest with empty experiments,
+assets, notes and runs; it does not need another archive format.
+
+The current native `trace-metadata` / `trace-source` layout is an audit fact, not
+a compatibility constraint. When moving saved context to these objects, update
+the current writers, readers and recovery together; do not dual-write context,
+add fallback readers or keep the old storage solely to open earlier files. K3
+must specify recording/checkpoint and final-package behavior so interrupted
+recording still recovers its available traffic and context without depending on
+an unfinished ZIP directory. Source association is evidence provenance, not a
+reason to retain the old record representation.
 
 Collection stays opt-in and uses the existing bounded collector; packaging and
 opening do not run tool labels, shell commands or network probes. Preserve
 unavailable-tool, nonzero-exit, timeout and output-limit notes. Configuration
 output is included in privacy review and whole-package encryption along with
-notes and traffic. Omitting an attachment cannot remove context still embedded
-in a capture: privacy omission of that context needs an explicitly derived
-capture with new identity and lineage, or an honest warning that it remains.
+notes and traffic. Privacy omission removes the selected context object/reference;
+if deliberately embedded opaque evidence still contains the same information,
+it needs an explicitly derived capture with new identity/lineage or a warning
+that the information remains. This is a content/privacy rule, not a requirement
+to support historical TMCap layouts.
 No collectors or existing native context records change in K0. K2 owns the
 inventory and source associations; K3 owns safe packaging/privacy qualification.
 
@@ -318,7 +368,7 @@ script/compare tooling only after its dependencies are distributed and qualified
 | --- | --- |
 | `case inspect --input FILE --json` | Bounded inventory, source/dependency states and capabilities; no execution or import. |
 | `case validate --input FILE --json` | Verify structure, object hashes and references; separately report evidence completeness and runnable capabilities. |
-| `case pack --input DIR --output FILE [--encrypt]` | Create-new transactional package of the selected manifest and closure. |
+| `case pack --input DIR --output FILE [--container tmcap\|zip] [--encrypt]` | Create-new transactional package of the selected manifest and closure; default TMCap compression, optional encryption. Explicit bare ZIP rejects `--encrypt`. |
 | `case unpack --input FILE --output DIR` | Explicit plaintext working copy, create-new directory and safe transactional extraction. |
 | `rules validate --input FILE --json` | Portable schema plus authoritative rule/action validation; no activation. |
 | `rules test --input FILE --capture FILE --json` | Original-request or available recorded-boundary matching, actual match/no-match/unknown, order and intent; no response/script execution or network. |

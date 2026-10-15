@@ -20,6 +20,8 @@ the same capture is imported twice or different captures reuse exchange IDs.
    transfer. Objects use SHA-256 names; manifests carry typed references, exact
    revisions, lineage, dependency state and authored observations. A rule
    collection uses the same packaging conventions with a smaller manifest.
+   Native packages wrap that archive in TMCap for compression, with optional
+   encryption. Bare ZIP remains an explicit interchange export.
 3. Identify evidence by actual source-artifact bytes, the source key inside that
    artifact, original exchange identity and occurrence. Runtime import IDs,
    display request numbers, filenames and labels are not portable keys.
@@ -30,10 +32,11 @@ the same capture is imported twice or different captures reuse exchange IDs.
 5. Freeze external file bytes explicitly. Distinguish an export-time snapshot
    from retained bytes of a historical run. Missing, incomplete, redacted, locked
    and unsupported evidence never becomes an empty or runnable replacement.
-6. Protect the complete ZIP byte stream, including its manifest and member
-   names, with TMCap's existing authenticated encryption and indexed chunk
-   machinery. Reuse the container layer through a typed, seekable artifact
-   payload; do not disguise an archive as HTTP traffic or encode it into JSON.
+6. Compress the complete ZIP byte stream using TMCap's indexed chunks. When
+   encryption is selected, protect its manifest and member names with TMCap's
+   existing authenticated encryption. Reuse the container layer through a typed,
+   seekable artifact payload; do not disguise an archive as HTTP traffic or encode
+   it into JSON.
    A mandatory document-kind discriminator distinguishes captures from portable
    archives. K3 must implement and qualify this extension, authenticated
    completion, bounded random access, failure cleanup and clean-machine
@@ -43,10 +46,11 @@ the same capture is imported twice or different captures reuse exchange IDs.
    commands use the same semantic validators and matchers, with explicit unknown
    states and no network, routing, trust-store or activation side effects.
 8. Include case-level configuration/diagnostic snapshots as typed immutable
-   context objects. Preserve capture-time context in its source and reference
-   it without a second authoritative copy. Label new collections by machine,
-   time and purpose; opening a case never runs the recorded tools. Review both
-   attached and embedded context when omitting sensitive information.
+   context objects, including capture-time context in the new saved format.
+   Preserve the original machine, time, purpose and capture association, not the
+   current `trace-metadata` / `trace-source` storage layout. Update writers,
+   readers and recovery together without legacy readers or dual writes. Opening
+   a case never runs the recorded tools. Review context privacy with traffic.
 
 The [portable investigation design](../portable-investigations.md) owns the
 revision-0 fields, limits, CLI grammar and staged implementation boundaries.

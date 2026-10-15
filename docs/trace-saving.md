@@ -173,5 +173,7 @@ The [portable investigation design](portable-investigations.md) specifies a
 separate case manifest, exact evidence references and whole-package encryption
 qualification. It does not change TMCap or add case commands in this increment.
 Its [context model](portable-investigations.md#configuration-and-diagnostic-context)
-puts separately collected diagnostics in package objects while retaining original
-capture context with its source and distinguishing the saving machine's snapshot.
+uses package objects for capture-time and separately collected diagnostics,
+retaining original source associations and distinguishing the saving machine's
+snapshot. Keeping today's native context-record layout or reading historical
+layouts is not required by the new format.
