@@ -1,5 +1,6 @@
 """Generate third-party notices and a CycloneDX BOM from locked dependencies."""
 import argparse
+import base64
 from datetime import datetime, timezone
 import json
 import hashlib
@@ -7,6 +8,7 @@ from pathlib import Path
 import re
 from urllib.parse import quote, urlsplit
 from repo_tools import ROOT, command, main_guard, write_json
+from transport_dependencies import resolved_provenance
 
 
 def package_key(package):
@@ -47,12 +49,21 @@ def license_choices(expression):
 
 def artifacts(metadata, npm, version, *, native=None):
     packages = sorted(metadata["packages"], key=package_key)
-    third_party = [p for p in packages if p.get("source") is not None]
+    transports = resolved_provenance(metadata, ROOT)
+    third_party = [p for p in packages if p.get("source") is not None or p["id"] in transports]
     lines = ["# Third-party notices", "",
              "Transmog includes the following third-party software.",
              "",
              "| Package | Version | License expression | Source |", "|---|---:|---|---|"]
-    lines += [f"| {p['name']} | {p['version']} | {p.get('license') or ''} | {(source_identity(p) or {}).get('url', p.get('repository') or p['source'])} |" for p in third_party]
+    lines += [f"| {p['name']} | {p['version']} | {p.get('license') or ''} | {transports[p['id']]['archiveUrl'] if p['id'] in transports else (source_identity(p) or {}).get('url', p.get('repository') or p['source'])} |" for p in third_party]
+    if transports:
+        lines += ["", "## Patched Rust transport dependencies", "",
+                  "The registry archives below are vendored with local patches. Original license and copyright texts are included in the desktop Credits.", "",
+                  "| Package | Archive SHA-256 | Local patch | Patch SHA-256 |", "|---|---|---|---|"]
+        for package in third_party:
+            if package["id"] in transports:
+                source = transports[package["id"]]
+                lines.append(f"| {package['name']} | {source['archiveSha256']} | [{source['patchPath']}]({source['patchPath']}) | {source['patchSha256']} |")
     lines += ["", "## Desktop npm production packages", "",
               "| Package | Version | License expression | Source |", "|---|---:|---|---|"]
     lines += [f"| {p['name']} | {p['version']} | {p['license']} | {p['source']} |" for p in npm]
@@ -77,7 +88,8 @@ def artifacts(metadata, npm, version, *, native=None):
               (ROOT / "third_party/chromium-root-store/LICENSE").read_text(encoding="utf-8").rstrip()]
     components = []
     for package in packages:
-        component = {"type": "library" if package.get("source") else "application", "bom-ref": package["id"],
+        transport = transports.get(package["id"])
+        component = {"type": "library" if package.get("source") or transport else "application", "bom-ref": package["id"],
                      "name": package["name"], "version": package["version"],
                      "licenses": license_choices(package.get("license")),
                      "purl": f"pkg:cargo/{quote(package['name'], safe='')}@{quote(package['version'], safe='')}"}
@@ -90,6 +102,18 @@ def artifacts(metadata, npm, version, *, native=None):
             component["pedigree"] = {"commits": [{"uid": identity["revision"], "url": identity["url"]}]}
             component["properties"] = [{"name": "transmog:cargo:resolvedSource", "value": identity["source"]},
                                        {"name": "transmog:git:revision", "value": identity["revision"]}]
+        if transport:
+            ancestor = {"type": "library", "name": package["name"], "version": package["version"],
+                        "purl": component["purl"],
+                        "hashes": [{"alg": "SHA-256", "content": transport["archiveSha256"]}],
+                        "externalReferences": [{"type": "distribution", "url": transport["archiveUrl"]}]}
+            patch = (ROOT / transport["patchPath"]).read_bytes()
+            component["purl"] += "?patch_sha256=" + transport["patchSha256"]
+            component["pedigree"] = {"ancestors": [ancestor], "patches": [{"type": "unofficial", "diff": {
+                "text": {"contentType": "text/x-diff", "encoding": "base64", "content": base64.b64encode(patch).decode("ascii")}}}]}
+            component.setdefault("externalReferences", []).append({"type": "distribution", "url": transport["archiveUrl"]})
+            component["properties"] = [{"name": "transmog:transport:" + key, "value": transport[key]}
+                                       for key in ("archiveSha256", "patchPath", "patchSha256", "snapshotSha256")]
         components.append(component)
     for package in npm:
         components.append({"type": "library", "bom-ref": f"npm:{package['name']}@{package['version']}",

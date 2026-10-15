@@ -187,5 +187,28 @@ def check_repository(root=ROOT, metadata=None):
         BASE = previous
 
 
+def resolved_provenance(metadata, root=ROOT):
+    """Identify resolved path dependencies using their verified source receipts."""
+    check_repository(root, metadata)
+    base = root / "third_party/rust-transport"
+    sources = json.loads((base / "sources.json").read_text(encoding="utf-8"))
+    resolved = {}
+    for package in metadata["packages"]:
+        if package["name"] not in sources:
+            continue
+        name = package["name"]
+        source = sources[name]
+        receipt = base / "vendor" / name / "transmog-snapshot.json"
+        snapshot = json.loads(receipt.read_text(encoding="utf-8"))
+        resolved[package["id"]] = {
+            **source,
+            "archiveUrl": f"https://static.crates.io/crates/{name}/{name}-{source['version']}.crate",
+            "patchPath": f"third_party/rust-transport/patches/{name}.patch",
+            "patchSha256": snapshot["patchSha256"],
+            "snapshotSha256": digest(receipt.read_bytes()),
+        }
+    return resolved
+
+
 if __name__ == "__main__":
     main_guard(main)

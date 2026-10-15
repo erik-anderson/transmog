@@ -10,6 +10,12 @@ crate. `patches/` is the complete local delta, and each generated snapshot has
 a receipt covering its source, patch and every file. Portable build preflight
 rejects modified or incomplete snapshots.
 
+Desktop Credits and generated third-party notices include these path dependencies.
+The CycloneDX SBOM records the original registry archive and its checksum as the
+ancestor, embeds the exact local patch, and records patch and snapshot-receipt
+checksums. A `patch_sha256` package-URL qualifier distinguishes the patched build
+from the registry release of the same version.
+
 Verify with `python scripts/vendor-transport.py --check`. Regenerate with
 `--regenerate`, optionally supplying `--archive-dir` pointing at Cargo's registry
 cache. Regeneration verifies checksums, rejects unsafe archive entries, applies

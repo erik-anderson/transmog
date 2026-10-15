@@ -1,4 +1,4 @@
-import { readFile, readdir, writeFile } from 'node:fs/promises';
+import { readFile, readdir, realpath, writeFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 
@@ -12,16 +12,24 @@ async function notices(root, depth=0, vendored=false) {
   }
   return found;
 }
-export async function buildCredits(uiRoot, output) {
-  const repository=resolve(uiRoot,'../../..');
-  const metadata=JSON.parse(execFileSync('cargo',['metadata','--format-version','1','--locked','--offline'],{cwd:repository,maxBuffer:32*1024*1024,encoding:'utf8',windowsHide:true}));
+export async function cargoCredits(repository, metadata) {
+  const sources=new Map(Object.entries(JSON.parse(await readFile(join(repository,'third_party/rust-transport/sources.json'),'utf8'))));
+  const packages=[];
+  for(const pkg of metadata.packages) {
+    const source=sources.get(pkg.name);
+    if(source) {
+      const manifest=await realpath(resolve(repository,'third_party/rust-transport/vendor',pkg.name,'Cargo.toml'));
+      if(pkg.source!==null||pkg.version!==source.version||await realpath(pkg.manifest_path)!==manifest)throw new Error('Unreviewed transport dependency: '+pkg.name);
+    }
+    if(source||pkg.source)packages.push(pkg);
+  }
   const entries=[];
   const byRepository=new Map();
-  for(const pkg of metadata.packages.filter(pkg=>pkg.source)) {
+  for(const pkg of packages) {
     const files=await notices(dirname(pkg.manifest_path));
     if(files.length&&pkg.repository)byRepository.set(pkg.repository,files);
   }
-  for(const pkg of metadata.packages.filter(pkg=>pkg.source)) {
+  for(const pkg of packages) {
     let files=await notices(dirname(pkg.manifest_path));
     if(pkg.license_file&&!files.some(file=>file.file===pkg.license_file))files.push({file:pkg.license_file,text:await readFile(pkg.license_file,'utf8')});
     if(!files.length)files=byRepository.get(pkg.repository)??[];
@@ -36,6 +44,12 @@ export async function buildCredits(uiRoot, output) {
     }
     entries.push({id:pkg.name+'@'+pkg.version,name:pkg.name,version:pkg.version,license:pkg.license??'',text:files.map(file=>file.text).join('\n\n')});
   }
+  return entries;
+}
+export async function buildCredits(uiRoot, output) {
+  const repository=resolve(uiRoot,'../../..');
+  const metadata=JSON.parse(execFileSync('cargo',['metadata','--format-version','1','--locked','--offline'],{cwd:repository,maxBuffer:32*1024*1024,encoding:'utf8',windowsHide:true}));
+  const entries=await cargoCredits(repository,metadata);
   const lock=JSON.parse(await readFile(join(uiRoot,'package-lock.json'),'utf8'));
   for(const [path,pkg] of Object.entries(lock.packages)) {
     if(!path||pkg.dev||!pkg.version)continue;

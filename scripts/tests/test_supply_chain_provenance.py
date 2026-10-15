@@ -1,5 +1,7 @@
 """Git/native provenance must identify the actual build, including patches."""
 import copy
+import base64
+import hashlib
 import json
 from pathlib import Path
 import sys
@@ -10,6 +12,58 @@ from test_tools import load
 
 
 class ProvenanceTests(unittest.TestCase):
+    def transport_fixture(self):
+        module = load("generate-supply-chain-artifacts")
+        base = module.ROOT / "third_party/rust-transport"
+        sources = json.loads((base / "sources.json").read_text(encoding="utf-8"))
+        packages = [{"id": name, "name": name, "version": source["version"], "source": None,
+                     "license": "BSD-2-Clause" if name == "quiche" else "MIT",
+                     "manifest_path": str(base / "vendor" / name / "Cargo.toml")}
+                    for name, source in sources.items()]
+        packages.append({"id": "app", "name": "transmog-desktop", "version": "1", "source": None})
+        metadata = {"packages": packages, "resolve": {"nodes": [{"id": p["id"], "dependencies": []} for p in packages]}}
+        return module, metadata, sources
+
+    def test_vendored_transports_have_notices_archive_identity_and_exact_patches(self):
+        module, metadata, sources = self.transport_fixture()
+        original = copy.deepcopy(metadata)
+        notice, sbom = module.artifacts(metadata, [], "1")
+        self.assertEqual(metadata, original)
+        components = {component["bom-ref"]: component for component in sbom["components"]}
+        self.assertEqual(components["app"]["type"], "application")
+        for name, source in sources.items():
+            with self.subTest(name=name):
+                component = components[name]
+                self.assertEqual(component["type"], "library")
+                self.assertIn(f"| {name} | {source['version']} |", notice)
+                self.assertIn(source["archiveSha256"], notice)
+                self.assertEqual(component["licenses"], [{"expression": "BSD-2-Clause" if name == "quiche" else "MIT"}])
+                ancestor, = component["pedigree"]["ancestors"]
+                self.assertEqual(ancestor["purl"], f"pkg:cargo/{name}@{source['version']}")
+                self.assertEqual(ancestor["hashes"], [{"alg": "SHA-256", "content": source["archiveSha256"]}])
+                self.assertEqual(ancestor["externalReferences"][0]["url"], f"https://static.crates.io/crates/{name}/{name}-{source['version']}.crate")
+                properties = {p["name"]: p["value"] for p in component["properties"]}
+                patch_path = properties["transmog:transport:patchPath"]
+                patch = (module.ROOT / patch_path).read_bytes()
+                patch_hash = hashlib.sha256(patch).hexdigest()
+                self.assertEqual(properties["transmog:transport:patchSha256"], patch_hash)
+                self.assertIn(patch_hash, notice)
+                self.assertIn("?patch_sha256=" + patch_hash, component["purl"])
+                self.assertEqual(base64.b64decode(component["pedigree"]["patches"][0]["diff"]["text"]["content"]), patch)
+                receipt = module.ROOT / "third_party/rust-transport/vendor" / name / "transmog-snapshot.json"
+                self.assertEqual(properties["transmog:transport:snapshotSha256"], hashlib.sha256(receipt.read_bytes()).hexdigest())
+
+    def test_vendored_identity_rejects_a_different_source_version_or_manifest(self):
+        module, metadata, sources = self.transport_fixture()
+        for name in sources:
+            for change in ({"source": "registry+https://github.com/rust-lang/crates.io-index"},
+                           {"version": "0.0.0"}, {"manifest_path": str(module.ROOT / "fake/Cargo.toml")}):
+                with self.subTest(name=name, change=change):
+                    altered = copy.deepcopy(metadata)
+                    next(p for p in altered["packages"] if p["name"] == name).update(change)
+                    with self.assertRaisesRegex(ValueError, "reviewed transport snapshot"):
+                        module.artifacts(altered, [], "1")
+
     def fixture(self):
         module = load("generate-supply-chain-artifacts")
         receipt = json.loads((module.ROOT / "third_party/boringssl-pki/manifest.json").read_text(encoding="utf-8"))

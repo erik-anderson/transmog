@@ -1776,6 +1776,13 @@ try {
   const credits=page.locator('.credits-dialog[open]');
   await credits.locator('details').nth(1).waitFor();
   assert.ok(await credits.locator('details').count()>100,'Credits omitted the dependency inventory');
+  for(const name of ['h2','hyper','quiche']) {
+    const dependency=credits.locator('details').filter({has:page.locator('summary',{hasText:new RegExp('^'+name+' ')})});
+    assert.equal(await dependency.count(),1,'Credits omitted '+name);
+    await dependency.locator('summary').click();
+    assert.match(await dependency.locator('pre').textContent(),/copyright|permission|redistribution/i);
+    await dependency.locator('summary').click();
+  }
   assert.doesNotMatch(await credits.textContent(),/Generated from the locked|Distributions must retain/);
   await credits.locator('details').first().locator('summary').click();
   assert.match(await credits.locator('details').first().textContent(),/license|copyright|permission/i);

@@ -229,7 +229,7 @@ Transmog includes the following third-party software.
 | gtk-sys | 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs |
 | gtk3-macros | 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs |
 | gzip-header | 1.1.0 | MIT/Apache-2.0 | https://github.com/oyvindln/gzip-header |
-| h2 | 0.4.19 | MIT | https://github.com/hyperium/h2 |
+| h2 | 0.4.19 | MIT | https://static.crates.io/crates/h2/h2-0.4.19.crate |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.14.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
@@ -253,7 +253,7 @@ Transmog includes the following third-party software.
 | httparse | 1.10.1 | MIT OR Apache-2.0 | https://github.com/seanmonstar/httparse |
 | httpdate | 1.0.3 | MIT OR Apache-2.0 | https://github.com/pyfisch/httpdate |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hybrid-array |
-| hyper | 1.11.1 | MIT | https://github.com/hyperium/hyper |
+| hyper | 1.11.1 | MIT | https://static.crates.io/crates/hyper/hyper-1.11.1.crate |
 | hyper-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/hyper-rustls |
 | hyper-util | 0.1.21 | MIT | https://github.com/hyperium/hyper-util |
@@ -439,7 +439,7 @@ Transmog includes the following third-party software.
 | prost-derive | 0.14.4 | Apache-2.0 | https://github.com/tokio-rs/prost |
 | psm | 0.1.32 | MIT OR Apache-2.0 | https://github.com/rust-lang/stacker/ |
 | pxfm | 0.1.30 | BSD-3-Clause OR Apache-2.0 | https://github.com/awxkee/pxfm |
-| quiche | 0.30.0 | BSD-2-Clause | https://github.com/cloudflare/quiche |
+| quiche | 0.30.0 | BSD-2-Clause | https://static.crates.io/crates/quiche/quiche-0.30.0.crate |
 | quick-error | 2.0.1 | MIT/Apache-2.0 | http://github.com/tailhook/quick-error |
 | quick-xml | 0.42.0 | MIT | https://github.com/tafia/quick-xml |
 | quote | 1.0.47 | MIT OR Apache-2.0 | https://github.com/dtolnay/quote |
@@ -788,6 +788,16 @@ Transmog includes the following third-party software.
 | zvariant_derive | 5.15.0 | MIT | https://github.com/z-galaxy/zbus/ |
 | zvariant_utils | 2.1.0 | MIT | https://github.com/dbus2/zbus/ |
 | zvariant_utils | 4.2.0 | MIT | https://github.com/z-galaxy/zbus/ |
+
+## Patched Rust transport dependencies
+
+The registry archives below are vendored with local patches. Original license and copyright texts are included in the desktop Credits.
+
+| Package | Archive SHA-256 | Local patch | Patch SHA-256 |
+|---|---|---|---|
+| h2 | ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16 | [third_party/rust-transport/patches/h2.patch](third_party/rust-transport/patches/h2.patch) | ac2771bb502d4449fc1fc24c9046b4a97b645be7830f6feb0f7246b1f32a6014 |
+| hyper | 27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43 | [third_party/rust-transport/patches/hyper.patch](third_party/rust-transport/patches/hyper.patch) | 87b8870bd0a78c31498f5fba20b96a5a08a3e685cb53b79dedba602fb80a9843 |
+| quiche | 52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a | [third_party/rust-transport/patches/quiche.patch](third_party/rust-transport/patches/quiche.patch) | eda5505fa0c32aab58a1f79606ef7c5b5693b33e49321d6a5ca2d4d488a36484 |
 
 ## Desktop npm production packages
 
