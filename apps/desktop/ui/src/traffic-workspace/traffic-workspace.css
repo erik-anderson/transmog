@@ -210,10 +210,10 @@ traffic-workspace { display:contents; }
 }
 
 .trace-save-progress { display:block; width:100%; accent-color:var(--accent); }
-.trace-save-dialog[open] { display:flex; flex-direction:column; overflow:hidden; }
+.trace-save-dialog[open] { display:flex; flex-direction:column; overflow:hidden; max-height:calc(100% - 2rem); }
 .trace-save-dialog > h2, .trace-save-dialog > p { flex-shrink:0; }
 .trace-save-dialog form { display:flex; flex-direction:column; flex:1; min-height:0; }
-.trace-save-options { min-height:0; overflow:auto; }
+.trace-save-options { flex:1 1 auto; min-height:0; overflow:auto; }
 .trace-save-dialog form > p, .trace-save-dialog progress, .trace-save-dialog footer { flex-shrink:0; }
 
 .stream-tabs {display:flex;flex:0 0 auto;gap:.3rem;padding:.25rem .5rem;border-bottom:1px solid var(--line);}.stream-tabs button {font-size:.75rem;}.stream-tabs button[data-selected] {border-bottom-color:var(--accent);font-weight:600;}
@@ -223,3 +223,6 @@ traffic-workspace { display:contents; }
 .preview-rule-picker small {display:block;color:var(--muted);}
 
 .preview-rule-name {overflow-wrap:anywhere;min-width:0;}
+
+traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywhere}traffic-workspace .trace-export-facts div{display:grid;grid-template-columns:minmax(8rem,1fr) minmax(0,2fr);gap:.5rem}traffic-workspace .trace-export-facts dd{margin:0}
+@media(max-width:650px){traffic-workspace .trace-export-facts div{grid-template-columns:1fr}}

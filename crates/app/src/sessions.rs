@@ -122,6 +122,9 @@ impl CursorRegistry {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionQueryInput {
+    /// Optional original-source incident time/host restriction, applied before paging.
+    #[serde(default)]
+    pub incident_window: Option<crate::incidents::IncidentWindow>,
     /// Opaque completed content-search snapshot handle.
     #[serde(default)]
     pub search_result_id: Option<String>,

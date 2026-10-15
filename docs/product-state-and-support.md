@@ -122,3 +122,13 @@ and save a `.tmcap` trace instead.
 versions, licenses, copyright notices and vendored native library notices. The
 notices ship with the app and are available offline. Builds require version-pinned
 license snapshots when published dependencies omit their license files.
+
+## Customer website incidents
+
+[Support capture profiles and incident intake](support-capture-profiles.md) guide
+website evidence collection. They are separate from operational Transmog support
+bundles and network profiles. Profile-only CLI choices, incident navigation and
+export reviews are run/window state, not global preferences containing captured
+notes. Incident marks belong to explicit recorded artifacts; normal proxy startup
+does not create a journal. Review original context and HTTP/stream content before
+sharing; header redaction alone does not anonymize them.

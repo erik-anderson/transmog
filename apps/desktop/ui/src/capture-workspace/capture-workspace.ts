@@ -15,6 +15,22 @@ export class CaptureWorkspace extends WorkspaceElement {
  private recordingCanceled=false;
  cancelRecordingStart():void {this.recordingCanceled=true;this.captureText='Recording canceled. Proxy routing remains off.';}
  @observable exportCanEncrypt=true;
+ @observable incidentMarkBusy=false;
+ @observable incidentMarkStatus='';
+ incidentNote!:HTMLTextAreaElement;
+ async markIncident():Promise<void>{
+  if(this.incidentMarkBusy||!this.captureActive)return;
+  const path=this.capturePathText,note=this.incidentNote.value;
+  this.incidentMarkBusy=true;this.incidentMarkStatus='Recording incident marker…';
+  try{
+   const marker=await invoke<{id:string;unixMillis:number}>('mark_incident',{note});
+   if(!this.isConnected||this.capturePathText!==path)return;
+   this.incidentMarkStatus='Issue marker recorded at '+new Date(marker.unixMillis).toISOString()+'. It will appear when this file is imported into Traffic.';
+   if(this.incidentNote.value===note)this.incidentNote.value='';
+  }catch(error:unknown){if(this.isConnected&&this.capturePathText===path)this.incidentMarkStatus='Marker was not recorded: '+describeError(error);}
+  finally{this.incidentMarkBusy=false;}
+ }
+
  @observable captureText=initialState.captureText;
  @observable captureError='';
  @observable captureBusy=false;
@@ -49,7 +65,7 @@ export class CaptureWorkspace extends WorkspaceElement {
  }
  viewChanged():void {if(this.view==='captures'){void this.refreshCapture();void this.loadRecordingDefaults();}else window.clearTimeout(this.timer);}
  showCaptureTask(task:string):void {this.captureTask=task;this.captureError='';}
- private renderCapture(status:CaptureReadModel):void {this.captureActive=status.state==='active';this.capturePathText=status.path??'';this.captureStateText=status.state==='active'?'Recording · '+storageSize(status.bytesWritten??0)+' written':status.state==='sealed'?'Saved · '+storageSize(status.bytesWritten??0):status.state==='failed'?'Recording stopped: '+(status.message??'capture failed'):status.state==='shutdown'?'Capture service stopped':'Not recording';}
+ private renderCapture(status:CaptureReadModel):void {this.captureActive=status.state==='active';if(this.captureActive&&this.captureText==='Capture is idle.')this.captureText='Recording directly to file. Import the saved file to inspect its traffic.';this.capturePathText=status.path??'';this.captureStateText=status.state==='active'?'Recording · '+storageSize(status.bytesWritten??0)+' written':status.state==='sealed'?'Saved · '+storageSize(status.bytesWritten??0):status.state==='failed'?'Recording stopped: '+(status.message??'capture failed'):status.state==='shutdown'?'Capture service stopped':'Not recording';}
  private async runCapture(title:string,operation:()=>Promise<void>):Promise<void> {if(this.captureBusy)return;this.captureBusy=true;this.captureError='';this.generation++;try{await operation();}catch(error:unknown){this.captureError=describeError(error);this.captureBusy=false;await this.showError(title,this.captureError);}finally{this.captureBusy=false;if(this.view==='captures')void this.refreshCapture();}}
  async chooseCapturePath(kind:string):Promise<void> {await this.runCapture('Could not choose capture file',async()=>{const format=String(new FormData(this.exportForm).get('format')??'native');const path=await invoke<string|null>('pick_capture_path',{kind,format});if(path===null)return;const form=kind==='source'?this.inspectionForm:this.exportForm;const name=kind==='source'?'source':'destination';const input=form.elements.namedItem(name) as HTMLInputElement;input.value=path;input.focus();});}
  async chooseExportSource():Promise<void> {await this.runCapture('Could not open export source',async()=>{const path=await invoke<string|null>('pick_capture_path',{kind:'source',format:null});if(path!==null){const input=this.exportForm.elements.namedItem('source') as HTMLInputElement;input.value=path;input.focus();}});}

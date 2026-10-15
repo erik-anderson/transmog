@@ -1,3 +1,4 @@
+import {checkIncidents} from './check-incidents.mjs';
 import {checkResponseBodyEditor} from './check-response-body-editor.mjs';
 import {checkBinaryResponse} from './check-binary-response.mjs';
 import {checkMatchingTests,checkMatchingSelectionRace} from './check-matching-tests.mjs';
@@ -164,6 +165,19 @@ await page.addInitScript((configuration) => {
           if(state.saveTraceError)throw new Error('Fixture trace write failed');
           return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap',entries:state.sessions.length,bytes:1234,incompleteBodies:0,placeholderEntries:state.tracePlaceholders??0,connectionEntries:state.traceConnections??0};
         }
+        case 'incident_intake': {
+          if(state.deferIntake){state.deferIntake=false;await new Promise(resolve=>state.releaseIntake=resolve);}
+          const source=state.traces?.find(t=>t.id===args.traceId);
+          return structuredClone(state.incidentIntakes?.[args.traceId]??{traceId:args.traceId,source:source?.name??'Fixture',profile:null,markers:[],expectedBehavior:'',actualBehavior:'',enteredClientVersion:'',collector:'Fixture collector',observedClients:[],observedUserAgents:[],entries:state.sessions.filter(r=>r.traceId===args.traceId).length,incompleteBodies:0,note:'Original source context; clocks do not establish cross-source chronology.'});
+        }
+        case 'review_traffic_export': {
+          const id='export-review-'+(state.reviewGeneration=(state.reviewGeneration??0)+1);
+          let rows=state.sessions;if(args.selection?.kind==='selected')rows=rows.filter(r=>args.selection.ids.includes(r.id));if(args.selection?.kind==='source')rows=rows.filter(r=>(r.traceId??null)===args.selection.traceId);
+          const result={id,entries:rows.length,retainedEntries:state.sessions.length,sources:['Customer fixture'],sourceCount:1,hosts:['example.test'],firstMillis:1800000000000,lastMillis:1800000003000,incompleteBodies:1,retainedBodyBytes:512,streamRecords:3,retainedStreamBytes:1024,incidentMarkers:1,note:'Entry membership is frozen. Header redaction is not complete anonymization.'};
+          if(state.deferExportReview){state.deferExportReview=false;await new Promise(resolve=>state.releaseExportReview=resolve);}
+          state.lastReviewSelection=structuredClone(args.selection);return result;
+        }
+        case 'mark_incident': state.lastIncidentNote=args.note;if(state.deferMarker){state.deferMarker=false;await new Promise(resolve=>state.releaseMarker=resolve);}return {id:'marker-fixture',unixMillis:1800000000000};
         case 'trace_metadata_list': return structuredClone(state.traces??[]);
         case 'cancel_trace_import': state.importCanceled=true;return;
         case 'import_trace': {
@@ -241,6 +255,7 @@ await page.addInitScript((configuration) => {
           const key = (row, column) => ({'request-number':BigInt(row.requestNumber??'0'),method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
           const dismissedQuery=new Set(state.dismissedIds??[]),matchingQuery=args.query.searchResultId?new Set(state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids??[]):null;
           let rows = structuredClone(state.sessions).filter(row => (!matchingQuery||matchingQuery.has(row.id)) && !dismissedQuery.has(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
+          if(args.query.incidentWindow){const w=args.query.incidentWindow;const intake=state.incidentIntakes?.[w.traceId];const marker=intake?.markers.find(m=>m.id===w.markerId);rows=rows.filter(row=>row.traceId===w.traceId&&(!w.markerId||!!marker&&row.startedAt>=marker.unixMillis-w.beforeSeconds*1000&&row.startedAt<=marker.unixMillis+w.afterSeconds*1000)&&(!w.relevantHostsOnly||intake?.profile?.relevantHosts.some(h=>row.host===h.host||h.includeSubdomains&&row.host.endsWith('.'+h.host))));}
           if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
           for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=(filter.column==='request-number'?BigInt(filter.value):Number(filter.value)):filter.operator==='maximum'?key(row,filter.column)<=(filter.column==='request-number'?BigInt(filter.value):Number(filter.value)):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
           const {sort,limit=100} = args.query;
@@ -519,6 +534,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--incidents-only')) {await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident intake, markers, reviewed export and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--comparison-only')) {await checkComparison(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Comparison interactions, races, pairing and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--network-profiles')) {
     await page.goto('https://workspace.test/');
@@ -2171,7 +2187,7 @@ try {
   assert.equal(await page.locator('.trace-password-dialog input[name="password"]').inputValue(),'');
   await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).uncheck();
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
-  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs),{options:{format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true}});
+  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>{const {reviewId,...options}=globalThis.__workspaceFixture.savedTraceArgs.options;return options;}),{includeOriginalContext:true,format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true});
   await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save trace…',exact:true}).click();
   await page.locator('.trace-save-dialog[open]').getByLabel('Encrypt with a password (AES-256)',{exact:true}).check();
   const callbacksBeforeCancel=await page.evaluate(()=>globalThis.__workspaceFixture.callbackCount());
@@ -2318,6 +2334,7 @@ try {
   assert.equal(await emptyDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Clear all restored the initial import helper');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
   await checkComparison(page,root);
+  await checkIncidents(page,root);
   assert.deepEqual(errors,[]);
   process.stdout.write(JSON.stringify({ startupRequests, coalescedQueries: coalesced, editorsBefore, editorsVisible, components: built.stats.componentCount, cspViolations: 0 }) + '\n');
 } catch (error) {

@@ -22,6 +22,8 @@ mod composer;
 mod composer_response;
 mod diagnostics;
 mod export_privacy;
+pub mod export_review;
+pub mod incidents;
 mod inspector;
 mod lifecycle;
 mod network_profiles;
@@ -335,6 +337,7 @@ pub struct Application {
     searches: search::SearchRegistry,
     traffic_views: Arc<std::sync::Mutex<sessions::TrafficViews>>,
     comparisons: comparison::ComparisonRegistry,
+    export_reviews: export_review::ReviewRegistry,
 }
 
 impl std::fmt::Debug for Application {
@@ -483,6 +486,7 @@ impl Application {
             searches: search::SearchRegistry::default(),
             traffic_views: Arc::new(std::sync::Mutex::new(sessions::TrafficViews::default())),
             comparisons: comparison::ComparisonRegistry::default(),
+            export_reviews: export_review::ReviewRegistry::default(),
         })
     }
 
@@ -1278,7 +1282,11 @@ impl Application {
     /// # Errors
     /// Returns invalid filters, page sizes, cursors, or token-generation failures.
     pub fn query_sessions(&self, query: SessionQueryInput) -> Result<SessionPage, AppError> {
-        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        let matching = incidents::restrict(
+            self,
+            query.incident_window.as_ref(),
+            self.searches.resolve(query.search_result_id.as_deref())?,
+        )?;
         sessions::query_sessions_with_traces(
             &self.service,
             &self.cursors,
@@ -1293,7 +1301,11 @@ impl Application {
     /// # Errors
     /// Returns invalid filters or an expired search handle.
     pub fn matching_traffic_ids(&self, query: &SessionQueryInput) -> Result<Vec<String>, AppError> {
-        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        let matching = incidents::restrict(
+            self,
+            query.incident_window.as_ref(),
+            self.searches.resolve(query.search_result_id.as_deref())?,
+        )?;
         sessions::matching_ids(&self.service, query, &self.traces, matching.as_deref())
     }
 
@@ -1302,7 +1314,11 @@ impl Application {
     /// # Errors
     /// Returns invalid filters, an expired search or too many unreleased views.
     pub fn query_traffic_view(&self, query: &SessionQueryInput) -> Result<TrafficView, AppError> {
-        let matching = self.searches.resolve(query.search_result_id.as_deref())?;
+        let matching = incidents::restrict(
+            self,
+            query.incident_window.as_ref(),
+            self.searches.resolve(query.search_result_id.as_deref())?,
+        )?;
         sessions::traffic_view(
             &self.service,
             &self.traffic_views,

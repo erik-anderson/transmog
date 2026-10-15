@@ -538,3 +538,22 @@ integrity.
 The test suite also compares block ciphertext with an independent BoringSSL
 AES-GCM implementation on both sides of the key-epoch boundary. Fuzzing and
 regressions supply evidence, not a proof of cryptographic or parser correctness.
+
+## Incident marker extension
+
+`incident-marker` is a global extension (`sequence:0`, `exchange_id:0`), with no
+body reference. Version 1 fields are `version`, `id`, `runId`, `unixMillis`,
+`offsetMillis`, `origin`, `creationKind`, `note`. IDs are 32 lowercase hexadecimal
+characters, UTC is bounded to year 9999, offset is optional unsigned milliseconds,
+origin is `cli`/`desktop`/`analyst`, and creation kind is `user-mark`/`later-annotation`.
+Notes allow at most 2,048 UTF-8 bytes of plain text; recorders/imported source
+contexts accept at most 256 markers with unique marker IDs. When `captureRunId`
+is present, every marker must refer to that run. Unsupported
+marker versions, invalid identities/scope and hidden controls are rejected.
+
+Original `trace-metadata.supportCapture` stores version 1 validated profile content,
+`profileDigest` and resolved settings. `captureRunId` identifies the recording;
+markers retain their own run identity through merged source namespaces. Application
+imports retain markers under source `context.incidentMarkers`; source-preserving
+saves keep this context without rewriting original timestamps. These optional
+extensions do not change the experimental container/header/record revision.

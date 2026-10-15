@@ -81,6 +81,8 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "traffic_view_rows"
             | "release_traffic_view"
             | "session_detail"
+            | "incident_intake"
+            | "review_traffic_export"
             | "compare_evidence"
             | "close_comparison"
             | "cancel_comparison"

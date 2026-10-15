@@ -1,3 +1,5 @@
+import '../incident-intake/incident-intake.js';
+import type {IncidentWindow} from '../incident-intake/incident-intake.js';
 import {timingView, type TimingRow, type TimelineRow, type TransportView, type WaterfallRow} from '../timings.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
@@ -17,6 +19,25 @@ type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  @observable incidentWindow:IncidentWindow|null=null;
+  @observable incidentWindowLabel='';
+  private incidentReturn:{scroll:number;selection:ListSelection;follow:boolean}|null=null;
+  async onIncidentWindow(event:CustomEvent<{window:IncidentWindow;label:string}>):Promise<void>{event.stopPropagation();if(!this.incidentReturn)this.incidentReturn={scroll:this.sessionScroller.scrollTop,selection:this.trafficSelection.clone(),follow:this.followLatest};this.incidentWindow=event.detail.window;this.incidentWindowLabel=event.detail.label;this.followLatest=false;this.queryRevision++;await this.refreshSessions(undefined,true);if(this.metadataDialog.open)this.closeMetadata();if(this.timingDialog.open)this.closeTimings();this.trafficTable.focus({preventScroll:true});}
+  async clearIncidentWindow(all=false):Promise<void>{const previous=this.incidentReturn;this.incidentReturn=null;this.incidentWindow=null;this.incidentWindowLabel='';if(all){this.filters=[];this.fetchDestinations=[];await this.clearContentSearch(false);}this.queryRevision++;this.followLatest=previous?.follow??false;await this.refreshSessions(undefined,true);if(previous&&!all){this.trafficSelection=previous.selection;for(const id of this.trafficSelection.ids)if(!this.virtualList.indexes.has(id))this.trafficSelection.ids.delete(id);this.updateTrafficSelection();this.sessionScroller.scrollTop=previous.scroll;this.scheduleViewport();}this.trafficTable.focus({preventScroll:true});}
+  @observable exportReviewId='';
+  @observable exportReviewBusy=false;
+  @observable exportReviewScope='all';
+  @observable exportReviewSummary='';
+  @observable exportReviewNote='';
+  @observable exportReviewFacts:Array<{label:string;value:string}>=[];
+  private exportReviewRevision=0;
+  async changeExportScope(event:Event):Promise<void>{this.exportReviewScope=(event.currentTarget as HTMLSelectElement).value;await this.reviewTraceExport();}
+  async reviewTraceExport():Promise<void>{const revision=++this.exportReviewRevision;this.exportReviewBusy=true;this.exportReviewId='';this.exportReviewSummary='Reviewing retained evidence…';
+   try{let selection:unknown=null;if(this.exportReviewScope==='selected')selection={kind:'selected',ids:[...this.trafficSelection.ids]};else if(this.exportReviewScope==='filtered')selection={kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}};else if(this.exportReviewScope.startsWith('source:'))selection={kind:'source',traceId:this.exportReviewScope.slice(7)};
+    const inventory=await invoke<{id:string;entries:number;retainedEntries:number;sources:string[];sourceCount:number;hosts:string[];firstMillis:number|null;lastMillis:number|null;incompleteBodies:number;retainedBodyBytes:number;streamRecords:number;retainedStreamBytes:number;incidentMarkers:number;note:string}>('review_traffic_export',{selection});if(revision!==this.exportReviewRevision||!this.isConnected)return;
+    this.exportReviewId=inventory.id;this.exportReviewSummary=`${inventory.entries} of ${inventory.retainedEntries} retained entries · ${inventory.sourceCount} original sources · ${inventory.incidentMarkers} incident markers`;
+    const date=(value:number|null)=>value==null?'Unavailable':Number.isFinite(new Date(value).valueOf())?new Date(value).toISOString():'Outside supported calendar range';this.exportReviewFacts=[{label:'Included sources (up to 100)',value:inventory.sources.join(' · ')||'Live traffic'},{label:'Included hosts (up to 100)',value:inventory.hosts.join(' · ')||'No known hosts'},{label:'Recorded start range (UTC, source clocks)',value:date(inventory.firstMillis)+' to '+date(inventory.lastMillis)},{label:'Retained HTTP body bytes',value:inventory.retainedBodyBytes.toLocaleString()},{label:'Incomplete body observations',value:String(inventory.incompleteBodies)},{label:'Observed stream records / retained stream storage',value:inventory.streamRecords+' / '+inventory.retainedStreamBytes.toLocaleString()+' bytes'}];this.exportReviewNote=inventory.note;
+   }catch(error:unknown){if(revision===this.exportReviewRevision)this.exportReviewSummary='Export review failed: '+describeError(error);}finally{if(revision===this.exportReviewRevision)this.exportReviewBusy=false;}}
   private emitComparison(detail:ComparisonOpen):void{this.$emit('comparison-request',detail);}
   @observable comparisonBaseline='';
   @observable comparisonBaselineLabel='';
@@ -24,7 +45,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   clearComparisonBaseline():void{this.comparisonBaseline='';this.comparisonBaselineLabel='';}
   compareSelected():void{const ids=[...this.trafficSelection.ids];if(ids.length!==2){this.diagnostic='Select exactly two requests, including requests outside the visible table window.';return;}this.trafficMenu.hidePopover();this.emitComparison({left:{kind:'exchange',id:ids[0]!},right:{kind:'exchange',id:ids[1]!}});}
   compareWithBaseline():void{const id=this.trafficSelection.ids.size===1?[...this.trafficSelection.ids][0]:this.selectedSessionId;if(!id||!this.comparisonBaseline)return;this.trafficMenu.hidePopover();this.emitComparison({left:{kind:'exchange',id:this.comparisonBaseline},right:{kind:'exchange',id}});}
-  async compareCaptureScopes():Promise<void>{this.filesMenu.hidePopover();const sources=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);const choices:ScopeChoice[]=sources.map(s=>({value:s.id,label:`${s.name} · ${s.sessions} imported entries`,scope:{kind:'source',traceId:s.id}}));choices.push({value:'live',label:'Live traffic · retained entries',scope:{kind:'source',traceId:null}});if(this.trafficSelection.ids.size)choices.push({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries before virtual windowing`,scope:{kind:'filtered',query:{search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});this.$emit('capture-comparison-request',{choices});}
+  async compareCaptureScopes():Promise<void>{this.filesMenu.hidePopover();const sources=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);const choices:ScopeChoice[]=sources.map(s=>({value:s.id,label:`${s.name} · ${s.sessions} imported entries`,scope:{kind:'source',traceId:s.id}}));choices.push({value:'live',label:'Live traffic · retained entries',scope:{kind:'source',traceId:null}});if(this.trafficSelection.ids.size)choices.push({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries before virtual windowing`,scope:{kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});this.$emit('capture-comparison-request',{choices});}
   @observable previewComparisonBaselineLabel='';
   private previewComparisonBaseline:ComparisonSubject|null=null;
   setPreviewResponseBaseline(observation:string):void{this.previewComparisonBaseline={kind:'preview',run:this.previewReportLabel,observation:Number(observation)};this.previewComparisonBaselineLabel=`${this.previewReportLabel} · response ${observation}`;}
@@ -713,7 +734,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       let view:TrafficView,revision:number;
       do {
         revision=this.queryRevision;
-        view=await invoke<TrafficView>('query_traffic_view',{query:{search:this.liveFilter,searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort}});
+        view=await invoke<TrafficView>('query_traffic_view',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort}});
         if(!this.isConnected||this.searchOperation!==operationId){this.releaseView(view);return;}
         if(revision!==this.queryRevision)this.releaseView(view);
       }while(revision!==this.queryRevision);
@@ -790,7 +811,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async refreshSearchMatchIds():Promise<boolean> {
     if(!this.searchResultId)return false;
     const resultId=this.searchResultId, revision=this.queryRevision;
-    const ids=await invoke<string[]>('matching_traffic_ids',{query:{search:this.liveFilter,searchResultId:resultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+    const ids=await invoke<string[]>('matching_traffic_ids',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:resultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
     if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return false;
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
     return true;
@@ -871,7 +892,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force:boolean):Promise<void> {
     const revision = this.queryRevision;
     try {
-      const view = await invoke<TrafficView>('query_traffic_view',{query:{search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      const view = await invoke<TrafficView>('query_traffic_view',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
       if (!this.isConnected || revision !== this.queryRevision) {this.releaseView(view);return;}
       if(view.page.retainedCount>0||view.ids.length)this.showTraceImportHelp=false;
       if(this.contentSearchActive){this.searchMatchIds=view.ids;this.contentMatchCount=view.ids.length;this.matchRevision=revision;}
@@ -961,7 +982,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if(this.removingTraffic)return;this.removingTraffic=true;
     try {
       const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null}>('clear_traffic');
-      this.trafficUndo=[];this.metadataGeneration++;this.traceMetadataRows=[];this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
+      this.trafficUndo=[];this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;this.metadataGeneration++;this.traceMetadataRows=[];this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
       if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
 
       this.trafficUndoText=result.ids.length?'Cleared '+result.ids.length.toLocaleString()+' entries.'+(result.undoable?(result.undoSeconds?' Undo expires in 5 minutes.':' Undo is available.'):' Undo is unavailable because 1 GB or more was cleared.'): 'Traffic is already empty.';
@@ -1077,11 +1098,13 @@ export class TrafficWorkspace extends WorkspaceElement {
   beginAutoResponseFromSelected():void { if (this.selectedDetail && this.selectedSessionId) this.$emit('autoresponse-request',{sessionId:this.selectedSessionId,detail:this.selectedDetail}); }
   async revealSession(id:string):Promise<boolean> {
     window.clearTimeout(this.searchTimer);
+
     let revision = ++this.queryRevision;
     try {
       const view = await invoke<TrafficView>('query_traffic_view',{query:{sort:this.sort,focusId:id}});
       if (revision !== this.queryRevision || !this.isConnected) {this.releaseView(view);return false;}
-      // Discard live queries started with the old filters while the source page was loading.
+      this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;
+    // Discard live queries started with the old filters while the source page was loading.
       revision = ++this.queryRevision;
       const filtered = this.filterCount > 0 || this.searchText.length > 0;
       if(this.searchOperation){void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.searchOperation='';this.searchingTraffic=false;}
@@ -1217,11 +1240,11 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   @observable saveTraceFormat='native';
   changeSaveTraceFormat(event:Event):void {this.saveTraceFormat=(event.target as HTMLSelectElement).value;}
-  showSaveTrace():void {this.closePopover(this.filesMenu,this.filesMenuButton);if(!this.savingTrace)this.saveTraceStatus='';this.saveTraceOpen=true;this.saveTraceDialog.showModal();}
+  showSaveTrace():void {this.closePopover(this.filesMenu,this.filesMenuButton);if(!this.savingTrace){this.saveTraceStatus='';this.exportReviewScope='all';void this.reviewTraceExport();}this.saveTraceOpen=true;this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
-  saveTraceClosed():void {this.saveTraceOpen=false;this.filesMenuButton.focus({preventScroll:true});}
+  saveTraceClosed():void {this.saveTraceOpen=false;if(!this.savingTrace){this.exportReviewRevision++;this.exportReviewBusy=false;this.exportReviewId="";this.exportReviewFacts=[];this.exportReviewNote="";this.exportReviewSummary="";}this.filesMenuButton.focus({preventScroll:true});}
   async saveTrafficTrace(event:Event):Promise<void> {
-    event.preventDefault();if(this.savingTrace)return;
+    event.preventDefault();if(this.savingTrace||this.exportReviewBusy||!this.exportReviewId)return;
     const data=new FormData(this.saveTraceForm);
     this.savingTrace=true;this.saveTraceCompleted=0;this.saveTraceTotal=0;
     this.saveTraceStatus='Choose a destination, then the trace will be saved…';
@@ -1236,11 +1259,11 @@ export class TrafficWorkspace extends WorkspaceElement {
       const phase=progress.phase==='writing'?'Writing trace':progress.phase==='converting'?'Creating SAZ archive':progress.phase==='finalizing'?'Finalizing trace':'Preparing trace';
       this.saveTraceStatus=phase+(progress.total?` · ${progress.completed.toLocaleString()} of ${progress.total.toLocaleString()} entries…`:'…');
       };
-      const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number;placeholderEntries:number;connectionEntries:number}|null>('save_traffic_trace',{options:{format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},onProgress});
+      const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number;placeholderEntries:number;connectionEntries:number;omittedIncidentMarkers?:number}|null>('save_traffic_trace',{options:{reviewId:this.exportReviewId,includeOriginalContext:data.get('originalContext')==='on',format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},onProgress});
       if(!this.isConnected)return;
       if(result){
         this.saveTraceDialog.close();
-        this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.connectionEntries?' · '+result.connectionEntries.toLocaleString()+' generated connection '+(result.connectionEntries===1?'summary':'summaries'):'')+(result.placeholderEntries?' · '+result.placeholderEntries.toLocaleString()+' entries use labeled placeholders for uncaptured headers.':'')+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);
+        this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.omittedIncidentMarkers?' · '+result.omittedIncidentMarkers+' incident markers omitted by format/context choices.':'')+(result.connectionEntries?' · '+result.connectionEntries.toLocaleString()+' generated connection '+(result.connectionEntries===1?'summary':'summaries'):'')+(result.placeholderEntries?' · '+result.placeholderEntries.toLocaleString()+' entries use labeled placeholders for uncaptured headers.':'')+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);
       }else this.saveTraceStatus='Save canceled.';
     }
     catch(error:unknown){if(onProgress)onProgress.onmessage=()=>{};this.savingTrace=false;if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);await this.showError('Trace save failed',describeError(error));}}

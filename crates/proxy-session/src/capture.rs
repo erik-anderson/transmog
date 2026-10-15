@@ -95,12 +95,22 @@ pub enum CaptureServiceError {
 #[derive(Debug)]
 enum Command {
     Start(CaptureStart, mpsc::Sender<Result<(), CaptureServiceError>>),
+    Mark {
+        note: String,
+        origin: transmog_capture::support::MarkerOrigin,
+        at: Instant,
+        unix_millis: u64,
+        reply: mpsc::Sender<Result<transmog_capture::support::IncidentMarker, CaptureServiceError>>,
+    },
     Record(ObserverEvent, Option<tokio::sync::OwnedSemaphorePermit>),
     Stop(mpsc::Sender<Result<SealedCapture, CaptureServiceError>>),
     Shutdown(mpsc::Sender<()>),
 }
 
 struct ActiveCapture {
+    run_id: String,
+    began: Instant,
+    markers: usize,
     path: PathBuf,
     writer: CaptureWriter<File>,
     policy: CapturePolicy,
@@ -197,6 +207,48 @@ impl CaptureManager {
             sender
                 .send(Command::Start(request, reply))
                 .map_err(|_| CaptureServiceError::WorkerUnavailable)?;
+            response
+                .recv()
+                .map_err(|_| CaptureServiceError::WorkerUnavailable)?
+        })
+        .await
+    }
+
+    /// Records a user incident through the bounded writer queue, then checkpoints it.
+    /// # Errors
+    /// Returns invalid input, marker/queue bounds, inactive/sealed state or writer failure.
+    pub async fn mark(
+        &self,
+        note: String,
+        origin: transmog_capture::support::MarkerOrigin,
+    ) -> Result<transmog_capture::support::IncidentMarker, CaptureServiceError> {
+        transmog_capture::support::text(
+            "Incident note",
+            &note,
+            transmog_capture::support::MAX_NOTE_BYTES,
+            false,
+        )
+        .map_err(|e| CaptureServiceError::Writer(e.to_string()))?;
+        if !matches!(self.status(), CaptureStatus::Active { .. }) {
+            return Err(CaptureServiceError::NotActive);
+        }
+        let sender = self.inner.sender.clone();
+        let at = Instant::now();
+        let unix_millis = transmog_capture::support::unix_millis();
+        run_command(move || {
+            let (reply, response) = mpsc::channel();
+            sender
+                .try_send(Command::Mark {
+                    note,
+                    origin,
+                    at,
+                    unix_millis,
+                    reply,
+                })
+                .map_err(|e| match e {
+                    mpsc::TrySendError::Full(_) => CaptureServiceError::QueueSaturated,
+                    mpsc::TrySendError::Disconnected(_) => CaptureServiceError::WorkerUnavailable,
+                })?;
             response
                 .recv()
                 .map_err(|_| CaptureServiceError::WorkerUnavailable)?
@@ -344,6 +396,25 @@ fn capture_worker(receiver: &mpsc::Receiver<Command>, status: &Mutex<CaptureStat
                     );
                 }
             }
+            Command::Mark {
+                note,
+                origin,
+                at,
+                unix_millis,
+                reply,
+            } => {
+                let result = if matches!(current_status(status), CaptureStatus::Active { .. }) {
+                    active
+                        .as_mut()
+                        .ok_or(CaptureServiceError::NotActive)
+                        .and_then(|capture| {
+                            mark_capture(capture, note, origin, at, unix_millis, status)
+                        })
+                } else {
+                    Err(CaptureServiceError::NotActive)
+                };
+                let _ = reply.send(result);
+            }
             Command::Stop(reply) => {
                 let result = stop_capture(&mut active, status);
                 let _ = reply.send(result);
@@ -363,13 +434,23 @@ fn capture_worker(receiver: &mpsc::Receiver<Command>, status: &Mutex<CaptureStat
 fn start_capture(
     active: &mut Option<ActiveCapture>,
     status: &Mutex<CaptureStatus>,
-    request: CaptureStart,
+    mut request: CaptureStart,
 ) -> Result<(), CaptureServiceError> {
     if active.is_some() {
         return Err(CaptureServiceError::AlreadyActive);
     }
     if matches!(current_status(status), CaptureStatus::Shutdown) {
         return Err(CaptureServiceError::WorkerUnavailable);
+    }
+    let run_id = transmog_capture::support::new_id()
+        .map_err(|e| CaptureServiceError::Writer(e.to_string()))?;
+    if let Some(metadata) = request.metadata.as_mut() {
+        if !metadata.is_object() {
+            return Err(CaptureServiceError::Writer(
+                "Capture context must be an object".into(),
+            ));
+        }
+        metadata["captureRunId"] = run_id.clone().into();
     }
     if request.metadata.as_ref().is_some_and(|value| {
         serde_json::to_vec(value).map_or(true, |bytes| bytes.len() > 4 * 1024 * 1024)
@@ -404,6 +485,9 @@ fn start_capture(
         },
     );
     *active = Some(ActiveCapture {
+        run_id,
+        began: Instant::now(),
+        markers: 0,
         path: request.path,
         writer,
         policy: request.policy,
@@ -412,6 +496,52 @@ fn start_capture(
         open_websockets: HashMap::new(),
     });
     Ok(())
+}
+
+fn mark_capture(
+    capture: &mut ActiveCapture,
+    note: String,
+    origin: transmog_capture::support::MarkerOrigin,
+    at: Instant,
+    unix_millis: u64,
+    status: &Mutex<CaptureStatus>,
+) -> Result<transmog_capture::support::IncidentMarker, CaptureServiceError> {
+    if capture.markers >= transmog_capture::support::MAX_MARKERS {
+        return Err(CaptureServiceError::Writer(
+            "Incident marker limit reached (256); no marker was written".into(),
+        ));
+    }
+    let mut marker = transmog_capture::support::IncidentMarker::new(
+        capture.run_id.clone(),
+        Some(
+            u64::try_from(at.saturating_duration_since(capture.began).as_millis())
+                .unwrap_or(u64::MAX),
+        ),
+        origin,
+        note,
+    )
+    .map_err(|e| CaptureServiceError::Writer(e.to_string()))?;
+    marker.unix_millis = unix_millis;
+    let record = marker
+        .record()
+        .map_err(|e| CaptureServiceError::Writer(e.to_string()))?;
+    if let Err(e) = capture
+        .writer
+        .append(&record)
+        .and_then(|()| capture.writer.checkpoint())
+    {
+        set_failure(status, e.to_string());
+        return Err(CaptureServiceError::Writer(e.to_string()));
+    }
+    capture.markers += 1;
+    set_status(
+        status,
+        CaptureStatus::Active {
+            path: capture.path.clone(),
+            bytes_written: capture.writer.bytes_written(),
+        },
+    );
+    Ok(marker)
 }
 
 fn prepare_writer(
@@ -589,6 +719,134 @@ mod tests {
 
     use super::*;
 
+    #[tokio::test]
+    async fn incident_ack_survives_checkpoint_and_stop_never_writes_after_seal() {
+        let path = temp_path();
+        let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
+        manager
+            .start(CaptureStart {
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                path: path.clone(),
+                limits: CaptureLimits::default(),
+                policy: CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        let marker = manager
+            .mark(
+                "Issue happened before any request".into(),
+                transmog_capture::support::MarkerOrigin::Cli,
+            )
+            .await
+            .unwrap();
+        let recovered = recover(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
+        assert!(!recovered.sealed);
+        assert!(recovered.records.iter().any(|r|matches!(&r.kind,CaptureRecordKind::Unknown{kind,payload} if kind==transmog_capture::support::MARKER_KIND&&payload["id"]==marker.id)));
+        let marking = {
+            let manager = manager.clone();
+            tokio::spawn(async move {
+                manager
+                    .mark(
+                        "racing stop".into(),
+                        transmog_capture::support::MarkerOrigin::Desktop,
+                    )
+                    .await
+            })
+        };
+        manager.stop().await.unwrap();
+        let result = marking.await.unwrap();
+        let before = std::fs::read(&path).unwrap();
+        assert!(
+            manager
+                .mark(
+                    "too late".into(),
+                    transmog_capture::support::MarkerOrigin::Cli
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(before, std::fs::read(&path).unwrap());
+        let recovered = recover(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
+        assert!(recovered.sealed);
+        if let Ok(marker) = result {
+            assert!(recovered.records.iter().any(|r|matches!(&r.kind,CaptureRecordKind::Unknown{payload,..}if payload["id"]==marker.id)));
+        }
+        manager.shutdown().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn marker_bound_refuses_without_poisoning_and_keeps_marker_only_capture() {
+        let path = temp_path();
+        let manager = CaptureManager::new(NonZeroUsize::new(8).unwrap()).unwrap();
+        manager
+            .start(CaptureStart {
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                path: path.clone(),
+                limits: CaptureLimits::default(),
+                policy: CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        for _ in 0..transmog_capture::support::MAX_MARKERS {
+            manager
+                .mark(
+                    String::new(),
+                    transmog_capture::support::MarkerOrigin::Desktop,
+                )
+                .await
+                .unwrap();
+        }
+        assert!(
+            manager
+                .mark(
+                    "overflow".into(),
+                    transmog_capture::support::MarkerOrigin::Desktop
+                )
+                .await
+                .is_err()
+        );
+        assert!(matches!(manager.status(), CaptureStatus::Active { .. }));
+        manager.stop().await.unwrap();
+        let recovered = recover(File::open(&path).unwrap(), CaptureLimits::default()).unwrap();
+        assert!(recovered.sealed);
+        assert_eq!(recovered.records.iter().filter(|r| matches!(&r.kind, CaptureRecordKind::Unknown {kind,..} if kind == transmog_capture::support::MARKER_KIND)).count(), 256);
+        manager.shutdown().await;
+        let _ = std::fs::remove_file(path);
+    }
+
+    #[tokio::test]
+    async fn saturated_marker_queue_refuses_without_changing_status() {
+        let (sender, receiver) = mpsc::sync_channel(1);
+        let (reply, _) = mpsc::channel();
+        sender.send(Command::Shutdown(reply)).unwrap();
+        let status = CaptureStatus::Active {
+            path: temp_path(),
+            bytes_written: 0,
+        };
+        let manager = CaptureManager {
+            inner: Arc::new(CaptureInner {
+                sender,
+                byte_budget: Arc::new(tokio::sync::Semaphore::new(1)),
+                status: Arc::new(Mutex::new(status.clone())),
+                worker: Mutex::new(None),
+            }),
+        };
+        assert_eq!(
+            manager
+                .mark(
+                    "bounded".into(),
+                    transmog_capture::support::MarkerOrigin::Cli
+                )
+                .await,
+            Err(CaptureServiceError::QueueSaturated)
+        );
+        assert_eq!(manager.status(), status);
+        drop(receiver);
+    }
+
     static NEXT_FILE: AtomicU64 = AtomicU64::new(1);
 
     #[test]
@@ -600,6 +858,9 @@ mod tests {
         };
         let path = temp_path();
         let mut capture = ActiveCapture {
+            run_id: transmog_capture::support::new_id().unwrap(),
+            began: Instant::now(),
+            markers: 0,
             path: path.clone(),
             writer: CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default())
                 .unwrap(),
@@ -700,6 +961,9 @@ mod tests {
         let path = temp_path();
         let file = File::create(&path).unwrap();
         let mut capture = ActiveCapture {
+            run_id: transmog_capture::support::new_id().unwrap(),
+            began: Instant::now(),
+            markers: 0,
             path: path.clone(),
             writer: CaptureWriter::new(file, CaptureLimits::default()).unwrap(),
             policy: CapturePolicy::default(),

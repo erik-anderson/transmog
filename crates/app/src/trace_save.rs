@@ -13,9 +13,15 @@ use transmog_core::{HeaderBlock, observe::ExchangeBoundary};
 use transmog_session::{SessionSnapshot, SessionTerminal};
 
 /// Explicit save choices; collection is always opt-in.
-#[derive(Clone, Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TraceSaveOptions {
+    /// Optional frozen selection from explicit export review. Omitted saves all retained traffic.
+    #[serde(default)]
+    pub review_id: Option<String>,
+    /// Keep original source notes, incident markers and optional capture context in this copy.
+    #[serde(default = "include_context")]
+    pub include_original_context: bool,
     /// Native trace, SAZ archive, or standard HTTP Archive.
     #[serde(default)]
     pub format: TraceSaveFormat,
@@ -28,6 +34,21 @@ pub struct TraceSaveOptions {
     /// Collect network configuration from this computer when saving.
     #[serde(default)]
     pub include_network_context: bool,
+}
+fn include_context() -> bool {
+    true
+}
+impl Default for TraceSaveOptions {
+    fn default() -> Self {
+        Self {
+            review_id: None,
+            include_original_context: true,
+            format: TraceSaveFormat::default(),
+            password: None,
+            redact_sensitive_headers: false,
+            include_network_context: false,
+        }
+    }
 }
 /// Formats offered by Save trace. `NetLog` is import-only.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq)]
@@ -59,6 +80,8 @@ pub struct TraceSaveResult {
     pub placeholder_entries: usize,
     /// Additional generated CONNECT rows describing recorded connection evidence.
     pub connection_entries: usize,
+    /// Incident markers omitted by the selected privacy/format projection.
+    pub omitted_incident_markers: usize,
 }
 
 /// Observable save work; zero total denotes an indeterminate phase.
@@ -120,24 +143,61 @@ pub(crate) async fn save(
             &application,
             destination,
             network.as_ref(),
-            options.redact_sensitive_headers,
-            options.password,
-            options.format,
+            options,
             progress.as_ref(),
         )
     })
     .await
     .map_err(|_| error("Trace save worker failed"))?
 }
+#[allow(clippy::too_many_lines)] // Keep each bounded review/save transaction auditable together.
 fn write(
     application: &Application,
     destination: PathBuf,
     network: Option<&transmog_network::context::NetworkContext>,
-    redact: bool,
-    password: Option<transmog_capture::CapturePassword>,
-    format: TraceSaveFormat,
+    options: TraceSaveOptions,
     progress: &Progress,
 ) -> Result<TraceSaveResult, AppError> {
+    // Exports are copies. Native overwrite consent must never replace loaded evidence.
+    if let Ok(target) = std::fs::canonicalize(&destination)
+        && application
+            .traces
+            .list()
+            .iter()
+            .any(|source| std::fs::canonicalize(&source.path).is_ok_and(|path| path == target))
+    {
+        return Err(error(
+            "Choose a new filename; an imported original cannot be overwritten",
+        ));
+    }
+    let review = application.export_scope(options.review_id.as_deref())?;
+    let redact = options.redact_sensitive_headers;
+    let password = options.password;
+    let format = options.format;
+    let original_sources = application
+        .traces
+        .list()
+        .into_iter()
+        .filter(|s| review.as_ref().is_none_or(|r| r.sources.contains(&s.id)))
+        .collect::<Vec<_>>();
+    let marker_count = original_sources
+        .iter()
+        .map(|s| {
+            s.context
+                .get("incidentMarkers")
+                .and_then(serde_json::Value::as_array)
+                .map_or(0, Vec::len)
+        })
+        .sum::<usize>();
+    let omitted_markers = if options.include_original_context
+        && matches!(
+            format,
+            TraceSaveFormat::Native | TraceSaveFormat::SazExtended
+        ) {
+        0
+    } else {
+        marker_count
+    };
     if !destination.is_absolute() || destination.file_name().is_none() {
         return Err(error("Choose an absolute trace destination"));
     }
@@ -147,7 +207,15 @@ fn write(
                 "HAR has no encryption or network-configuration option; choose TMCap for those options",
             ));
         }
-        return crate::trace_har::write(application, destination, redact, progress);
+        let mut result = crate::trace_har::write(
+            application,
+            destination,
+            redact,
+            progress,
+            review.as_deref().map(|r| &r.ids),
+        )?;
+        result.omitted_incident_markers = omitted_markers;
+        return Ok(result);
     }
     let store = application
         .body_store
@@ -156,13 +224,30 @@ fn write(
     store
         .flush()
         .map_err(|_| error("Body metadata is temporarily unavailable"))?;
-    let sessions = application.service.catalog().project_retained(|session| {
-        let mut snapshot = session.clone();
-        for body in &mut snapshot.bodies {
-            body.retained_prefix = bytes::Bytes::new();
-        }
-        snapshot
-    });
+    let sessions = application
+        .service
+        .catalog()
+        .project_retained(|session| {
+            if review
+                .as_ref()
+                .is_some_and(|r| !r.ids.contains(&format!("{:032x}", session.exchange_id.0)))
+            {
+                return None;
+            }
+            let mut snapshot = session.clone();
+            for body in &mut snapshot.bodies {
+                body.retained_prefix = bytes::Bytes::new();
+            }
+            Some(snapshot)
+        })
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>();
+    if review.as_ref().is_some_and(|review| {
+        sessions.len() != review.ids.len() || original_sources.len() != review.sources.len()
+    }) {
+        return Err(error("Export evidence changed; review the selection again"));
+    }
     let parent = destination
         .parent()
         .ok_or_else(|| error("Choose a trace destination"))?;
@@ -186,6 +271,8 @@ fn write(
             password: password.clone(),
         },
         progress,
+        options.include_original_context,
+        &original_sources,
     )?;
     let (placeholder_entries, connection_entries) = if let Some(native) = native {
         write_saz(native, temporary.as_file_mut(), format, password, progress)?
@@ -216,6 +303,7 @@ fn write(
         incomplete_bodies: incomplete,
         placeholder_entries,
         connection_entries,
+        omitted_incident_markers: omitted_markers,
     })
 }
 fn write_saz(
@@ -261,6 +349,7 @@ fn write_saz(
     }))
 }
 
+#[allow(clippy::too_many_arguments)] // One streaming writer applies explicit export projections.
 fn write_records(
     output: &mut std::fs::File,
     application: &Application,
@@ -269,6 +358,8 @@ fn write_records(
     redact: bool,
     encoding: &transmog_capture::CaptureEncoding,
     progress: &Progress,
+    include_original_context: bool,
+    original_sources: &[crate::traces::TraceMetadataView],
 ) -> Result<usize, AppError> {
     let store = application
         .body_store
@@ -290,24 +381,16 @@ fn write_records(
         0,
         CaptureRecordKind::Unknown {
             kind: "trace-metadata".into(),
-            payload: serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"),"savedAt":millis(SystemTime::now()),"networkContext":network,"sensitiveHeadersRedacted":redact}),
+            payload: serde_json::json!({"application":"Transmog", "version":env!("CARGO_PKG_VERSION"),"savedAt":millis(SystemTime::now()),"networkContext":network,"sensitiveHeadersRedacted":redact,"exportSelection":{"entries":sessions.len(),"originalContextIncluded":include_original_context}}),
         },
     )?;
-    let source_ids = sessions
-        .iter()
-        .filter_map(|session| {
-            application
-                .traces
-                .entry(&format!("{:032x}", session.exchange_id.0))
-                .map(|entry| entry.trace_id)
-        })
-        .collect::<std::collections::HashSet<_>>();
-    for source in application
-        .traces
-        .list()
-        .into_iter()
-        .filter(|source| source_ids.contains(&source.id))
-    {
+    for original in original_sources {
+        let mut source = original.clone();
+        if !include_original_context {
+            source.context = serde_json::Value::Null;
+            source.path = std::path::PathBuf::new();
+            source.notes=vec!["Original notes, profile/incident and optional context omitted from this exported copy.".into()];
+        }
         append(
             &mut writer,
             0,

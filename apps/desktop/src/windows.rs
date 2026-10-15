@@ -4,6 +4,8 @@
 mod captured_preview;
 #[path = "comparison.rs"]
 mod comparison;
+#[path = "incidents.rs"]
+mod incidents;
 #[path = "window_workspaces.rs"]
 mod workspaces;
 
@@ -2065,6 +2067,9 @@ pub fn run() {
                 captured_preview::open_captured_page,
                 captured_preview::captured_page_report,
                 captured_preview::cancel_captured_page,
+                incidents::incident_intake,
+                incidents::review_traffic_export,
+                incidents::mark_incident,
                 comparison::compare_evidence,
                 comparison::close_comparison,
                 comparison::cancel_comparison,

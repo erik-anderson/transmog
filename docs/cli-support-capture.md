@@ -252,3 +252,17 @@ For [inspection and validation](cli.md#inspect-validate-and-recover-a-native-cap
 or [SAZ and JSONL export](cli.md#export-records-or-a-saz-archive), follow the CLI
 guide. A sealed capture can still contain evictions or incomplete bodies;
 validation checks file integrity rather than completeness of captured traffic.
+
+## Guided profiles and issue markers
+
+A support contact can provide a bounded [support capture profile](support-capture-profiles.md).
+Validate it with `profile validate --input issue.json`, then use
+`record --profile issue.json --output customer.tmcap`. Preflight identifies resolved
+privacy/body settings and their origins. Profile-only choices do not overwrite
+your CLI preferences. Relevant hosts are advisory; other traffic can be recorded.
+
+During interactive recording, type `m` then Enter when the issue happens, or
+`m short note`. Marking is disabled for redirected input. Ctrl+C behavior and
+owned certificate/routing cleanup remain unchanged. Optional `--duration SECONDS`
+uses the normal drain/second-interrupt path. Import the file to review incident
+markers and collection gaps, then review the selected evidence before sharing.

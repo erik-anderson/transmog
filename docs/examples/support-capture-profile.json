@@ -1,0 +1,19 @@
+{
+  "schemaVersion": 1,
+  "id": "checkout-issue",
+  "revision": 1,
+  "title": "Investigate checkout failure",
+  "supportReference": "SUPPORT-123",
+  "instructions": "Sign in with your test account and reproduce the reported failure.",
+  "steps": ["Open the website", "Add a test item", "Submit checkout and mark the issue"],
+  "relevantHosts": [{"host": "example.test", "includeSubdomains": true}],
+  "recording": {
+    "redactSensitiveHeaders": true,
+    "requestBodyLimit": {"kind": "limited", "bytes": 25000000},
+    "includeNetworkContext": false,
+    "encryption": "recommended"
+  },
+  "incidentPrompts": ["What did you expect?", "What happened instead?"],
+  "expectedApplication": "The browser/application reported to support",
+  "suggestPersistentRoot": false
+}

@@ -8,6 +8,8 @@ mod passwords;
 mod root_lifecycle;
 mod roots;
 mod support;
+mod support_profile;
+mod support_recording;
 
 use std::{
     collections::HashSet,
@@ -78,6 +80,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     match arguments.first().map(String::as_str) {
+        Some("profile") => support_profile::command(&arguments[1..]),
         Some("record") => support::record(&arguments[1..]).await,
         Some("roots") => support::cleanup_roots(&arguments[1..]),
         Some("--version" | "-V") => {

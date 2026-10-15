@@ -26,6 +26,7 @@ struct State {
     retention: CaptureBodyRetention,
     sequences: HashMap<u128, u64>,
     failure: Option<String>,
+    published: bool,
 }
 impl CircularObserver {
     pub(crate) fn new(
@@ -80,6 +81,7 @@ impl CircularObserver {
                 retention: CaptureBodyRetention::default(),
                 sequences: HashMap::new(),
                 failure: None,
+                published: false,
             })),
             policy,
             redact,
@@ -102,6 +104,38 @@ impl CircularObserver {
                     payload: metadata,
                 },
             })
+    }
+    pub(crate) async fn mark(
+        &self,
+        marker: &transmog_capture::support::IncidentMarker,
+    ) -> io::Result<()> {
+        let record = marker.record()?;
+        let state = self.state.clone();
+        tokio::task::spawn_blocking(move || {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if let Err(error) = state.ring.append(&record) {
+                state.failure = Some(error.to_string());
+                return Err(io::Error::other(error));
+            }
+            Ok(())
+        })
+        .await
+        .map_err(io::Error::other)?
+    }
+    pub(crate) fn published(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .published
+    }
+    pub(crate) fn evicted(&self) -> u64 {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .ring
+            .evicted_exchanges()
     }
     pub(crate) fn config(&self) -> ObserverConfig {
         ObserverConfig {
@@ -133,6 +167,7 @@ impl CircularObserver {
         match result {
             Ok(bytes) => match output.publish() {
                 Ok(()) => {
+                    state.published = true;
                     println!(
                         "Circular trace saved: {bytes} bytes; {} older exchanges evicted.",
                         state.ring.evicted_exchanges()

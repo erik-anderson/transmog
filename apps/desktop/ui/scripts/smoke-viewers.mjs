@@ -1,3 +1,4 @@
+import {smokeIncidentRecording,smokeIncidentIntake} from './smoke-incidents.mjs';
 import {smokeComparison,smokePreviewComparison} from './smoke-comparison.mjs';
 import assert from 'node:assert/strict';
 import {smokePreviewRules} from './smoke-preview-rules.mjs';
@@ -84,6 +85,7 @@ try{
   const main=await connect(mainTarget);
   await waitFor(()=>main.evaluate(`${root} && !${root}.viewerMode && ${traffic}?.queryLoaded`),'Main window did not initialize');
   assert.equal(await main.evaluate(`${traffic}.sessions.length`),0,'Viewer imported into the main catalog');
+  await smokeIncidentRecording(main,viewer,traffic,join(dirname(source),'desktop-marker.tmcap'),screenshot);
   await smokeComparison(viewer,main,traffic,screenshot);
   process.stdout.write('Main window opened with an independent catalog.\n');
   const child=spawn(executable,[source],{windowsHide:true,stdio:'ignore'});
@@ -107,10 +109,11 @@ try{
   // geometry together; it uses only deterministic, nonsensitive fixture data.
   const timingSource=join(dirname(source),'timing-fixture.tmcap');
   const perf={points:[{milestone:'request-headers',unixMillis:1800000000000,offsetMicros:0},{milestone:'exchange-done',unixMillis:1800000000004,offsetMicros:4000}],protocols:[],transports:[{leg:'upstream',connectionId:'native-tcp-stats',shared:true,outcome:'connected',sampledOffsetMicros:3500,bytesRead:8192,bytesWritten:4096,tcpSampledOffsetMicros:3000,tcp:{rttMicros:2400,congestionWindow:65536,sendWindow:32768,retransmittedBytes:2048},socketIo:{writeWaitMicros:1750,writeWaits:2,lastWriteOffsetMicros:2800,lastFlushOffsetMicros:2900}}],work:[{kind:'hook',label:'Request headers · native support script',beganOffsetMicros:0,endedOffsetMicros:1000,busyNanos:1000000,calls:1},{kind:'transform',label:'Response body · native support script',beganOffsetMicros:1200,endedOffsetMicros:3500,busyNanos:500000,calls:3}]};
-  const fixture=[{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/native-waterfall',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'performance',payload:perf},{kind:'completed',payload:null}];
+  const fixture=[{kind:'incident-marker',exchange_id:0,sequence:0,payload:{version:1,id:'1'.repeat(32),runId:'2'.repeat(32),unixMillis:1800000000000,offsetMillis:1,origin:'cli',creationKind:'user-mark',note:'Native issue <img src=x>'}},{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://example.invalid/native-waterfall',headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[]}},{kind:'body-segment',payload:{boundary:'client-response',byte_count:0,bytes:[],truncated:false}},{kind:'performance',payload:perf},{kind:'completed',payload:null}];
   await writeFile(timingSource,nativeFixture(fixture,99));
   await viewer.evaluate(`void ${traffic}.importTrace(${JSON.stringify(timingSource)})`);
   await waitFor(async()=>{const state=await viewer.evaluate(`({busy:${traffic}.importingTrace,found:${traffic}.sessions.some(row=>row.path==='/native-waterfall'),status:${traffic}.importStatus})`);if(!state.busy){assert.ok(state.found,'Native timing fixture import failed: '+state.status);return true;}return false;},'Native timing fixture did not import');
+  await smokeIncidentIntake(viewer,traffic,await viewer.evaluate(`${traffic}.sessions.find(row=>row.path==='/native-waterfall').traceId`),screenshot);
   const timingId=await viewer.evaluate(`(async()=>{const workspace=${traffic};const row=workspace.sessions.find(row=>row.path==='/native-waterfall');await workspace.selectTraffic(row,new MouseEvent('click'));return row.id;})()`);
   await viewer.evaluate(`${traffic}.showTimings()`);
   await waitFor(()=>viewer.evaluate(`!${traffic}.timingBusy && ${traffic}.timingWaterfall.length+${traffic}.timingMinor.length>=3`),'Native timing waterfall was not restored');

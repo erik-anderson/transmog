@@ -229,3 +229,12 @@ remain independent. Eviction, clearing and leases cannot invalidate the other
 boundary's shared bytes. Disk-cache policy is unchanged. Imported TMCap bodies
 remain file references and are decoded only for an active read; they are not
 loaded into the live memory cache during import.
+
+## Support incident extensions
+
+The artifact-level `incident-marker` extension uses sequence/exchange ID zero and
+a bounded versioned payload, with independent marker/run identity, UTC/monotonic
+time, origin, creation kind and plain note. It shares serialized writer/checkpoint
+ordering, compression and encryption. Circular metadata is retained independently
+of evicted HTTP exchanges. Native import/save/merge preserves original marker
+identities inside source context. See [the incident contract](support-capture-profiles.md#recording-and-incident-durability).

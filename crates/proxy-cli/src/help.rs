@@ -9,8 +9,10 @@ pub(crate) fn requested(arguments: &[String]) -> io::Result<Option<&'static str>
     if matches!(arguments[0].as_str(), "help" | "--help" | "-h") {
         return topic(&arguments[1..]).map(Some);
     }
-    let depth = if matches!(arguments[0].as_str(), "ca" | "capture" | "roots")
-        && arguments.get(1).is_some_and(|arg| !arg.starts_with('-'))
+    let depth = if matches!(
+        arguments[0].as_str(),
+        "ca" | "capture" | "roots" | "profile"
+    ) && arguments.get(1).is_some_and(|arg| !arg.starts_with('-'))
     {
         2
     } else {
@@ -29,7 +31,12 @@ pub(crate) fn requested(arguments: &[String]) -> io::Result<Option<&'static str>
 fn takes_value(argument: &str) -> bool {
     matches!(
         argument,
-        "--output"
+        "--profile"
+            | "--duration"
+            | "--client-version"
+            | "--expected"
+            | "--actual"
+            | "--output"
             | "--listen"
             | "--route"
             | "--upstream-ca-cert"
@@ -56,6 +63,7 @@ fn topic(path: &[String]) -> io::Result<&'static str> {
     match path.as_slice() {
         [] => Ok(ROOT),
         ["record"] => Ok(RECORD),
+        ["profile"] | ["profile", "validate"] => Ok(PROFILE),
         ["serve"] => Ok(SERVE),
         ["roots"] | ["roots", "cleanup"] => Ok(ROOTS),
         ["ca"] => Ok(CA),
@@ -79,6 +87,7 @@ const ROOT: &str = "transmog-cli — traffic capture and explicit proxy tools
 Usage: transmog-cli COMMAND [OPTIONS]
 
 Commands:
+  profile validate  Validate an inert support capture profile (no setup or recording)
   record            Guided support recording; Ctrl+C stops and saves a TMCap trace
   roots cleanup     Restore interrupted Windows proxy settings and remove CLI roots
   serve             Run a proxy with an existing CA; host settings are configured manually
@@ -103,6 +112,11 @@ const RECORD: &str = "Record a support trace
 
 Usage: transmog-cli record [OPTIONS]
 
+  --profile FILE             Version 1 support capture profile; host hints do not filter traffic
+  --duration SECONDS         Stop through normal drain after 1–86400 seconds
+  --client-version TEXT      User-entered application/browser version context
+  --expected TEXT            Expected website behavior (plain-text context)
+  --actual TEXT              Actual website behavior (plain-text context)
   --output FILE              New .tmcap path (default: Transmog-<timestamp>.tmcap in the current directory)
   --listen IP:PORT           Listener (default: 127.0.0.1:0; port 0 chooses a free port)
   --allow-remote             Permit non-loopback listening and remote clients
@@ -135,8 +149,19 @@ Windows configures and restores the host proxy automatically unless --no-system-
 Other platforms require manual HTTP/HTTPS proxy configuration. Remote Windows listeners also
 require --no-system-proxy. Apps may have separate certificate stores or certificate pinning.
 Ctrl+C once restores routing and drains active requests. Ctrl+C again stops unfinished work.
+In an interactive console, m then Enter records an issue marker; m NOTE adds a short note.
+Profile-only settings apply to this run and do not overwrite your preferences.
 
 Example: transmog-cli record --output support.tmcap --redact --encrypt";
+
+const PROFILE:&str="Validate a support capture profile
+
+Usage: transmog-cli profile validate --input FILE [--format text|json]
+
+Reads at most 64 KiB of strict version 1 JSON. Validates bounded fields and relevant hostnames.
+Validation never installs roots, configures routing, writes output or loads credentials.
+Unknown fields/versions are rejected. The JSON result has schemaVersion, valid, profileId, revision and digest.
+Use record --profile FILE --output FILE to collect; profile hostnames are advisory, not retention filters.";
 
 const SERVE: &str = "Run an explicit proxy
 

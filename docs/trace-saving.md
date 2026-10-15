@@ -11,10 +11,10 @@ native and extended-SAZ files remain readable without these optional fields.
 HAR and conventional third-party SAZ consumers may discard these extensions;
 workspace numbers alone are never portable source references.
 
-Use **Traffic → Files → Save trace…** in the main window or a Capture viewer. It saves
-all retained entries across the list and search results; removed entries are excluded.
+Use **Traffic → Files → Save trace…** in the main window or a Capture viewer. Review all retained entries, selected requests, the current filters/incident window,
+or an original source; removed entries are excluded.
 Undo a removal before saving if those entries should be included. The file dialog
-confirms overwriting, and an existing destination is replaced only after a complete
+confirms overwriting other exports; imported originals require a new filename. An existing destination is replaced only after a complete
 successful write. Failed reads or writes leave that destination intact. A progress
 bar reports writing and SAZ conversion by entry, with indeterminate progress while
 preparing or finalizing. Close the dialog to keep working; Traffic continues to
@@ -36,7 +36,7 @@ evidence. SAZ supports optional encryption and network context; ZIP member names
 remain visible. Both SAZ profiles include retained WebSocket messages for Fiddler,
 with reconstructed frames and normalized HTTP/2 handshakes. TMCap preserves full
 stream lifecycle and parsed SSE events; HAR omits stream activity.
-SAZ includes every exchange. Missing request or response heads
+SAZ includes each selected exchange. Missing request or response heads
 use clearly labeled compatibility placeholders: Fiddler can show the explanation
 in session comments and message headers; an uncaptured response uses a labeled 599
 status, or 502 for a recorded DNS, TCP or TLS setup failure, and, when
@@ -108,3 +108,18 @@ Comparison bodies, pairing decisions and exclusions are bounded transient window
 state. Saving a trace does not currently persist them or duplicate payloads in a
 comparison-result JSON file. Portable cases and public CLI comparison belong to
 their separate API/artifact work. See [Traffic comparison](traffic-inspection.md#comparing-captured-evidence).
+
+## Incident intake and reviewed evidence export
+
+Native source metadata retains support profile revisions, independent incident
+markers and original source clocks. **View current imports…** offers incident
+intake and source-specific adjustable time navigation. A marker is never an HTTP
+exchange or a request-order value. Circular gaps and recovered/unsealed sources
+remain explicit. See [support profiles and incident intake](support-capture-profiles.md).
+
+**Save trace…** inventories and freezes all, selected, filtered or source membership
+before saving, including offscreen entries. The original-context choice can omit
+capture context, markers, source notes and source paths from the copy. HTTP/stream
+content is controlled separately by whole-entry selection and sensitive-header
+projection. TMCap/extended SAZ preserve source incident context; HAR/compatibility
+SAZ report incident-marker omissions. Review is not complete anonymization.

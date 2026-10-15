@@ -256,3 +256,10 @@ and a `transmog-cli:` message on stderr. In PowerShell, check `$LASTEXITCODE`
 after invoking the binary. Choose explicit new output paths, provide password
 files for encrypted operations, and choose a root-installation option for
 unattended `record` runs. OS consent or `sudo` may still need interaction.
+
+## Support profiles
+
+`profile validate --input FILE [--format text|json]` validates a versioned support
+capture profile without setup or writes. `record --profile FILE` applies its
+run-scoped suggestions; explicit CLI flags win. Interactive `m` / `m NOTE` records
+incident markers. See [the support profile contract](support-capture-profiles.md).

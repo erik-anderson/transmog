@@ -95,6 +95,7 @@ other guides rather than repeated inventories.
 | Rule editing and activation | [Automation](automation.md) |
 | Preview isolation | [Safe previews](safe-previews.md) and [page preview](captured-page-preview.md) |
 | Save/import behavior and fidelity | [Trace saving](trace-saving.md) |
+| Support profiles, incident navigation and evidence review | [Support capture profiles](support-capture-profiles.md) |
 | Installer ownership and release gates | [Windows release](windows-release.md) |
 
 The [quality routine](ux-quality.md) owns interaction, layout and verification

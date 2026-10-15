@@ -80,6 +80,7 @@ pub(crate) fn write(
     destination: PathBuf,
     redact: bool,
     progress: &crate::trace_save::Progress,
+    selected: Option<&std::collections::HashSet<String>>,
 ) -> Result<crate::TraceSaveResult, AppError> {
     if !destination.is_absolute() {
         return Err(error("Choose an absolute HAR destination"));
@@ -94,6 +95,12 @@ pub(crate) fn write(
         .session_service()
         .catalog()
         .project_retained(Clone::clone);
+    if let Some(ids) = selected {
+        sessions.retain(|s| ids.contains(&format!("{:032x}", s.exchange_id.0)));
+    }
+    if selected.is_some_and(|ids| ids.len() != sessions.len()) {
+        return Err(error("Export evidence changed; review the selection again"));
+    }
     sessions.sort_by_key(|session| session.metadata.started_at);
     let certificates = certificates(&sessions);
     let mut temporary = tempfile::NamedTempFile::new_in(
@@ -169,6 +176,7 @@ pub(crate) fn write(
         entries: sessions.len(),
         bytes: size,
         incomplete_bodies: incomplete,
+        omitted_incident_markers: 0,
     })
 }
 

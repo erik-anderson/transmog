@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+url = "=2.5.8"
 boring.workspace = true
 tempfile.workspace = true
 aes-gcm.workspace = true

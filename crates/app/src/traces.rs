@@ -1355,6 +1355,7 @@ fn import_native(
     let mut rows: BTreeMap<u128, NativeSession> = BTreeMap::new();
     let mut appearance = Vec::new();
     let mut context = Value::Null;
+    let mut markers = Vec::new();
     let mut sources = BTreeMap::new();
     let mut budget = 0_usize;
     let mut certificates = HashSet::new();
@@ -1383,7 +1384,17 @@ fn import_native(
                 if budget > MAX_HEAD_BYTES {
                     return Err(invalid("Trace source metadata exceeds its index limit"));
                 }
-                if kind == "trace-metadata" {
+                if kind == transmog_capture::support::MARKER_KIND {
+                    if markers.len() >= transmog_capture::support::MAX_MARKERS {
+                        return Err(invalid("Incident marker count exceeds 256"));
+                    }
+                    let marker = transmog_capture::support::parse_marker(payload)
+                        .map_err(|e| invalid(&e.to_string()))?;
+                    markers.push(
+                        serde_json::to_value(marker)
+                            .map_err(|_| invalid("Invalid incident marker"))?,
+                    );
+                } else if kind == "trace-metadata" {
                     context = payload;
                 } else if kind == "circular-retention" {
                     if let Some(context) = context.as_object_mut() {
@@ -1426,6 +1437,24 @@ fn import_native(
         }
         progress(capture.valid_bytes(), max_bytes);
     }
+    if !markers.is_empty() {
+        if !context.is_object() {
+            if !context.is_null() {
+                return Err(invalid("Incident capture context must be an object"));
+            }
+            context = serde_json::json!({});
+        }
+        let existing = context
+            .as_object_mut()
+            .unwrap()
+            .entry("incidentMarkers")
+            .or_insert_with(|| serde_json::json!([]));
+        existing
+            .as_array_mut()
+            .ok_or_else(|| invalid("Invalid incident marker metadata"))?
+            .extend(markers);
+    }
+    transmog_capture::support::validate_context(&context).map_err(|e| invalid(&e.to_string()))?;
     let mut result = ImportData {
         format: "native",
         stream_index_bytes: rows
@@ -1478,8 +1507,8 @@ fn validate_native_scope(record: &transmog_capture::CaptureRecord) -> Result<(),
     let global = match &record.kind {
         CaptureRecordKind::Seal { .. } => Some(true),
         CaptureRecordKind::Unknown { kind, .. } => match kind.as_str() {
-            "trace-metadata" | "trace-source" | "circular-retention" | "public-certificate"
-            | "connection-context" => Some(true),
+            "incident-marker" | "trace-metadata" | "trace-source" | "circular-retention"
+            | "public-certificate" | "connection-context" => Some(true),
             "body-representation" | "body-completed" | "entry-provenance" | "request-order" => {
                 Some(false)
             }
@@ -2502,6 +2531,8 @@ fn saved_source(value: Value, parent: &str) -> Result<TraceMetadataView, AppErro
     {
         return Err(invalid("Saved source metadata exceeds its limits"));
     }
+    transmog_capture::support::validate_context(&source.context)
+        .map_err(|e| invalid(&e.to_string()))?;
     let format = match source.format.as_str() {
         "saz" => "saz",
         "har" => "har",
@@ -4135,6 +4166,7 @@ mod tests {
                         password: None,
                         redact_sensitive_headers: false,
                         include_network_context: false,
+                        ..Default::default()
                     },
                 )
                 .await
@@ -4193,6 +4225,7 @@ mod tests {
                     password: None,
                     redact_sensitive_headers: true,
                     include_network_context: false,
+                    ..Default::default()
                 },
             )
             .await
@@ -4256,6 +4289,7 @@ mod tests {
                     password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
+                    ..Default::default()
                 },
             )
             .await
@@ -4555,6 +4589,7 @@ mod tests {
                     password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
+                    ..Default::default()
                 },
             )
             .await
@@ -4586,6 +4621,7 @@ mod tests {
                     password: None,
                     redact_sensitive_headers: false,
                     include_network_context: false,
+                    ..Default::default()
                 },
             )
             .await
@@ -4613,7 +4649,8 @@ mod tests {
                         format: crate::TraceSaveFormat::Native,
                         password: None,
                         redact_sensitive_headers: false,
-                        include_network_context: false
+                        include_network_context: false,
+                        ..Default::default()
                     }
                 )
                 .await

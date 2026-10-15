@@ -15,25 +15,56 @@ use transmog_session::{
     ApplicationSessionService, CaptureStart, CaptureStatus, ServiceConfig, ServiceStatus,
 };
 
+#[allow(clippy::too_many_lines)] // Keep cleanup paired with every setup/record result.
 pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
-    validate_options(arguments)?;
+    let profile = crate::option(arguments, "--profile")
+        .map(|p| crate::support_profile::Loaded::read(Path::new(p)))
+        .transpose()?;
+    let effective = profile
+        .as_ref()
+        .map_or_else(|| arguments.to_vec(), |p| p.arguments(arguments));
+    validate_options(&effective)?;
+    let original = arguments;
+    let arguments = effective.as_slice();
+    let output = output_path(arguments)?;
+    // Probe the parent before trust/routing setup; publishing still uses create-new semantics.
+    let prepared = crate::output::PendingOutput::new(&output)?;
+    let circular_output = if crate::option(arguments, "--circular-buffer").is_some() {
+        Some(prepared)
+    } else {
+        drop(prepared);
+        None
+    };
+    if let Some(profile) = &profile {
+        profile.preflight();
+    }
     let encoding = transmog_capture::CaptureEncoding {
         password: crate::passwords::output(arguments)?,
     };
-    let output = output_path(arguments)?;
-    if output.exists() {
-        return Err(crate::invalid_input(
-            "The capture destination already exists; choose a new filename",
-        )
-        .into());
-    }
-    let circular_output = crate::option(arguments, "--circular-buffer")
-        .map(|_| crate::output::PendingOutput::new(&output))
-        .transpose()?;
     let circular_recording = circular_output.is_some();
     let ledger = RootLedger::open(state_directory()?)?;
     let trust = SystemRootTrust;
-    let (redact, request_body_limit) = recording_preferences(arguments, &ledger)?;
+    let (redact, request_body_limit) = recording_preferences(original, &ledger, profile.as_ref())?;
+    let support_context = profile
+        .as_ref()
+        .map(|p| p.context(original, redact, request_body_limit));
+    if profile.is_some() {
+        println!(
+            "Resolved settings and origins: {}",
+            support_context.as_ref().unwrap()["resolvedSettings"]
+        );
+    }
+    println!(
+        "Preflight output: {} · encryption {} · network context {} · duration {}",
+        output.display(),
+        if encoding.password.is_some() {
+            "on"
+        } else {
+            "off"
+        },
+        arguments.iter().any(|a| a == "--include-network-context"),
+        crate::option(arguments, "--duration").unwrap_or("manual stop")
+    );
     #[cfg(windows)]
     recover_proxy(&ledger)?;
     if ledger.cleanup_ephemeral(&trust)? > 0 {
@@ -63,6 +94,8 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
             request_body_limit,
             encoding,
             circular_output,
+            profile,
+            support_context,
         },
     )
     .await;
@@ -103,6 +136,7 @@ pub(crate) async fn record(arguments: &[String]) -> Result<(), Box<dyn Error>> {
     println!("Trace saved: {}", output.display());
     println!("Open it in Transmog to review it, then share this file with your support contact.");
     cleanup?;
+    println!("Certificate cleanup: completed (or explicitly retained persistent trust).");
     Ok(())
 }
 
@@ -120,6 +154,7 @@ fn recover_proxy(ledger: &RootLedger) -> Result<(), Box<dyn Error>> {
 fn recording_preferences(
     arguments: &[String],
     ledger: &RootLedger,
+    profile: Option<&crate::support_profile::Loaded>,
 ) -> Result<(bool, Option<u64>), Box<dyn Error>> {
     let body_choice = if arguments
         .iter()
@@ -131,7 +166,7 @@ fn recording_preferences(
             .map(|value| value.parse::<u64>().map(Some))
             .transpose()?
     };
-    let (redact, request_body_limit) = ledger.preferences(
+    let (mut redact, mut request_body_limit) = ledger.preferences(
         if arguments.iter().any(|arg| arg == "--redact") {
             Some(true)
         } else if arguments.iter().any(|arg| arg == "--retain-sensitive") {
@@ -141,6 +176,27 @@ fn recording_preferences(
         },
         body_choice,
     )?;
+    if let Some(profile) = profile {
+        if !arguments
+            .iter()
+            .any(|a| matches!(a.as_str(), "--redact" | "--retain-sensitive"))
+            && let Some(value) = profile.profile.recording.redact_sensitive_headers
+        {
+            redact = value;
+        }
+        if !arguments.iter().any(|a| {
+            matches!(
+                a.as_str(),
+                "--request-body-limit" | "--unlimited-request-bodies"
+            )
+        }) && let Some(value) = &profile.profile.recording.request_body_limit
+        {
+            request_body_limit = match value {
+                transmog_capture::support::BodyLimit::Limited { bytes } => Some(*bytes),
+                transmog_capture::support::BodyLimit::Unlimited => None,
+            };
+        }
+    }
     println!(
         "Request body retention: {}. Trace files have no size ceiling. A request retention limit keeps byte counts and marks bodies incomplete.",
         request_body_limit.map_or_else(
@@ -200,8 +256,11 @@ struct RecordingOptions {
     request_body_limit: Option<u64>,
     encoding: transmog_capture::CaptureEncoding,
     circular_output: Option<crate::output::PendingOutput>,
+    profile: Option<crate::support_profile::Loaded>,
+    support_context: Option<serde_json::Value>,
 }
 
+#[allow(clippy::too_many_lines)] // One owned recorder lifecycle and outcome report.
 async fn run_capture(
     arguments: &[String],
     native: &Path,
@@ -215,6 +274,8 @@ async fn run_capture(
         request_body_limit,
         encoding,
         circular_output,
+        profile,
+        support_context,
     } = options;
     setup_root(arguments, ledger, root)?;
     println!(
@@ -250,7 +311,15 @@ async fn run_capture(
         ..ProxyConfig::default()
     };
     let policy = capture_policy(redact, request_body_limit);
-    let metadata = capture_metadata(arguments, ledger, root, request_body_limit).await?;
+    let mut metadata = capture_metadata(arguments, ledger, root, request_body_limit).await?;
+    if let Some(context) = support_context {
+        metadata["supportCapture"] = context;
+    }
+    let run_id = transmog_capture::support::new_id()?;
+    metadata["captureRunId"] = run_id.clone().into();
+    let health = Arc::new(crate::support_recording::Health::new(
+        profile.as_ref().map(|p| p.profile.clone()),
+    ));
     let circular = crate::option(arguments, "--circular-buffer")
         .map(|value| {
             crate::circular::CircularObserver::new(
@@ -275,6 +344,8 @@ async fn run_capture(
         false,
     )
     .await?;
+    components =
+        components.with_observer(health.clone(), crate::support_recording::health_config());
     if let Some(circular) = &circular {
         components = components.with_observer(circular.clone(), circular.config());
     }
@@ -302,7 +373,38 @@ async fn run_capture(
         "Set your application's HTTP and HTTPS proxy to this address. Remove that setting after recording."
     );
     println!("Recording. Reproduce the issue, then press Ctrl+C once to stop and save the trace.");
-    finish_capture(&service, circular.as_deref(), circular_output, native).await
+    println!(
+        "Recording started: UTC {} ms since the Unix epoch. Health updates every 10 seconds.",
+        transmog_capture::support::unix_millis()
+    );
+    let result = finish_capture(
+        &service,
+        circular.as_deref(),
+        circular_output,
+        native,
+        health.as_ref(),
+        run_id,
+        crate::option(arguments, "--duration").and_then(|v| v.parse::<u64>().ok()),
+    )
+    .await;
+    health.print_summary(circular.as_ref().map_or(0, |c| c.evicted()));
+    let sealed = matches!(service.capture().status(), CaptureStatus::Sealed(_))
+        || circular.as_ref().is_some_and(|c| c.published());
+    println!("File sealed: {sealed}. Destination: {}", native.display());
+    println!(
+        "Routing restoration: {}. Recording stop: {}.",
+        if service.has_pending_host_restore() {
+            "pending; see recovery details"
+        } else {
+            "complete (or no owned change)"
+        },
+        if result.is_ok() {
+            "completed"
+        } else {
+            "failed; see recovery details"
+        }
+    );
+    result
 }
 
 async fn finish_capture(
@@ -310,8 +412,11 @@ async fn finish_capture(
     circular: Option<&crate::circular::CircularObserver>,
     circular_output: Option<crate::output::PendingOutput>,
     native: &Path,
+    health: &crate::support_recording::Health,
+    run_id: String,
+    duration: Option<u64>,
 ) -> Result<(), Box<dyn Error>> {
-    let running = wait_for_stop(service, circular).await;
+    let running = wait_for_stop(service, circular, health, run_id, duration).await;
     // Ensure failures still flush the recoverable prefix and restore owned host state.
     let stopped = service.stop().await;
     if let Some(circular) = circular {
@@ -442,38 +547,79 @@ fn setup_root(
 async fn wait_for_stop(
     service: &ApplicationSessionService,
     circular: Option<&crate::circular::CircularObserver>,
+    health: &crate::support_recording::Health,
+    run_id: String,
+    duration: Option<u64>,
 ) -> io::Result<()> {
+    use transmog_capture::support::{IncidentMarker, MAX_MARKERS, MarkerOrigin};
+    let mut input = crate::support_recording::MarkerInput::start();
+    let began = std::time::Instant::now();
+    let mut marker_count = 0usize;
+    let mut stopping = false;
+    let mut pending: Option<
+        std::pin::Pin<Box<dyn std::future::Future<Output = io::Result<IncidentMarker>> + '_>>,
+    > = None;
+    let mut last_health = std::time::Instant::now();
     let mut tick = tokio::time::interval(Duration::from_millis(250));
     loop {
-        tokio::select! {
-            signal = tokio::signal::ctrl_c() => {
-                signal?;
-                println!("Stopping capture: restoring proxy settings, then finishing active requests. Press Ctrl+C again to stop waiting (unfinished requests will be incomplete).");
-                service.begin_drain().await.map_err(io::Error::other)?;
-                break;
-            }
-            _ = tick.tick() => { check_failure(service)?; if let Some(circular)=circular {circular.check()?;} }
-        }
-    }
-    loop {
-        if service.status() == ServiceStatus::Stopped {
+        if stopping && service.status() == ServiceStatus::Stopped && pending.is_none() {
+            println!("Incident markers recorded: {marker_count}");
             return Ok(());
         }
-        check_failure(service)?;
-        if let Some(circular) = circular {
-            circular.check()?;
-        }
         tokio::select! {
             signal = tokio::signal::ctrl_c() => {
                 signal?;
-                // The explicitly bounded stop permits forced completion.
-                service.stop_now().await.map_err(io::Error::other)?;
-                return Ok(());
+                input.stop();
+                if stopping {
+                    service.stop_now().await.map_err(io::Error::other)?;
+                } else {
+                    println!("Stopping capture: restoring proxy settings, then finishing active requests. Press Ctrl+C again to stop waiting (unfinished requests will be incomplete).");
+                    stopping = true;
+                    service.begin_drain().await.map_err(io::Error::other)?;
+                }
             }
-            _ = tick.tick() => {}
+            result = async { pending.as_mut().unwrap().await }, if pending.is_some() => {
+                pending = None;
+                match result {
+                    Ok(marker) => { marker_count += 1; println!("Issue marker {marker_count} recorded: {} (UTC {} ms).", marker.id, marker.unix_millis); },
+                    Err(error) => eprintln!("Issue marker was not recorded: {error}"),
+                }
+            }
+            _ = tick.tick() => {
+                check_failure(service)?;
+                if let Some(circular) = circular { circular.check()?; }
+                if last_health.elapsed() >= Duration::from_secs(10) {
+                    health.print_health(began.elapsed()); last_health = std::time::Instant::now();
+                }
+                if !stopping {
+                    if let Some(line) = input.poll() {
+                        if let Some(note) = crate::support_recording::marker_note(&line) {
+                            if pending.is_some() { eprintln!("Previous marker is still being saved; this marker was not recorded. Retry after acknowledgement."); }
+                            else if marker_count >= MAX_MARKERS { eprintln!("Incident marker limit reached (256); this marker was not recorded."); }
+                            else {
+                                let run_id = run_id.clone();
+                                let offset = u64::try_from(began.elapsed().as_millis()).unwrap_or(u64::MAX);
+                                pending = Some(Box::pin(async move {
+                                    if let Some(circular) = circular {
+                                        let marker = IncidentMarker::new(run_id, Some(offset), MarkerOrigin::Cli, note)?;
+                                        circular.mark(&marker).await?;
+                                        Ok(marker)
+                                    } else { service.capture().mark(note, MarkerOrigin::Cli).await.map_err(io::Error::other) }
+                                }));
+                            }
+                        } else { eprintln!("Use m then Enter, or m followed by a short incident note."); }
+                    }
+                    if duration.is_some_and(|seconds| began.elapsed() >= Duration::from_secs(seconds)) {
+                        println!("Requested duration reached. Stopping capture: restoring proxy settings, then finishing active requests. Press Ctrl+C again to stop waiting.");
+                        input.stop(); stopping = true;
+                        service.begin_drain().await.map_err(io::Error::other)?;
+                    }
+                }
+            }
         }
     }
 }
+
 fn check_failure(service: &ApplicationSessionService) -> io::Result<()> {
     if let ServiceStatus::Failed { message, .. } = service.status() {
         return Err(io::Error::other(message));
@@ -525,17 +671,48 @@ fn output_path(arguments: &[String]) -> io::Result<PathBuf> {
             "--output must end in .tmcap (chunk-compressed)",
         ));
     }
+    #[cfg(windows)]
+    {
+        let name = path
+            .file_name()
+            .and_then(|v| v.to_str())
+            .ok_or_else(|| crate::invalid_input("--output requires a valid Windows filename"))?;
+        let device = name.split('.').next().unwrap_or("").to_ascii_uppercase();
+        let reserved = ["CON", "PRN", "AUX", "NUL"].contains(&device.as_str())
+            || ["COM", "LPT"].iter().any(|prefix| {
+                device.strip_prefix(prefix).is_some_and(|suffix| {
+                    ["1", "2", "3", "4", "5", "6", "7", "8", "9", "¹", "²", "³"].contains(&suffix)
+                })
+            });
+        if reserved
+            || name.encode_utf16().count() > 255
+            || name.ends_with([' ', '.'])
+            || name
+                .chars()
+                .any(|ch| ch.is_control() || "<>:\"|?*".contains(ch))
+        {
+            return Err(crate::invalid_input(
+                "--output requires an ordinary Windows filename, without reserved devices, streams or invalid characters",
+            ));
+        }
+    }
     Ok(if path.is_absolute() {
         path
     } else {
         env::current_dir()?.join(path)
     })
 }
+#[allow(clippy::too_many_lines)] // Validate all recorder flags before any setup.
 fn validate_options(arguments: &[String]) -> io::Result<()> {
     crate::arguments::validate(
         arguments,
         &[
             "--output",
+            "--profile",
+            "--duration",
+            "--client-version",
+            "--expected",
+            "--actual",
             "--listen",
             "--route",
             "--upstream-ca-cert",
@@ -598,6 +775,16 @@ fn validate_options(arguments: &[String]) -> io::Result<()> {
     {
         crate::circular::parse_size(value)?;
     }
+    if let Some(value) = crate::option(arguments, "--duration")
+        && value.parse::<u64>().map_or(true, |v| v == 0 || v > 86400)
+    {
+        return Err(crate::invalid_input("--duration requires 1–86400 seconds"));
+    }
+    for flag in ["--client-version", "--expected", "--actual"] {
+        if let Some(value) = crate::option(arguments, flag) {
+            transmog_capture::support::text(flag, value, 2048, false)?;
+        }
+    }
     let listener = ListenerConfig {
         listen_addr: crate::option(arguments, "--listen")
             .unwrap_or("127.0.0.1:0")
@@ -658,11 +845,56 @@ pub(crate) fn cleanup_roots(arguments: &[String]) -> Result<(), Box<dyn Error>> 
 mod tests {
     use super::*;
     #[test]
+    fn profile_privacy_is_run_scoped_but_explicit_flags_keep_their_preference() {
+        let root = tempfile::tempdir().unwrap();
+        let ledger = RootLedger::open(root.path().into()).unwrap();
+        let profile=transmog_capture::support::SupportProfile::parse(br#"{"schemaVersion":1,"id":"fixture","revision":1,"title":"Issue","recording":{"redactSensitiveHeaders":true,"requestBodyLimit":{"kind":"limited","bytes":1234},"encryption":"required"}}"#).unwrap();
+        let loaded = crate::support_profile::Loaded {
+            digest: profile.digest().unwrap(),
+            profile,
+        };
+        assert_eq!(
+            recording_preferences(&[], &ledger, Some(&loaded)).unwrap(),
+            (true, Some(1234))
+        );
+        assert_eq!(
+            ledger.preferences(None, None).unwrap(),
+            (false, Some(25_000_000))
+        );
+        assert_eq!(
+            recording_preferences(
+                &[
+                    "--retain-sensitive".into(),
+                    "--unlimited-request-bodies".into()
+                ],
+                &ledger,
+                Some(&loaded)
+            )
+            .unwrap(),
+            (false, None)
+        );
+        assert_eq!(ledger.preferences(None, None).unwrap(), (false, None));
+        let args = loaded.arguments(&["--password-file".into(), "secret.txt".into()]);
+        assert!(args.iter().any(|a| a == "--encrypt"));
+        validate_options(&args).unwrap();
+        assert!(crate::support_recording::marker_note("m issue happened").is_some());
+        assert!(crate::support_recording::marker_note("unexpected command").is_none());
+    }
+    #[test]
     fn output_requires_native_extension_and_preserves_relative_paths() {
         let output = output_path(&["--output".into(), "my trace.TMCAP".into()]).unwrap();
         assert!(output.is_absolute());
         assert_eq!(output.file_name().unwrap(), "my trace.TMCAP");
         assert!(output_path(&["--output".into(), "trace.bin".into()]).is_err());
+        #[cfg(windows)]
+        for name in [
+            "CON.tmcap",
+            "a?.tmcap",
+            "a.tmcap:stream.tmcap",
+            "LPT1.extra.tmcap",
+        ] {
+            assert!(output_path(&["--output".into(), name.into()]).is_err());
+        }
     }
 
     #[test]

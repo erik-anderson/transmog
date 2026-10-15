@@ -1,0 +1,8 @@
+incident-intake .incident-intake{border-block:1px solid var(--border);padding:.65rem 0;overflow-wrap:anywhere}
+incident-intake h3{margin:.2rem 0}incident-intake .incident-instructions,incident-intake article p{white-space:pre-wrap}
+incident-intake .incident-window-controls{display:flex;gap:.7rem;flex-wrap:wrap}incident-intake .incident-window-controls label{display:flex;flex-direction:column;gap:.25rem}incident-intake input[type=number]{max-width:9rem}
+incident-intake article{padding:.6rem 0;border-top:1px solid var(--border)}incident-intake article strong,incident-intake article small{display:block}incident-intake article p{margin:.35rem 0}
+incident-intake dl{display:grid;gap:.4rem}incident-intake dl div{display:grid;grid-template-columns:minmax(8rem,1fr) minmax(0,2fr);gap:.5rem}incident-intake dd{margin:0;white-space:pre-wrap}
+@media(max-width:650px){incident-intake dl div{grid-template-columns:1fr}}
+
+incident-intake .incident-marker-list{max-height:20rem;overflow:auto;overscroll-behavior:contain}

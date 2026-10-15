@@ -9,6 +9,7 @@ pub mod compression;
 mod connections;
 mod container;
 mod stream_ids;
+pub mod support;
 pub use container::{CaptureReader, CaptureWriter, read_indexed_frame_with_codec};
 mod circular;
 pub use circular::CircularCapture;
@@ -330,6 +331,16 @@ pub struct CaptureRecord {
 }
 
 fn validate_appended_record(record: &CaptureRecord) -> Result<(), CaptureError> {
+    if let CaptureRecordKind::Unknown { kind, payload } = &record.kind
+        && kind == support::MARKER_KIND
+        && (record.exchange_id != 0
+            || record.sequence != 0
+            || support::parse_marker(payload.clone()).is_err())
+    {
+        return Err(CaptureError::MalformedRecord(
+            "invalid incident marker or scope",
+        ));
+    }
     if matches!(record.kind, CaptureRecordKind::Seal { .. })
         || matches!(&record.kind, CaptureRecordKind::Unknown { kind, .. } if kind == "seal")
     {
@@ -1771,6 +1782,16 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
 
 #[allow(clippy::too_many_lines)]
 fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
+    if record.kind == support::MARKER_KIND
+        && (record.exchange_id != 0
+            || record.sequence != 0
+            || support::parse_marker(record.payload.clone()).is_err())
+    {
+        return Err(CaptureError::MalformedRecord(
+            "invalid incident marker or scope",
+        ));
+    }
+
     if record.stream_id.is_some() {
         return Err(CaptureError::MalformedRecord("unresolved stream ID"));
     }
