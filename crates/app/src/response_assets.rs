@@ -29,6 +29,7 @@ const MAX_AUTHORED_BYTES: usize = 16 * 1024 * 1024;
 const BUFFERED_RESPONSE_BYTES: u64 = 1024 * 1024;
 const STREAM_CHUNK_BYTES: usize = 64 * 1024;
 
+mod portable;
 mod snapshot;
 
 /// Explicit selected-file behavior; size never changes this choice.
@@ -249,6 +250,7 @@ pub struct ResponseAssetStore {
     mutation: Arc<Mutex<()>>,
     root: Option<Arc<PathBuf>>,
     assets: Arc<RwLock<BTreeMap<String, ResponseAsset>>>,
+    imported: Arc<RwLock<portable::ImportedCatalog>>,
     generation: Arc<std::sync::atomic::AtomicU64>,
     file_errors: Arc<Mutex<BTreeMap<String, String>>>,
     snapshots: Arc<snapshot::SnapshotPool>,
@@ -267,6 +269,7 @@ impl ResponseAssetStore {
             mutation: Arc::new(Mutex::new(())),
             root: root.map(Arc::new),
             assets: Arc::new(RwLock::new(assets)),
+            imported: Arc::default(),
             generation: Arc::new(std::sync::atomic::AtomicU64::new(generation)),
             file_errors: Arc::new(Mutex::new(BTreeMap::new())),
             snapshots: Arc::default(),
@@ -275,12 +278,17 @@ impl ResponseAssetStore {
 
     /// Lists immutable assets in stable ID/revision order.
     pub fn list(&self) -> Vec<ResponseAsset> {
-        self.assets
+        let mut assets = self
+            .assets
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .values()
-            .cloned()
-            .collect()
+            .clone();
+        assets.extend(
+            self.imported_catalog()
+                .iter()
+                .map(|(key, value)| (key.clone(), value.clone())),
+        );
+        assets.into_values().collect()
     }
 
     fn get(&self, reference: &str) -> Result<ResponseAsset, AppError> {
@@ -289,6 +297,7 @@ impl ResponseAssetStore {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .get(reference)
             .cloned()
+            .or_else(|| self.imported_catalog().get(reference).cloned())
             .ok_or_else(|| invalid("Saved response revision is unavailable."))
     }
 
@@ -822,12 +831,7 @@ impl ResponseAssetStore {
             return Err(invalid("response asset status must be between 200 and 599"));
         }
         let key = format!("{id}@{revision}");
-        if self
-            .assets
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(&key)
-        {
+        if self.get(&key).is_ok() {
             return Err(AppError::new(
                 ErrorCategory::Conflict,
                 "response asset revision already exists",
@@ -887,12 +891,7 @@ impl ResponseAssetStore {
         if !linked.path.is_absolute() {
             return Err(invalid("Linked response file needs an absolute path."));
         }
-        if self
-            .assets
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .contains_key(&format!("{id}@{revision}"))
-        {
+        if self.get(&format!("{id}@{revision}")).is_ok() {
             return Err(invalid("Saved response revision already exists."));
         }
         let mut headers = repair_headers(headers, bytes, media_type.as_deref())?;
@@ -974,13 +973,7 @@ pub(crate) fn set_content_encoding(
 
 impl ResponseAssetResolver for ResponseAssetStore {
     fn validate(&self, asset_id: &str) -> Result<(), String> {
-        let asset = self
-            .assets
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(asset_id)
-            .cloned()
-            .ok_or_else(|| "response asset revision is unavailable".to_owned())?;
+        let asset = self.get(asset_id).map_err(|error| error.message)?;
         if asset.linked_body.is_some() {
             return Ok(());
         }
@@ -1002,13 +995,7 @@ impl ResponseAssetResolver for ResponseAssetStore {
         asset_id: &str,
         canceled: &std::sync::atomic::AtomicBool,
     ) -> Result<AutomationResponse, String> {
-        let asset = self
-            .assets
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(asset_id)
-            .cloned()
-            .ok_or_else(|| "response asset revision is unavailable".to_owned())?;
+        let asset = self.get(asset_id).map_err(|error| error.message)?;
         if let Some(linked) = &asset.linked_body {
             let result = self.resolve_linked(&asset, linked, canceled);
             if let Err(message) = &result
@@ -1076,13 +1063,7 @@ impl ResponseAssetStore {
         &self,
         reference: &str,
     ) -> Result<(ResponseAsset, Option<File>), AppError> {
-        let asset = self
-            .assets
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| unavailable("Saved response revision is unavailable"))?;
+        let asset = self.get(reference)?;
         let path = asset
             .linked_body
             .as_ref()
@@ -1109,13 +1090,7 @@ impl ResponseAssetStore {
         limit: u64,
         canceled: &std::sync::atomic::AtomicBool,
     ) -> Result<(ResponseAsset, u64, String), AppError> {
-        let asset = self
-            .assets
-            .read()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .get(reference)
-            .cloned()
-            .ok_or_else(|| unavailable("Saved response revision is unavailable"))?;
+        let asset = self.get(reference)?;
         let path = match &asset.linked_body {
             Some(link) => link.path.clone(),
             None => body_path(

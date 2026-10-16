@@ -1,6 +1,5 @@
 use std::{
     collections::VecDeque,
-    fs::OpenOptions,
     io::Write,
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
@@ -21,6 +20,8 @@ use crate::{AppError, ErrorCategory};
 mod experiments;
 #[path = "header_rules.rs"]
 mod header_rules;
+#[path = "rule_import_registry.rs"]
+mod portable;
 pub use experiments::{
     Experiment, ExperimentChange, ExperimentRevision, ExperimentSelection, ExperimentVariant,
 };
@@ -102,6 +103,9 @@ pub struct AutomationRuleSet {
     /// Saved experiments and immutable variant revisions, independent of live rules.
     #[serde(default)]
     pub experiments: Vec<Experiment>,
+    /// Portable origin and imported asset catalog, committed with the rules.
+    #[serde(default)]
+    pub portable_imports: Vec<crate::rule_interchange::ImportedCollection>,
     /// Global hook gate; individual rule enabled states remain unchanged.
     #[serde(default = "default_autoresponses_enabled")]
     pub autoresponses_enabled: bool,
@@ -116,6 +120,7 @@ impl Default for AutomationRuleSet {
         Self {
             schema_version: AUTOMATION_SCHEMA_VERSION,
             experiments: Vec::new(),
+            portable_imports: Vec::new(),
             generation: 0,
             rules: Vec::new(),
             autoresponses_enabled: true,
@@ -188,9 +193,10 @@ pub struct RuleUsage {
 }
 
 #[derive(Clone, Debug)]
-struct ActiveAutomation {
-    document: AutomationRuleSet,
+pub(crate) struct ActiveAutomation {
+    pub(crate) document: AutomationRuleSet,
     compiled: CompiledAutomation,
+    pub(crate) imported_assets: Arc<std::collections::BTreeMap<String, crate::ResponseAsset>>,
 }
 
 #[derive(Clone, Debug)]
@@ -209,7 +215,7 @@ pub struct AutomationRegistry {
     history: Arc<Mutex<VecDeque<Arc<ActiveAutomation>>>>,
     path: Option<Arc<PathBuf>>,
     limits: AutomationLimits,
-    assets: Arc<dyn ResponseAssetResolver>,
+    assets: Arc<crate::response_assets::ResponseAssetStore>,
 }
 
 impl AutomationRegistry {
@@ -307,7 +313,7 @@ impl AutomationRegistry {
     }
     pub(crate) fn load(
         path: Option<PathBuf>,
-        assets: Arc<dyn ResponseAssetResolver>,
+        assets: Arc<crate::response_assets::ResponseAssetStore>,
     ) -> Result<Self, AppError> {
         let limits = AutomationLimits::default();
         let mut document = path
@@ -316,13 +322,24 @@ impl AutomationRegistry {
             .unwrap_or_default();
         migrate_user_agent_override(&mut document);
         validate_document(&document)?;
+        let imported = crate::rule_interchange::imported_assets(&document);
+        if !assets.import_catalog_valid(&imported) {
+            return Err(crate::rule_interchange::invalid(
+                "Imported response catalog is invalid",
+            ));
+        }
+        assets.publish_imports(&imported);
         let compiled = compile_document(&document, limits, assets.clone())?;
+        let imported_assets = crate::rule_interchange::asset_index(&document);
+        let active = Arc::new(RwLock::new(Arc::new(ActiveAutomation {
+            document,
+            compiled,
+            imported_assets,
+        })));
+        assets.bind_import_catalog(&active);
         Ok(Self {
             mutation: Arc::new(Mutex::new(())),
-            active: Arc::new(RwLock::new(Arc::new(ActiveAutomation {
-                document,
-                compiled,
-            }))),
+            active,
             candidates: Arc::new(Mutex::new(VecDeque::new())),
             history: Arc::new(Mutex::new(VecDeque::new())),
             path: path.map(Arc::new),
@@ -347,6 +364,7 @@ impl AutomationRegistry {
             .clone();
         experiments::validate_owned_rules(&current, &document.rules)?;
         document.experiments = current.experiments;
+        document.portable_imports = current.portable_imports;
         self.validate_candidate(document)
     }
 
@@ -459,9 +477,15 @@ impl AutomationRegistry {
         if let Some(path) = self.path.as_deref() {
             persist(path, &candidate.document)?;
         }
+        let imported_assets = crate::rule_interchange::asset_index(&candidate.document);
+        self.assets
+            .publish_imports(&crate::rule_interchange::imported_assets(
+                &candidate.document,
+            ));
         let replacement = Arc::new(ActiveAutomation {
             document: candidate.document,
             compiled: candidate.compiled,
+            imported_assets,
         });
         let previous = {
             let mut active = self
@@ -673,6 +697,7 @@ fn validate_document(document: &AutomationRuleSet) -> Result<(), AppError> {
             false,
         ));
     }
+    crate::rule_interchange::validate_imported(document)?;
     experiments::validate_experiments(document)
 }
 
@@ -687,7 +712,10 @@ fn slot_path(path: &Path, slot: u64) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn load_latest(path: &Path, assets: &Arc<dyn ResponseAssetResolver>) -> Option<AutomationRuleSet> {
+fn load_latest(
+    path: &Path,
+    assets: &Arc<crate::response_assets::ResponseAssetStore>,
+) -> Option<AutomationRuleSet> {
     let mut candidates = Vec::new();
     for slot in 0..=1 {
         let candidate = slot_path(path, slot);
@@ -702,10 +730,13 @@ fn load_latest(path: &Path, assets: &Arc<dyn ResponseAssetResolver>) -> Option<A
         };
         if let Ok(document) = serde_json::from_slice::<AutomationRuleSet>(&bytes)
             && validate_document(&document).is_ok()
+            && assets.import_catalog_valid(&crate::rule_interchange::imported_assets(&document))
             && compile_with_assets(
                 document.rules.clone(),
                 AutomationLimits::default(),
-                Some(Arc::clone(assets)),
+                Some(Arc::new(assets.with_imports(
+                    &crate::rule_interchange::imported_assets(&document),
+                ))),
             )
             .is_ok()
         {
@@ -716,7 +747,7 @@ fn load_latest(path: &Path, assets: &Arc<dyn ResponseAssetResolver>) -> Option<A
     candidates.pop()
 }
 
-fn persist(path: &Path, document: &AutomationRuleSet) -> Result<(), AppError> {
+fn persistence_bytes(document: &AutomationRuleSet) -> Result<Vec<u8>, AppError> {
     let bytes = serde_json::to_vec_pretty(document).map_err(|_| {
         AppError::new(
             ErrorCategory::Internal,
@@ -731,21 +762,26 @@ fn persist(path: &Path, document: &AutomationRuleSet) -> Result<(), AppError> {
             false,
         ));
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| {
-            AppError::new(
-                ErrorCategory::Unavailable,
-                "automation workspace directory is unavailable",
-                true,
-            )
-        })?;
-    }
+    Ok(bytes)
+}
+
+fn persist(path: &Path, document: &AutomationRuleSet) -> Result<(), AppError> {
+    let bytes = persistence_bytes(document)?;
+    let parent = path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent).map_err(|_| {
+        AppError::new(
+            ErrorCategory::Unavailable,
+            "automation workspace directory is unavailable",
+            true,
+        )
+    })?;
     let destination = slot_path(path, document.generation % 2);
-    let mut file = OpenOptions::new()
-        .create(true)
-        .truncate(true)
-        .write(true)
-        .open(destination)
+    let mut file = tempfile::Builder::new()
+        .prefix(".automation-")
+        .tempfile_in(parent)
         .map_err(|_| {
             AppError::new(
                 ErrorCategory::Unavailable,
@@ -754,14 +790,22 @@ fn persist(path: &Path, document: &AutomationRuleSet) -> Result<(), AppError> {
             )
         })?;
     file.write_all(&bytes)
-        .and_then(|()| file.sync_all())
+        .and_then(|()| file.as_file().sync_all())
         .map_err(|_| {
             AppError::new(
                 ErrorCategory::Unavailable,
                 "automation workspace could not be persisted",
                 true,
             )
-        })
+        })?;
+    // Only a complete flushed document can replace an older recovery slot.
+    file.persist(destination).map(|_| ()).map_err(|_| {
+        AppError::new(
+            ErrorCategory::Unavailable,
+            "automation workspace could not be persisted",
+            true,
+        )
+    })
 }
 
 fn hex_sha256(bytes: &[u8]) -> String {
@@ -783,6 +827,7 @@ mod tests {
         AutomationRuleSet {
             schema_version: 1,
             experiments: Vec::new(),
+            portable_imports: Vec::new(),
             generation: 0,
             rules: vec![Rule {
                 id: "conditional-ua".to_owned(),

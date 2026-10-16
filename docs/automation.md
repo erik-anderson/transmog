@@ -125,10 +125,11 @@ file bytes. A new preview or live request reads a fresh coherent file snapshot;
 F5 retains the current preview's frozen bytes. Earlier actual results remain
 inspectable under the existing Traffic body-retention policy and response file evidence.
 Selecting an old configuration does not recover missing, truncated or expired
-response bytes. Portable experiment packaging is a later increment.
-The [portable investigation design](portable-investigations.md) now defines its
-manifest, dependency and disabled-import boundaries; it adds no current export
-or import action.
+response bytes. The [portable investigation APIs](portable-investigations.md#implemented-rule-interchange-apis-k1)
+now export selected saved rules/assets and review/import fresh disabled copies
+through the UI-neutral Application facade. They preserve authored intent and
+source mappings without changing live activation. Desktop file actions, archive
+packaging and CLI commands remain later increments.
 
 ## General rule ordering
 

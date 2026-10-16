@@ -208,6 +208,7 @@ impl Application {
         let candidate = self.validate_automation(AutomationRuleSet {
             schema_version: 1,
             experiments: Vec::new(),
+            portable_imports: Vec::new(),
             generation: current.generation,
             autoresponses_enabled: current.autoresponses_enabled,
             rules,

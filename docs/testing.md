@@ -31,11 +31,14 @@ The Chromium HAR/NetLog import regression uses sanitized, checked-in archives
 and runs in the ordinary Rust suite without a browser or network connection.
 See [browser fixtures](../crates/app/tests/fixtures/browser/README.md) for regeneration.
 
-The [portable investigation design corpus](../verification/fixtures/portable/README.md)
+The [portable investigation corpus](../verification/fixtures/portable/README.md)
 is checked by the ordinary Python gate and current native capture-reader tests.
 Use `python scripts/portable_fixtures.py --check` for a mutation-free corpus check.
-These establish fixture bytes and expected future scenarios, not implemented
-case import, package encryption or CLI support.
+`cargo test -p transmog-portable` exercises the K1 production rule reader,
+native matching/actions and verified object staging. `cargo test -p transmog-app
+--lib rule_interchange` covers disabled import/export, conflict remaps, failure
+atomicity, workspace/generation binding, linked snapshots and restart recovery.
+These do not qualify case import, archive readers, package encryption or CLI support.
 
 For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:

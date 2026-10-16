@@ -1,9 +1,10 @@
-# Portable investigations: revision-0 design
+# Portable investigations: revision 0
 
-Status: K0 contract and fixture corpus, prepared for implementation. The desktop
-and CLI do not yet open, export or import these formats. Examples below describe
-the intended interface. [ADR 0009](adr/0009-portable-investigation-boundaries.md)
-records the architecture; [the roadmap](roadmap.md) tracks implementation.
+Status: K0 defines the contract and corpus; K1 implements rule/asset interchange
+in the shared library and UI-neutral application APIs. Desktop file actions,
+case working copies, archive/encryption readers and CLI commands remain planned.
+[ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
+[the roadmap](roadmap.md) tracks remaining implementation.
 
 ## Support policy
 
@@ -177,6 +178,7 @@ fields are never translated into rules or treated as supported configuration.
 | `objects` | Unique SHA-256, decimal byte length and role (`capture`, `response-body`, `script-source`, `context`). All present members must match length/hash. |
 | `sources` | Capture object references, internal source keys, original/derived lineage and explicit loss/privacy context. |
 | `assets` | Exact asset ID/revision, status, ordered headers, encoded entity object and provenance/availability. |
+| `rules` | Optional ordered ordinary rules, separate from named experiment ownership. Defaults to an empty array. |
 | `experiments` | Named variants and ordered immutable rule revisions with selected saved definitions and enabled/paused intent. |
 | `notes` | Authored text/reproduction steps and optional stable evidence references. |
 | `contexts` | Optional case-only inventory of immutable capture-time and separately collected diagnostic objects, with original source association, collection origin, completeness and explicit failures/omissions. |
@@ -241,8 +243,8 @@ required decoded pairs (including duplicates), or ignore. Regex declares URL/pat
 scope, whole/submatch and case choice, using the current bounded Rust matcher.
 Status/status-class predicates apply only to response phases. Examples contain
 explicit sample request fields and expected match decisions; they never influence
-matching. K1 must define field-level DTOs and round-trip this vocabulary through
-the existing validators, without expanding which rule kinds the product supports.
+matching. K1 translates explicit portable DTOs through the existing validators,
+without expanding which rule kinds the product supports.
 
 Header names are ASCII tokens with original casing preserved. Header values use
 canonical padded RFC4648 Base64, including empty bytes. Arrays preserve duplicate
@@ -253,7 +255,7 @@ Do not silently omit redacted predicate values: mark that rule unavailable.
 Assets contain final status, ordered fields and exact **encoded entity** bytes,
 with their coding stack reflected in headers. SHA-256 identifies stored encoded
 bytes. Decoded hashes/text comparisons, if recorded, have their own representation
-labels. A future reader repairs framing through existing response-asset services,
+labels. K1 repairs framing through existing response-asset services,
 not by treating a bounded editor preview as complete content.
 
 Dependencies carry `state`: `present`, `missing`, `not-exported`, `unsupported` or
@@ -275,6 +277,111 @@ capabilities, limits and asset references. Imported scripts stay disabled drafts
 Validation does not execute; explicit sandbox tests/activation use current backend
 validation and host startup. K5 must qualify helper discovery/versioning and ship
 declarations before advertising standalone script test commands.
+
+## Implemented rule interchange APIs (K1)
+
+[`transmog-portable`](../crates/portable/src/lib.rs) owns independent public
+[DTOs](../crates/portable/src/model.rs), strict JSON parsing, native semantic
+validation and verified object snapshots. It currently accepts only `kind="rules"`.
+Case/evidence/script semantics and unavailable dependencies cannot be imported by
+this reader. Unsupported versions, required features, action kinds and action
+phases fail explicitly; unknown fields and duplicate keys are invalid.
+
+`Collection::parse` validates metadata and the declared dependency graph without
+opening objects. `Collection::encode` applies the same validation and an 8 MiB
+output bound. `PreparedCollection::prepare` additionally reads each declared
+digest from an explicit caller-supplied local provider into owned temporary
+files. It checks exact length and SHA-256 with 128 KiB buffers, syncs files and
+removes its staging directory on drop or failure. `manifest()` and
+`open_object(digest)` expose only that frozen closure. There is no archive or
+directory reader here: a future file adapter must enforce its own safe
+name/member/source-access policy before supplying readers. The manifest never
+causes a URL, linked file path or source-machine path to be opened.
+
+The [Application facade](../crates/app/src/rule_interchange.rs) exposes:
+
+| API | Result and publication boundary |
+| --- | --- |
+| `prepare_rule_import(manifest, staging_parent, open, canceled)` | Freezes and verifies the complete collection, then returns an opaque `PreparedRuleImport` with a mutation-free `review()`. |
+| `import_rule_collection(prepared, canceled)` | Requires the same workspace and unchanged generation; publishes fresh disabled local authoring content and assets in one automation commit. |
+| `export_rule_collection(request, staging_parent, canceled)` | Returns a `PreparedCollection` containing only selected saved rules/revisions and their verified asset closure; writes no transfer package. |
+
+`RuleExportRequest` supplies a collection ID/revision/title, ordinary rule IDs
+and exact `ExperimentSelection` values. Selection order does not change saved
+rule precedence. Named rules must be selected through their saved variant,
+including archived history; projected live rules, drafts and candidate handles
+are not export selections. Empty Baseline is included automatically. Unsupported
+advanced/mixed rules fail the whole selection instead of disappearing.
+
+Export retains complete encoded entities, ordered duplicate/raw header values
+and exact asset revisions. Linked assets become coherent export-time snapshots,
+including the configured content-coding stack, labeled `export-snapshot` with
+`acquiredAt`. Their paths are excluded. Captured-response assets without a joined
+source artifact carry `sourceUnavailableReason`; runtime exchange IDs are never
+substituted for evidence references. The descriptive `transmog.rule-origins`
+extension retains original imported rule IDs for selected rules only. It does
+not affect matching or disclose origins of unselected content.
+
+Review classifies entries as `new`, `identical-source-definition` or
+`conflicting` against saved identities and retained import origins. All receive
+fresh local identities, including identical definitions; immutable body blobs
+deduplicate by digest. Existing content is never overwritten by label or ID.
+Original definitions, exact revision strings and mappings persist as provenance.
+Ordinary imported rules are disabled; imported named experiments are paused,
+unselected and inspectable. Source enabled/paused/archived/active intent remains
+metadata. Local variant histories start at revision 1 while exact original
+revision numbers remain in the retained source definition. Named saved rule
+intent remains usable only after a separate explicit activation.
+
+Imported asset metadata belongs to the automation document, with one persisted
+transaction and one in-memory generation shared with the rules. A complete
+flushed temporary document replaces its recovery slot before publication; failed
+writes cannot truncate an older slot. Imported metadata is not copied
+into the independent authored-asset index. Startup validates this catalog and
+its source mapping before accepting a saved generation. A failed/canceled import
+leaves existing gates, registrations, rules and drafts intact; saved candidates
+remain available but require revalidation against the changed generation after a
+successful import. Unreferenced immutable body blobs may remain after a failed
+commit; they are not visible assets or a partially imported collection.
+
+Application errors distinguish `Unsupported`, `Canceled`, `InvalidInput`,
+`Conflict` and unavailable I/O. K1 does not change desktop commands, window roles,
+activation controls, file dialogs or CLI output. It adds no TMCap compatibility
+or migration code.
+
+### Current wire fields and limits
+
+All known objects reject unknown fields. Optional matcher fields are absent or
+`null`; omitted predicate/example arrays are empty. These explicit wire fields
+are separate from private Rust rule serialization:
+
+| Object | Fields and supported values |
+| --- | --- |
+| Matcher | `method`, `address`, optional `scheme`, `host`, `port`, `pathPrefix`, raw `query`, `requestHeaders`, `responseHeaders`, `responseStatus`, `responseStatusClass`, `examples`. Native phase restrictions apply. |
+| Address | `{kind:"exact",value:URL}`, `{kind:"pattern",value:{address,query,caseSensitive}}`, or `{kind:"regex",value:{pattern,scope,whole,caseSensitive,query}}`; regex scope is `url` or `path`. |
+| Query | `{kind:"exact",value:STRING_OR_NULL}`, `{kind:"parameters",value:[{name,value}]}`, or `{kind:"ignore"}`. Required decoded pairs preserve duplicates. |
+| Predicate | `name`, `kind`; `exists` has no payload, `exact`/`prefix`/`suffix` use `valueBase64`, `byte-regex` uses `pattern`. |
+| Example | `method`, `url`, ordered `headers` and `expected` (`match`/`no-match`). Native sample headers currently require UTF-8; binary sample values fail as unsupported. Binary predicates and asset fields remain supported. |
+| Rule | `id`, decimal `revision`, `label`, `kind`, `evaluation`, `enabledIntent`, `match`, typed `action`; general mutations require signed numeric `priority`. Auto-response priorities, if supplied, must agree with array order. |
+| Auto-response action | `assetId`, decimal `revision`. |
+| Header action | `operations:[{operation,name,valueBase64}]`; `operation` is `set`/`append`/`remove`; remove has no value. |
+| Literal action | `find`, `replacement`, `occurrences` (`first`/`all`), nullable decimal `expectedMatches`, `mediaType`, `encoding`, decimal `maxBytes`; current native UTF-8 and media/body bounds apply. |
+| Experiment | `id`, `kind:"response-variants"`, `requiredFeatures`, `label`, `pausedIntent`, optional `archivedIntent` (false), optional `activeIntent:{variantId,revision}`, `variants`. Active intent must reference an included revision. |
+| Variant/revision | Variant `id`, `label`, optional `archivedIntent` (false), ordered `revisions:[{revision,rules}]`. An empty `baseline` variant is mandatory. |
+
+K1 recognizes `response-assets/1`, `header-edits/1` and `literal-response/1`.
+Namespaced extension keys use the portable ID alphabet, contain a dot and are at
+most 128 bytes. All nested JSON shares depth 32 and the 8 MiB manifest bound.
+Assets/objects are bounded to 16,384 each, bodies to 1 GiB, headers to 256 fields
+and 64 KiB, examples to 64 per rule, experiments to 32, variants to 16 per
+experiment, saved revisions to 32 per variant, and rules to 64 per saved revision.
+Ordinary compilation units retain the native 1,024-rule and action/regex limits.
+
+The private application workspace still has its 4 MiB persistence limit and
+allows at most 64 retained imported collections. Combined native workspace
+limits also apply. A valid larger transfer can therefore fail import atomically
+without altering existing content; transfer validity is not a promise of available
+workspace capacity. Later archive/working-copy APIs have their own qualification.
 
 ## Configuration and diagnostic context
 
@@ -361,7 +468,7 @@ Package encryption does not erase plaintext working copies, previews or dumps.
 
 ## Intended CLI interface
 
-These commands are **not implemented by K0**. K4 adds the first group; K5 adds
+These commands are **not implemented by K0 or K1**. K4 adds the first group; K5 adds
 script/compare tooling only after its dependencies are distributed and qualified.
 
 | Command | Intended behavior |
@@ -416,11 +523,12 @@ they do not demonstrate an implemented package parser. The ordinary Python gate
 checks fixture consistency, digests, compression and scenario coverage. Current
 native readers verify real encrypted/stream/incomplete capture seeds separately.
 
-K1 introduces independent portable DTOs, field-level schema/semantic validation,
-selected rule/asset export and reviewed disabled import. Qualify exact/pattern/
-regex/query examples and each supported action phase through existing engines;
-unsupported kinds fail explicitly, without dropping rules. Import must preserve
-unrelated state and remap conflicts atomically.
+K1's production parser and application tests cover selected rule/asset export
+and reviewed disabled import, native exact/pattern/regex/query matching, header
+and literal output, encoded/duplicate-header fixtures, changed/large linked
+files, conflict remapping, cancellation, failed persistence, restart recovery,
+workspace ownership and generation-bound asset visibility. Case/archive/CLI
+scenarios remain future work; passing rule tests does not qualify those readers.
 
 K2 adds evidence/notes/run inventory and working-copy persistence. K3 qualifies
 safe archive readers/writers, the typed TMCap wrapper, hostile corpus,

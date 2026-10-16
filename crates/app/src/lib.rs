@@ -62,7 +62,12 @@ pub use artifacts::{
     CaptureReadModel, CaptureStartRequest, CaptureSummaryView, ExportFormat, ExportRequest,
     ExportResult, ImportRequest,
 };
+pub use rule_interchange::{
+    PreparedRuleImport, RuleExportRequest, RuleImportItem, RuleImportReview,
+};
 pub use transmog_automation::{HeaderRuleTest, TextTransformTest};
+pub use transmog_portable as portable;
+mod rule_interchange;
 
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
@@ -157,6 +162,10 @@ pub enum ErrorCategory {
     InvalidPassword,
     /// Caller input failed validation.
     InvalidInput,
+    /// A requested file semantic or capability is not implemented by this build.
+    Unsupported,
+    /// An explicit operation was canceled before publication.
+    Canceled,
     /// Requested operation conflicts with current application state.
     Conflict,
     /// A finite resource or result limit was reached.

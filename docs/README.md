@@ -38,7 +38,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 - [Native capture overview](native-capture-format.md) and [TMCap wire specification](tmcap-format.md).
 - [SAZ compatibility](saz-compatibility.md) and [HAR/NetLog](json-archives.md).
 - [CLI commands](cli.md) and [guided support capture](cli-support-capture.md).
-- [Portable investigation design](portable-investigations.md): revision-0 decisions and fixtures; export/import and case commands remain planned.
+- [Portable investigations](portable-investigations.md): revision-0 rule/asset library APIs and design; desktop file actions, cases, packages and CLI commands remain planned.
 
 ## Library contracts and decisions
 

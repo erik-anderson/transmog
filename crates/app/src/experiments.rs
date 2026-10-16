@@ -70,6 +70,17 @@ pub struct Experiment {
 }
 
 impl Experiment {
+    pub(super) fn imported(id: String, name: String, variants: Vec<ExperimentVariant>) -> Self {
+        Self {
+            id,
+            name,
+            paused: true,
+            archived: false,
+            active: None,
+            variants,
+            undo: None,
+        }
+    }
     pub(crate) fn owns(&self, id: &str) -> bool {
         self.variants
             .iter()

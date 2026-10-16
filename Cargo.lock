@@ -7045,6 +7045,7 @@ dependencies = [
  "transmog-http",
  "transmog-key-protection",
  "transmog-network",
+ "transmog-portable",
  "transmog-preview-worker",
  "transmog-runtime",
  "transmog-saz",
@@ -7300,6 +7301,21 @@ dependencies = [
  "tokio",
  "transmog-core",
  "transmog-socket-info",
+]
+
+[[package]]
+name = "transmog-portable"
+version = "0.1.4"
+dependencies = [
+ "base64 0.22.1",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "transmog-automation",
+ "transmog-core",
 ]
 
 [[package]]

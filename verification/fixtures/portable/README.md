@@ -66,7 +66,16 @@ seed hashes, explicitly review and remove obsolete generated objects before
 `--write`; the generator never deletes files. Refresh these seeds when the
 experimental native format changes; do not add migration readers for this corpus.
 
-K1/K3/K4 must run these scenarios through the eventual production validators and
-import/package/CLI paths, adding resource-pressure, interruption and archive
-reader cases appropriate to each implementation. Keeping a valid fixture corpus
-does not mark those stages complete.
+K1 now runs `rules-only.json` through the production `transmog-portable` parser
+and Application review/import/export APIs. Tests also project the coded-header
+asset fixture into a rules-only collection and verify exact encoded bytes, raw
+duplicate fields and native matcher/action behavior. Run these with:
+
+```powershell
+python scripts/dev-env.py --run cargo test --locked -p transmog-portable
+python scripts/dev-env.py --run cargo test --locked -p transmog-app --lib rule_interchange
+```
+
+Case, hostile archive, encryption wrapper and CLI scenarios still need production
+consumers in K2/K3/K4, including resource-pressure and interruption checks.
+Keeping a valid fixture corpus does not mark those stages complete.
