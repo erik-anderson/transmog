@@ -88,6 +88,10 @@ export async function smokeTrafficList(client,screenshot) {
   assert.equal(await client.evaluate(`${t}.getRootNode().activeElement?.dataset.sessionId===${t}.matchEntryId && ${t}.selectedSessionId===${t}.matchEntryId && ${t}.contentSearchActive`),true);
   if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-traffic.png'),Buffer.from(image.data,'base64'));}
   const listScroll=await client.evaluate(`${t}.sessionScroller.scrollTop`);
+  const searchBeforeHelp=await client.evaluate(`${t}.searchInput.value`);
+  await client.evaluate(`${t}.searchInput.focus()`);await key('a','KeyA',65,2);
+  await client.call('Input.insertText',{text:searchBeforeHelp+' edited'});
+  await key('a','KeyA',65,2);await client.call('Input.insertText',{text:searchBeforeHelp});
   await client.evaluate(`${t}.clearTrafficSelection();${t}.querySelector('.timeline-toggle').focus()`);
   await key(' ','Space',32);
   await wait(`${t}.timelineEntries.length===20000 && !${t}.timelineBusy && !${t}.timelinePending`,120000);
@@ -112,6 +116,20 @@ export async function smokeTrafficList(client,screenshot) {
   await client.call('Input.dispatchMouseEvent',{type:'mousePressed',x:helpGeometry.x,y:helpGeometry.y,button:'left',clickCount:1});
   await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',x:helpGeometry.x,y:helpGeometry.y,button:'left',clickCount:1});
   await wait(`${t}.timeline.helpPanel.matches(':popover-open')`);
+  const checkHelpShortcuts=async()=>{
+    const state=()=>client.evaluate(`(()=>{const w=${t};return {selected:[...w.trafficSelection.ids].sort(),matched:w.totalMatched,filter:w.searchInput.value,undo:w.trafficUndo.length};})()`);
+    const before=await state();
+    for(const index of [0,1]){
+      await client.evaluate(`${t}.timeline.helpPanel.querySelectorAll('button')[${index}].focus()`);
+      for(const [text,code,value,modifiers] of [['a','KeyA',65,2],['Delete','Delete',46,0],['z','KeyZ',90,2],['y','KeyY',89,2],['Z','KeyZ',90,10]]){
+        await key(text,code,value,modifiers);await wait(`!${t}.removingTraffic`);
+        assert.deepEqual(await state(),before,'Native help shortcut changed Traffic');
+        assert.equal(await client.evaluate(`${t}.getRootNode().activeElement===${t}.timeline.helpPanel.querySelectorAll('button')[${index}]`),true,'Native help shortcut moved focus');
+      }
+    }
+    assert.equal(await client.evaluate(`${t}.timeline.helpPanel.matches(':popover-open')`),true);
+  };
+  await checkHelpShortcuts();
   if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timeline-help.png'),Buffer.from(image.data,'base64'));}
   await key('Escape','Escape',27);
   const textSize=await client.evaluate('document.documentElement.style.fontSize');
@@ -150,6 +168,9 @@ export async function smokeTrafficList(client,screenshot) {
   assert.equal(await client.evaluate(`[...${t}.requestActionsMenu.querySelectorAll('button')].find(button=>button.textContent==='Copy request reference').disabled`),false);
   await key('Escape','Escape',27);
   const timelinePreferences=await client.evaluate(`${t}.preferences`);
+  await client.evaluate(`${t}.timeline.helpButton.focus()`);await key('Enter','Enter',13);
+  await wait(`${t}.timeline.helpPanel.matches(':popover-open')`);
+  await checkHelpShortcuts();await key('Escape','Escape',27);
   await client.evaluate(`${t}.preferences={...${t}.preferences,listSplit:65}`);
   if(screenshot)for(const [width,height] of [[1440,900],[960,720],[800,600]]){
     await client.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});

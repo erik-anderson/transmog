@@ -10,10 +10,12 @@ export async function checkTrafficTimeline(page,root) {
   const settle=()=>page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.timelineMode&&!t.timelineBusy&&!t.timelinePending&&t.timelineEntries.length>0;});
   const show=async enabled=>{if(await toggle.getAttribute('aria-pressed')!==String(enabled))await toggle.click();if(enabled)await settle();};
   try {
+    const search=traffic.getByLabel('Filter or search traffic',{exact:true});
+    await search.fill('example');await search.press('Control+a');await search.press('Backspace');
     await page.evaluate(async()=>{
       const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=s.sessions[0],base=1800000000000;
       s.sessions=[['slow',0,1200],['fast',100,50],['long',300,700],['zero',600,0],['failed',700,200],['unknown',null,null]].map(([id,start,duration],index)=>({...seed,id:'tl-'+id,requestNumber:String(index+1),method:'GET',path:'/scenario/'+id,url:'https://example.test/scenario/'+id,startedAt:start==null?0:base+start,durationMs:duration,responseOffset:id==='slow'?400000:null,terminal:id==='failed'?'failed':id==='unknown'?'incomplete':'completed',contentType:'text/plain',traceId:id==='unknown'?'imported-fixture':null}));
-      t.preferences={...t.preferences,layout:'stacked',listSplit:55};t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);
+      window.clearTimeout(t.searchTimer);t.searchText='';t.liveFilter='';t.preferences={...t.preferences,layout:'stacked',listSplit:55};t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);
     });
     const bodies=await page.evaluate(()=>globalThis.__workspaceFixture.calls.inspect_body??0);
     assert.equal(await toggle.getAttribute('aria-pressed'),'false');
@@ -25,6 +27,19 @@ export async function checkTrafficTimeline(page,root) {
     await show(true);await timeline.locator('.timeline-overview > svg').focus();
     const helpButton=timeline.getByRole('button',{name:'Timeline help',exact:true});
     const help=timeline.getByRole('dialog',{name:'Timeline help',exact:true});
+    const checkHelpShortcuts=async()=>{
+      const state=()=>page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {selected:[...t.trafficSelection.ids].sort(),matched:t.totalMatched,filter:t.searchInput.value,undo:t.trafficUndo.length,removals:globalThis.__workspaceFixture.calls.remove_traffic_entries??0};});
+      const before=await state();
+      for(const name of ['Close Timeline help','Refresh timeline']){
+        const control=help.getByRole('button',{name,exact:true});await control.focus();
+        for(const key of ['Control+a','Delete','Control+z','Control+y','Control+Shift+z']){
+          await page.keyboard.press(key);
+          assert.deepEqual(await state(),before,`${key} in ${name} changed Traffic`);
+          assert.equal(await control.evaluate(el=>el===el.getRootNode().activeElement),true,`${key} moved focus out of ${name}`);
+        }
+      }
+      assert.equal(await help.isVisible(),true,'Traffic shortcuts closed help');
+    };
     const chartTop=await timeline.locator('.timeline-viewport').evaluate(el=>el.getBoundingClientRect().top);
     await helpButton.hover();await help.waitFor({state:'visible'});
     await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
@@ -35,6 +50,7 @@ export async function checkTrafficTimeline(page,root) {
     await traffic.getByLabel('Filter or search traffic',{exact:true}).hover();await help.waitFor({state:'hidden'});
     await helpButton.focus();await help.waitFor({state:'visible'});await page.keyboard.press('Tab');
     assert.equal(await help.getByRole('button',{name:'Close Timeline help',exact:true}).evaluate(el=>el===el.getRootNode().activeElement),true);
+    await checkHelpShortcuts();
     await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
     assert.equal(await helpButton.evaluate(el=>el===el.getRootNode().activeElement),true,'Closing help lost keyboard focus');
     await page.keyboard.press('Shift+Tab');await page.keyboard.press('Tab');await help.waitFor({state:'visible'});
@@ -42,7 +58,7 @@ export async function checkTrafficTimeline(page,root) {
     await helpButton.click();await traffic.getByLabel('Filter or search traffic',{exact:true}).hover();
     await page.waitForTimeout(250);assert.equal(await help.isVisible(),true,'Clicked help did not stay open');
     const queries=await page.evaluate(()=>globalThis.__workspaceFixture.calls.traffic_timeline_rows??0);
-    await help.getByRole('button',{name:'Refresh timeline',exact:true}).click();
+    await help.getByRole('button',{name:'Refresh timeline',exact:true}).focus();await page.keyboard.press('Enter');
     await page.waitForFunction(queries=>(globalThis.__workspaceFixture.calls.traffic_timeline_rows??0)>queries,queries);
     await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();await help.waitFor({state:'hidden'});
     await helpButton.click();await traffic.getByLabel('Filter or search traffic',{exact:true}).click();await help.waitFor({state:'hidden'});
@@ -144,7 +160,7 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     await show(false);await traffic.locator('#session-tl-slow').click();await traffic.locator('#session-tl-failed').click({modifiers:['Control']});
     await show(true);assert.equal(await timeline.locator('.timeline-row').count(),2);
-    await helpButton.click();await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
+    await helpButton.click();await checkHelpShortcuts();await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
     assert.equal(await timeline.locator('.timeline-row').count(),2,'Dismissing help cleared request selection');
     await timeline.locator('#timeline-tl-slow').click();assert.equal(await timeline.locator('.timeline-row').count(),2,'Inspecting collapsed multiselection');
     await timeline.getByRole('button',{name:'Show all matches',exact:true}).click();assert.equal(await timeline.locator('.timeline-row').count(),6);

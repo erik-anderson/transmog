@@ -106,7 +106,8 @@ Escape cancels a drag. **Reset range** fits the scope again.
 Hover or focus **?** beside the Timeline heading for the absolute start time in
 UTC, timing boundaries and keyboard instructions. Click it to keep help open;
 Close, Escape or clicking outside dismisses it. Help overlays the view without
-moving the chart. **Compact rows** applies to both List and Timeline;
+moving the chart. Selection, removal and Undo/Redo shortcuts are inactive
+inside help. **Compact rows** applies to both List and Timeline;
 **List columns** is available only in List. Layout places the **Inspector below**
 (default) or **Inspector beside** the traffic view.
 

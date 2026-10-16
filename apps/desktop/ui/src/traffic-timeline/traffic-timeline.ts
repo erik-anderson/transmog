@@ -133,7 +133,12 @@ export class TrafficTimeline extends WebUIElement {
   }
   timelineKey(event:KeyboardEvent):void {
     if(this.helpPanel.matches(':popover-open')&&event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closeHelp();return;}
-    if(this.helpPanel.contains(event.target as Node))return;
+    if(this.helpPanel.contains(event.target as Node)){
+      event.stopPropagation();
+      // Native Undo/Redo can reactivate a previously edited field outside help.
+      if(!isTextEditing(event)&&(event.key==='Delete'||((event.ctrlKey||event.metaKey)&&['a','z','y'].includes(event.key.toLowerCase()))))event.preventDefault();
+      return;
+    }
     if(event.defaultPrevented||isTextEditing(event))return;
     if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){
       event.preventDefault();event.stopPropagation();this.selectAll();
