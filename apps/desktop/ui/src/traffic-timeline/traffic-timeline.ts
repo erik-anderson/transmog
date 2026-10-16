@@ -16,6 +16,7 @@ export class TrafficTimeline extends WebUIElement {
   @observable timelineDisplay={...initialState.timelineDisplay,rows:[] as DisplayRow[]};
   viewport!:HTMLElement;
   overview!:SVGSVGElement;
+  rowMetric!:HTMLElement;
   private observer:ResizeObserver|null=null;
   private scoped:TrafficTimelineRow[]=[];
   private matching:TrafficTimelineRow[]=[];
@@ -25,19 +26,16 @@ export class TrafficTimeline extends WebUIElement {
   private maximum=1;
   private adjusted=false;
   private order='start';
-  private previousRowHeight=32;
-  private get rowHeight():number {return this.compact?32:48;}
+  private rowHeight=32;
   private rebuildPending=false;
   private drag:{pointer:number;target:Element;part:string;x:number;from:number;to:number;adjusted:boolean;scale:number;minimum:number;maximum:number}|null=null;
 
-  protected hydratedCallback():void {this.observer=new ResizeObserver(()=>this.renderRows());this.observer.observe(this.viewport);this.rebuild();}
+  protected hydratedCallback():void {this.observer=new ResizeObserver(()=>this.renderRows());this.observer.observe(this.viewport);this.observer.observe(this.rowMetric);this.rebuild();}
   entriesChanged():void {if(this.drag)this.rebuildPending=true;else this.rebuild();}
   chosenChanged():void {this.rebuild();}
   sourcesChanged():void {this.renderRows();}
   compactChanged():void {
-    const scroll=(this.viewport?.scrollTop??0)/this.previousRowHeight*this.rowHeight;
-    this.previousRowHeight=this.rowHeight;this.renderRows(scroll);this.$flushUpdates();
-    if(this.viewport)this.viewport.scrollTop=scroll;
+    if(this.rowMetric){this.$flushUpdates();this.renderRows();}
   }
   private rebuild():void {
     // Deliberate scope changes cancel a gesture; live snapshots wait for its end.
@@ -81,6 +79,10 @@ export class TrafficTimeline extends WebUIElement {
     this.renderRows();
   }
   renderRows(scroll=this.viewport?.scrollTop??0):void {
+    // The CSS metric tracks rem-based density even when only text size changes.
+    const measured=this.rowMetric?.getClientRects().length?parseFloat(getComputedStyle(this.rowMetric).height):0;
+    const resized=measured>0&&Math.abs(measured-this.rowHeight)>.01;
+    if(resized){scroll=scroll/this.rowHeight*measured;this.rowHeight=measured;}
     const height=this.viewport?.clientHeight??300,rowHeight=this.rowHeight;
     const start=Math.max(0,Math.min(this.matching.length,Math.floor(scroll/rowHeight)-5)),end=Math.min(this.matching.length,start+Math.ceil(height/rowHeight)+11);
     const extent=this.to-this.from,sourceNames=new Map(this.sources.map(source=>[source.id,source.name]));
@@ -101,6 +103,7 @@ export class TrafficTimeline extends WebUIElement {
         description:`#${row.requestNumber} ${row.method} ${row.url} · ${milliseconds(row.durationMicros)} · ${row.terminal} · ${source} · ${row.basis}${row.startMillis==null?' · Start time unavailable':' · '+timestamp(row.startMillis)}`};
     });
     this.timelineDisplay={...this.timelineDisplay,rows,top:start*rowHeight+'px',bottom:Math.max(0,this.matching.length-end)*rowHeight+'px'};
+    if(resized){this.$flushUpdates();if(this.viewport)this.viewport.scrollTop=scroll;}
   }
   inspect(id:string):void {this.$emit('timeline-inspect',id);}
   clearSelection():void {this.$emit('timeline-clear-selection');}
@@ -116,6 +119,7 @@ export class TrafficTimeline extends WebUIElement {
     }
   }
   reveal(id:string):void {
+    this.renderRows();
     const index=this.matching.findIndex(row=>row.id===id);
     if(index<0){this.viewport.focus({preventScroll:true});return;}
     const top=index*this.rowHeight;

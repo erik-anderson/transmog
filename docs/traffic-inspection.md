@@ -91,6 +91,9 @@ Ctrl+A selects the requests included in the current timeline range, including
 offscreen rows and new traffic. Inspector actions apply to the inspected request
 without changing that group. Opening source evidence refreshes the timeline,
 fits the range to that request and focuses its row.
+If focus moves elsewhere while source evidence loads, it stays there when the
+result arrives. Timeline virtualization follows the rendered row size, including
+larger text settings.
 
 Drag the overview's window to pan, drag either edge to resize, or drag outside
 the window to choose a range. Requests active at any point in the window are

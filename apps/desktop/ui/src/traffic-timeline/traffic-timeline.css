@@ -1,6 +1,7 @@
 traffic-timeline { display:block; flex:1; min-height:0; min-width:0; overflow:hidden; }
-.traffic-timeline { --timeline-row-height:48px; display:flex; flex-direction:column; height:100%; min-height:0; overflow:auto; container-type:inline-size; }
-.traffic-timeline[data-compact] { --timeline-row-height:32px; }
+.traffic-timeline { --timeline-row-height:3rem; position:relative; display:flex; flex-direction:column; height:100%; min-height:0; overflow:auto; container-type:inline-size; }
+.traffic-timeline[data-compact] { --timeline-row-height:2rem; }
+.timeline-row-metric { position:absolute; top:0; left:0; width:0; height:var(--timeline-row-height); visibility:hidden; pointer-events:none; }
 .timeline-tools { display:flex; flex-wrap:wrap; align-items:baseline; gap:.35rem .6rem; padding:.35rem .6rem; font-size:.73rem; border-bottom:1px solid var(--line); }
 .timeline-tools > span { flex:1; min-width:8rem; }
 .timeline-tools label { display:flex; gap:.3rem; align-items:baseline; }
@@ -23,7 +24,7 @@ traffic-timeline { display:block; flex:1; min-height:0; min-width:0; overflow:hi
 .timeline-ticks { display:flex; justify-content:space-between; font-variant-numeric:tabular-nums; }
 .timeline-overview:has(.timeline-help[open]) { max-height:45%; overflow:auto; }
 .timeline-viewport { min-height:96px; flex:1 0 96px; overflow:auto; overflow-anchor:none; scrollbar-gutter:stable; }
-.timeline-row { align-items:center; width:100%; height:var(--timeline-row-height); padding:2px .6rem; border:0; border-bottom:1px solid var(--line); border-radius:0; text-align:left; color:var(--text); background:var(--panel); font:inherit; font-size:.73rem; }
+.timeline-row { align-items:center; width:100%; height:var(--timeline-row-height); padding:2px .6rem; border:0; border-bottom:1px solid var(--line); border-radius:0; text-align:left; color:var(--text); background:var(--panel); font:inherit; font-size:.73rem; line-height:1.1; }
 .timeline-row:hover { background:var(--row-hover); }
 .timeline-row[data-current] { box-shadow:inset 3px 0 var(--accent-strong); background:var(--accent-soft); }
 .timeline-request { min-width:0; }

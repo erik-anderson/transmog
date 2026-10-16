@@ -1,5 +1,6 @@
 <template>
   <section class="traffic-timeline" ?data-compact="{{compact}}" aria-label="Request timeline" @keydown="{timelineKey(e)}">
+    <div w-ref="{rowMetric}" class="timeline-row-metric" aria-hidden="true"></div>
     <div class="timeline-tools">
       <strong>Timeline</strong><span role="status">{{timelineDisplay.summary}}</span>
       <label>Order <select aria-label="Timeline order" @change="{changeOrder(e)}"><option value="start">Start time</option><option value="duration">Longest first</option></select></label>

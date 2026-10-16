@@ -123,6 +123,12 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.locator('#timeline-tl-slow').waitFor({state:'visible'});
     assert.equal(await timeline.locator('#timeline-tl-slow').evaluate(el=>el===el.getRootNode().activeElement),true,'Source navigation left focus on the hidden List');
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedDetail?.id),'tl-slow');
+    // Late source results update evidence without taking focus back from a field.
+    await page.evaluate(()=>{globalThis.__workspaceFixture.deferTimeline=true;void document.querySelector('app-shell').traffic.revealSession('tl-fast');});
+    await page.waitForFunction(()=>globalThis.__workspaceFixture.timelinePending);await input.focus();
+    await page.evaluate(()=>globalThis.__workspaceFixture.releaseTimeline());
+    await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.timelinePending);
+    assert.equal(await input.evaluate(el=>el===el.getRootNode().activeElement),true,'Late source navigation stole focus');
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=s.sessions[0];s.sessions=Array.from({length:10000},(_,i)=>({...seed,id:'tl-load-'+i,requestNumber:String(i+1),startedAt:1800000000000+i*10,durationMs:50,url:'https://example.test/scenario/long-url/'+i+'?value='+('long-value-'.repeat(20))}));t.liveFilter='';t.searchText='';t.searchInput.value='';t.queryRevision++;await t.refreshSessions(undefined,true);await t.refreshTimeline();});
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),10000);
@@ -138,14 +144,34 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=5000*32);
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:false};});
-    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('.timeline-row').getBoundingClientRect().height===48);
+    await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic.timeline;return t.rowHeight===48&&t.querySelector('.timeline-row').getBoundingClientRect().height===48;});
     assert.ok(Math.abs(await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop/48)-5000)<1,'Density change lost the current request position');
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:true};});
+    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.timeline.rowHeight===32);
     await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=el.scrollHeight);
     await timeline.locator('#timeline-tl-load-9999').waitFor();await timeline.locator('#timeline-tl-load-9999').click();
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-9999');
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0);
+    // Text sizing changes rem lengths without applying browser zoom to pixels.
+    for(const size of ['20px','24px','17.5px']){
+      await page.evaluate(size=>document.documentElement.style.fontSize=size,size);
+      await timeline.locator('.timeline-viewport').focus();await page.keyboard.press('End');
+      const geometry=await timeline.evaluate(el=>{const row=el.querySelector('#timeline-tl-load-9999').getBoundingClientRect(),viewport=el.viewport.getBoundingClientRect();return {height:row.height,model:el.rowHeight,top:row.top,bottom:row.bottom,viewTop:viewport.top,viewBottom:viewport.bottom};});
+      assert.equal(geometry.height,geometry.model,'Text size changed rendered height without updating virtualization');
+      assert.ok(geometry.top>=geometry.viewTop-1&&geometry.bottom<=geometry.viewBottom+1,'End navigation left the focused request outside the viewport');
+      await checkAxis();
+    }
+    await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-large-text.png')});
+    await page.evaluate(()=>document.documentElement.style.fontSize='');
+    await page.evaluate(()=>document.documentElement.style.zoom='1.25');
+    try{
+      await timeline.locator('.timeline-viewport').focus();await page.keyboard.press('End');
+      const geometry=await timeline.evaluate(el=>{const row=el.querySelector('#timeline-tl-load-9999'),box=row.getBoundingClientRect(),viewport=el.viewport.getBoundingClientRect();return {height:parseFloat(getComputedStyle(row).height),model:el.rowHeight,top:box.top,bottom:box.bottom,viewTop:viewport.top,viewBottom:viewport.bottom};});
+      assert.equal(geometry.height,geometry.model,'Browser zoom changed virtualization units');
+      assert.ok(geometry.top>=geometry.viewTop-1&&geometry.bottom<=geometry.viewBottom+1,'End navigation at zoom left the row outside the viewport');
+    }finally{await page.evaluate(()=>document.documentElement.style.zoom='');}
   } finally {
+    await page.evaluate(()=>{document.documentElement.style.fontSize='';document.documentElement.style.zoom='';});
     await page.evaluate(async saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.timelineFailure=false;s.deferTimeline=false;s.releaseTimeline?.();t.setTimeline(false);s.sessions=saved.rows;t.preferences=saved.preferences;t.comparisonBaseline=saved.baseline;t.comparisonBaselineLabel=saved.baselineLabel;t.liveFilter='';t.searchText='';t.searchInput.value='';t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);},saved);
     await page.setViewportSize({width:1280,height:800});
   }

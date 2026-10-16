@@ -34,8 +34,12 @@ export class AppShell extends WebUIElement {
     event.stopPropagation();
     try{
       if(!await this.activateView('traffic')){this.comparison.comparisonStatus='Navigation canceled; comparison and editor draft preserved.';return;}
-      if(!await this.traffic.revealSession(event.detail)){this.comparison.comparisonStatus='The source is no longer retained. Frozen comparison evidence remains available.';return;}
-      this.comparison.sourceOpened();if(this.traffic.previewReportDialog.open)this.traffic.closePreviewReport();this.traffic.focusTraffic();
+      const focus=this.traffic.trackNavigationFocus();
+      try{
+        if(!await this.traffic.revealSession(event.detail,focus.unchanged)){this.comparison.comparisonStatus='The source is no longer retained. Frozen comparison evidence remains available.';return;}
+        const restore=focus.unchanged();
+        this.comparison.sourceOpened();if(this.traffic.previewReportDialog.open)this.traffic.closePreviewReport();if(restore)this.traffic.focusTraffic();
+      }finally{focus.dispose();}
     }catch(error:unknown){this.comparison.comparisonStatus='Source could not be opened: '+describeError(error);}
   }
 

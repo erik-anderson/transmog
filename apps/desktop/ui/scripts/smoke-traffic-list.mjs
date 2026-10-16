@@ -93,6 +93,12 @@ export async function smokeTrafficList(client,screenshot) {
   assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis===null)`),'Native fixture lost unavailable timing');
   assert.equal(await client.evaluate(`${t}.querySelector('.timeline-span').namespaceURI`),'http://www.w3.org/2000/svg');
   assert.ok(await client.evaluate(`${t}.querySelectorAll('.timeline-row').length<100`));
+  const textSize=await client.evaluate('document.documentElement.style.fontSize');
+  try{
+    await client.evaluate(`document.documentElement.style.fontSize='20px';${t}.querySelector('.timeline-viewport').focus()`);
+    await key('End','End',35);
+    assert.ok(await client.evaluate(`(()=>{const timeline=${t}.timeline,row=timeline.getRootNode().activeElement,r=row.getBoundingClientRect(),v=timeline.viewport.getBoundingClientRect();return row.matches('.timeline-row')&&Math.abs(parseFloat(getComputedStyle(row).height)-timeline.rowHeight)<.01&&r.top>=v.top-1&&r.bottom<=v.bottom+1;})()`),'Native large-text navigation lost the focused row');
+  }finally{await client.evaluate(`document.documentElement.style.fontSize=${JSON.stringify(textSize)}`);}
   // Starting on a button must not prevent Escape from canceling a native drag.
   const rangeWidth=await client.evaluate(`${t}.querySelector('.timeline-window').getAttribute('width')`);
   const handle=await client.evaluate(`(()=>{[...${t}.querySelectorAll('traffic-timeline button')].find(button=>button.textContent==='Reset range').focus();const r=${t}.querySelector('[aria-label="Timeline end"]').getBoundingClientRect();return {x:r.x+1,y:r.y+5};})()`);
@@ -137,6 +143,14 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.revealSession(${JSON.stringify(ids[2])})`);
   await wait(`${t}.querySelector('.timeline-row')?.dataset.id===${JSON.stringify(ids[2])}`);
   assert.equal(await client.evaluate(`${t}.getRootNode().activeElement?.dataset.id`),ids[2],'Native source reveal left focus on hidden List');
+  // Hold only the Timeline acquisition; the source navigation and focus are real.
+  await client.evaluate(`(()=>{const w=${t},original=w.refreshTimeline;let release;const gate=new Promise(resolve=>release=resolve);globalThis.__nativeTimelineFocus={original,release,entered:false,complete:false};w.refreshTimeline=async()=>{globalThis.__nativeTimelineFocus.entered=true;await gate;return original.call(w);};void w.revealSession(${JSON.stringify(ids[0])}).then(()=>globalThis.__nativeTimelineFocus.complete=true);})()`);
+  try{
+    await wait('globalThis.__nativeTimelineFocus.entered');
+    await client.evaluate(`${t}.searchInput.focus();globalThis.__nativeTimelineFocus.release()`);
+    await wait('globalThis.__nativeTimelineFocus.complete');
+    assert.equal(await client.evaluate(`${t}.getRootNode().activeElement===${t}.searchInput`),true,'Native late source navigation stole focus');
+  }finally{await client.evaluate(`${t}.refreshTimeline=globalThis.__nativeTimelineFocus.original;globalThis.__nativeTimelineFocus.release();delete globalThis.__nativeTimelineFocus`);}
   await client.evaluate(`${t}.setTimeline(false);${t}.clearTrafficSelection()`);
   process.stdout.write('WebView2 timeline: full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n');
   process.stdout.write('WebView2 traffic: 20,000 entries, offscreen range, select all/delete/undo and search reveal verified.\n');

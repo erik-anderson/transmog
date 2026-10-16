@@ -94,6 +94,15 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.trafficSelection.anchor=ids[0]??null;this.updateTrafficSelection();
   }
   focusTraffic():void {if(this.timelineMode)this.timeline.reveal(this.selectedSessionId??'');else this.trafficTable.focus({preventScroll:true});}
+  trackNavigationFocus():{unchanged:()=>boolean;dispose:()=>void} {
+    let moved=false;
+    const onFocus=()=>{moved=true;};
+    // Focus moves within one shadow tree do not necessarily reach document.
+    const root=this.getRootNode();
+    root.addEventListener('focusin',onFocus,true);
+    document.addEventListener('focusin',onFocus,true);
+    return {unchanged:()=>!moved,dispose:()=>{root.removeEventListener('focusin',onFocus,true);document.removeEventListener('focusin',onFocus,true);}};
+  }
   portableCase!:PortableCase;
   @observable caseOpen=false;
   onCaseOpenChange(event:CustomEvent<boolean>):void{this.caseOpen=event.detail;}
@@ -108,7 +117,11 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async onCasePreviewReport(event:CustomEvent<string>):Promise<void>{event.stopPropagation();this.previewReportLabel=event.detail;await this.showPreviewReport();}
   onCasePreview(event:CustomEvent<{label:string;id:string}>):void{event.stopPropagation();this.previewReportLabel=event.detail.label;this.previewReportAvailable=true;this.previewSceneAvailable=false;this.previewSceneDocumentId=event.detail.id;this.diagnostic='Case preview opened in an isolated InPrivate session. Preview diagnostics record the engine, script choice and supplied responses.';}
-  async onCaseReference(event:CustomEvent<string>):Promise<void>{event.stopPropagation();await this.refreshSessions(undefined,true);await this.revealSession(event.detail);this.focusTraffic();}
+  async onCaseReference(event:CustomEvent<string>):Promise<void>{
+    event.stopPropagation();const focus=this.trackNavigationFocus();
+    try{await this.refreshSessions(undefined,true);await this.revealSession(event.detail,focus.unchanged);}
+    finally{focus.dispose();}
+  }
   async onCaseEvidenceOpened(event:CustomEvent):Promise<void>{event.stopPropagation();await this.refreshSessions(undefined,true);}
 
   @observable incidentWindow:IncidentWindow|null=null;
@@ -1232,9 +1245,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.$emit('response-experiment-request',{sessionId:this.selectedSessionId,detail:structuredClone(this.selectedDetail),reusable:true} satisfies SelectedResponse);
   }
   beginAutoResponseFromSelected():void { if (this.selectedDetail && this.selectedSessionId) this.$emit('autoresponse-request',{sessionId:this.selectedSessionId,detail:this.selectedDetail}); }
-  async revealSession(id:string):Promise<boolean> {
+  async revealSession(id:string,canFocus:()=>boolean=()=>true):Promise<boolean> {
     window.clearTimeout(this.searchTimer);
-
+    const focus=this.trackNavigationFocus(),restoreFocus=()=>focus.unchanged()&&canFocus();
     let revision = ++this.queryRevision;
     try {
       const view = await invoke<TrafficView>('query_traffic_view',{query:{sort:this.sort,focusId:id}});
@@ -1254,21 +1267,21 @@ export class TrafficWorkspace extends WorkspaceElement {
         if(revision!==this.queryRevision||this.selectedSessionId!==id)return true;
         await this.refreshTimeline();
         if(revision!==this.queryRevision||this.selectedSessionId!==id)return true;
-        if(this.timelineMode){this.$flushUpdates();this.timeline.resetRange();this.timeline.$flushUpdates();this.timeline.reveal(id);}
+        if(this.timelineMode){this.$flushUpdates();this.timeline.resetRange();this.timeline.$flushUpdates();if(restoreFocus())this.timeline.reveal(id);}
       }else {
-        const row=await this.revealCurrent(id,true);if(!row)throw new Error('Source no longer in Traffic.');
+        const row=await this.revealCurrent(id,false);if(!row)throw new Error('Source no longer in Traffic.');
         await this.inspectSession(row);
       }
       if (revision !== this.queryRevision || this.selectedSessionId !== id) return true;
       const element = (this.getRootNode() as ShadowRoot).getElementById('session-'+id);
-      if(!this.timelineMode){element?.scrollIntoView({block:'nearest'});element?.focus({preventScroll:true});}
+      if(!this.timelineMode&&restoreFocus()){element?.scrollIntoView({block:'nearest'});element?.focus({preventScroll:true});}
       if (filtered) this.diagnostic = 'Traffic filters cleared to reveal the source request.';
       return true;
     } catch (error:unknown) {
       if (revision !== this.queryRevision || !this.isConnected) return false;
       this.showNotice('Source unavailable',describeError(error),null,null);
       return false;
-    }
+    }finally{focus.dispose();}
   }
   showMatchedAutoResponse():void { if (this.matchedRuleId) this.$emit('matched-rule-request',this.matchedRuleId); }
   async copyUrl():Promise<void> {if(!this.selectedSessionId||this.inspectionSummaryId!==this.selectedSessionId){this.diagnostic='The request URL is still loading.';return;}try { await navigator.clipboard.writeText(this.selectedUrlText); this.diagnostic = 'URL copied.'; } catch { this.diagnostic = 'Select the URL and use Copy.'; } }
