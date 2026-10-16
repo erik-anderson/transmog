@@ -23,7 +23,8 @@ are checked in.
 
 - Broader case/rule CLI validation, matching and extraction remain deferred under
   the revision-0 [portable investigation contract](portable-investigations.md), along with
-  script/run/preview/comparison integration (K5).
+  offline script execution, persisted browser runs and CLI comparison (K5).
+  Desktop case previews and saved recorded-request/capture comparisons are implemented.
   Broader project organization and any future format stability decision remain
   separate from the experimental live control protocol.
 - Expand safe previews or semantic viewers only after a format-specific parser,

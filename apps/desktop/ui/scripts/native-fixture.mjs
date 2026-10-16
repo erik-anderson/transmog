@@ -29,7 +29,7 @@ export function nativeFixture(records, exchangeId) {
     expanded.push(original);
   }
   const blockSize=16384,payloadSize=blockSize-5,blockBytes=blockSize+16;
-  const header=Buffer.from(JSON.stringify({version:1,layout:'indexed-blocks',block_size:blockSize,compression:'zstd',cipher:'none',kdf:'none',salt:Array(16).fill(0),nonce_prefix:Array(4).fill(0),memory_kib:0,iterations:0,lanes:0}));
+  const header=Buffer.from(JSON.stringify({version:1,document_kind:'capture',layout:'indexed-blocks',block_size:blockSize,compression:'zstd',cipher:'none',kdf:'none',salt:Array(16).fill(0),nonce_prefix:Array(4).fill(0),memory_kib:0,iterations:0,lanes:0}));
   const size=Buffer.alloc(4);size.writeUInt32LE(header.length);
   const geometry=Buffer.alloc(4);geometry.writeUInt32LE(blockSize);
   const envelope=Buffer.concat([Buffer.from('TMCAP001\0'),size,header,geometry,Buffer.alloc(512)]);

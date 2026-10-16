@@ -28,6 +28,8 @@ export class AppShell extends WebUIElement {
   comparison!:ComparisonWorkspace;
   onComparison(event:CustomEvent<ComparisonOpen>):void{event.stopPropagation();void this.comparison.open(event.detail);}
   onCaptureComparison(event:CustomEvent<CaptureOpen>):void{event.stopPropagation();void this.comparison.openCaptures(event.detail);}
+  async onSaveComparisonCase(event:CustomEvent<{id:string;returnFocus:HTMLElement}>):Promise<void>{event.stopPropagation();await this.traffic.showPortableCase('export',event.detail.id,event.detail.returnFocus);}
+  onCaseComparison(event:CustomEvent<{id:string;kind:string;left:ComparisonOpen['left'];right:ComparisonOpen['right'];options:NonNullable<ComparisonOpen['options']>}>):void{event.stopPropagation();if(event.detail.kind==='captures')void this.comparison.openCaseCaptures(event.detail.id);else void this.comparison.open({left:event.detail.left,right:event.detail.right,options:event.detail.options});}
   async onComparisonSource(event:CustomEvent<string>):Promise<void>{
     event.stopPropagation();
     try{

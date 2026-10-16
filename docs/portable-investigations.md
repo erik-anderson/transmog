@@ -4,8 +4,9 @@ Status: K1/K2 implement rule/asset and working-case APIs. K3 adds bounded Stored
 ZIP64 transfer, the typed TMCap wrapper with optional whole-package encryption,
 and desktop review/open/save/disabled-import actions. K4 is limited to native
 capture context listing/extraction through the [CLI](cli.md#read-recorded-context).
-Broader case/rule CLI tooling is deferred; script and richer run integration
-remain future work. Revision 0 stays experimental.
+Desktop cases also support frozen response previews and saved recorded-request /
+capture-scope comparisons. Broader case/rule CLI tooling, offline script execution
+and persisted browser-run evidence remain future work. Revision 0 stays experimental.
 [ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
 [the roadmap](roadmap.md) tracks remaining implementation.
 
@@ -629,6 +630,68 @@ that the information remains. This is a content/privacy rule, not a requirement
 to support historical TMCap layouts.
 Collectors remain opt-in and unchanged. K2 supplies the context inventory and
 source associations; K3 packages and protects that same object model.
+
+## Desktop previews and saved comparisons
+
+Open a case through **Files → Open portable case…**. Beside an available evidence
+source, choose **Preview case…**, select an included complete HTML response and
+choose **Captured baseline**, **Frozen saved auto-responses**, or an exact named
+variant revision. Read the warning before **Open case preview**. Scripts start off
+each time. The resource scope defaults to the document’s original source;
+**All opened case evidence** is an explicit choice that can mix captures. Inspect
+additional case sources first when they are needed by that broader scope.
+
+Preview preparation reads the package’s verified immutable response objects into
+bounded owned snapshots. It neither imports nor activates automation, resolves
+original linked-file paths, executes packaged automation scripts, nor changes the live
+pause switch. Ordinary auto-responses explicitly selected for preview participate
+even if their saved enabled intent is false. Named variants retain each rule’s
+participation and recorded precedence. A variant containing participating live
+header/body transformations cannot run in this captured-response preview.
+Unavailable assets or an unsupported selection fail visibly; there is no fallback
+to a current workbench definition. Existing 64-rule, 32 MiB/resource and 256 MiB
+scene bounds apply. See [page previews](captured-page-preview.md) for isolation,
+network failures and browser limitations.
+
+Each opening creates an independent InPrivate WebView2 preview. The case review’s
+**Preview diagnostics…** (also available as **Last preview diagnostics…** in Traffic) records the case/revision/variant, actual engine,
+script choice, resource hashes, winning rules and intercepted request outcomes.
+These are supplied-response observations, not proof that another browser or the
+original site completed successfully. Closing the package does not invalidate an
+already prepared scene. Open another case preview to use a different selection.
+
+In a recorded-request or capture-scope comparison, choose **Save comparison in
+case…**. The case form selects that comparison and all requests it requires;
+review and save the content normally. Other retained comparisons can also be
+selected. A narrower evidence selection must still contain every referenced
+request. Changed source metadata or an expired comparison requires a new
+comparison before saving. Temporary draft, response-asset and preview-observation
+comparisons are not saved by this increment.
+
+A case’s **Saved comparisons** shows historical summary findings.
+**Recompute comparison** opens required available sources, resolves their exact
+artifact digest / internal source / original request / occurrence identities,
+and opens the existing comparison workspace. Request comparisons restore both
+boundaries, header exclusions and newline normalization. Capture comparisons
+restore ordered scope membership, pairing query/header/body criteria, and manual
+pair / keep-unmatched decisions. Proposed pairs are recomputed in the saved scope
+order; body comparison remains on demand. Missing, removed or ambiguous evidence
+and unsupported engine revisions fail explicitly. Historical findings never
+establish equality for the newly acquired evidence. No runtime handle, workspace
+request number or filename is used as a portable comparison identity.
+
+The optional manifest `comparisons` array uses required feature `comparisons/1`.
+Each entry has `id`, `label`, `kind` (`exchange` or `captures`), `engine`
+(`transmog-comparison/1`), ordered `left`/`right` evidence references,
+`requestBoundary`, `settings`, `corrections`, and inert `recordedSummary`.
+Settings contain `excludedHeaders`, `normalizeNewlines`, `excludedQueryNames`,
+`requestHeaders`, and `requestBodyDigest`; fields inapplicable to the kind must
+be empty/false. Response boundaries belong to each evidence reference. Corrections
+contain optional `left`/`right` references to their declared sides, with no
+repeated member. There are at most 16 saved comparisons, 10,000 members per side,
+20,000 corrections and 8 KiB per summary, within the shared manifest bound.
+Unknown engine revisions remain inspectable but cannot be recomputed. Payload
+bytes stay in the existing shared objects; summaries never contain copied bodies.
 
 ## Limits, persistence and import
 

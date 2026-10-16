@@ -433,18 +433,22 @@ pub(crate) async fn prepare(
     options: CapturedPageOptions,
     canceled: std::sync::Arc<std::sync::atomic::AtomicBool>,
 ) -> Result<CapturedPage, AppError> {
+    if options.case_preview.is_some() {
+        return Err(error("Open a case preview through its owning package"));
+    }
     let runtime = tokio::runtime::Handle::current();
     tokio::task::spawn_blocking(move || {
-        runtime.block_on(build(&application, &id, &options, &canceled))
+        runtime.block_on(build(&application, &id, &options, &canceled, None))
     })
     .await
     .map_err(|_| error("Captured page preparation failed"))?
 }
-async fn build(
+pub(crate) async fn build(
     application: &Application,
     id: &str,
     options: &CapturedPageOptions,
     canceled: &std::sync::atomic::AtomicBool,
+    allowed: Option<&std::collections::HashSet<String>>,
 ) -> Result<CapturedPage, AppError> {
     let numeric = ExchangeId(parse_session_id(id)?);
     let selected = application
@@ -463,6 +467,9 @@ async fn build(
     let source = application.traces.source_id(id);
     let anchor = millis(selected.metadata.started_at);
     let mut candidates = candidates(application, source.as_deref(), options.scope);
+    if let Some(allowed) = allowed {
+        candidates.retain(|candidate| allowed.contains(&format!("{:032x}", candidate.id.0)));
+    }
     candidates.sort_by_key(|candidate| {
         (
             candidate.id != numeric,
@@ -497,6 +504,7 @@ pub(crate) fn fork(page: &CapturedPage) -> CapturedPage {
     report.bytes -= report.rules.iter().map(|r| r.bytes).sum::<u64>();
     report.rules.clear();
     report.variant = None;
+    report.case_origin = None;
     report.hits = 0;
     report.misses = 0;
     report.failures = 0;
@@ -1170,6 +1178,278 @@ mod tests {
             0,
         );
         assert!(!absent.to_ascii_lowercase().contains("cache-control"));
+    }
+
+    #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Full frozen case export/recipient/preview lifetime.
+    async fn case_preview_uses_package_assets_and_only_case_evidence_without_activation() {
+        use crate::{
+            AuthoredResponseAsset, CaseExportRequest, ExperimentChange, ExperimentSelection,
+            RuleExportRequest,
+        };
+        use transmog_automation::{RequestActions, Rule, RuleMatcher, UrlCondition};
+        use transmog_core::HeaderBlock;
+        let root = tempfile::tempdir().unwrap();
+        let stage = tempfile::tempdir().unwrap();
+        let app = Application::new(AppConfig {
+            body_store: Some(BodyStoreConfig::product_default(root.path().join("bodies"))),
+            response_asset_root: Some(root.path().join("assets")),
+            ..Default::default()
+        })
+        .unwrap();
+        let path = root.path().join("page.saz");
+        fixture(&path, "Portable baseline");
+        app.import_trace(
+            TraceImportRequest {
+                path,
+                password: None,
+                operation_id: "case-site".into(),
+                max_file_bytes: 1024 * 1024,
+            },
+            Arc::new(|_| {}),
+        )
+        .await
+        .unwrap();
+        let asset = app
+            .create_response_asset(AuthoredResponseAsset {
+                id: "case-css".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body: b"h1 { color: blue; }".to_vec(),
+                media_type: Some("text/css".into()),
+            })
+            .unwrap();
+        let rule = Rule {
+            id: "case-rule".into(),
+            display_name: Some("Frozen CSS".into()),
+            enabled: true,
+            revision: 1,
+            priority: 0,
+            matcher: RuleMatcher {
+                url: Some(UrlCondition::Exact(
+                    "https://example.invalid/style.css".into(),
+                )),
+                ..Default::default()
+            },
+            request: RequestActions {
+                response_asset: Some(asset.asset_ref()),
+                ..Default::default()
+            },
+            response: transmog_automation::ResponseActions::default(),
+        };
+        app.change_experiment(
+            app.automation_status().generation,
+            ExperimentChange::Create {
+                id: "portable-exp".into(),
+                name: "Frozen preview".into(),
+                variant_id: "blue".into(),
+                variant_name: "Blue CSS".into(),
+                rules: vec![rule],
+            },
+        )
+        .unwrap();
+        let prepared = app
+            .prepare_investigation(
+                &CaseExportRequest {
+                    rules: RuleExportRequest {
+                        id: "case-preview".into(),
+                        revision: "1".into(),
+                        title: "Portable page".into(),
+                        rule_ids: vec![],
+                        selections: vec![ExperimentSelection {
+                            experiment_id: "portable-exp".into(),
+                            variant_id: "blue".into(),
+                            revision: 1,
+                        }],
+                    },
+                    evidence_review_id: Some(app.review_traffic_export(None).unwrap().id),
+                    derived_plaintext: true,
+                    notes: vec![],
+                    comparison_ids: vec![],
+                },
+                stage.path(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let package_path = stage.path().join("portable.tmcase.tmcap");
+        let password = transmog_capture::CapturePassword::new("fixture password".into());
+        transmog_portable::write_case_package(
+            &prepared,
+            &package_path,
+            transmog_portable::PackageFormat::Native,
+            Some(password.clone()),
+            false,
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+        let package = Arc::new(
+            transmog_portable::Package::open(
+                &package_path,
+                Some(&password),
+                &AtomicBool::new(false),
+            )
+            .unwrap(),
+        );
+        let wire = prepared.manifest();
+        let experiment: transmog_portable::Experiment =
+            serde_json::from_value(wire.experiments[0].clone()).unwrap();
+        let selection = transmog_portable::FrozenExperiment {
+            experiment_id: experiment.id.clone(),
+            variant_id: experiment
+                .variants
+                .iter()
+                .find(|v| v.revisions.iter().any(|r| !r.rules.is_empty()))
+                .unwrap()
+                .id
+                .clone(),
+            revision: experiment.variants[0].revisions[0].revision.clone(),
+        };
+        let recipient_root = tempfile::tempdir().unwrap();
+        let recipient = Application::new(AppConfig {
+            body_store: Some(BodyStoreConfig::product_default(
+                recipient_root.path().join("bodies"),
+            )),
+            response_asset_root: Some(recipient_root.path().join("assets")),
+            ..Default::default()
+        })
+        .unwrap();
+        let outside = recipient_root.path().join("outside.saz");
+        variant_fixture(&outside, true);
+        recipient
+            .import_trace(
+                TraceImportRequest {
+                    path: outside,
+                    password: None,
+                    operation_id: "outside".into(),
+                    max_file_bytes: 1024 * 1024,
+                },
+                Arc::new(|_| {}),
+            )
+            .await
+            .unwrap();
+        let opened = recipient
+            .open_package_evidence(
+                &package,
+                &wire.sources[0].id,
+                None,
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        let id = recipient
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions
+            .into_iter()
+            .find(|r| r.url == "https://example.invalid/page")
+            .unwrap()
+            .id;
+        let before = recipient.automation_status();
+        let assets = recipient.response_assets();
+        let page = recipient
+            .prepare_case_preview(
+                package.clone(),
+                opened.links.clone(),
+                id.clone(),
+                crate::CasePreviewOptions {
+                    selection: Some(selection),
+                    ..Default::default()
+                },
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            page.diagnostics()
+                .snapshot()
+                .case_origin
+                .unwrap()
+                .contains("case-preview@1")
+        );
+        let css = page
+            .resolve(
+                "GET",
+                "https://example.invalid/style.css",
+                Some(&[]),
+                None,
+                false,
+            )
+            .unwrap();
+        assert_eq!(
+            std::fs::read(&css.body_path).unwrap(),
+            b"h1 { color: blue; }"
+        );
+        assert!(
+            page.resolve(
+                "GET",
+                "https://variants.invalid/extra.js",
+                Some(&[]),
+                None,
+                false
+            )
+            .is_none()
+        );
+        let baseline = recipient
+            .prepare_case_preview(
+                package.clone(),
+                opened.links.clone(),
+                id.clone(),
+                crate::CasePreviewOptions::default(),
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await
+            .unwrap();
+        assert!(
+            std::fs::read_to_string(
+                baseline
+                    .resolve(
+                        "GET",
+                        "https://example.invalid/style.css",
+                        Some(&[]),
+                        None,
+                        false
+                    )
+                    .unwrap()
+                    .body_path
+            )
+            .unwrap()
+            .contains("green")
+        );
+        assert!(
+            recipient
+                .prepare_case_preview(
+                    package.clone(),
+                    opened.links.clone(),
+                    "0".repeat(32),
+                    crate::CasePreviewOptions::default(),
+                    Arc::new(AtomicBool::new(false))
+                )
+                .await
+                .is_err()
+        );
+        assert!(
+            recipient
+                .prepare_case_preview(
+                    package.clone(),
+                    opened.links,
+                    id,
+                    crate::CasePreviewOptions::default(),
+                    Arc::new(AtomicBool::new(true))
+                )
+                .await
+                .is_err()
+        );
+        assert_eq!(recipient.automation_status(), before);
+        assert_eq!(recipient.response_assets(), assets);
+        drop(package);
+        drop(prepared);
+        drop(app);
+        std::fs::remove_file(package_path).unwrap();
+        assert_eq!(
+            std::fs::read(css.body_path).unwrap(),
+            b"h1 { color: blue; }"
+        );
     }
 
     #[tokio::test]

@@ -46,7 +46,210 @@ fn request() -> CaseExportRequest {
         evidence_review_id: None,
         derived_plaintext: false,
         notes: vec![],
+        comparison_ids: vec![],
     }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn saved_comparisons_roundtrip_source_collisions_settings_and_manual_pairing() {
+    use crate::comparison::{
+        CaseComparisonOpen, ComparisonOptions, ComparisonRequest, ComparisonScope,
+        ComparisonSubject, PairingOptions,
+    };
+    let root = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let app = application(root.path());
+    let original = prepare(&manifest("source-collision"), stage.path());
+    let a = app
+        .open_investigation_evidence(
+            &original,
+            "source-a",
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+    let b = app
+        .open_investigation_evidence(
+            &original,
+            "source-b",
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+    let left = a.links[0].exchange_id.clone();
+    let right = b.links[0].exchange_id.clone();
+    let compared = app
+        .compare_evidence(
+            ComparisonRequest {
+                operation_id: "case-pair".into(),
+                left: ComparisonSubject::Exchange {
+                    id: left.clone(),
+                    request_boundary: "client-request".into(),
+                    response_boundary: "client-response".into(),
+                },
+                right: ComparisonSubject::Exchange {
+                    id: right.clone(),
+                    request_boundary: "client-request".into(),
+                    response_boundary: "client-response".into(),
+                },
+                options: ComparisonOptions {
+                    excluded_headers: vec!["date".into()],
+                    normalize_newlines: true,
+                },
+            },
+            [None, None],
+        )
+        .await
+        .unwrap();
+    let capture = app
+        .compare_captures(
+            "case-scopes".into(),
+            ComparisonScope::Selected {
+                ids: vec![left.clone()],
+            },
+            ComparisonScope::Selected {
+                ids: vec![right.clone()],
+            },
+            PairingOptions {
+                excluded_query_names: vec!["nonce".into()],
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    app.capture_comparison_page(
+        &capture.id,
+        0,
+        None,
+        Some(left.clone()),
+        Some(right.clone()),
+        "pair",
+    )
+    .unwrap();
+    let mut export = request();
+    export.derived_plaintext = true;
+    export.evidence_review_id = Some(app.review_traffic_export(None).unwrap().id);
+    export.comparison_ids = vec![compared.id.clone(), capture.id];
+    let frozen = app
+        .prepare_investigation(&export, stage.path(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(frozen.manifest().comparisons.len(), 2);
+    let pair = &frozen.manifest().comparisons[0];
+    assert_ne!(pair.left[0].source_key, pair.right[0].source_key);
+    assert!(pair.settings.normalize_newlines);
+    assert_eq!(pair.settings.excluded_headers, ["date"]);
+    let recipient_root = tempfile::tempdir().unwrap();
+    let recipient = application(recipient_root.path());
+    assert!(recipient.resolve_case_comparison(pair, &[]).is_err());
+    let mut links = vec![];
+    let mut artifacts = std::collections::HashSet::new();
+    for source in &frozen.manifest().sources {
+        if artifacts.insert(source.artifact_sha256.clone()) {
+            links.extend(
+                recipient
+                    .open_investigation_evidence(
+                        &frozen,
+                        &source.id,
+                        None,
+                        Arc::new(AtomicBool::new(false)),
+                    )
+                    .await
+                    .unwrap()
+                    .links,
+            );
+        }
+    }
+    let CaseComparisonOpen::Exchange {
+        left,
+        right,
+        options,
+    } = recipient.resolve_case_comparison(pair, &links).unwrap()
+    else {
+        panic!("exchange");
+    };
+    let result = recipient
+        .compare_evidence(
+            ComparisonRequest {
+                operation_id: "recomputed".into(),
+                left,
+                right,
+                options,
+            },
+            [None, None],
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.different, compared.different);
+    assert_eq!(result.excluded, compared.excluded);
+    let CaseComparisonOpen::Captures {
+        left,
+        right,
+        options,
+        corrections,
+    } = recipient
+        .resolve_case_comparison(&frozen.manifest().comparisons[1], &links)
+        .unwrap()
+    else {
+        panic!("captures");
+    };
+    assert_eq!(options.excluded_query_names, ["nonce"]);
+    assert_eq!(corrections.len(), 1);
+    let restored = recipient
+        .reopen_case_capture_comparison("re-pair".into(), left, right, options, corrections)
+        .await
+        .unwrap();
+    assert!(
+        restored
+            .rows
+            .iter()
+            .any(|r| r.reason == "Explicit user choice")
+    );
+    let before = recipient.case_comparison_choices().len();
+    assert!(
+        recipient
+            .reopen_case_capture_comparison(
+                "invalid-restoration".into(),
+                vec![restored.rows[0].left.clone().unwrap()],
+                vec![restored.rows[0].right.clone().unwrap()],
+                PairingOptions::default(),
+                vec![(Some("outside-the-saved-scope".into()), None)],
+            )
+            .await
+            .is_err()
+    );
+    assert_eq!(
+        recipient.case_comparison_choices().len(),
+        before,
+        "Failed restoration published a partial scope comparison"
+    );
+    assert_eq!(recipient.automation_status().generation, 0);
+    let mut changed = pair.clone();
+    changed.engine = "future/2".into();
+    assert!(recipient.resolve_case_comparison(&changed, &links).is_err());
+    changed = pair.clone();
+    changed.left[0].occurrence = "99".into();
+    assert!(recipient.resolve_case_comparison(&changed, &links).is_err());
+    let mut duplicate = links.clone();
+    let mut conflicting = links[0].clone();
+    conflicting.exchange_id = links[1].exchange_id.clone();
+    duplicate.push(conflicting);
+    assert!(recipient.resolve_case_comparison(pair, &duplicate).is_err());
+    export.evidence_review_id = Some(
+        app.review_traffic_export(Some(ComparisonScope::Selected {
+            ids: vec![a.links[0].exchange_id.clone()],
+        }))
+        .unwrap()
+        .id,
+    );
+    assert!(
+        app.prepare_investigation(&export, stage.path(), &AtomicBool::new(false))
+            .unwrap_err()
+            .message
+            .contains("outside this export")
+    );
 }
 
 #[tokio::test]

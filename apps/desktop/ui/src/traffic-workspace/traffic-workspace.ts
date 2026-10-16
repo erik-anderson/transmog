@@ -24,13 +24,15 @@ type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:s
 
 export class TrafficWorkspace extends WorkspaceElement {
   portableCase!:PortableCase;
-  async showPortableCase(mode:'export'|'open'):Promise<void>{
+  async showPortableCase(mode:'export'|'open',comparisonId?:string,returnFocus?:HTMLElement):Promise<void>{
     this.filesMenu.hidePopover();
     const choices:ScopeChoice[]=[{value:'none',label:'No evidence — rules and notes only',scope:null}];
     if(this.trafficSelection.ids.size)choices.unshift({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});
     choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries`,scope:{kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});
-    await this.portableCase.show(mode,choices,this.filesMenuButton);
+    await this.portableCase.show(mode,choices,returnFocus??this.filesMenuButton,comparisonId);
   }
+  async onCasePreviewReport(event:CustomEvent<string>):Promise<void>{event.stopPropagation();this.previewReportLabel=event.detail;await this.showPreviewReport();}
+  onCasePreview(event:CustomEvent<{label:string;id:string}>):void{event.stopPropagation();this.previewReportLabel=event.detail.label;this.previewReportAvailable=true;this.previewSceneAvailable=false;this.previewSceneDocumentId=event.detail.id;this.diagnostic='Case preview opened in an isolated InPrivate session. Preview diagnostics record the engine, script choice and supplied responses.';}
   async onCaseReference(event:CustomEvent<string>):Promise<void>{event.stopPropagation();await this.refreshSessions(undefined,true);await this.revealSession(event.detail);this.trafficTable.focus({preventScroll:true});}
   async onCaseEvidenceOpened(event:CustomEvent):Promise<void>{event.stopPropagation();await this.refreshSessions(undefined,true);}
 
@@ -67,7 +69,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   clearPreviewResponseBaseline():void{this.previewComparisonBaseline=null;this.previewComparisonBaselineLabel='';}
   comparePreviewResponse(observation:string,sourceId:string,ruleId:string):void{
     if(!this.previewReportLabel)return;
-    const asset=this.previewRuleRows.find(rule=>rule.id===ruleId)?.asset;
+    const asset=this.previewCaseOrigin?undefined:this.previewRuleRows.find(rule=>rule.id===ruleId)?.asset;
     const left:ComparisonSubject|null=this.previewComparisonBaseline??(sourceId?{kind:'exchange',id:sourceId}:asset?{kind:'asset',reference:asset}:null);
     if(!left){this.previewReportError='Choose a captured source or set a response baseline from another retained preview.';return;}
     this.emitComparison({left,right:{kind:'preview',run:this.previewReportLabel,observation:Number(observation)}});
@@ -161,6 +163,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable previewPageUrl='';
   @observable previewPageStatus='';
   @observable previewPageScope='original-trace';
+  @observable previewCaseOrigin='';
   @observable previewReportAvailable=false;
   @observable previewReportBusy=false;
   @observable previewReportError='';
@@ -1291,15 +1294,15 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.closePopover(this.requestActionsMenu,this.actionsButton);this.closePreviewReport();this.previewReusesScene=true;this.previewPageUrl=this.previewSceneUrl;this.previewPageScope=this.previewSceneScope;this.previewSourceLabel=this.previewReportLabel;this.previewPageMode=mode;this.previewDraftExcluded=false;
     this.$emit('preview-options-request',undefined);this.previewPageGeneration++;this.previewPageStatus='';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();void this.loadPreviewRules();
   }
-  showPreviewRule(id:string):void {this.closePreviewReport();this.$emit('matched-rule-request',id);}
+  showPreviewRule(id:string):void {if(this.previewCaseOrigin){this.previewReportError='This rule belongs to the frozen case. Review its definition in the package inventory.';return;}this.closePreviewReport();this.$emit('matched-rule-request',id);}
   setPreviewScope(event:Event):void {this.previewPageScope=(event.currentTarget as HTMLSelectElement).value;}
   async showPreviewReport():Promise<void> {const active=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.previewReportFocus=active&&this.requestActionsMenu.contains(active)?this.actionsButton:active;this.previewReportDialog.showModal();await this.refreshPreviewReport();}
   async refreshPreviewReport():Promise<void> {
     const label=this.previewReportLabel,generation=++this.previewReportGeneration;this.previewReportBusy=true;this.previewReportError='';
     try {const report=await invoke<CapturedPageReport>('captured_page_report',{label});if(generation!==this.previewReportGeneration||!this.isConnected)return;
-      this.previewVariantText=report.variant?`${report.variant.experimentId} / ${report.variant.variantId} / revision ${report.variant.revision}`:'';
+      this.previewCaseOrigin=report.caseOrigin??'';this.previewVariantText=report.caseOrigin??(report.variant?`${report.variant.experimentId} / ${report.variant.variantId} / revision ${report.variant.revision}`:'');
       this.previewSceneVariant=report.variant??undefined;
-      this.previewSceneUrl=report.url;this.previewSceneScope=report.scope;this.previewRuleRows=report.rules??[];this.previewSceneAvailable=report.bytesAvailable!==false;this.previewReportUrl=report.url;this.previewReportSummary=(this.previewRuleRows.length?'Modified':'Baseline')+' · '+(report.runtime??'WebView2')+' · '+(report.bytesAvailable===false?'Related preview bytes expired · ':'')+(report.scope==='all-loaded'?'All loaded traffic':report.source)+' · '+report.available+' frozen variants · '+report.skipped+' skipped · '+report.hits+' served · '+report.misses+' network failures · '+(report.failures??0)+' failed · '+Math.max(0,report.available+report.skipped-report.resources.length)+' omitted resource decisions · '+Math.max(0,report.hits+report.misses+(report.failures??0)-report.requests.length)+' older requests'+(report.scriptsEnabled==null?'':report.scriptsEnabled?' · Scripts enabled':' · Scripts disabled');
+      this.previewSceneUrl=report.url;this.previewSceneScope=report.scope;this.previewRuleRows=report.rules??[];this.previewSceneAvailable=!report.caseOrigin&&report.bytesAvailable!==false;this.previewReportUrl=report.url;this.previewReportSummary=(this.previewRuleRows.length?'Modified':'Baseline')+' · '+(report.runtime??'WebView2')+' · '+(report.bytesAvailable===false?'Related preview bytes expired · ':'')+(report.caseOrigin?report.source:report.scope==='all-loaded'?'All loaded traffic':report.source)+' · '+report.available+' frozen variants · '+report.skipped+' skipped · '+report.hits+' served · '+report.misses+' network failures · '+(report.failures??0)+' failed · '+Math.max(0,report.available+report.skipped-report.resources.length)+' omitted resource decisions · '+Math.max(0,report.hits+report.misses+(report.failures??0)-report.requests.length)+' older requests'+(report.scriptsEnabled==null?'':report.scriptsEnabled?' · Scripts enabled':' · Scripts disabled');
       this.previewResourceRows=report.resources.map((row,index)=>({id:String(index),sourceId:row.entryId,sourceAvailable:row.sourceAvailable!==false,method:row.method,url:row.url,source:row.source,size:row.bytes==null?'Unavailable':row.bytes.toLocaleString()+' bytes',time:row.unixMillis==null||!Number.isFinite(new Date(row.unixMillis).getTime())?'Time unavailable':new Date(row.unixMillis).toISOString(),decision:row.decision+(row.sha256?' · SHA-256 '+row.sha256:'')}));
       this.previewRequestRows=report.requests.map(row=>({id:String(row.id),method:row.method,url:row.url,outcome:row.outcome==='failed/unavailable'?'Failed / unavailable':row.outcome==='auto-response'?'Auto-response':row.outcome==='captured'||row.outcome==='served'?'Captured':'Missing · Network failure',reason:row.reason,ruleId:row.ruleId??'',sourceId:row.entryId??'',sha256:row.sha256??'',comparable:row.outcome==='captured'||row.outcome==='auto-response'||row.outcome==='served'}));
     }catch(error:unknown){if(generation===this.previewReportGeneration)this.previewReportError='Preview diagnostics could not be read: '+describeError(error);}finally{if(generation===this.previewReportGeneration)this.previewReportBusy=false;}

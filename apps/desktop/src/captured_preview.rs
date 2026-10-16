@@ -235,7 +235,7 @@ pub(super) async fn open_captured_page(
 ) -> Result<String, AppError> {
     let application = state.window_application(&window)?;
     let options = options.unwrap_or_default();
-    if options.rule_ids.is_some() && window.label() != "main" {
+    if (options.rule_ids.is_some() || options.variant.is_some()) && window.label() != "main" {
         return Err(error(
             "Open this capture in the main window to use saved auto-responses",
         ));
@@ -330,10 +330,17 @@ async fn prepare_scene(
     application: &transmog_app::Application,
     owner: &str,
     id: String,
-    options: CapturedPageOptions,
+    mut options: CapturedPageOptions,
     source_label: Option<String>,
     canceled: Arc<AtomicBool>,
 ) -> Result<CapturedPage, AppError> {
+    if let Some(input) = options.case_preview.take() {
+        if options.rule_ids.is_some() || options.variant.is_some() || source_label.is_some() {
+            return Err(error("Choose a case preview or saved workbench rules"));
+        }
+        return super::portable_cases::prepare_preview(application, owner, id, input, canceled)
+            .await;
+    }
     if let Some(label) = source_label {
         let page = reports().lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter()
             .find(|run| run.owner == owner && run.label == label).and_then(|run| run.page.clone())

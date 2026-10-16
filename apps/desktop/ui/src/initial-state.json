@@ -1236,5 +1236,14 @@
   "previewDocumentNote": "",
   "previewContextBusy": false,
   "responseBodyFileMode": "copy",
-  "responseCopiedFrom": ""
+  "responseCopiedFrom": "",
+  "comparisonCaseAvailable": false,
+  "previewCaseOrigin": "",
+  "caseComparisons": [],
+  "caseSavedComparisons": [],
+  "casePreviewPages": [],
+  "casePreviewVariants": [],
+  "casePreviewDocument": "",
+  "casePreviewAvailable": false,
+  "casePreviewVariant": ""
 }

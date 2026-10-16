@@ -41,6 +41,73 @@ fn next(case: &WorkingCase, stage: &Path) -> PreparedCase {
     .unwrap()
 }
 #[test]
+fn saved_comparisons_validate_membership_corrections_and_representation_without_trusting_findings()
+{
+    use transmog_portable::{
+        CaseComparison, ComparisonPair, ComparisonSettings, EvidenceReference,
+    };
+    let mut value = manifest("source-collision");
+    let refs = value
+        .sources
+        .iter()
+        .map(|s| EvidenceReference {
+            artifact_sha256: s.artifact_sha256.clone(),
+            source_key: s.source_key.clone(),
+            exchange_id: Some("original".into()),
+            occurrence: "0".into(),
+            boundary: "client-response".into(),
+        })
+        .collect::<Vec<_>>();
+    value.comparisons = vec![CaseComparison {
+        id: "saved-comparison".into(),
+        label: "Working / failing".into(),
+        kind: "captures".into(),
+        engine: "future-engine/2".into(),
+        left: vec![refs[0].clone()],
+        right: vec![refs[1].clone()],
+        request_boundary: "client-request".into(),
+        settings: ComparisonSettings {
+            excluded_headers: vec![],
+            normalize_newlines: false,
+            excluded_query_names: vec!["nonce".into()],
+            request_headers: vec![],
+            request_body_digest: false,
+        },
+        corrections: vec![ComparisonPair {
+            left: Some(refs[0].clone()),
+            right: Some(refs[1].clone()),
+        }],
+        recorded_summary: "Historical finding <script>inert</script>".into(),
+    }];
+    // Unknown engine versions remain inspectable; execution adapters must reject recomputation.
+    assert_eq!(
+        CaseManifest::parse(&value.encode().unwrap()).unwrap(),
+        value
+    );
+    let mut invalid = value.clone();
+    invalid.comparisons[0].left.push(refs[0].clone());
+    assert!(invalid.encode().is_err());
+    invalid = value.clone();
+    invalid.comparisons[0].left[0].boundary = "upstream-response".into();
+    assert!(invalid.encode().is_err());
+    invalid = value.clone();
+    invalid.comparisons[0].corrections[0].right = Some(refs[0].clone());
+    assert!(invalid.encode().is_err());
+    invalid = value.clone();
+    let repeated = invalid.comparisons[0].corrections[0].clone();
+    invalid.comparisons[0].corrections.push(repeated);
+    assert!(invalid.encode().is_err());
+    invalid = value.clone();
+    invalid.comparisons[0].settings.normalize_newlines = true;
+    assert!(invalid.encode().is_err());
+    invalid = value.clone();
+    invalid.comparisons[0].left[0].artifact_sha256 = "a".repeat(64);
+    assert!(invalid.encode().is_err());
+    invalid = value.clone();
+    invalid.comparisons[0].kind = "exchange".into();
+    assert!(invalid.encode().is_err());
+}
+#[test]
 fn production_case_reader_verifies_the_current_corpus_and_keeps_availability_distinct() {
     let stage = tempfile::tempdir().unwrap();
     for name in [

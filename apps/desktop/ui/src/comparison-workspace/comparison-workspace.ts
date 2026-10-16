@@ -12,6 +12,7 @@ export class ComparisonWorkspace extends WorkspaceElement {
   private pageRevision=0;
   private byteRevision=0;
   private changeRevision=0;
+  @observable comparisonCaseAvailable=false;
   @observable comparisonLeftTime="";
   @observable comparisonRightTime="";
   @observable comparisonRange="";
@@ -75,7 +76,14 @@ export class ComparisonWorkspace extends WorkspaceElement {
   private activeElement():HTMLElement|null{return (this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;}
   async open(input:ComparisonOpen):Promise<void>{
     if(!this.comparisonDialog.open){this.returnFocus=this.activeElement();this.comparisonDialog.showModal();this.comparisonSection='All';}
-    this.comparisonPairingNote="";this.subjects=structuredClone(input);this.excludedHeaders.value="";this.comparisonNormalize=false;this.comparisonLeftName="Left";this.comparisonRightName="Right";await this.refreshComparison(false);
+    this.comparisonPairingNote="";this.subjects={left:structuredClone(input.left),right:structuredClone(input.right)};this.comparisonCaseAvailable=input.left.kind==='exchange'&&input.right.kind==='exchange';this.excludedHeaders.value=input.options?.excludedHeaders.join(', ')??"";this.comparisonNormalize=input.options?.normalizeNewlines??false;this.comparisonLeftName="Left";this.comparisonRightName="Right";await this.refreshComparison(false);
+  }
+  saveCase(captures=false):void {const id=captures?this.captureResult?.id:this.comparisonResult?.id;if(id)this.$emit('save-comparison-case',{id,returnFocus:this.activeElement()});}
+  async openCaseCaptures(id:string):Promise<void>{
+    this.captureReturnFocus=this.activeElement();this.captureChoices=[];this.captureDialog.showModal();this.captureBusy=true;
+    const revision=++this.captureRevision,operationId=crypto.randomUUID();this.captureOperation=operationId;this.captureCancellationRequested=false;this.captureStatus='Recomputing the saved case scopes and pairing corrections…';
+    try{const result=await invoke<CaptureComparison>('reopen_case_capture_comparison',{id,operationId});if(revision!==this.captureRevision||!this.isConnected||this.captureCancellationRequested){void invoke('close_capture_comparison',{id:result.id}).catch(()=>{});return;}const previous=this.captureResult?.id;this.queryNames.value=result.options.excludedQueryNames.join(', ');this.pairingHeaders.value=result.options.requestHeaders.join(', ');this.pairingBodyDigest=result.options.requestBodyDigest;this.updateCapture(result,0);if(previous)void invoke('close_capture_comparison',{id:previous}).catch(()=>{});}
+    catch(error:unknown){if(revision===this.captureRevision)this.captureStatus=describeError(error);}finally{if(revision===this.captureRevision){this.captureBusy=false;this.captureOperation='';}}
   }
   async refreshComparison(preserve=true):Promise<void>{
     if(!this.subjects)return;

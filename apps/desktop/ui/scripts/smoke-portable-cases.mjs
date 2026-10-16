@@ -1,5 +1,6 @@
 // Real WebView2 + Tauri IPC. File selection is owned by the test-only native adapter.
 import assert from 'node:assert/strict';
+import {smokeCaseIntegration} from './smoke-case-integration.mjs';
 import {createRequire} from 'node:module';
 import {writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
@@ -9,7 +10,7 @@ const port=argument('--port'),output=argument('--output');
 assert.match(port,/^\d{1,5}$/);assert.ok(output);
 const browser=await chromium.connectOverCDP(`http://127.0.0.1:${port}`);
 try{
- const page=browser.contexts()[0].pages().find(p=>p.url().includes('transmog-ui.localhost'));assert.ok(page);
+ const page=browser.contexts()[0].pages().find(p=>p.url().includes('transmog-ui.localhost'));assert.ok(page);page.setDefaultTimeout(30000);
  const errors=[];page.on('pageerror',error=>errors.push(error.message));
  await page.waitForFunction(()=>document.querySelector('app-shell')?.traffic?.queryLoaded);
  const traffic=page.locator('traffic-workspace'),dialog=page.locator('portable-case dialog');
@@ -35,7 +36,7 @@ try{
  const workingCopy=await dialog.locator('header p').textContent();
  await dialog.getByRole('button',{name:'Open another package…',exact:true}).click();await unlock.getByLabel('Password',{exact:true}).fill('synthetic-native-test');await unlock.getByRole('button',{name:'Continue',exact:true}).click();await unlock.getByText('The package password is incorrect',{exact:true}).waitFor();await unlock.getByLabel('Password',{exact:true}).fill('synthetic-replacement-test');await unlock.getByRole('button',{name:'Continue',exact:true}).click();await dialog.getByText('Verified package. Evidence and scripts remain inert.',{exact:true}).waitFor();
  await page.keyboard.press('Escape');assert.equal(await dialog.isVisible(),false);
- assert.equal(await traffic.getByRole('button',{name:'Files',exact:true}).evaluate(e=>e===e.getRootNode().activeElement),true);assert.deepEqual(errors,[]);
+ assert.equal(await traffic.getByRole('button',{name:'Files',exact:true}).evaluate(e=>e===e.getRootNode().activeElement),true);await smokeCaseIntegration({page,output,chromium,processId:argument('--process-id'),closeHelper:argument('--close-helper')});assert.deepEqual(errors,[]);
  await writeFile(resolve(output,'portable-cases.json'),JSON.stringify({nativeWebView2:true,productionIpc:true,encryptedSaveAndOpen:true,passwordRetry:true,atomicPinnedReplacement:true,plaintextWorkingCopyConsent:true,inertAuthoredText:true,escapeFocus:true,widths:[1440,960,800],destination,workingCopy,errors},null,2));
  process.stdout.write('Native encrypted case save/open, pinned replacement, password retry, explicit working copy, inert text, responsive layout and Escape focus verified.\n');
 }catch(error){

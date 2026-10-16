@@ -3,6 +3,7 @@
 
 mod algorithm;
 mod pairing;
+mod portable;
 mod subjects;
 #[cfg(test)]
 mod tests;
@@ -23,6 +24,7 @@ use transmog_core::HeaderBlock;
 pub use pairing::{
     CaptureComparison, CaptureEntryChoice, ComparisonScope, PairingOptions, PairingRow,
 };
+pub use portable::CaseComparisonOpen;
 
 pub(super) const MAX_BODY: u64 = 32 * 1024 * 1024;
 const MAX_RESULTS: usize = 4;
@@ -217,6 +219,7 @@ struct Snapshot {
     left: Evidence,
     right: Evidence,
     _root: tempfile::TempDir,
+    subjects: [ComparisonSubject; 2],
 }
 struct Evidence {
     side: ComparisonSide,
@@ -371,6 +374,7 @@ impl Application {
                 options: input.options,
             };
             let snapshot = Arc::new(Snapshot {
+                subjects: [input.left, input.right],
                 result: result.clone(),
                 rows,
                 left,

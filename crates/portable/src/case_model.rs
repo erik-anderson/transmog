@@ -77,6 +77,17 @@ object!(CaseRun {
     id: String, experiment_id: String, variant_id: String, revision: String,
     responses: Vec<RunResponse>, outcome: AuthoredOutcome
 });
+object!(ComparisonSettings {
+    excluded_headers: Vec<String>, normalize_newlines: bool,
+    excluded_query_names: Vec<String>, request_headers: Vec<String>, request_body_digest: bool
+});
+object!(ComparisonPair { left: Option<EvidenceReference>, right: Option<EvidenceReference> });
+object!(CaseComparison {
+    id: String, label: String, kind: String, engine: String,
+    left: Vec<EvidenceReference>, right: Vec<EvidenceReference>,
+    request_boundary: String, settings: ComparisonSettings,
+    corrections: Vec<ComparisonPair>, recorded_summary: String
+});
 object!(CaseManifest {
     format: String, schema_version: u32, kind: String, id: String, revision: String,
     title: String, created_at: String, producer: Producer, required_features: Vec<String>,
@@ -85,7 +96,9 @@ object!(CaseManifest {
     experiments: Vec<Value>, notes: Vec<CaseNote>,
     #[serde(default, skip_serializing_if="Vec::is_empty")] markers: Vec<CaseMarker>,
     #[serde(default, skip_serializing_if="Vec::is_empty")] contexts: Vec<CaseContext>,
-    runs: Vec<CaseRun>, extensions: Map<String, Value>
+    runs: Vec<CaseRun>,
+    #[serde(default, skip_serializing_if="Vec::is_empty")] comparisons: Vec<CaseComparison>,
+    extensions: Map<String, Value>
 });
 
 /// Inventory distinguishes inspectable evidence from available rule dependencies.

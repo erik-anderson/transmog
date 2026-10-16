@@ -77,6 +77,7 @@ pub struct CaptureEntryChoice {
 #[derive(Clone)]
 struct Entry {
     id: String,
+    sequence: u64,
     order: u64,
     label: String,
     method: String,
@@ -144,6 +145,17 @@ impl Application {
         right: ComparisonScope,
         options: PairingOptions,
     ) -> Result<CaptureComparison, AppError> {
+        self.compare_captures_inner(operation_id, left, right, options, None)
+            .await
+    }
+    async fn compare_captures_inner(
+        &self,
+        operation_id: String,
+        left: ComparisonScope,
+        right: ComparisonScope,
+        options: PairingOptions,
+        restore: Option<Vec<(Option<String>, Option<String>)>>,
+    ) -> Result<CaptureComparison, AppError> {
         let app = self.clone();
         let op = self.comparisons.begin(&operation_id)?;
         let _cancel_on_drop = super::CancelOnDrop(op.canceled.clone());
@@ -151,6 +163,17 @@ impl Application {
             validate_options(&options)?;
             let left_label = scope_label(&app, &left);
             let right_label = scope_label(&app, &right);
+            let saved_order = if restore.is_some() {
+                match (&left, &right) {
+                    (
+                        ComparisonScope::Selected { ids: a },
+                        ComparisonScope::Selected { ids: b },
+                    ) => Some((a.clone(), b.clone())),
+                    _ => return Err(error("Saved comparisons require explicit scope membership")),
+                }
+            } else {
+                None
+            };
             let (left, left_details) = scope(&app, left, &op)?;
             let (right, right_details) = scope(&app, right, &op)?;
             let mut snapshot = CaptureSnapshot {
@@ -166,8 +189,12 @@ impl Application {
                 undo: vec![],
                 rows: vec![],
             };
+            if let (Some(order), Some(corrections)) = (saved_order, restore) {
+                restore_choices(&mut snapshot, order, corrections, &op)?;
+            }
             op.check()?;
             snapshot.rows = pair_rows(&snapshot, Some(&op))?;
+            op.check()?;
             let result = view(&snapshot, 0)?;
             let mut registry = app
                 .comparisons
@@ -468,6 +495,7 @@ fn scope(
             .then(|| snapshot.performance.elapsed_micros())
             .flatten();
         entries.push(Entry {
+            sequence: snapshot.last_sequence,
             order: snapshot.request_number,
             id,
             label: label(&format!(
@@ -827,6 +855,169 @@ fn scope_label(app: &Application, scope: &ComparisonScope) -> String {
     }
 }
 
+pub(super) fn case_choices(
+    snapshots: &std::collections::VecDeque<CaptureSnapshot>,
+) -> Vec<(String, String, Vec<String>)> {
+    snapshots
+        .iter()
+        .map(|s| {
+            (
+                s.id.clone(),
+                format!("Capture scopes · {} / {}", s.left_label, s.right_label),
+                s.left
+                    .iter()
+                    .chain(&s.right)
+                    .map(|e| e.id.clone())
+                    .collect(),
+            )
+        })
+        .collect()
+}
+pub(super) fn export_case(
+    app: &Application,
+    snapshots: &std::collections::VecDeque<CaptureSnapshot>,
+    id: &str,
+    links: &BTreeMap<String, transmog_portable::EvidenceReference>,
+) -> Result<transmog_portable::CaseComparison, AppError> {
+    use super::portable::{ENGINE, reference, settings};
+    let s = snapshots
+        .iter()
+        .find(|s| s.id == id)
+        .ok_or_else(|| error("Saved comparison expired; reopen it before saving"))?;
+    if s.left.len() > 10_000 || s.right.len() > 10_000 {
+        return Err(error(
+            "Saved case comparisons support 10,000 requests per side. Narrow the scopes and compare again.",
+        ));
+    }
+    for e in s.left.iter().chain(&s.right) {
+        if app
+            .service
+            .catalog()
+            .sequence(transmog_core::intercept::ExchangeId(
+                crate::inspector::parse_session_id(&e.id)?,
+            ))
+            != Some(e.sequence)
+        {
+            return Err(error(
+                "A capture comparison source changed; compare the scopes again before saving",
+            ));
+        }
+    }
+    let left = s
+        .left
+        .iter()
+        .map(|e| reference(links, &e.id))
+        .collect::<Result<_, _>>()?;
+    let right = s
+        .right
+        .iter()
+        .map(|e| reference(links, &e.id))
+        .collect::<Result<_, _>>()?;
+    let mut corrections = vec![];
+    for (l, r) in &s.choices.pairs {
+        corrections.push(transmog_portable::ComparisonPair {
+            left: Some(reference(links, l)?),
+            right: r.as_ref().map(|id| reference(links, id)).transpose()?,
+        });
+    }
+    for r in &s.choices.right_only {
+        corrections.push(transmog_portable::ComparisonPair {
+            left: None,
+            right: Some(reference(links, r)?),
+        });
+    }
+    corrections.sort_by_key(|p| serde_json::to_string(p).unwrap_or_default());
+    let result = view(s, 0)?;
+    Ok(transmog_portable::CaseComparison {
+        id: "comparison".into(),
+        label: format!("{} / {}", s.left_label, s.right_label)
+            .chars()
+            .take(512)
+            .collect(),
+        kind: "captures".into(),
+        engine: ENGINE.into(),
+        left,
+        right,
+        request_boundary: "client-request".into(),
+        settings: settings(&super::ComparisonOptions::default(), &s.options),
+        corrections,
+        recorded_summary: format!(
+            "Recorded metadata: {} changed, {} equal, {} unresolved, {} left only, {} right only. Bodies were not compared. Recompute to assess included evidence.",
+            result.changed,
+            result.equal_metadata,
+            result.unresolved,
+            result.left_only,
+            result.right_only
+        ),
+    })
+}
+impl Application {
+    /// Recomputes saved scope membership and manual choices against explicitly resolved case evidence.
+    /// # Errors
+    /// Rejects unavailable members, invalid corrections, cancellation and pairing budgets.
+    pub async fn reopen_case_capture_comparison(
+        &self,
+        operation_id: String,
+        left: Vec<String>,
+        right: Vec<String>,
+        options: PairingOptions,
+        corrections: Vec<(Option<String>, Option<String>)>,
+    ) -> Result<CaptureComparison, AppError> {
+        self.compare_captures_inner(
+            operation_id,
+            ComparisonScope::Selected { ids: left },
+            ComparisonScope::Selected { ids: right },
+            options,
+            Some(corrections),
+        )
+        .await
+    }
+}
+
+fn restore_choices(
+    s: &mut CaptureSnapshot,
+    order: (Vec<String>, Vec<String>),
+    corrections: Vec<(Option<String>, Option<String>)>,
+    op: &Operation,
+) -> Result<(), AppError> {
+    for (entries, order) in [(&mut s.left, order.0), (&mut s.right, order.1)] {
+        let positions = order
+            .into_iter()
+            .enumerate()
+            .map(|(n, id)| (id, n))
+            .collect::<HashMap<_, _>>();
+        entries.sort_by_key(|e| positions.get(&e.id).copied());
+        for (n, e) in entries.iter_mut().enumerate() {
+            op.check()?;
+            e.order =
+                u64::try_from(n).map_err(|_| error("Comparison order exceeds platform range"))?;
+        }
+    }
+    let left = s.left.iter().map(|e| e.id.clone()).collect::<HashSet<_>>();
+    let right = s.right.iter().map(|e| e.id.clone()).collect::<HashSet<_>>();
+    let mut used_left = HashSet::new();
+    let mut used_right = HashSet::new();
+    for (l, r) in corrections {
+        op.check()?;
+        if l.is_none() && r.is_none()
+            || l.as_ref()
+                .is_some_and(|id| !left.contains(id) || !used_left.insert(id.clone()))
+            || r.as_ref()
+                .is_some_and(|id| !right.contains(id) || !used_right.insert(id.clone()))
+        {
+            return Err(error(
+                "A saved pairing correction is invalid or outside its scope",
+            ));
+        }
+        if let Some(l) = l {
+            s.choices.pairs.insert(l, r);
+        } else if let Some(r) = r {
+            s.choices.right_only.insert(r);
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,6 +1025,7 @@ mod tests {
     #[test]
     fn large_repeated_key_group_is_bounded_and_never_confirmed_by_response() {
         let entry = |side: &str, index: usize| Entry {
+            sequence: 0,
             id: format!("{side}-{index}"),
             order: u64::try_from(index).unwrap(),
             label: format!("{side} #{index}"),

@@ -9,11 +9,25 @@ type Scope={value:string;label:string;scope:unknown};
 type Reference={artifactSha256:string;sourceKey:string;exchangeId:string|null;occurrence:string};
 type Source={id:string;label:string;artifactSha256?:string;sourceKey?:string;dependency:{state:string;reason?:string};evidenceCompleteness:string};
 type Context={id:string;kind:string;completeness:string;content:{state:string;sha256?:string}};
-type Review={encrypted?:boolean;traffic?:{entries:number;retainedEntries:number;streamRecords:number;incompleteBodies:number}|null;manifest:{id:string;kind:string;title:string;sources?:Source[];rules?:unknown[];assets?:unknown[];experiments?:Array<{id:string;label?:string}>;notes?:Array<{id:string;text:string;source?:Reference|null}>;contexts?:Context[];markers?:unknown[];runs?:unknown[];objects?:Array<{role:string;bytes:string;sha256?:string;mediaType?:string}>};inventory:{missingDependencies:number;incompleteSources:number;experiments:Array<{id:string;state:string;reason:string|null}>};excluded:string[];activation:string};
+type FrozenSelection={experimentId:string;variantId:string;revision:string};
+type SavedComparison={id:string;label:string;kind:string;engine:string;left:Reference[];right:Reference[];recordedSummary:string};
+type Review={encrypted?:boolean;traffic?:{entries:number;retainedEntries:number;streamRecords:number;incompleteBodies:number}|null;manifest:{id:string;kind:string;title:string;sources?:Source[];rules?:unknown[];assets?:unknown[];experiments?:Array<{id:string;label?:string;variants?:Array<{id:string;label:string;revisions:Array<{revision:string;rules:Array<{kind:string;enabledIntent:boolean}>}>}>}>;comparisons?:SavedComparison[];notes?:Array<{id:string;text:string;source?:Reference|null}>;contexts?:Context[];markers?:unknown[];runs?:unknown[];objects?:Array<{role:string;bytes:string;sha256?:string;mediaType?:string}>};inventory:{missingDependencies:number;incompleteSources:number;experiments:Array<{id:string;state:string;reason:string|null}>};excluded:string[];activation:string};
 type RuleReview={items:Array<{kind:string;portableId:string;state:string;localId:string}>;activation:string};
 export class PortableCase extends WorkspaceElement {
   @attr({mode:'boolean'}) viewerMode=false;
   @observable caseStage='author';
+  @observable caseComparisons:Array<{id:string;label:string;scope:unknown;included:boolean}>=[];
+  @observable caseSavedComparisons:SavedComparison[]=[];
+  @observable casePreviewPages:Array<{id:string;url:string}>=[];
+  @observable casePreviewVariants:Array<{value:string;label:string;selection:FrozenSelection|null;available:boolean}>=[];
+  @observable casePreviewDocument='';
+  @observable casePreviewAvailable=false;
+  private casePreviewLabel='';
+  @observable casePreviewVariant='';
+  previewForm!:HTMLFormElement;
+  private viewRevision=0;
+  private previewOperation='';
+
   @observable caseFormat='native';
   @observable caseEncrypt=false;
   @observable caseBusy=false;
@@ -48,25 +62,27 @@ export class PortableCase extends WorkspaceElement {
   private links=new Map<string,string>();
   private referenceKey(ref:Reference):string{return JSON.stringify([ref.artifactSha256,ref.sourceKey,ref.exchangeId,ref.occurrence]);}
   disconnectedCallback():void {this.connectedRevision++;super.disconnectedCallback();void invoke('close_case').catch(()=>undefined);}
-  async show(mode:'export'|'open',scopes:Scope[],returnFocus:HTMLElement):Promise<void>{
-    this.returnFocus=returnFocus;
+  async show(mode:'export'|'open',scopes:Scope[],returnFocus:HTMLElement,comparisonId?:string):Promise<void>{
+    this.viewRevision++;this.returnFocus=returnFocus;
     if(!this.caseDialog.open)this.caseDialog.showModal();
     if(this.caseBusy)return;
-    if(mode==='export'&&this.caseStage==='export'&&!this.caseInspection)return;
+    if(mode==='export'&&!comparisonId&&this.caseStage==='export'&&!this.caseInspection)return;
     this.scopes=scopes;this.caseScopes=scopes;this.caseStatus='';
     if(mode==='open'){if(this.openedReview){this.display(this.openedReview,true);this.caseStage='inspect';return;}await this.openPackage();return;}
     this.caseStage='author';this.caseInspection=false;
     await this.run('Loading saved rule choices…',async()=>{
-      const choices=await invoke<{rules:Array<{id:string;label:string}>;variants:Array<{label:string;selection:Selection}>}>('case_export_choices');
+      const choices=await invoke<{rules:Array<{id:string;label:string}>;variants:Array<{label:string;selection:Selection}>;comparisons?:Array<{id:string;label:string;scope:unknown}>}>('case_export_choices');
+      this.caseComparisons=(choices.comparisons??[]).map(c=>({...c,included:c.id===comparisonId}));
+      if(comparisonId){const selected=this.caseComparisons.find(c=>c.id===comparisonId);if(!selected)throw new Error('This temporary comparison cannot be saved. Portable cases support recorded-request and capture-scope comparisons.');this.caseScopes=[{value:'comparison',label:'All requests required by this comparison',scope:selected.scope},...scopes];this.scopes=this.caseScopes;this.$flushUpdates();(this.authorForm.elements.namedItem('scope') as HTMLSelectElement).value='comparison';}
       this.caseRules=choices.rules;this.caseVariants=choices.variants.map(v=>({...v,value:JSON.stringify([v.selection.experimentId,v.selection.variantId,v.selection.revision])}));
     });
   }
   private async run(status:string,action:()=>Promise<void>):Promise<void>{
-    if(this.caseBusy)return;this.caseBusy=true;this.caseStatus=status;const revision=this.connectedRevision;
+    if(this.caseBusy)return;this.caseBusy=true;this.caseStatus=status;const revision=this.connectedRevision,viewRevision=this.viewRevision;
     try{await action();}catch(error:unknown){
-      const canceled=typeof error==='object'&&error!==null&&'category'in error&&error.category==='canceled';
+      const canceled=typeof error==='object'&&error!==null&&'category'in error&&error.category==='canceled'||describeError(error).toLowerCase().includes('canceled');
       this.caseStatus=canceled?'Case operation canceled.':describeError(error);
-      if(!canceled&&revision===this.connectedRevision)await this.showError('Portable case operation failed',this.caseStatus);
+      if(!canceled&&revision===this.connectedRevision){if(this.caseDialog.open&&viewRevision===this.viewRevision)await this.showError('Portable case operation failed',this.caseStatus);else this.showNotice('Portable case operation failed',this.caseStatus,null,null);}
     }finally{if(revision===this.connectedRevision)this.caseBusy=false;}
   }
   async prepare(event:SubmitEvent):Promise<void>{
@@ -75,7 +91,7 @@ export class PortableCase extends WorkspaceElement {
       const scope=this.scopes.find(s=>s.value===String(data.get('scope')))?.scope??null;
       const review=await invoke<Review>('prepare_case_export',{input:{title:String(data.get('title')),scope,
         ruleIds:data.getAll('rule').map(String),selections:data.getAll('variant').map(v=>this.caseVariants.find(c=>c.value===v)!.selection),
-        notes:String(data.get('notes')??''),includeContext:data.get('context')==='on'}});
+        notes:String(data.get('notes')??''),includeContext:data.get('context')==='on',comparisonIds:data.getAll('comparison').map(String)}});
       this.display(review,false);this.caseStage='export';this.caseStatus='Review the frozen content before saving.';
     });
   }
@@ -91,6 +107,10 @@ export class PortableCase extends WorkspaceElement {
       {label:'Missing or unavailable dependencies',value:String(review.inventory.missingDependencies)},{label:'Sources with incomplete or unknown evidence',value:String(review.inventory.incompleteSources)},
       {label:'Activation',value:review.activation}];
     if(review.traffic)this.caseFacts=[{label:'Included / retained entries',value:`${review.traffic.entries} / ${review.traffic.retainedEntries}`},{label:'Retained stream records / incomplete body observations',value:`${review.traffic.streamRecords} / ${review.traffic.incompleteBodies}`},...this.caseFacts];
+    this.caseSavedComparisons=m.comparisons??[];
+    this.casePreviewVariants=[{value:'',label:'Captured baseline',selection:null,available:true}];if(rules.some(r=>(r as {kind?:string}).kind==='auto-response'))this.casePreviewVariants.push({value:'rules',label:'Frozen saved auto-responses',selection:null,available:true});
+    for(const e of experiments)for(const v of e.variants??[])for(const r of v.revisions)this.casePreviewVariants.push({value:JSON.stringify([e.id,v.id,r.revision]),label:`${e.label??e.id} / ${v.label} / revision ${r.revision}`,selection:{experimentId:e.id,variantId:v.id,revision:r.revision},available:r.rules.filter(rule=>rule.enabledIntent).every(rule=>rule.kind==='auto-response')});
+    this.casePreviewPages=[];this.casePreviewDocument='';this.casePreviewVariant='';
     this.caseImportAvailable=this.caseOrdinaryRules||this.caseExperiments.some(e=>e.available);
     this.caseManifestText=JSON.stringify(m,null,2);this.caseImportItems=[];
   }
@@ -115,15 +135,34 @@ export class PortableCase extends WorkspaceElement {
       const chosen=await invoke<string|null>('choose_case');if(chosen===null){this.caseStatus='Open canceled.';return;}
       const review=await this.withTracePassword('Unlock portable package',password=>invoke<Review>('open_case',{password}));
       if(!review){this.caseStatus='Open canceled.';return;}
-      this.openedReview=review;this.links.clear();this.display(review,true);this.caseStage='inspect';this.caseStatus='Verified package. Evidence and scripts remain inert.';
+      this.openedReview=review;this.casePreviewAvailable=false;this.casePreviewLabel='';this.links.clear();this.display(review,true);this.caseStage='inspect';this.caseStatus='Verified package. Evidence and scripts remain inert.';
     });
   }
-  async inspect(sourceId:string):Promise<void>{
+  async inspect(sourceId:string):Promise<boolean>{
+    let success=false;
     await this.run('Opening evidence in Traffic…',async()=>{
       const result=await this.withTracePassword('Unlock embedded source',password=>invoke<{links:Array<{reference:Reference;exchangeId:string}>}>('inspect_case_source',{sourceId,password}));
-      if(result){for(const link of result.links)this.links.set(this.referenceKey(link.reference),link.exchangeId);this.$emit('case-evidence-opened',result);this.caseStatus='Evidence opened in this window’s Traffic. Closing this review keeps its lazy bodies available.';}
+      if(result){success=true;for(const link of result.links)this.links.set(this.referenceKey(link.reference),link.exchangeId);this.$emit('case-evidence-opened',result);this.caseStatus='Evidence opened in this window’s Traffic. Closing this review keeps its lazy bodies available.';}
       else this.caseStatus='Evidence opening canceled.';
-    });
+    });return success;
+  }
+  async choosePreview(sourceId:string):Promise<void>{
+    const revision=this.viewRevision;if(!await this.inspect(sourceId)||revision!==this.viewRevision||!this.caseDialog.open)return;
+    await this.run('Finding complete HTML responses in opened case evidence…',async()=>{const choices=await invoke<{pages:Array<{id:string;url:string}>;more?:boolean}>('case_preview_choices',{sourceId});if(revision!==this.viewRevision||!this.caseDialog.open)return;this.casePreviewPages=choices.pages;this.casePreviewDocument=choices.pages[0]?.id??'';this.casePreviewVariant='';this.caseStage='preview';this.caseStatus=choices.pages.length?(choices.more?'Showing 100 HTML documents. Export a narrower case to choose another document.':'Choose a document and frozen response variant.'):'No complete retained HTML response is available in this source.';this.$flushUpdates();this.previewForm.reset();});
+  }
+  setPreviewDocument(event:Event):void{this.casePreviewDocument=(event.target as HTMLSelectElement).value;}
+  setPreviewVariant(event:Event):void{this.casePreviewVariant=(event.target as HTMLSelectElement).value;}
+  async preview(event:SubmitEvent):Promise<void>{
+    event.preventDefault();if(!this.casePreviewDocument)return;
+    const id=this.casePreviewDocument,selection=this.casePreviewVariants.find(v=>v.value===this.casePreviewVariant)?.selection??null;
+    await this.run('Preparing an isolated case preview…',async()=>{const operationId=crypto.randomUUID();this.previewOperation=operationId;try{const label=await invoke<string>('open_captured_page',{id,enableScripts:new FormData(this.previewForm).get('scripts')==='on',options:{casePreview:{selection,ordinary:this.casePreviewVariant==='rules',scope:String(new FormData(this.previewForm).get('scope'))}},sourceLabel:null,operationId});this.casePreviewLabel=label;this.casePreviewAvailable=true;this.$emit('case-preview-opened',{label,id});this.caseStatus='Case preview opened. Preview diagnostics show the actual engine, script choice and resource outcomes.';if(this.caseDialog.open)this.caseStage='inspect';}finally{this.previewOperation='';}});
+  }
+  previewDiagnostics():void{if(this.casePreviewLabel)this.$emit('case-preview-report-request',this.casePreviewLabel);}
+  async openComparison(id:string):Promise<void>{
+    const revision=this.viewRevision,saved=this.caseSavedComparisons.find(c=>c.id===id);if(!saved)return;
+    const needed=new Set([...saved.left,...saved.right].map(r=>JSON.stringify([r.artifactSha256,r.sourceKey])));
+    for(const source of this.caseSources){if(!needed.has(JSON.stringify([source.artifactSha256,source.sourceKey])))continue;if(!source.available){this.caseStatus='This comparison needs an unavailable source. Its recorded findings remain historical.';return;}if(!await this.inspect(source.id)||revision!==this.viewRevision||!this.caseDialog.open)return;}
+    await this.run('Resolving saved comparison evidence…',async()=>{const resolved=await invoke<{kind:string;left:unknown;right:unknown;options:unknown}>('resolve_case_comparison',{id});if(revision!==this.viewRevision||!this.caseDialog.open)return;this.close();this.$emit('case-comparison-request',{...resolved,id});});
   }
   async inspectNote(id:string):Promise<void>{
     const ref=this.caseNotes.find(n=>n.id===id)?.source;if(!ref)return;
@@ -151,8 +190,8 @@ export class PortableCase extends WorkspaceElement {
     this.showNotice('Rules imported disabled',this.caseStatus,null,null);
   });}
   back():void{if(!this.caseBusy){this.caseStage=this.caseInspection?'inspect':'author';this.caseImportItems=[];}}
-  async cancel():Promise<void>{await invoke('cancel_case_operation');this.caseStatus='Cancellation requested. Waiting for owned work to finish…';}
-  close(event?:Event):void{event?.preventDefault();this.caseDialog.close();this.returnFocus?.focus({preventScroll:true});}
+  async cancel():Promise<void>{if(this.previewOperation)await invoke('cancel_captured_page',{operationId:this.previewOperation});else await invoke('cancel_case_operation');this.caseStatus='Cancellation requested. Waiting for owned work to finish…';}
+  close(event?:Event):void{event?.preventDefault();this.viewRevision++;if(this.previewOperation)void invoke('cancel_captured_page',{operationId:this.previewOperation});this.caseDialog.close();this.returnFocus?.focus({preventScroll:true});}
   async closePackage():Promise<void>{if(this.caseBusy)return;await invoke('close_case');this.openedReview=null;this.links.clear();this.caseStage='author';this.caseInspection=false;this.caseSources=[];this.caseContexts=[];this.caseContextText='';this.caseManifestText='';this.close();}
 }
 PortableCase.define('portable-case');

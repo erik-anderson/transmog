@@ -14,6 +14,9 @@ use transmog_portable as wire;
 mod native;
 #[path = "case_open.rs"]
 mod open;
+#[path = "case_preview.rs"]
+mod preview;
+pub use preview::CasePreviewOptions;
 
 #[cfg(test)]
 #[path = "investigation_tests.rs"]
@@ -40,6 +43,8 @@ pub struct CaseExportRequest {
     pub derived_plaintext: bool,
     /// Authored notes; no captured fact is inferred from their contents.
     pub notes: Vec<CaseNoteInput>,
+    /// Retained exchange/capture comparisons explicitly selected for this case.
+    pub comparison_ids: Vec<String>,
 }
 /// One source-stable reference to a newly admitted runtime row.
 #[derive(Clone, Debug, serde::Serialize)]
@@ -75,6 +80,19 @@ impl OpenedCaseEvidence {
     }
 }
 impl Application {
+    /// Whether every row of a previously opened case source is still retained.
+    pub fn case_evidence_is_retained(&self, opened: &OpenedCaseEvidence) -> bool {
+        opened.links.iter().all(|l| {
+            crate::inspector::parse_session_id(&l.exchange_id)
+                .ok()
+                .and_then(|id| {
+                    self.service
+                        .catalog()
+                        .sequence(transmog_core::intercept::ExchangeId(id))
+                })
+                .is_some()
+        })
+    }
     /// Freezes a minimal case from selected retained evidence and immutable saved rules.
     /// # Errors
     /// Rejects stale selections, unavailable dependencies, missing plaintext consent or cancellation.
@@ -131,6 +149,7 @@ impl Application {
             markers: vec![],
             contexts: vec![],
             runs: vec![],
+            comparisons: vec![],
             extensions: collection.extensions.clone(),
         };
         let mut files = BTreeMap::new();
@@ -160,6 +179,10 @@ impl Application {
                 text: note.text.clone(),
                 source: reference,
             });
+        }
+        manifest.comparisons = self.export_case_comparisons(&request.comparison_ids, &links)?;
+        if !manifest.comparisons.is_empty() {
+            manifest.required_features.push("comparisons/1".into());
         }
         let bytes = manifest
             .encode()

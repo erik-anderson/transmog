@@ -16,6 +16,9 @@ pub enum CapturedPageScope {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapturedPageOptions {
+    /// Window-owned package selection; only the native case adapter resolves it.
+    #[serde(default)]
+    pub case_preview: Option<crate::CasePreviewOptions>,
     /// Exact saved experiment revision; independent of live participation and pause.
     #[serde(default)]
     pub variant: Option<crate::ExperimentSelection>,
@@ -116,6 +119,8 @@ pub struct CapturedPageReport {
     pub rules: Vec<PreviewRuleSnapshot>,
     /// Exact saved experiment selection, independent of mutable names and live state.
     pub variant: Option<crate::ExperimentSelection>,
+    /// Portable case/revision provenance; never interpreted as a local saved selection.
+    pub case_origin: Option<String>,
     /// Response variants successfully frozen.
     pub available: usize,
     /// Captured variants omitted during preparation.

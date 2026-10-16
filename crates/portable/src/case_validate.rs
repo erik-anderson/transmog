@@ -16,6 +16,7 @@ pub(crate) fn check(value: &CaseManifest) -> Result<(), Error> {
                 | "header-edits/1"
                 | "literal-response/1"
                 | "context-objects/1"
+                | "comparisons/1"
         ) {
             return Err(Error::Unsupported(feature.clone()));
         }
@@ -27,6 +28,7 @@ pub(crate) fn check(value: &CaseManifest) -> Result<(), Error> {
         || value.runs.len() > 1024
         || value.markers.len() > 10000
         || value.experiments.len() > 32
+        || value.comparisons.len() > 16
     {
         return Err(invalid("Case inventory limits exceeded"));
     }
@@ -65,6 +67,95 @@ pub(crate) fn check(value: &CaseManifest) -> Result<(), Error> {
     base.encode()?;
     experiments(value, &base)?;
     run_inventory(value, &objects)?;
+    comparison_inventory(value)?;
+    Ok(())
+}
+
+fn comparison_inventory(value: &CaseManifest) -> Result<(), Error> {
+    unique(value.comparisons.iter().map(|c| c.id.as_str()))?;
+    for c in &value.comparisons {
+        if !matches!(c.kind.as_str(), "exchange" | "captures")
+            || c.engine.is_empty()
+            || c.engine.len() > 128
+            || c.label.len() > 512
+            || c.recorded_summary.len() > 8192
+            || c.left.len() > 10000
+            || c.right.len() > 10000
+            || c.corrections.len() > 20000
+            || (c.kind == "exchange"
+                && (c.left.len() != 1 || c.right.len() != 1 || !c.corrections.is_empty()))
+            || !matches!(
+                c.request_boundary.as_str(),
+                "client-request" | "upstream-request"
+            )
+        {
+            return Err(invalid("Invalid saved comparison"));
+        }
+        let settings = &c.settings;
+        if (c.kind == "captures"
+            && (c.request_boundary != "client-request"
+                || !settings.excluded_headers.is_empty()
+                || settings.normalize_newlines
+                || c.left
+                    .iter()
+                    .chain(&c.right)
+                    .any(|r| r.boundary != "client-response")))
+            || (c.kind == "exchange"
+                && (!settings.excluded_query_names.is_empty()
+                    || !settings.request_headers.is_empty()
+                    || settings.request_body_digest))
+            || settings
+                .excluded_headers
+                .iter()
+                .chain(&settings.request_headers)
+                .any(|name| !name.is_ascii())
+        {
+            return Err(invalid("Unsupported comparison representation/settings"));
+        }
+        for (names, limit) in [
+            (&settings.excluded_headers, 64),
+            (&settings.excluded_query_names, 64),
+            (&settings.request_headers, 32),
+        ] {
+            if names.len() > limit
+                || names
+                    .iter()
+                    .any(|s| s.is_empty() || s.len() > 256 || s.contains(['\r', '\n', '\0']))
+            {
+                return Err(invalid("Invalid saved comparison settings"));
+            }
+        }
+        let mut sides = [BTreeSet::new(), BTreeSet::new()];
+        for (refs, seen) in [&c.left, &c.right].into_iter().zip(&mut sides) {
+            for r in refs {
+                evidence(value, r)?;
+                if !matches!(r.boundary.as_str(), "client-response" | "upstream-response")
+                    || !seen.insert(serde_json::to_string(r)?)
+                {
+                    return Err(invalid("Duplicate or invalid comparison subject"));
+                }
+            }
+        }
+        let mut used_left = BTreeSet::new();
+        let mut used_right = BTreeSet::new();
+        for pair in &c.corrections {
+            if pair.left.is_none() && pair.right.is_none() {
+                return Err(invalid("Empty pairing correction"));
+            }
+            if let Some(r) = &pair.left
+                && (!sides[0].contains(&serde_json::to_string(r)?)
+                    || !used_left.insert(serde_json::to_string(r)?))
+            {
+                return Err(invalid("Invalid left pairing correction"));
+            }
+            if let Some(r) = &pair.right
+                && (!sides[1].contains(&serde_json::to_string(r)?)
+                    || !used_right.insert(serde_json::to_string(r)?))
+            {
+                return Err(invalid("Invalid right pairing correction"));
+            }
+        }
+    }
     Ok(())
 }
 

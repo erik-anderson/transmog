@@ -159,13 +159,30 @@ fn selected_rules(
 
 pub(super) async fn attach(
     application: &Application,
-    mut page: CapturedPage,
+    page: CapturedPage,
     options: &CapturedPageOptions,
     canceled: &AtomicBool,
 ) -> Result<CapturedPage, AppError> {
     let selected = selected_rules(application, options)?;
+    attach_selected(
+        &application.response_assets,
+        page,
+        selected,
+        options.variant.clone(),
+        canceled,
+    )
+    .await
+}
+
+pub(crate) async fn attach_selected(
+    assets: &crate::response_assets::ResponseAssetStore,
+    mut page: CapturedPage,
+    selected: Vec<Rule>,
+    variant: Option<crate::ExperimentSelection>,
+    canceled: &AtomicBool,
+) -> Result<CapturedPage, AppError> {
     let mut report = page.diagnostics.snapshot();
-    report.variant = options.variant.clone();
+    report.variant = variant;
     if selected.is_empty() {
         page.diagnostics = CapturedPageDiagnostics::new(report);
         return Ok(page);
@@ -190,8 +207,7 @@ pub(super) async fn attach(
         let matcher = CompiledRequestMatcher::new(&rule.matcher)
             .map_err(|why| error(&format!("{name}: {why}")))?;
         let path = root.path().join(format!("rule-{}", rules.len()));
-        let (asset, mut bytes, mut sha256) = application
-            .response_assets
+        let (asset, mut bytes, mut sha256) = assets
             .freeze_preview(
                 reference,
                 &path,

@@ -25,6 +25,7 @@ struct WindowCase {
     export: Option<Arc<PreparedCase>>,
     package: Option<Arc<Package>>,
     import: Option<PreparedRuleImport>,
+    opened: HashMap<String, transmog_app::OpenedCaseEvidence>,
 }
 fn cases() -> &'static Mutex<HashMap<String, WindowCase>> {
     static CASES: OnceLock<Mutex<HashMap<String, WindowCase>>> = OnceLock::new();
@@ -196,7 +197,9 @@ pub(super) fn case_export_choices(
 ) -> Result<Value, AppError> {
     let app = state.window_application(&window)?;
     if window.label() != "main" {
-        return Ok(json!({"rules":[],"variants":[]}));
+        return Ok(
+            json!({"rules":[],"variants":[],"comparisons":app.case_comparison_choices().into_iter().map(|(id,label,ids)|json!({"id":id,"label":label,"scope":{"kind":"selected","ids":ids}})).collect::<Vec<_>>()}),
+        );
     }
     let status = app.automation_status();
     let owned = status
@@ -218,7 +221,7 @@ pub(super) fn case_export_choices(
         }
     }
     Ok(
-        json!({"rules":status.rules.iter().filter(|r|!owned.contains(&r.id)).map(|r| json!({"id":r.id,"label":r.display_name.as_deref().unwrap_or(&r.id)})).collect::<Vec<_>>(),"variants":variants}),
+        json!({"rules":status.rules.iter().filter(|r|!owned.contains(&r.id)).map(|r| json!({"id":r.id,"label":r.display_name.as_deref().unwrap_or(&r.id)})).collect::<Vec<_>>(),"variants":variants,"comparisons":app.case_comparison_choices().into_iter().map(|(id,label,ids)|json!({"id":id,"label":label,"scope":{"kind":"selected","ids":ids}})).collect::<Vec<_>>()}),
     )
 }
 #[derive(Deserialize)]
@@ -230,6 +233,7 @@ pub(super) struct ExportInput {
     selections: Vec<ExperimentSelection>,
     notes: String,
     include_context: bool,
+    comparison_ids: Vec<String>,
 }
 #[tauri::command]
 pub(super) async fn prepare_case_export(
@@ -273,6 +277,7 @@ pub(super) async fn prepare_case_export(
                     exchange_id: None,
                 }]
             },
+            comparison_ids: input.comparison_ids,
         };
         let prepared = app.prepare_investigation(&request, &staging, &flag)?;
         if input.include_context {
@@ -299,7 +304,7 @@ pub(super) async fn prepare_case_export(
         "Working manifest history and recovery files",
         "Unselected traffic, rules and experiment revisions",
         "Script sources, compiled state and application credential/private-key stores",
-        "Historical run results (not reconstructed from current files)",
+        "Historical browser run results and temporary draft/asset/preview comparisons",
         if include_context {
             "New configuration commands are not run"
         } else {
@@ -407,7 +412,10 @@ pub(super) async fn open_case(
     .map_err(|_| error("Case opening failed"))??;
     let mut result = review(package.manifest().clone())?;
     result["encrypted"] = json!(package.encrypted());
-    drop(operation.update(|o| (o.package.replace(Arc::new(package)), o.import.take()))?);
+    drop(operation.update(|o| {
+        o.opened.clear();
+        (o.package.replace(Arc::new(package)), o.import.take())
+    })?);
     Ok(result)
 }
 #[tauri::command]
@@ -420,8 +428,108 @@ pub(super) async fn inspect_case_source(
     let app = state.window_application(&window)?;
     let operation = Operation::begin(window.label())?;
     let package = package(window.label())?;
-    app.open_package_evidence(&package, &source_id, password, operation.flag.clone())
+    let PackageManifest::Case(manifest) = package.manifest() else {
+        return Err(error("Open an investigation case first"));
+    };
+    let source = manifest
+        .sources
+        .iter()
+        .find(|s| s.id == source_id)
+        .ok_or_else(|| error("Case source is unavailable"))?;
+    let sha = source.artifact_sha256.clone();
+    if let Some(opened) = operation.update(|o| o.opened.get(&sha).cloned())?
+        && app.case_evidence_is_retained(&opened)
+    {
+        return Ok(opened);
+    }
+    let opened = app
+        .open_package_evidence(&package, &source_id, password, operation.flag.clone())
+        .await?;
+    operation.update(|o| o.opened.insert(sha, opened.clone()))?;
+    Ok(opened)
+}
+
+fn opened_links(window: &str) -> Vec<transmog_app::CaseEvidenceLink> {
+    lock()
+        .get(window)
+        .map(|o| o.opened.values().flat_map(|e| e.links.clone()).collect())
+        .unwrap_or_default()
+}
+pub(super) type CasePreviewRequest = transmog_app::CasePreviewOptions;
+pub(super) async fn prepare_preview(
+    app: &transmog_app::Application,
+    owner: &str,
+    id: String,
+    input: CasePreviewRequest,
+    canceled: Arc<AtomicBool>,
+) -> Result<transmog_app::CapturedPage, AppError> {
+    app.prepare_case_preview(package(owner)?, opened_links(owner), id, input, canceled)
         .await
+}
+#[tauri::command]
+pub(super) async fn case_preview_choices(
+    source_id: String,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, AppError> {
+    let app = state.window_application(&window)?;
+    let package = package(window.label())?;
+    let PackageManifest::Case(manifest) = package.manifest() else {
+        return Err(error("Open a case first"));
+    };
+    let source = manifest
+        .sources
+        .iter()
+        .find(|s| s.id == source_id)
+        .ok_or_else(|| error("Case source is unavailable"))?;
+    let links = opened_links(window.label())
+        .into_iter()
+        .filter(|l| {
+            l.reference.artifact_sha256 == source.artifact_sha256
+                && l.reference.source_key == source.source_key
+        })
+        .collect::<Vec<_>>();
+    tokio::task::spawn_blocking(move || {
+        let link = links
+            .first()
+            .ok_or_else(|| error("Inspect this case source before choosing a document"))?;
+        let choices = app.captured_page_choices(&link.exchange_id)?;
+        let ids = links
+            .iter()
+            .map(|l| &l.exchange_id)
+            .collect::<std::collections::HashSet<_>>();
+        let pages = choices
+            .pages
+            .into_iter()
+            .filter(|p| ids.contains(&p.id))
+            .collect::<Vec<_>>();
+        Ok(json!({"pages":pages,"more":choices.more}))
+    })
+    .await
+    .map_err(|_| error("Case document choices unavailable"))?
+}
+
+#[tauri::command]
+pub(super) async fn resolve_case_comparison(
+    id: String,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::comparison::CaseComparisonOpen, AppError> {
+    let app = state.window_application(&window)?;
+    let package = package(window.label())?;
+    let PackageManifest::Case(manifest) = package.manifest() else {
+        return Err(error("Open a case first"));
+    };
+    let comparison = manifest
+        .comparisons
+        .iter()
+        .find(|c| c.id == id)
+        .ok_or_else(|| error("Saved comparison not included"))?;
+    let comparison = comparison.clone();
+    let links = opened_links(window.label());
+    tokio::task::spawn_blocking(move || app.resolve_case_comparison(&comparison, &links))
+        .await
+        .map_err(|_| error("Saved comparison resolution failed"))?
 }
 
 #[tauri::command]

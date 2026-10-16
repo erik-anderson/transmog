@@ -74,13 +74,13 @@ $priorTmp = $env:TMP
 $priorCaseTest = $env:TRANSMOG_DESKTOP_CASE_TEST
 if ($PortableCaseChecks) { $env:TRANSMOG_DESKTOP_CASE_TEST = '1' }
 # Separate captured-page profiles need separate browser debugging endpoints.
-$debugPort = if ($ViewerChecks) { 0 } else { $DevToolsPort }
+$debugPort = if ($ViewerChecks -or $PortableCaseChecks) { 0 } else { $DevToolsPort }
 $debugArguments = "--remote-debugging-port=$debugPort --remote-debugging-address=127.0.0.1"
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
 $probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
 $env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
-if ($ViewerChecks) {
+if ($ViewerChecks -or $PortableCaseChecks) {
     $probeTemp = Join-Path $probeRoot 'temp'
     New-Item -ItemType Directory -Force -Path $probeTemp | Out-Null
     $env:TEMP = $probeTemp
@@ -202,7 +202,7 @@ try {
     $process = Start-Process @launchArguments
     $deadline = [DateTime]::UtcNow.AddSeconds(30)
     do {
-        if ($ViewerChecks) {
+        if ($ViewerChecks -or $PortableCaseChecks) {
             $endpoint = Get-ChildItem -LiteralPath $probeRoot -Filter DevToolsActivePort -Recurse -File | Select-Object -First 1
             if ($endpoint) { $DevToolsPort = [int](Get-Content -LiteralPath $endpoint.FullName -First 1) }
         }
@@ -226,7 +226,7 @@ try {
     if ($PortableCaseChecks) {
         Push-Location $desktopUi
         try {
-            & node scripts/smoke-portable-cases.mjs --port "$DevToolsPort" --output $probeRoot
+            & node scripts/smoke-portable-cases.mjs --port "$DevToolsPort" --output $probeRoot --process-id "$($process.Id)" --close-helper (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1')
             if ($LASTEXITCODE -ne 0) { throw 'Native portable case checks failed.' }
         } finally { Pop-Location }
         return [pscustomobject]@{ PortableCasesVerified = $true; EvidenceRoot = $probeRoot }

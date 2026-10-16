@@ -100,6 +100,27 @@ pub(super) async fn compare_captures(
         .await
 }
 #[tauri::command]
+pub(super) async fn reopen_case_capture_comparison(
+    id: String,
+    operation_id: String,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<CaptureComparison, AppError> {
+    let app = state.window_application(&window)?;
+    let input = super::portable_cases::resolve_case_comparison(id, window, state).await?;
+    let transmog_app::comparison::CaseComparisonOpen::Captures {
+        left,
+        right,
+        options,
+        corrections,
+    } = input
+    else {
+        return Err(error("Select a saved capture-scope comparison"));
+    };
+    app.reopen_case_capture_comparison(operation_id, left, right, options, corrections)
+        .await
+}
+#[tauri::command]
 #[allow(clippy::too_many_arguments)]
 pub(super) async fn capture_comparison_page(
     id: String,
