@@ -127,6 +127,15 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),10000);
     assert.ok(await timeline.locator('.timeline-row').count()<100,'Timeline DOM grew with capture size');
+    await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;globalThis.__workspaceFixture.sessions[0].url='https://example.test/api/../admin?';await t.refreshTimeline();});
+    assert.equal(await timeline.locator('#timeline-tl-load-0 .timeline-request > span').textContent(),'#1 GET /api/../admin?');
+    await timeline.getByRole('slider',{name:'Timeline end',exact:true}).focus();await page.keyboard.press('Home');
+    await timeline.getByRole('slider',{name:'Timeline window',exact:true}).focus();await page.keyboard.press('End');
+    const zoomedLabels=await timeline.locator('.timeline-ticks > span').allTextContents();
+    assert.notEqual(zoomedLabels[0],zoomedLabels[1],'Narrow range endpoints collapsed to the same label');
+    assert.equal(await timeline.getByRole('slider',{name:'Timeline window',exact:true}).getAttribute('aria-valuetext'),zoomedLabels.join(' – '));
+    await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-narrow-range.png')});
+    await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=5000*32);
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:false};});
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('.timeline-row').getBoundingClientRect().height===48);

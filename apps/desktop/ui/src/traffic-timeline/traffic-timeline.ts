@@ -1,7 +1,7 @@
 import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
 import type {TrafficTimelineRow,TraceMetadata} from '../models.js';
 import {milliseconds} from '../timings.js';
-import {clampWindow,intervalEnd,overlaps,requestAddress,timelineTime} from './timeline-model.js';
+import {clampWindow,intervalEnd,overlaps,requestAddress,timelineTime,timelineRange} from './timeline-model.js';
 import initialState from '../initial-state.json';
 import {isTextEditing} from '../list-selection.js';
 
@@ -73,8 +73,7 @@ export class TrafficTimeline extends WebUIElement {
       windowX:(this.from-this.minimum)/extent*1000,windowWidth:(this.to-this.from)/extent*1000,
       startHandle:(this.from-this.minimum)/extent*1000-4,endHandle:(this.to-this.minimum)/extent*1000-4,
       fromValue:(this.from-this.minimum)/extent*1000,toValue:(this.to-this.minimum)/extent*1000,
-      range:timelineTime((this.from-this.minimum)*1000)+' – '+timelineTime((this.to-this.minimum)*1000),
-      fromLabel:timelineTime((this.from-this.minimum)*1000),toLabel:timelineTime((this.to-this.minimum)*1000),
+      ...timelineRange((this.from-this.minimum)*1000,(this.to-this.minimum)*1000),
       origin:this.minimum>0?timestamp(this.minimum):'Start time unavailable',
       summary:(this.matching.length===this.scoped.length?`${this.scoped.length.toLocaleString()}${this.chosen.length?' selected':''} request${this.scoped.length===1?'':'s'}`:`${this.matching.length.toLocaleString()} of ${this.scoped.length.toLocaleString()}${this.chosen.length?' selected':''} requests in range`)+(unavailable?` · ${unavailable.toLocaleString()} without timing`:''),
       clocks:clocks.size>1?'Recorded source clocks may differ; alignment does not establish cross-source chronology.':'Times are relative to the first recorded start in this scope.',

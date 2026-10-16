@@ -79,6 +79,8 @@ The path is the primary request label; host, source and state are secondary.
 The full URL remains in the inspector. Row descriptions and tooltips retain
 the display URL and precise duration. Chart labels use milliseconds, seconds,
 minutes or hours to keep longer ranges readable.
+Axis units follow the visible span so zoomed endpoints remain distinct. Path
+labels preserve recorded dot segments, escapes and empty query markers.
 
 With no requests selected, the timeline includes all current Traffic filter
 matches, including offscreen entries. With a selection, it shows those selected

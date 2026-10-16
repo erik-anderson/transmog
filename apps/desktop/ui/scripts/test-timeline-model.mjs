@@ -3,7 +3,7 @@ import test from 'node:test';
 import {fileURLToPath} from 'node:url';
 import {build} from 'esbuild';
 const compiled=await build({entryPoints:[fileURLToPath(new URL('../src/traffic-timeline/timeline-model.ts',import.meta.url))],bundle:true,platform:'node',format:'esm',write:false});
-const {overlaps,clampWindow,timelineTime,requestAddress}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+const {overlaps,clampWindow,timelineTime,timelineRange,requestAddress}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
 
 test('chart labels keep zero and unknown distinct and use readable units',()=>{
   assert.equal(timelineTime(null),'Unavailable');assert.equal(timelineTime(0),'0 ms');
@@ -11,6 +11,26 @@ test('chart labels keep zero and unknown distinct and use readable units',()=>{
   assert.equal(timelineTime(90_000_000),'1.5 min');assert.equal(timelineTime(7_200_000_000),'2 h');
   assert.deepEqual(requestAddress('https://example.test:8443/api/items?q=%2F'),{path:'/api/items?q=%2F',host:'example.test:8443'});
   assert.deepEqual(requestAddress('Unavailable'),{path:'Unavailable',host:''});
+});
+
+test('axis endpoints stay distinct when zooming late in a long capture',()=>{
+  for(const start of [99_999_000,3_600_000_000,86_400_000_000]){
+    for(const width of [1000,1,.9765625]){
+      const labels=timelineRange(start,start+width);
+      assert.notEqual(labels.fromLabel,labels.toLabel);
+      assert.match(labels.fromLabel,/ ms$/);assert.match(labels.toLabel,/ ms$/);
+      assert.equal(labels.range,labels.fromLabel+' – '+labels.toLabel);
+    }
+  }
+  assert.deepEqual(timelineRange(0,1_200_000),{fromLabel:'0 s',toLabel:'1.2 s',range:'0 s – 1.2 s'});
+});
+
+test('request labels retain recorded dot segments, escapes and empty queries',()=>{
+  for(const path of ['/api/../admin','/a/%2e%2e/admin','/admin?','/a%2Fb?q=%2f&x=','/x#fragment']){
+    assert.deepEqual(requestAddress('https://EXAMPLE.test:443'+path),{path,host:'EXAMPLE.test:443'});
+  }
+  assert.deepEqual(requestAddress('http://[::1]:8080/a/./b?'),{path:'/a/./b?',host:'[::1]:8080'});
+  assert.deepEqual(requestAddress('https://example.test?'),{path:'/?',host:'example.test'});
 });
 test('time filtering includes overlapping requests, boundary points, and unavailable evidence',()=>{
   assert.equal(overlaps({startMillis:10,durationMicros:100000},50,70),true);
