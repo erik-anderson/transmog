@@ -3,6 +3,7 @@ import type {TrafficTimelineRow,TraceMetadata} from '../models.js';
 import {milliseconds} from '../timings.js';
 import {clampWindow,intervalEnd,overlaps} from './timeline-model.js';
 import initialState from '../initial-state.json';
+import {isTextEditing} from '../list-selection.js';
 
 type DisplayRow=TrafficTimelineRow&{label:string;source:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
 const ROW_HEIGHT=48;
@@ -98,6 +99,25 @@ export class TrafficTimeline extends WebUIElement {
   inspect(id:string):void {this.$emit('timeline-inspect',id);}
   clearSelection():void {this.$emit('timeline-clear-selection');}
   refresh():void {this.$emit('timeline-refresh');}
+  selectAll():void {this.$emit('timeline-select',this.matching.map(row=>row.id));}
+  timelineKey(event:KeyboardEvent):void {
+    if(event.defaultPrevented||isTextEditing(event))return;
+    if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){
+      event.preventDefault();event.stopPropagation();this.selectAll();
+    }else if(event.key==='Escape'){
+      event.preventDefault();event.stopPropagation();
+      if(this.drag)this.cancelDrag();else this.clearSelection();
+    }
+  }
+  reveal(id:string):void {
+    const index=this.matching.findIndex(row=>row.id===id);
+    if(index<0){this.viewport.focus({preventScroll:true});return;}
+    const top=index*ROW_HEIGHT;
+    if(top<this.viewport.scrollTop)this.viewport.scrollTop=top;
+    else if(top+ROW_HEIGHT>this.viewport.scrollTop+this.viewport.clientHeight)this.viewport.scrollTop=top+ROW_HEIGHT-this.viewport.clientHeight;
+    this.renderRows();this.$flushUpdates();
+    (this.getRootNode() as ShadowRoot).getElementById('timeline-'+id)?.focus({preventScroll:true});
+  }
   rowKey(id:string,event:KeyboardEvent):void {
     if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
     event.preventDefault();event.stopPropagation();
@@ -113,6 +133,7 @@ export class TrafficTimeline extends WebUIElement {
     if(event.button!==0||!this.scoped.some(row=>intervalEnd(row)!=null))return;
     event.preventDefault();event.stopPropagation();
     const target=event.target as Element,part=target.getAttribute('data-part')??'new';
+    (target instanceof SVGElement&&target.hasAttribute('tabindex')?target:this.overview).focus({preventScroll:true});
     const bounds=this.overview.getBoundingClientRect(),scale=(this.maximum-this.minimum)/Math.max(1,bounds.width);
     this.drag={pointer:event.pointerId,target:this.overview,part,x:event.clientX,from:this.from,to:this.to,adjusted:this.adjusted,scale,minimum:this.minimum,maximum:this.maximum};
     this.overview.setPointerCapture(event.pointerId);

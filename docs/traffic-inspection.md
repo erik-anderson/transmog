@@ -81,6 +81,10 @@ matches, including offscreen entries. With a selection, it shows those selected
 matches only. **All matching requests** or Escape clears the selection. Clicking
 a timeline row inspects it without changing this scope; Up/Down and Home/End
 navigate timeline rows. Return to List to change the selected group.
+Ctrl+A selects the requests included in the current timeline range, including
+offscreen rows and new traffic. Inspector actions apply to the inspected request
+without changing that group. Opening source evidence refreshes the timeline,
+fits the range to that request and focuses its row.
 
 Drag the overview's window to pan, drag either edge to resize, or drag outside
 the window to choose a range. Requests active at any point in the window are

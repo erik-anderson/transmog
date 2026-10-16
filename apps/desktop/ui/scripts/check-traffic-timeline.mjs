@@ -4,7 +4,7 @@ import {resolve} from 'node:path';
 export async function checkTrafficTimeline(page,root) {
   await page.setViewportSize({width:1440,height:900});
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
-  const saved=await page.evaluate(()=>({rows:globalThis.__workspaceFixture.sessions,preferences:document.querySelector('app-shell').traffic.preferences}));
+  const saved=await page.evaluate(()=>({rows:globalThis.__workspaceFixture.sessions,preferences:document.querySelector('app-shell').traffic.preferences,baseline:document.querySelector('app-shell').traffic.comparisonBaseline,baselineLabel:document.querySelector('app-shell').traffic.comparisonBaselineLabel}));
   const traffic=page.locator('traffic-workspace'),timeline=traffic.locator('traffic-timeline');
   const settle=()=>page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.timelineMode&&!t.timelineBusy&&!t.timelinePending&&t.timelineEntries.length>0;});
   const show=async enabled=>{await traffic.getByRole('button',{name:'View',exact:true}).click();await traffic.locator('#table-settings').getByRole('button',{name:enabled?'Timeline':'List',exact:true}).click();if(enabled)await settle();};
@@ -27,6 +27,16 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.locator('#timeline-tl-slow').focus();await page.keyboard.press('ArrowDown');
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-fast');
     assert.equal(await traffic.locator('.selected-url').textContent(),'https://example.test/scenario/fast');
+    // Inspector actions follow the inspected request without narrowing Timeline.
+    await traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
+    const actions=traffic.locator('#selected-request-actions');
+    assert.equal(await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).isEnabled(),true);
+    await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).click();
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.comparisonBaseline),'tl-fast');
+    await traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
+    await actions.getByRole('button',{name:'Copy request reference',exact:true}).click();
+    assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/scenario\/fast/);
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0);
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,layout:'side-by-side',listSplit:45};});
     assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0));
     await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-aside.png')});
@@ -55,7 +65,8 @@ export async function checkTrafficTimeline(page,root) {
     await page.mouse.move(windowBox.x+windowBox.width/2,windowBox.y+20);await page.mouse.down();await page.mouse.move(windowBox.x+windowBox.width/2+overview.width*.1,windowBox.y+20,{steps:6});await page.mouse.up();
     assert.ok(Math.abs(Number(await timeline.locator('.timeline-window').getAttribute('width'))-beforeWidth)<1,'Panning changed window width');
     const range=await timeline.locator('.timeline-scale > span').first().textContent();
-    await timeline.getByRole('group',{name:'Timeline overview',exact:true}).focus();
+    // Pointer cancellation must work even when focus started on another control.
+    await timeline.getByRole('button',{name:'Reset range',exact:true}).focus();
     const box=await end.boundingBox();await page.mouse.move(box.x+2,box.y+10);await page.mouse.down();await page.mouse.move(box.x-50,box.y+10,{steps:4});
     await page.evaluate(async()=>await document.querySelector('app-shell').traffic.refreshTimeline());
     await page.keyboard.press('Escape');await page.mouse.up();
@@ -68,15 +79,28 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('slider',{name:'Timeline window',exact:true}).focus();await page.keyboard.press('+');
     const liveRange=await timeline.locator('.timeline-scale > span').first().textContent();
     const input=traffic.getByLabel('Filter or search traffic',{exact:true});await input.focus();
-    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions.push({...s.sessions[0],id:'tl-later',requestNumber:'7',startedAt:1800000050000});await t.refreshSessions(undefined,true);await t.refreshTimeline();});
+    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions.push({...s.sessions[0],id:'tl-later',requestNumber:'7',startedAt:1800000050000});await t.refreshSessions();await t.refreshTimeline();});
     assert.equal(await timeline.locator('.timeline-scale > span').first().textContent(),liveRange,'Live traffic reset the adjusted window');
     assert.equal(await input.evaluate(el=>el===el.getRootNode().activeElement),true,'Timeline update stole focus');
+    // List updates pause during inspection, while Timeline includes new requests.
+    await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
+    await timeline.locator('#timeline-tl-later').click();await page.keyboard.press('Control+a');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.trafficSelection.ids.has('tl-later')),true,'Timeline select all omitted new traffic');
+    assert.equal(await timeline.locator('#timeline-tl-later').count(),1);
+    await timeline.getByRole('slider',{name:'Timeline end',exact:true}).focus();await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,'Escape on a range control did not clear selection');
     await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.deferTimeline=true;void document.querySelector('app-shell').traffic.refreshTimeline();});
     await page.waitForFunction(()=>globalThis.__workspaceFixture.timelinePending);await input.fill('fast');
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.totalMatched===1);await page.evaluate(()=>globalThis.__workspaceFixture.releaseTimeline());
     await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return !t.timelineBusy&&t.timelineEntries.length===1&&t.timelineEntries[0].id==='tl-fast';});
     await page.evaluate(async()=>{globalThis.__workspaceFixture.timelineFailure=true;await document.querySelector('app-shell').traffic.refreshTimeline();});
     await traffic.getByRole('button',{name:'Retry',exact:true}).waitFor();await page.evaluate(()=>globalThis.__workspaceFixture.timelineFailure=false);await traffic.getByRole('button',{name:'Retry',exact:true}).click();await settle();
+    // Open source evidence only after the previous filter has fully settled.
+    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.timelineTimer===undefined);
+    await page.evaluate(async()=>await document.querySelector('app-shell').traffic.revealSession('tl-slow'));
+    await timeline.locator('#timeline-tl-slow').waitFor({state:'visible'});
+    assert.equal(await timeline.locator('#timeline-tl-slow').evaluate(el=>el===el.getRootNode().activeElement),true,'Source navigation left focus on the hidden List');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedDetail?.id),'tl-slow');
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=s.sessions[0];s.sessions=Array.from({length:10000},(_,i)=>({...seed,id:'tl-load-'+i,requestNumber:String(i+1),startedAt:1800000000000+i*10,durationMs:50,url:'https://example.test/scenario/long-url/'+i+'?value='+('long-value-'.repeat(20))}));t.liveFilter='';t.searchText='';t.searchInput.value='';t.queryRevision++;await t.refreshSessions(undefined,true);await t.refreshTimeline();});
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),10000);
@@ -86,7 +110,7 @@ export async function checkTrafficTimeline(page,root) {
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-9999');
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0);
   } finally {
-    await page.evaluate(async saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.timelineFailure=false;s.deferTimeline=false;s.releaseTimeline?.();t.setTimeline(false);s.sessions=saved.rows;t.preferences=saved.preferences;t.liveFilter='';t.searchText='';t.searchInput.value='';t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);},saved);
+    await page.evaluate(async saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.timelineFailure=false;s.deferTimeline=false;s.releaseTimeline?.();t.setTimeline(false);s.sessions=saved.rows;t.preferences=saved.preferences;t.comparisonBaseline=saved.baseline;t.comparisonBaselineLabel=saved.baselineLabel;t.liveFilter='';t.searchText='';t.searchInput.value='';t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);},saved);
     await page.setViewportSize({width:1280,height:800});
   }
 }
