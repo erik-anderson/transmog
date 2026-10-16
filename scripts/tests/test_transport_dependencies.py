@@ -2,6 +2,7 @@ import io
 import json
 import os
 from pathlib import Path
+import subprocess
 import sys
 import tarfile
 import tempfile
@@ -13,6 +14,19 @@ import transport_dependencies as transport
 
 
 class TransportSnapshots(unittest.TestCase):
+    def test_receipted_transport_files_are_tracked(self):
+        tracked = subprocess.run(
+            ["git", "ls-files", "-z", "--", "third_party/rust-transport/vendor"],
+            cwd=transport.ROOT, capture_output=True, check=True,
+        ).stdout.decode("utf-8").split("\0")
+        tracked = set(tracked)
+        for name in ("h2", "hyper", "quiche"):
+            directory = transport.BASE / "vendor" / name
+            receipt = json.loads((directory / "transmog-snapshot.json").read_text(encoding="utf-8"))
+            prefix = directory.relative_to(transport.ROOT).as_posix() + "/"
+            missing = {prefix + filename for filename in receipt["files"]} - tracked
+            self.assertFalse(missing, f"Snapshot files missing from Git: {sorted(missing)}")
+
     def test_regeneration_ignores_git_user_line_ending_preferences(self):
         with tempfile.TemporaryDirectory() as temporary, patch.object(transport, "BASE", Path(temporary)):
             root = Path(temporary)

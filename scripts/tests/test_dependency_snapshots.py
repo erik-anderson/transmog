@@ -19,6 +19,57 @@ spec.loader.exec_module(vendor)
 
 
 class SnapshotTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt", "requires Windows 8.3 path aliases")
+    def test_replacement_accepts_short_parent_aliases(self):
+        import ctypes
+        from ctypes import wintypes
+        get_short_path = ctypes.WinDLL("kernel32", use_last_error=True).GetShortPathNameW
+        get_short_path.argtypes = [wintypes.LPCWSTR, wintypes.LPWSTR, wintypes.DWORD]
+        get_short_path.restype = wintypes.DWORD
+        with tempfile.TemporaryDirectory(prefix="dependency snapshot parent alias ") as temporary:
+            root = Path(temporary).resolve()
+            buffer = ctypes.create_unicode_buffer(32768)
+            length = get_short_path(str(root), buffer, len(buffer))
+            self.assertGreater(length, 0)
+            self.assertLess(length, len(buffer))
+            alias = Path(buffer.value)
+            if alias == root:
+                self.skipTest("8.3 path aliases are disabled on this volume")
+            staged, destination = alias / "stage", root / "snapshot"
+            staged.mkdir()
+            destination.mkdir()
+            (staged / "new.h").write_text("new")
+            (destination / "old.h").write_text("old")
+            replace_directory(staged, destination)
+            self.assertEqual((destination / "new.h").read_text(), "new")
+            self.assertFalse((destination / "old.h").exists())
+            self.assertFalse(staged.exists())
+
+    def test_replacement_rejects_a_different_parent(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            staged = root / "stage"
+            staged.mkdir()
+            other = root / "other"
+            other.mkdir()
+            with self.assertRaisesRegex(ValueError, "outside its parent"):
+                replace_directory(staged, other / "snapshot")
+            self.assertTrue(staged.is_dir())
+
+    def test_replacement_still_rejects_linked_children(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary).resolve()
+            target = root / "target"
+            target.mkdir()
+            staged = root / "stage"
+            try:
+                staged.symlink_to(target, target_is_directory=True)
+            except OSError:
+                self.skipTest("directory symlinks are unavailable")
+            with self.assertRaisesRegex(ValueError, "outside its parent"):
+                replace_directory(staged, root / "snapshot")
+            self.assertTrue(target.is_dir())
+
     def fixture(self, root):
         source = root / "source"
         for name, value in {"gen/sources.cmake": "set(PKI_SOURCES\n pki/verify.cc\n)\n",

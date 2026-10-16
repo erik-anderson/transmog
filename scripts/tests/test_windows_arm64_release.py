@@ -25,7 +25,7 @@ class WindowsArm64ReleaseTests(unittest.TestCase):
                 installer = root / f"Transmog_1.2.3_{architecture}-setup.exe"
                 installer.write_bytes(b"signed installer fixture")
                 def sign(arguments, **kwargs):
-                    self.assertEqual(arguments[-1], installer)
+                    self.assertEqual(arguments[-1], installer.resolve(strict=True))
                     installer.with_suffix(".exe.sig").write_text("signed fixture", encoding="utf-8")
                     return type("Result", (), {"returncode": 0})()
                 argv = ["create-update-manifest", "--target", target, "--installer", str(installer), "--version", "1.2.3", "--output-directory", str(root)]

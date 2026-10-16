@@ -23,6 +23,10 @@ def replace_directory(staged: Path, destination: Path) -> None:
     parent = destination.parent.resolve(strict=True)
     staged = staged.absolute()
     destination = destination.absolute()
+    # Windows temp paths can use an 8.3 parent alias. Compare canonical
+    # parents while retaining the child names so links are still rejected.
+    staged = staged.parent.resolve(strict=True) / staged.name
+    destination = destination.parent.resolve(strict=True) / destination.name
     backup = parent / (".dependency-backup-" + uuid.uuid4().hex)
     for path in (staged, destination, backup):
         if path.parent != parent or path.resolve() != path or path == parent:

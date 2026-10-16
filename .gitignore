@@ -11,6 +11,8 @@
 /.vscode/
 *.pdb
 *.key
+# Public upstream example required by the checksum-pinned transport snapshot.
+!third_party/rust-transport/vendor/quiche/examples/cert.key
 *.pem
 !crates/app/tests/fixtures/certificates/leaf.pem
 !crates/app/tests/fixtures/certificates/root.pem
