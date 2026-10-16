@@ -74,7 +74,26 @@ qualify a signed installer or the visual native file chooser. Source/evidence
 streaming and actual disabled imports also have application integration coverage.
 
 Use [the composition benchmark](performance.md#portable-archive-composition) for
-compression policy measurements. New CLI commands require separate K4 checks.
+compression policy measurements. The narrowed K4 checks only native context
+listing/extraction, password modes and standalone binary operation; broader
+case/rule CLI work is deferred.
+
+For context CLI changes, run strict Clippy and all targets for `-p transmog`.
+The executable tests exercise extraction, metadata-only reads, encrypted input,
+no-prompt behavior and password spaces/quotes/backslashes/Unicode. A separate
+opt-in standalone shell check copies the selected binary to an owned temporary
+directory, restricts the product's PATH, and executes a quoted-password script:
+
+```powershell
+$env:TRANSMOG_CONTEXT_TEST_BINARY = (Resolve-Path ./target/release/transmog-cli.exe).Path
+$env:TRANSMOG_CONTEXT_TEST_SHELL = (Get-Command pwsh).Source
+python scripts/dev-env.py --run cargo test --locked -p transmog --test context standalone_binary_and_shell_quoted_passwords -- --ignored --nocapture
+```
+
+Use an absolute POSIX shell path such as `/bin/sh` for the shell variable on Linux.
+Interactive masked entry also needs a real-terminal check; piped stdin deliberately
+fails when an encrypted input has no supplied password. No desktop/browser checks
+are implied by this CLI-only qualification.
 
 For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:

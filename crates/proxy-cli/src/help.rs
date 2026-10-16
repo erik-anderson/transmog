@@ -42,6 +42,8 @@ fn takes_value(argument: &str) -> bool {
             | "--upstream-ca-cert"
             | "--request-body-limit"
             | "--password-file"
+            | "--password"
+            | "--id"
             | "--source-password-file"
             | "--circular-buffer"
             | "--ca-cert"
@@ -63,6 +65,7 @@ fn topic(path: &[String]) -> io::Result<&'static str> {
     match path.as_slice() {
         [] => Ok(ROOT),
         ["record"] => Ok(RECORD),
+        ["context"] => Ok(CONTEXT),
         ["profile"] | ["profile", "validate"] => Ok(PROFILE),
         ["serve"] => Ok(SERVE),
         ["roots"] | ["roots", "cleanup"] => Ok(ROOTS),
@@ -75,10 +78,11 @@ fn topic(path: &[String]) -> io::Result<&'static str> {
         ["capture", "validate"] => Ok(VALIDATE),
         ["capture", "seal"] => Ok(SEAL),
         ["capture", "export"] => Ok(EXPORT),
-        _ => Err(crate::invalid_input(format!(
-            "Unknown help topic {}; run transmog-cli help",
-            path.join(" ")
-        ))),
+        // A malformed help invocation can contain a password argument. Do not
+        // reflect arbitrary command-line values into diagnostics.
+        _ => Err(crate::invalid_input(
+            "Unknown help topic; run transmog-cli help",
+        )),
     }
 }
 
@@ -89,6 +93,7 @@ Usage: transmog-cli COMMAND [OPTIONS]
 Commands:
   profile validate  Validate an inert support capture profile (no setup or recording)
   record            Guided support recording; Ctrl+C stops and saves a TMCap trace
+  context           List or extract recorded configuration and support context
   roots cleanup     Restore interrupted Windows proxy settings and remove CLI roots
   serve             Run a proxy with an existing CA; host settings are configured manually
   ca generate       Generate a CA with an OS-user-protected private key
@@ -258,6 +263,36 @@ Usage: transmog-cli capture inspect|validate|seal|export [OPTIONS]
 Encrypted input prompts for a masked password or accepts --password-file FILE.
 Use transmog-cli capture COMMAND --help for full options.";
 
+const CONTEXT: &str = "Read recorded capture context
+
+Usage: transmog-cli context --input FILE [--list | --id ID] [OPTIONS]
+
+  --input FILE          Native TMCap capture (sealed or committed recoverable prefix)
+  --list                List context IDs, sources, collection time and collection issues (default)
+  --id ID               Extract this listed context item as JSON
+  --output FILE         New JSON destination; default: - (stdout)
+  --password TEXT       Input password; an incorrect supplied password fails without prompting
+  --password-file FILE  Protected UTF-8 input password file (up to 4096 bytes); alternative to --password
+  --no-prompt           Fail when a password is needed instead of asking for it
+  --help, -h            Show this help
+
+Without a supplied password, encrypted input prompts with masked entry in an interactive
+console. Use the prompt to keep the password out of shell history; automation can use
+--no-prompt with a password argument or file. Noninteractive missing passwords fail.
+Quote passwords with spaces using your shell's quoting and escaping rules. Transmog
+uses the argument exactly as passed; it does not decode escape sequences a second time.
+Only stored context is read; configuration commands are never run. Traffic bodies are
+not exported or integrity-checked. Unsealed/incomplete input is reported separately.
+IDs identify fields in this input's metadata records. Original JSON values, source
+associations, times, text and collection issues are retained. Null means not collected.
+Existing output files are never overwritten. Failed extraction leaves no destination.
+Supports native captures, not portable case archives. No proxy or certificate setup.
+
+Examples:
+  transmog-cli context --input support.tmcap --list
+  transmog-cli context --input support.tmcap --id record/0/networkContext --output network.json
+  transmog-cli context --input support.tmcap --no-prompt --password TEXT --id record/0/networkContext";
+
 const INSPECT: &str = "Inspect a native capture
 
 Usage: transmog-cli capture inspect --input FILE [--password-file FILE]
@@ -329,6 +364,7 @@ mod tests {
     fn help_resolves_every_command_and_password_context() {
         for command in [
             "record",
+            "context",
             "serve",
             "roots cleanup",
             "ca generate",
@@ -361,6 +397,10 @@ mod tests {
     fn help_like_option_values_are_not_help_requests() {
         assert_eq!(
             requested(&["serve".into(), "--proof-id".into(), "-h".into()]).unwrap(),
+            None
+        );
+        assert_eq!(
+            requested(&["context".into(), "--password".into(), "--help".into()]).unwrap(),
             None
         );
         assert_eq!(

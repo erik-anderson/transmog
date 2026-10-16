@@ -130,7 +130,11 @@ rather than requiring a buffered HTTP/3 retry.
 Starting the proxy does not create an automatic trace journal. **Save trace…** and
 explicit recording write files. See [trace saving](trace-saving.md) and the
 [CLI support guide](cli-support-capture.md); the CLI has separate preferences
-and root ownership under `%LOCALAPPDATA%\Transmog-cli`.
+and root ownership under `%LOCALAPPDATA%\Transmog-cli`. Its read-only
+[`context` command](cli.md#read-recorded-context) lists or extracts original
+configuration/support context from native captures. It supports a password
+argument, masked prompt, password file and a no-prompt automation mode. It does
+not collect current configuration or export traffic bodies.
 
 Desktop automatic-check preferences and update reminders use a separate bounded `update-preferences.<generation>.json`
 store under the same product-state root. Independent Settings saves cannot

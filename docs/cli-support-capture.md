@@ -195,7 +195,11 @@ To include network configuration for a support investigation, add
 interface/DNS/route context on macOS, or `ip` and `resolvectl` output on Linux.
 This is optional because adapter addresses, DNS configuration and computer names
 may be private. Collection is bounded and failures remain in Trace metadata.
-Open the saved trace and use **Trace metadata** before sharing.
+Open the saved trace and use **Trace metadata** before sharing. To list or extract
+the original saved context from the standalone CLI, use
+[`context`](cli.md#read-recorded-context). It does not collect new configuration
+or export traffic bodies. Encrypted input accepts `--password TEXT`, a password
+file, or a masked prompt; add `--no-prompt` for a run that must not wait for input.
 
 ## Password protection
 

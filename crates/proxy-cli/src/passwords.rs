@@ -1,4 +1,4 @@
-//! Transient, masked capture passwords; never accepted as command-line text.
+//! Transient masked capture prompts and protected password-file input.
 use std::{
     fs::File,
     io::{self, IsTerminal, Read},

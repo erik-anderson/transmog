@@ -2,8 +2,10 @@
 
 Status: K1/K2 implement rule/asset and working-case APIs. K3 adds bounded Stored
 ZIP64 transfer, the typed TMCap wrapper with optional whole-package encryption,
-and desktop review/open/save/disabled-import actions. CLI commands remain K4;
-script and richer run integration remain K5. Revision 0 stays experimental.
+and desktop review/open/save/disabled-import actions. K4 is limited to native
+capture context listing/extraction through the [CLI](cli.md#read-recorded-context).
+Broader case/rule CLI tooling is deferred; script and richer run integration
+remain future work. Revision 0 stays experimental.
 [ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
 [the roadmap](roadmap.md) tracks remaining implementation.
 
@@ -670,14 +672,19 @@ Package encryption does not erase plaintext working copies, previews or dumps.
 
 ## Intended CLI interface
 
-These commands are **not implemented by K0–K3**. K4 adds the first group; K5 adds
-script/compare tooling only after its dependencies are distributed and qualified.
+The maintainer narrowed K4 to `context --input FILE [--list | --id ID]`: a
+read-only native-capture context reader. It supports a supplied `--password`, a
+masked prompt when needed, and `--no-prompt` for automation. See the
+[implemented CLI contract](cli.md#read-recorded-context). It does not add portable
+package authoring, case unpacking, rule matching, or a new query language.
+
+The following commands remain unimplemented design ideas, with no scheduled
+increment. CLI case packing has been removed from the proposed scope.
 
 | Command | Intended behavior |
 | --- | --- |
 | `case inspect --input FILE --json` | Bounded inventory, source/dependency states and capabilities; no execution or import. |
 | `case validate --input FILE --json` | Verify structure, object hashes and references; separately report evidence completeness and runnable capabilities. |
-| `case pack --input DIR --output FILE [--container tmcap\|zip] [--encrypt]` | Create-new transactional package of the selected manifest and closure; default TMCap compression, optional encryption. Explicit bare ZIP rejects `--encrypt`. |
 | `case unpack --input FILE --output DIR` | Explicit plaintext working copy, create-new directory and safe transactional extraction. |
 | `rules validate --input FILE --json` | Portable schema plus authoritative rule/action validation; no activation. |
 | `rules test --input FILE --capture FILE --json` | Original-request or available recorded-boundary matching, actual match/no-match/unknown, order and intent; no response/script execution or network. |
@@ -695,8 +702,10 @@ Password roles: `--input-password-file FILE` for the package, repeated
 `--source-password-file SOURCE_ID FILE` for separately encrypted captures, and
 `--password-file FILE` for encrypted output only. Use masked prompts when
 interactive; noninteractive missing passwords fail explicitly. Preserve the
-current 4096-byte UTF-8 file bound and newline trimming. Never accept plaintext
-password arguments. Diagnostics/progress/prompts go to stderr for new structured
+current 4096-byte UTF-8 file bound and newline trimming. These deferred commands
+have no implemented password interface. The delivered context reader explicitly
+accepts a password argument as well as a masked prompt and password file.
+Diagnostics/progress/prompts go to stderr for new structured
 commands; stdout contains one UTF-8 JSON result and newline. Existing default
 output and existing command exit behavior remain unchanged.
 
@@ -736,9 +745,10 @@ K2's working-case APIs implement evidence/notes/context/run inventory and
 transactional directory persistence, including historical manifest inspection.
 K3 implements and separately checks safe archive readers/writers, the typed TMCap
 wrapper, hostile corpus, transactional export and clean-profile desktop transfer.
-K4 qualifies the documented CLI
-using shipped binaries in an empty directory. K5 integrates scripts, preview and
-comparison without claiming that packaging launches arbitrary browsers.
+K4 qualifies only context listing/extraction using the standalone CLI in an empty
+directory, including password and no-prompt behavior. Case/rule CLI work is
+deferred. Future script/preview/comparison work must qualify its own distribution
+and execution dependencies without implying arbitrary browser launching.
 
 Every reader must exercise the corpus through its production path once shipped:
 colliding sources and IDs; duplicate/binary headers and compression; missing and

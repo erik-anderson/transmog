@@ -2,6 +2,7 @@
 
 mod arguments;
 mod circular;
+mod context;
 mod help;
 mod output;
 mod passwords;
@@ -81,6 +82,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
     }
     match arguments.first().map(String::as_str) {
         Some("profile") => support_profile::command(&arguments[1..]),
+        Some("context") => context::command(&arguments[1..]),
         Some("record") => support::record(&arguments[1..]).await,
         Some("roots") => support::cleanup_roots(&arguments[1..]),
         Some("--version" | "-V") => {

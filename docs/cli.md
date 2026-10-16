@@ -28,14 +28,15 @@ accepts `--help` or `-h`. Help shows accepted options, defaults, and password
 roles before any certificate, proxy, or output-file setup. The
 [help source](../crates/proxy-cli/src/help.rs) contains the full option reference.
 
-Future case/rule/script workflows and explicit JSON results are specified in the
-[portable investigation design](portable-investigations.md#intended-cli-interface).
-Those planned commands are not available in current binaries; existing command
-output and exit behavior remain unchanged.
+The [context reader](#read-recorded-context) lists and extracts saved diagnostic
+context. Broader case/rule/script CLI ideas in the
+[portable investigation design](portable-investigations.md#intended-cli-interface)
+are deferred; existing command output and exit behavior remain unchanged.
 
 | Command | Task |
 | --- | --- |
 | `record` | Guided recording to a new `.tmcap` file; Ctrl+C stops and saves it. |
+| `context` | List or extract original recorded configuration, support metadata, incidents and source notes. |
 | `roots cleanup` | Restore interrupted Windows proxy settings and remove CLI-owned roots. |
 | `serve` | Run a proxy with an existing CA and manually configured clients. |
 | `ca generate` | Create a public CA certificate and an OS-user-protected private key. |
@@ -195,6 +196,69 @@ with `roots cleanup` before beginning another recording. Use
 `roots cleanup --include-persistent` to remove persistent roots too. See
 [interrupted-run recovery](cli-support-capture.md#recover-an-interrupted-capture).
 
+## Read recorded context
+
+Use `context` on a native `.tmcap` capture to read information already stored in
+it. For example, `record --include-network-context` saves the original machine's
+network configuration; profiles and incident marks retain their support context.
+The command never runs configuration tools again or changes proxy/certificate
+settings. Portable case archives are outside this command's initial scope.
+
+```powershell
+.\transmog-cli.exe context --input '.\customer trace.tmcap' --list
+.\transmog-cli.exe context --input '.\customer trace.tmcap' --id record/0/networkContext --output '.\network context.json'
+```
+
+Without `--id`, JSON output lists available context IDs, kinds, original source
+keys/names, recorded collection times when known, and network collection issues.
+Use an ID from that input's listing: `record/0/networkContext` is illustrative.
+IDs locate fields in this file's metadata; they are not portable case identities
+and can change when a capture is rewritten. Unknown collection completeness is
+reported as `unknown`, and a null field is `not-collected`. Extracting a null or
+missing item fails without creating an output file.
+
+`--id` writes the original JSON value, preserving stored text, Unicode, CR/LF,
+timestamps and failure notes. It does not add the receiving computer's state.
+`--output` defaults to `-` (stdout); a file destination must be new. File output
+is published only after successful extraction. stdout contains only JSON;
+prompts, errors and incomplete-prefix notices go to stderr.
+
+Encrypted input asks for a masked password after opening the capture, unless
+`--password TEXT` or `--password-file FILE` supplies it. Use the prompt when the
+password should stay out of shell history. An incorrect supplied password fails
+without asking again. `--no-prompt` disables interactive password requests:
+
+```powershell
+.\transmog-cli.exe context --input '.\customer trace.tmcap' --no-prompt
+.\transmog-cli.exe context --input '.\customer trace.tmcap' --password 'PASSWORD' --no-prompt --id record/0/networkContext
+.\transmog-cli.exe context --input '.\customer trace.tmcap' --password-file '.\protected password.txt' --no-prompt --list
+```
+
+A supplied password still works with `--no-prompt`. Without one, protected input
+fails immediately instead of waiting for input. Missing passwords also fail when
+stdin is not an interactive terminal. Password arguments are accepted only by
+`context`; other capture commands retain their existing password-file behavior.
+
+Passwords containing spaces must be quoted. Shell quoting/escaping happens before
+Transmog receives the argument; the tool preserves the resulting characters,
+including leading/trailing spaces, quotes and backslashes. It does not interpret
+backslash escapes a second time. For example, PowerShell 7 supports:
+
+```powershell
+.\transmog-cli.exe context --input .\support.tmcap --no-prompt --password 'a password with spaces'
+.\transmog-cli.exe context --input .\support.tmcap --no-prompt --password 'spaces, an apostrophe '' and \backslashes\'
+.\transmog-cli.exe context --input .\support.tmcap --no-prompt --password "spaces and `"double quotes`""
+```
+
+PowerShell doubles an apostrophe inside single quotes and uses a backtick to
+escape a quote inside double quotes. Other shells have their own escaping rules.
+
+This is a metadata read, not a full-capture validation: traffic bodies are skipped
+and are not integrity-checked. The listing includes `sealed`, `truncatedTail` and
+`bodyIntegrityChecked: false`. A readable committed prefix can expose its saved
+context, with a notice that later context may be unavailable. The reader bounds
+context to 256 fields and 16 MiB in total; native metadata limits also apply.
+
 ## Export records or a SAZ archive
 
 ```powershell
@@ -233,8 +297,9 @@ for representation and archive limits.
 Encrypted native input prompts for a masked password when needed. New
 encrypted output uses `--encrypt`, asks for a password and confirmation, and
 never remembers it. For unattended runs, use protected UTF-8 password files
-of at most 4096 bytes; trailing CR/LF characters are ignored. Password strings
-are not accepted as command-line options. Protect and retain the password
+of at most 4096 bytes; trailing CR/LF characters are ignored. `context` also
+accepts `--password TEXT` and supports `--no-prompt`, as described above.
+Other commands do not accept password strings as options. Protect and retain the password
 files yourself; passwords cannot be recovered.
 
 | Operation | Input password file | Output password file |

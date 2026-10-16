@@ -21,9 +21,8 @@ are checked in.
 
 ## Capture and inspection fidelity
 
-- Continue the revision-0 [portable investigation contract](portable-investigations.md)
-  beyond the shared rule/working-case APIs and desktop ZIP64/TMCap transfer:
-  binary-only validation, matching, inspection and packaging (K4), followed by
+- Broader case/rule CLI validation, matching and extraction remain deferred under
+  the revision-0 [portable investigation contract](portable-investigations.md), along with
   script/run/preview/comparison integration (K5).
   Broader project organization and any future format stability decision remain
   separate from the experimental live control protocol.

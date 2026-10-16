@@ -14,10 +14,9 @@ pub(crate) fn validate(arguments: &[String], values: &[&str], flags: &[&str]) ->
         }
         index += 1;
         if values.contains(&argument.as_str()) {
-            if arguments
-                .get(index)
-                .is_none_or(|value| value.is_empty() || value.starts_with("--"))
-            {
+            if arguments.get(index).is_none_or(|value| {
+                value.is_empty() || (argument != "--password" && value.starts_with("--"))
+            }) {
                 return Err(crate::invalid_input(format!("{argument} requires a value")));
             }
             index += 1;
