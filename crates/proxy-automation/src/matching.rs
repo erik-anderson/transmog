@@ -608,6 +608,7 @@ pub fn test_matcher(matcher: &RuleMatcher, request: &RequestHead) -> Result<Matc
         matcher: matcher.clone(),
         url,
         regexes: compile_predicates(&matcher.request_headers),
+        response_regexes: compile_predicates(&matcher.response_headers),
     }
     .evaluate(request))
 }
@@ -618,6 +619,7 @@ pub struct CompiledRequestMatcher {
     matcher: RuleMatcher,
     url: Option<CompiledUrl>,
     regexes: std::sync::Arc<[Option<crate::Regex>]>,
+    response_regexes: std::sync::Arc<[Option<crate::Regex>]>,
 }
 impl CompiledRequestMatcher {
     /// Validates and compiles the same conditions used by live automation.
@@ -635,7 +637,27 @@ impl CompiledRequestMatcher {
                 .map(UrlCondition::compile)
                 .transpose()?,
             regexes: compile_predicates(&matcher.request_headers),
+            response_regexes: compile_predicates(&matcher.response_headers),
         })
+    }
+    /// Tests request conditions without allocating explanations or running actions.
+    pub fn matches_request(&self, request: &RequestHead) -> bool {
+        self.matcher
+            .matches_request(request, &self.regexes, self.url.as_ref())
+    }
+    /// Tests request and response conditions without running actions.
+    pub fn matches_response(
+        &self,
+        request: &RequestHead,
+        response: &transmog_core::ResponseHead,
+    ) -> bool {
+        self.matcher.matches_response(
+            request,
+            response,
+            &self.regexes,
+            &self.response_regexes,
+            self.url.as_ref(),
+        )
     }
     /// Evaluates conditions without recompiling or sending traffic.
     pub fn evaluate(&self, request: &RequestHead) -> MatchTest {

@@ -4,17 +4,52 @@ export async function checkPortableCases(page,root){
   await page.goto('https://workspace.test/');await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
   await page.evaluate(()=>{
     const state=globalThis.__workspaceFixture;
-    state.caseChoices={rules:[{id:'rule-a',label:'Keep the exact encoded response'}],variants:[]};
+    const comparisons=[{id:'scope-snapshot',label:'Saved scope snapshot',scope:{kind:'selected',ids:['first','second']}}];
+    state.caseChoices={choices:[{id:'rule:rule-a',ruleId:'rule-a',selection:null,label:'Keep the exact encoded response',relevance:'matched'},{id:'rule:missing',ruleId:'missing',selection:null,label:'Response for a resource missing from this capture',relevance:'unmatched'},{id:'rule:unknown',ruleId:'unknown',selection:null,label:'Requires redacted request headers',relevance:'unknown'},{id:'version:blue',ruleId:null,selection:{experimentId:'css',variantId:'blue',revision:7},label:'Checkout CSS / Blue / revision 7',relevance:'matched'}],comparisons};
     state.caseReview={traffic:{entries:99,retainedEntries:120,streamRecords:12,incompleteBodies:198},manifest:{id:'portable-test',kind:'case',title:'Checkout investigation — customer-provided context <script>inert</script>',sources:[{id:'source-a',artifactSha256:'fixture-digest',sourceKey:'root',requestCount:'99',label:'Original source with a long descriptive label — '+ 'customer evidence '.repeat(8),dependency:{state:'present'},evidenceCompleteness:'truncated'}],rules:[{id:'rule-a'}],assets:[{}],experiments:[{id:'future',label:'Unsupported optional experiment'}],notes:[{id:'note',source:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},text:'Authored observation <img src=x onerror=alert(1)>\nOriginal config output remains source evidence.'}],contexts:[{id:'context-a',kind:'capture-metadata',completeness:'partial',content:{state:'present',sha256:'context-digest'}}],markers:[{}],runs:[],objects:[{role:'capture',bytes:'1000'},{role:'context',bytes:'20',sha256:'context-digest',mediaType:'application/json'}]},inventory:{missingDependencies:1,incompleteSources:1,experiments:[{id:'future',state:'unavailable',reason:'This optional experiment is not supported by this build.'}]},excluded:['Unselected evidence and working history'],activation:'Opening and importing do not activate rules or scripts.'};
   });
   const traffic=page.locator('traffic-workspace');const dialog=page.locator('portable-case dialog');
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save portable case…',exact:true}).click();
   await dialog.getByLabel('Title',{exact:true}).fill('A portable investigation');
   await dialog.getByLabel('Evidence',{exact:true}).selectOption('filtered');
+  await dialog.getByText('99 included requests.',{exact:false}).waitFor();
+  await dialog.getByLabel('Saved scope snapshot',{exact:true}).check();
+  await dialog.getByLabel('Keep the exact encoded response',{exact:false}).check();
+  assert.equal(await dialog.getByLabel('Response for a resource missing',{exact:false}).count(),0);
+  await dialog.getByLabel('Checkout CSS / Blue / revision 7',{exact:false}).check();
+  await dialog.getByLabel('Show all',{exact:true}).check();
+  await dialog.getByLabel('Response for a resource missing',{exact:false}).check();
+  await dialog.getByText('Saved rule · Could not assess',{exact:true}).waitFor();
+  await dialog.getByLabel('Show all',{exact:true}).uncheck();
+  assert.equal(await dialog.getByLabel('Response for a resource missing',{exact:false}).isChecked(),true);
+  assert.equal(await dialog.getByLabel('Requires redacted request headers',{exact:false}).count(),0);
+  for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.locator('.case-scroll').evaluate(e=>e.scrollTop=0);await page.screenshot({path:resolve(root,`../../../target/ui-check/case-picker-${width}.png`)});}
+  // A late assessment cannot restore an obsolete scope or discard selected content.
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseRelevance=true;});
+  await dialog.getByLabel('Evidence',{exact:true}).selectOption('none');await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseCaseRelevance);
+  await dialog.getByLabel('Evidence',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
+  await page.evaluate(()=>globalThis.__workspaceFixture.releaseCaseRelevance());await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseChoicesBusy);
+  assert.equal(await dialog.getByLabel('Evidence',{exact:true}).inputValue(),'filtered');
+  assert.equal(await dialog.getByLabel('Requires redacted request headers',{exact:false}).count(),0);
+  assert.equal(await dialog.getByLabel('Keep the exact encoded response',{exact:false}).isChecked(),true);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.caseRelevanceError='Matching temporarily unavailable';});
+  await dialog.getByLabel('Evidence',{exact:true}).selectOption('none');await dialog.getByText('Matching temporarily unavailable',{exact:true}).waitFor();
+  assert.equal(await dialog.getByLabel('Keep the exact encoded response',{exact:false}).isChecked(),true);
+  await page.evaluate(()=>{delete globalThis.__workspaceFixture.caseRelevanceError;});await dialog.getByRole('button',{name:'Retry matching',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseChoicesBusy);
+  await dialog.getByLabel('Evidence',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
+  await dialog.getByLabel('Show all',{exact:true}).uncheck();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseRelevance=true;delete globalThis.__workspaceFixture.releaseCaseRelevance;});
+  await dialog.getByLabel('Evidence',{exact:true}).selectOption('none');await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseCaseRelevance);
+  await dialog.getByRole('button',{name:'Close review',exact:true}).click();await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save portable case…',exact:true}).click();
+  await dialog.getByLabel('Evidence',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
+  await page.evaluate(()=>globalThis.__workspaceFixture.releaseCaseRelevance());assert.equal(await dialog.getByLabel('Evidence',{exact:true}).inputValue(),'filtered');
+  assert.equal(await dialog.getByLabel('Saved scope snapshot',{exact:true}).isChecked(),true);
   await dialog.getByLabel('Notes').fill('Reproduce checkout.');
 
   await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByText(/Verified|Review the frozen/).waitFor();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.scope.kind),'filtered');
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.ruleIds),['rule-a','missing']);
+  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.selections),[{experimentId:'css',variantId:'blue',revision:7}]);
   await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();
   assert.equal(await dialog.locator('dl').first().locator('div').filter({hasText:'Captured requests'}).locator('dd').textContent(),'99');
   await dialog.getByText('99 requests · Included',{exact:true}).waitFor();

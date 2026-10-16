@@ -70,7 +70,8 @@ pub use transmog_portable as portable;
 mod investigations;
 mod rule_interchange;
 pub use investigations::{
-    CaseEvidenceLink, CaseExportRequest, CaseNoteInput, CasePreviewOptions, OpenedCaseEvidence,
+    CaseEvidenceLink, CaseExportChoice, CaseExportChoices, CaseExportRequest, CaseNoteInput,
+    CasePreviewOptions, OpenedCaseEvidence,
 };
 
 pub use automation::{

@@ -504,6 +504,30 @@ evidence creates temporary unencrypted copies; the form discloses this before
 **Review selected content**. That explicit action prepares the copy without an
 additional acknowledgement checkbox. Output encryption protects the final file.
 
+The optional **Rules and experiments** picker initially shows saved content that
+matches the included requests. **Show all** also exposes
+nonmatching and unassessed choices, including overrides for uncaptured resources.
+Choosing a version includes its complete ordered rules; experiment-owned rules
+do not appear again as standalone choices. Suggestions are not automatically
+selected. Selected content stays visible and selected when the evidence scope or
+visibility filter changes. With no evidence chosen, every saved choice is shown.
+
+Changing Evidence reassesses the full scope before table paging/windowing. The
+read-only check uses recorded client request and client response heads, including
+raw header bytes, independently of enabled/paused state. It never runs actions,
+loads bodies or assets, activates automation, or consumes an export review slot.
+Matching describes the recorded conditions, not which rules actually ran or
+whether a response body transformation will succeed. Suggestions are a snapshot;
+live traffic can change before the final export freezes its membership.
+Missing heads, redacted predicate values, unknown original targets, invalid
+matchers or exhausted assessment bounds produce **Could not assess**, rather than
+a false no-match. Metadata is bounded to 32 MiB, at most 100,000 scoped requests,
+one million evaluations and a two-second assessment budget. All saved definitions
+remain available even when assessment stops. Late results cannot replace a newer
+scope or reopen a closed dialog; errors retain selections and offer **Retry
+matching**. Selected definitions removed elsewhere remain visible for explicit
+deselection before saving.
+
 Review leads with the included request count and groups requests by capture,
 showing each capture's request count when recorded. Case source `requestCount`
 is an optional canonical unsigned-64-bit decimal string: the number of requests

@@ -42,6 +42,33 @@ impl ReviewRegistry {
             .ok_or_else(|| error("Export review expired; review the selection again"))
     }
 }
+pub(crate) fn scope_ids(
+    app: &Application,
+    scope: &ComparisonScope,
+) -> Result<Vec<String>, AppError> {
+    match scope {
+        ComparisonScope::Selected { ids } => Ok(ids.clone()),
+        ComparisonScope::Filtered { query } => app.matching_traffic_ids(query),
+        ComparisonScope::Source { trace_id } => {
+            if trace_id
+                .as_ref()
+                .is_some_and(|id| app.traces.metadata(id).is_none())
+            {
+                return Err(error("Export source expired"));
+            }
+            Ok(app
+                .service
+                .catalog()
+                .project_retained(|s| {
+                    let id = format!("{:032x}", s.exchange_id.0);
+                    (app.traces.source_id(&id) == *trace_id).then_some(id)
+                })
+                .into_iter()
+                .flatten()
+                .collect())
+        }
+    }
+}
 impl Application {
     /// Inventories and freezes all, selected, filtered or original-source entry membership.
     /// # Errors
@@ -59,26 +86,14 @@ impl Application {
                     .project_retained(|s| format!("{:032x}", s.exchange_id.0)),
                 None,
             ),
-            Some(ComparisonScope::Selected { ids }) => (ids, None),
-            Some(ComparisonScope::Filtered { query }) => (self.matching_traffic_ids(&query)?, None),
-            Some(ComparisonScope::Source { trace_id }) => {
-                if trace_id
-                    .as_ref()
-                    .is_some_and(|id| self.traces.metadata(id).is_none())
-                {
-                    return Err(error("Export source expired"));
-                }
-                let ids = self
-                    .service
-                    .catalog()
-                    .project_retained(|s| {
-                        let id = format!("{:032x}", s.exchange_id.0);
-                        (self.traces.source_id(&id) == trace_id).then_some(id)
-                    })
-                    .into_iter()
-                    .flatten()
-                    .collect();
-                (ids, Some(trace_id))
+            Some(scope) => {
+                let ids = scope_ids(self, &scope)?;
+                let source = if let ComparisonScope::Source { trace_id } = scope {
+                    Some(trace_id)
+                } else {
+                    None
+                };
+                (ids, source)
             }
         };
         if ids.len() > 100_000 {

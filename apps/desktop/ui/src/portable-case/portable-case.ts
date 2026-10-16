@@ -5,6 +5,8 @@ import {WorkspaceElement} from '../workspace-element.js';
 import {describeError} from '../utilities.js';
 
 type Selection={experimentId:string;variantId:string;revision:number};
+type RuleChoice={id:string;label:string;ruleId:string|null;selection:Selection|null;relevance:'matched'|'unmatched'|'unknown'|'not-assessed';unavailable?:boolean};
+type ChoiceResponse={choices:RuleChoice[];requestCount:number;evidenceSelected:boolean;comparisons:Array<{id:string;label:string;scope:unknown}>};
 type Scope={value:string;label:string;scope:unknown};
 type Reference={artifactSha256:string;sourceKey:string;exchangeId:string|null;occurrence:string};
 type Source={id:string;label:string;requestCount?:string;artifactSha256?:string;sourceKey?:string;dependency:{state:string;reason?:string};evidenceCompleteness:string};
@@ -37,8 +39,16 @@ export class PortableCase extends WorkspaceElement {
   @observable caseContextLabel='';
   @observable caseTitle='Portable investigation';
   @observable caseScopes:Scope[]=[];
-  @observable caseRules:Array<{id:string;label:string}>=[];
-  @observable caseVariants:Array<{value:string;label:string;selection:Selection}>=[];
+  @observable caseRuleChoices:Array<RuleChoice&{selected:boolean;kindLabel:string;matchLabel:string}>=[];
+  @observable caseChoicesBusy=false;
+  @observable caseChoiceMessage='';
+  @observable caseChoiceError='';
+  @observable caseChoiceFilterAvailable=false;
+  @observable caseShowAll=false;
+  private allChoices:RuleChoice[]=[];
+  private selectedChoices=new Set<string>();
+  private pinnedChoices=new Set<string>();
+  private choiceRevision=0;
   @observable caseSources:Array<Source&{available:boolean;summary:string;completenessLabel:string}>=[];
   @observable caseExperiments:Array<{id:string;label:string;state:string;reason:string;available:boolean}>=[];
   @observable caseNotes:Array<{id:string;text:string;source?:Reference|null}>=[];
@@ -72,13 +82,36 @@ export class PortableCase extends WorkspaceElement {
     this.scopes=scopes;this.caseScopes=scopes;this.caseStatus='';
     if(mode==='open'){if(this.openedReview){this.display(this.openedReview,true);this.caseStage='inspect';return;}await this.openPackage();return;}
     this.caseStage='author';this.caseInspection=false;
-    await this.run('Loading saved rule choices…',async()=>{
-      const choices=await invoke<{rules:Array<{id:string;label:string}>;variants:Array<{label:string;selection:Selection}>;comparisons?:Array<{id:string;label:string;scope:unknown}>}>('case_export_choices');
-      this.caseComparisons=(choices.comparisons??[]).map(c=>({...c,included:c.id===comparisonId}));
-      if(comparisonId){const selected=this.caseComparisons.find(c=>c.id===comparisonId);if(!selected)throw new Error('This temporary comparison cannot be saved. Portable cases support recorded-request and capture-scope comparisons.');this.caseScopes=[{value:'comparison',label:'All requests required by this comparison',scope:selected.scope},...scopes];this.scopes=this.caseScopes;this.$flushUpdates();(this.authorForm.elements.namedItem('scope') as HTMLSelectElement).value='comparison';}
-      this.caseRules=choices.rules;this.caseVariants=choices.variants.map(v=>({...v,value:JSON.stringify([v.selection.experimentId,v.selection.variantId,v.selection.revision])}));
-    });
+    this.$flushUpdates();
+    await this.refreshChoices(comparisonId);
   }
+  async refreshChoices(comparisonId?:string):Promise<void>{
+    const revision=++this.choiceRevision,view=this.viewRevision;
+    const scope=comparisonId?null:this.scopes.find(s=>s.value===String(new FormData(this.authorForm).get('scope')))?.scope??null;
+    this.caseChoicesBusy=true;this.caseChoiceError='';this.caseChoiceFilterAvailable=scope!==null;
+    try{
+      const response=await invoke<ChoiceResponse>('case_export_choices',{scope});
+      if(revision!==this.choiceRevision||view!==this.viewRevision||!this.caseDialog.open)return;
+      const available=new Set(response.choices.map(c=>c.id));
+      const retained=this.allChoices.filter(c=>this.selectedChoices.has(c.id)&&!available.has(c.id)).map(c=>({...c,unavailable:true}));
+      this.allChoices=[...response.choices,...retained];
+      this.pinnedChoices.clear();
+      const included=new Set(new FormData(this.authorForm).getAll('comparison').map(String));
+      this.caseComparisons=(response.comparisons??[]).map(c=>({...c,included:comparisonId?c.id===comparisonId:included.has(c.id)}));
+      this.caseChoiceFilterAvailable=response.evidenceSelected;
+      this.caseChoiceMessage=response.evidenceSelected?`${response.requestCount} included requests.`:'Choose evidence to find matching rules, or select any saved content below.';
+      this.renderChoices();
+      if(comparisonId){const selected=this.caseComparisons.find(c=>c.id===comparisonId);if(!selected)throw new Error('This comparison is no longer available. Compare the requests again before saving it.');this.caseScopes=[{value:'comparison',label:'All requests required by this comparison',scope:selected.scope},...this.scopes.filter(s=>s.value!=='comparison')];this.scopes=this.caseScopes;this.$flushUpdates();(this.authorForm.elements.namedItem('scope') as HTMLSelectElement).value='comparison';await this.refreshChoices();}
+    }catch(error:unknown){if(revision!==this.choiceRevision||view!==this.viewRevision||!this.caseDialog.open)return;this.caseChoiceError=describeError(error);this.caseChoiceMessage='Matches are unavailable. Your selections are unchanged.';this.allChoices=this.allChoices.map(c=>({...c,relevance:'unknown'}));this.caseShowAll=true;this.renderChoices();}
+    finally{if(revision===this.choiceRevision)this.caseChoicesBusy=false;}
+  }
+  private renderChoices():void{
+    this.caseRuleChoices=this.allChoices.filter(c=>!this.caseChoiceFilterAvailable||this.caseShowAll||c.relevance==='matched'||this.selectedChoices.has(c.id)||this.pinnedChoices.has(c.id))
+      .sort((a,b)=>Number(b.relevance==='matched')-Number(a.relevance==='matched'))
+      .map(c=>({...c,selected:this.selectedChoices.has(c.id),kindLabel:c.selection?'Experiment version':'Saved rule',matchLabel:c.unavailable?'No longer saved — deselect to continue':c.relevance==='matched'?'Matches':c.relevance==='unmatched'?'No captured match':c.relevance==='unknown'?'Could not assess':'Not checked'}));
+  }
+  setShowAll(event:Event):void{this.caseShowAll=(event.target as HTMLInputElement).checked;this.pinnedChoices.clear();this.renderChoices();}
+  setChoice(id:string,event:Event):void{if((event.target as HTMLInputElement).checked)this.selectedChoices.add(id);else this.selectedChoices.delete(id);this.pinnedChoices.add(id);this.renderChoices();}
   private async run(status:string,action:()=>Promise<void>):Promise<void>{
     if(this.caseBusy)return;this.caseBusy=true;this.caseStatus=status;const revision=this.connectedRevision,viewRevision=this.viewRevision;
     try{await action();}catch(error:unknown){
@@ -89,10 +122,13 @@ export class PortableCase extends WorkspaceElement {
   }
   async prepare(event:SubmitEvent):Promise<void>{
     event.preventDefault();const data=new FormData(this.authorForm);
+    if(this.caseChoicesBusy)return;
     await this.run('Freezing and verifying selected case content…',async()=>{
+      const selected=this.allChoices.filter(c=>this.selectedChoices.has(c.id));
+      if(selected.some(c=>c.unavailable))throw new Error('Some selected content is no longer saved. Deselect it before continuing.');
       const scope=this.scopes.find(s=>s.value===String(data.get('scope')))?.scope??null;
       const review=await invoke<Review>('prepare_case_export',{input:{title:String(data.get('title')),scope,
-        ruleIds:data.getAll('rule').map(String),selections:data.getAll('variant').map(v=>this.caseVariants.find(c=>c.value===v)!.selection),
+        ruleIds:selected.flatMap(c=>c.ruleId?[c.ruleId]:[]),selections:selected.flatMap(c=>c.selection?[c.selection]:[]),
         notes:String(data.get('notes')??''),includeContext:data.get('context')==='on',comparisonIds:data.getAll('comparison').map(String)}});
       this.display(review,false);this.caseStage='export';this.caseStatus='Review the frozen content before saving.';
     });
@@ -199,7 +235,7 @@ export class PortableCase extends WorkspaceElement {
   });}
   back():void{if(!this.caseBusy){this.caseStage=this.caseInspection?'inspect':'author';this.caseImportItems=[];}}
   async cancel():Promise<void>{if(this.previewOperation)await invoke('cancel_captured_page',{operationId:this.previewOperation});else await invoke('cancel_case_operation');this.caseStatus='Cancellation requested. Waiting for owned work to finish…';}
-  close(event?:Event):void{event?.preventDefault();this.viewRevision++;if(this.previewOperation)void invoke('cancel_captured_page',{operationId:this.previewOperation});this.caseDialog.close();this.returnFocus?.focus({preventScroll:true});}
+  close(event?:Event):void{event?.preventDefault();this.viewRevision++;this.choiceRevision++;this.caseChoicesBusy=false;if(this.previewOperation)void invoke('cancel_captured_page',{operationId:this.previewOperation});this.caseDialog.close();this.returnFocus?.focus({preventScroll:true});}
   async closePackage():Promise<void>{if(this.caseBusy)return;await invoke('close_case');this.openedReview=null;this.links.clear();this.caseStage='author';this.caseInspection=false;this.caseSources=[];this.caseContexts=[];this.caseContextText='';this.caseManifestText='';this.close();}
 }
 PortableCase.define('portable-case');

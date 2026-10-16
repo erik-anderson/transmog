@@ -17,6 +17,9 @@ mod open;
 #[path = "case_preview.rs"]
 mod preview;
 pub use preview::CasePreviewOptions;
+#[path = "case_choices.rs"]
+mod choices;
+pub use choices::{CaseExportChoice, CaseExportChoices};
 
 #[cfg(test)]
 #[path = "investigation_tests.rs"]

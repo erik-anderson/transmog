@@ -181,7 +181,14 @@ await page.addInitScript((configuration) => {
         case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
         case 'case_preview_choices':if(state.deferCaseChoices){state.deferCaseChoices=false;await new Promise(resolve=>state.releaseCaseChoices=resolve);}return {pages:[{id:'first',url:'https://example.test/page'}]};
         case 'resolve_case_comparison':if(state.caseResolveError)throw new Error(state.caseResolveError);return {kind:args.id==='saved-scopes'?'captures':'exchange',left:{kind:'exchange',id:'first'},right:{kind:'exchange',id:'second'},options:{excludedHeaders:['date','x-request-id'],normalizeNewlines:true}};
-        case 'case_export_choices':return structuredClone(state.caseChoices??{rules:[],variants:[]});
+        case 'case_export_choices':{
+          state.caseChoiceScopes??=[];state.caseChoiceScopes.push(structuredClone(args.scope));
+          const response=structuredClone(state.caseChoices??{choices:[],comparisons:[]});response.evidenceSelected=args.scope!==null;response.requestCount=args.scope?99:0;
+          if(!args.scope)response.choices=response.choices.map(c=>({...c,relevance:'not-assessed'}));
+          if(state.deferCaseRelevance){state.deferCaseRelevance=false;await new Promise(resolve=>state.releaseCaseRelevance=resolve);}
+          if(state.caseRelevanceError)throw new Error(state.caseRelevanceError);
+          return response;
+        }
         case 'prepare_case_export':state.caseExportInput=structuredClone(args.input);return structuredClone(state.caseReview);
         case 'save_open_case':
         case 'save_case_export':

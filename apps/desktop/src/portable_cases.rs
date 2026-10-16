@@ -196,38 +196,20 @@ fn review(manifest: PackageManifest) -> Result<Value, AppError> {
 }
 
 #[tauri::command]
-pub(super) fn case_export_choices(
+pub(super) async fn case_export_choices(
+    scope: Option<transmog_app::comparison::ComparisonScope>,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Value, AppError> {
     let app = state.window_application(&window)?;
-    if window.label() != "main" {
-        return Ok(
-            json!({"rules":[],"variants":[],"comparisons":app.case_comparison_choices().into_iter().map(|(id,label,ids)|json!({"id":id,"label":label,"scope":{"kind":"selected","ids":ids}})).collect::<Vec<_>>()}),
-        );
-    }
-    let status = app.automation_status();
-    let owned = status
-        .experiments
-        .iter()
-        .flat_map(|e| &e.variants)
-        .flat_map(|v| &v.revisions)
-        .flat_map(|r| &r.rules)
-        .map(|r| r.id.clone())
-        .collect::<std::collections::HashSet<_>>();
-    let mut variants = vec![];
-    for experiment in status.experiments {
-        for variant in experiment.variants {
-            for revision in variant.revisions {
-                if !revision.rules.is_empty() {
-                    variants.push(json!({"label":format!("{} / {} / revision {}",experiment.name,variant.name,revision.revision),"selection":ExperimentSelection{experiment_id:experiment.id.clone(),variant_id:variant.id.clone(),revision:revision.revision}}));
-                }
-            }
-        }
-    }
-    Ok(
-        json!({"rules":status.rules.iter().filter(|r|!owned.contains(&r.id)).map(|r| json!({"id":r.id,"label":r.display_name.as_deref().unwrap_or(&r.id)})).collect::<Vec<_>>(),"variants":variants,"comparisons":app.case_comparison_choices().into_iter().map(|(id,label,ids)|json!({"id":id,"label":label,"scope":{"kind":"selected","ids":ids}})).collect::<Vec<_>>()}),
-    )
+    let main = window.label() == "main";
+    tokio::task::spawn_blocking(move || {
+        let mut choices = app.case_export_choices(scope.as_ref())?;
+        if !main {choices.choices.clear();}
+        let mut result = serde_json::to_value(choices).map_err(|_| error("Saved content choices are unavailable"))?;
+        result["comparisons"] = json!(app.case_comparison_choices().into_iter().map(|(id,label,ids)|json!({"id":id,"label":label,"scope":{"kind":"selected","ids":ids}})).collect::<Vec<_>>());
+        Ok(result)
+    }).await.map_err(|_| error("Saved content assessment failed"))?
 }
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
