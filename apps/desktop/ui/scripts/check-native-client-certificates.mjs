@@ -22,7 +22,7 @@ async function evaluateTarget(url,expression){const socket=new WebSocket(url);tr
 async function until(predicate,label,milliseconds=8000){const end=Date.now()+milliseconds;for(;;){const result=await predicate();if(result)return result;if(Date.now()>=end)throw new Error(`Timed out: ${label}`);await new Promise(resolve=>setTimeout(resolve,40));}}
 const shell="document.querySelector('app-shell')";
 const queue=`${shell}.shadowRoot.querySelector('client-certificate-requests')`;
-async function protocol(route){const state=await invoke('product_state');const catalog=state.preferences.networkProfiles;const profile=structuredClone(catalog.activeProfile);profile.id='custom-native-'+route;profile.name='Native '+route;profile.settings.rootStore='os';profile.settings.protocols={http1:route==='http1',http2:route==='http2',http3:route==='http3'};await invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:[...catalog.customProfiles.filter(item=>item.id!==profile.id),profile],useProfile:profile.id});}
+async function protocol(route){const state=await invoke('product_state');const catalog=state.preferences.networkProfiles;const profile=structuredClone(catalog.activeProfile);profile.id='custom-native-'+route;profile.name='Native '+route;profile.settings.rootStore='os';profile.settings.protocols={http1:route==='all'||route==='http1',http2:route==='all'||route==='http2',http3:route==='all'||route==='http3'};await invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:[...catalog.customProfiles.filter(item=>item.id!==profile.id),profile],useProfile:profile.id});}
 async function beginComposer(peer){await evaluate(`(async()=>{const shell=${shell};await shell.activateView('composer');const composer=shell.composer;composer.showComposerPane('request');const set=(name,value)=>{const input=composer.composerForm.elements.namedItem(name);input.value=value;input.dispatchEvent(new Event('input',{bubbles:true}));};set('method','GET');set('url',${JSON.stringify(`https://localhost:${peer}/`)});set('headers','');set('body','');composer.composerForm.requestSubmit();})()`);}
 async function composerResult(authenticated){await until(()=>evaluate(`!${shell}.composer.composerBusy`),'Composer completion');const result=await evaluate(`({error:${shell}.composer.composerError,result:${shell}.composer.composerResult})`);assert.equal(result.error,'');assert.equal(result.result.status,200);assert.match(result.result.body,new RegExp(`:${authenticated}$`));assert(result.result.detail.performance.transports.some(transport=>transport.tls&&transport.tls.clientChain.length===(authenticated?1:0)),'Received certificate evidence does not match the live server');const certificates=await invoke('inspect_certificates',{id:result.result.detail.id});assert(certificates.connections.some(connection=>connection.clientChain.length===(authenticated?1:0)));return result.result.body;}
 async function inspectRequest(id){
@@ -130,12 +130,13 @@ try {
     for(const route of ['http1','http2','http3']){await protocol(route);await beginComposer(fixture[route]);await composerResult(true);assert.equal((await invoke('client_certificate_status')).pending.length,0);}
     // The intercepted proxy uses the same real UI decisions on every egress protocol.
     const ca=await readFile(bootstrap.caCertificatePath,'utf8');
-    const all=await invoke('product_state');await invoke('save_network_profiles',{expectedRevision:all.preferences.networkProfiles.revision,profiles:all.preferences.networkProfiles.customProfiles,useProfile:'chromium-154'});
+    // Keep the fixture's explicit trust roots instead of selecting a production root store.
+    await protocol('all');
     await invoke('save_client_certificate_policy',{policy:{default:'prompt',rules:[]}});
     for(const route of ['http1','http2','http3']){
       const running=await invoke('start_proxy',{request:{caCertificatePath:bootstrap.caCertificatePath,caPrivateKeyPath:bootstrap.caPrivateKeyPath,listen:'127.0.0.1:0',route,allowRemoteClients:false,recordingOnly:false}});
-      let result;const request=proxyRequest(running.listener,fixture[route],ca).then(value=>result=value);
-      await answer('certificate',fixture.identity);await request;assert.match(result,/:true$/);
+      const request=proxyRequest(running.listener,fixture[route],ca);
+      const [,result]=await Promise.all([answer('certificate',fixture.identity),request]);assert.match(result,/:true$/);
       await invoke('stop_application');await until(async()=>(await invoke('app_status')).lifecycle==='stopped','proxy drained');
     }
     const policy={default:'noCertificate',rules:['http1','http2','http3'].map(route=>({id:route,enabled:true,host:'localhost',port:fixture[route],mode:{action:'automatic',selector:{identity:fixture.identity,subject:{},issuer:{}}}}))};
@@ -148,5 +149,5 @@ try {
     await invoke('save_client_certificate_policy',{policy:saved});await writeFile(resolve(output,'saved-policy.json'),JSON.stringify(saved));
     process.stdout.write(JSON.stringify({composerProtocols:['H1','H2','H3'],proxyProtocols:['H1','H2','H3'],realWindowsKey:true,selection:true,noCertificate:true,cancel:true,peerTimeout:true,automaticRules:true,renewalRules:true,deletedKeyAnonymous:true,receivedCertificateEvidence:true,closedViewerCancelled:true,mainClosePreservedViewer:true,viewerPermissionsEnforced:true,operatingSystemTrustChanged:false})+'\n');
   }
-} catch(error){await screenshot('certificate-native-failure.png').catch(()=>{});throw error;}
+} catch(error){const evidence=await invoke('query_sessions',{query:{}}).then(async page=>Promise.all(page.sessions.map(row=>invoke('session_detail',{id:row.id})))).catch(e=>({error:String(e)}));await writeFile(resolve(output,'failure-sessions.json'),JSON.stringify(evidence,null,2));await screenshot('certificate-native-failure.png').catch(()=>{});throw error;}
 finally {socket.close();}
