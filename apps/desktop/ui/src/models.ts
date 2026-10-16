@@ -63,6 +63,11 @@ export interface SessionPage {
 }
 
 export interface TrafficView {id:string;ids:string[];page:SessionPage;}
+export interface TrafficTimelineRow {
+  id:string;requestNumber:string;method:string;url:string;traceId:string|null;
+  startMillis:number|null;durationMicros:number|null;responseMicros:number|null;basis:string;
+  terminal:SessionSummary['terminal'];
+}
 
 export interface SessionHint { exchangeId: string | null; sequence: number; lagged: boolean; }
 export interface SessionDetail {

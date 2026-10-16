@@ -32,7 +32,7 @@ export async function smokeIncidentIntake(viewer,traffic,traceId,screenshot){
  if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-incident.png'),Buffer.from(image.data,'base64'));}
  await viewer.evaluate(`${traffic}.closeMetadata();${traffic}.showSaveTrace()`);
  await viewer.evaluate(`new Promise(resolve=>{const check=()=>!${traffic}.exportReviewBusy?resolve():setTimeout(check,30);check();})`);
- assert.ok(await viewer.evaluate(`${traffic}.exportReviewId.length>0 && ${traffic}.exportReviewSummary.includes('1 incident markers')`));
+ assert.ok(await viewer.evaluate(`${traffic}.exportReviewId.length>0 && ${traffic}.exportReviewSummary.includes(' · 1 incident marker')`));
  await viewer.evaluate(`${traffic}.closeSaveTrace()`);
  process.stdout.write('Native source incident intake and reviewed export commands verified.\n');
 }

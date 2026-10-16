@@ -145,6 +145,17 @@ try {
                         else { $trafficWriter.Write("HTTP/1.1 200 OK`r`nContent-Type: text/plain`r`nContent-Length: 2`r`n`r`nok") }
                     } finally { $trafficWriter.Dispose() }
                 }
+                # Exercise aligned, overlapping intervals as well as one unknown start.
+                if ($trafficIndex -lt 20000) {
+                    $trafficStart = [datetime]::new(2026, 10, 8, 19, 0, 0, [DateTimeKind]::Utc).AddMilliseconds($trafficIndex * 10)
+                    $trafficEnd = $trafficStart.AddMilliseconds(20 + ($trafficIndex % 10) * 30)
+                    $trafficStartText = $trafficStart.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+                    $trafficEndText = $trafficEnd.ToString('o', [Globalization.CultureInfo]::InvariantCulture)
+                    $trafficTiming = $trafficZip.CreateEntry("raw/${trafficIndex}_m.xml")
+                    $trafficTimingWriter = [IO.StreamWriter]::new($trafficTiming.Open(), [Text.UTF8Encoding]::new($false))
+                    try { $trafficTimingWriter.Write("<Session><SessionTimers ClientBeginRequest=`"$trafficStartText`" ClientDoneResponse=`"$trafficEndText`"/></Session>") }
+                    finally { $trafficTimingWriter.Dispose() }
+                }
             }
         } finally { $trafficZip.Dispose() }
         $responseBody = 'saved viewer response'

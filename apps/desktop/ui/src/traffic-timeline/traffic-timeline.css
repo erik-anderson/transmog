@@ -1,0 +1,39 @@
+traffic-timeline { display:block; flex:1; min-height:0; min-width:0; overflow:hidden; }
+.traffic-timeline { display:flex; flex-direction:column; height:100%; min-height:0; overflow:auto; container-type:inline-size; }
+.timeline-tools { display:flex; flex-wrap:wrap; align-items:baseline; gap:.35rem .6rem; padding:.35rem .6rem; font-size:.73rem; border-bottom:1px solid var(--line); }
+.timeline-tools > span { flex:1; min-width:8rem; }
+.timeline-tools label { display:flex; gap:.3rem; align-items:baseline; }
+.timeline-tools select { padding:.2rem; font:inherit; min-height:1.8rem; }
+.timeline-overview { flex:none; padding:.35rem .6rem; border-bottom:1px solid var(--line); background:var(--panel-subtle); }
+.timeline-overview > svg { display:block; width:100%; height:44px; overflow:hidden; touch-action:none; cursor:crosshair; }
+.timeline-density { fill:var(--accent); fill-opacity:.35; pointer-events:none; }
+.timeline-window { fill:var(--accent-soft); fill-opacity:.55; stroke:var(--accent-strong); stroke-width:2; cursor:grab; }
+.timeline-handle { fill:var(--accent-strong); cursor:ew-resize; }
+.timeline-scale { display:flex; flex-wrap:wrap; justify-content:space-between; gap:.2rem .75rem; margin-top:.2rem; font-size:.7rem; color:var(--muted); font-variant-numeric:tabular-nums; }
+.timeline-scale > span { min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.timeline-help { font-size:.7rem; color:var(--muted); margin-top:.25rem; }
+.timeline-help summary { cursor:pointer; }
+.timeline-help p { margin:.4rem 0; }
+.timeline-clock-note { margin:.25rem 0 0; color:var(--muted); font-size:.7rem; }
+.timeline-axis { display:grid; grid-template-columns:minmax(7rem,32%) minmax(3rem,1fr) minmax(4.5rem,auto); gap:.6rem; padding:.25rem .6rem; font-size:.7rem; color:var(--muted); border-bottom:1px solid var(--line); }
+.timeline-axis > span:last-child { text-align:right; }
+.timeline-ticks { display:flex; justify-content:space-between; font-variant-numeric:tabular-nums; }
+.timeline-overview:has(.timeline-help[open]) { max-height:45%; overflow:auto; }
+.timeline-viewport { min-height:48px; flex:1 0 48px; overflow:auto; overflow-anchor:none; scrollbar-gutter:stable; }
+.timeline-row { display:grid; grid-template-columns:minmax(7rem,32%) minmax(3rem,1fr) minmax(4.5rem,auto); align-items:center; gap:.6rem; width:100%; height:48px; padding:4px .6rem; border:0; border-bottom:1px solid var(--line); border-radius:0; text-align:left; color:var(--text); background:var(--panel); font:inherit; font-size:.73rem; }
+.timeline-row:hover { background:var(--row-hover); }
+.timeline-row[data-current] { box-shadow:inset 3px 0 var(--accent-strong); background:var(--accent-soft); }
+.timeline-request { min-width:0; }
+.timeline-request > span,.timeline-request small { display:block; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.timeline-request small { color:var(--muted); font-size:.65rem; margin-top:2px; }
+.timeline-row > svg { width:100%; height:20px; background:var(--panel-subtle); }
+.timeline-span { fill:var(--accent); fill-opacity:.45; }
+.timeline-response,.timeline-zero { fill:var(--accent-strong); }
+.timeline-row[data-state="active"] .timeline-span { stroke:var(--accent-strong); stroke-width:2; stroke-dasharray:6 3; }
+.timeline-row[data-state="failed"] .timeline-request { color:var(--danger); }
+.timeline-duration { text-align:right; font-variant-numeric:tabular-nums; max-width:7rem; }
+.timeline-spacer { height:attr(data-size type(<length>),0px); }
+.timeline-empty { padding:.7rem; color:var(--muted); font-size:.8rem; }
+.timeline-overview [tabindex]:focus-visible,.timeline-viewport:focus-visible,.timeline-row:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+@container (max-width:650px) { .timeline-overview > svg { height:28px; } }
+@media (forced-colors:active) { .timeline-window { fill:Canvas; stroke:Highlight; } .timeline-handle,.timeline-response,.timeline-zero { fill:Highlight; } .timeline-span,.timeline-density { fill:CanvasText; } .timeline-row[data-current] { border-inline-start:3px solid Highlight; } }

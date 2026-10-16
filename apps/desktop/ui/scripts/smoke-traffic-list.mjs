@@ -28,7 +28,10 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.getRootNode().getElementById('header-request-number').querySelector('button').focus()`);
   await key('Enter','Enter',13);await wait(`${t}.columnMenu.matches(':popover-open')`);
   await key('Enter','Enter',13);
-  await wait(`${t}.sort.column==='request-number' && !${t}.queryPending && ${t}.sessions[0]?.requestNumber==='1'`);
+  await wait(`${t}.sort.column==='request-number' && ${t}.sort.direction==='ascending' && !${t}.queryPending`);
+  // Sorting preserves the request anchor; deliberately reveal the first result.
+  await client.evaluate(`${t}.revealCurrent(${t}.virtualList.ids[0])`);
+  await wait(`${t}.sessions[0]?.requestNumber==='1' && ${t}.sessions.every(row=>!row.loading)`);
   assert.equal(await client.evaluate(`${t}.getRootNode().getElementById('header-request-number').getAttribute('aria-sort')`),'ascending');
   assert.deepEqual(await client.evaluate(`${t}.sessions.slice(0,3).map(row=>row.requestNumber)`),['1','2','3']);
   await client.evaluate(`${t}.applySort('descending','request-number')`);
@@ -83,5 +86,34 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.closeMatches()`);
   assert.equal(await client.evaluate(`${t}.getRootNode().activeElement?.dataset.sessionId===${t}.matchEntryId && ${t}.selectedSessionId===${t}.matchEntryId && ${t}.contentSearchActive`),true);
   if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-traffic.png'),Buffer.from(image.data,'base64'));}
+  await client.evaluate(`${t}.clearTrafficSelection();${t}.setTimeline(true)`);
+  await wait(`${t}.timelineEntries.length===20000 && !${t}.timelineBusy`,120000);
+  assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis>0 && row.durationMicros>0)`),'Native fixture did not produce measured intervals');
+  assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis===null)`),'Native fixture lost unavailable timing');
+  assert.equal(await client.evaluate(`${t}.querySelector('.timeline-span').namespaceURI`),'http://www.w3.org/2000/svg');
+  assert.ok(await client.evaluate(`${t}.querySelectorAll('.timeline-row').length<100`));
+  await client.evaluate(`${t}.querySelector('[aria-label="Timeline end"]').focus()`);
+  const before=await client.evaluate(`${t}.querySelector('.timeline-scale').textContent`);
+  await key('Home','Home',36);
+  assert.notEqual(await client.evaluate(`${t}.querySelector('.timeline-scale').textContent`),before,'Native range keyboard did not resize');
+  await client.evaluate(`${t}.querySelector('traffic-timeline').resetRange();${t}.trafficSelection.replace(${JSON.stringify(ids[0])});${t}.trafficSelection.ids.add(${JSON.stringify(ids[1])});${t}.updateTrafficSelection()`);
+  await wait(`${t}.querySelectorAll('.timeline-row').length===2`);
+  const timelineRow=await client.evaluate(`(()=>{const row=${t}.querySelector('.timeline-row');row.scrollIntoView({block:'center'});const r=row.getBoundingClientRect(),x=r.x+20,y=r.y+r.height/2;return {id:row.dataset.id,x,y,hit:${t}.getRootNode().elementFromPoint(x,y)?.closest('.timeline-row')?.dataset.id};})()`);
+  assert.equal(timelineRow.hit,timelineRow.id,'Native timeline pointer target is outside the visible rows');
+  if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timeline-pointer.png'),Buffer.from(image.data,'base64'));}
+  for(const type of ['mousePressed','mouseReleased'])await client.call('Input.dispatchMouseEvent',{type,x:timelineRow.x,y:timelineRow.y,button:'left',clickCount:1});
+  await wait(`${t}.selectedDetail?.id===${JSON.stringify(timelineRow.id)}`);
+  assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),2,'Native timeline inspection changed selected scope');
+  assert.notEqual(await client.evaluate(`${t}.selectedUrlText`),'Loading request…');
+  const timelinePreferences=await client.evaluate(`${t}.preferences`);
+  await client.evaluate(`${t}.preferences={...${t}.preferences,listSplit:65}`);
+  if(screenshot)for(const [width,height] of [[1440,900],[960,720],[800,600]]){
+    await client.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timeline-'+width+'.png'),Buffer.from(image.data,'base64'));
+  }
+  await client.call('Emulation.clearDeviceMetricsOverride');
+  await client.evaluate(`${t}.preferences=${JSON.stringify(timelinePreferences)}`);
+  await client.evaluate(`${t}.setTimeline(false);${t}.clearTrafficSelection()`);
+  process.stdout.write('WebView2 timeline: full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n');
   process.stdout.write('WebView2 traffic: 20,000 entries, offscreen range, select all/delete/undo and search reveal verified.\n');
 }

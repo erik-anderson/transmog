@@ -8,6 +8,14 @@ local operations and body milestones. **Copy report** includes the timeline,
 physical connection facts, source association and original imported timers.
 The report stays available for manual copying if clipboard access fails.
 
+For comparison across requests, use [Traffic → View → Timeline](traffic-inspection.md#timeline).
+It uses the complete filtered metadata scope, or its selected requests, with a
+movable and resizable time window. Native intervals retain their measured
+sub-millisecond duration and request-header anchor. Imported intervals retain
+source starts and durations; missing values are not inferred. Source clocks are
+identified explicitly, and an active stream's state is separate from the HTTP
+exchange duration. Detailed phase interpretation remains in this report.
+
 ## Interpret latency
 
 The waterfall, phase details and copied report use the same concise names:

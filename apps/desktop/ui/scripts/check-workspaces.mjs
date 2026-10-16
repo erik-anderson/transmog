@@ -23,6 +23,7 @@ import { checkTrafficPresentation } from './check-traffic-presentation.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
 import {checkAppSelection} from './check-app-selection.mjs';
 import {checkTimingLabels} from './check-timing-labels.mjs';
+import {checkTrafficTimeline} from './check-traffic-timeline.mjs';
 import {checkRequestOrder,checkRequestOrderModel} from './check-request-order.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
@@ -324,6 +325,13 @@ await page.addInitScript((configuration) => {
           const snapshot=state.trafficViews?.get(args.viewId);if(!snapshot)throw new Error('Traffic view expired');
           const dismissed=new Set(state.dismissedIds??[]);
           return snapshot.ids.slice(args.offset,args.offset+args.limit).filter(id=>!dismissed.has(id)).map(id=>state.rowMap.get(id)).filter(Boolean);
+        }
+        case 'traffic_timeline_rows': {
+          const view=state.trafficViews?.get(args.viewId);if(!view)throw new Error('Timeline view expired');
+          if(state.timelineFailure)throw new Error('Fixture timeline failure');
+          if(state.deferTimeline){state.deferTimeline=false;state.timelinePending=true;await new Promise(resolve=>state.releaseTimeline=resolve);state.timelinePending=false;}
+          const dismissed=new Set(state.dismissedIds??[]);
+          return view.ids.slice(args.offset,args.offset+args.limit).filter(id=>!dismissed.has(id)).map(id=>state.rowMap.get(id)).filter(Boolean).map(row=>({id:row.id,requestNumber:row.requestNumber,method:row.method,url:row.url,traceId:row.traceId??null,startMillis:row.startedAt||null,durationMicros:row.durationMs==null?null:row.durationMs*1000,responseMicros:row.responseOffset??null,basis:'Fixture recorded interval',terminal:row.terminal}));
         }
         case 'composer_source': {
           if(state.sourceDelay)await new Promise(resolve=>setTimeout(resolve,state.sourceDelay));
@@ -653,6 +661,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--timeline-only')) {await page.goto('https://workspace.test/');await checkTrafficTimeline(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timeline scope, dragging, keyboard, live updates, races, failures and virtualization verified.\n');process.exit(0);}
   if(process.argv.includes('--timing-labels-only')) {await page.goto('https://workspace.test/');await checkTimingLabels(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timing names, values and reports verified.\n');process.exit(0);}
   if(process.argv.includes('--selection-only')) {await page.goto('https://workspace.test/');await checkAppSelection(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('App selection and selectable evidence verified.\n');process.exit(0);}
   if(process.argv.includes('--text-edits-only')) {await checkTextEdits(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Literal response edit flows, async drafts, comparison evidence and responsive layouts verified.\n');process.exit(0);}
@@ -2457,6 +2466,7 @@ try {
   await page.goto('https://workspace.test/');
   await checkAppSelection(page,root);
   await checkTimingLabels(page,root);
+  await checkTrafficTimeline(page,root);
   await page.goto('https://workspace.test/?empty');
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
   const emptyDrop=page.locator('traffic-workspace trace-drop-target');

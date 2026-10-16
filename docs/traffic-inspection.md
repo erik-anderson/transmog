@@ -69,6 +69,40 @@ hide, pin, resize, fit and move actions. Upgrading an old layout inserts the pin
 column while preserving existing widths, order, visibility, pinning and splits.
 Hiding it persists, and Reset columns restores the new default.
 
+## Timeline
+
+Choose **View → Timeline** to replace the list with requests aligned on a shared
+time axis, while keeping the inspector available. Choose **View → List** to
+return to the existing list and scroll position. **Order → Start time** is the
+default; **Longest first** brings long requests to the top.
+
+With no requests selected, the timeline includes all current Traffic filter
+matches, including offscreen entries. With a selection, it shows those selected
+matches only. **All matching requests** or Escape clears the selection. Clicking
+a timeline row inspects it without changing this scope; Up/Down and Home/End
+navigate timeline rows. Return to List to change the selected group.
+
+Drag the overview's window to pan, drag either edge to resize, or drag outside
+the window to choose a range. Requests active at any point in the window are
+included, even when they started earlier. Unavailable timing stays visible and
+is counted separately. Focus the window or either edge and use Left/Right;
+Shift moves farther, Home/End moves to a boundary, +/− zooms and 0 resets.
+Escape cancels a drag. **Reset range** fits the scope again.
+
+Live updates preserve adjusted ranges and do not steal focus. The overview
+summarizes overlapping activity; rows are virtualized across the full scope.
+Timeline mode, ordering and range are temporary investigation state, retained
+while switching workspaces but not saved into captures or preferences.
+
+Bars use a recorded request start and its measured or source-recorded duration.
+For measured proxy intervals the anchor is complete client request headers.
+An optional darker segment begins at observed upstream response headers; it
+includes subsequent forwarding and local work and is not a server-only or pure
+download phase. Active stream state can outlive its HTTP request interval.
+Source names and states remain visible. Mixed sources carry an explicit clock
+notice; their alignment does not establish synchronized or causal chronology.
+See [request timings](request-timings.md) for boundaries and imported evidence.
+
 ## Headers and sizes
 
 Header views preserve ordering and duplicate fields. Value and field byte sizes,

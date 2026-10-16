@@ -6,7 +6,7 @@
   "type": "module",
   "scripts": {
     "build": "node build-client.mjs",
-    "check": "tsc --noEmit && node --test scripts/test-build-credits.mjs scripts/test-response-body-codec.mjs scripts/test-timings.mjs && node build-client.mjs",
+    "check": "tsc --noEmit && node --test scripts/test-build-credits.mjs scripts/test-response-body-codec.mjs scripts/test-timings.mjs scripts/test-timeline-model.mjs && node build-client.mjs",
     "test:workspaces": "node scripts/check-workspaces.mjs",
     "smoke:webview": "node scripts/smoke-webview.mjs",
     "soak:webview": "node scripts/smoke-webview.mjs --soak-minutes 30"

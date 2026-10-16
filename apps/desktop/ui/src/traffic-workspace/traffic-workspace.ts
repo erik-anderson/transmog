@@ -1,4 +1,6 @@
 import '../portable-case/portable-case.js';
+import '../traffic-timeline/traffic-timeline.js';
+import type {TrafficTimelineRow} from '../models.js';
 import type {PortableCase} from '../portable-case/portable-case.js';
 import {bodyEditSummary} from '../text-edit-report.js';
 import { responseEvidence } from '../response-evidence.js';
@@ -23,6 +25,63 @@ type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  @observable timelineMode=false;
+  @observable timelineBusy=false;
+  @observable timelineError='';
+  @observable timelineEntries:TrafficTimelineRow[]=[];
+  @observable timelineSelection:string[]=[];
+  private timelineGeneration=0;
+  private timelineTimer:number|undefined;
+  private timelinePending:Promise<void>|null=null;
+  private timelineAgain=false;
+  private timelineRevision=-1;
+  private syncTimelineSelection():void {
+    const ids=[...this.trafficSelection.ids];
+    if(ids.length!==this.timelineSelection.length||ids.some((id,index)=>id!==this.timelineSelection[index]))this.timelineSelection=ids;
+  }
+  setTimeline(enabled:boolean):void {
+    this.timelineMode=enabled;
+    (this.getRootNode() as ShadowRoot).getElementById('table-settings')?.hidePopover();
+    if(enabled){this.syncTimelineSelection();void this.refreshTimeline();this.$flushUpdates();this.querySelector<HTMLElement>('.timeline-overview svg')?.focus({preventScroll:true});}
+    else {this.timelineGeneration++;this.timelineBusy=false;window.clearTimeout(this.timelineTimer);this.timelineTimer=undefined;this.$flushUpdates();this.scheduleViewport();this.trafficTable.focus({preventScroll:true});}
+  }
+  private scheduleTimeline():void {
+    if(!this.timelineMode||this.view!=='traffic'||this.timelineTimer!==undefined)return;
+    this.timelineTimer=window.setTimeout(()=>{this.timelineTimer=undefined;void this.refreshTimeline();},500);
+  }
+  async refreshTimeline():Promise<void> {
+    if(!this.timelineMode||!this.isConnected)return;
+    this.timelineAgain=true;
+    if(this.timelinePending)return this.timelinePending;
+    this.timelinePending=(async()=>{
+      while(this.timelineAgain&&this.timelineMode&&this.isConnected){
+        this.timelineAgain=false;
+        const generation=this.timelineGeneration,revision=this.queryRevision;
+        const current=()=>this.isConnected&&this.timelineMode&&generation===this.timelineGeneration&&revision===this.queryRevision;
+        if(this.timelineRevision!==revision)this.timelineEntries=[];
+        this.timelineBusy=true;this.timelineError='';let view:TrafficView|null=null;
+        try {
+          view=await invoke<TrafficView>('query_traffic_view',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+          const rows:TrafficTimelineRow[]=[];
+          for(let offset=0;offset<view.ids.length&&current();offset+=2048)rows.push(...await invoke<TrafficTimelineRow[]>('traffic_timeline_rows',{viewId:view.id,offset,limit:2048}));
+          if(!current())continue;
+          this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');
+          if(!current())continue;
+          this.timelineEntries=rows;this.syncTimelineSelection();this.timelineRevision=revision;
+        }catch(error:unknown){if(current())this.timelineError='Timeline could not be loaded: '+describeError(error);}
+        finally {this.releaseView(view);if(generation===this.timelineGeneration)this.timelineBusy=false;}
+      }
+    })();
+    try{await this.timelinePending;}finally{this.timelinePending=null;}
+  }
+  async inspectTimeline(event:CustomEvent<string>):Promise<void> {
+    event.stopPropagation();const id=event.detail,generation=this.beginInspection(id);
+    try{const detail=await loadSessionDetail(id,false);if(this.isConnected&&generation===this.inspectionGeneration){
+      const head=detail.requests.find(head=>head.boundary==='client-request')??detail.requests[0];
+      this.inspectionSummaryId=id;this.selectedMethodText=head?.method??'Unavailable';this.selectedUrlText=head?.target??'Unavailable';this.applyDetail(detail);
+    }}
+    catch(error:unknown){if(generation===this.inspectionGeneration)this.diagnostic='Inspector unavailable: '+describeError(error);}
+  }
   portableCase!:PortableCase;
   @observable caseOpen=false;
   onCaseOpenChange(event:CustomEvent<boolean>):void{this.caseOpen=event.detail;}
@@ -542,7 +601,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeMetadata():void {this.metadataDialog.close();}
   metadataClosed():void {if(this.metadataDialog.open)return;this.metadataGeneration++;this.metadataBusy=false;const focus=this.metadataReturnFocus?.isConnected&&this.metadataReturnFocus.getClientRects().length?this.metadataReturnFocus:this.filesMenuButton;focus.focus({preventScroll:true});this.metadataReturnFocus=null;}
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
-  viewChanged():void {if(this.view==='traffic')this.scheduleViewport();}
+  viewChanged():void {if(this.view==='traffic'){this.scheduleViewport();if(this.timelineMode)void this.refreshTimeline();}}
   preferencesChanged():void {
     this.listShare = this.preferences.listSplit+'%';
     this.requestShare = this.preferences.requestSplit+'%';
@@ -964,6 +1023,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       if (force) this.diagnostic = this.sessionText;
       this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
       this.$emit('traffic-refreshed');
+      this.syncTimelineSelection();this.scheduleTimeline();
     } catch (error:unknown) {if(!this.isConnected||revision!==this.queryRevision)return;this.queryError = 'Traffic query failed: '+describeError(error); this.renderSessionState(); this.diagnostic = this.sessionText; }
   }
   async watchSessions():Promise<void> {
@@ -979,6 +1039,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); }this.scheduleViewport(); }
   private updateTrafficSelection():void {
     this.trafficSelectionRevision++;
+    this.syncTimelineSelection();
     this.rebuildRows(this.sessions);
   }
   clearTrafficSelection():void {this.trafficSelection.clear();this.updateTrafficSelection();this.trafficMenu.hidePopover();}
@@ -1366,6 +1427,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch (error:unknown) { await this.showError('TMCap export failed',describeError(error)); }
   }
   disconnectedCallback():void {
+    this.timelineGeneration++;window.clearTimeout(this.timelineTimer);
     this.clearColumnDrag();
     for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
