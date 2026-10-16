@@ -2167,6 +2167,7 @@ pub fn run() {
                 comparison::close_capture_comparison,
                 workspaces::take_opened_traces,
                 workspaces::pick_trace_path,
+                portable_cases::saved_file_is_case,
                 import_trace,
                 cancel_trace_import,
                 trace_metadata_list,

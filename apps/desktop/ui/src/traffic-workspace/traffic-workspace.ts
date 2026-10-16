@@ -24,11 +24,15 @@ type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:s
 
 export class TrafficWorkspace extends WorkspaceElement {
   portableCase!:PortableCase;
-  async showPortableCase(mode:'export'|'open',comparisonId?:string,returnFocus?:HTMLElement):Promise<void>{
+  @observable caseOpen=false;
+  onCaseOpenChange(event:CustomEvent<boolean>):void{this.caseOpen=event.detail;}
+  private openingSavedFile=false;
+  async showPortableCase(mode:'export'|'open'|'current',comparisonId?:string,returnFocus?:HTMLElement):Promise<void>{
     this.filesMenu.hidePopover();
-    const choices:ScopeChoice[]=[{value:'none',label:'No evidence — rules and notes only',scope:null}];
+    const choices:ScopeChoice[]=[];
     if(this.trafficSelection.ids.size)choices.unshift({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});
     choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries`,scope:{kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});
+    choices.push({value:'none',label:'Rules and notes only',scope:null});
     await this.portableCase.show(mode,choices,returnFocus??this.filesMenuButton,comparisonId);
   }
   async onCasePreviewReport(event:CustomEvent<string>):Promise<void>{event.stopPropagation();this.previewReportLabel=event.detail;await this.showPreviewReport();}
@@ -52,7 +56,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async reviewTraceExport():Promise<void>{const revision=++this.exportReviewRevision;this.exportReviewBusy=true;this.exportReviewId='';this.exportReviewSummary='Reviewing retained evidence…';
    try{let selection:unknown=null;if(this.exportReviewScope==='selected')selection={kind:'selected',ids:[...this.trafficSelection.ids]};else if(this.exportReviewScope==='filtered')selection={kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}};else if(this.exportReviewScope.startsWith('source:'))selection={kind:'source',traceId:this.exportReviewScope.slice(7)};
     const inventory=await invoke<{id:string;entries:number;retainedEntries:number;sources:string[];sourceCount:number;hosts:string[];firstMillis:number|null;lastMillis:number|null;incompleteBodies:number;retainedBodyBytes:number;streamRecords:number;retainedStreamBytes:number;incidentMarkers:number;note:string}>('review_traffic_export',{selection});if(revision!==this.exportReviewRevision||!this.isConnected)return;
-    this.exportReviewId=inventory.id;this.exportReviewSummary=`${inventory.entries} of ${inventory.retainedEntries} retained entries · ${inventory.sourceCount} original sources · ${inventory.incidentMarkers} incident markers`;
+    this.exportReviewId=inventory.id;this.exportReviewSummary=`${inventory.entries} of ${inventory.retainedEntries} retained entries · ${inventory.sourceCount} original source${inventory.sourceCount===1?'':'s'} · ${inventory.incidentMarkers} incident marker${inventory.incidentMarkers===1?'':'s'}`;
     const date=(value:number|null)=>value==null?'Unavailable':Number.isFinite(new Date(value).valueOf())?new Date(value).toISOString():'Outside supported calendar range';this.exportReviewFacts=[{label:'Included sources (up to 100)',value:inventory.sources.join(' · ')||'Live traffic'},{label:'Included hosts (up to 100)',value:inventory.hosts.join(' · ')||'No known hosts'},{label:'Recorded start range (UTC, source clocks)',value:date(inventory.firstMillis)+' to '+date(inventory.lastMillis)},{label:'Retained HTTP body bytes',value:inventory.retainedBodyBytes.toLocaleString()},{label:'Incomplete body observations',value:String(inventory.incompleteBodies)},{label:'Observed stream records / retained stream storage',value:inventory.streamRecords+' / '+inventory.retainedStreamBytes.toLocaleString()+' bytes'}];this.exportReviewNote=inventory.note;
    }catch(error:unknown){if(revision===this.exportReviewRevision)this.exportReviewSummary='Export review failed: '+describeError(error);}finally{if(revision===this.exportReviewRevision)this.exportReviewBusy=false;}}
   private emitComparison(detail:ComparisonOpen):void{this.$emit('comparison-request',detail);}
@@ -435,12 +439,21 @@ export class TrafficWorkspace extends WorkspaceElement {
     try {const paths=await invoke<string[]>('take_opened_traces');if(!this.isConnected)return;this.openedFileQueue.push(...paths.map(path=>({path,ask:!this.viewerMode})));await this.processOpenedTraces();}
     catch(error:unknown){this.importStatus='Opened capture could not be read: '+describeError(error);await this.showError('Could not open capture',describeError(error));}
   }
-  private async processOpenedTraces():Promise<void> {
-    while(this.isConnected&&!this.importingTrace&&!this.openTraceDialog.open&&this.openedFileQueue.length){
-      const file=this.openedFileQueue.shift()!;
-      if(file.ask){this.openedTracePath=file.path;this.openedTraceName=file.path.split(/[\\/]/).pop()??file.path;this.openTraceDialog.showModal();return;}
-      await this.importTrace(file.path);
-    }
+  async processOpenedTraces():Promise<void> {
+    if(this.openingSavedFile)return;
+    this.openingSavedFile=true;
+    try {
+      while(this.isConnected&&!this.importingTrace&&!this.openTraceDialog.open&&!this.portableCase.caseDialog.open&&!this.portableCase.caseBusy&&this.openedFileQueue.length){
+        const file=this.openedFileQueue.shift()!;
+        try {
+          const isCase=await invoke<boolean>('saved_file_is_case',{path:file.path});
+          if(!this.isConnected)return;
+          if(isCase){await this.portableCase.showPath(file.path,this.filesMenuButton);if(this.portableCase.caseDialog.open)return;continue;}
+          if(file.ask){this.openedTracePath=file.path;this.openedTraceName=file.path.split(/[\\/]/).pop()??file.path;this.openTraceDialog.showModal();return;}
+          await this.importTrace(file.path);
+        }catch(error:unknown){await this.showError('Could not open file',describeError(error));}
+      }
+    }finally{this.openingSavedFile=false;}
   }
   async importPaths(paths:string[]):Promise<void> {this.openedFileQueue.push(...paths.slice(0,16).map(path=>({path,ask:false})));await this.processOpenedTraces();}
   async chooseOpenedTrace(separate:boolean):Promise<void> {

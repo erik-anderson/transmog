@@ -29,7 +29,7 @@ export async function checkResponseExperiments(page,root){
  await editor.locator('textarea[name="body"]').fill('globalThis.checkout = true;');
  await page.evaluate(async()=>{const s=document.querySelector('app-shell');await s.activateView('traffic');await s.activateView('automation');});
  assert.equal(await editor.locator('textarea[name="body"]').inputValue(),'globalThis.checkout = true;','Workspace changes lost the experiment draft');
- await editor.getByRole('button',{name:'Compare with captured source',exact:true}).click();
+ await editor.getByRole('button',{name:'Compare…',exact:true}).click();await editor.getByRole('button',{name:'With captured source',exact:true}).click();
  await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.comparisonBusy);
  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.comparisonInput.left.id),'first');
  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.comparisonInput.right.decodedBody),[...Buffer.from('globalThis.checkout = true;')]);
@@ -47,7 +47,7 @@ export async function checkResponseExperiments(page,root){
  assert.deepEqual(state.rules.find(r=>r.id==='unrelated'),state.unrelated);
  assert.equal(state.rules.some(r=>r.id===id),false);assert.equal(state.paused,false);
  await editor.getByLabel('Rule name',{exact:true}).fill('Checkout succeeds with patched script (saved revision)');
- await editor.getByRole('button',{name:'Preview captured page…',exact:true}).click();
+ await editor.getByRole('button',{name:'Preview…',exact:true}).click();await editor.getByRole('button',{name:'With saved changes…',exact:true}).click();
  assert.match(await editor.locator('.field-error[aria-live]').textContent(),/Save the experiment before previewing/);
  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').activeView),'automation');
  await editor.getByLabel('Rule name',{exact:true}).press('Control+s');
@@ -58,7 +58,7 @@ export async function checkResponseExperiments(page,root){
   const button=await editor.getByRole('button',{name:'Save experiment',exact:true}).boundingBox();assert.ok(button.y>=0&&button.y+button.height<=height);
   await page.screenshot({path:resolve(root,`../../../target/ui-check/response-experiment-${width}.png`)});
  }
- await editor.getByRole('button',{name:'Preview captured page…',exact:true}).click();
+ await editor.getByRole('button',{name:'Preview…',exact:true}).click();await editor.getByRole('button',{name:'With saved changes…',exact:true}).click();
  const warning=page.locator('.captured-page-warning');await warning.getByLabel('Captured page',{exact:true}).waitFor();
  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'first','Choosing a page replaced the inspected script');
  assert.equal(await warning.getByLabel('Captured page',{exact:true}).inputValue(),'second');
@@ -78,7 +78,7 @@ export async function checkResponseExperiments(page,root){
  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.autoresponsesEnabled),false,'Explicit rule activation resumed global automation');
  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.find(r=>r.id==='unrelated')),state.unrelated);
  await page.evaluate(()=>document.querySelector('app-shell').automation.showAutomationSection('responses'));
- await editor.getByRole('button',{name:'Preview baseline…',exact:true}).click();
+ await editor.getByRole('button',{name:'Preview…',exact:true}).click();await editor.getByRole('button',{name:'Captured baseline…',exact:true}).click();
  await warning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewPageBusy);
  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.ruleIds),undefined);
  // A delayed page lookup, including a failure, cannot reopen UI after leaving Traffic.
@@ -98,7 +98,7 @@ export async function checkResponseExperiments(page,root){
  await warning.getByRole('button',{name:'Cancel',exact:true}).click();
  await page.evaluate(async()=>{await document.querySelector('app-shell').activateView('automation');document.documentElement.style.zoom='1.5';});
  await page.emulateMedia({forcedColors:'active'});
- for(const name of ['Preview captured page…','Use for live traffic','Save experiment']){
+ for(const name of ['Preview…','Use for live traffic','Save experiment']){
   const action=editor.getByRole('button',{name,exact:true});await action.scrollIntoViewIfNeeded();await action.focus();
   const reachability=await action.evaluate(button=>{const box=button.getBoundingClientRect(),root=button.getRootNode(),hit=root.elementFromPoint(box.x+box.width/2,box.y+box.height/2);return {visible:box.top>=0&&box.bottom<=innerHeight&&button.contains(hit),top:box.top,bottom:box.bottom,height:innerHeight,hit:hit?.tagName};});
   assert.equal(reachability.visible,true,`${name} is unreachable at compact size and 150% zoom: ${JSON.stringify(reachability)}`);

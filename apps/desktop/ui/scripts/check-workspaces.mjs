@@ -183,8 +183,8 @@ await page.addInitScript((configuration) => {
         case 'resolve_case_comparison':if(state.caseResolveError)throw new Error(state.caseResolveError);return {kind:args.id==='saved-scopes'?'captures':'exchange',left:{kind:'exchange',id:'first'},right:{kind:'exchange',id:'second'},options:{excludedHeaders:['date','x-request-id'],normalizeNewlines:true}};
         case 'case_export_choices':{
           state.caseChoiceScopes??=[];state.caseChoiceScopes.push(structuredClone(args.scope));
-          const response=structuredClone(state.caseChoices??{choices:[],comparisons:[]});response.evidenceSelected=args.scope!==null;response.requestCount=args.scope?99:0;
-          if(!args.scope)response.choices=response.choices.map(c=>({...c,relevance:'not-assessed'}));
+          const response=structuredClone(state.caseChoices??{choices:[],comparisons:[]});response.evidenceSelected=args.scope!==null||args.comparisonIds.length>0;response.requestCount=response.evidenceSelected?99:0;state.caseChoiceComparisons=structuredClone(args.comparisonIds);
+          if(!response.evidenceSelected)response.choices=response.choices.map(c=>({...c,relevance:'not-assessed'}));
           if(state.deferCaseRelevance){state.deferCaseRelevance=false;await new Promise(resolve=>state.releaseCaseRelevance=resolve);}
           if(state.caseRelevanceError)throw new Error(state.caseRelevanceError);
           return response;
@@ -197,10 +197,11 @@ await page.addInitScript((configuration) => {
           return 'C:/cases/investigation.tmcase.tmcap';
         case 'cancel_case_operation':state.caseCanceled=true;state.releaseCaseSave?.();return;
         case 'read_case_context':return 'Original config output <script>inert</script>\r\nDNS=value';
+        case 'saved_file_is_case':return /\.(tmcase|tmrules)\.(tmcap|zip)$/i.test(args.path);
         case 'choose_case':return 'portable-fixture.tmcase.tmcap';
         case 'open_case':if(state.caseLocked&&args.password!=='fixture')throw {category:args.password?'invalid-password':'password-required',message:args.password?'The package password is incorrect':'This package requires a password'};return structuredClone(state.caseReview);
         case 'inspect_case_source':return {links:[{reference:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},exchangeId:'first'}],imported:{trace:state.traces?.[0],issues:[]}};
-        case 'review_case_rules':return {items:[{kind:'rule',portableId:'rule-a',state:'conflicting',localId:'fresh-disabled-rule'}],activation:'disabled'};
+        case 'review_case_rules':return {source:{rules:[{id:'rule-a',label:'Keep the exact encoded response'}],experiments:[]},items:[{kind:'rule',portableId:'rule-a',state:'conflicting',localId:'fresh-disabled-rule'}],activation:'disabled'};
         case 'import_case_rules':state.caseImported=true;return {};
         case 'close_case':return;
         case 'save_case_working_copy':return 'C:/cases/plaintext-working-copy';
@@ -1290,7 +1291,7 @@ try {
   await savedProperties();
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
   const previewSourceBefore=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,detail=structuredClone(t.selectedDetail),html=structuredClone(detail),row=globalThis.__workspaceFixture.sessions.find(row=>row.id===detail.id),contentType=row.contentType;row.contentType='text/html';html.storedBodies[0].mediaType='text/html';t.applyDetail(html);return {detail,contentType};});
-  await autoEditor.getByRole('button',{name:'Preview captured page…',exact:true}).click();
+  await autoEditor.getByRole('button',{name:'Preview…',exact:true}).click();await autoEditor.getByRole('button',{name:'With saved changes…',exact:true}).click();
   await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.previewPageDialog.open&&!t.previewRulesBusy;});
   assert.equal(await page.locator('.captured-page-warning[open]').getByLabel('Responses',{exact:true}).inputValue(),'modified');
   assert.equal(await page.evaluate(()=>{const shell=document.querySelector('app-shell');return shell.traffic.previewRules.find(row=>row.id===shell.automation.editingAutoResponseId)?.included;}),true,'Saved disabled rule was not selected by editor preview');
@@ -2292,8 +2293,8 @@ try {
   assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isDisabled(),true);
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('native');
   assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isChecked(),false);
-  assert.equal(await saveTrace.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).isChecked(),false);
-  await saveTrace.getByLabel('Redact Authorization, Proxy-Authorization, Cookie and Set-Cookie values',{exact:true}).check();
+  assert.equal(await saveTrace.getByLabel('Remove authentication and cookie header values',{exact:true}).isChecked(),false);
+  await saveTrace.getByLabel('Remove authentication and cookie header values',{exact:true}).check();
   await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).check();
   await page.evaluate(()=>globalThis.__workspaceFixture.saveTraceError=true);
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();

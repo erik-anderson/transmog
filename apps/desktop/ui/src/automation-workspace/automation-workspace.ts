@@ -31,7 +31,13 @@ type CapturedDraft={sessionId:string;detail:SessionDetail;headers:ResponseAsset[
 export class AutomationWorkspace extends WorkspaceElement {
   responseTextEditor!:HeaderRules;
   async beginTextEdit(selected:SelectedResponse):Promise<void>{this.showAutomationSection('response-text');await this.responseTextEditor.newRule(selected);}
+  compareResponseMenu!:HTMLElement;
+  compareResponseButton!:HTMLButtonElement;
+  previewResponseMenu!:HTMLElement;
+  previewResponseButton!:HTMLButtonElement;
+  private closeResponseMenu(menu:HTMLElement,button:HTMLButtonElement):void{if(menu?.matches(':popover-open')){menu.hidePopover();button.focus();}}
   compareResponseDraft(mode:string):void{
+    this.closeResponseMenu(this.compareResponseMenu,this.compareResponseButton);
     const data=new FormData(this.autoResponseForm),saved=this.savedResponse,source=this.autoResponseSourceState;
     try{
       let base:ComparisonSubject|null=saved?{kind:'asset',reference:`${saved.asset.id}@${saved.asset.revision}`}:this.capturedDraft?{kind:'exchange',id:this.capturedDraft.sessionId}:null;
@@ -307,6 +313,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   scheduleMatcherTest():void {window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;this.matchTestResult=null;this.renderMatchCases();this.matcherTimer=window.setTimeout(()=>{void this.testMatcher();},300);}
   formKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();this.autoResponseForm.requestSubmit();}}
   previewSavedRule(mode:'captured'|'modified'='modified'):void {
+    this.closeResponseMenu(this.previewResponseMenu,this.previewResponseButton);
     if(mode==='modified'&&!this.editingAutoResponseId)return;
     if(this.responseExperiment&&this.draftDirty){this.autoResponseError='Save the experiment before previewing. Your draft is preserved.';return;}
     this.$emit('page-preview-request',{ruleId:this.editingAutoResponseId,sourceSessionId:this.sourceSessionId,mode,...(mode==='modified'&&this.editingVariant?{variant:this.editingVariant}:{})} satisfies ResponsePreviewIntent);

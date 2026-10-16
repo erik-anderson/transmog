@@ -41,6 +41,44 @@ struct Samples {
     remaining: usize,
     deadline: Instant,
 }
+impl Application {
+    /// Includes all requests required by explicitly selected comparisons.
+    /// # Errors
+    /// Rejects expired comparisons, invalid scopes, or excessive selections.
+    pub fn case_export_scope(
+        &self,
+        scope: Option<ComparisonScope>,
+        comparison_ids: &[String],
+    ) -> Result<Option<ComparisonScope>, AppError> {
+        if comparison_ids.is_empty() {
+            return Ok(scope);
+        }
+        if comparison_ids.len() > 16 {
+            return Err(invalid("Select up to 16 comparisons"));
+        }
+        let mut ids: std::collections::BTreeSet<String> = scope
+            .as_ref()
+            .map(|s| crate::export_review::scope_ids(self, s))
+            .transpose()?
+            .unwrap_or_default()
+            .into_iter()
+            .collect();
+        let choices = self.case_comparison_choices();
+        for id in comparison_ids {
+            let (_, _, required) =
+                choices
+                    .iter()
+                    .find(|(key, _, _)| key == id)
+                    .ok_or_else(|| {
+                        invalid("A selected comparison expired. Compare the requests again.")
+                    })?;
+            ids.extend(required.iter().cloned());
+        }
+        Ok(Some(ComparisonScope::Selected {
+            ids: ids.into_iter().collect(),
+        }))
+    }
+}
 impl Samples {
     fn relevance(&mut self, rules: &[Rule]) -> &'static str {
         if self.heads.is_empty() {

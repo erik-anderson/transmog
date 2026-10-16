@@ -78,9 +78,10 @@ when an earlier revision is active. Unrelated rules and the global On/Paused
 setting are preserved. The original **Create auto-response** flow still creates
 ordinary rules with its established save behavior.
 
-Open **Automation → Experiments** or **Named variants and revision history…**
+Open **Automation → Experiments** or **Versions and history…**
 from the shared response editor. Select an experiment, variant and revision to
-inspect them without changing live participation. Duplicate a saved revision to
+inspect them without changing live participation. These selector labels remain
+visible while scrolling. Duplicate a saved revision to
 create another approach, rename it, include/exclude or reorder its rules, and use
 **Add selected response** to add another captured response through the same editor.
 Earlier revisions remain inspectable; duplicate an earlier revision to edit it.
@@ -520,7 +521,7 @@ participating match wins. Browser headers may differ from captured headers and
 captured Vary is not an authored rule condition.
 
 Save editor changes or explicitly exclude unsaved changes before opening a modified
-preview. **Preview captured page…** offers source-local HTML choices for captured
+preview. **Preview… → With saved changes…** offers source-local HTML choices for captured
 resources, reusing a matching retained scene when available. Authored responses
 without a captured source use the last retained scene or selected complete HTML
 response. Existing previews and F5 retain their
@@ -530,8 +531,10 @@ when the current saved rule changes or is deleted.
 
 ## Compare a response draft
 
-The response editor offers **Compare draft**, **Compare with captured source**,
-and **Compare with previous saved revision** when its source/revision is retained.
+The response editor's **Compare…** menu offers **Draft with saved response**,
+**With captured source**, and **With previous saved revision** when its
+source/revision is retained. Its **Preview…** menu groups captured baseline and
+modified page previews. Save and live activation remain distinct visible actions.
 The shared comparison freezes the current status, ordered headers and proposed
 body without saving or activating the rule. Invalid status remains visible as
 proposed input. Header/byte editing errors stay beside the editor and preserve the
@@ -544,7 +547,7 @@ with separate decoded/text verdicts. Draft/linked-file input is labeled as decod
 bytes. Generated framing/compression stays distinct from original captured entity
 bytes; this is not proof of a downstream observed response. Current linked
 file bytes are acquired coherently and labeled with acquisition time. A later file
-edit cannot change an open result. **Preview captured page…** still uses explicitly
+edit cannot change an open result. **Preview… → With saved changes…** still uses explicitly
 saved rule snapshots; comparing does not save a draft for preview.
 
 See [Traffic comparison](traffic-inspection.md#comparing-captured-evidence) for

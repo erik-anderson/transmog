@@ -178,6 +178,53 @@ async fn suggestions_match_the_entire_filtered_or_source_scope_without_activatio
     assert!(!all.evidence_selected);
     assert!(all.choices.iter().all(|c| c.relevance == "not-assessed"));
     assert!(app.export_scope(Some(&review.id)).is_ok());
+    let rows = app
+        .query_sessions(SessionQueryInput::default())
+        .unwrap()
+        .sessions;
+    let subject = |id: String| crate::comparison::ComparisonSubject::Exchange {
+        id,
+        request_boundary: "client-request".into(),
+        response_boundary: "client-response".into(),
+    };
+    let comparison = app
+        .compare_evidence(
+            crate::comparison::ComparisonRequest {
+                operation_id: "scope-union".into(),
+                left: subject(rows[0].id.clone()),
+                right: subject(rows[1].id.clone()),
+                options: crate::comparison::ComparisonOptions::default(),
+            },
+            [None, None],
+        )
+        .await
+        .unwrap();
+    let scope = app
+        .case_export_scope(
+            Some(ComparisonScope::Selected {
+                ids: vec![rows[0].id.clone(), rows[2].id.clone()],
+            }),
+            std::slice::from_ref(&comparison.id),
+        )
+        .unwrap()
+        .unwrap();
+    let ids = crate::export_review::scope_ids(&app, &scope).unwrap();
+    assert_eq!(ids.len(), 3);
+    assert!(ids.contains(&rows[1].id));
+    let required = app
+        .case_export_scope(None, std::slice::from_ref(&comparison.id))
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        crate::export_review::scope_ids(&app, &required)
+            .unwrap()
+            .len(),
+        2
+    );
+    assert!(
+        app.case_export_scope(None, &["expired-comparison".into()])
+            .is_err()
+    );
     assert_eq!(
         serde_json::to_value(app.automation_status()).unwrap(),
         before

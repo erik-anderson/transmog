@@ -496,15 +496,23 @@ opening is asynchronous and cancels pending publication if its future is dropped
 
 ## Desktop transfer and package APIs (K3)
 
-Traffic's **Files** menu offers **Save portable case…** and **Open portable case…**.
-Saving starts with an explicit evidence scope (including a no-evidence option),
+Traffic's **Files** menu leads with normal import/save actions. Its secondary
+**Cases** group offers **Save case…**, **Open case…**, and **Current case…**
+while a case is loaded. Normal import, file-open arguments and drag/drop also
+recognize case files. ZIP files go to the case reader; native files are routed by
+the bounded public document header before any password prompt. Full validation
+still happens when opening. Opening cases never imports or enables automation.
+
+Saving defaults to selected requests, or current filtered traffic when nothing
+is selected. **Rules and notes only** explicitly omits traffic. The form adds
 selected saved rules/exact experiment revisions, authored notes and an original
 context choice. It does not run new configuration commands. Preparing selected
 evidence creates temporary unencrypted copies; the form discloses this before
 **Review selected content**. That explicit action prepares the copy without an
 additional acknowledgement checkbox. Output encryption protects the final file.
 
-The optional **Rules and experiments** picker initially shows saved content that
+The optional **Rules and experiments** disclosure starts collapsed with its
+selected count. When expanded, the picker initially shows saved content that
 matches the included requests. **Show all** also exposes
 nonmatching and unassessed choices, including overrides for uncaptured resources.
 Choosing a version includes its complete ordered rules; experiment-owned rules
@@ -512,7 +520,14 @@ do not appear again as standalone choices. Suggestions are not automatically
 selected. Selected content stays visible and selected when the evidence scope or
 visibility filter changes. With no evidence chosen, every saved choice is shown.
 
-Changing Evidence reassesses the full scope before table paging/windowing. The
+The collapsed **Comparisons** section shows its selected count. Choosing a
+comparison includes all required requests, including any outside the selected
+traffic scope; the description states this before selection. Matching and the
+final export use the union, deduplicated by request identity. Expired comparisons
+fail explicitly. The comparison dialogs expose **Save comparison in case…**
+under **More**, only when their recorded requests can be saved.
+
+Changing **Traffic to include** reassesses the full scope before table paging/windowing. The
 read-only check uses recorded client request and client response heads, including
 raw header bytes, independently of enabled/paused state. It never runs actions,
 loads bodies or assets, activates automation, or consumes an export review slot.
@@ -528,26 +543,28 @@ scope or reopen a closed dialog; errors retain selections and offer **Retry
 matching**. Selected definitions removed elsewhere remain visible for explicit
 deselection before saving.
 
-Review leads with the included request count and groups requests by capture,
+Review leads with a compact request/capture/content summary and groups requests by capture,
 showing each capture's request count when recorded. Case source `requestCount`
 is an optional canonical unsigned-64-bit decimal string: the number of requests
 included for that source, not its original unfiltered size. Absence means unknown,
 not zero. Selected native exports always record it, including on reopened cases.
-**Inspect in Traffic** closes the review and reveals a request from that capture;
-reopening returns to the same case. Notes, context files, rules, response files,
+**Open in Traffic** is the primary fixed-footer action; a capture selector
+chooses its source. It closes the review and reveals a request from that capture.
+**Current case…** returns to the loaded case and selected capture without reopening its file. Detailed
+counts remain under **Content details**. Notes, context files, rules, response files,
 experiments and exclusions remain available. **Capture observations** explains
 stream events and body records without full content; ordinary capture settings,
 protocol behavior and unknown completeness are not presented as export failures.
 The raw **Technical manifest (JSON)** contains file inventory and provenance,
 not an individual request list. Missing content remains missing;
 an optional unsupported experiment does not prevent unrelated inspection.
-**Ready to import disabled** describes supported rule content, not browser replay
+**Ready to import** describes supported rule content, not browser replay
 or proof of an earlier experiment's outcome.
 
 The native format compresses a Stored ZIP64 stream inside TMCap. Optional password
 protection covers the complete ZIP, including notes, context, object names and
 manifest. The masked output prompt is separate from source/embedded-source
-password prompts. The desktop labels these **Transmog package (compressed)** and
+password prompts. The desktop labels these **Transmog case (compressed)** and
 **ZIP package (for tools)**. ZIP output contains a JSON manifest and binary
 capture/response objects for compatible readers; it is not a readable traffic
 export. It is uncompressed and cannot be password-protected.
@@ -557,19 +574,19 @@ An error or canceled password prompt never selects plaintext as a fallback.
 
 Opening verifies the complete outer stream and all declared object hashes before
 publishing inventory. It creates no decrypted archive or working directory.
-**Inspect in Traffic** uses pinned random reads and the existing inert native
+**Open in Traffic** uses pinned random reads and the existing inert native
 importer. Original internal source keys are checked before Traffic publication.
 Source-linked notes can navigate to retained matching requests; absent links are
 reported without guessing. **View context** displays retained JSON/text without
 executing its command labels. Capture viewers retain their role restrictions.
 
-Closing review preserves its inventory and ongoing operations; reopening the
-action returns to that inventory. **Open another package…** replaces it only after
-successful verification. **Close package** releases its owner, while already
+Closing the dialog preserves its contents and ongoing operations. **Open case…**
+always chooses another file and replaces the loaded case only after successful
+verification. **More → Unload case** releases its owner, while already
 imported Traffic retains the source/key handles needed by lazy bodies. Moving or
 deleting the original filename does not reopen another file under that name.
 
-**Save transfer as…** forwards the exact inner ZIP, optionally changing its outer
+**More → Save a copy…** opens output options, then forwards the exact inner ZIP, optionally changing its outer
 compression/password. It preserves ZIP metadata as well as declared contents;
 it is not redaction. An encrypted opened package starts with protection selected.
 Writing a readable copy requires an explicit output choice. Native dialogs confirm
@@ -581,7 +598,7 @@ package. Windows readers allow delete sharing and publication uses the modern
 rename API through Rust's standard library. A failed replacement preserves the
 existing destination.
 
-**Save unencrypted folder…** explicitly copies the case into a readable working
+**More → Extract to a folder → Save unencrypted folder…** explicitly copies the case into a readable working
 folder, including any decrypted evidence. Its adjacent description states this
 effect; there is no separate acknowledgement checkbox. It creates a new case
 directory at the chosen path and preserves
@@ -589,7 +606,8 @@ existing paths. Portable manifest IDs are not used as filesystem names. Archive 
 transactional edits/history; this desktop increment does not add a project editor.
 
 In the main window, selected supported experiments/ordinary rules have a separate
-import review showing fresh identities and conflicts. Commit imports rules disabled
+import review showing names, counts and what will be added. Generated identifiers
+and identity conflicts remain under **Identity details**. **Import rules** imports rules disabled
 and experiments paused/unselected, preserving existing edits and activation.
 Rules-only packages are reviewed as one complete dependency graph. Opening,
 copying or inspecting never imports automation automatically or executes scripts.
@@ -677,12 +695,12 @@ source associations; K3 packages and protects that same object model.
 
 ## Desktop previews and saved comparisons
 
-Open a case through **Files → Open portable case…**. Beside an available evidence
-source, choose **Preview case…**, select an included complete HTML response and
-choose **Captured baseline**, **Frozen saved auto-responses**, or an exact named
-variant revision. Read the warning before **Open case preview**. Scripts start off
+Open a case through **Files → Open case…** or ordinary file import. Choose a
+capture and **Preview…**, select an included complete HTML response and
+choose **Captured baseline**, **Saved auto-responses**, or an exact named
+variant revision. Read the warning before **Open preview**. Scripts start off
 each time. The resource scope defaults to the document’s original source;
-**All opened case evidence** is an explicit choice that can mix captures. Inspect
+**All opened captures in this case** is an explicit choice that can mix captures. Inspect
 additional case sources first when they are needed by that broader scope.
 
 Preview preparation reads the package’s verified immutable response objects into
@@ -698,7 +716,7 @@ scene bounds apply. See [page previews](captured-page-preview.md) for isolation,
 network failures and browser limitations.
 
 Each opening creates an independent InPrivate WebView2 preview. The case review’s
-**Preview diagnostics…** (also available as **Last preview diagnostics…** in Traffic) records the case/revision/variant, actual engine,
+**More → Preview diagnostics…** (also available as **Last preview diagnostics…** in Traffic) records the case/revision/variant, actual engine,
 script choice, resource hashes, winning rules and intercepted request outcomes.
 These are supplied-response observations, not proof that another browser or the
 original site completed successfully. Closing the package does not invalidate an

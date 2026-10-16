@@ -56,7 +56,7 @@ export class ExperimentVariants extends WorkspaceElement {
     this.variantArchived=variant?.archived??false;this.experimentArchived=experiment?.archived??false;
     this.variantUndoAvailable=experiment?.undo?.generation===this.status?.generation;
     const active=experiment?.active,activeName=active?variants.find(v=>v.id===active.variantId)?.name??active.variantId:'Baseline';
-    this.variantLiveText=`Live: ${activeName}${active?' · revision '+active.revision:''}${experiment?.paused?' · Experiment paused':''}${this.status?.autoresponsesEnabled===false?' · All auto-responses paused':''}. Selecting or saving a variant does not change live traffic.`;
+    this.variantLiveText=`${experiment?.paused?'Experiment paused':this.status?.autoresponsesEnabled===false?'All auto-responses paused':'Live'} · ${activeName}${active?' · revision '+active.revision:''}${experiment?.paused&&this.status?.autoresponsesEnabled===false?' · All auto-responses paused':''}. Selecting or saving a variant does not change live traffic.`;
     this.$flushUpdates();
     if(this.experimentName&&(this.renderedExperiment!==this.experimentId||this.experimentName.value===this.renderedExperimentName))this.experimentName.value=experiment?.name??'';
     if(this.variantName&&(this.renderedExperiment!==this.experimentId||this.renderedVariant!==this.variantId||this.variantName.value===this.renderedVariantName))this.variantName.value=variant?.name??'';

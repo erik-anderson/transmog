@@ -18,6 +18,31 @@ const MAX_HEADER: usize = 4096;
 static DERIVATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const FRAME_OVERHEAD: usize = 29;
 
+/// Recognizes the public native archive document kind without decrypting contents.
+/// This is only a routing hint; opening still validates the complete document.
+/// # Errors
+/// Returns read errors or a malformed native header.
+pub fn is_portable_archive(mut input: impl Read) -> Result<bool, CaptureError> {
+    let mut magic = [0; MAGIC.len()];
+    match input.read_exact(&mut magic) {
+        Err(error) if error.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(false),
+        result => result?,
+    }
+    if magic != MAGIC {
+        return Ok(false);
+    }
+    let mut length = [0; 4];
+    input.read_exact(&mut length)?;
+    let length = u32::from_le_bytes(length) as usize;
+    if length == 0 || length > MAX_HEADER {
+        return Err(CaptureError::InvalidMagic);
+    }
+    let mut encoded = vec![0; length];
+    input.read_exact(&mut encoded)?;
+    let header: Header = serde_json::from_slice(&encoded)?;
+    Ok(header.document_kind == "portable-archive")
+}
+
 /// A transient password which is never printed or serialized into preferences.
 #[derive(Clone)]
 pub struct CapturePassword(Arc<Zeroizing<String>>);
@@ -614,6 +639,37 @@ impl FrameCodec {
 }
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn routes_native_archives_without_a_password_and_rejects_oversized_headers() {
+        use super::*;
+        for kind in ["capture", "portable-archive"] {
+            let mut bytes = Vec::new();
+            FrameCodec::create_kind(&mut bytes, &CaptureEncoding::default(), 16 * 1024, kind)
+                .unwrap();
+            assert_eq!(
+                is_portable_archive(bytes.as_slice()).unwrap(),
+                kind == "portable-archive"
+            );
+        }
+        let mut bytes = Vec::new();
+        FrameCodec::create_kind(
+            &mut bytes,
+            &CaptureEncoding {
+                password: Some(CapturePassword::new("test secret".into())),
+            },
+            16 * 1024,
+            "portable-archive",
+        )
+        .unwrap();
+        assert!(is_portable_archive(bytes.as_slice()).unwrap());
+        assert!(!is_portable_archive(&b"ordinary.har"[..]).unwrap());
+        let mut invalid = MAGIC.to_vec();
+        invalid.extend_from_slice(&u32::MAX.to_le_bytes());
+        assert!(matches!(
+            is_portable_archive(invalid.as_slice()),
+            Err(CaptureError::InvalidMagic)
+        ));
+    }
     use super::*;
     use crate::{
         CaptureLimits, CaptureRecord, CaptureRecordKind, ScratchReader, ScratchWriter,

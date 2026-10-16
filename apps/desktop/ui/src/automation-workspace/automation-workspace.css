@@ -105,3 +105,8 @@ automation-workspace { display:contents; }
 @media (forced-colors:active) { .response-file-overlay { background:Canvas; border-color:CanvasText; } }
 
 .response-file-overlay label { width:100%; max-width:24rem; }
+
+.compare-response-trigger{anchor-name:--compare-response}.preview-response-trigger{anchor-name:--preview-response}
+.response-action-menu{inset:auto;position-area:block-start span-inline-end;position-try-fallbacks:flip-inline,flip-block;margin:.25rem;padding:.5rem;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:.4rem;max-width:calc(100vw - 2rem)}
+#compare-response-menu{position-anchor:--compare-response}#preview-response-menu{position-anchor:--preview-response}
+.response-action-menu>button{display:block;width:100%;text-align:start;margin:.2rem 0}

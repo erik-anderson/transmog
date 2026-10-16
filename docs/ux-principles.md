@@ -11,6 +11,10 @@ when changing the experience.
 - Keep collecting, filtering, selecting and inspecting traffic direct. Use a few
   clearly named workspaces, compact collections and one selected-item properties
   pane. Multiselection should reveal useful batch actions.
+- Keep ordinary traffic import and save ahead of case sharing. Cases are an
+  occasional sharing workflow, grouped secondarily; opening a case leads toward
+  inspecting its traffic. Recognize supported file kinds through normal opening
+  paths so users need not choose a specialized command first.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.

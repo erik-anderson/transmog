@@ -28,3 +28,7 @@ comparison-workspace progress{max-width:8rem}
 comparison-workspace .comparison-dialog > .comparison-controls{flex:none;margin:0}
 comparison-workspace .comparison-position{flex:none;margin:0}
 @media(max-width:520px){comparison-workspace .comparison-sides{grid-template-columns:1fr}}
+
+.comparison-more{anchor-name:--comparison-more}.capture-more{anchor-name:--capture-more}
+.comparison-menu{inset:auto;position-area:block-start span-inline-end;position-try-fallbacks:flip-inline,flip-block;margin:.25rem;padding:.5rem;border:1px solid var(--line);border-radius:.4rem;background:var(--panel);color:var(--text)}
+#comparison-more{position-anchor:--comparison-more}#capture-more{position-anchor:--capture-more}

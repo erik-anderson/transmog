@@ -15,7 +15,7 @@ pub use container::{CaptureReader, CaptureWriter, read_indexed_frame_with_codec}
 mod circular;
 pub use circular::CircularCapture;
 mod encoding;
-pub use encoding::{CaptureEncoding, CapturePassword, FrameCodec};
+pub use encoding::{CaptureEncoding, CapturePassword, FrameCodec, is_portable_archive};
 
 use std::{
     collections::{BTreeSet, HashMap},

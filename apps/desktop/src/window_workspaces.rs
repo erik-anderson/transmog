@@ -89,6 +89,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "save_open_case"
             | "choose_case"
             | "open_case"
+            | "saved_file_is_case"
             | "inspect_case_source"
             | "read_case_context"
             | "save_case_working_copy"
@@ -156,7 +157,12 @@ pub(super) fn opened_files(arguments: &[String], cwd: &Path) -> Vec<PathBuf> {
             } else {
                 cwd.join(path)
             };
-            transmog_app::detect_trace_format(&path).map(|_| path)
+            (transmog_app::detect_trace_format(&path).is_some()
+                || path
+                    .extension()
+                    .and_then(|v| v.to_str())
+                    .is_some_and(|v| v.eq_ignore_ascii_case("zip")))
+            .then_some(path)
         })
         .take(16)
         .collect()
@@ -349,7 +355,7 @@ pub(super) async fn pick_trace_path(window: WebviewWindow) -> Option<String> {
         .set_title("Open saved traffic")
         .add_filter(
             "Traffic captures",
-            &["saz", "tmcap", "har", "netlog", "json", "jsonl"],
+            &["saz", "tmcap", "har", "netlog", "json", "jsonl", "zip"],
         )
         .pick_file()
         .await

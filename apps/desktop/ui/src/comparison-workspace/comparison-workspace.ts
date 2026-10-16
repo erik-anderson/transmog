@@ -78,7 +78,16 @@ export class ComparisonWorkspace extends WorkspaceElement {
     if(!this.comparisonDialog.open){this.returnFocus=this.activeElement();this.comparisonDialog.showModal();this.comparisonSection='All';}
     this.comparisonPairingNote="";this.subjects={left:structuredClone(input.left),right:structuredClone(input.right)};this.comparisonCaseAvailable=input.left.kind==='exchange'&&input.right.kind==='exchange';this.excludedHeaders.value=input.options?.excludedHeaders.join(', ')??"";this.comparisonNormalize=input.options?.normalizeNewlines??false;this.comparisonLeftName="Left";this.comparisonRightName="Right";await this.refreshComparison(false);
   }
-  saveCase(captures=false):void {const id=captures?this.captureResult?.id:this.comparisonResult?.id;if(id)this.$emit('save-comparison-case',{id,returnFocus:this.activeElement()});}
+  comparisonMore!:HTMLElement;
+  comparisonMoreButton!:HTMLButtonElement;
+  captureMore!:HTMLElement;
+  captureMoreButton!:HTMLButtonElement;
+  saveCase(captures=false):void {
+    const menu=captures?this.captureMore:this.comparisonMore,button=captures?this.captureMoreButton:this.comparisonMoreButton;
+    menu.hidePopover();button.focus();
+    const id=captures?this.captureResult?.id:this.comparisonResult?.id;
+    if(id)this.$emit('save-comparison-case',{id,returnFocus:button});
+  }
   async openCaseCaptures(id:string):Promise<void>{
     this.captureReturnFocus=this.activeElement();this.captureChoices=[];this.captureDialog.showModal();this.captureBusy=true;
     const revision=++this.captureRevision,operationId=crypto.randomUUID();this.captureOperation=operationId;this.captureCancellationRequested=false;this.captureStatus='Recomputing the saved case scopes and pairing corrections…';

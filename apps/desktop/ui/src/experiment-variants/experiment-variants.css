@@ -26,3 +26,5 @@ experiment-variants { display:block; height:100%; min-height:0; }
   .variant-content { overflow:visible; }
   .variant-workspace footer { margin-top:.6rem; }
 }
+
+.variant-pickers{position:sticky;top:0;z-index:1;background:var(--panel);padding:.25rem 0 .5rem}

@@ -5,7 +5,7 @@ Read the warning and choose whether to **Enable scripts for this preview**.
 Scripts start disabled each time. **Open preview** opens a separate WebView2
 window; the Transmog proxy can remain stopped. Cancel or Escape stops preparation.
 
-An opened portable case offers **Preview case…** beside its evidence. It uses
+An opened case offers **Preview…** for its selected capture. It uses
 frozen package response bytes and original-source scope by default, with an
 explicit choice to mix opened case evidence. It does not import or activate rules.
 See [case previews and saved comparisons](portable-investigations.md#desktop-previews-and-saved-comparisons).

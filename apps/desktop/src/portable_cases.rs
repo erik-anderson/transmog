@@ -145,7 +145,7 @@ async fn pick_case(
     let picker = rfd::AsyncFileDialog::new().set_parent(window);
     let file = if let Some(suffix) = suffix {
         picker
-            .set_title("Save portable case")
+            .set_title("Save case")
             .set_file_name(format!("Investigation.{suffix}"))
             // Windows appends the default extension if it does not match the
             // final filename extension. A compound filter duplicates the suffix.
@@ -157,7 +157,7 @@ async fn pick_case(
             .await
     } else {
         picker
-            .set_title("Open portable case or rules")
+            .set_title("Open case or rule collection")
             .add_filter("Portable investigations", &["tmcap", "zip"])
             .pick_file()
             .await
@@ -198,12 +198,14 @@ fn review(manifest: PackageManifest) -> Result<Value, AppError> {
 #[tauri::command]
 pub(super) async fn case_export_choices(
     scope: Option<transmog_app::comparison::ComparisonScope>,
+    comparison_ids: Vec<String>,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Value, AppError> {
     let app = state.window_application(&window)?;
     let main = window.label() == "main";
     tokio::task::spawn_blocking(move || {
+        let scope = app.case_export_scope(scope, &comparison_ids)?;
         let mut choices = app.case_export_choices(scope.as_ref())?;
         if !main {choices.choices.clear();}
         let mut result = serde_json::to_value(choices).map_err(|_| error("Saved content choices are unavailable"))?;
@@ -241,8 +243,8 @@ pub(super) async fn prepare_case_export(
     let include_context = input.include_context;
     let (prepared, traffic) = tokio::task::spawn_blocking(move || {
         std::fs::create_dir_all(&staging).map_err(|e| portable(e.into()))?;
-        let evidence = input
-            .scope
+        let evidence = app
+            .case_export_scope(input.scope, &input.comparison_ids)?
             .map(|scope| app.review_traffic_export(Some(scope)))
             .transpose()?;
         let request = CaseExportRequest {
@@ -383,13 +385,14 @@ pub(super) async fn save_open_case(
 #[tauri::command]
 pub(super) async fn open_case(
     password: Option<CapturePassword>,
+    path: Option<PathBuf>,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Value, AppError> {
     state.window_application(&window)?;
     let operation = Operation::begin(window.label())?;
-    let path = operation
-        .update(|o| o.chosen.clone())?
+    let path = path
+        .or(operation.update(|o| o.chosen.clone())?)
         .ok_or_else(|| error("Choose a package first"))?;
     let flag = operation.flag.clone();
     let package = tokio::task::spawn_blocking(move || {
@@ -404,6 +407,27 @@ pub(super) async fn open_case(
         (o.package.replace(Arc::new(package)), o.import.take())
     })?);
     Ok(result)
+}
+#[tauri::command]
+pub(super) async fn saved_file_is_case(
+    path: PathBuf,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<bool, AppError> {
+    state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || {
+        if path
+            .extension()
+            .and_then(|e| e.to_str())
+            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
+        {
+            return Ok(true);
+        }
+        let file = std::fs::File::open(&path).map_err(|e| portable(e.into()))?;
+        transmog_capture::is_portable_archive(file).map_err(|e| error(&e.to_string()))
+    })
+    .await
+    .map_err(|_| error("Could not identify the selected file"))?
 }
 #[tauri::command]
 pub(super) async fn inspect_case_source(
