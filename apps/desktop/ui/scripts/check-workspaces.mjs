@@ -21,6 +21,7 @@ import { build, Protocol } from '@microsoft/webui';
 import { checkHexViewer } from './check-hex-viewer.mjs';
 import { checkTrafficPresentation } from './check-traffic-presentation.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
+import {checkAppSelection} from './check-app-selection.mjs';
 import {checkRequestOrder,checkRequestOrderModel} from './check-request-order.mjs';
 import { checkTrafficNavigation } from './check-traffic-navigation.mjs';
 import { checkTraceImport } from './check-trace-import.mjs';
@@ -651,6 +652,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--selection-only')) {await page.goto('https://workspace.test/');await checkAppSelection(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('App selection and selectable evidence verified.\n');process.exit(0);}
   if(process.argv.includes('--text-edits-only')) {await checkTextEdits(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Literal response edit flows, async drafts, comparison evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--header-rules-only')) {await checkHeaderRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Header rule authoring, raw bytes, ordered tests, activation, stale updates, Undo, evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--variants-only')) {await checkResponseExperiments(page,root);await checkNamedVariants(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Named variants, scoped activation, history, preview, pause, archive, Undo and responsive layouts verified.\n');process.exit(0);}
@@ -2450,6 +2452,8 @@ try {
   await checkTrafficPresentation(page,root);
   await checkRequestOrder(page,root);
   await checkTrafficNavigation(page);
+  await page.goto('https://workspace.test/');
+  await checkAppSelection(page,root);
   await page.goto('https://workspace.test/?empty');
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
   const emptyDrop=page.locator('traffic-workspace trace-drop-target');

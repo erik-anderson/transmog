@@ -46,6 +46,9 @@ when changing the experience.
 - Lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A and
   Escape. Where supported, Ctrl+arrow moves focus, Del removes and Ctrl+Z undoes.
   Text fields retain ordinary editing shortcuts; Ctrl+S saves an explicit draft.
+- Application chrome and selectable lists do not select text during pointer or
+  range selection. Editors and inspection evidence, including headers, bodies,
+  full URLs and reports, retain ordinary text selection and copying.
 - Dragging shows its destination, preserves selected groups, supports edge
   scrolling and restores selection on cancellation. Provide keyboard/menu
   alternatives and Undo.

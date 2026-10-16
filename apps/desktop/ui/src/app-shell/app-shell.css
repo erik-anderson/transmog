@@ -23,7 +23,13 @@
   background: var(--canvas);
   color-scheme: light;
   font-family: "Segoe UI Variable", "Segoe UI", sans-serif;
+  user-select: none;
 }
+
+/* App controls select items; evidence and editors retain ordinary text copying. */
+input, textarea, [contenteditable="true"], pre, code, .full-value,
+.headers-table tbody, .timing-facts dd, .timing-table-scroll tbody,
+.listener-value, .monaco-editor { user-select: text; }
 
 :host([data-theme="dark"]) {
   --canvas: #171a1f;

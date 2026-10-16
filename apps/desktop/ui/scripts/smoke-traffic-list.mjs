@@ -65,6 +65,7 @@ export async function smokeTrafficList(client,screenshot) {
   await wait(`${t}.sessions.some(row=>row.id===${JSON.stringify(ids[1])}&&!row.loading)`);
   assert.equal(await client.evaluate(`!!${t}.getRootNode().getElementById(${JSON.stringify('session-'+ids[0])})`),false);
   await click(ids[1],8);await wait(`${t}.selectedTrafficCount===5001`);
+  assert.equal(await client.evaluate('getSelection().toString()'),'','Native Shift-click selected row text');
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===14999 && !${t}.removingTraffic`);
   await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===5001 && !${t}.removingTraffic`);
   assert.equal(await client.evaluate(`window.__TAURI_INTERNALS__.invoke('session_detail',{id:${JSON.stringify(numberedId)}}).then(detail=>detail.requestNumber)`),'20000');

@@ -165,7 +165,9 @@ remain inert text in this view.
 
 Ctrl+click adds entries, Shift selects ranges across the full displayed order,
 even when intermediate rows are offscreen, Shift+arrow extends selection and
-Escape clears it. **Remove selected entries** / Del and **Remove unselected
+Escape clears it. Selecting or dragging across Traffic rows does not highlight
+their text. Headers, bodies, the full URL popover and reports remain selectable
+for copying. **Remove selected entries** / Del and **Remove unselected
 entries** operate across the whole workspace, including hidden rows. Undo / Ctrl+Z
 restores them while their underlying evidence is retained. These actions do not
 delete source capture files or saved auto-responses.
