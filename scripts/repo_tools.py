@@ -77,7 +77,8 @@ def development_environment(*, root=ROOT, environment=None, platform=None) -> di
     bins = []
     if windows:
         architecture = "arm64" if host_platform.machine().lower() in {"arm64", "aarch64"} else "x64"
-        bins = [root / ".tools/llvm/bin", root / ".tools/cmake/cmake-4.4.4-windows-x86_64/bin",
+        cmake_architecture = "arm64" if architecture == "arm64" else "x86_64"
+        bins = [root / ".tools/llvm/bin", root / f".tools/cmake/cmake-4.4.4-windows-{cmake_architecture}/bin",
                 root / ".tools/ninja", root / ".tools/nasm/nasm-3.02"]
         bins = [directory for directory in bins if directory.is_dir()]
         vswhere = Path(env.get("ProgramFiles(x86)", "C:/Program Files (x86)")) / "Microsoft Visual Studio/Installer/vswhere.exe"

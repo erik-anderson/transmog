@@ -108,9 +108,11 @@ distributions under ignored `.tools`. Those binaries are intentionally not
 committed. A system installation of equivalent or newer compatible versions is
 also supported.
 
-On ARM64, `setup-windows-ci.ps1` installs the pinned native ARM64 LLVM distribution
-so Rust build scripts can load its libclang DLL. CMake, Ninja and NASM use the
-same verified portable tools through Windows emulation. `dev-env.py` selects the
+On ARM64, `setup-windows-ci.ps1` installs pinned native ARM64 LLVM and CMake.
+LLVM lets Rust build scripts load its libclang DLL; native CMake lets BoringSSL
+select ARM64 assembly instead of x64 NASM objects. Setup verifies both tools'
+executable architecture. Ninja and NASM use verified portable tools through
+Windows emulation. `dev-env.py` selects the
 ARM64 linker, CRT and Windows SDK libraries. `cache-v8.py` selects the pinned
 archive for the native host, or accepts `--target` explicitly. To package ARM64,
 run `package-windows.ps1 -Target aarch64-pc-windows-msvc` on an ARM64 build host;

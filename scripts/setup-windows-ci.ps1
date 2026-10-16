@@ -36,11 +36,16 @@ $nativeTools = @(
         Sha256 = '161D0BFAFF53C2F9E9F3E69FD0672323EBABAFD1268976A5CEC11BE92A19AEE7'
     }
 )
-if ([Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [Runtime.InteropServices.Architecture]::Arm64) {
+$arm64Host = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture -eq [Runtime.InteropServices.Architecture]::Arm64
+if ($arm64Host) {
     # bindgen loads libclang into the Rust build process, so LLVM must be native.
     $nativeTools[0].File = 'LLVM-22.1.4-woa64.exe'
     $nativeTools[0].Url = 'https://github.com/llvm/llvm-project/releases/download/llvmorg-22.1.4/LLVM-22.1.4-woa64.exe'
     $nativeTools[0].Sha256 = '09924875CDF239F7A96E3258ED8D289A050BA385240AC8255A34EA4D2CBFB56C'
+    # Emulated x64 CMake makes BoringSSL select NASM x64 objects for ARM64.
+    $nativeTools[1].File = 'cmake-4.4.4-windows-arm64.zip'
+    $nativeTools[1].Url = 'https://github.com/Kitware/CMake/releases/download/v4.4.4/cmake-4.4.4-windows-arm64.zip'
+    $nativeTools[1].Sha256 = 'ED673BBC4EB7C1E59B0407FD52F1680FC0AE3229A46B9B7B3EA9133764F07F67'
 }
 
 New-Item -ItemType Directory -Force -Path $downloadsRoot | Out-Null
@@ -79,6 +84,11 @@ if (-not (Test-Path -LiteralPath $windowsSdk)) {
     throw 'The hosted runner must provide the Windows 11 SDK 10.0.26100 and Visual Studio C++ tools.'
 }
 . (Join-Path $PSScriptRoot 'dev-env.ps1') -Check
+. (Join-Path $PSScriptRoot 'windows-release-target.ps1')
+$nativeTarget = if ($arm64Host) { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
+foreach ($tool in @('clang', 'cmake')) {
+    Assert-WindowsBinaryTarget -Path (Get-Command $tool).Source -Target $nativeTarget
+}
 
 $toolVersions = @(
     @{ Command = 'clang'; Arguments = @('--version'); Expected = '22.1.4' },

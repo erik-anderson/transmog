@@ -14,6 +14,23 @@ import repo_tools
 
 
 class WindowsArm64ReleaseTests(unittest.TestCase):
+    def test_native_cmake_is_selected_when_both_architectures_are_installed(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            directories = {
+                architecture: root / f".tools/cmake/cmake-4.4.4-windows-{architecture}/bin"
+                for architecture in ("x86_64", "arm64")
+            }
+            for directory in directories.values():
+                directory.mkdir(parents=True)
+            for host, native, other in (("ARM64", "arm64", "x86_64"), ("AMD64", "x86_64", "arm64")):
+                with self.subTest(host=host), patch.object(repo_tools.host_platform, "machine", return_value=host), patch.object(repo_tools, "executable", side_effect=lambda name, env: str(root / name)):
+                    configured = repo_tools.development_environment(
+                        root=root, environment={"PATH": "fixture", "ProgramFiles(x86)": str(root / "absent")}, platform="win32",
+                    )
+                self.assertIn(str(directories[native]), configured["PATH"].split(";"))
+                self.assertNotIn(str(directories[other]), configured["PATH"].split(";"))
+
     def test_updater_signs_only_the_installer_for_the_requested_architecture(self):
         module = load("create-update-manifest")
         for target, architecture, platform in (
