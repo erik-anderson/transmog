@@ -21,9 +21,10 @@ are checked in.
 
 ## Capture and inspection fidelity
 
-- Implement the revision-0 [portable investigation contract](portable-investigations.md)
-  beyond K1 rule/asset and K2 directory working-case APIs: qualified archive and
-  encryption handling, desktop transfer and binary-only workflows.
+- Continue the revision-0 [portable investigation contract](portable-investigations.md)
+  beyond the shared rule/working-case APIs and desktop ZIP64/TMCap transfer:
+  binary-only validation, matching, inspection and packaging (K4), followed by
+  script/run/preview/comparison integration (K5).
   Broader project organization and any future format stability decision remain
   separate from the experimental live control protocol.
 - Expand safe previews or semantic viewers only after a format-specific parser,

@@ -15,6 +15,7 @@ use zeroize::Zeroizing;
 
 pub(crate) const MAGIC: [u8; 9] = *b"TMCAP001\0";
 const MAX_HEADER: usize = 4096;
+static DERIVATION: std::sync::Mutex<()> = std::sync::Mutex::new(());
 const FRAME_OVERHEAD: usize = 29;
 
 /// A transient password which is never printed or serialized into preferences.
@@ -52,6 +53,7 @@ pub struct CaptureEncoding {
 #[serde(deny_unknown_fields)]
 struct Header {
     version: u32,
+    document_kind: String,
     layout: String,
     block_size: u32,
     compression: String,
@@ -89,6 +91,9 @@ impl fmt::Debug for FrameCodec {
     }
 }
 impl FrameCodec {
+    pub(crate) fn encrypted(&self) -> bool {
+        self.inner.key.is_some()
+    }
     pub(crate) fn block_plain(&self) -> usize {
         self.inner.block_size
     }
@@ -293,6 +298,14 @@ impl FrameCodec {
         options: &CaptureEncoding,
         block_size: u32,
     ) -> Result<(Self, u64), CaptureError> {
+        Self::create_kind(output, options, block_size, "capture")
+    }
+    pub(crate) fn create_kind(
+        output: &mut impl Write,
+        options: &CaptureEncoding,
+        block_size: u32,
+        kind: &str,
+    ) -> Result<(Self, u64), CaptureError> {
         let mut salt = [0; 16];
         let mut prefix = [0; 4];
         getrandom::fill(&mut salt)
@@ -302,6 +315,7 @@ impl FrameCodec {
         let encrypted = options.password.is_some();
         let header = Header {
             version: 1,
+            document_kind: kind.into(),
             layout: "indexed-blocks".into(),
             block_size: if encrypted { 0 } else { block_size },
             compression: "zstd".into(),
@@ -334,6 +348,13 @@ impl FrameCodec {
         input: &mut impl Read,
         password: Option<&CapturePassword>,
     ) -> Result<(Self, u64), CaptureError> {
+        Self::read_kind(input, password, "capture")
+    }
+    pub(crate) fn read_kind(
+        input: &mut impl Read,
+        password: Option<&CapturePassword>,
+        kind: &str,
+    ) -> Result<(Self, u64), CaptureError> {
         let mut length = [0; 4];
         input.read_exact(&mut length)?;
         let length = u32::from_le_bytes(length) as usize;
@@ -343,6 +364,9 @@ impl FrameCodec {
         let mut encoded = vec![0; length];
         input.read_exact(&mut encoded)?;
         let header: Header = serde_json::from_slice(&encoded)?;
+        if header.document_kind != kind {
+            return Err(CaptureError::UnsupportedEncoding);
+        }
         let mut codec = Self::from_header(encoded, &header, password)?;
         let mut proof = vec![0; if codec.inner.key.is_some() { 20 } else { 4 }];
         input.read_exact(&mut proof)?;
@@ -397,6 +421,9 @@ impl FrameCodec {
                 let params =
                     Params::new(header.memory_kib, header.iterations, header.lanes, Some(32))
                         .map_err(|_| CaptureError::UnsupportedEncoding)?;
+                let _permit = DERIVATION
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
                 let mut key = Zeroizing::new([0; 32]);
                 Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
                     .hash_password_into(password.bytes(), &header.salt, &mut *key)

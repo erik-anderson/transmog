@@ -95,9 +95,27 @@ fn reader_seeds_reach_their_documented_stage() {
         );
     }))
     .unwrap();
-    assert_eq!(
-        actual, expected,
-        "TMCap seed coverage changed; review the seed and expected stage"
+    let names = actual
+        .as_object()
+        .unwrap()
+        .keys()
+        .chain(expected.as_object().unwrap().keys())
+        .collect::<std::collections::BTreeSet<_>>();
+    let drift = names
+        .into_iter()
+        .filter(|name| actual.get(*name) != expected.get(*name))
+        .map(|name| {
+            format!(
+                "{name}: expected {}; observed {}",
+                expected.get(name).unwrap_or(&Value::Null),
+                actual.get(name).unwrap_or(&Value::Null)
+            )
+        })
+        .collect::<Vec<_>>();
+    assert!(
+        drift.is_empty(),
+        "TMCap seed coverage changed; review each seed and expected stage:\n{}",
+        drift.join("\n")
     );
 }
 

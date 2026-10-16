@@ -6,10 +6,18 @@ fallbacks. Saving a subset preserves source associations and explicit source
 numbers, while reopening assigns fresh workspace numbers. Native saves carry
 versioned request-order ordinals so a saved investigation retains deterministic
 relative order even with equal or backward timestamps. Extended SAZ carries the
-same ordering and original numeric provenance in its Transmog evidence. Older
-native and extended-SAZ files remain readable without these optional fields.
+same ordering and original numeric provenance in its Transmog evidence. These
+ordering fields are optional within the current formats; earlier experimental
+TMCap container layouts have no compatibility adapter.
 HAR and conventional third-party SAZ consumers may discard these extensions;
 workspace numbers alone are never portable source references.
+
+For evidence, frozen rules/assets, notes and source-associated context in one
+transfer, use **Files → Save portable case…**. [Portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3)
+use Stored ZIP64 inside TMCap with optional whole-package encryption. They open
+through **Open portable case…**, where inspection, exact-package forwarding,
+plaintext working copies and reviewed disabled rule import are separate actions.
+Ordinary native capture import rejects the archive document kind explicitly.
 
 Use **Traffic → Files → Save trace…** in the main window or a Capture viewer. Review all retained entries, selected requests, the current filters/incident window,
 or an original source; removed entries are excluded.

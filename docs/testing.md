@@ -44,7 +44,37 @@ publication. `cargo test -p transmog-app --lib investigation_tests` covers inert
 native evidence opening, source/occurrence identity, original context, streams,
 capture-wide loss, encrypted inputs and changed originals. Unix no-follow/locking
 checks run in the Linux container; Windows tests cover blocked replacement.
-These do not qualify archive readers, package encryption or CLI support.
+These K1/K2 checks alone do not qualify archive readers, package encryption or CLI support.
+K3's `cargo test -p transmog-portable --test packages` qualifies production ZIP64
+preflight, hostile corpus, encryption, exact-ZIP forwarding, independent readers,
+working copies and publication failures. Capture artifact tests cover authenticated
+random reads, incomplete/tampered completion and failed-output poisoning. A sparse
+ZIP64 metadata test exceeds four GiB without reading/allocating its declared body.
+The current-format fuzz builder includes the mandatory document kind so its seeds
+continue reaching the documented parser stages.
+
+The complete `npm run test:workspaces` gate includes portable-case authoring,
+password retry, inert context, note navigation, disabled import, cancellation,
+retained progress and responsive/forced-color layouts. To isolate that flow after
+`npm run check`, use `node scripts/check-workspaces.mjs --portable-cases-only`.
+
+For the real WebView2 transfer flow, build a test-only desktop binary:
+
+```powershell
+python scripts/dev-env.py --run cargo build --locked -p transmog-desktop --features desktop-test-fixtures
+./scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath ./target/debug/transmog.exe -PortableCaseChecks
+```
+
+This creates a fresh profile and exercises production IPC, encrypted save/open,
+same-filename replacement with pinned readers, wrong-password retry, explicit
+plaintext working copy, inert notes, layout and
+Escape focus. The feature-only file-picker adapter selects owned destinations inside
+that test instance's export root; product builds have no such adapter. It does not
+qualify a signed installer or the visual native file chooser. Source/evidence
+streaming and actual disabled imports also have application integration coverage.
+
+Use [the composition benchmark](performance.md#portable-archive-composition) for
+compression policy measurements. New CLI commands require separate K4 checks.
 
 For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:

@@ -16,8 +16,8 @@
   ],
   "objects": [
     {
-      "sha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
-      "bytes": "3892",
+      "sha256": "0a2c04e5c0751842e4812f461f6752ec536ef89c2f37685f690b7d237ecdf0e5",
+      "bytes": "3916",
       "role": "capture",
       "mediaType": "application/vnd.transmog.tmcap"
     },
@@ -31,7 +31,7 @@
   "sources": [
     {
       "id": "source-a",
-      "artifactSha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+      "artifactSha256": "0a2c04e5c0751842e4812f461f6752ec536ef89c2f37685f690b7d237ecdf0e5",
       "sourceKey": "root",
       "label": "customer.tmcap",
       "dependency": {
@@ -79,7 +79,7 @@
       "provenance": {
         "kind": "authored",
         "capturedSource": {
-          "artifactSha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+          "artifactSha256": "0a2c04e5c0751842e4812f461f6752ec536ef89c2f37685f690b7d237ecdf0e5",
           "sourceKey": "root",
           "exchangeId": "00000000000000000000000000000001",
           "occurrence": "0",
@@ -155,7 +155,7 @@
       "id": "note-steps",
       "text": "SYNTHETIC ONLY: select the stylesheet, compare, then explicitly preview. Observed issue marker is an authored observation.",
       "source": {
-        "artifactSha256": "95f091e88317d9e35f8f02f1d40c856c73b5df70f5d59cacc9a0475283d2f47b",
+        "artifactSha256": "0a2c04e5c0751842e4812f461f6752ec536ef89c2f37685f690b7d237ecdf0e5",
         "sourceKey": "root",
         "exchangeId": "00000000000000000000000000000001",
         "occurrence": "0",

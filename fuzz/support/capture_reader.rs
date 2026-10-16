@@ -14,7 +14,7 @@ const PAYLOAD: usize = BLOCK - 5;
 
 fn header() -> Vec<u8> {
     serde_json::to_vec(
-        &json!({"version":1,"layout":"indexed-blocks","block_size":BLOCK,
+        &json!({"version":1,"document_kind":"capture","layout":"indexed-blocks","block_size":BLOCK,
         "compression":"zstd","cipher":"none","kdf":"none","salt":vec![0;16],
         "nonce_prefix":vec![0;4],"memory_kib":0,"iterations":0,"lanes":0}),
     )

@@ -7175,6 +7175,7 @@ dependencies = [
  "base64 0.22.1",
  "boring",
  "bytes",
+ "getrandom 0.4.3",
  "http",
  "http-body-util",
  "hyper",
@@ -7198,9 +7199,11 @@ dependencies = [
  "transmog-app",
  "transmog-app-webui",
  "transmog-automation",
+ "transmog-capture",
  "transmog-core",
  "transmog-host-windows",
  "transmog-http",
+ "transmog-portable",
  "transmog-session",
  "transmog-tls",
  "transmog-webview-preview-windows",
@@ -7308,6 +7311,8 @@ name = "transmog-portable"
 version = "0.1.4"
 dependencies = [
  "base64 0.22.1",
+ "crc32fast",
+ "flate2",
  "rustix 1.1.5",
  "serde",
  "serde_json",
@@ -7316,7 +7321,9 @@ dependencies = [
  "thiserror 2.0.21",
  "time",
  "transmog-automation",
+ "transmog-capture",
  "transmog-core",
+ "zip",
 ]
 
 [[package]]

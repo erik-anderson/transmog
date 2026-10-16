@@ -1,20 +1,73 @@
 use super::{AppError, Application, CaseEvidenceLink, OpenedCaseEvidence, check_cancel, invalid};
+use crate::trace_body::SourceReader;
 use std::{
     collections::BTreeMap,
     sync::{Arc, atomic::AtomicBool},
 };
 use transmog_portable as wire;
 
+pub(super) enum CaseInput<'a> {
+    Prepared(&'a wire::PreparedCase),
+    Package(&'a wire::Package),
+}
+impl CaseInput<'_> {
+    fn manifest(&self) -> Result<&wire::CaseManifest, AppError> {
+        match self {
+            Self::Prepared(p) => Ok(p.manifest()),
+            Self::Package(p) => match p.manifest() {
+                wire::PackageManifest::Case(m) => Ok(m),
+                wire::PackageManifest::Rules(_) => Err(invalid("This package contains rules only")),
+            },
+        }
+    }
+    fn object(&self, sha: &str) -> Result<Box<dyn std::io::Read + Send>, AppError> {
+        match self {
+            Self::Prepared(p) => Ok(Box::new(
+                p.open_object(sha)
+                    .map_err(crate::rule_interchange::portable_error)?,
+            )),
+            Self::Package(p) => Ok(Box::new(
+                p.open_object(sha)
+                    .map_err(crate::rule_interchange::portable_error)?,
+            )),
+        }
+    }
+    fn source(&self, sha: &str) -> Result<SourceReader, AppError> {
+        match self {
+            Self::Prepared(p) => SourceReader::new(
+                p.open_object(sha)
+                    .map_err(crate::rule_interchange::portable_error)?,
+            )
+            .map_err(|_| invalid("Case evidence is unavailable")),
+            Self::Package(p) => {
+                let object = p
+                    .manifest()
+                    .objects()
+                    .iter()
+                    .find(|o| o.sha256 == sha)
+                    .ok_or_else(|| invalid("Missing case source object"))?;
+                Ok(SourceReader::package(
+                    p.open_object(sha)
+                        .map_err(crate::rule_interchange::portable_error)?,
+                    wire::decimal(&object.bytes, true)
+                        .map_err(crate::rule_interchange::portable_error)?,
+                    sha.into(),
+                ))
+            }
+        }
+    }
+}
+
 pub(super) async fn open(
     app: &Application,
-    case: &wire::PreparedCase,
+    case: CaseInput<'_>,
     source_id: &str,
     password: Option<transmog_capture::CapturePassword>,
     canceled: Arc<AtomicBool>,
 ) -> Result<OpenedCaseEvidence, AppError> {
     check_cancel(&canceled)?;
-    let source = case
-        .manifest()
+    let manifest = case.manifest()?;
+    let source = manifest
         .sources
         .iter()
         .find(|s| s.id == source_id)
@@ -23,18 +76,17 @@ pub(super) async fn open(
         return Err(invalid("Case source evidence is unavailable"));
     }
     let sha = source.artifact_sha256.clone();
-    let file = case
-        .open_object(&sha)
-        .map_err(crate::rule_interchange::portable_error)?;
-    let keys = case
-        .manifest()
+    let reader = case.source(&sha)?;
+    let keys = manifest
         .sources
         .iter()
-        .filter(|s| s.artifact_sha256 == sha)
+        .filter(|s| {
+            s.artifact_sha256 == sha && matches!(s.dependency.state.as_str(), "present" | "locked")
+        })
         .map(|s| s.source_key.clone())
         .collect::<Vec<_>>();
     let mut contexts = BTreeMap::new();
-    for context in &case.manifest().contexts {
+    for context in &manifest.contexts {
         check_cancel(&canceled)?;
         if context.kind != "capture-metadata" || context.content.state != "present" {
             continue;
@@ -42,12 +94,10 @@ pub(super) async fn open(
         let Some(reference) = &context.origin.source else {
             continue;
         };
-        if reference.artifact_sha256 != sha {
+        if reference.artifact_sha256 != sha || !keys.contains(&reference.source_key) {
             continue;
         }
-        let value = case
-            .open_object(context.content.sha256.as_deref().unwrap_or(""))
-            .map_err(crate::rule_interchange::portable_error)?;
+        let value = case.object(context.content.sha256.as_deref().unwrap_or(""))?;
         if contexts
             .insert(reference.source_key.clone(), value)
             .is_some()
@@ -56,6 +106,7 @@ pub(super) async fn open(
         }
     }
     let worker = app.clone();
+    let expected_keys = keys.clone();
     let flag = canceled.clone();
     let request = crate::TraceImportRequest {
         path: source.label.clone().into(),
@@ -67,7 +118,7 @@ pub(super) async fn open(
     let result = tokio::task::spawn_blocking(move || {
         worker
             .traces
-            .import_case_file(file, &request, &worker, contexts, &flag)
+            .import_case_source(reader, &request, &worker, contexts, &expected_keys, &flag)
     })
     .await;
     pending.0 = None;

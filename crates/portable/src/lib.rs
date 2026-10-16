@@ -1,13 +1,19 @@
-//! Experimental revision-0 rule interchange, independent of private workspace DTOs.
+//! Experimental revision-0 case/rule interchange and protected portable archives.
 mod case_model;
 mod case_prepare;
 mod case_validate;
 mod convert;
 mod model;
+mod package;
+mod package_zip;
 mod prepare;
 mod strict_json;
 mod validate;
 mod working;
+pub use package::{
+    Package, PackageFormat, PackageManifest, PackageMember, ReadSeek, write_case_package,
+    write_rules_package,
+};
 
 pub use case_model::*;
 pub use case_prepare::PreparedCase;
@@ -19,6 +25,12 @@ pub use working::WorkingCase;
 /// A bounded interchange failure; callers must not publish partial imports.
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
+    /// Protected package needs an explicit source password.
+    #[error("This package requires a password")]
+    PasswordRequired,
+    /// Source password did not authenticate the protected header.
+    #[error("The package password is incorrect")]
+    InvalidPassword,
     /// Invalid schema, identity, semantics or content integrity.
     #[error("{0}")]
     Invalid(String),
@@ -26,7 +38,7 @@ pub enum Error {
     #[error("Unsupported portable content: {0}")]
     Unsupported(String),
     /// Explicit cancellation before publication.
-    #[error("Rule collection operation canceled")]
+    #[error("Portable operation canceled")]
     Canceled,
     /// A source or owned staging file could not be read or written.
     #[error("Portable object I/O failed: {0}")]

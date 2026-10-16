@@ -1,1 +1,1 @@
-	{"version":1,"layout":"indexed-blocks","block_size":1024,"compression":"zstd","cipher":"none","kdf":"none","salt":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"nonce_prefix":[0,0,0,0],"memory_kib":0,"iterations":0,"lanes":0}
+	{"document_kind":"capture","version":1,"layout":"indexed-blocks","block_size":1024,"compression":"zstd","cipher":"none","kdf":"none","salt":[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],"nonce_prefix":[0,0,0,0],"memory_kib":0,"iterations":0,"lanes":0}

@@ -5,6 +5,7 @@
 //! The durable schema is independent from live control messages. A valid
 //! prefix remains readable after a crash-truncated final record.
 
+pub mod artifact;
 pub mod compression;
 mod connections;
 mod container;

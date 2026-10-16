@@ -1,3 +1,5 @@
+import '../portable-case/portable-case.js';
+import type {PortableCase} from '../portable-case/portable-case.js';
 import {bodyEditSummary} from '../text-edit-report.js';
 import { responseEvidence } from '../response-evidence.js';
 import '../incident-intake/incident-intake.js';
@@ -21,6 +23,17 @@ type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  portableCase!:PortableCase;
+  async showPortableCase(mode:'export'|'open'):Promise<void>{
+    this.filesMenu.hidePopover();
+    const choices:ScopeChoice[]=[{value:'none',label:'No evidence — rules and notes only',scope:null}];
+    if(this.trafficSelection.ids.size)choices.unshift({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});
+    choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries`,scope:{kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});
+    await this.portableCase.show(mode,choices,this.filesMenuButton);
+  }
+  async onCaseReference(event:CustomEvent<string>):Promise<void>{event.stopPropagation();await this.refreshSessions(undefined,true);await this.revealSession(event.detail);this.trafficTable.focus({preventScroll:true});}
+  async onCaseEvidenceOpened(event:CustomEvent):Promise<void>{event.stopPropagation();await this.refreshSessions(undefined,true);}
+
   @observable incidentWindow:IncidentWindow|null=null;
   @observable incidentWindowLabel='';
   private incidentReturn:{scroll:number;selection:ListSelection;follow:boolean}|null=null;

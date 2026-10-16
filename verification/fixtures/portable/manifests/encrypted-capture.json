@@ -16,8 +16,8 @@
   ],
   "objects": [
     {
-      "sha256": "9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf",
-      "bytes": "3922",
+      "sha256": "af433924c671d9c97ad740ce5afe3e74880d27f43abed77cad5e5b878bbb6860",
+      "bytes": "3950",
       "role": "capture",
       "mediaType": "application/vnd.transmog.tmcap"
     },
@@ -31,7 +31,7 @@
   "sources": [
     {
       "id": "source-a",
-      "artifactSha256": "9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf",
+      "artifactSha256": "af433924c671d9c97ad740ce5afe3e74880d27f43abed77cad5e5b878bbb6860",
       "sourceKey": "root",
       "label": "customer.tmcap",
       "dependency": {
@@ -80,7 +80,7 @@
       "provenance": {
         "kind": "authored",
         "capturedSource": {
-          "artifactSha256": "9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf",
+          "artifactSha256": "af433924c671d9c97ad740ce5afe3e74880d27f43abed77cad5e5b878bbb6860",
           "sourceKey": "root",
           "exchangeId": "00000000000000000000000000000001",
           "occurrence": "0",
@@ -156,7 +156,7 @@
       "id": "note-steps",
       "text": "SYNTHETIC ONLY: select the stylesheet, compare, then explicitly preview. Observed issue marker is an authored observation.",
       "source": {
-        "artifactSha256": "9b97a000b31136c18669475e4d20cca7e05054061a09f4bb156120815868fecf",
+        "artifactSha256": "af433924c671d9c97ad740ce5afe3e74880d27f43abed77cad5e5b878bbb6860",
         "sourceKey": "root",
         "exchangeId": "00000000000000000000000000000001",
         "occurrence": "0",

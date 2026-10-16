@@ -45,12 +45,19 @@ zero. They are not a nonce or an index key.
 block ordinal `i` starts at `S + i * (B + 16)`. A final sealed file has no
 partial or trailing blocks. An interrupted file can have an uncommitted tail.
 
+The locator slots and this value of `S` apply to `document_kind="capture"`.
+`portable-archive` shares the preamble through the geometry proof, then starts
+its blocks immediately at `13 + H + proof_length`, without capture locators.
+Readers select the document kind before interpreting its blocks. A capture reader
+rejects an archive document rather than reporting an empty capture.
+
 The header has exactly these fields. Unknown fields or unsupported combinations
 are rejected; readers do not use arbitrary caller-supplied KDF costs.
 
 | Field | Plain file | Encrypted file |
 | --- | --- | --- |
 | `version` | `1` | `1` |
+| `document_kind` | `"capture"` or `"portable-archive"` | Same, bound by header authentication |
 | `layout` | `"indexed-blocks"` | `"indexed-blocks"` |
 | `block_size` | `1024` or `16384` | `0` (actual value is protected) |
 | `compression` | `"zstd"` | `"zstd"` |
@@ -61,6 +68,55 @@ are rejected; readers do not use arbitrary caller-supplied KDF costs.
 | `memory_kib` | `0` | `65536` |
 | `iterations` | `0` | `3` |
 | `lanes` | `0` | `1` |
+
+`document_kind` is mandatory. There is no earlier-header adapter. Current writers,
+readers and synthetic fixtures use this layout together.
+
+### Portable archive payload
+
+[`artifact.rs`](../crates/proxy-capture/src/artifact.rs) exposes a streaming writer
+and logical `Read + Seek` view using the same block codec and key derivation as
+capture documents. Its blocks have `B=16384`. This path has no HTTP records,
+exchange identities, capture seal record or paired-body sharing.
+
+The logical ZIP stream is divided into independent chunks of at most 128 KiB.
+Each chunk is raw (`codec=0`) or a complete level-1 zstd frame (`codec=1`). Encoded
+chunk bytes are concatenated into data blocks. A member boundary ends the current
+compression chunk and resets adaptive sampling; it does not pad a physical block.
+Only the final data block's unused capacity is outside the encoded byte stream.
+
+Data blocks are followed by index blocks, then one completion block. The protected
+index is at most 16 MiB. It starts with `LE32(json_length)`, then at most 4096 bytes
+of descriptor JSON (`mediaType`, numeric unsigned-64-bit `bytes`, lowercase
+SHA-256 `sha256`), then fixed 32-byte chunk entries:
+
+| Offset | Field |
+| --- | --- |
+| 0 | Logical ZIP offset, `LE64` |
+| 8 | Offset in the concatenated encoded stream, `LE64` |
+| 16 | Expanded length, `LE32`, from 1 through 131072 |
+| 20 | Stored length, `LE32`, from 1 through 131072 |
+| 24 | Codec byte, 0 or 1 |
+| 25 | Seven reserved zero bytes |
+
+Offsets/lengths must describe contiguous nonoverlapping streams; raw chunks have
+equal expanded/stored lengths. The descriptor media type is
+`application/vnd.transmog.case+zip` or `application/vnd.transmog.rules+zip` and
+must agree with the inner manifest. The index bound permits approximately 64 GiB
+of logical data with full chunks; numerous partial chunks consume that bound
+sooner. It is an explicit index capacity limit, not a small capture/body buffer.
+
+The final block starts with ASCII `TMARCH01`, followed by `LE64(index_bytes)` and
+`LE64(encoded_data_bytes)`. All remaining completion bytes are zero. These lengths
+determine the exact data/index block counts; partial or trailing physical blocks
+are invalid. Every requested block is checked/authenticated before decompression
+or exposure. Full validation additionally checks the logical ZIP SHA-256, its
+complete directory and every declared object hash/length/CRC before publication.
+
+This is a sealed transfer format. Capture checkpoint recovery cannot manufacture
+a missing ZIP directory or archive completion block. Original capture prefix
+recovery remains a capture-document operation. No decrypted temporary archive is
+needed for random access. Explicit plaintext working-copy creation is separate.
 
 In a plain file the geometry proof must equal the public `block_size`. In an
 encrypted file its authenticated value selects the geometry. A reader must

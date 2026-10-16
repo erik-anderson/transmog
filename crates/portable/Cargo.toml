@@ -1,6 +1,6 @@
 [package]
 name = "transmog-portable"
-description = "Bounded portable rule and response-asset interchange"
+description = "Bounded portable investigation and rule interchange"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 base64.workspace = true
+crc32fast.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -17,6 +18,11 @@ tempfile.workspace = true
 time.workspace = true
 transmog-automation = { version = "=0.1.4", path = "../proxy-automation" }
 transmog-core = { version = "=0.1.4", path = "../proxy-core" }
+transmog-capture = { version = "=0.1.4", path = "../proxy-capture" }
+
+[dev-dependencies]
+zip.workspace = true
+flate2.workspace = true
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "=1.1.5", features = ["fs"] }

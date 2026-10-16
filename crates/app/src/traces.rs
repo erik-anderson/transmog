@@ -449,12 +449,13 @@ impl TraceRegistry {
         Ok((imported, trace, bytes))
     }
 
-    pub(crate) fn import_case_file(
+    pub(crate) fn import_case_source(
         &self,
-        file: File,
+        reader: SourceReader,
         request: &TraceImportRequest,
         application: &crate::Application,
-        contexts: BTreeMap<String, File>,
+        contexts: BTreeMap<String, Box<dyn std::io::Read + Send>>,
+        keys: &[String],
         canceled: &Arc<AtomicBool>,
     ) -> Result<TraceImportResult, AppError> {
         {
@@ -472,8 +473,6 @@ impl TraceRegistry {
             registry: self.clone(),
             id: request.operation_id.clone(),
         };
-        let reader =
-            SourceReader::new(file).map_err(|_| unavailable("Case evidence is unavailable"))?;
         if crate::trace_format::detect_trace_format_from(&request.path, reader.clone())
             != Some(crate::TraceFormat::Native)
         {
@@ -485,6 +484,14 @@ impl TraceRegistry {
         }
         let (mut imported, mut trace, _) =
             Self::read_source(request, reader, PathBuf::new(), canceled, &|_| {})?;
+        if keys.iter().any(|key| {
+            !(imported.source_keys.values().any(|known| known == key)
+                || key == "root" && imported.sources.is_empty())
+        }) {
+            return Err(invalid(
+                "Case source key is absent from its native evidence object",
+            ));
+        }
         restore_case_context(&mut imported, &mut trace, contexts, canceled)?;
         let store = application
             .body_store
@@ -630,7 +637,7 @@ impl TraceRegistry {
 fn restore_case_context(
     imported: &mut ImportData,
     trace: &mut TraceMetadataView,
-    contexts: BTreeMap<String, File>,
+    contexts: BTreeMap<String, Box<dyn std::io::Read + Send>>,
     canceled: &AtomicBool,
 ) -> Result<(), AppError> {
     use std::io::Read as _;

@@ -35,8 +35,13 @@ disabled. A saved state directory is still not a portable case.
 now keep selected evidence, source-associated notes/context, frozen experiments
 and up to 32 manifest revisions in an explicit plaintext directory. Current
 publication is transactional; interrupted staging remains separate recovery data.
-Opening case evidence uses the existing inert trace inspector. Desktop file
-actions and archive/encryption transfer remain planned.
+Desktop Files actions now open/save reviewed ZIP64/TMCap transfers, with optional
+whole-package encryption. Opening keeps a pinned read-only source and creates no
+decrypted archive. Evidence uses the existing inert trace inspector; its lazy
+readers retain source/key handles after package review closes. Plaintext working
+copies and disabled automation import are separate explicit actions. Preparing a
+new derived case from Traffic uses disclosed owned plaintext snapshots; forwarding
+an opened package streams its exact ZIP without that intermediate copy.
 
 Response assets persist the chosen copy/link behavior. Linked assets retain an
 absolute path even when the file is unavailable; they do not silently become

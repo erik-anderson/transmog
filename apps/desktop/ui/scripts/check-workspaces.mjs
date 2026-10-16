@@ -1,3 +1,4 @@
+import {checkPortableCases} from './check-portable-cases.mjs';
 import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
 import {checkResponseExperiments} from './check-response-experiments.mjs';
@@ -177,6 +178,22 @@ await page.addInitScript((configuration) => {
         case 'captured_page_report': return {variant:state.previewArgs?.options?.variant??null,url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return 'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
+        case 'case_export_choices':return structuredClone(state.caseChoices??{rules:[],variants:[]});
+        case 'prepare_case_export':state.caseExportInput=structuredClone(args.input);return structuredClone(state.caseReview);
+        case 'save_open_case':
+        case 'save_case_export':
+          if(state.deferCaseSave){state.deferCaseSave=false;await new Promise(resolve=>state.releaseCaseSave=resolve);}
+          if(state.caseCanceled){state.caseCanceled=false;throw {category:'canceled',message:'Case operation canceled'};}
+          return 'C:/cases/investigation.tmcase.tmcap';
+        case 'cancel_case_operation':state.caseCanceled=true;state.releaseCaseSave?.();return;
+        case 'read_case_context':return 'Original config output <script>inert</script>\r\nDNS=value';
+        case 'choose_case':return 'portable-fixture.tmcase.tmcap';
+        case 'open_case':if(state.caseLocked&&args.password!=='fixture')throw {category:args.password?'invalid-password':'password-required',message:args.password?'The package password is incorrect':'This package requires a password'};return structuredClone(state.caseReview);
+        case 'inspect_case_source':return {links:[{reference:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},exchangeId:'first'}],imported:{trace:state.traces?.[0],issues:[]}};
+        case 'review_case_rules':return {items:[{kind:'rule',portableId:'rule-a',state:'conflicting',localId:'fresh-disabled-rule'}],activation:'disabled'};
+        case 'import_case_rules':state.caseImported=true;return {};
+        case 'close_case':return;
+        case 'save_case_working_copy':return 'C:/cases/plaintext-working-copy';
         case 'save_traffic_trace': {
           state.savedTraceArgs=structuredClone({options:args.options});state.saveTraceChannel=args.onProgress;
           if(state.deferTraceSave){state.traceSavePending=true;await new Promise(resolve=>state.releaseTraceSave=resolve);state.traceSavePending=false;}
@@ -630,6 +647,7 @@ try {
   await checkResponseSnapshots(page,root);
   if(process.argv.includes('--file-modes-only')) {await checkResponseFiles(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Explicit file copy/link, repair, drafts and size-independent modes verified.\n');process.exit(0);}
   if(process.argv.includes('--experiments-only')) {await checkResponseExperiments(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response experiment authoring, frozen comparison, preview context and separate live activation verified.\n');process.exit(0);}
+  if(process.argv.includes('--portable-cases-only')) {await checkPortableCases(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Portable case review, password retry, inert inspection, disabled import, cancellation and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')) {await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident intake, markers, reviewed export and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--comparison-only')) {await checkComparison(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Comparison interactions, races, pairing and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--network-profiles')) {
@@ -2434,6 +2452,7 @@ try {
   assert.equal(await emptyDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Clear all restored the initial import helper');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
   await checkComparison(page,root);
+  await checkPortableCases(page,root);
   await checkIncidents(page,root);
   await checkResponseFiles(page,root);
   await checkResponseExperiments(page,root);

@@ -6,6 +6,8 @@ mod captured_preview;
 mod comparison;
 #[path = "incidents.rs"]
 mod incidents;
+#[path = "portable_cases.rs"]
+mod portable_cases;
 #[path = "window_workspaces.rs"]
 mod workspaces;
 
@@ -2136,6 +2138,19 @@ pub fn run() {
                 captured_preview::cancel_captured_page,
                 incidents::incident_intake,
                 incidents::review_traffic_export,
+                portable_cases::case_export_choices,
+                portable_cases::prepare_case_export,
+                portable_cases::save_case_export,
+                portable_cases::save_open_case,
+                portable_cases::choose_case,
+                portable_cases::open_case,
+                portable_cases::inspect_case_source,
+                portable_cases::read_case_context,
+                portable_cases::save_case_working_copy,
+                portable_cases::review_case_rules,
+                portable_cases::import_case_rules,
+                portable_cases::cancel_case_operation,
+                portable_cases::close_case,
                 incidents::mark_incident,
                 comparison::compare_evidence,
                 comparison::close_comparison,
@@ -2298,6 +2313,7 @@ pub fn run() {
         })
         .on_window_event(move |window, event| {
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                portable_cases::release(window.label());
                 if window.label() == "main" {
                     close_guard.store(false, Ordering::Release);
                 } else {

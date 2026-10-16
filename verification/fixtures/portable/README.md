@@ -31,11 +31,11 @@ encryption implementation or proof that the application supports these formats.
   with Unicode/CRLF output, collection origin/purpose and partial-tool failure.
   It collects no real machine configuration and does not rewrite source captures.
 
-An encrypted TMCap source object does not demonstrate whole-case encryption.
-The typed TMCap artifact wrapper around an unchanged ZIP and its streaming,
-authenticated-seek, interoperability and hostile tests belong to K3; until then
-no encrypted-case support or confidentiality qualification is claimed. The
-current native seed format is unchanged by this design increment.
+An encrypted TMCap source object alone does not demonstrate whole-case encryption.
+K3's artifact/package tests separately qualify the typed outer wrapper, unchanged
+inner ZIP, authenticated seek, independent ZIP reading, hostile archives and
+transactional publication. Current native seeds require the mandatory document
+kind discriminator and are regenerated with their hashes/manifest references.
 
 The native reader tests compare every stored observation with authored expected
 records, check wrong/missing passwords and authenticated sealing, and distinguish
@@ -84,5 +84,7 @@ and loss, preserve original source context, and verify stable source/entry links
 They do not run tools or activate rules/scripts. Directory tests qualify history,
 interruption, stale writers, bounded streaming and Windows blocked replacement.
 
-Hostile archive, generic encryption wrapper and CLI scenarios still need production
-consumers in K3/K4. Keeping a valid corpus does not qualify those future adapters.
+K3's production `packages` tests exercise the bare/streamed ZIP64 and hostile
+archives, plus native encryption, forwarding, exact object/ZIP bytes, independent
+readers and failure cleanup. Native desktop checks use a fresh profile. CLI
+scenarios still need their K4 consumers; these tests do not qualify future commands.

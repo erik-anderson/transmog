@@ -188,7 +188,33 @@ impl Application {
         password: Option<transmog_capture::CapturePassword>,
         canceled: Arc<AtomicBool>,
     ) -> Result<OpenedCaseEvidence, AppError> {
-        open::open(self, case, source_id, password, canceled).await
+        open::open(
+            self,
+            open::CaseInput::Prepared(case),
+            source_id,
+            password,
+            canceled,
+        )
+        .await
+    }
+    /// Inspects a package source using pinned authenticated random reads, without extraction.
+    /// # Errors
+    /// Rejects unavailable sources/passwords and preserves atomic inert import.
+    pub async fn open_package_evidence(
+        &self,
+        package: &wire::Package,
+        source_id: &str,
+        password: Option<transmog_capture::CapturePassword>,
+        canceled: Arc<AtomicBool>,
+    ) -> Result<OpenedCaseEvidence, AppError> {
+        open::open(
+            self,
+            open::CaseInput::Package(package),
+            source_id,
+            password,
+            canceled,
+        )
+        .await
     }
 }
 pub(super) fn invalid(message: &str) -> AppError {

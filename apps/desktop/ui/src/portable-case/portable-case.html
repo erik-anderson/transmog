@@ -1,0 +1,48 @@
+<template>
+  <dialog w-ref="{caseDialog}" class="portable-dialog" aria-labelledby="case-heading" @cancel="{close(e)}">
+    <header><h2 id="case-heading">Portable case</h2><p role="status" aria-live="polite">{{caseStatus}}</p></header>
+    <div class="case-scroll" ?inert="{{caseBusy}}">
+      <form ?hidden="{{caseStage != 'author'}}" id="case-author" w-ref="{authorForm}" @submit="{prepare(e)}">
+        <label>Title<input name="title" required maxlength="512" value="Portable investigation"></label>
+        <label>Evidence<select name="scope" aria-label="Evidence"><for each="scope in caseScopes"><option key="{{scope.value}}" value="{{scope.value}}">{{scope.label}}</option></for></select></label>
+        <label class="check"><input type="checkbox" name="context" checked>Include original source context and configuration output</label>
+        <details><summary>Saved rules and exact experiment revisions</summary><p>Select only the definitions needed by this case. Linked files become export-time snapshots.</p>
+          <for each="rule in caseRules"><label key="{{rule.id}}" class="check"><input type="checkbox" name="rule" value="{{rule.id}}">{{rule.label}}</label></for>
+          <for each="variant in caseVariants"><label key="{{variant.value}}" class="check"><input type="checkbox" name="variant" value="{{variant.value}}">{{variant.label}}</label></for>
+          <if condition="!caseRules.length && !caseVariants.length"><p>No saved rule choices in this window.</p></if>
+        </details>
+        <label>Reproduction notes and expected / actual behavior<textarea name="notes" rows="5" maxlength="65536"></textarea></label>
+        <p class="privacy-note">Selected retained traffic can include URLs, headers, bodies, stream messages, source names and notes. Original context can contain configuration output and paths. Preparing this case creates owned plaintext snapshots; output encryption protects the saved transfer. Arbitrary secrets are not automatically removed.</p>
+        <label class="check"><input type="checkbox" required>I authorize a new derived copy of the selected evidence and reviewed content.</label>
+      </form>
+      <if condition="caseStage != 'author'"><h3>{{caseTitle}}</h3>
+        <dl><for each="fact in caseFacts"><div><dt>{{fact.label}}</dt><dd>{{fact.value}}</dd></div></for></dl>
+        <if condition="viewerMode"><h4>Experiments</h4><for each="experiment in caseExperiments"><div class="case-row"><strong>{{experiment.label}}</strong><span>{{experiment.state}}</span><p>{{experiment.reason}}</p></div></for></if><h4>Evidence</h4><if condition="!caseSources.length"><p>No captured evidence is included.</p></if><for each="source in caseSources"><div class="case-row"><strong>{{source.label}}</strong><span>{{source.dependency.state}} · {{source.evidenceCompleteness}}</span><p>{{source.dependency.reason}}</p><if condition="caseInspection"><button type="button" class="secondary" ?disabled="{{!source.available}}" @click="{inspect(source.id)}">Inspect in Traffic</button></if></div></for>
+        <for each="note in caseNotes"><div class="case-row"><strong>Authored note</strong><p class="note-text">{{note.text}}</p><if condition="caseInspection && note.source"><button type="button" class="secondary" @click="{inspectNote(note.id)}">Inspect linked request</button></if></div></for>
+        <if condition="caseInspection"><for each="context in caseContexts"><div class="case-row"><strong>{{context.kind}}</strong><span>{{context.content.state}} · {{context.completeness}}</span><button type="button" class="secondary" ?disabled="{{!context.available}}" @click="{inspectContext(context.id)}">View context</button></div></for><if condition="caseContextText"><h4>Original context · {{caseContextLabel}}</h4><pre tabindex="0">{{caseContextText}}</pre></if></if>
+        <details><summary>Full content inventory and provenance</summary><pre tabindex="0">{{caseManifestText}}</pre></details>
+        <details><summary>Excluded from this transfer</summary><ul><for each="item in caseExcluded"><li>{{item.text}}</li></for></ul></details>
+        <p class="privacy-note">Headers, URLs, bodies, streams, scripts, response assets, notes and context can contain credentials. Checksums detect corruption; they do not identify the publisher. Opening this package does not contact captured sites.</p>
+      </if>
+      <form ?hidden="{{caseStage == 'author' || caseStage == 'import'}}" id="case-save" w-ref="{saveForm}" @submit="{save(e)}">
+        <label>Transfer format<select name="format" @change="{setFormat(e)}"><option value="native">Native compressed transfer</option><option value="bare-zip">Uncompressed ZIP interchange</option></select></label>
+        <label class="check"><input type="checkbox" name="encrypt" ?disabled="{{caseFormat == 'bare-zip'}}" @change="{setEncryption(e)}">Protect the entire native case with a password</label>
+        <p>Without encryption, the package is readable by anyone who can access it. Native encrypted packages expose the document kind, filename, encryption parameters and size.</p>
+      </form>
+      <if condition="caseStage == 'inspect'"><if condition="caseIsCase"><details><summary>Save working copy</summary><p>A working folder is plaintext, including evidence decrypted from this package. Existing folders are preserved.</p><label class="check"><input type="checkbox" w-ref="{workingConsent}">I want a plaintext working copy</label><button type="button" class="secondary" @click="{workingCopy()}">Save working copy…</button></details></if>
+        <if condition="!viewerMode"><form id="case-import" w-ref="{importForm}" @submit="{reviewImport(e)}"><h4>Copy selected rules into this workbench</h4>
+          <if condition="!caseIsCase"><p>This rule collection is reviewed as one complete dependency graph.</p></if><if condition="caseIsCase"><if condition="caseOrdinaryRules"><label class="check"><input type="checkbox" name="ordinary">Ordinary saved rules</label></if>
+          <for each="experiment in caseExperiments"><label class="check"><input type="checkbox" name="experiment" value="{{experiment.id}}" ?disabled="{{!experiment.available}}">{{experiment.label}} · {{experiment.state}}</label><p>{{experiment.reason}}</p></for>
+          </if><p>Import creates disabled rules and paused experiments. Existing drafts and activation remain in place.</p>
+          <if condition="!caseImportAvailable"><p>No supported rules or experiments are available to import.</p></if><button type="submit" class="secondary" ?disabled="{{!caseImportAvailable}}">Review rule import</button>
+        </form></if>
+      </if>
+      <if condition="caseStage == 'import'"><h4>Reviewed local identities</h4><for each="item in caseImportItems"><div class="case-row"><strong>{{item.kind}} · {{item.portableId}}</strong><span>{{item.state}}</span><code>{{item.localId}}</code></div></for><p>All imported rules start disabled. No script or captured page executes.</p></if>
+    </div>
+    <footer class="actions">
+      <if condition="caseBusy"><button type="button" class="secondary" @click="{cancel()}">Cancel operation</button></if>
+      <if condition="!caseBusy"><if condition="caseStage == 'author'"><button type="submit" form="case-author">Review selected content</button></if><if condition="caseStage == 'export'"><button type="button" class="secondary" @click="{back()}">Change selection</button><button type="submit" form="case-save">Save portable case…</button></if><if condition="caseStage == 'import'"><button type="button" class="secondary" @click="{back()}">Back to inventory</button><button type="button" @click="{importRules()}">Import rules disabled</button></if><if condition="caseStage == 'inspect'"><button type="submit" form="case-save">Save transfer as…</button></if><if condition="caseInspection"><button type="button" class="secondary" @click="{openPackage()}">Open another package…</button><button type="button" class="secondary" @click="{closePackage()}">Close package</button></if></if>
+      <button type="button" class="secondary" @click="{close()}">Close review</button>
+    </footer>
+  </dialog>
+</template>

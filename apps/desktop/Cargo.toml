@@ -23,6 +23,9 @@ path = "src/main.rs"
 
 [dependencies]
 transmog-app = { version = "=0.1.4", path = "../../crates/app" }
+transmog-portable = { version = "=0.1.4", path = "../../crates/portable" }
+transmog-capture = { version = "=0.1.4", path = "../../crates/proxy-capture" }
+getrandom.workspace = true
 transmog-app-webui = { version = "=0.1.4", path = "../../crates/app-webui" }
 transmog-session = { version = "=0.1.4", path = "../../crates/proxy-session" }
 tokio.workspace = true

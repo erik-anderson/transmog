@@ -7,6 +7,7 @@ param(
     [switch]$SkipReleaseBuild,
     [string]$ExecutablePath,
     [switch]$StartupOnly,
+    [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
     [switch]$CapturedPageChecks,
     [switch]$TraceSaveChecks,
@@ -25,6 +26,8 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($PortableCaseChecks -and ($StartupOnly -or $ViewerChecks -or $SoakMinutes)) { throw 'PortableCaseChecks is an isolated main-window flow.' }
+if ($PortableCaseChecks -and -not $ExecutablePath) { throw 'PortableCaseChecks requires an explicit desktop-test-fixtures build via ExecutablePath and SkipReleaseBuild.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
 if ($CapturedPageChecks -and -not $ViewerChecks) { throw 'CapturedPageChecks requires ViewerChecks.' }
 if ($TraceSaveChecks -and (-not $ViewerChecks -or $NativeTracePath)) { throw 'TraceSaveChecks requires ViewerChecks and uses its isolated SAZ fixture.' }
@@ -68,6 +71,8 @@ $priorArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $priorLocalAppData = $env:LOCALAPPDATA
 $priorTemp = $env:TEMP
 $priorTmp = $env:TMP
+$priorCaseTest = $env:TRANSMOG_DESKTOP_CASE_TEST
+if ($PortableCaseChecks) { $env:TRANSMOG_DESKTOP_CASE_TEST = '1' }
 # Separate captured-page profiles need separate browser debugging endpoints.
 $debugPort = if ($ViewerChecks) { 0 } else { $DevToolsPort }
 $debugArguments = "--remote-debugging-port=$debugPort --remote-debugging-address=127.0.0.1"
@@ -218,6 +223,14 @@ try {
         Get-Content -LiteralPath (Join-Path $probeRoot 'stderr.txt') -Tail 30 | ForEach-Object { Write-Host $_ }
         throw "WebView2 DevTools endpoint did not become ready (exited=$exited, exit=$exitCode); startup diagnostics were retained."
     }
+    if ($PortableCaseChecks) {
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-portable-cases.mjs --port "$DevToolsPort" --output $probeRoot
+            if ($LASTEXITCODE -ne 0) { throw 'Native portable case checks failed.' }
+        } finally { Pop-Location }
+        return [pscustomobject]@{ PortableCasesVerified = $true; EvidenceRoot = $probeRoot }
+    }
     if ($StartupOnly) {
         $result = [pscustomobject]@{ StartupVerified = $true; HostedPolicy = [bool]$HostedRunnerDevToolsPolicy; Runtime = (Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/version").Browser }
         $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
@@ -290,6 +303,7 @@ try {
     $env:LOCALAPPDATA = $priorLocalAppData
     $env:TEMP = $priorTemp
     $env:TMP = $priorTmp
+    $env:TRANSMOG_DESKTOP_CASE_TEST = $priorCaseTest
     if ($policySet) {
         if ($null -ne $priorPolicyKind) { (Get-Item -LiteralPath $policyPath).SetValue($policyName, $priorPolicy, $priorPolicyKind) }
         else { Remove-ItemProperty -LiteralPath $policyPath -Name $policyName -ErrorAction Stop }

@@ -1,9 +1,9 @@
 # Portable investigations: revision 0
 
-Status: K0 defines the contract and corpus; K1 implements rule/asset interchange;
-K2 adds directory working cases, inventory and evidence inspection through shared
-libraries and UI-neutral application APIs. Desktop file actions, archive/encryption
-readers and CLI commands remain planned.
+Status: K1/K2 implement rule/asset and working-case APIs. K3 adds bounded Stored
+ZIP64 transfer, the typed TMCap wrapper with optional whole-package encryption,
+and desktop review/open/save/disabled-import actions. CLI commands remain K4;
+script and richer run integration remain K5. Revision 0 stays experimental.
 [ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
 [the roadmap](roadmap.md) tracks remaining implementation.
 
@@ -55,6 +55,9 @@ archive data. Standard streaming data descriptors and ZIP64 size fields are
 allowed: their local placeholders must agree with the descriptor and central
 directory under ZIP's rules, rather than being rejected as mismatches. Only
 `manifest.json` and declared object members are allowed.
+This profile accepts only ZIP64 extra fields; Unicode path aliases and other
+unmodeled ZIP extras are rejected rather than interpreted differently by another
+reader. Stored ZIPs emitted here remain readable by standard ZIP tools.
 Nested archive-looking asset bytes are ordinary response content, never extracted.
 
 Native transfers default to `.tmcase.tmcap` or `.tmrules.tmcap`: the exact ZIP byte
@@ -82,8 +85,8 @@ This requires a **new generic artifact path**, not an existing capture feature:
   a mandatory public document-kind discriminator for captures versus
   `portable-archive`, authenticated with the rest of the header. Unsupported
   document kinds fail before a capture importer can treat a case as empty
-  traffic. K3 specifies the wire extension and updates all current consumers and
-  fixtures together, without migration readers or earlier-layout adapters.
+  traffic. The [wire specification](tmcap-format.md#portable-archive-payload) defines the extension; current consumers and
+  fixtures use it together, without migration readers or earlier-layout adapters.
 - Store one typed logical ZIP payload with media type (case/rules),
   checked unsigned-64-bit length, SHA-256 and a bounded chunk index. Reuse chunks
   of at most 128 KiB and existing integrity checks; encrypt the descriptor with
@@ -96,7 +99,7 @@ This requires a **new generic artifact path**, not an existing capture feature:
   directory before library indexing.
 - Emit Stored ZIP members; let the outer layer's existing adaptive compression
   handle compressible chunks and bypass ineffective work. Do not decompress and
-  rebuild an existing ZIP to wrap it. K3 measures nested framing/index overhead
+  rebuild an existing ZIP to wrap it. The [composition benchmark](performance.md#portable-archive-composition) measures nested framing/index overhead
   and read amplification on large archives and already compressed evidence.
 - Require a sealed outer artifact and complete inner ZIP for a valid transfer.
   TMCap checkpoint recovery does not reconstruct a missing ZIP central directory.
@@ -105,11 +108,11 @@ This requires a **new generic artifact path**, not an existing capture feature:
   different outer bytes; inner object hashes and portable source identities do
   not change when their bytes do not.
 
-This choice avoids a new encryption dependency but does not establish correctness
-of the new composition. K3 must qualify the generic payload, independent ZIP
-readability after unwrap, corruption/truncation detection, password handling,
-bounded random access, cancellation and clean-machine distribution. K0 ships no
-encrypted case writer/reader and does not change today's TMCap wire format.
+The implementation reuses the existing encryption dependency and validates the
+composition separately: independent ZIP readability, corruption/truncation,
+password handling, bounded random access and transactional publication. The
+test-only native flow uses a fresh desktop profile. This does not establish a
+stable public v1 or qualify the future CLI commands.
 
 ### Compression and performance qualification
 
@@ -126,7 +129,7 @@ The generic writer must reset/re-evaluate compression at member boundaries, or
 use equivalent bounded sampling that prevents an incompressible capture from
 suppressing compression of subsequent text/configuration members. Boundary hints
 must preserve the exact ZIP bytes and must not force padded physical blocks for
-every small member. Measure both whole-stream and boundary-aware policies in K3.
+every small member. The developer benchmark measures both policies.
 
 Before shipping, compare Stored ZIP + TMCap against ZIP Deflate with outer
 compression disabled on the same synthetic and representative workloads: large
@@ -134,7 +137,9 @@ native/encrypted captures, encoded assets, large plain text, small config/notes,
 and mixed member order. Record package size, pack/validate/open times, random
 entry/body latency, CPU and peak memory; report password derivation separately.
 Current capture benchmarks qualify the existing codec, not this future wrapper.
-No package-level throughput or size advantage is claimed by K0.
+Measured scope, results and the small-package framing floor are recorded in
+[performance](performance.md#portable-archive-composition); they are not a general
+package throughput promise.
 
 Unencrypted TMCap uses its existing corruption checks, not authenticated
 encryption; it provides no confidentiality or publisher identity.
@@ -294,9 +299,9 @@ output bound. `PreparedCollection::prepare` additionally reads each declared
 digest from an explicit caller-supplied local provider into owned temporary
 files. It checks exact length and SHA-256 with 128 KiB buffers, syncs files and
 removes its staging directory on drop or failure. `manifest()` and
-`open_object(digest)` expose only that frozen closure. There is no archive or
-directory reader here: a future file adapter must enforce its own safe
-name/member/source-access policy before supplying readers. The manifest never
+`open_object(digest)` expose only that frozen closure. The separate `Package` and
+`WorkingCase` adapters enforce safe member/source-access policies before supplying
+readers. The manifest never
 causes a URL, linked file path or source-machine path to be opened.
 
 The [Application facade](../crates/app/src/rule_interchange.rs) exposes:
@@ -443,7 +448,7 @@ includes no Traffic. Selected workspace evidence requires explicit
 `derived_plaintext=true`: it creates a new plaintext derived native artifact,
 including when an earlier source was encrypted. To preserve an encrypted source
 as-is, supply its exact encrypted bytes through the case object provider instead.
-Working directories are plaintext; archive-wide encryption belongs to K3.
+Working directories are plaintext; native transfers optionally encrypt the whole archive.
 
 Selected evidence uses the production native session writer: retained boundary
 bodies, original entry IDs, raw fields, stream payloads, truncation, local response
@@ -483,6 +488,86 @@ opening the evidence API; this does not grant a viewer global automation rights.
 Synchronous prepare/save APIs should run on a worker in a GUI host. Case evidence
 opening is asynchronous and cancels pending publication if its future is dropped.
 
+## Desktop transfer and package APIs (K3)
+
+Traffic's **Files** menu offers **Save portable case…** and **Open portable case…**.
+Saving starts with an explicit evidence scope (including a no-evidence option),
+selected saved rules/exact experiment revisions, authored notes and an original
+context choice. It does not run new configuration commands. Preparing selected
+evidence creates owned plaintext snapshots; the review discloses this before the
+user authorizes the derived copy. Output encryption protects the final transfer.
+
+Review shows included/retained entry counts, sources, stream/body completeness,
+notes, context, assets, runs, experiment availability and exclusions. The full
+manifest/provenance is available as inert text. Missing content remains missing;
+an optional unsupported experiment does not prevent unrelated inspection.
+**Ready to import disabled** describes supported rule content, not browser replay
+or proof of an earlier experiment's outcome.
+
+The native format compresses a Stored ZIP64 stream inside TMCap. Optional password
+protection covers the complete ZIP, including notes, context, object names and
+manifest. The masked output prompt is separate from source/embedded-source
+password prompts. Bare ZIP interchange is uncompressed and cannot be encrypted.
+An error or canceled password prompt never selects plaintext as a fallback.
+
+Opening verifies the complete outer stream and all declared object hashes before
+publishing inventory. It creates no decrypted archive or working directory.
+**Inspect in Traffic** uses pinned random reads and the existing inert native
+importer. Original internal source keys are checked before Traffic publication.
+Source-linked notes can navigate to retained matching requests; absent links are
+reported without guessing. **View context** displays retained JSON/text without
+executing its command labels. Capture viewers retain their role restrictions.
+
+Closing review preserves its inventory and ongoing operations; reopening the
+action returns to that inventory. **Open another package…** replaces it only after
+successful verification. **Close package** releases its owner, while already
+imported Traffic retains the source/key handles needed by lazy bodies. Moving or
+deleting the original filename does not reopen another file under that name.
+
+**Save transfer as…** forwards the exact inner ZIP, optionally changing its outer
+compression/password. It preserves ZIP metadata as well as declared contents;
+it is not redaction. An encrypted opened package starts with protection selected.
+Writing a readable copy requires an explicit output choice. Native dialogs confirm
+replacement; failed writes, failed verification and cancellation preserve existing
+destinations and remove only owned staging files.
+Replacing an opened package atomically publishes a separately verified file.
+Existing pinned readers retain their original snapshot; new opens see the new
+package. Windows readers allow delete sharing and publication uses the modern
+rename API through Rust's standard library. A failed replacement preserves the
+existing destination.
+
+**Save working copy…** separately requires acknowledgment that the new folder is
+plaintext. It creates a new case directory at the chosen path and preserves
+existing paths. Portable manifest IDs are not used as filesystem names. Archive editing is not implicit. Shared `WorkingCase` APIs own
+transactional edits/history; this desktop increment does not add a project editor.
+
+In the main window, selected supported experiments/ordinary rules have a separate
+import review showing fresh identities and conflicts. Commit imports rules disabled
+and experiments paused/unselected, preserving existing edits and activation.
+Rules-only packages are reviewed as one complete dependency graph. Opening,
+copying or inspecting never imports automation automatically or executes scripts.
+
+[`Package`](../crates/portable/src/package.rs) is the shared archive adapter:
+
+| API | Boundary |
+| --- | --- |
+| `open(path, source_password, canceled)` | Pinned, fully verified read-only source; bounded ZIP directory and strict manifest validation. |
+| `open_object(digest)` | Independent seekable cursor over declared bytes; no source-machine path resolution. |
+| `write_transfer(...)` | Stream the exact ZIP into native or bare output; verify before publication. |
+| `save_working_copy(...)` | Explicit create-new plaintext directory using K2 transactional persistence. |
+| `write_case_package` / `write_rules_package` | Stream a frozen dependency closure directly into Stored ZIP64 and optionally TMCap; exclude working history/recovery. |
+| `Application::open_package_evidence` | Existing bounded native importer and body sources, with package/source handles pinned for lazy reads. |
+
+The ZIP preflight rejects unsafe/unlisted/duplicate names, links/directories,
+unsupported compression/encryption, inconsistent ZIP32/ZIP64 and local/central
+metadata, overlaps, incomplete descriptors and trailing data. Directory limits
+are checked before indexing; no payload-sized allocation is made. Standard
+streamed ZIP64 placeholders/descriptors are supported, including an unsigned
+descriptor whose CRC equals the optional signature. Transfer content is read in
+128 KiB chunks; the outer protected chunk index has a separate 16 MiB limit.
+Failure-injection, blocked replacement, large virtual ZIP64, independent ZIP-reader
+and encrypted native desktop tests are described in [testing](testing.md).
+
 ## Configuration and diagnostic context
 
 Use the same ZIP object store for saved configuration output and diagnostic
@@ -521,14 +606,15 @@ machine's snapshot. A new case-save collection has
 capture-only bundle can use the same case manifest with empty experiments,
 assets, notes and runs; it does not need another archive format.
 
-The current native `trace-metadata` / `trace-source` layout is an audit fact, not
-a compatibility constraint. When moving saved context to these objects, update
-the current writers, readers and recovery together; do not dual-write context,
-add fallback readers or keep the old storage solely to open earlier files. K3
-must specify recording/checkpoint and final-package behavior so interrupted
-recording still recovers its available traffic and context without depending on
-an unfinished ZIP directory. Source association is evidence provenance, not a
-reason to retain the old record representation.
+Active capture documents keep recorder context in committed capture metadata so
+prefix/checkpoint recovery can retain it without a ZIP directory. Final case
+preparation projects selected evidence into a newly sealed native object with
+empty inline source context; original context goes into the source-associated
+ZIP objects above. Case opening restores it from those objects, without an
+earlier-layout fallback or duplicate context write. These are separate current
+document kinds, not a compatibility adapter. Interrupted original captures can
+still be inspected through native prefix recovery; an unfinished final ZIP/TMCap
+archive is never presented as a completed transfer.
 
 Collection stays opt-in and uses the existing bounded collector; packaging and
 opening do not run tool labels, shell commands or network probes. Preserve
@@ -539,8 +625,8 @@ if deliberately embedded opaque evidence still contains the same information,
 it needs an explicitly derived capture with new identity/lineage or a warning
 that the information remains. This is a content/privacy rule, not a requirement
 to support historical TMCap layouts.
-No collectors or existing native context records change in K0. K2 owns the
-inventory and source associations; K3 owns safe packaging/privacy qualification.
+Collectors remain opt-in and unchanged. K2 supplies the context inventory and
+source associations; K3 packages and protects that same object model.
 
 ## Limits, persistence and import
 
@@ -584,7 +670,7 @@ Package encryption does not erase plaintext working copies, previews or dumps.
 
 ## Intended CLI interface
 
-These commands are **not implemented by K0–K2**. K4 adds the first group; K5 adds
+These commands are **not implemented by K0–K3**. K4 adds the first group; K5 adds
 script/compare tooling only after its dependencies are distributed and qualified.
 
 | Command | Intended behavior |
@@ -643,14 +729,14 @@ K1's production parser and application tests cover selected rule/asset export
 and reviewed disabled import, native exact/pattern/regex/query matching, header
 and literal output, encoded/duplicate-header fixtures, changed/large linked
 files, conflict remapping, cancellation, failed persistence, restart recovery,
-workspace ownership and generation-bound asset visibility. Case/archive/CLI
-scenarios remain future work; passing rule tests does not qualify those readers.
+workspace ownership and generation-bound asset visibility. Passing rule tests
+alone does not qualify archive readers or future CLI commands.
 
 K2's working-case APIs implement evidence/notes/context/run inventory and
 transactional directory persistence, including historical manifest inspection.
-K3 qualifies
-safe archive readers/writers, the typed TMCap wrapper, hostile corpus,
-transactional export and clean-profile import. K4 qualifies the documented CLI
+K3 implements and separately checks safe archive readers/writers, the typed TMCap
+wrapper, hostile corpus, transactional export and clean-profile desktop transfer.
+K4 qualifies the documented CLI
 using shipped binaries in an empty directory. K5 integrates scripts, preview and
 comparison without claiming that packaging launches arbitrary browsers.
 
@@ -658,6 +744,7 @@ Every reader must exercise the corpus through its production path once shipped:
 colliding sources and IDs; duplicate/binary headers and compression; missing and
 changed linked bytes; sensitive notes; encrypted sources; streams/loss/prefixes;
 unknown versions/features; invalid paths, duplicate members and corrupt digests.
-Add cancellation/full-disk/password retry and large streaming cases in K3/K4.
+Retain cancellation/full-disk/password retry and large streaming coverage as
+additional consumers are introduced.
 Record actual compatibility, completeness and runnable state instead of a single
 "portable" success flag. Keep per-run results under ignored `artifacts`.

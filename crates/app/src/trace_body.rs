@@ -18,11 +18,42 @@ use crate::body_store::SavedBodySource;
 /// covers only seek/read pairs; separate body streams never share positions.
 #[derive(Clone, Debug)]
 pub(crate) struct SourceReader {
-    file: Arc<Mutex<File>>,
+    file: Arc<Mutex<SourceFile>>,
     position: u64,
     length: u64,
     modified: Option<std::time::SystemTime>,
     digest: Arc<Mutex<Option<String>>>,
+}
+#[derive(Debug)]
+enum SourceFile {
+    File(File),
+    Package(transmog_portable::PackageMember),
+}
+impl Read for SourceFile {
+    fn read(&mut self, bytes: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Self::File(f) => f.read(bytes),
+            Self::Package(p) => p.read(bytes),
+        }
+    }
+}
+impl Seek for SourceFile {
+    fn seek(&mut self, from: SeekFrom) -> io::Result<u64> {
+        match self {
+            Self::File(f) => f.seek(from),
+            Self::Package(p) => p.seek(from),
+        }
+    }
+}
+impl SourceFile {
+    fn metadata(&self) -> io::Result<std::fs::Metadata> {
+        match self {
+            Self::File(f) => f.metadata(),
+            Self::Package(_) => Err(io::Error::other(
+                "Package object has no standalone metadata",
+            )),
+        }
+    }
 }
 impl SourceReader {
     pub(crate) const fn length(&self) -> u64 {
@@ -34,12 +65,25 @@ impl SourceReader {
         let length = metadata.len();
         let modified = metadata.modified().ok();
         Ok(Self {
-            file: Arc::new(Mutex::new(file)),
+            file: Arc::new(Mutex::new(SourceFile::File(file))),
             position: 0,
             length,
             modified,
             digest: Arc::default(),
         })
+    }
+    pub(crate) fn package(
+        member: transmog_portable::PackageMember,
+        length: u64,
+        sha: String,
+    ) -> Self {
+        Self {
+            file: Arc::new(Mutex::new(SourceFile::Package(member))),
+            position: 0,
+            length,
+            modified: None,
+            digest: Arc::new(Mutex::new(Some(sha))),
+        }
     }
     pub(crate) fn artifact_digest(
         &self,
@@ -49,6 +93,17 @@ impl SourceReader {
             .file
             .lock()
             .map_err(|_| io::Error::other("Trace source reader failed"))?;
+        if matches!(&*file, SourceFile::Package(_)) {
+            if canceled.load(Ordering::Acquire) {
+                return Err(io::Error::other("Case export canceled"));
+            }
+            return self
+                .digest
+                .lock()
+                .map_err(|_| io::Error::other("Source identity cache failed"))?
+                .clone()
+                .ok_or_else(|| io::Error::other("Package identity is unavailable"));
+        }
         let before = file.metadata()?;
         if self.modified.is_none()
             || before.len() != self.length

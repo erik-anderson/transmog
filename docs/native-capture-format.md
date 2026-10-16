@@ -3,6 +3,13 @@
 For byte layouts, cryptographic derivation, record and index schemas, and reader
 invariants, see the [TMCap format specification](tmcap-format.md).
 
+Current headers require a document kind: `capture` for this append/checkpoint
+format, or `portable-archive` for a sealed, seekable ZIP payload. The latter reuses
+the existing encryption/block/compression layer without inventing HTTP records;
+see [portable investigations](portable-investigations.md). Capture prefix recovery
+does not recover an incomplete ZIP. This experimental layout has no earlier-header
+adapter; current consumers and fixtures move together.
+
 Application saves may include an exchange-scoped `request-order` extension with
 `{"version":1,"ordinal":"42"}`. The positive decimal `u64` ordinal describes
 relative workspace admission order at save time, independently of observer-event

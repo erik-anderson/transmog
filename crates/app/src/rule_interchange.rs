@@ -88,6 +88,8 @@ pub(crate) fn invalid(message: &str) -> AppError {
 pub(crate) fn portable_error(error: transmog_portable::Error) -> AppError {
     AppError::new(
         match error {
+            transmog_portable::Error::PasswordRequired => ErrorCategory::PasswordRequired,
+            transmog_portable::Error::InvalidPassword => ErrorCategory::InvalidPassword,
             transmog_portable::Error::Io(_) => ErrorCategory::Unavailable,
             transmog_portable::Error::Canceled => ErrorCategory::Canceled,
             transmog_portable::Error::Unsupported(_) => ErrorCategory::Unsupported,

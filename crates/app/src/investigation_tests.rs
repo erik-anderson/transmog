@@ -50,6 +50,129 @@ fn request() -> CaseExportRequest {
 }
 
 #[tokio::test]
+async fn encrypted_package_inspects_without_extraction_and_keeps_pinned_bodies_after_close() {
+    let root = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let app = application(root.path());
+    let value = manifest("source-collision");
+    let prepared = prepare(&value, stage.path());
+    let path = root.path().join("case.tmcase.tmcap");
+    let password = transmog_capture::CapturePassword::new("package-fixture".into());
+    wire::write_case_package(
+        &prepared,
+        &path,
+        wire::PackageFormat::Native,
+        Some(password.clone()),
+        false,
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+    drop(prepared);
+    assert_eq!(std::fs::read_dir(stage.path()).unwrap().count(), 0);
+    let package = wire::Package::open(&path, Some(&password), &AtomicBool::new(false)).unwrap();
+    let before = app.automation_status();
+    let opened = app
+        .open_package_evidence(&package, "source-a", None, Arc::new(AtomicBool::new(false)))
+        .await
+        .unwrap();
+    assert_eq!(app.automation_status(), before);
+    assert_eq!(std::fs::read_dir(stage.path()).unwrap().count(), 0);
+    let id = opened
+        .resolve(value.notes[0].source.as_ref().unwrap())
+        .unwrap()
+        .to_owned();
+    drop(package);
+    std::fs::remove_file(&path).unwrap();
+    let bytes = app
+        .body_store
+        .as_ref()
+        .unwrap()
+        .read_range(
+            ExchangeId(u128::from_str_radix(&id, 16).unwrap()),
+            ExchangeBoundary::ClientResponse,
+            0,
+            1,
+        )
+        .unwrap();
+    assert_eq!(bytes.bytes, b"h");
+    let mut request = request();
+    request.derived_plaintext = true;
+    request.evidence_review_id = Some(app.review_traffic_export(None).unwrap().id);
+    let derived = app
+        .prepare_investigation(&request, stage.path(), &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(
+        derived.manifest().sources[0].lineage.parents[0].artifact_sha256,
+        value.sources[0].artifact_sha256
+    );
+}
+
+#[tokio::test]
+async fn mismatched_native_source_identity_fails_before_traffic_publication() {
+    let root = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let app = application(root.path());
+    let value = manifest("source-collision");
+    let bytes = String::from_utf8(value.encode().unwrap())
+        .unwrap()
+        .replace("\"sourceKey\": \"root\"", "\"sourceKey\": \"absent\"");
+    let value = wire::CaseManifest::parse(bytes.as_bytes()).unwrap();
+    let prepared = prepare(&value, stage.path());
+    assert!(
+        app.open_investigation_evidence(
+            &prepared,
+            "source-a",
+            None,
+            Arc::new(AtomicBool::new(false))
+        )
+        .await
+        .is_err()
+    );
+    assert!(app.trace_metadata_list().is_empty());
+    assert_eq!(app.automation_status().generation, 0);
+}
+
+#[tokio::test]
+async fn unavailable_optional_source_context_does_not_block_present_evidence() {
+    let root = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let app = application(root.path());
+    let mut value = manifest("network-context");
+    let source_id = value.sources[0].id.clone();
+    let mut omitted = value.sources[0].clone();
+    omitted.id = "omitted-source".into();
+    omitted.source_key = "not-retained".into();
+    omitted.dependency = wire::Availability {
+        state: "missing".into(),
+        reason: Some("The original source was not retained".into()),
+        sha256: None,
+        bytes: None,
+    };
+    let mut context = value.contexts[0].clone();
+    context.id = "omitted-context".into();
+    context.kind = "capture-metadata".into();
+    context.origin.kind = "captured-source".into();
+    context.origin.source = Some(wire::SourceAssociation {
+        artifact_sha256: omitted.artifact_sha256.clone(),
+        source_key: omitted.source_key.clone(),
+    });
+    value.sources.push(omitted);
+    value.contexts.push(context);
+    let prepared = prepare(&value, stage.path());
+    let opened = app
+        .open_investigation_evidence(
+            &prepared,
+            &source_id,
+            None,
+            Arc::new(AtomicBool::new(false)),
+        )
+        .await
+        .unwrap();
+    assert!(!opened.links.is_empty());
+    assert_eq!(app.automation_status().generation, 0);
+}
+
+#[tokio::test]
 async fn colliding_sources_open_inertly_with_distinct_links_and_pinned_body_lifetimes() {
     let root = tempfile::tempdir().unwrap();
     let stage = tempfile::tempdir().unwrap();
