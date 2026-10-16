@@ -1,8 +1,9 @@
 # Portable investigations: revision 0
 
-Status: K0 defines the contract and corpus; K1 implements rule/asset interchange
-in the shared library and UI-neutral application APIs. Desktop file actions,
-case working copies, archive/encryption readers and CLI commands remain planned.
+Status: K0 defines the contract and corpus; K1 implements rule/asset interchange;
+K2 adds directory working cases, inventory and evidence inspection through shared
+libraries and UI-neutral application APIs. Desktop file actions, archive/encryption
+readers and CLI commands remain planned.
 [ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
 [the roadmap](roadmap.md) tracks remaining implementation.
 
@@ -383,6 +384,105 @@ limits also apply. A valid larger transfer can therefore fail import atomically
 without altering existing content; transfer validity is not a promise of available
 workspace capacity. Later archive/working-copy APIs have their own qualification.
 
+## Implemented working-case APIs (K2)
+
+[`CaseManifest`](../crates/portable/src/case_model.rs) defines case-only source,
+note, marker, context, lineage and run DTOs. `parse` / `encode` apply strict JSON,
+identity/reference and native rule validation within the existing 8 MiB/depth-32
+bound. The production reader exercises the case corpus, including unavailable
+assets, locked native sources, duplicate source labels/IDs, optional future
+experiments and different historical/export-time response bytes.
+
+`inventory()` reports selected object bytes, source completeness, missing/locked
+dependencies and each experiment's availability. `ready-for-explicit-import`
+means supported rules and complete declared asset dependencies; it does not mean
+a browser run has occurred. Unsupported optional experiments remain opaque JSON
+and inspectable as unavailable. Unknown required package features fail early.
+`rules_for_import(ids, ordinary)` selects only supported, complete dependencies
+for K1's separate reviewed disabled import. Opening or saving a case does not
+copy automation into the workbench or activate anything.
+
+`PreparedCase::prepare` snapshots declared objects from an explicit inert local
+provider, verifying exact lengths/hashes with 128 KiB chunks. Captures have no new
+small byte ceiling; response bodies retain 1 GiB and context objects 8 MiB limits.
+JSON context is parsed within the same depth/size limits; text stays UTF-8 data.
+The owned snapshot and its read handles survive source movement/deletion.
+Passwords, compiled script state and active hook registrations are not case data.
+
+[`WorkingCase`](../crates/portable/src/working.rs) provides:
+
+| API | Current behavior |
+| --- | --- |
+| `create(prepared, path, canceled)` | Create-new plaintext directory; existing paths are preserved. A manifest is published only after complete verified objects are present. |
+| `open(path, staging, canceled)` | Read-only verified current snapshot; no collection, script execution or application-state import. |
+| `save(next, canceled)` | Same case ID and next exact revision, exclusive writer lock and unchanged current-manifest hash; stage/flush objects and history before atomically replacing `manifest.json`. |
+| `history()` / `open_revision(revision, staging, canceled)` | List retained prior revisions and explicitly verify/open their object closure. Current inventory does not imply every historical object's integrity has been checked. |
+| `prune_history(revisions)` | Explicit removal of selected old manifests; current evidence and immutable objects remain. Recovery data must be inspected before pruning a directory that contains it. |
+| `recovery_artifacts()` | Report interrupted owned staging without loading it as the current case or silently deleting it. |
+
+At most 32 committed manifest revisions, including current, are retained. Saving
+at the limit fails before publication until the caller explicitly prunes history.
+An interrupted save/prune can leave immutable unreferenced objects, temporary
+files or an empty/current-revision history directory. The valid current manifest
+remains authoritative. Conflicting pending history is preserved for inspection
+and explicit repair; retry can reuse an identical completed history snapshot.
+Failures preserve existing current content and destinations. The filesystem
+adapter rejects links/reparse points, unexpected member names and excessive
+metadata/staging counts. No archive extraction is implemented by this adapter.
+
+The [Application case APIs](../crates/app/src/investigations.rs) are:
+
+| API | Result |
+| --- | --- |
+| `prepare_investigation(request, staging, canceled)` | Frozen selected rules/assets and an optional reviewed native evidence selection, source-linked authored notes, original context objects and incident-marker inventory. |
+| `open_investigation_evidence(case, source_id, password, canceled)` | Existing inert Traffic/source inspection with stable-reference-to-runtime navigation links. It shares native importer limits and atomic publication. |
+
+`CaseExportRequest.rules` supplies exact saved selections through K1;
+`evidence_review_id` is an existing frozen Traffic export review. Omitted evidence
+includes no Traffic. Selected workspace evidence requires explicit
+`derived_plaintext=true`: it creates a new plaintext derived native artifact,
+including when an earlier source was encrypted. To preserve an encrypted source
+as-is, supply its exact encrypted bytes through the case object provider instead.
+Working directories are plaintext; archive-wide encryption belongs to K3.
+
+Selected evidence uses the production native session writer: retained boundary
+bodies, original entry IDs, raw fields, stream payloads, truncation, local response
+snapshot/operation evidence and per-exchange loss remain recorded. Capture-wide
+loss is preserved separately from per-request attribution, both in source context
+and native derived output. Parent artifact hashes come from pinned input handles,
+with bounded streaming and change checks against the indexed file's size/time.
+The internal source key inside that exact artifact is retained. Changed originals
+fail export; filenames and new runtime trace IDs are not used as origin identity.
+Live evidence without an earlier artifact has an explicit unavailable-parent
+reason. Hashes identify bytes, not authenticity or proof of historical behavior.
+
+Derived sources get fresh intrinsic keys in their new native artifact. Lineage
+parents carry `artifactSha256`, optional `sourceKey`, dependency state and reason.
+Original entry IDs remain unchanged. When a subset changes an occurrence number
+for a repeated original ID, `entryMappings:[{exchangeId,occurrence,original}]`
+records its complete parent evidence reference. Import-time occurrences survive
+clearing earlier rows, so the next export cannot silently renumber the parent.
+`OpenedCaseEvidence.links` contains temporary navigation handles;
+`resolve(reference)` never joins by label or guesses an absent original ID.
+
+Case notes are authored `{id,text,source?}` observations. Case markers retain
+`id`, `label`, source artifact/key, `originalId` and nullable decimal
+`elapsedMillis`; unknown elapsed time stays `null`. Runs retain exact
+`experimentId`, `variantId`, decimal `revision`, declared retained
+`responses:[{source,body,provenance}]` and authored `outcome:{origin,text}`. The
+current run layout validates selected saved response variants and exact response
+object references. Stored declarations are not a browser replay or a substitute
+for inspecting captured boundaries. New workspace exports leave runs empty;
+they never infer a past run's bytes from today's linked file. Existing per-run
+snapshot evidence stays in selected native captures, and the working model can
+retain explicitly supplied historical body objects independently of current assets.
+
+No desktop case dialog, new command, browser launcher or case archive is added
+by K2. Hosts use their existing read-only viewer role and permission checks when
+opening the evidence API; this does not grant a viewer global automation rights.
+Synchronous prepare/save APIs should run on a worker in a GUI host. Case evidence
+opening is asynchronous and cancels pending publication if its future is dropped.
+
 ## Configuration and diagnostic context
 
 Use the same ZIP object store for saved configuration output and diagnostic
@@ -396,6 +496,22 @@ not proof that the same configuration held during every captured request.
 Unknown optional context kinds remain inspectable as unavailable metadata within
 the same bounds; they never acquire execution semantics. Package-wide required
 features still fail early when unsupported.
+
+K2's working-case reader stores these exact JSON/text bytes in context objects.
+Newly exported workspace sources use `kind="capture-metadata"` with a bounded
+JSON object containing original `context`, `notes` and `format`. That includes
+original network-configuration output, incident metadata and source notes. The
+embedded derived native capture has empty context/path fields; configuration is
+not duplicated there. Existing standalone native Save trace remains unchanged.
+Opening a case never invokes a recorded command or collects replacement context
+from the receiving computer.
+
+Captured-source `collectedAt` may be `null` when the outer source metadata has no
+known collection time. Its nested original timestamps and machine/purpose values
+remain intact; an import/export time is not substituted. New
+`collected-for-case` context requires a known RFC3339 collection time. Unknown
+optional context kinds remain inert objects; they are not restored as native
+support context by the current adapter.
 
 Keep capture-time context associated with its source through artifact digest and
 internal source key, with collection purpose/time/machine recorded separately.
@@ -468,7 +584,7 @@ Package encryption does not erase plaintext working copies, previews or dumps.
 
 ## Intended CLI interface
 
-These commands are **not implemented by K0 or K1**. K4 adds the first group; K5 adds
+These commands are **not implemented by K0–K2**. K4 adds the first group; K5 adds
 script/compare tooling only after its dependencies are distributed and qualified.
 
 | Command | Intended behavior |
@@ -530,7 +646,9 @@ files, conflict remapping, cancellation, failed persistence, restart recovery,
 workspace ownership and generation-bound asset visibility. Case/archive/CLI
 scenarios remain future work; passing rule tests does not qualify those readers.
 
-K2 adds evidence/notes/run inventory and working-copy persistence. K3 qualifies
+K2's working-case APIs implement evidence/notes/context/run inventory and
+transactional directory persistence, including historical manifest inspection.
+K3 qualifies
 safe archive readers/writers, the typed TMCap wrapper, hostile corpus,
 transactional export and clean-profile import. K4 qualifies the documented CLI
 using shipped binaries in an empty directory. K5 integrates scripts, preview and

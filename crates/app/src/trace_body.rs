@@ -21,6 +21,8 @@ pub(crate) struct SourceReader {
     file: Arc<Mutex<File>>,
     position: u64,
     length: u64,
+    modified: Option<std::time::SystemTime>,
+    digest: Arc<Mutex<Option<String>>>,
 }
 impl SourceReader {
     pub(crate) const fn length(&self) -> u64 {
@@ -28,12 +30,73 @@ impl SourceReader {
     }
 
     pub(crate) fn new(file: File) -> io::Result<Self> {
-        let length = file.metadata()?.len();
+        let metadata = file.metadata()?;
+        let length = metadata.len();
+        let modified = metadata.modified().ok();
         Ok(Self {
             file: Arc::new(Mutex::new(file)),
             position: 0,
             length,
+            modified,
+            digest: Arc::default(),
         })
+    }
+    pub(crate) fn artifact_digest(
+        &self,
+        canceled: &std::sync::atomic::AtomicBool,
+    ) -> io::Result<String> {
+        let mut file = self
+            .file
+            .lock()
+            .map_err(|_| io::Error::other("Trace source reader failed"))?;
+        let before = file.metadata()?;
+        if self.modified.is_none()
+            || before.len() != self.length
+            || before.modified().ok() != self.modified
+        {
+            return Err(io::Error::other("Original trace changed since indexing"));
+        }
+        if let Some(digest) = self
+            .digest
+            .lock()
+            .map_err(|_| io::Error::other("Source identity cache failed"))?
+            .clone()
+        {
+            return Ok(digest);
+        }
+        file.rewind()?;
+        let mut hash = Sha256::new();
+        let mut buffer = vec![0; 128 * 1024];
+        let mut total = 0_u64;
+        loop {
+            if canceled.load(Ordering::Acquire) {
+                return Err(io::Error::other("Case export canceled"));
+            }
+            let count = file.read(&mut buffer)?;
+            if count == 0 {
+                break;
+            }
+            total = total
+                .checked_add(count as u64)
+                .ok_or_else(|| io::Error::other("Trace length overflow"))?;
+            if total > self.length {
+                return Err(io::Error::other("Original trace grew while hashing"));
+            }
+            hash.update(&buffer[..count]);
+        }
+        let after = file.metadata()?;
+        if total != self.length
+            || after.len() != self.length
+            || after.modified().ok() != self.modified
+        {
+            return Err(io::Error::other("Original trace changed while hashing"));
+        }
+        let digest = format!("{:x}", hash.finalize());
+        *self
+            .digest
+            .lock()
+            .map_err(|_| io::Error::other("Source identity cache failed"))? = Some(digest.clone());
+        Ok(digest)
     }
 }
 impl Read for SourceReader {

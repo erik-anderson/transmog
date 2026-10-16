@@ -185,6 +185,25 @@ struct State {
     metadata: BTreeMap<String, TraceMetadataView>,
     entries: HashMap<String, TraceEntry>,
     operations: HashMap<String, Arc<AtomicBool>>,
+    artifacts: HashMap<String, ArtifactOrigin>,
+    occurrences: HashMap<String, u64>,
+}
+
+#[derive(Clone)]
+pub(crate) struct ArtifactOrigin {
+    reader: SourceReader,
+    key: String,
+    pub(crate) loss: Arc<Vec<Value>>,
+}
+impl ArtifactOrigin {
+    pub(crate) fn digest(&self, canceled: &AtomicBool) -> Result<(String, String), AppError> {
+        self.reader
+            .artifact_digest(canceled)
+            .map(|sha| (sha, self.key.clone()))
+            .map_err(|_| {
+                invalid("Original capture changed or its content identity cannot be verified")
+            })
+    }
 }
 
 // Dropping the awaiting task must cancel its blocking worker too. Keep the
@@ -224,6 +243,7 @@ impl TraceRegistry {
             .collect::<std::collections::HashSet<_>>();
         for id in ids {
             state.entries.remove(&format!("{:032x}", id.0));
+            state.occurrences.remove(&format!("{:032x}", id.0));
         }
         let sources = state
             .entries
@@ -231,6 +251,7 @@ impl TraceRegistry {
             .map(|entry| entry.trace_id.clone())
             .collect::<std::collections::HashSet<_>>();
         state.metadata.retain(|id, _| sources.contains(id));
+        state.artifacts.retain(|id, _| sources.contains(id));
         for (entries, _, _) in &mut state.index_batches {
             entries.retain(|id| !removed.contains(id));
         }
@@ -254,11 +275,27 @@ impl TraceRegistry {
     pub(crate) fn entry(&self, id: &str) -> Option<TraceEntry> {
         self.lock().entries.get(id).cloned()
     }
+    pub(crate) fn entry_occurrence(&self, id: &str) -> Option<u64> {
+        self.lock().occurrences.get(id).copied()
+    }
     pub(crate) fn metadata(&self, id: &str) -> Option<TraceMetadataView> {
         self.lock().metadata.get(id).cloned()
     }
     pub(crate) fn list(&self) -> Vec<TraceMetadataView> {
         self.lock().metadata.values().cloned().collect()
+    }
+    pub(crate) fn frozen_origin(&self, id: &str) -> Option<ArtifactOrigin> {
+        self.lock().artifacts.get(id).cloned()
+    }
+    #[cfg(test)]
+    pub(crate) fn artifact_origin(
+        &self,
+        id: &str,
+        canceled: &AtomicBool,
+    ) -> Result<Option<(String, String)>, AppError> {
+        self.frozen_origin(id)
+            .map(|origin| origin.digest(canceled))
+            .transpose()
     }
     pub(crate) fn cancel(&self, operation_id: &str) {
         if let Some(canceled) = self.lock().operations.get(operation_id) {
@@ -335,6 +372,16 @@ impl TraceRegistry {
             File::open(&path).map_err(|_| invalid("The selected trace file is unreadable"))?;
         let reader =
             SourceReader::new(file).map_err(|_| unavailable("Trace source could not be opened"))?;
+        Self::read_source(request, reader, path, canceled, progress)
+    }
+
+    fn read_source(
+        request: &TraceImportRequest,
+        reader: SourceReader,
+        path: PathBuf,
+        canceled: &AtomicBool,
+        progress: &(dyn Fn(TraceImportProgress) + Send + Sync),
+    ) -> Result<(ImportData, TraceMetadataView, u64), AppError> {
         let bytes = reader.length();
         if bytes > request.max_file_bytes {
             return Err(invalid("The trace exceeds the selected input byte limit"));
@@ -355,6 +402,7 @@ impl TraceRegistry {
                 total,
             });
         };
+        let artifact = reader.clone();
         let mut imported =
             match crate::trace_format::detect_trace_format_from(&path, reader.clone()) {
                 Some(crate::TraceFormat::Saz) => import_saz(
@@ -383,6 +431,7 @@ impl TraceRegistry {
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
         }
+        imported.artifact = Some(artifact);
         let trace = TraceMetadataView {
             id: trace_id.clone(),
             name,
@@ -398,6 +447,74 @@ impl TraceRegistry {
             ),
         };
         Ok((imported, trace, bytes))
+    }
+
+    pub(crate) fn import_case_file(
+        &self,
+        file: File,
+        request: &TraceImportRequest,
+        application: &crate::Application,
+        contexts: BTreeMap<String, File>,
+        canceled: &Arc<AtomicBool>,
+    ) -> Result<TraceImportResult, AppError> {
+        {
+            let mut state = self.lock();
+            if state.operations.len() >= 4 || state.operations.contains_key(&request.operation_id) {
+                return Err(invalid(
+                    "Another import already uses this operation or the import limit was reached",
+                ));
+            }
+            state
+                .operations
+                .insert(request.operation_id.clone(), canceled.clone());
+        }
+        let _operation = ImportOperation {
+            registry: self.clone(),
+            id: request.operation_id.clone(),
+        };
+        let reader =
+            SourceReader::new(file).map_err(|_| unavailable("Case evidence is unavailable"))?;
+        if crate::trace_format::detect_trace_format_from(&request.path, reader.clone())
+            != Some(crate::TraceFormat::Native)
+        {
+            return Err(AppError::new(
+                ErrorCategory::Unsupported,
+                "Case evidence inspection currently requires a native capture",
+                false,
+            ));
+        }
+        let (mut imported, mut trace, _) =
+            Self::read_source(request, reader, PathBuf::new(), canceled, &|_| {})?;
+        restore_case_context(&mut imported, &mut trace, contexts, canceled)?;
+        let store = application
+            .body_store
+            .as_ref()
+            .ok_or_else(|| unavailable("Body retention is not configured"))?;
+        self.publish_import(imported, &application.service, store, trace, canceled)
+    }
+
+    pub(crate) fn case_entries(
+        &self,
+        parent: &str,
+        keys: &[String],
+    ) -> Vec<(String, String, TraceEntry)> {
+        let state = self.lock();
+        let prefix = parent.strip_prefix("trace-").unwrap_or("invalid");
+        let mut result = state
+            .entries
+            .iter()
+            .filter(|(id, _)| id.starts_with(prefix))
+            .filter_map(|(id, entry)| {
+                keys.iter()
+                    .find(|key| {
+                        (key.as_str() == "root" && entry.trace_id == parent)
+                            || source_namespace(parent, key) == entry.trace_id
+                    })
+                    .map(|key| (key.clone(), id.clone(), entry.clone()))
+            })
+            .collect::<Vec<_>>();
+        result.sort_by(|a, b| a.1.cmp(&b.1)); // Native import allocates runtime IDs in original appearance order.
+        result
     }
 
     fn publish_import(
@@ -489,7 +606,8 @@ impl TraceRegistry {
                 ));
                 state.metadata_bytes = state.metadata_bytes.saturating_add(extra_metadata);
                 state.metadata.extend(imported.sources);
-                state.metadata.insert(trace_id, trace.clone());
+                state.metadata.insert(trace_id.clone(), trace.clone());
+                install_origins(&mut state, &trace_id, imported.artifact.as_ref(), &imported.source_keys, &imported.entries, &imported.native_loss);
                 state.entries.extend(imported.entries);
                 Ok(())
             })
@@ -509,6 +627,116 @@ impl TraceRegistry {
     }
 }
 
+fn restore_case_context(
+    imported: &mut ImportData,
+    trace: &mut TraceMetadataView,
+    contexts: BTreeMap<String, File>,
+    canceled: &AtomicBool,
+) -> Result<(), AppError> {
+    use std::io::Read as _;
+    let mut context_bytes = 0_usize;
+    for (key, body) in contexts {
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable("Case evidence opening canceled"));
+        }
+        let mut bytes = Vec::new();
+        body.take(8 * 1024 * 1024 + 1)
+            .read_to_end(&mut bytes)
+            .map_err(|_| invalid("Case context is unavailable"))?;
+        if bytes.len() > 8 * 1024 * 1024 {
+            return Err(invalid("Case context exceeds its object limit"));
+        }
+        let payload: Value =
+            serde_json::from_slice(&bytes).map_err(|_| invalid("Invalid source context JSON"))?;
+        context_bytes = context_bytes
+            .checked_add(bytes.len())
+            .and_then(|sum| sum.checked_add(json_heap_bytes(&payload)))
+            .filter(|sum| *sum <= MAX_HEAD_BYTES)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Limit,
+                    "Case contexts exceed the viewer metadata limit",
+                    false,
+                )
+            })?;
+
+        let context = payload
+            .get("context")
+            .ok_or_else(|| invalid("Invalid capture-metadata context object"))?;
+        transmog_capture::support::validate_context(context)
+            .map_err(|_| invalid("Invalid case source context"))?;
+        let target = if key == "root" && imported.sources.is_empty() {
+            &mut *trace
+        } else {
+            imported
+                .sources
+                .get_mut(&source_namespace(&trace.id, &key))
+                .ok_or_else(|| invalid("Case context references an absent internal source"))?
+        };
+        let loss = target.context.get("globalLoss").cloned();
+        target.context = context.clone();
+        if let Some(loss) = loss {
+            if target.context.is_null() {
+                target.context = serde_json::json!({});
+            }
+            target
+                .context
+                .as_object_mut()
+                .ok_or_else(|| invalid("Case source context must be an object"))?
+                .insert("globalLoss".into(), loss);
+        }
+        let notes: Vec<String> = serde_json::from_value(
+            payload
+                .get("notes")
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([])),
+        )
+        .map_err(|_| invalid("Invalid case source notes"))?;
+        target.notes = bounded_source_notes(target.notes.iter().cloned().chain(notes));
+    }
+    Ok(())
+}
+
+fn install_origins(
+    state: &mut State,
+    trace_id: &str,
+    reader: Option<&SourceReader>,
+    keys: &HashMap<String, String>,
+    entries: &HashMap<String, TraceEntry>,
+    loss: &Arc<Vec<Value>>,
+) {
+    if let Some(reader) = reader {
+        state.artifacts.insert(
+            trace_id.into(),
+            ArtifactOrigin {
+                reader: reader.clone(),
+                key: "root".into(),
+                loss: loss.clone(),
+            },
+        );
+        for (id, key) in keys {
+            state.artifacts.insert(
+                id.clone(),
+                ArtifactOrigin {
+                    reader: reader.clone(),
+                    key: key.clone(),
+                    loss: loss.clone(),
+                },
+            );
+        }
+    }
+    let mut ordered = entries.iter().collect::<Vec<_>>();
+    ordered.sort_by(|a, b| a.0.cmp(b.0));
+    let mut counts = BTreeMap::new();
+    for (id, entry) in ordered {
+        let count = counts
+            .entry((&entry.trace_id, &entry.original_id))
+            .or_insert(0_u64);
+        state.occurrences.insert(id.clone(), *count);
+        *count += 1;
+    }
+}
+
 struct ImportedBody {
     id: ExchangeId,
     boundary: ExchangeBoundary,
@@ -519,6 +747,9 @@ struct ImportedBody {
     complete: bool,
 }
 struct ImportData {
+    native_loss: Arc<Vec<Value>>,
+    source_keys: HashMap<String, String>,
+    artifact: Option<SourceReader>,
     index_bytes: usize,
     // Stream history scales with recorded activity; it is measured but is not
     // subject to the HTTP metadata quota. Payload content remains lazy.
@@ -559,7 +790,10 @@ fn import_saz(
         )
         .map_err(AppError::from)?;
     let mut result = ImportData {
+        source_keys: HashMap::new(),
+        artifact: None,
         format: "saz",
+        native_loss: Arc::default(),
         stream_index_bytes: 0,
         sources: BTreeMap::new(),
         index_bytes: 0,
@@ -595,7 +829,12 @@ fn import_saz(
         head_bytes += serde_json::to_vec(&source)
             .map_err(|_| invalid("Invalid SAZ source"))?
             .len();
+        let original_key = source["id"]
+            .as_str()
+            .ok_or_else(|| invalid("Missing source identity"))?
+            .to_owned();
         let source = saved_source(source, trace_id)?;
+        result.source_keys.insert(source.id.clone(), original_key);
         if result.sources.insert(source.id.clone(), source).is_some() {
             return Err(invalid("Duplicate SAZ source metadata"));
         }
@@ -1357,7 +1596,9 @@ fn import_native(
     let mut appearance = Vec::new();
     let mut context = Value::Null;
     let mut markers = Vec::new();
+    let mut global_loss = Vec::new();
     let mut sources = BTreeMap::new();
+    let mut source_keys = HashMap::new();
     let mut budget = 0_usize;
     let mut certificates = HashSet::new();
     while let Some(frame) = capture
@@ -1369,6 +1610,18 @@ fn import_native(
         }
         validate_native_scope(&frame.record)?;
         if frame.record.exchange_id == 0 {
+            if let CaptureRecordKind::Loss {
+                first_missing_sequence,
+                count,
+                reason,
+            } = &frame.record.kind
+            {
+                let payload = serde_json::json!({"firstMissingSequence":first_missing_sequence.to_string(),"count":count.to_string(),"reason":reason});
+                charge_native_index(&mut budget, json_heap_bytes(&payload))?;
+                global_loss.push(payload);
+                progress(capture.valid_bytes(), max_bytes);
+                continue;
+            }
             if let CaptureRecordKind::Unknown { kind, payload } = frame.record.kind {
                 // CaptureReader bounds the transient dictionaries. Hydrated DER
                 // retained in session performance is charged separately below.
@@ -1402,7 +1655,12 @@ fn import_native(
                         context.insert("circularRetention".into(), payload);
                     }
                 } else if kind == "trace-source" {
+                    let original_key = payload["id"]
+                        .as_str()
+                        .ok_or_else(|| invalid("Missing source identity"))?
+                        .to_owned();
                     let source = saved_source(payload, trace_id)?;
+                    source_keys.insert(source.id.clone(), original_key);
                     if sources.len() >= MAX_SESSIONS
                         || sources.insert(source.id.clone(), source).is_some()
                     {
@@ -1438,6 +1696,21 @@ fn import_native(
         }
         progress(capture.valid_bytes(), max_bytes);
     }
+    let native_loss = Arc::new(global_loss.clone());
+    if !global_loss.is_empty() {
+        if context.is_null() {
+            context = serde_json::json!({});
+        }
+        let target = context
+            .as_object_mut()
+            .ok_or_else(|| invalid("Capture-wide loss requires object metadata"))?;
+        let loss = target
+            .entry("globalLoss")
+            .or_insert_with(|| serde_json::json!([]));
+        loss.as_array_mut()
+            .ok_or_else(|| invalid("Invalid capture-wide loss metadata"))?
+            .extend(global_loss);
+    }
     if !markers.is_empty() {
         if !context.is_object() {
             if !context.is_null() {
@@ -1457,7 +1730,10 @@ fn import_native(
     }
     transmog_capture::support::validate_context(&context).map_err(|e| invalid(&e.to_string()))?;
     let mut result = ImportData {
+        source_keys,
+        artifact: None,
         format: "native",
+        native_loss,
         stream_index_bytes: rows
             .values()
             .map(|row| row.stream_history.retained_bytes)
@@ -1507,6 +1783,7 @@ fn import_native(
 fn validate_native_scope(record: &transmog_capture::CaptureRecord) -> Result<(), AppError> {
     let global = match &record.kind {
         CaptureRecordKind::Seal { .. } => Some(true),
+        CaptureRecordKind::Loss { .. } => None, // Both capture-wide and per-exchange loss are valid.
         CaptureRecordKind::Unknown { kind, .. } => match kind.as_str() {
             "incident-marker" | "trace-metadata" | "trace-source" | "circular-retention"
             | "public-certificate" | "connection-context" => Some(true),

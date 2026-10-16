@@ -33,11 +33,17 @@ impl Collection {
     /// Returns validation or manifest-size failures without writing a destination.
     pub fn encode(&self) -> Result<Vec<u8>, Error> {
         crate::validate::collection(self)?;
-        let mut output = BoundedManifest(Vec::new());
-        serde_json::to_writer_pretty(&mut output, self)?;
-        Self::parse(&output.0)?;
-        Ok(output.0)
+        let bytes = encode_json(self)?;
+        Self::parse(&bytes)?;
+        Ok(bytes)
     }
+}
+
+pub(crate) fn encode_json(value: &impl serde::Serialize) -> Result<Vec<u8>, Error> {
+    let mut output = BoundedManifest(Vec::new());
+    serde_json::to_writer_pretty(&mut output, value)?;
+    crate::strict_json::read(&output.0)?;
+    Ok(output.0)
 }
 
 struct BoundedManifest(Vec<u8>);
@@ -111,9 +117,9 @@ impl PreparedCollection {
         Ok(File::open(self.staging.path().join(digest))?)
     }
 }
-fn copy_object(
+pub(crate) fn copy_object(
     mut input: Box<dyn Read + Send>,
-    output: &mut File,
+    output: &mut impl Write,
     object: &crate::Object,
     canceled: &AtomicBool,
 ) -> Result<(), Error> {

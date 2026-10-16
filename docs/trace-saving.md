@@ -164,14 +164,16 @@ or authorizing access to an author's filesystem paths.
 
 Save trace does not export the automation workspace, named variant definitions,
 script sources, external file dependencies or temporary captured-page preview
-scenes/reports. Keep reproduction steps and authored definitions separately when
-sharing an investigation today. A portable case format and binary-only rule
-management remain future work. See [response experiments](automation.md#response-experiments)
+scenes/reports. The [working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
+can now combine reviewed retained evidence, source context, notes and selected
+saved experiments in an explicit plaintext directory. Desktop case file actions,
+archive transfer and binary-only rule management remain future work.
+See [response experiments](automation.md#response-experiments)
 for current authoring and activation behavior.
 
-The [portable investigation design](portable-investigations.md) specifies a
+The [portable investigation guide](portable-investigations.md) specifies a
 separate case manifest, exact evidence references and whole-package encryption
-qualification. It does not change TMCap or add case commands in this increment.
+qualification. K2 adds no TMCap wire change, compatibility reader or case command.
 Its [context model](portable-investigations.md#configuration-and-diagnostic-context)
 uses package objects for capture-time and separately collected diagnostics,
 retaining original source associations and distinguishing the saving machine's

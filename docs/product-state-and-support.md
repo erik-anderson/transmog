@@ -30,8 +30,13 @@ provide selected rule/asset interchange for library callers. Imported source
 definitions, identity mappings and asset metadata share one automation commit;
 their immutable body blobs use the existing asset store. Imported named
 experiments start paused with no active selection, and ordinary rules start
-disabled. A saved state directory is still not a portable case. Case working
-copies, desktop file actions and archive/encryption transfer remain planned.
+disabled. A saved state directory is still not a portable case.
+[Working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
+now keep selected evidence, source-associated notes/context, frozen experiments
+and up to 32 manifest revisions in an explicit plaintext directory. Current
+publication is transactional; interrupted staging remains separate recovery data.
+Opening case evidence uses the existing inert trace inspector. Desktop file
+actions and archive/encryption transfer remain planned.
 
 Response assets persist the chosen copy/link behavior. Linked assets retain an
 absolute path even when the file is unavailable; they do not silently become

@@ -89,6 +89,9 @@ pub(super) fn import(
 
 fn empty(format: &'static str, context: Value) -> ImportData {
     ImportData {
+        native_loss: Arc::default(),
+        source_keys: HashMap::new(),
+        artifact: None,
         stream_index_bytes: 0,
         index_bytes: 0,
         sources: BTreeMap::new(),

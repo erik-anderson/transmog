@@ -67,7 +67,9 @@ pub use rule_interchange::{
 };
 pub use transmog_automation::{HeaderRuleTest, TextTransformTest};
 pub use transmog_portable as portable;
+mod investigations;
 mod rule_interchange;
+pub use investigations::{CaseEvidenceLink, CaseExportRequest, CaseNoteInput, OpenedCaseEvidence};
 
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,

@@ -22,7 +22,7 @@ are checked in.
 ## Capture and inspection fidelity
 
 - Implement the revision-0 [portable investigation contract](portable-investigations.md)
-  beyond the K1 rule/asset APIs: cases with evidence/notes, qualified archive and
+  beyond K1 rule/asset and K2 directory working-case APIs: qualified archive and
   encryption handling, desktop transfer and binary-only workflows.
   Broader project organization and any future format stability decision remain
   separate from the experimental live control protocol.

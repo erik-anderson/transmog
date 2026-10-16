@@ -76,6 +76,13 @@ python scripts/dev-env.py --run cargo test --locked -p transmog-portable
 python scripts/dev-env.py --run cargo test --locked -p transmog-app --lib rule_interchange
 ```
 
-Case, hostile archive, encryption wrapper and CLI scenarios still need production
-consumers in K2/K3/K4, including resource-pressure and interruption checks.
-Keeping a valid fixture corpus does not mark those stages complete.
+K2's `working_cases` integration tests run the case manifests through production
+schema/semantic validation and verified object snapshots, including missing assets,
+encrypted sources, optional future experiments, context and historical body objects.
+Application `investigation_tests` open native evidence, re-export selected streams
+and loss, preserve original source context, and verify stable source/entry links.
+They do not run tools or activate rules/scripts. Directory tests qualify history,
+interruption, stale writers, bounded streaming and Windows blocked replacement.
+
+Hostile archive, generic encryption wrapper and CLI scenarios still need production
+consumers in K3/K4. Keeping a valid corpus does not qualify those future adapters.

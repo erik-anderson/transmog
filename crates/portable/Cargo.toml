@@ -18,5 +18,8 @@ time.workspace = true
 transmog-automation = { version = "=0.1.4", path = "../proxy-automation" }
 transmog-core = { version = "=0.1.4", path = "../proxy-core" }
 
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "=1.1.5", features = ["fs"] }
+
 [lints]
 workspace = true

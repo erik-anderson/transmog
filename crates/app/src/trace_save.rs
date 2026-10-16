@@ -416,7 +416,7 @@ fn write_records(
     let mut incomplete = 0;
     notify(progress, "writing", 0, sessions.len());
     for (position, session) in sessions.iter().enumerate() {
-        incomplete += write_session(&mut writer, application, store, session, redact)?;
+        incomplete += write_session(&mut writer, application, store, session, redact, None)?;
         notify(progress, "writing", position + 1, sessions.len());
     }
     writer
@@ -424,7 +424,7 @@ fn write_records(
         .map_err(|_| error("Trace could not be sealed"))?;
     Ok(incomplete)
 }
-fn append<W: Write>(
+pub(crate) fn append<W: Write>(
     writer: &mut CaptureWriter<W>,
     id: u128,
     sequence: u64,
@@ -438,13 +438,30 @@ fn append<W: Write>(
         })
         .map_err(|_| error("Trace output exceeded its limit or could not be written"))
 }
+pub(crate) fn source_entry(application: &Application, session: &SessionSnapshot) -> TraceEntry {
+    let id = session.exchange_id.0;
+    application
+        .traces
+        .entry(&format!("{id:032x}"))
+        .unwrap_or_else(|| TraceEntry {
+            trace_id: "live".into(),
+            original_id: format!("{id:032x}"),
+            original_number: None,
+            raw_headers: None,
+            timings: std::collections::BTreeMap::default(),
+            protocol_known: !session.performance.protocols.is_empty(),
+            target_known: true,
+            diagnostics: vec![],
+        })
+}
 #[allow(clippy::too_many_lines)]
-fn write_session<W: Write>(
+pub(crate) fn write_session<W: Write>(
     writer: &mut CaptureWriter<W>,
     application: &Application,
     store: &BodyStore,
     session: &SessionSnapshot,
     redact: bool,
+    provenance: Option<TraceEntry>,
 ) -> Result<usize, AppError> {
     let id = session.exchange_id.0;
     let mut sequence = 0;
@@ -472,19 +489,7 @@ fn write_session<W: Write>(
             .unwrap_or_default()
             .as_nanos(),
     })?;
-    let entry = application
-        .traces
-        .entry(&format!("{id:032x}"))
-        .unwrap_or_else(|| TraceEntry {
-            trace_id: "live".into(),
-            original_id: format!("{id:032x}"),
-            original_number: None,
-            raw_headers: None,
-            timings: std::collections::BTreeMap::default(),
-            protocol_known: !session.performance.protocols.is_empty(),
-            target_known: true,
-            diagnostics: vec![],
-        });
+    let entry = provenance.unwrap_or_else(|| source_entry(application, session));
     emit(CaptureRecordKind::Unknown {
         kind: "entry-provenance".into(),
         payload: serde_json::json!({"source":entry,"terminalUnixMillis":session.terminal_at.map(millis)}),

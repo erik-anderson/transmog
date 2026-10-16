@@ -1,13 +1,20 @@
 //! Experimental revision-0 rule interchange, independent of private workspace DTOs.
+mod case_model;
+mod case_prepare;
+mod case_validate;
 mod convert;
 mod model;
 mod prepare;
 mod strict_json;
 mod validate;
+mod working;
 
+pub use case_model::*;
+pub use case_prepare::PreparedCase;
 pub use convert::{from_headers, from_native, to_native};
 pub use model::*;
 pub use prepare::PreparedCollection;
+pub use working::WorkingCase;
 
 /// A bounded interchange failure; callers must not publish partial imports.
 #[derive(Debug, thiserror::Error)]

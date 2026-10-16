@@ -231,7 +231,7 @@ def main():
             stale.append(name)
     if stale:
         raise SystemExit("Stale portable design fixtures: " + ", ".join(stale))
-    print("Portable design fixtures " + ("written." if args.write else "consistent; production case validation remains unimplemented."))
+    print("Portable design fixtures " + ("written." if args.write else "consistent."))
 
 
 if __name__ == "__main__":

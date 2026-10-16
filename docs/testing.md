@@ -38,7 +38,13 @@ Use `python scripts/portable_fixtures.py --check` for a mutation-free corpus che
 native matching/actions and verified object staging. `cargo test -p transmog-app
 --lib rule_interchange` covers disabled import/export, conflict remaps, failure
 atomicity, workspace/generation binding, linked snapshots and restart recovery.
-These do not qualify case import, archive readers, package encryption or CLI support.
+K2's `cargo test -p transmog-portable --test working_cases` covers the case corpus,
+directory history/recovery, stale writers, bounded large objects and failed
+publication. `cargo test -p transmog-app --lib investigation_tests` covers inert
+native evidence opening, source/occurrence identity, original context, streams,
+capture-wide loss, encrypted inputs and changed originals. Unix no-follow/locking
+checks run in the Linux container; Windows tests cover blocked replacement.
+These do not qualify archive readers, package encryption or CLI support.
 
 For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:
