@@ -29,7 +29,7 @@
       <trace-drop-target variant="region" ?show-help="{{showTraceImportHelp}}" ?active="{{view == 'traffic'}}" ?busy="{{importingTrace}}"><section class="session-list-pane" aria-label="Captured traffic" @keydown="{listKeyboard(e)}">
         <div class="traffic-selection-bar" ?hidden="{{selectedTrafficCount <= 1}}"><span role="status">{{trafficSelectionText}}</span><button type="button" class="secondary compact-button" @click="{compareSelected()}" ?disabled="{{selectedTrafficCount != 2}}" title="Select exactly two requests">Compare requests</button><button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{selectedResponses()}" ?disabled="{{removingTraffic || !selectedTrafficCount}}">{{trafficCreateLabel}}</button><button type="button" class="secondary compact-button" popovertarget="traffic-entry-menu" @click="{positionTrafficMenu(e)}">More</button></div>
         <div class="timeline-surface" ?hidden="{{!timelineMode}}"><div class="timeline-load-state"><if condition="timelineBusy"><span role="status">Loading timeline…</span></if><if condition="timelineError"><span role="status">{{timelineError}}</span><button type="button" class="secondary compact-button" @click="{refreshTimeline()}">Retry</button></if></div>
-        <traffic-timeline w-ref="{timeline}" :entries="{{timelineEntries}}" :chosen="{{timelineSelection}}" :sources="{{traceMetadataRows}}" current="{{selectedSessionId}}" @timeline-inspect="{inspectTimeline(e)}" @timeline-clear-selection="{clearTrafficSelection()}" @timeline-refresh="{refreshTimeline()}" @timeline-select="{selectTimeline(e)}"></traffic-timeline></div>
+        <traffic-timeline w-ref="{timeline}" :entries="{{timelineEntries}}" :chosen="{{timelineSelection}}" :sources="{{traceMetadataRows}}" :compact="{{preferences.compactRows}}" current="{{selectedSessionId}}" @timeline-inspect="{inspectTimeline(e)}" @timeline-clear-selection="{clearTrafficSelection()}" @timeline-refresh="{refreshTimeline()}" @timeline-select="{selectTimeline(e)}"></traffic-timeline></div>
         <div w-ref="{sessionScroller}" class="table-wrap" ?hidden="{{timelineMode}}" @scroll="{sessionScrolled()}">
           <table w-ref="{trafficTable}" class="traffic-table" role="grid" tabindex="0" aria-rowcount="{{rowCount}}" aria-activedescendant="{{activeRowId}}" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
@@ -61,7 +61,7 @@
           </table>
         </div>
         <div class="traffic-undo" ?hidden="{{!trafficUndoText}}"><span role="status">{{trafficUndoText}}</span><button w-ref="{trafficUndoButton}" type="button" class="secondary compact-button" @click="{undoTrafficRemoval()}" ?hidden="{{!trafficUndo.length}}" ?disabled="{{removingTraffic}}">Undo traffic removal</button></div>
-        <div class="list-footer">
+        <div class="list-footer" ?hidden="{{timelineMode}}">
           <span ?hidden="{{timelineMode}}">{{followText}}</span><span ?hidden="{{!timelineMode}}">Timeline reflects retained traffic · adjusted ranges stay fixed</span>
           <div class="list-footer-actions" ?hidden="{{timelineMode}}">
             <if condition="updatesPending"><button type="button" class="new-traffic-button compact-button" @click="{showUpdates()}"><if condition="newTrafficCount">{{newTrafficCount}} new · </if>Show updates</button></if>
@@ -190,11 +190,12 @@
       <for each="column in settingsColumns"><button key="{{column.id}}" type="button" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}">{{column.label}}</button></for>
     </div>
     <div id="table-settings" class="table-popover table-settings" popover="auto">
-      <strong class="popover-title">View</strong><label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">Request and response</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">List beside inspector</option></select></label>
-      <button type="button" aria-pressed="{{!timelineMode}}" @click="{setTimeline(false)}">List</button><button type="button" aria-pressed="{{timelineMode}}" @click="{setTimeline(true)}">Timeline</button>
+      <strong class="popover-title">View</strong>
+      <div class="traffic-view-options" role="group" aria-label="Traffic view"><button type="button" aria-pressed="{{!timelineMode}}" @click="{setTimeline(false)}">List</button><button type="button" aria-pressed="{{timelineMode}}" @click="{setTimeline(true)}">Timeline</button></div>
+      <label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">Inspector below</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">Inspector beside</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
-      <strong class="popover-title">Columns</strong><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>
-      <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset columns</button>
+      <if condition="!timelineMode"><details class="list-column-settings"><summary>List columns</summary><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>
+      <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset columns</button></details></if>
     </div>
   </section>
 </template>

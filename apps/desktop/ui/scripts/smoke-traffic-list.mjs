@@ -57,7 +57,8 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.revealCurrent(${JSON.stringify(ids[0])})`);
   await wait(`!${t}.queryPending && ${t}.sessions.every(row=>!row.loading)`);
   // Drag the actual native scrollbar thumb into the middle of the full capture.
-  const scrollbar=await client.evaluate(`(()=>{const s=${t}.sessionScroller,r=s.getBoundingClientRect();return {x:r.right-(s.offsetWidth-s.clientWidth)/2,start:r.top+(s.offsetWidth-s.clientWidth)*1.5,end:r.top+r.height/2};})()`);
+  await client.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+  const scrollbar=await client.evaluate(`(()=>{const s=${t}.sessionScroller,r=s.getBoundingClientRect(),gutter=s.offsetWidth-s.clientWidth,track=s.clientHeight-2*gutter,thumb=Math.max(17,track*s.clientHeight/s.scrollHeight),position=s.scrollTop/Math.max(1,s.scrollHeight-s.clientHeight);return {x:r.right-gutter/2,start:r.top+gutter+(track-thumb)*position+thumb/2,end:r.top+r.height/2};})()`);
   await client.call('Input.dispatchMouseEvent',{type:'mousePressed',x:scrollbar.x,y:scrollbar.start,button:'left',clickCount:1});
   await client.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:scrollbar.x,y:scrollbar.end,button:'left',buttons:1});
   await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',x:scrollbar.x,y:scrollbar.end,button:'left',clickCount:1});
@@ -92,6 +93,18 @@ export async function smokeTrafficList(client,screenshot) {
   assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis===null)`),'Native fixture lost unavailable timing');
   assert.equal(await client.evaluate(`${t}.querySelector('.timeline-span').namespaceURI`),'http://www.w3.org/2000/svg');
   assert.ok(await client.evaluate(`${t}.querySelectorAll('.timeline-row').length<100`));
+  // Starting on a button must not prevent Escape from canceling a native drag.
+  const rangeWidth=await client.evaluate(`${t}.querySelector('.timeline-window').getAttribute('width')`);
+  const handle=await client.evaluate(`(()=>{[...${t}.querySelectorAll('traffic-timeline button')].find(button=>button.textContent==='Reset range').focus();const r=${t}.querySelector('[aria-label="Timeline end"]').getBoundingClientRect();return {x:r.x+1,y:r.y+5};})()`);
+  await client.call('Input.dispatchMouseEvent',{type:'mousePressed',...handle,button:'left',clickCount:1});
+  await client.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:handle.x-50,y:handle.y,button:'left',buttons:1});
+  await key('Escape','Escape',27);
+  await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',x:handle.x-50,y:handle.y,button:'left',clickCount:1});
+  assert.equal(await client.evaluate(`${t}.querySelector('.timeline-window').getAttribute('width')`),rangeWidth,'Native Escape failed to cancel a drag');
+  await client.evaluate(`${t}.querySelector('.timeline-viewport').focus()`);await key('a','KeyA',65,2);
+  assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),20000);
+  await client.evaluate(`${t}.querySelector('[aria-label="Timeline end"]').focus()`);await key('Escape','Escape',27);
+  assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),0,'Native Escape on a slider did not clear selection');
   await client.evaluate(`${t}.querySelector('[aria-label="Timeline end"]').focus()`);
   const before=await client.evaluate(`${t}.querySelector('.timeline-scale').textContent`);
   await key('Home','Home',36);
@@ -105,14 +118,25 @@ export async function smokeTrafficList(client,screenshot) {
   await wait(`${t}.selectedDetail?.id===${JSON.stringify(timelineRow.id)}`);
   assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),2,'Native timeline inspection changed selected scope');
   assert.notEqual(await client.evaluate(`${t}.selectedUrlText`),'Loading request…');
+  await client.evaluate(`${t}.actionsButton.focus()`);await key('Enter','Enter',13);
+  assert.equal(await client.evaluate(`[...${t}.requestActionsMenu.querySelectorAll('button')].find(button=>button.textContent==='Set as comparison baseline').disabled`),false);
+  assert.equal(await client.evaluate(`[...${t}.requestActionsMenu.querySelectorAll('button')].find(button=>button.textContent==='Copy request reference').disabled`),false);
+  await key('Escape','Escape',27);
   const timelinePreferences=await client.evaluate(`${t}.preferences`);
   await client.evaluate(`${t}.preferences={...${t}.preferences,listSplit:65}`);
   if(screenshot)for(const [width,height] of [[1440,900],[960,720],[800,600]]){
     await client.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    assert.ok(await client.evaluate(`${t}.querySelector('.timeline-viewport').clientHeight>=96`),'Native compact Timeline lost its request rows');
+    assert.ok(await client.evaluate(`(()=>{const a=${t}.querySelector('.timeline-ticks').getBoundingClientRect();return [...${t}.querySelectorAll('.timeline-row>svg')].every(svg=>{const r=svg.getBoundingClientRect();return Math.abs(a.left-r.left)<1&&Math.abs(a.right-r.right)<1;});})()`),'Native bar widths differ from the axis');
     const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timeline-'+width+'.png'),Buffer.from(image.data,'base64'));
   }
   await client.call('Emulation.clearDeviceMetricsOverride');
   await client.evaluate(`${t}.preferences=${JSON.stringify(timelinePreferences)}`);
+  await client.evaluate(`${t}.liveFilter='no-native-timeline-match';${t}.queryRevision++;${t}.refreshSessions(undefined,true).then(()=>${t}.refreshTimeline())`);
+  await wait(`${t}.timelineEntries.length===0 && !${t}.timelineBusy && ${t}.timelineTimer===undefined`);
+  await client.evaluate(`${t}.revealSession(${JSON.stringify(ids[2])})`);
+  await wait(`${t}.querySelector('.timeline-row')?.dataset.id===${JSON.stringify(ids[2])}`);
+  assert.equal(await client.evaluate(`${t}.getRootNode().activeElement?.dataset.id`),ids[2],'Native source reveal left focus on hidden List');
   await client.evaluate(`${t}.setTimeline(false);${t}.clearTrafficSelection()`);
   process.stdout.write('WebView2 timeline: full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n');
   process.stdout.write('WebView2 traffic: 20,000 entries, offscreen range, select all/delete/undo and search reveal verified.\n');

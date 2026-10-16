@@ -9,7 +9,7 @@ export async function smokeScriptExperiment({main,traffic,documentId,targets,con
   let preview;
   try {
     const source=await main.evaluate(`(async()=>{const t=${traffic};const row=t.sessions.find(row=>row.path==='/experiment.js');await t.revealSession(row.id);t.beginExperimentFromSelected();return row.id;})()`);
-    await waitFor(()=>main.evaluate(`${editor}.responseExperiment&&!${editor}.editBodyDisabled&&!${editor}.loadingSavedResponse`),'Captured script experiment did not load');
+    await waitFor(()=>main.evaluate(`${editor}.sourceSessionId===${JSON.stringify(source)}&&${editor}.responseExperiment&&!${editor}.editBodyDisabled&&!${editor}.loadingSavedResponse`),'Captured script experiment did not load');
     const original=await main.evaluate(`${editor}.autoResponseBody.value`);
     assert.ok(original.includes('"original"'));
     const edited=original.replace('"original"','"patched"');

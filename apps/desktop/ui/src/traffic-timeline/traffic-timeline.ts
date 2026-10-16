@@ -1,17 +1,17 @@
 import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
 import type {TrafficTimelineRow,TraceMetadata} from '../models.js';
 import {milliseconds} from '../timings.js';
-import {clampWindow,intervalEnd,overlaps} from './timeline-model.js';
+import {clampWindow,intervalEnd,overlaps,requestAddress,timelineTime} from './timeline-model.js';
 import initialState from '../initial-state.json';
 import {isTextEditing} from '../list-selection.js';
 
-type DisplayRow=TrafficTimelineRow&{label:string;source:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
-const ROW_HEIGHT=48;
+type DisplayRow=TrafficTimelineRow&{label:string;source:string;host:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
 
 export class TrafficTimeline extends WebUIElement {
   @observable entries:TrafficTimelineRow[]=[];
   @observable chosen:string[]=[];
   @observable sources:TraceMetadata[]=[];
+  @observable compact=true;
   @attr current='';
   @observable timelineDisplay={...initialState.timelineDisplay,rows:[] as DisplayRow[]};
   viewport!:HTMLElement;
@@ -25,6 +25,8 @@ export class TrafficTimeline extends WebUIElement {
   private maximum=1;
   private adjusted=false;
   private order='start';
+  private previousRowHeight=32;
+  private get rowHeight():number {return this.compact?32:48;}
   private rebuildPending=false;
   private drag:{pointer:number;target:Element;part:string;x:number;from:number;to:number;adjusted:boolean;scale:number;minimum:number;maximum:number}|null=null;
 
@@ -32,6 +34,11 @@ export class TrafficTimeline extends WebUIElement {
   entriesChanged():void {if(this.drag)this.rebuildPending=true;else this.rebuild();}
   chosenChanged():void {this.rebuild();}
   sourcesChanged():void {this.renderRows();}
+  compactChanged():void {
+    const scroll=(this.viewport?.scrollTop??0)/this.previousRowHeight*this.rowHeight;
+    this.previousRowHeight=this.rowHeight;this.renderRows(scroll);this.$flushUpdates();
+    if(this.viewport)this.viewport.scrollTop=scroll;
+  }
   private rebuild():void {
     // Deliberate scope changes cancel a gesture; live snapshots wait for its end.
     if(this.drag)this.cancelDrag();
@@ -66,17 +73,17 @@ export class TrafficTimeline extends WebUIElement {
       windowX:(this.from-this.minimum)/extent*1000,windowWidth:(this.to-this.from)/extent*1000,
       startHandle:(this.from-this.minimum)/extent*1000-4,endHandle:(this.to-this.minimum)/extent*1000-4,
       fromValue:(this.from-this.minimum)/extent*1000,toValue:(this.to-this.minimum)/extent*1000,
-      range:milliseconds((this.from-this.minimum)*1000)+' – '+milliseconds((this.to-this.minimum)*1000),
-      fromLabel:milliseconds((this.from-this.minimum)*1000),toLabel:milliseconds((this.to-this.minimum)*1000),
+      range:timelineTime((this.from-this.minimum)*1000)+' – '+timelineTime((this.to-this.minimum)*1000),
+      fromLabel:timelineTime((this.from-this.minimum)*1000),toLabel:timelineTime((this.to-this.minimum)*1000),
       origin:this.minimum>0?timestamp(this.minimum):'Start time unavailable',
-      summary:`${this.matching.length} of ${this.scoped.length} requests${selectedCount(this.chosen)}${unavailable?' · '+unavailable+' timing unavailable':''}`,
+      summary:(this.matching.length===this.scoped.length?`${this.scoped.length.toLocaleString()}${this.chosen.length?' selected':''} request${this.scoped.length===1?'':'s'}`:`${this.matching.length.toLocaleString()} of ${this.scoped.length.toLocaleString()}${this.chosen.length?' selected':''} requests in range`)+(unavailable?` · ${unavailable.toLocaleString()} without timing`:''),
       clocks:clocks.size>1?'Recorded source clocks may differ; alignment does not establish cross-source chronology.':'Times are relative to the first recorded start in this scope.',
       selected:this.chosen.length>0,empty:this.matching.length===0,mixedClocks:clocks.size>1};
     this.renderRows();
   }
-  renderRows():void {
-    const height=this.viewport?.clientHeight??300,scroll=this.viewport?.scrollTop??0;
-    const start=Math.max(0,Math.min(this.matching.length,Math.floor(scroll/ROW_HEIGHT)-5)),end=Math.min(this.matching.length,start+Math.ceil(height/ROW_HEIGHT)+11);
+  renderRows(scroll=this.viewport?.scrollTop??0):void {
+    const height=this.viewport?.clientHeight??300,rowHeight=this.rowHeight;
+    const start=Math.max(0,Math.min(this.matching.length,Math.floor(scroll/rowHeight)-5)),end=Math.min(this.matching.length,start+Math.ceil(height/rowHeight)+11);
     const extent=this.to-this.from,sourceNames=new Map(this.sources.map(source=>[source.id,source.name]));
     const active=this.getRootNode() instanceof ShadowRoot?(this.getRootNode() as ShadowRoot).activeElement:document.activeElement;
     if(active instanceof HTMLElement&&active.closest('.timeline-row')){
@@ -90,11 +97,11 @@ export class TrafficTimeline extends WebUIElement {
       const response=row.startMillis!=null&&row.responseMicros!=null?row.startMillis+row.responseMicros/1000:null;
       const responseX=response==null?right:Math.max(x,Math.min(right,(response-this.from)/extent*1000));
       const source=row.traceId?sourceNames.get(row.traceId)??'Imported capture':'Live traffic';
-      const label=`#${row.requestNumber} ${row.method} ${row.url}`,duration=milliseconds(row.durationMicros);
-      return {...row,label,source,duration,x,width:Math.max(0,right-x),responseX,responseWidth:Math.max(0,right-responseX),plottable,hasResponse:response!=null,
-        description:`${label} · ${duration} · ${row.terminal} · ${source} · ${row.basis}${row.startMillis==null?' · Start time unavailable':' · '+timestamp(row.startMillis)}`};
+      const address=requestAddress(row.url),label=`#${row.requestNumber} ${row.method} ${address.path}`,duration=timelineTime(row.durationMicros);
+      return {...row,label,host:address.host,source,duration,x,width:Math.max(0,right-x),responseX,responseWidth:Math.max(0,right-responseX),plottable,hasResponse:response!=null,
+        description:`#${row.requestNumber} ${row.method} ${row.url} · ${milliseconds(row.durationMicros)} · ${row.terminal} · ${source} · ${row.basis}${row.startMillis==null?' · Start time unavailable':' · '+timestamp(row.startMillis)}`};
     });
-    this.timelineDisplay={...this.timelineDisplay,rows,top:start*ROW_HEIGHT+'px',bottom:Math.max(0,this.matching.length-end)*ROW_HEIGHT+'px'};
+    this.timelineDisplay={...this.timelineDisplay,rows,top:start*rowHeight+'px',bottom:Math.max(0,this.matching.length-end)*rowHeight+'px'};
   }
   inspect(id:string):void {this.$emit('timeline-inspect',id);}
   clearSelection():void {this.$emit('timeline-clear-selection');}
@@ -112,9 +119,9 @@ export class TrafficTimeline extends WebUIElement {
   reveal(id:string):void {
     const index=this.matching.findIndex(row=>row.id===id);
     if(index<0){this.viewport.focus({preventScroll:true});return;}
-    const top=index*ROW_HEIGHT;
+    const top=index*this.rowHeight;
     if(top<this.viewport.scrollTop)this.viewport.scrollTop=top;
-    else if(top+ROW_HEIGHT>this.viewport.scrollTop+this.viewport.clientHeight)this.viewport.scrollTop=top+ROW_HEIGHT-this.viewport.clientHeight;
+    else if(top+this.rowHeight>this.viewport.scrollTop+this.viewport.clientHeight)this.viewport.scrollTop=top+this.rowHeight-this.viewport.clientHeight;
     this.renderRows();this.$flushUpdates();
     (this.getRootNode() as ShadowRoot).getElementById('timeline-'+id)?.focus({preventScroll:true});
   }
@@ -123,11 +130,7 @@ export class TrafficTimeline extends WebUIElement {
     event.preventDefault();event.stopPropagation();
     const index=this.matching.findIndex(row=>row.id===id),next=event.key==='Home'?0:event.key==='End'?this.matching.length-1:Math.max(0,Math.min(this.matching.length-1,index+(event.key==='ArrowDown'?1:-1)));
     const row=this.matching[next];if(!row)return;
-    const top=next*ROW_HEIGHT;
-    if(top<this.viewport.scrollTop)this.viewport.scrollTop=top;
-    else if(top+ROW_HEIGHT>this.viewport.scrollTop+this.viewport.clientHeight)this.viewport.scrollTop=top+ROW_HEIGHT-this.viewport.clientHeight;
-    this.renderRows();this.$flushUpdates();
-    (this.getRootNode() as ShadowRoot).getElementById('timeline-'+row.id)?.focus({preventScroll:true});this.inspect(row.id);
+    this.reveal(row.id);this.inspect(row.id);
   }
   startDrag(event:PointerEvent):void {
     if(event.button!==0||!this.scoped.some(row=>intervalEnd(row)!=null))return;
@@ -170,6 +173,5 @@ export class TrafficTimeline extends WebUIElement {
   }
   disconnectedCallback():void {this.releaseDrag();this.observer?.disconnect();super.disconnectedCallback();}
 }
-function selectedCount(selection:string[]):string {return selection.length?' · selected requests':'';}
 function timestamp(value:number):string {const date=new Date(value);return Number.isFinite(date.getTime())?date.toISOString():'Outside supported calendar range';}
 TrafficTimeline.define('traffic-timeline');

@@ -1,9 +1,9 @@
 <template>
-  <section class="traffic-timeline" aria-label="Request timeline" @keydown="{timelineKey(e)}">
+  <section class="traffic-timeline" ?data-compact="{{compact}}" aria-label="Request timeline" @keydown="{timelineKey(e)}">
     <div class="timeline-tools">
       <strong>Timeline</strong><span role="status">{{timelineDisplay.summary}}</span>
       <label>Order <select aria-label="Timeline order" @change="{changeOrder(e)}"><option value="start">Start time</option><option value="duration">Longest first</option></select></label>
-      <button type="button" class="secondary compact-button" ?hidden="{{!timelineDisplay.selected}}" @click="{clearSelection()}">All matching requests</button>
+      <button type="button" class="secondary compact-button" ?hidden="{{!timelineDisplay.selected}}" @click="{clearSelection()}">Show all matches</button>
       <button type="button" class="secondary compact-button" @click="{resetRange()}">Reset range</button>
     </div>
     <div class="timeline-overview">
@@ -13,18 +13,17 @@
         <rect class="timeline-handle" data-part="start" x="{{timelineDisplay.startHandle}}" y="0" width="8" height="44" tabindex="0" role="slider" aria-label="Timeline start" aria-valuemin="0" aria-valuemax="{{timelineDisplay.toValue}}" aria-valuenow="{{timelineDisplay.fromValue}}" aria-valuetext="{{timelineDisplay.range}}" @keydown="{rangeKey('start',e)}"></rect>
         <rect class="timeline-handle" data-part="end" x="{{timelineDisplay.endHandle}}" y="0" width="8" height="44" tabindex="0" role="slider" aria-label="Timeline end" aria-valuemin="{{timelineDisplay.fromValue}}" aria-valuemax="1000" aria-valuenow="{{timelineDisplay.toValue}}" aria-valuetext="{{timelineDisplay.range}}" @keydown="{rangeKey('end',e)}"></rect>
       </svg>
-      <div class="timeline-scale"><span>{{timelineDisplay.range}}</span><span title="{{timelineDisplay.origin}}">Start UTC: {{timelineDisplay.origin}}</span></div>
-      <details class="timeline-help"><summary>Timeline controls and timing boundaries</summary><p>Drag the window to pan; drag its edges to resize, or drag outside it to choose a range. Focus the window or an edge and use Left/Right; Shift moves farther. Home/End moves to a boundary, +/− zooms, and 0 resets. Escape cancels a drag. Requests overlapping the range are included. Click a request to inspect it; Up/Down moves between requests. Escape clears request selection.</p><p>Bars show request duration. A darker segment after measured upstream response headers shows the rest of the observed interval, including forwarding and local work. It does not isolate download or server time. Missing timing stays unavailable. Active stream state can outlive its HTTP exchange.</p><p>{{timelineDisplay.clocks}}</p><button type="button" class="secondary compact-button" @click="{refresh()}">Refresh timeline</button></details>
+      <details class="timeline-help"><summary>Timeline help</summary><div class="timeline-scale"><span>{{timelineDisplay.range}}</span><span>Start (UTC): {{timelineDisplay.origin}}</span></div><p>Live updates preserve adjusted ranges. The timeline reflects retained traffic.</p><p>Drag the window to pan; drag its edges to resize, or drag outside it to choose a range. Focus the window or an edge and use Left/Right; Shift moves farther. Home/End moves to a boundary, +/− zooms, and 0 resets. Escape cancels a drag. Requests overlapping the range are included. Click a request to inspect it; Up/Down moves between requests. Escape clears request selection.</p><p>Bars show request duration. A darker segment after measured upstream response headers shows the rest of the observed interval, including forwarding and local work. It does not isolate download or server time. Missing timing stays unavailable. Active stream state can outlive its HTTP exchange.</p><p>{{timelineDisplay.clocks}}</p><button type="button" class="secondary compact-button" @click="{refresh()}">Refresh timeline</button></details>
       <p class="timeline-clock-note" ?hidden="{{!timelineDisplay.mixedClocks}}">Source clocks may differ; cross-source order is unverified.</p>
     </div>
-    <div class="timeline-axis"><span>Request</span><span class="timeline-ticks"><span>{{timelineDisplay.fromLabel}}</span><span>{{timelineDisplay.toLabel}}</span></span><span>Duration</span></div>
+    <div class="timeline-axis-scroll"><div class="timeline-axis"><span>Request</span><span class="timeline-ticks"><span>{{timelineDisplay.fromLabel}}</span><span>{{timelineDisplay.toLabel}}</span></span><span>Duration</span></div></div>
     <div w-ref="{viewport}" class="timeline-viewport" tabindex="0" aria-label="Timeline requests" @scroll="{renderRows()}" @keydown="{rowKey('',e)}">
       <div class="timeline-spacer" data-size="{{timelineDisplay.top}}"></div>
       <for each="row in timelineDisplay.rows">
         <button key="{{row.id}}" id="timeline-{{row.id}}" type="button" class="timeline-row" data-id="{{row.id}}" data-state="{{row.terminal}}" ?data-current="{{row.id == current}}" title="{{row.description}}" aria-label="{{row.description}}" @click="{inspect(row.id)}" @keydown="{rowKey(row.id,e)}">
-          <span class="timeline-request"><span>{{row.label}}</span><small>{{row.source}} · {{row.terminal}}</small></span>
+          <span class="timeline-request"><span>{{row.label}}</span><small><if condition="row.host">{{row.host}} · </if>{{row.source}} · {{row.terminal}}</small></span>
           <svg viewBox="0 0 1000 20" preserveAspectRatio="none" aria-hidden="true"><rect class="timeline-span" ?hidden="{{!row.plottable}}" x="{{row.x}}" y="4" width="{{row.width}}" height="12"></rect><rect class="timeline-response" ?hidden="{{!row.hasResponse}}" x="{{row.responseX}}" y="4" width="{{row.responseWidth}}" height="12"></rect><circle class="timeline-zero" ?hidden="{{!row.plottable || row.width != 0}}" cx="{{row.x}}" cy="10" r="3"></circle></svg>
-          <span class="timeline-duration"><if condition="row.plottable">{{row.duration}}</if><if condition="!row.plottable">Timing unavailable</if></span>
+          <span class="timeline-duration">{{row.duration}}</span>
         </button>
       </for>
       <div class="timeline-spacer" data-size="{{timelineDisplay.bottom}}"></div>

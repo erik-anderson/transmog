@@ -807,6 +807,7 @@ try {
   await openColumn('response-bytes'); await page.locator('#column-actions').getByRole('button',{name:'Hide column',exact:true}).click();
   assert.equal(await page.locator('#header-response-bytes').count(),0);
   await page.getByRole('button',{name:'View',exact:true}).click();
+  await page.locator('#table-settings').getByText('List columns',{exact:true}).click();
   await page.locator('#table-settings').getByLabel('Response size',{exact:true}).check();
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#header-response-bytes').count(),1);

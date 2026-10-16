@@ -75,10 +75,14 @@ Choose **View → Timeline** to replace the list with requests aligned on a shar
 time axis, while keeping the inspector available. Choose **View → List** to
 return to the existing list and scroll position. **Order → Start time** is the
 default; **Longest first** brings long requests to the top.
+The path is the primary request label; host, source and state are secondary.
+The full URL remains in the inspector. Row descriptions and tooltips retain
+the display URL and precise duration. Chart labels use milliseconds, seconds,
+minutes or hours to keep longer ranges readable.
 
 With no requests selected, the timeline includes all current Traffic filter
 matches, including offscreen entries. With a selection, it shows those selected
-matches only. **All matching requests** or Escape clears the selection. Clicking
+matches only. **Show all matches** or Escape clears the selection. Clicking
 a timeline row inspects it without changing this scope; Up/Down and Home/End
 navigate timeline rows. Return to List to change the selected group.
 Ctrl+A selects the requests included in the current timeline range, including
@@ -92,6 +96,11 @@ included, even when they started earlier. Unavailable timing stays visible and
 is counted separately. Focus the window or either edge and use Left/Right;
 Shift moves farther, Home/End moves to a boundary, +/− zooms and 0 resets.
 Escape cancels a drag. **Reset range** fits the scope again.
+**Timeline help** contains the absolute start time in UTC, timing boundaries
+and keyboard instructions. **Compact rows** applies to both List and Timeline;
+**List columns** is available only in List. The selected view is visibly marked
+in the View menu. Layout places the **Inspector below** (default) or
+**Inspector beside** the traffic view.
 
 Live updates preserve adjusted ranges and do not steal focus. The overview
 summarizes overlapping activity; rows are virtualized across the full scope.
@@ -239,8 +248,8 @@ metadata. Switch to **Search contents**, then press Search or Enter to inspect
 headers and bodies. Content searches remain snapshots; filtering never decodes
 bodies on each keystroke.
 
-**Request and response** is the wide default, with the list above request and response
-inspectors. Narrow panes show one message and a request/response selector.
+**Inspector below** is the default layout, with the traffic view above request
+and response inspectors. Narrow panes show one message and a request/response selector.
 Headers show Name and Value by default; **Header options** reveals byte sizes
 and ordering. **Body options** groups decoding and preview limits.
 
@@ -266,7 +275,7 @@ selection menu. The baseline remains visible and clearable while selecting other
 traffic. Selection order determines left and right; **Swap sides** reverses them.
 Comparisons are read-only and available in capture viewers as well as the main
 window. Closing returns to the original Traffic selection and scroll position.
-The existing inspector layout is named **Request and response**.
+The inspector continues to show request and response together when space permits.
 
 The comparison opens original client requests and final client-visible responses.
 **Boundaries and comparison options** explicitly selects client or upstream stages;

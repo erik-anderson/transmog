@@ -52,7 +52,7 @@ traffic-workspace { display:contents; }
 .traffic-table { min-width:0; table-layout:fixed; width:100%; }
 .timeline-load-state:not(:empty) { padding:.25rem .6rem; font-size:.75rem; color:var(--muted); }
 .session-list-pane > .timeline-surface { grid-row:2; display:flex; flex-direction:column; min-height:0; min-width:0; overflow:hidden; }
-.traffic-workspace[data-layout="stacked"]:has(.timeline-surface:not([hidden])) { grid-template-rows:minmax(14rem,55%) 6px minmax(0,1fr); grid-template-rows:minmax(14rem,attr(data-list-share type(<percentage>),55%)) 6px minmax(0,1fr); }
+.traffic-workspace[data-layout="stacked"]:has(.timeline-surface:not([hidden])) { grid-template-rows:minmax(16rem,55%) 6px minmax(0,1fr); grid-template-rows:minmax(16rem,attr(data-list-share type(<percentage>),55%)) 6px minmax(0,1fr); }
 .table-wrap {overflow-anchor:none;scrollbar-gutter:stable;}
 
 .traffic-spacer div {height:attr(data-size type(<length>),0px);}
@@ -130,6 +130,12 @@ traffic-workspace { display:contents; }
 }
 .table-popover > button { display:block; width:100%; min-height:2rem; padding:.4rem .5rem; border:0; border-radius:.2rem; color:var(--text); background:transparent; text-align:left; font-size:.76rem; font-weight:400; }
 .table-popover > button:hover { background:var(--row-hover); }
+.traffic-view-options { display:flex; gap:.25rem; margin:.25rem 0 .6rem; }
+.traffic-view-options button { flex:1; font:inherit; font-size:.76rem; background:var(--panel); color:var(--text); border-color:var(--line); }
+.traffic-view-options button[aria-pressed="true"] { background:var(--accent-soft); color:var(--accent-strong); border-color:var(--accent-strong); box-shadow:inset 0 -2px currentColor; font-weight:650; }
+.list-column-settings { margin-top:.5rem; font-size:.76rem; }
+.list-column-settings summary { cursor:pointer; }
+.list-column-settings > button { font:inherit; }
 .popover-title { display:block; padding:.45rem .5rem; border-bottom:1px solid var(--line); margin-bottom:.35rem; font-size:.76rem; }
 .table-popover label { padding:.3rem .5rem; font-size:.76rem; }
 .column-filter { max-width:none; gap:.4rem; padding:.5rem; margin:.3rem 0; border-block:1px solid var(--line); }

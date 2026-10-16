@@ -37,19 +37,41 @@ export async function checkTrafficTimeline(page,root) {
     await actions.getByRole('button',{name:'Copy request reference',exact:true}).click();
     assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/scenario\/fast/);
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0);
+    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.clearComparisonBaseline();t.diagnostic='';});
+    assert.equal(await timeline.locator('#timeline-tl-fast .timeline-request > span').textContent(),'#2 GET /scenario/fast');
+    assert.match(await timeline.locator('#timeline-tl-fast small').textContent(),/example.test/);
+    const checkAxis=async()=>{
+      const geometry=await timeline.evaluate(el=>{const axis=el.querySelector('.timeline-ticks').getBoundingClientRect();return [...el.querySelectorAll('.timeline-row > svg')].map(svg=>{const box=svg.getBoundingClientRect();return {left:box.left-axis.left,right:box.right-axis.right};});});
+      for(const row of geometry)assert.ok(Math.abs(row.left)<1&&Math.abs(row.right)<1,'Request bars do not share the time axis');
+    };
+    await checkAxis();
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,layout:'side-by-side',listSplit:45};});
     assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0));
     await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-aside.png')});
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,layout:'stacked',listSplit:55};});
     for(const [width,height] of [[1440,900],[960,720],[800,600]]){
       await page.setViewportSize({width,height});
-      assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0),'Timeline rows lost all space');
+      assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>=96),'Compact layout cannot show several requests');
+      await checkAxis();
       await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-'+width+'.png')});
     }
-    await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-contrast.png')});await page.emulateMedia({forcedColors:'none',colorScheme:'dark'});await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-dark.png')});await page.emulateMedia({colorScheme:'light'});
+    const paint=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    await page.emulateMedia({forcedColors:'active'});await paint();await page.screenshot({animations:'disabled',path:resolve(root,'../../../target/ui-check/traffic-timeline-contrast.png')});
+    await page.emulateMedia({forcedColors:'none',colorScheme:'dark'});await paint();await page.screenshot({animations:'disabled',path:resolve(root,'../../../target/ui-check/traffic-timeline-dark.png')});
+    await page.emulateMedia({colorScheme:'light'});await paint();
     await page.evaluate(()=>document.documentElement.style.zoom='1.25');
     try{assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0));await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-zoom.png')});}finally{await page.evaluate(()=>document.documentElement.style.zoom='');}
     await page.setViewportSize({width:1440,height:900});
+    await traffic.getByRole('button',{name:'View',exact:true}).click();
+    const settings=traffic.locator('#table-settings');
+    assert.equal(await settings.getByRole('button',{name:'Timeline',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await settings.getByText('List columns',{exact:true}).count(),0,'Timeline exposes inactive List settings');
+    await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-settings.png')});
+    await settings.getByLabel('Compact rows',{exact:true}).uncheck();await page.keyboard.press('Escape');
+    assert.equal(await timeline.locator('.timeline-row').first().evaluate(el=>el.getBoundingClientRect().height),48);
+    await traffic.getByRole('button',{name:'View',exact:true}).click();await settings.getByLabel('Compact rows',{exact:true}).check();await page.keyboard.press('Escape');
+    assert.equal(await timeline.locator('.timeline-row').first().evaluate(el=>el.getBoundingClientRect().height),32);
+    await checkAxis();
     await timeline.getByLabel('Timeline order',{exact:true}).selectOption('duration');
     assert.equal(await timeline.locator('.timeline-row').first().getAttribute('data-id'),'tl-slow');
     const end=timeline.getByRole('slider',{name:'Timeline end',exact:true});await end.focus();await page.keyboard.press('Home');
@@ -75,7 +97,7 @@ export async function checkTrafficTimeline(page,root) {
     await show(false);await traffic.locator('#session-tl-slow').click();await traffic.locator('#session-tl-failed').click({modifiers:['Control']});
     await show(true);assert.equal(await timeline.locator('.timeline-row').count(),2);
     await timeline.locator('#timeline-tl-slow').click();assert.equal(await timeline.locator('.timeline-row').count(),2,'Inspecting collapsed multiselection');
-    await timeline.getByRole('button',{name:'All matching requests',exact:true}).click();assert.equal(await timeline.locator('.timeline-row').count(),6);
+    await timeline.getByRole('button',{name:'Show all matches',exact:true}).click();assert.equal(await timeline.locator('.timeline-row').count(),6);
     await timeline.getByRole('slider',{name:'Timeline window',exact:true}).focus();await page.keyboard.press('+');
     const liveRange=await timeline.locator('.timeline-scale > span').first().textContent();
     const input=traffic.getByLabel('Filter or search traffic',{exact:true});await input.focus();
@@ -105,6 +127,11 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),10000);
     assert.ok(await timeline.locator('.timeline-row').count()<100,'Timeline DOM grew with capture size');
+    await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=5000*32);
+    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:false};});
+    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('.timeline-row').getBoundingClientRect().height===48);
+    assert.ok(Math.abs(await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop/48)-5000)<1,'Density change lost the current request position');
+    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:true};});
     await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=el.scrollHeight);
     await timeline.locator('#timeline-tl-load-9999').waitFor();await timeline.locator('#timeline-tl-load-9999').click();
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-9999');
