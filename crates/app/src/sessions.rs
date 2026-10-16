@@ -277,6 +277,32 @@ pub struct TrafficView {
     pub page: SessionPage,
 }
 
+/// Compact request interval for a shared traffic timeline; contains no body data.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TrafficTimelineRow {
+    /// Stable workspace exchange identity.
+    pub id: String,
+    /// Exact workspace admission number.
+    pub request_number: String,
+    /// Recorded request method.
+    pub method: String,
+    /// Display target, shortened to at most 2048 characters plus an ellipsis.
+    pub url: String,
+    /// Original source namespace, or absent for live traffic.
+    pub trace_id: Option<String>,
+    /// Recorded request-header anchor, or original source start, in Unix milliseconds.
+    pub start_millis: Option<u64>,
+    /// Measured or source-recorded duration; active native traffic uses elapsed time so far.
+    pub duration_micros: Option<u64>,
+    /// Upstream response-header offset from the same request anchor, when measured.
+    pub response_micros: Option<u64>,
+    /// Human-readable measurement boundary or reason timing is unavailable.
+    pub basis: &'static str,
+    /// Completion state, independent of timing availability.
+    pub terminal: &'static str,
+}
+
 #[derive(Default)]
 pub(crate) struct TrafficViews {
     next: u64,
@@ -888,6 +914,115 @@ pub(crate) fn traffic_rows(
         .collect())
 }
 
+pub(crate) fn traffic_timeline_rows(
+    service: &ApplicationSessionService,
+    views: &Mutex<TrafficViews>,
+    id: &str,
+    offset: usize,
+    limit: usize,
+    traces: &crate::traces::TraceRegistry,
+) -> Result<Vec<TrafficTimelineRow>, AppError> {
+    if limit == 0 || limit > 2048 {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Request between 1 and 2048 timeline rows",
+            false,
+        ));
+    }
+    let ids = views
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .ids(id)?;
+    let now = SystemTime::now();
+    Ok(ids
+        .iter()
+        .skip(offset)
+        .take(limit)
+        .filter_map(|id| {
+            let exchange = crate::response_assets::parse_exchange_id(id).ok()?;
+            service
+                .catalog()
+                .get(exchange)
+                .map(|snapshot| timeline_row(&snapshot, now, traces))
+        })
+        .collect())
+}
+
+fn timeline_row(
+    snapshot: &SessionSnapshot,
+    now: SystemTime,
+    traces: &crate::traces::TraceRegistry,
+) -> TrafficTimelineRow {
+    use transmog_core::performance::Milestone;
+    let summary = summarize_with_trace(snapshot, now, false, traces);
+    let headers = snapshot
+        .performance
+        .points
+        .iter()
+        .find(|point| point.milestone == Milestone::RequestHeaders);
+    let start_millis = headers.map_or_else(
+        || (summary.started_at > 0).then_some(summary.started_at),
+        |point| (point.unix_millis > 0).then_some(point.unix_millis),
+    );
+    let measured = snapshot.performance.elapsed_micros();
+    let end = snapshot
+        .terminal_at
+        .or_else(|| (!snapshot.imported && summary.terminal == "active").then_some(now));
+    let source_duration = end
+        .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
+        .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
+        .and_then(|duration| u64::try_from(duration.as_micros()).ok());
+    // An active request with a header anchor uses that anchor, not admission time.
+    let elapsed = (!snapshot.imported && measured.is_none())
+        .then(|| {
+            let start = SystemTime::UNIX_EPOCH
+                .checked_add(std::time::Duration::from_millis(start_millis?))?;
+            u64::try_from(end?.duration_since(start).ok()?.as_micros()).ok()
+        })
+        .flatten();
+    let duration_micros = if headers.is_some() {
+        measured.or(elapsed)
+    } else {
+        source_duration
+    };
+    let response_micros = headers
+        .and_then(|start| {
+            snapshot
+                .performance
+                .points
+                .iter()
+                .find(|point| point.milestone == Milestone::ResponseHeaders)
+                .and_then(|end| end.offset_micros.checked_sub(start.offset_micros))
+                .and_then(|offset| u64::try_from(offset).ok())
+        })
+        .filter(|offset| duration_micros.is_some_and(|duration| *offset <= duration));
+    let basis = if measured.is_some() {
+        "Request headers to proxy completion"
+    } else if snapshot.imported {
+        "Recorded source interval; source clock"
+    } else if summary.terminal == "active" {
+        "Elapsed so far at the proxy"
+    } else {
+        "Recorded start to local completion"
+    };
+    let mut url: String = summary.url.chars().take(2048).collect();
+    if url.len() < summary.url.len() {
+        url.push('…');
+    }
+    TrafficTimelineRow {
+        id: summary.id,
+        request_number: summary.request_number,
+        method: summary.method,
+        url,
+        trace_id: summary.trace_id,
+        start_millis,
+        duration_micros,
+        response_micros,
+        basis,
+        terminal: summary.terminal,
+    }
+}
+
 fn matches_query_row(
     row: &SessionSummary,
     input: &SessionQueryInput,
@@ -1139,6 +1274,77 @@ mod tests {
         assert!(traffic_rows(&service, &views, &view.id, 0, 513, &traces).is_err());
         views.lock().unwrap().release(&view.id);
         assert!(traffic_rows(&service, &views, &view.id, 0, 100, &traces).is_err());
+    }
+
+    #[test]
+    fn timeline_uses_the_header_anchor_and_monotonic_duration_without_losing_zero() {
+        use transmog_core::performance::{Milestone, TimingPoint};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        service.catalog().apply(started(1));
+        let mut snapshot = service.catalog().get(ExchangeId(1)).unwrap();
+        let traces = crate::traces::TraceRegistry::default();
+        snapshot.performance.points = vec![
+            TimingPoint {
+                milestone: Milestone::RequestHeaders,
+                unix_millis: 1_800_000_000_000,
+                offset_micros: 0,
+            },
+            TimingPoint {
+                milestone: Milestone::ResponseHeaders,
+                unix_millis: 1_800_000_000_003,
+                offset_micros: 3_250,
+            },
+            TimingPoint {
+                milestone: Milestone::ExchangeDone,
+                unix_millis: 1_800_000_000_005,
+                offset_micros: 5_750,
+            },
+        ];
+        let row = timeline_row(&snapshot, SystemTime::now(), &traces);
+        assert_eq!(row.start_millis, Some(1_800_000_000_000));
+        assert_eq!(row.duration_micros, Some(5_750));
+        assert_eq!(row.response_micros, Some(3_250));
+        snapshot.performance.points[2].offset_micros = 0;
+        let row = timeline_row(&snapshot, SystemTime::now(), &traces);
+        assert_eq!(row.duration_micros, Some(0));
+        assert_eq!(row.response_micros, None);
+        snapshot.performance.points.clear();
+        snapshot.imported = true;
+        snapshot.metadata = Arc::new(transmog_core::intercept::ExchangeMetadata {
+            started_at: SystemTime::UNIX_EPOCH,
+            ..(*snapshot.metadata).clone()
+        });
+        let row = timeline_row(&snapshot, SystemTime::now(), &traces);
+        assert_eq!(row.start_millis, None);
+        assert_eq!(row.duration_micros, None);
+        assert_eq!(row.response_micros, None);
+    }
+
+    #[test]
+    fn timeline_pages_cover_offscreen_matches_and_reject_expired_views() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=3000 {
+            service.catalog().apply(started(id));
+        }
+        let traces = crate::traces::TraceRegistry::default();
+        let views = Mutex::new(TrafficViews::default());
+        let view = traffic_view(
+            &service,
+            &views,
+            &SessionQueryInput::default(),
+            &traces,
+            None,
+        )
+        .unwrap();
+        let rows = traffic_timeline_rows(&service, &views, &view.id, 2000, 1000, &traces).unwrap();
+        assert_eq!(rows.len(), 1000);
+        assert_eq!(rows[0].id, view.ids[2000]);
+        assert!(traffic_timeline_rows(&service, &views, &view.id, 0, 2049, &traces).is_err());
+        assert!(traffic_timeline_rows(&service, &views, &view.id, 0, 0, &traces).is_err());
+        views.lock().unwrap().release(&view.id);
+        assert!(traffic_timeline_rows(&service, &views, &view.id, 0, 100, &traces).is_err());
     }
 
     #[test]

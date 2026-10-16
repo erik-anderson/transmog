@@ -140,7 +140,7 @@ use serde::Serialize;
 pub use sessions::{
     ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
-    TrafficView,
+    TrafficTimelineRow, TrafficView,
 };
 use thiserror::Error;
 pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveProgress, TraceSaveResult};
@@ -1444,6 +1444,26 @@ impl Application {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .release(view_id);
+    }
+
+    /// Reads compact timing metadata for a bounded window of a filtered traffic view.
+    ///
+    /// # Errors
+    /// Returns an expired view or a limit outside 1 through 2048.
+    pub fn traffic_timeline_rows(
+        &self,
+        view_id: &str,
+        offset: usize,
+        limit: usize,
+    ) -> Result<Vec<TrafficTimelineRow>, AppError> {
+        sessions::traffic_timeline_rows(
+            &self.service,
+            &self.traffic_views,
+            view_id,
+            offset,
+            limit,
+            &self.traces,
+        )
     }
 
     /// Searches captured evidence without changing traffic or selections.

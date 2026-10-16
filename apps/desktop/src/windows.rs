@@ -41,8 +41,8 @@ use transmog_app::{
     ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
     ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
     SessionResponseAsset, SessionSummary, SupportBundleRequest, SupportBundleResult,
-    SystemReplayExecutor, TraceSaveOptions, TraceSaveResult, TrafficView, WindowState,
-    WorkspacePreferences,
+    SystemReplayExecutor, TraceSaveOptions, TraceSaveResult, TrafficTimelineRow, TrafficView,
+    WindowState, WorkspacePreferences,
 };
 use transmog_app_webui::{AppRenderer, ShellView, UiError, UiResponse};
 use transmog_host_windows::{
@@ -1340,6 +1340,26 @@ fn release_traffic_view(
 }
 
 #[tauri::command]
+async fn traffic_timeline_rows(
+    view_id: String,
+    offset: usize,
+    limit: usize,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<TrafficTimelineRow>, AppError> {
+    let application = state.window_application(&window)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        application.traffic_timeline_rows(&view_id, offset, limit)
+    })
+    .await
+    .map_err(|_| AppError {
+        category: transmog_app::ErrorCategory::Internal,
+        message: "Timeline query worker failed".into(),
+        retryable: true,
+    })?
+}
+
+#[tauri::command]
 fn session_detail(
     id: String,
     window: tauri::WebviewWindow,
@@ -2248,6 +2268,7 @@ pub fn run() {
                 reset_ca,
                 query_sessions,
                 query_traffic_view,
+                traffic_timeline_rows,
                 traffic_view_rows,
                 release_traffic_view,
                 session_detail,
