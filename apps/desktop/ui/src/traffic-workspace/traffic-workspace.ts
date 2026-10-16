@@ -41,11 +41,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     const ids=[...this.trafficSelection.ids];
     if(ids.length!==this.timelineSelection.length||ids.some((id,index)=>id!==this.timelineSelection[index]))this.timelineSelection=ids;
   }
-  setTimeline(enabled:boolean):void {
+  toggleTimeline():void {this.setTimeline(!this.timelineMode,false);}
+  setTimeline(enabled:boolean,focusView=true):void {
+    if(!enabled)this.timeline?.closeHelp(false);
     this.timelineMode=enabled;
     (this.getRootNode() as ShadowRoot).getElementById('table-settings')?.hidePopover();
-    if(enabled){this.syncTimelineSelection();void this.refreshTimeline();this.$flushUpdates();this.querySelector<HTMLElement>('.timeline-overview svg')?.focus({preventScroll:true});}
-    else {this.timelineGeneration++;this.timelineBusy=false;window.clearTimeout(this.timelineTimer);this.timelineTimer=undefined;this.$flushUpdates();this.scheduleViewport();this.focusTraffic();}
+    if(enabled){this.syncTimelineSelection();void this.refreshTimeline();this.$flushUpdates();if(focusView)this.querySelector<HTMLElement>('.timeline-overview svg')?.focus({preventScroll:true});}
+    else {this.timelineGeneration++;this.timelineBusy=false;window.clearTimeout(this.timelineTimer);this.timelineTimer=undefined;this.$flushUpdates();this.scheduleViewport();if(focusView)this.focusTraffic();}
   }
   private scheduleTimeline():void {
     if(!this.timelineMode||this.view!=='traffic'||this.timelineTimer!==undefined)return;

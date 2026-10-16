@@ -87,8 +87,17 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.closeMatches()`);
   assert.equal(await client.evaluate(`${t}.getRootNode().activeElement?.dataset.sessionId===${t}.matchEntryId && ${t}.selectedSessionId===${t}.matchEntryId && ${t}.contentSearchActive`),true);
   if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-traffic.png'),Buffer.from(image.data,'base64'));}
-  await client.evaluate(`${t}.clearTrafficSelection();${t}.setTimeline(true)`);
-  await wait(`${t}.timelineEntries.length===20000 && !${t}.timelineBusy`,120000);
+  const listScroll=await client.evaluate(`${t}.sessionScroller.scrollTop`);
+  await client.evaluate(`${t}.clearTrafficSelection();${t}.querySelector('.timeline-toggle').focus()`);
+  await key(' ','Space',32);
+  await wait(`${t}.timelineEntries.length===20000 && !${t}.timelineBusy && !${t}.timelinePending`,120000);
+  assert.equal(await client.evaluate(`${t}.getRootNode().activeElement===${t}.querySelector('.timeline-toggle')`),true,'Native Timeline toggle moved keyboard focus');
+  await key('Enter','Enter',13);
+  assert.equal(await client.evaluate(`${t}.timelineMode`),false,'Native Timeline toggle did not turn off');
+  assert.ok(Math.abs(await client.evaluate(`${t}.sessionScroller.scrollTop`)-listScroll)<1,'Native Timeline toggle lost the List scroll position');
+  await key(' ','Space',32);
+  await wait(`${t}.timelineMode && !${t}.timelineBusy && !${t}.timelinePending`,120000);
+  await client.evaluate(`${t}.timeline.overview.focus()`);
   assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis>0 && row.durationMicros>0)`),'Native fixture did not produce measured intervals');
   assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis===null)`),'Native fixture lost unavailable timing');
   assert.equal(await client.evaluate(`${t}.querySelector('.timeline-span').namespaceURI`),'http://www.w3.org/2000/svg');
@@ -164,6 +173,6 @@ export async function smokeTrafficList(client,screenshot) {
     assert.equal(await client.evaluate(`${t}.getRootNode().activeElement===${t}.searchInput`),true,'Native late source navigation stole focus');
   }finally{await client.evaluate(`${t}.refreshTimeline=globalThis.__nativeTimelineFocus.original;globalThis.__nativeTimelineFocus.release();delete globalThis.__nativeTimelineFocus`);}
   await client.evaluate(`${t}.setTimeline(false);${t}.clearTrafficSelection()`);
-  process.stdout.write('WebView2 timeline: full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n');
+  process.stdout.write('WebView2 timeline: compact toggle, contextual help, full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n');
   process.stdout.write('WebView2 traffic: 20,000 entries, offscreen range, select all/delete/undo and search reveal verified.\n');
 }

@@ -125,9 +125,9 @@ export class TrafficTimeline extends WebUIElement {
     },200);
   }
   helpToggled(event:ToggleEvent):void {if(event.newState==='closed'){this.helpPinned=false;window.clearTimeout(this.helpCloseTimer);}}
-  closeHelp():void {
+  closeHelp(restoreFocus=true):void {
     const root=this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
-    const restore=this.helpPanel.contains(active);
+    const restore=restoreFocus&&this.helpPanel.contains(active);
     this.helpPinned=false;window.clearTimeout(this.helpCloseTimer);this.helpClosing=true;
     this.helpPanel.hidePopover();if(restore)this.helpButton.focus({preventScroll:true});this.helpClosing=false;
   }

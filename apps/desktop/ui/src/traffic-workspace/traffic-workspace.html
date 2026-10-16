@@ -13,6 +13,7 @@
         <button type="button" w-ref="{filesMenuButton}" class="secondary compact-button files-menu-trigger" popovertarget="trace-files-menu">Files</button>
         <button type="button" class="secondary compact-button" @click="{clearTraffic()}" ?disabled="{{removingTraffic}}" title="Clear every entry in this window. Undo expires after 5 minutes for 100 MB or more and is unavailable for 1 GB or more.">Clear all</button>
         <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filters <if condition="filterCount">({{filterCount}})</if></button>
+        <button type="button" class="secondary compact-button timeline-toggle" aria-label="Timeline" aria-pressed="{{timelineMode}}" title="{{timelineMode ? 'Show request list' : 'Show timeline'}}" @click="{toggleTimeline()}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4h7M5 10h10M10 16h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg></button>
         <button type="button" class="secondary compact-button" popovertarget="table-settings">View</button>
       </div>
     </header><if condition="incidentWindow"><div class="content-search-status"><span>{{incidentWindowLabel}}. Other filters still apply.</span><button type="button" class="secondary compact-button" @click="{clearIncidentWindow()}">Clear incident restriction</button><button type="button" class="secondary compact-button" @click="{clearIncidentWindow(true)}">Show all traffic</button></div></if>
@@ -191,7 +192,6 @@
     </div>
     <div id="table-settings" class="table-popover table-settings" popover="auto">
       <strong class="popover-title">View</strong>
-      <div class="traffic-view-options" role="group" aria-label="Traffic view"><button type="button" aria-pressed="{{!timelineMode}}" @click="{setTimeline(false)}">List</button><button type="button" aria-pressed="{{timelineMode}}" @click="{setTimeline(true)}">Timeline</button></div>
       <label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">Inspector below</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">Inspector beside</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
       <if condition="!timelineMode"><details class="list-column-settings"><summary>List columns</summary><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>

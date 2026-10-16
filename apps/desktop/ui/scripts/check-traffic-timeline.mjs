@@ -6,8 +6,9 @@ export async function checkTrafficTimeline(page,root) {
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
   const saved=await page.evaluate(()=>({rows:globalThis.__workspaceFixture.sessions,preferences:document.querySelector('app-shell').traffic.preferences,baseline:document.querySelector('app-shell').traffic.comparisonBaseline,baselineLabel:document.querySelector('app-shell').traffic.comparisonBaselineLabel}));
   const traffic=page.locator('traffic-workspace'),timeline=traffic.locator('traffic-timeline');
+  const toggle=traffic.getByRole('button',{name:'Timeline',exact:true});
   const settle=()=>page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.timelineMode&&!t.timelineBusy&&!t.timelinePending&&t.timelineEntries.length>0;});
-  const show=async enabled=>{await traffic.getByRole('button',{name:'View',exact:true}).click();await traffic.locator('#table-settings').getByRole('button',{name:enabled?'Timeline':'List',exact:true}).click();if(enabled)await settle();};
+  const show=async enabled=>{if(await toggle.getAttribute('aria-pressed')!==String(enabled))await toggle.click();if(enabled)await settle();};
   try {
     await page.evaluate(async()=>{
       const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=s.sessions[0],base=1800000000000;
@@ -15,7 +16,13 @@ export async function checkTrafficTimeline(page,root) {
       t.preferences={...t.preferences,layout:'stacked',listSplit:55};t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);
     });
     const bodies=await page.evaluate(()=>globalThis.__workspaceFixture.calls.inspect_body??0);
-    await show(true);
+    assert.equal(await toggle.getAttribute('aria-pressed'),'false');
+    const toggleSize=await toggle.boundingBox();assert.ok(toggleSize.width<=40&&toggleSize.height<=40,'Timeline toggle takes more than a compact icon button');
+    await toggle.focus();await page.keyboard.press('Space');await settle();
+    assert.equal(await toggle.getAttribute('aria-pressed'),'true');assert.equal(await toggle.evaluate(el=>el===el.getRootNode().activeElement),true,'Turning Timeline on moved focus off its toggle');
+    await page.keyboard.press('Enter');assert.equal(await toggle.getAttribute('aria-pressed'),'false');
+    assert.equal(await toggle.evaluate(el=>el===el.getRootNode().activeElement),true,'Turning Timeline off lost toggle focus');
+    await show(true);await timeline.locator('.timeline-overview > svg').focus();
     const helpButton=timeline.getByRole('button',{name:'Timeline help',exact:true});
     const help=timeline.getByRole('dialog',{name:'Timeline help',exact:true});
     const chartTop=await timeline.locator('.timeline-viewport').evaluate(el=>el.getBoundingClientRect().top);
@@ -39,6 +46,8 @@ export async function checkTrafficTimeline(page,root) {
     await page.waitForFunction(queries=>(globalThis.__workspaceFixture.calls.traffic_timeline_rows??0)>queries,queries);
     await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();await help.waitFor({state:'hidden'});
     await helpButton.click();await traffic.getByLabel('Filter or search traffic',{exact:true}).click();await help.waitFor({state:'hidden'});
+    await helpButton.click();await toggle.focus();await page.keyboard.press('Space');await help.waitFor({state:'hidden'});
+    assert.equal(await toggle.getAttribute('aria-pressed'),'false');await toggle.hover();await page.keyboard.press('Space');await settle();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),6);
     assert.equal(await timeline.locator('#timeline-tl-slow .timeline-span').evaluate(el=>el.namespaceURI),'http://www.w3.org/2000/svg');
     assert.equal(Number(await timeline.locator('#timeline-tl-slow .timeline-span').getAttribute('width')),1000);
@@ -95,12 +104,13 @@ export async function checkTrafficTimeline(page,root) {
       assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0));await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-zoom.png')});
       await helpButton.click();
       const bounds=await help.boundingBox();assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=801&&bounds.y+bounds.height<=601,'Zoomed help extends outside the window');
+      const trigger=await helpButton.boundingBox();assert.ok(bounds.y>=trigger.y+trigger.height-1||bounds.y+bounds.height<=trigger.y+1,'Zoomed help covers its trigger');
       await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-help-zoom.png')});await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();
     }finally{await page.evaluate(()=>document.documentElement.style.zoom='');}
     await page.setViewportSize({width:1440,height:900});
     await traffic.getByRole('button',{name:'View',exact:true}).click();
     const settings=traffic.locator('#table-settings');
-    assert.equal(await settings.getByRole('button',{name:'Timeline',exact:true}).getAttribute('aria-pressed'),'true');
+    assert.equal(await toggle.getAttribute('aria-pressed'),'true');
     assert.equal(await settings.getByText('List columns',{exact:true}).count(),0,'Timeline exposes inactive List settings');
     await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-settings.png')});
     await settings.getByLabel('Compact rows',{exact:true}).uncheck();await page.keyboard.press('Escape');
@@ -123,6 +133,8 @@ export async function checkTrafficTimeline(page,root) {
     await page.mouse.move(windowBox.x+windowBox.width/2,windowBox.y+20);await page.mouse.down();await page.mouse.move(windowBox.x+windowBox.width/2+overview.width*.1,windowBox.y+20,{steps:6});await page.mouse.up();
     assert.ok(Math.abs(Number(await timeline.locator('.timeline-window').getAttribute('width'))-beforeWidth)<1,'Panning changed window width');
     const range=await timeline.locator('.timeline-scale > span').first().textContent();
+    await show(false);await show(true);
+    assert.equal(await timeline.locator('.timeline-scale > span').first().textContent(),range,'Toggling the Timeline reset the adjusted range');
     // Pointer cancellation must work even when focus started on another control.
     await timeline.getByRole('button',{name:'Reset range',exact:true}).focus();
     const box=await end.boundingBox();await page.mouse.move(box.x+2,box.y+10);await page.mouse.down();await page.mouse.move(box.x-50,box.y+10,{steps:4});
@@ -171,6 +183,13 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),10000);
     assert.ok(await timeline.locator('.timeline-row').count()<100,'Timeline DOM grew with capture size');
+    await show(false);
+    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.sessionScroller.scrollTop=t.virtualList.offset(5000);t.renderViewport();});
+    await traffic.locator('#session-tl-load-5000').waitFor({state:'visible'});
+    const listScroll=await traffic.locator('.table-wrap').evaluate(el=>el.scrollTop);
+    await show(true);await show(false);
+    assert.ok(Math.abs(await traffic.locator('.table-wrap').evaluate(el=>el.scrollTop)-listScroll)<1,'Toggling Timeline lost the List scroll position');
+    await show(true);
     await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;globalThis.__workspaceFixture.sessions[0].url='https://example.test/api/../admin?';await t.refreshTimeline();});
     assert.equal(await timeline.locator('#timeline-tl-load-0 .timeline-request > span').textContent(),'#1 GET /api/../admin?');
     await timeline.getByRole('slider',{name:'Timeline end',exact:true}).focus();await page.keyboard.press('Home');

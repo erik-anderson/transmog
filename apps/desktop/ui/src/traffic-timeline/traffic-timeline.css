@@ -12,7 +12,7 @@ traffic-timeline { display:block; flex:1; min-height:0; min-width:0; overflow:hi
 .timeline-help header { display:flex; align-items:center; justify-content:space-between; gap:.5rem; }
 .timeline-help p { margin:.6rem 0; }
 .timeline-help .timeline-scale { margin-top:.4rem; }
-@supports(anchor-name:--timeline-help) { .timeline-help { position-anchor:--timeline-help; inset:auto; position-area:block-end span-inline-end; margin:.25rem 0 0; position-try-fallbacks:flip-inline,flip-block; } }
+@supports(anchor-name:--timeline-help) { .timeline-help { position-anchor:--timeline-help; inset:auto; position-area:block-end span-inline-end; margin:.25rem 0 0; max-height:min(32rem,calc(100% - .5rem)); position-try-fallbacks:flip-inline,flip-block; position-try-order:most-height; } }
 .timeline-overview { flex:none; padding:.35rem .6rem; border-bottom:1px solid var(--line); background:var(--panel-subtle); }
 .timeline-overview > svg { display:block; width:100%; height:44px; overflow:hidden; touch-action:none; cursor:crosshair; }
 .timeline-density { fill:var(--accent); fill-opacity:.35; pointer-events:none; }

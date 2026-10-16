@@ -71,10 +71,12 @@ Hiding it persists, and Reset columns restores the new default.
 
 ## Timeline
 
-Choose **View → Timeline** to replace the list with requests aligned on a shared
-time axis, while keeping the inspector available. Choose **View → List** to
-return to the existing list and scroll position. **Order → Start time** is the
-default; **Longest first** brings long requests to the top.
+Click the **Timeline** button (waterfall icon) beside **View** to replace the
+list with requests aligned on a shared time axis, while keeping the inspector
+available. Click it again to return to the existing list and scroll position.
+The compact toggle shows when Timeline is on and retains keyboard focus when
+switched. List is the default. **Order → Start time** is the default;
+**Longest first** brings long requests to the top.
 The path is the primary request label; host, source and state are secondary.
 The full URL remains in the inspector. Row descriptions and tooltips retain
 the display URL and precise duration. Chart labels use milliseconds, seconds,
@@ -105,9 +107,8 @@ Hover or focus **?** beside the Timeline heading for the absolute start time in
 UTC, timing boundaries and keyboard instructions. Click it to keep help open;
 Close, Escape or clicking outside dismisses it. Help overlays the view without
 moving the chart. **Compact rows** applies to both List and Timeline;
-**List columns** is available only in List. The selected view is visibly marked
-in the View menu. Layout places the **Inspector below** (default) or
-**Inspector beside** the traffic view.
+**List columns** is available only in List. Layout places the **Inspector below**
+(default) or **Inspector beside** the traffic view.
 
 Live updates preserve adjusted ranges and do not steal focus. The overview
 summarizes overlapping activity; rows are virtualized across the full scope.
