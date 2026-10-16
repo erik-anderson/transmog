@@ -298,13 +298,13 @@ try {
           watchControls: [...element.shadowRoot.querySelectorAll('button')]
             .filter((candidate) => /watch live/i.test(candidate.textContent ?? '')).length,
           hooksV2Branding: /hooks v2/i.test(surfaceText),
-          automationTools: automation?.querySelectorAll('.workspace-tabs button').length ?? 0,
+          automationTools: Array.from(automation?.querySelectorAll('.workspace-tabs button') ?? [],button=>button.textContent.trim()),
           autoResponseWorkspace: automation?.querySelectorAll('.auto-response-workspace').length ?? 0,
           captureStartHint: automation?.querySelectorAll('.auto-response-start-hint').length ?? 0,
           capturedResponsePrimary,
           scratchSecondary,
           trafficRowDragRemoved:trafficWorkspace.querySelectorAll('tr[data-session-id][draggable]').length===0,
-          exactUrlFields: automation?.querySelectorAll('input[name="url"]').length ?? 0,
+          exactUrlFields: autoResponseEditor?.querySelectorAll('input[name="url"]').length ?? 0,
           firstMatchExplained: /first enabled match wins/i.test(automation?.textContent ?? ''),
           scratchEditorOpened,
           responseBodyRows,
@@ -365,7 +365,7 @@ try {
   assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
-  assert(result.ux.automationTools === 3 && result.ux.autoResponseWorkspace === 1
+  assert(['Auto-responses','Experiments','Header rules','Response edits','UA header overrides','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
     && result.ux.captureStartHint === 1 && result.ux.exactUrlFields === 1
     && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened

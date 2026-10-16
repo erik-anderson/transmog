@@ -16,7 +16,7 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       globalThis.__responseFileProbe={original,view:shell.activeView};
       const sourceMediaType=${JSON.stringify(mediaType)};
       const source=await invoke('create_response_asset',{input:{id:'native-compressed-source',revision:1,status:200,headers:${JSON.stringify([...rawHeaders,{name:Array.from(Buffer.from('content-encoding')),value:Array.from(Buffer.from('x-gzip'))}])},body:${JSON.stringify(Array.from(gzipSync(Buffer.from([0,255,1,254]))))},mediaType:sourceMediaType}});
-      const asset=await invoke('edit_response_asset',{input:{assetReference:source.id+'@1',status:200,headers:source.headers,bodyPath:${JSON.stringify(path)},decodedBody:null,mediaType:source.mediaType,preserveContentEncoding:true}});
+      const asset=await invoke('edit_response_asset',{input:{assetReference:source.id+'@1',status:200,headers:source.headers,bodyPath:${JSON.stringify(path)},bodyFileMode:'linked',decodedBody:null,mediaType:source.mediaType,preserveContentEncoding:true}});
       if(!asset.linkedBody||asset.linkedBody.path!==${JSON.stringify(path)})throw new Error('Native file import did not preserve its linked path');
       const matcher={method:'GET',url:{kind:'exact',value:'https://example.test/native-file'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null};
       const rule={id:'native-linked-rule',displayName:'Native linked file',enabled:true,revision:1,priority:-2000000,matcher,request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@'+asset.revision,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
@@ -26,11 +26,14 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       await new Promise(resolve=>setTimeout(resolve,100));
       const workspace=shell.shadowRoot.querySelector('automation-workspace');
       await workspace.refreshAutomation();await workspace.editAutoResponse(rule,true);workspace.$flushUpdates();
-      if(!workspace.autoResponseBody.disabled||!workspace.textContent.includes('Response body being served from file'))throw new Error('Native linked-file overlay is missing');
+      const waitForFile=async()=>{const deadline=Date.now()+15000;while((workspace.loadingSavedResponse||workspace.fileChoiceBusy)&&Date.now()<deadline)await new Promise(resolve=>setTimeout(resolve,20));if(workspace.loadingSavedResponse||workspace.fileChoiceBusy)throw new Error('Native file inspection did not finish');};
+      await waitForFile();
+      if(!workspace.autoResponseBody.disabled||!workspace.textContent.includes('Response body from file'))throw new Error('Native linked-file overlay is missing');
       if(workspace.autoResponsePreserveEncoding.disabled||!workspace.textContent.includes('Apply original compression type (gzip)')||!asset.linkedBody.applyOriginalCompression)throw new Error('Native linked-file compression choice is missing');
       if(/x-gzip/i.test(workspace.autoResponsePreserveEncoding.closest('label').textContent))throw new Error('Native compression control exposed the gzip alias');
       workspace.autoResponseForm.elements.namedItem('status').value='201';
       if(!await workspace.saveAutoResponse(new Event('submit',{cancelable:true})))throw new Error('Native metadata-only Save failed: '+workspace.autoResponseError);
+      await waitForFile();
       const saved=await invoke('inspect_response_asset',{reference:workspace.rules.find(r=>r.id===rule.id).request.responseAsset});
       const repeated=saved.asset.headers.filter(field=>new TextDecoder().decode(new Uint8Array(field.name))==='X-Repeat');
       if(JSON.stringify(repeated)!==${JSON.stringify(JSON.stringify(rawHeaders))})throw new Error('Native metadata-only Save changed raw repeated header bytes or order');
