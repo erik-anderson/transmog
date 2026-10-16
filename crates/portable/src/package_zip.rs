@@ -368,6 +368,7 @@ pub(super) struct Writer<W> {
     offset: u64,
     directory: Vec<u8>,
     count: u64,
+    modified: u32,
 }
 impl<W: Write> Writer<W> {
     pub fn new(output: W) -> Self {
@@ -376,6 +377,7 @@ impl<W: Write> Writer<W> {
             offset: 0,
             directory: vec![],
             count: 0,
+            modified: dos_timestamp(time::OffsetDateTime::now_utc()),
         }
     }
     fn bytes(&mut self, bytes: &[u8]) -> Result<(), Error> {
@@ -400,7 +402,7 @@ impl<W: Write> Writer<W> {
         put16(&mut head, 45);
         put16(&mut head, 0x808);
         put16(&mut head, 0);
-        put32(&mut head, 0x0021_0000);
+        put32(&mut head, self.modified);
         put32(&mut head, 0);
         put32(&mut head, u32::MAX);
         put32(&mut head, u32::MAX);
@@ -450,7 +452,7 @@ impl<W: Write> Writer<W> {
         put16(d, 45);
         put16(d, 0x808);
         put16(d, 0);
-        put32(d, 0x0021_0000);
+        put32(d, self.modified);
         put32(d, crc);
         put32(d, u32::MAX);
         put32(d, u32::MAX);
@@ -514,6 +516,15 @@ impl<W: Write> Writer<W> {
         self.output.flush()?;
         Ok(self.output)
     }
+}
+// ZIP's DOS clock has no time-zone field and two-second precision. Use UTC
+// export time for newly created members, not an invented source modification time.
+fn dos_timestamp(at: time::OffsetDateTime) -> u32 {
+    let year = at.year().clamp(1980, 2107).cast_unsigned();
+    let date = ((year - 1980) << 9) | (u32::from(u8::from(at.month())) << 5) | u32::from(at.day());
+    let clock =
+        (u32::from(at.hour()) << 11) | (u32::from(at.minute()) << 5) | u32::from(at.second() / 2);
+    (date << 16) | clock
 }
 fn put16(out: &mut Vec<u8>, n: u16) {
     out.extend_from_slice(&n.to_le_bytes());

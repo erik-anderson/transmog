@@ -7,7 +7,7 @@ import {describeError} from '../utilities.js';
 type Selection={experimentId:string;variantId:string;revision:number};
 type Scope={value:string;label:string;scope:unknown};
 type Reference={artifactSha256:string;sourceKey:string;exchangeId:string|null;occurrence:string};
-type Source={id:string;label:string;artifactSha256?:string;sourceKey?:string;dependency:{state:string;reason?:string};evidenceCompleteness:string};
+type Source={id:string;label:string;requestCount?:string;artifactSha256?:string;sourceKey?:string;dependency:{state:string;reason?:string};evidenceCompleteness:string};
 type Context={id:string;kind:string;completeness:string;content:{state:string;sha256?:string}};
 type FrozenSelection={experimentId:string;variantId:string;revision:string};
 type SavedComparison={id:string;label:string;kind:string;engine:string;left:Reference[];right:Reference[];recordedSummary:string};
@@ -39,11 +39,12 @@ export class PortableCase extends WorkspaceElement {
   @observable caseScopes:Scope[]=[];
   @observable caseRules:Array<{id:string;label:string}>=[];
   @observable caseVariants:Array<{value:string;label:string;selection:Selection}>=[];
-  @observable caseSources:Array<Source&{available:boolean}>=[];
+  @observable caseSources:Array<Source&{available:boolean;summary:string;completenessLabel:string}>=[];
   @observable caseExperiments:Array<{id:string;label:string;state:string;reason:string;available:boolean}>=[];
   @observable caseNotes:Array<{id:string;text:string;source?:Reference|null}>=[];
   @observable caseExcluded:Array<{text:string}>=[];
   @observable caseFacts:Array<{label:string;value:string}>=[];
+  @observable caseCaptureFacts:Array<{label:string;value:string}>=[];
   @observable caseManifestText='';
   @observable caseImportItems:RuleReview['items']=[];
   @observable caseOrdinaryRules=false;
@@ -51,14 +52,15 @@ export class PortableCase extends WorkspaceElement {
   @observable caseIsCase=true;
   @observable caseInspection=false;
   caseDialog!:HTMLDialogElement;
+  caseScroll!:HTMLDivElement;
   authorForm!:HTMLFormElement;
   saveForm!:HTMLFormElement;
   importForm!:HTMLFormElement;
-  workingConsent!:HTMLInputElement;
   private scopes:Scope[]=[];
   private returnFocus:HTMLElement|null=null;
   private connectedRevision=0;
   private openedReview:Review|null=null;
+  private displayedReview:Review|null=null;
   private links=new Map<string,string>();
   private referenceKey(ref:Reference):string{return JSON.stringify([ref.artifactSha256,ref.sourceKey,ref.exchangeId,ref.occurrence]);}
   disconnectedCallback():void {this.connectedRevision++;super.disconnectedCallback();void invoke('close_case').catch(()=>undefined);}
@@ -96,17 +98,17 @@ export class PortableCase extends WorkspaceElement {
     });
   }
   private display(review:Review,inspection:boolean):void{
+    if(review!==this.displayedReview){this.caseScroll.scrollTop=0;this.displayedReview=review;}
     this.caseFormat='native';this.caseEncrypt=review.encrypted??false;this.saveForm.reset();(this.saveForm.elements.namedItem('encrypt') as HTMLInputElement).checked=this.caseEncrypt;
     const m=review.manifest,rules=m.rules??[],assets=m.assets??[],experiments=m.experiments??[],objects=m.objects??[];this.caseTitle=m.title;this.caseInspection=inspection;this.caseIsCase=m.kind==='case';
-    this.caseSources=(m.sources??[]).map(s=>({...s,available:['present','locked'].includes(s.dependency.state)}));
+    this.caseSources=(m.sources??[]).map(s=>({...s,available:['present','locked'].includes(s.dependency.state),summary:[s.requestCount===undefined?'Request count not recorded':`${s.requestCount} requests`,s.dependency.state==='present'?'Included':s.dependency.state==='locked'?'Source password required':'Unavailable'].join(' · '),completenessLabel:s.evidenceCompleteness==='complete'?'Capture reports complete evidence.':s.evidenceCompleteness==='unknown'?'Capture completeness was not established.':s.evidenceCompleteness==='redacted'?'Some captured content was redacted.':'Some content was not fully captured or retained.'}));
     this.caseExperiments=experiments.map(e=>{const availability=review.inventory.experiments.find(v=>v.id===e.id);return{id:e.id,label:e.label??e.id,state:availability?.state==='ready-for-explicit-import'?'Ready to import disabled':'Unavailable in this build',reason:availability?.reason??'',available:availability?.state==='ready-for-explicit-import'};});
     this.caseContexts=(m.contexts??[]).map(c=>({...c,available:c.content.state==='present'&&objects.some(o=>o.sha256===c.content.sha256&&(o.mediaType==='application/json'||o.mediaType?.startsWith('text/')))}));this.caseContextText='';this.caseContextLabel='';
     this.caseNotes=m.notes??[];this.caseOrdinaryRules=rules.length>0;this.caseExcluded=review.excluded.map(text=>({text}));
-    this.caseFacts=[{label:'Content kind',value:m.kind==='rules'?'Rule collection':'Investigation case'},{label:'Saved experiments',value:String(experiments.length)},{label:'Evidence sources',value:String(m.sources?.length??0)},{label:'Rules / response assets',value:`${rules.length} / ${assets.length}`},
-      {label:'Original context objects / markers',value:`${m.contexts?.length??0} / ${m.markers?.length??0}`},{label:'Authored notes / retained runs',value:`${m.notes?.length??0} / ${m.runs?.length??0}`},
-      {label:'Missing or unavailable dependencies',value:String(review.inventory.missingDependencies)},{label:'Sources with incomplete or unknown evidence',value:String(review.inventory.incompleteSources)},
-      {label:'Activation',value:review.activation}];
-    if(review.traffic)this.caseFacts=[{label:'Included / retained entries',value:`${review.traffic.entries} / ${review.traffic.retainedEntries}`},{label:'Retained stream records / incomplete body observations',value:`${review.traffic.streamRecords} / ${review.traffic.incompleteBodies}`},...this.caseFacts];
+    const requestCount=review.traffic?String(review.traffic.entries):this.caseSources.every(s=>s.requestCount!==undefined)?this.caseSources.reduce((n,s)=>n+BigInt(s.requestCount!),0n).toString():'Not recorded — inspect in Traffic';
+    this.caseFacts=[{label:'Captured requests',value:requestCount},{label:'Captures',value:String(this.caseSources.length)}];
+    for(const [label,count] of [['Saved rules',rules.length],['Response files',assets.length],['Experiments',experiments.length],['Source context files',m.contexts?.length??0],['Incident markers',m.markers?.length??0],['Notes',m.notes?.length??0],['Saved runs',m.runs?.length??0],['Unavailable files',review.inventory.missingDependencies]] as const)if(count)this.caseFacts.push({label,value:String(count)});
+    this.caseCaptureFacts=review.traffic?[{label:'Stream events observed',value:String(review.traffic.streamRecords)},{label:'Body records without full content',value:String(review.traffic.incompleteBodies)}]:[];
     this.caseSavedComparisons=m.comparisons??[];
     this.casePreviewVariants=[{value:'',label:'Captured baseline',selection:null,available:true}];if(rules.some(r=>(r as {kind?:string}).kind==='auto-response'))this.casePreviewVariants.push({value:'rules',label:'Frozen saved auto-responses',selection:null,available:true});
     for(const e of experiments)for(const v of e.variants??[])for(const r of v.revisions)this.casePreviewVariants.push({value:JSON.stringify([e.id,v.id,r.revision]),label:`${e.label??e.id} / ${v.label} / revision ${r.revision}`,selection:{experimentId:e.id,variantId:v.id,revision:r.revision},available:r.rules.filter(rule=>rule.enabledIntent).every(rule=>rule.kind==='auto-response')});
@@ -146,9 +148,16 @@ export class PortableCase extends WorkspaceElement {
       else this.caseStatus='Evidence opening canceled.';
     });return success;
   }
+  async inspectTraffic(sourceId:string):Promise<void>{
+    const revision=this.viewRevision;
+    if(!await this.inspect(sourceId)||revision!==this.viewRevision||!this.caseDialog.open)return;
+    const source=this.caseSources.find(s=>s.id===sourceId);
+    const first=[...this.links].find(([key])=>{const [artifact,sourceKey]=JSON.parse(key) as string[];return artifact===source?.artifactSha256&&sourceKey===source?.sourceKey;});
+    this.close();if(first)this.$emit('case-reference-request',first[1]);
+  }
   async choosePreview(sourceId:string):Promise<void>{
     const revision=this.viewRevision;if(!await this.inspect(sourceId)||revision!==this.viewRevision||!this.caseDialog.open)return;
-    await this.run('Finding complete HTML responses in opened case evidence…',async()=>{const choices=await invoke<{pages:Array<{id:string;url:string}>;more?:boolean}>('case_preview_choices',{sourceId});if(revision!==this.viewRevision||!this.caseDialog.open)return;this.casePreviewPages=choices.pages;this.casePreviewDocument=choices.pages[0]?.id??'';this.casePreviewVariant='';this.caseStage='preview';this.caseStatus=choices.pages.length?(choices.more?'Showing 100 HTML documents. Export a narrower case to choose another document.':'Choose a document and frozen response variant.'):'No complete retained HTML response is available in this source.';this.$flushUpdates();this.previewForm.reset();});
+    await this.run('Finding complete HTML responses in opened case evidence…',async()=>{const choices=await invoke<{pages:Array<{id:string;url:string}>;more?:boolean}>('case_preview_choices',{sourceId});if(revision!==this.viewRevision||!this.caseDialog.open)return;this.casePreviewPages=choices.pages;this.casePreviewDocument=choices.pages[0]?.id??'';this.casePreviewVariant='';this.caseStage='preview';this.caseStatus=choices.pages.length?(choices.more?'Showing 100 HTML documents. Export a narrower case to choose another document.':'Choose a document and frozen response variant.'):'No complete retained HTML response is available in this source.';this.$flushUpdates();this.caseScroll.scrollTop=0;this.previewForm.reset();});
   }
   setPreviewDocument(event:Event):void{this.casePreviewDocument=(event.target as HTMLSelectElement).value;}
   setPreviewVariant(event:Event):void{this.casePreviewVariant=(event.target as HTMLSelectElement).value;}
@@ -173,7 +182,6 @@ export class PortableCase extends WorkspaceElement {
   }
   async inspectContext(id:string):Promise<void>{await this.run('Reading original context…',async()=>{this.caseContextText=await invoke<string>('read_case_context',{id});this.caseContextLabel=this.caseContexts.find(c=>c.id===id)?.kind??id;this.caseStatus='Original context shown as inert text. No configuration commands were run.';});}
   async workingCopy():Promise<void>{
-    if(!this.workingConsent.checked){await this.showError('Plaintext working copy','Acknowledge that the new folder contains decrypted evidence, notes and context.');return;}
     await this.run('Creating a verified plaintext working copy…',async()=>{
       const path=await invoke<string|null>('save_case_working_copy');this.caseStatus=path?`Working copy saved to ${path}`:'Working copy canceled.';
     });

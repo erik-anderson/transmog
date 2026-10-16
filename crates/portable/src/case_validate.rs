@@ -374,6 +374,9 @@ fn source_inventory(
     let mut sources = BTreeSet::new();
     for source in &value.sources {
         association(&source.artifact_sha256, &source.source_key)?;
+        if let Some(count) = &source.request_count {
+            decimal(count, true)?;
+        }
         if !sources.insert((&source.artifact_sha256, &source.source_key))
             || source.label.len() > 1024
         {

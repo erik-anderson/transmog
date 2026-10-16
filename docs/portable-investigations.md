@@ -48,8 +48,8 @@ object bytes. Paths are derived from digests, never supplied filesystem locators
 There are no absolute paths, URLs to fetch, links, scripts to run or environment
 variable substitutions in dependency resolution.
 
-Use `.tmcase` for a bare ZIP/ZIP64 interchange export of a case directory and
-`.tmrules` for a rule collection. Writers use Stored members so ZIP entries remain
+Use `.tmcase.zip` for a bare ZIP/ZIP64 interchange export of a case directory and
+`.tmrules.zip` for a rule collection. Writers use Stored members so ZIP entries remain
 seekable and TMCap owns package compression. Native captures and many encoded
 response assets already compress internally. Readers reject other ZIP compression,
 member encryption, directories, duplicate names, unsafe names, reparse points,
@@ -61,6 +61,9 @@ directory under ZIP's rules, rather than being rejected as mismatches. Only
 This profile accepts only ZIP64 extra fields; Unicode path aliases and other
 unmodeled ZIP extras are rejected rather than interpreted differently by another
 reader. Stored ZIPs emitted here remain readable by standard ZIP tools.
+New ZIP members use the export time in UTC, rounded to ZIP's two-second DOS
+timestamp precision. This is packaging time, not a claim about when original
+evidence was modified. Forwarding an existing package preserves its timestamps.
 Nested archive-looking asset bytes are ordinary response content, never extracted.
 
 Native transfers default to `.tmcase.tmcap` or `.tmrules.tmcap`: the exact ZIP byte
@@ -497,12 +500,22 @@ Traffic's **Files** menu offers **Save portable case…** and **Open portable ca
 Saving starts with an explicit evidence scope (including a no-evidence option),
 selected saved rules/exact experiment revisions, authored notes and an original
 context choice. It does not run new configuration commands. Preparing selected
-evidence creates owned plaintext snapshots; the review discloses this before the
-user authorizes the derived copy. Output encryption protects the final transfer.
+evidence creates temporary unencrypted copies; the form discloses this before
+**Review selected content**. That explicit action prepares the copy without an
+additional acknowledgement checkbox. Output encryption protects the final file.
 
-Review shows included/retained entry counts, sources, stream/body completeness,
-notes, context, assets, runs, experiment availability and exclusions. The full
-manifest/provenance is available as inert text. Missing content remains missing;
+Review leads with the included request count and groups requests by capture,
+showing each capture's request count when recorded. Case source `requestCount`
+is an optional canonical unsigned-64-bit decimal string: the number of requests
+included for that source, not its original unfiltered size. Absence means unknown,
+not zero. Selected native exports always record it, including on reopened cases.
+**Inspect in Traffic** closes the review and reveals a request from that capture;
+reopening returns to the same case. Notes, context files, rules, response files,
+experiments and exclusions remain available. **Capture observations** explains
+stream events and body records without full content; ordinary capture settings,
+protocol behavior and unknown completeness are not presented as export failures.
+The raw **Technical manifest (JSON)** contains file inventory and provenance,
+not an individual request list. Missing content remains missing;
 an optional unsupported experiment does not prevent unrelated inspection.
 **Ready to import disabled** describes supported rule content, not browser replay
 or proof of an earlier experiment's outcome.
@@ -510,7 +523,12 @@ or proof of an earlier experiment's outcome.
 The native format compresses a Stored ZIP64 stream inside TMCap. Optional password
 protection covers the complete ZIP, including notes, context, object names and
 manifest. The masked output prompt is separate from source/embedded-source
-password prompts. Bare ZIP interchange is uncompressed and cannot be encrypted.
+password prompts. The desktop labels these **Transmog package (compressed)** and
+**ZIP package (for tools)**. ZIP output contains a JSON manifest and binary
+capture/response objects for compatible readers; it is not a readable traffic
+export. It is uncompressed and cannot be password-protected.
+ZIP case exports use `.tmcase.zip`; ZIP rule collections use `.tmrules.zip` so
+ordinary archive tools recognize them directly.
 An error or canceled password prompt never selects plaintext as a fallback.
 
 Opening verifies the complete outer stream and all declared object hashes before
@@ -539,8 +557,10 @@ package. Windows readers allow delete sharing and publication uses the modern
 rename API through Rust's standard library. A failed replacement preserves the
 existing destination.
 
-**Save working copy…** separately requires acknowledgment that the new folder is
-plaintext. It creates a new case directory at the chosen path and preserves
+**Save unencrypted folder…** explicitly copies the case into a readable working
+folder, including any decrypted evidence. Its adjacent description states this
+effect; there is no separate acknowledgement checkbox. It creates a new case
+directory at the chosen path and preserves
 existing paths. Portable manifest IDs are not used as filesystem names. Archive editing is not implicit. Shared `WorkingCase` APIs own
 transactional edits/history; this desktop increment does not add a project editor.
 

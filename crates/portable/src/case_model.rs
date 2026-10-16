@@ -35,6 +35,7 @@ object!(CaseSource {
     artifact_sha256: String,
     source_key: String,
     label: String,
+    #[serde(default, skip_serializing_if="Option::is_none")] request_count: Option<String>,
     dependency: Availability,
     lineage: Lineage,
     evidence_completeness: String

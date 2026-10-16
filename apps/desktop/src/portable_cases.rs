@@ -147,13 +147,18 @@ async fn pick_case(
         picker
             .set_title("Save portable case")
             .set_file_name(format!("Investigation.{suffix}"))
-            .add_filter("Portable case", &[suffix])
+            // Windows appends the default extension if it does not match the
+            // final filename extension. A compound filter duplicates the suffix.
+            .add_filter(
+                "Portable case",
+                &[suffix.rsplit('.').next().unwrap_or(suffix)],
+            )
             .save_file()
             .await
     } else {
         picker
             .set_title("Open portable case or rules")
-            .add_filter("Portable investigations", &["tmcap", "tmcase", "tmrules"])
+            .add_filter("Portable investigations", &["tmcap", "zip"])
             .pick_file()
             .await
     };
@@ -329,7 +334,7 @@ pub(super) async fn save_case_export(
     let suffix = if matches!(format, PackageFormat::Native) {
         "tmcase.tmcap"
     } else {
-        "tmcase"
+        "tmcase.zip"
     };
     let Some(path) = pick_case(&window, &state, Some(suffix)).await else {
         return Ok(None);
@@ -375,9 +380,9 @@ pub(super) async fn save_open_case(
     let package = package(window.label())?;
     let suffix = match (package.manifest(), format) {
         (PackageManifest::Case(_), PackageFormat::Native) => "tmcase.tmcap",
-        (PackageManifest::Case(_), PackageFormat::BareZip) => "tmcase",
+        (PackageManifest::Case(_), PackageFormat::BareZip) => "tmcase.zip",
         (PackageManifest::Rules(_), PackageFormat::Native) => "tmrules.tmcap",
-        (PackageManifest::Rules(_), PackageFormat::BareZip) => "tmrules",
+        (PackageManifest::Rules(_), PackageFormat::BareZip) => "tmrules.zip",
     };
     let Some(path) = pick_case(&window, &state, Some(suffix)).await else {
         return Ok(None);

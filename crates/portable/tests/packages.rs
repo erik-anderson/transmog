@@ -194,7 +194,7 @@ fn standards_reader_opens_both_rule_archives_and_the_exact_unwrapped_zip() {
         &flag,
     )
     .unwrap();
-    let bare = root.path().join("rules.tmrules");
+    let bare = root.path().join("rules.tmrules.zip");
     transmog_portable::write_rules_package(
         &rules,
         &bare,
@@ -205,6 +205,24 @@ fn standards_reader_opens_both_rule_archives_and_the_exact_unwrapped_zip() {
     )
     .unwrap();
     let mut standard = zip::ZipArchive::new(File::open(&bare).unwrap()).unwrap();
+    let now = time::OffsetDateTime::now_utc();
+    for index in 0..standard.len() {
+        let member = standard.by_index(index).unwrap();
+        let modified = member.last_modified().unwrap();
+        let stamp = time::Date::from_calendar_date(
+            modified.year().into(),
+            modified.month().try_into().unwrap(),
+            modified.day(),
+        )
+        .unwrap()
+        .with_hms(modified.hour(), modified.minute(), modified.second())
+        .unwrap()
+        .assume_utc();
+        assert!(
+            (now - stamp).whole_seconds().abs() < 60,
+            "ZIP member has stale timestamp"
+        );
+    }
     let mut actual = vec![];
     standard
         .by_name("manifest.json")
@@ -245,7 +263,7 @@ fn forwarding_preserves_exact_inner_zip_and_uses_a_separate_new_output_password(
     let root = tempfile::tempdir().unwrap();
     let prepared = prepared(root.path());
     let flag = AtomicBool::new(false);
-    let bare = root.path().join("original.tmcase");
+    let bare = root.path().join("original.tmcase.zip");
     write_case_package(&prepared, &bare, PackageFormat::BareZip, None, false, &flag).unwrap();
     let original = std::fs::read(&bare).unwrap();
     let package = Package::open(&bare, None, &flag).unwrap();
@@ -284,7 +302,7 @@ fn forwarding_preserves_exact_inner_zip_and_uses_a_separate_new_output_password(
         second_package.manifest().encode().unwrap(),
         protected.manifest().encode().unwrap()
     );
-    let copied = root.path().join("explicit-readable.tmcase");
+    let copied = root.path().join("explicit-readable.tmcase.zip");
     second_package
         .write_transfer(&copied, PackageFormat::BareZip, None, false, &flag)
         .unwrap();

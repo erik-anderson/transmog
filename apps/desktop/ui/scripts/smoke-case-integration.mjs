@@ -12,6 +12,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
   for(const [id,path,type,body] of [[101,'/case-page','text/html',`<h1 id="case-heading">Portable fixture</h1><link rel="stylesheet" href="/case.css"><script>globalThis.caseScript=true;fetch('/missing').catch(()=>globalThis.caseMiss=true)</script>`],[102,'/case.css','text/css','h1 {color: green;}'],[103,'/case.css','text/css','h1 {color: red;}']]) {
     records.push(...[{kind:'request-head',payload:{boundary:'client-request',method:'GET',target:'https://case.invalid'+path,headers:[]}},{kind:'response-head',payload:{boundary:'client-response',status:200,headers:[{name:bytes('content-type'),value:bytes(type)},{name:bytes('cache-control'),value:bytes('max-age=3600')}]}},{kind:'body-segment',payload:{boundary:'client-response',byte_count:Buffer.byteLength(body),bytes:bytes(body),truncated:false}},{kind:'completed',payload:null}].map(row=>({...row,exchange_id:id})));
   }
+  for(let i=0;i<96;i++)records.push({kind:'request-head',exchange_id:200+i,payload:{boundary:'client-request',method:'GET',target:`https://case.invalid/assets/item-${i}`,headers:[]}},{kind:'response-head',exchange_id:200+i,payload:{boundary:'client-response',status:204,headers:[]}},{kind:'completed',exchange_id:200+i,payload:null});
   const input=resolve(output,'case-integration.tmcap');await writeFile(input,nativeFixture(records,101));
   await page.evaluate(path=>{void document.querySelector('app-shell').traffic.importTrace(path);},input);
   await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.sessions.some(r=>r.path==='/case-page')||t.importStatus.startsWith('Import failed:');},null,{timeout:30000});assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.importStatus.startsWith('Import failed:')),false,await page.evaluate(()=>document.querySelector('app-shell').traffic.importStatus));
@@ -24,13 +25,17 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
   const comparison=await invoke('compare_evidence',{input:{operationId:'native-case-compare',left:{kind:'exchange',id:css[0].id},right:{kind:'exchange',id:css[1].id},options:{excludedHeaders:['date'],normalizeNewlines:true}}});
   const captures=await invoke('compare_captures',{operationId:'native-case-scopes',left:{kind:'selected',ids:[css[0].id]},right:{kind:'selected',ids:[css[1].id]},options:{excludedQueryNames:['nonce'],requestHeaders:[],requestBodyDigest:false}});
   await invoke('capture_comparison_page',{id:captures.id,offset:0,options:null,left:css[0].id,right:css[1].id,action:'pair'});
-  const review=await invoke('prepare_case_export',{input:{title:'Native frozen case',scope:{kind:'selected',ids:rows.map(r=>r.id)},ruleIds:[],selections:[{experimentId:'native-case-experiment',variantId:'blue',revision:1}],notes:'Portable frozen responses and saved comparisons',includeContext:true,comparisonIds:[comparison.id,captures.id]}});
-  assert.equal(review.manifest.comparisons.length,2);await invoke('save_case_export',{format:'native',password:null});
+  assert.ok(rows[0].traceId);
+  const review=await invoke('prepare_case_export',{input:{title:'Native frozen case',scope:{kind:'source',traceId:rows[0].traceId},ruleIds:[],selections:[{experimentId:'native-case-experiment',variantId:'blue',revision:1}],notes:'Portable frozen responses and saved comparisons',includeContext:true,comparisonIds:[comparison.id,captures.id]}});
+  assert.equal(review.manifest.comparisons.length,2);assert.equal(review.traffic.entries,99);assert.equal(review.manifest.sources[0].requestCount,'99');await invoke('save_case_export',{format:'native',password:null});
   const traffic=page.locator('traffic-workspace'),dialog=page.locator('portable-case dialog');
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open portable case…',exact:true}).click();await dialog.getByRole('button',{name:'Open another package…',exact:true}).click();await dialog.getByRole('heading',{name:'Native frozen case',exact:true}).waitFor();
+  await dialog.getByText('99 requests · Included',{exact:true}).waitFor();
+  assert.equal(await dialog.locator('dl').first().locator('div').filter({hasText:'Captured requests'}).locator('dd').textContent(),'99');
+  for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.locator('.case-scroll').evaluate(el=>el.scrollTop=0);await page.screenshot({path:resolve(output,`case-inventory-native-${width}.png`)});}
   await dialog.getByRole('button',{name:'Preview case…',exact:true}).click();await dialog.getByLabel('Responses',{exact:true}).selectOption({label:'Native case experiment / Blue / revision 1'});
   assert.equal(await dialog.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);
-  await dialog.getByLabel('I understand captured content will run',{exact:false}).check();await dialog.getByRole('button',{name:'Open case preview',exact:true}).click();await dialog.getByText(/^Case preview opened/).waitFor();
+  await dialog.getByRole('button',{name:'Open case preview',exact:true}).click();await dialog.getByText(/^Case preview opened/).waitFor();
   let previewBrowser;
   const findPreview=async()=>{
     const deadline=Date.now()+15000;
@@ -47,7 +52,8 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
     const report=await invoke('captured_page_report',{label});assert.match(report.caseOrigin,/native-case-experiment\/blue\/1/);assert.match(report.runtime,/WebView2/);assert.equal(report.scriptsEnabled,false);assert.equal(report.rules.length,1);assert.ok(report.requests.some(r=>r.outcome==='auto-response'));
     await dialog.getByRole('button',{name:'Preview diagnostics…',exact:true}).click();const diagnostics=page.getByRole('dialog',{name:'Captured preview diagnostics',exact:true});await diagnostics.getByText(/These rules belong to the frozen case/).waitFor();assert.equal(await diagnostics.getByRole('button',{name:'Show saved rule',exact:true}).isDisabled(),true);await diagnostics.getByRole('button',{name:'Close',exact:true}).click();
     const count=await page.evaluate(()=>document.querySelector('app-shell').traffic.totalMatched);
-    await dialog.getByRole('button',{name:'Inspect in Traffic',exact:true}).click();assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.totalMatched),count,'Repeated source inspection duplicated Traffic');
+    await dialog.getByRole('button',{name:'Inspect in Traffic',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseDialog.open);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.totalMatched),count,'Repeated source inspection duplicated Traffic');
+    await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open portable case…',exact:true}).click();
     await dialog.locator('.case-row').filter({hasText:review.manifest.comparisons[0].label}).getByRole('button',{name:'Recompute comparison',exact:true}).click();
     const pair=page.getByRole('dialog',{name:'Compare requests and responses'});await pair.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.comparisonBusy);
     const result=await page.evaluate(()=>document.querySelector('app-shell').comparison.comparisonResult);assert.ok(result,await page.evaluate(()=>document.querySelector('app-shell').comparison.comparisonStatus));assert.equal(result.different,comparison.different);assert.deepEqual(result.options,{excludedHeaders:['date'],normalizeNewlines:true});await pair.getByRole('button',{name:'Close',exact:true}).click();
@@ -56,7 +62,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
     const scope=page.getByRole('dialog',{name:'Compare capture scopes'});await scope.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.captureBusy);
     const restored=await page.evaluate(()=>document.querySelector('app-shell').comparison.captureResult);assert.ok(restored,await page.evaluate(()=>document.querySelector('app-shell').comparison.captureStatus));assert.deepEqual(restored.options.excludedQueryNames,['nonce']);assert.ok(restored.rows.some(r=>r.reason==='Explicit user choice'));await scope.getByRole('button',{name:'Close',exact:true}).click();
     assert.equal(JSON.stringify(await invoke('automation_status')),original);
-    await writeFile(resolve(output,'case-integration.json'),JSON.stringify({nativeWebView2:true,frozenPackageCss:true,scriptsOff:true,caseOrigin:report.caseOrigin,runtime:report.runtime,savedExchangeComparison:true,savedOptions:true,manualPairingRestored:true,deduplicatedSourceInspection:true,liveAutomationUnchanged:true},null,2));
+    await writeFile(resolve(output,'case-integration.json'),JSON.stringify({nativeWebView2:true,inventoryRequests:99,frozenPackageCss:true,scriptsOff:true,caseOrigin:report.caseOrigin,runtime:report.runtime,savedExchangeComparison:true,savedOptions:true,manualPairingRestored:true,deduplicatedSourceInspection:true,liveAutomationUnchanged:true},null,2));
   }finally{
     await previewBrowser?.close();
     const child=spawn('pwsh.exe',['-NoProfile','-NonInteractive','-File',closeHelper,'-ProbeProcessId',processId,'-WindowTitle','Modified preview · Scripts off — Transmog'],{windowsHide:true,stdio:'inherit'});

@@ -55,6 +55,7 @@ pub(super) fn snapshot(
         return Err(invalid("Evidence changed after review"));
     }
     let mut source_keys = BTreeMap::new();
+    let mut source_request_counts = BTreeMap::<String, usize>::new();
     let mut frozen = BTreeMap::new();
     let mut original_occurrences = BTreeMap::new();
     let mut entries = Vec::new();
@@ -80,6 +81,9 @@ pub(super) fn snapshot(
             );
         }
         let original_source = entry.trace_id.clone();
+        *source_request_counts
+            .entry(original_source.clone())
+            .or_default() += 1;
         entry.trace_id.clone_from(&source_keys[&original_source]);
         entries.push(entry);
     }
@@ -211,6 +215,7 @@ pub(super) fn snapshot(
             label: source
                 .as_ref()
                 .map_or_else(|| "Live traffic".into(), |s| s.name.clone()),
+            request_count: Some(source_request_counts[original].to_string()),
             dependency: wire::Availability {
                 state: "present".into(),
                 reason: None,

@@ -5,19 +5,25 @@ export async function checkPortableCases(page,root){
   await page.evaluate(()=>{
     const state=globalThis.__workspaceFixture;
     state.caseChoices={rules:[{id:'rule-a',label:'Keep the exact encoded response'}],variants:[]};
-    state.caseReview={manifest:{id:'portable-test',kind:'case',title:'Checkout investigation — customer-provided context <script>inert</script>',sources:[{id:'source-a',artifactSha256:'fixture-digest',sourceKey:'root',label:'Original source with a long descriptive label — '+ 'customer evidence '.repeat(8),dependency:{state:'present'},evidenceCompleteness:'truncated'}],rules:[{id:'rule-a'}],assets:[{}],experiments:[{id:'future',label:'Unsupported optional experiment'}],notes:[{id:'note',source:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},text:'Authored observation <img src=x onerror=alert(1)>\nOriginal config output remains source evidence.'}],contexts:[{id:'context-a',kind:'capture-metadata',completeness:'partial',content:{state:'present',sha256:'context-digest'}}],markers:[{}],runs:[],objects:[{role:'capture',bytes:'1000'},{role:'context',bytes:'20',sha256:'context-digest',mediaType:'application/json'}]},inventory:{missingDependencies:1,incompleteSources:1,experiments:[{id:'future',state:'unavailable',reason:'This optional experiment is not supported by this build.'}]},excluded:['Unselected evidence and working history'],activation:'Opening and importing do not activate rules or scripts.'};
+    state.caseReview={traffic:{entries:99,retainedEntries:120,streamRecords:12,incompleteBodies:198},manifest:{id:'portable-test',kind:'case',title:'Checkout investigation — customer-provided context <script>inert</script>',sources:[{id:'source-a',artifactSha256:'fixture-digest',sourceKey:'root',requestCount:'99',label:'Original source with a long descriptive label — '+ 'customer evidence '.repeat(8),dependency:{state:'present'},evidenceCompleteness:'truncated'}],rules:[{id:'rule-a'}],assets:[{}],experiments:[{id:'future',label:'Unsupported optional experiment'}],notes:[{id:'note',source:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},text:'Authored observation <img src=x onerror=alert(1)>\nOriginal config output remains source evidence.'}],contexts:[{id:'context-a',kind:'capture-metadata',completeness:'partial',content:{state:'present',sha256:'context-digest'}}],markers:[{}],runs:[],objects:[{role:'capture',bytes:'1000'},{role:'context',bytes:'20',sha256:'context-digest',mediaType:'application/json'}]},inventory:{missingDependencies:1,incompleteSources:1,experiments:[{id:'future',state:'unavailable',reason:'This optional experiment is not supported by this build.'}]},excluded:['Unselected evidence and working history'],activation:'Opening and importing do not activate rules or scripts.'};
   });
   const traffic=page.locator('traffic-workspace');const dialog=page.locator('portable-case dialog');
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save portable case…',exact:true}).click();
   await dialog.getByLabel('Title',{exact:true}).fill('A portable investigation');
   await dialog.getByLabel('Evidence',{exact:true}).selectOption('filtered');
-  await dialog.getByLabel('Reproduction notes and expected / actual behavior').fill('Reproduce checkout.');
-  await dialog.getByLabel('I authorize a new derived copy',{exact:false}).check();
+  await dialog.getByLabel('Notes').fill('Reproduce checkout.');
+
   await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByText(/Verified|Review the frozen/).waitFor();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.scope.kind),'filtered');
-  await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();assert.equal(await dialog.locator('script,img').count(),0);
+  await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();
+  assert.equal(await dialog.locator('dl').first().locator('div').filter({hasText:'Captured requests'}).locator('dd').textContent(),'99');
+  await dialog.getByText('99 requests · Included',{exact:true}).waitFor();
+  await dialog.getByText('Capture observations',{exact:true}).click();await dialog.getByText(/These counts alone do not indicate an export failure/).waitFor();
+  await dialog.getByLabel('File format',{exact:true}).selectOption('bare-zip');await dialog.getByText(/not a readable traffic export/).waitFor();assert.equal(await dialog.getByLabel('Protect the saved file with a password',{exact:true}).isDisabled(),true);await dialog.getByLabel('File format',{exact:true}).selectOption('native');
+  assert.equal(await dialog.locator('script,img').count(),0);
   for(const [width,height] of [[1440,900],[960,720],[800,600]]){
     await page.setViewportSize({width,height});await dialog.getByRole('button',{name:'Save portable case…',exact:true}).scrollIntoViewIfNeeded();
+    await dialog.locator('.case-scroll').evaluate(el=>el.scrollTop=0);
     const rect=await dialog.boundingBox();assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=width+1&&rect.y+rect.height<=height+1);
     await page.screenshot({path:resolve(root,`../../../target/ui-check/portable-case-${width}.png`)});
   }
@@ -31,7 +37,8 @@ export async function checkPortableCases(page,root){
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open portable case…',exact:true}).click();
   const password=page.getByRole('dialog',{name:'Unlock portable package'});await password.getByLabel('Password',{exact:true}).fill('wrong');await password.getByRole('button',{name:'Continue',exact:true}).click();
   await password.getByText('The package password is incorrect',{exact:true}).waitFor();await password.getByLabel('Password',{exact:true}).fill('fixture');await password.getByRole('button',{name:'Continue',exact:true}).click();
-  await dialog.getByRole('button',{name:'Inspect in Traffic',exact:true}).click();await dialog.getByText(/Evidence opened in this window/).waitFor();
+  await dialog.getByRole('button',{name:'Inspect in Traffic',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedSessionId==='first');assert.equal(await dialog.isVisible(),false);
+  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open portable case…',exact:true}).click();
   await dialog.getByRole('button',{name:'View context',exact:true}).click();await dialog.getByText(/Original config output <script>/).waitFor();assert.equal(await dialog.locator('script,img').count(),0);
   await dialog.getByText('Copy selected rules into this workbench',{exact:true}).waitFor();
   assert.equal(await dialog.getByLabel('Unsupported optional experiment',{exact:false}).isDisabled(),true);
@@ -54,7 +61,7 @@ export async function checkPortableCases(page,root){
   await dialog.getByRole('button',{name:'Preview case…',exact:true}).click();await dialog.getByRole('heading',{name:'Preview frozen responses',exact:true}).waitFor();
   assert.equal(await dialog.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);
   await dialog.getByLabel('Responses',{exact:true}).selectOption({label:'Frozen CSS / Blue / revision 7'});
-  await dialog.getByLabel('I understand captured content will run',{exact:false}).check();
+
   for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.getByRole('button',{name:'Open case preview',exact:true}).scrollIntoViewIfNeeded();const rect=await dialog.boundingBox();assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=width+1&&rect.y+rect.height<=height+1);await page.screenshot({path:resolve(root,`../../../target/ui-check/case-integration-${width}.png`)});}
   await dialog.getByRole('button',{name:'Open case preview',exact:true}).click();await dialog.getByText(/Case preview opened/).first().waitFor();
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.casePreview.selection),{experimentId:'frozen',variantId:'blue',revision:'7'});assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.enableScripts),false);
@@ -64,7 +71,7 @@ export async function checkPortableCases(page,root){
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.comparisonInput.options),{excludedHeaders:['date','x-request-id'],normalizeNewlines:true});
   await comparison.getByRole('button',{name:'Save comparison in case…',exact:true}).click();await dialog.getByRole('button',{name:'Review selected content',exact:true}).waitFor();
   assert.equal(await dialog.getByLabel('Evidence',{exact:true}).inputValue(),'comparison');assert.equal(await dialog.getByLabel('Working / failing',{exact:true}).isChecked(),true);
-  await dialog.getByLabel('I authorize a new derived copy',{exact:false}).check();await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();
+await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.comparisonIds),['comparison-1']);
   await dialog.getByRole('button',{name:'Close review',exact:true}).click();await comparison.getByRole('button',{name:'Close',exact:true}).click();
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open portable case…',exact:true}).click();
@@ -75,7 +82,7 @@ export async function checkPortableCases(page,root){
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save portable case…',exact:true}).click();
   await dialog.getByRole('button',{name:'Review selected content',exact:true}).waitFor();
   await dialog.getByLabel('Evidence',{exact:true}).selectOption('none');
-  await dialog.getByLabel('I authorize a new derived copy',{exact:false}).check();
+
   await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByRole('heading',{name:'Notes-only case',exact:true}).waitFor();
   await dialog.getByText('No captured evidence is included.',{exact:true}).waitFor();await dialog.getByText('Standalone reproduction notes',{exact:true}).waitFor();
   await dialog.getByRole('button',{name:'Close review',exact:true}).click();

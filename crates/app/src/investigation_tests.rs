@@ -495,6 +495,7 @@ async fn selected_native_export_moves_context_to_objects_and_preserves_streams_l
         .prepare_investigation(&options, stage.path(), &AtomicBool::new(false))
         .unwrap();
     let saved = prepared.manifest();
+    assert_eq!(saved.sources[0].request_count.as_deref(), Some("3"));
     assert_eq!(
         saved.sources[0].lineage.parents[0].artifact_sha256,
         value.sources[0].artifact_sha256
