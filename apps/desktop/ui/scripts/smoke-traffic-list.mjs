@@ -93,6 +93,18 @@ export async function smokeTrafficList(client,screenshot) {
   assert.ok(await client.evaluate(`${t}.timelineEntries.some(row=>row.startMillis===null)`),'Native fixture lost unavailable timing');
   assert.equal(await client.evaluate(`${t}.querySelector('.timeline-span').namespaceURI`),'http://www.w3.org/2000/svg');
   assert.ok(await client.evaluate(`${t}.querySelectorAll('.timeline-row').length<100`));
+  const helpGeometry=await client.evaluate(`(()=>{const timeline=${t}.timeline,r=timeline.helpButton.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2,top:timeline.viewport.getBoundingClientRect().top};})()`);
+  await client.call('Input.dispatchMouseEvent',{type:'mouseMoved',x:helpGeometry.x,y:helpGeometry.y});
+  await wait(`${t}.timeline.helpPanel.matches(':popover-open')`);
+  assert.equal(await client.evaluate(`${t}.timeline.viewport.getBoundingClientRect().top`),helpGeometry.top,'Native help moved the Timeline');
+  await key('Escape','Escape',27);
+  assert.equal(await client.evaluate(`${t}.timeline.helpPanel.matches(':popover-open')`),false,'Native Escape did not close help');
+  assert.equal(await client.evaluate(`${t}.getRootNode().activeElement===${t}.timeline.overview`),true,'Native hover help dismissal moved keyboard focus');
+  await client.call('Input.dispatchMouseEvent',{type:'mousePressed',x:helpGeometry.x,y:helpGeometry.y,button:'left',clickCount:1});
+  await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',x:helpGeometry.x,y:helpGeometry.y,button:'left',clickCount:1});
+  await wait(`${t}.timeline.helpPanel.matches(':popover-open')`);
+  if(screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timeline-help.png'),Buffer.from(image.data,'base64'));}
+  await key('Escape','Escape',27);
   const textSize=await client.evaluate('document.documentElement.style.fontSize');
   try{
     await client.evaluate(`document.documentElement.style.fontSize='20px';${t}.querySelector('.timeline-viewport').focus()`);

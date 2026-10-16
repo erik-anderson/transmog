@@ -16,6 +16,29 @@ export async function checkTrafficTimeline(page,root) {
     });
     const bodies=await page.evaluate(()=>globalThis.__workspaceFixture.calls.inspect_body??0);
     await show(true);
+    const helpButton=timeline.getByRole('button',{name:'Timeline help',exact:true});
+    const help=timeline.getByRole('dialog',{name:'Timeline help',exact:true});
+    const chartTop=await timeline.locator('.timeline-viewport').evaluate(el=>el.getBoundingClientRect().top);
+    await helpButton.hover();await help.waitFor({state:'visible'});
+    await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
+    assert.equal(await timeline.locator('.timeline-overview > svg').evaluate(el=>el===el.getRootNode().activeElement),true,'Hover help dismissal moved keyboard focus');
+    await traffic.getByLabel('Filter or search traffic',{exact:true}).hover();await helpButton.hover();await help.waitFor({state:'visible'});
+    await help.hover();assert.equal(await help.isVisible(),true,'Help disappeared while moving into it');
+    assert.equal(await timeline.locator('.timeline-viewport').evaluate(el=>el.getBoundingClientRect().top),chartTop,'Help moved the chart');
+    await traffic.getByLabel('Filter or search traffic',{exact:true}).hover();await help.waitFor({state:'hidden'});
+    await helpButton.focus();await help.waitFor({state:'visible'});await page.keyboard.press('Tab');
+    assert.equal(await help.getByRole('button',{name:'Close Timeline help',exact:true}).evaluate(el=>el===el.getRootNode().activeElement),true);
+    await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
+    assert.equal(await helpButton.evaluate(el=>el===el.getRootNode().activeElement),true,'Closing help lost keyboard focus');
+    await page.keyboard.press('Shift+Tab');await page.keyboard.press('Tab');await help.waitFor({state:'visible'});
+    await page.keyboard.press('Tab');await page.keyboard.press('Tab');await page.keyboard.press('Tab');await help.waitFor({state:'hidden'});
+    await helpButton.click();await traffic.getByLabel('Filter or search traffic',{exact:true}).hover();
+    await page.waitForTimeout(250);assert.equal(await help.isVisible(),true,'Clicked help did not stay open');
+    const queries=await page.evaluate(()=>globalThis.__workspaceFixture.calls.traffic_timeline_rows??0);
+    await help.getByRole('button',{name:'Refresh timeline',exact:true}).click();
+    await page.waitForFunction(queries=>(globalThis.__workspaceFixture.calls.traffic_timeline_rows??0)>queries,queries);
+    await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();await help.waitFor({state:'hidden'});
+    await helpButton.click();await traffic.getByLabel('Filter or search traffic',{exact:true}).click();await help.waitFor({state:'hidden'});
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),6);
     assert.equal(await timeline.locator('#timeline-tl-slow .timeline-span').evaluate(el=>el.namespaceURI),'http://www.w3.org/2000/svg');
     assert.equal(Number(await timeline.locator('#timeline-tl-slow .timeline-span').getAttribute('width')),1000);
@@ -54,13 +77,26 @@ export async function checkTrafficTimeline(page,root) {
       assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>=96),'Compact layout cannot show several requests');
       await checkAxis();
       await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-'+width+'.png')});
+      await helpButton.click();await help.waitFor({state:'visible'});
+      const bounds=await help.boundingBox();
+      assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=width+1&&bounds.y+bounds.height<=height+1,'Timeline help extends outside the window');
+      assert.equal(await help.evaluate(el=>el.scrollWidth<=el.clientWidth),true,'Timeline help clips text horizontally');
+      await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-help-'+width+'.png')});
+      await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();
     }
     const paint=()=>page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     await page.emulateMedia({forcedColors:'active'});await paint();await page.screenshot({animations:'disabled',path:resolve(root,'../../../target/ui-check/traffic-timeline-contrast.png')});
+    await helpButton.click();await page.screenshot({animations:'disabled',path:resolve(root,'../../../target/ui-check/traffic-timeline-help-contrast.png')});await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();
     await page.emulateMedia({forcedColors:'none',colorScheme:'dark'});await paint();await page.screenshot({animations:'disabled',path:resolve(root,'../../../target/ui-check/traffic-timeline-dark.png')});
+    await helpButton.click();await page.screenshot({animations:'disabled',path:resolve(root,'../../../target/ui-check/traffic-timeline-help-dark.png')});await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();
     await page.emulateMedia({colorScheme:'light'});await paint();
     await page.evaluate(()=>document.documentElement.style.zoom='1.25');
-    try{assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0));await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-zoom.png')});}finally{await page.evaluate(()=>document.documentElement.style.zoom='');}
+    try{
+      assert.ok(await timeline.locator('.timeline-viewport').evaluate(el=>el.clientHeight>0));await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-zoom.png')});
+      await helpButton.click();
+      const bounds=await help.boundingBox();assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=801&&bounds.y+bounds.height<=601,'Zoomed help extends outside the window');
+      await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-help-zoom.png')});await help.getByRole('button',{name:'Close Timeline help',exact:true}).click();
+    }finally{await page.evaluate(()=>document.documentElement.style.zoom='');}
     await page.setViewportSize({width:1440,height:900});
     await traffic.getByRole('button',{name:'View',exact:true}).click();
     const settings=traffic.locator('#table-settings');
@@ -96,6 +132,8 @@ export async function checkTrafficTimeline(page,root) {
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     await show(false);await traffic.locator('#session-tl-slow').click();await traffic.locator('#session-tl-failed').click({modifiers:['Control']});
     await show(true);assert.equal(await timeline.locator('.timeline-row').count(),2);
+    await helpButton.click();await page.keyboard.press('Escape');await help.waitFor({state:'hidden'});
+    assert.equal(await timeline.locator('.timeline-row').count(),2,'Dismissing help cleared request selection');
     await timeline.locator('#timeline-tl-slow').click();assert.equal(await timeline.locator('.timeline-row').count(),2,'Inspecting collapsed multiselection');
     await timeline.getByRole('button',{name:'Show all matches',exact:true}).click();assert.equal(await timeline.locator('.timeline-row').count(),6);
     await timeline.getByRole('slider',{name:'Timeline window',exact:true}).focus();await page.keyboard.press('+');

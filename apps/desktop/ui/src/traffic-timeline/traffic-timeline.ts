@@ -17,6 +17,11 @@ export class TrafficTimeline extends WebUIElement {
   viewport!:HTMLElement;
   overview!:SVGSVGElement;
   rowMetric!:HTMLElement;
+  helpButton!:HTMLButtonElement;
+  helpPanel!:HTMLElement;
+  private helpPinned=false;
+  private helpClosing=false;
+  private helpCloseTimer:number|undefined;
   private observer:ResizeObserver|null=null;
   private scoped:TrafficTimelineRow[]=[];
   private matching:TrafficTimelineRow[]=[];
@@ -109,7 +114,26 @@ export class TrafficTimeline extends WebUIElement {
   clearSelection():void {this.$emit('timeline-clear-selection');}
   refresh():void {this.$emit('timeline-refresh');}
   selectAll():void {this.$emit('timeline-select',this.matching.map(row=>row.id));}
+  showHelp():void {window.clearTimeout(this.helpCloseTimer);if(!this.helpPanel.matches(':popover-open'))this.helpPanel.showPopover();}
+  focusHelp():void {if(!this.helpClosing)this.showHelp();}
+  pinHelp():void {this.helpPinned=true;this.showHelp();}
+  scheduleHelpClose():void {
+    window.clearTimeout(this.helpCloseTimer);
+    this.helpCloseTimer=window.setTimeout(()=>{
+      const root=this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
+      if(!this.helpPinned&&!this.helpButton.matches(':hover')&&!this.helpPanel.matches(':hover')&&active!==this.helpButton&&!this.helpPanel.contains(active))this.helpPanel.hidePopover();
+    },200);
+  }
+  helpToggled(event:ToggleEvent):void {if(event.newState==='closed'){this.helpPinned=false;window.clearTimeout(this.helpCloseTimer);}}
+  closeHelp():void {
+    const root=this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
+    const restore=this.helpPanel.contains(active);
+    this.helpPinned=false;window.clearTimeout(this.helpCloseTimer);this.helpClosing=true;
+    this.helpPanel.hidePopover();if(restore)this.helpButton.focus({preventScroll:true});this.helpClosing=false;
+  }
   timelineKey(event:KeyboardEvent):void {
+    if(this.helpPanel.matches(':popover-open')&&event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closeHelp();return;}
+    if(this.helpPanel.contains(event.target as Node))return;
     if(event.defaultPrevented||isTextEditing(event))return;
     if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){
       event.preventDefault();event.stopPropagation();this.selectAll();
@@ -174,7 +198,7 @@ export class TrafficTimeline extends WebUIElement {
     }
     this.adjusted=true;this.renderRange();
   }
-  disconnectedCallback():void {this.releaseDrag();this.observer?.disconnect();super.disconnectedCallback();}
+  disconnectedCallback():void {window.clearTimeout(this.helpCloseTimer);this.releaseDrag();this.observer?.disconnect();super.disconnectedCallback();}
 }
 function timestamp(value:number):string {const date=new Date(value);return Number.isFinite(date.getTime())?date.toISOString():'Outside supported calendar range';}
 TrafficTimeline.define('traffic-timeline');

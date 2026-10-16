@@ -101,8 +101,10 @@ included, even when they started earlier. Unavailable timing stays visible and
 is counted separately. Focus the window or either edge and use Left/Right;
 Shift moves farther, Home/End moves to a boundary, +/− zooms and 0 resets.
 Escape cancels a drag. **Reset range** fits the scope again.
-**Timeline help** contains the absolute start time in UTC, timing boundaries
-and keyboard instructions. **Compact rows** applies to both List and Timeline;
+Hover or focus **?** beside the Timeline heading for the absolute start time in
+UTC, timing boundaries and keyboard instructions. Click it to keep help open;
+Close, Escape or clicking outside dismisses it. Help overlays the view without
+moving the chart. **Compact rows** applies to both List and Timeline;
 **List columns** is available only in List. The selected view is visibly marked
 in the View menu. Layout places the **Inspector below** (default) or
 **Inspector beside** the traffic view.
