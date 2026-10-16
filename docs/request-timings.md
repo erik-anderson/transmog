@@ -10,6 +10,24 @@ The report stays available for manual copying if clipboard access fails.
 
 ## Interpret latency
 
+The waterfall, phase details and copied report use the same concise names:
+
+| Name | Measured interval |
+| --- | --- |
+| Request duration | Complete client request headers to local proxy completion. |
+| Client upload | Receiving the client request body. |
+| Routing | Local proxy policy selection. |
+| Connection wait | Pool queueing and upstream connection readiness, including setup. |
+| Forwarding request body | Upstream adapter consumption of the body after connection assignment. |
+| Waiting for response | After both assignment and body consumption until upstream response headers. |
+| Receiving response | Upstream response headers to completion of its body. |
+| Queueing to client | Client response commitment to body queue completion. |
+
+Intervals can overlap and do not add up to the request duration. Waiting for
+response is a header observation, not a first-byte or server-only timer. Early
+responses can make that interval unavailable. Queueing does not confirm delivery.
+Imported source timer names remain unchanged in original evidence.
+
 One monotonic clock is anchored to complete incoming request headers. Wall times
 are UTC projections of that anchor. Client connection acceptance, first nonempty
 socket read, process attribution and TLS negotiation can precede zero. On reused
@@ -19,7 +37,7 @@ current request. A socket read does not measure first packet arrival in the kern
 The proxy observes routing, upstream assignment, outgoing body consumption,
 response headers/body availability, client response commitment and queue
 completion. Upload, forwarding and download can overlap. Assignment wait includes
-pool queueing and setup. Response header wait combines network, server work and
+pool queueing and setup. Waiting for response combines network, server work and
 queues; it does not isolate server CPU time. Early responses can precede outgoing
 body completion and leave a derived phase unavailable.
 

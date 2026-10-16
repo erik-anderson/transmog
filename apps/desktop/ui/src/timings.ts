@@ -13,27 +13,22 @@ function bytes(value:number|null|undefined):string {return value==null?'Unavaila
 export function timingView(detail:SessionDetail):{summary:string;phases:TimingRow[];timeline:TimelineRow[];transports:TransportView[];saved:TimingRow[];waterfall:WaterfallRow[];work:TimingRow[];minor:WaterfallRow[];range:string;report:string} {
  const points=detail.performance?.points??[], transports=detail.performance?.transports??[];
  const point=(id:string)=>points.find(p=>p.milestone===id)?.offsetMicros;
- const span=(a:string,b:string)=>{const begin=point(a),end=point(b);return begin==null||end==null||end<begin?undefined:end-begin;};
- const phases:TimingRow[]=[
-  {id:'total',label:'Processing since request headers',value:milliseconds(span('request-headers','exchange-done')),note:'Ends when proxy processing finishes; does not confirm client receipt.'},
-  {id:'upload',label:'Client body upload',value:milliseconds(span('request-headers','client-request-done')),note:'May overlap upstream transfer for streaming requests.'},
-  {id:'route',label:'Routing decision',value:milliseconds(span('route-begin','route-done')),note:'Local policy selection.'},
-  {id:'setup',label:'Upstream assignment wait',value:milliseconds(span('upstream-begin','upstream-connected')),note:'Includes pool queueing and setup when a new connection is needed.'},
-  {id:'wait',label:'Response header wait',value:(()=>{const headers=point('response-headers'),assigned=point('upstream-connected'),sent=point('upstream-request-consumed');return milliseconds(headers==null||assigned==null||sent==null||headers<Math.max(assigned,sent)?undefined:headers-Math.max(assigned,sent));})(),note:'After assignment and body consumption. Includes network, server and queueing time.'},
-  {id:'receive',label:'Upstream response transfer',value:milliseconds(span('response-headers','upstream-response-done')),note:'Includes backpressure and local body processing.'},
-  {id:'forward',label:'Client response queueing',value:milliseconds(span('client-response-begin','client-response-queued')),note:'Includes streaming wait; queued bytes may still be in transport buffers.'}];
+ const headers=point('response-headers'),assigned=point('upstream-connected'),sent=point('upstream-request-consumed');
+ // One definition owns each label, boundary and explanation in every presentation.
+ const definitions=[
+  {id:'total',label:'Request duration',begin:point('request-headers'),end:point('exchange-done'),note:'From complete client request headers to local proxy completion; client receipt is not confirmed.'},
+  {id:'upload',label:'Client upload',begin:point('request-headers'),end:point('client-request-done'),note:'Receiving the client request body. May overlap forwarding upstream.'},
+  {id:'route',label:'Routing',begin:point('route-begin'),end:point('route-done'),note:'Local proxy policy selection.'},
+  {id:'setup',label:'Connection wait',begin:point('upstream-begin'),end:assigned,note:'Pool queueing and connection readiness, including setup when needed.'},
+  {id:'send',label:'Forwarding request body',begin:assigned,end:sent,note:'Body consumed by the upstream HTTP adapter; server receipt is not confirmed.'},
+  {id:'wait',label:'Waiting for response',begin:assigned==null||sent==null?undefined:Math.max(assigned,sent),end:headers,note:'Until upstream response headers, after connection assignment and body consumption. Includes network, server and queueing time; not a first-byte measurement.'},
+  {id:'receive',label:'Receiving response',begin:headers,end:point('upstream-response-done'),note:'Receiving the upstream body, including backpressure and local processing.'},
+  {id:'forward',label:'Queueing to client',begin:point('client-response-begin'),end:point('client-response-queued'),note:'Queueing the client response, including streaming waits; delivery may finish later.'}
+ ];
+ const phases:TimingRow[]=definitions.map(row=>({id:row.id,label:row.label,note:row.note,value:milliseconds(row.begin==null||row.end==null||row.end<row.begin?undefined:row.end-row.begin)}));
  const work=(detail.performance?.work??[]).map(row=>({id:row.kind+':'+row.label,label:row.label,value:milliseconds(row.busyNanos/1000),note:row.calls.toLocaleString()+(row.calls===1?' call':' calls')}));
  const intervals:Array<{id:string;label:string;begin:number;end:number;value:string;note:string;repeated:boolean;minor?:boolean}>=[];
- const interval=(id:string,label:string,a:string,b:string,note:string)=>{const begin=point(a),end=point(b);if(begin!=null&&end!=null&&end>=begin)intervals.push({id,label,begin,end,value:milliseconds(end-begin),note,repeated:false,minor:id==='route'&&end-begin<1000});};
- interval('total','Proxy processing','request-headers','exchange-done','Ends at local processing completion; client receipt is not confirmed.');
- interval('upload','Client upload','request-headers','client-request-done','May overlap forwarding upstream.');
- interval('route','Routing','route-begin','route-done','Proxy policy selection.');
- interval('assignment','Upstream assignment','upstream-begin','upstream-connected','Pool queueing and connection/session readiness.');
- interval('send','Upstream body consumption','upstream-connected','upstream-request-consumed','Consumed by the HTTP adapter; remote receipt is not confirmed.');
- const headers=point('response-headers'),assigned=point('upstream-connected'),sent=point('upstream-request-consumed');
- if(headers!=null&&assigned!=null&&sent!=null&&headers>=Math.max(assigned,sent))intervals.push({id:'wait',label:'Response header wait',begin:Math.max(assigned,sent),end:headers,value:milliseconds(headers-Math.max(assigned,sent)),note:'Includes network and server/queueing time; cannot isolate server CPU.',repeated:false});
- interval('receive','Upstream transfer','response-headers','upstream-response-done','Includes backpressure and body processing.');
- interval('forward','Client queueing','client-response-begin','client-response-queued','Queued to the client HTTP adapter; transport delivery may finish later.');
+ for(const row of definitions)if(row.begin!=null&&row.end!=null&&row.end>=row.begin)intervals.push({...row,begin:row.begin,end:row.end,value:milliseconds(row.end-row.begin),repeated:false,minor:row.id==='route'&&row.end-row.begin<1000});
  for(const row of detail.performance?.work??[])intervals.push({minor:row.busyNanos<1000000,id:'work:'+row.kind+':'+row.label,label:row.label,begin:row.beganOffsetMicros,end:row.endedOffsetMicros,value:milliseconds(row.busyNanos/1000)+' / '+row.calls.toLocaleString()+(row.calls===1?' call':' calls'),note:'Measured call time. '+(row.calls>1?'The dashed window includes gaps between calls. ':'')+'Can overlap other rows; includes waits within the operation.',repeated:row.calls>1});
  const maximum=Math.max(0,...points.map(point=>point.offsetMicros),...intervals.map(interval=>interval.end)),scale=Math.max(1,maximum);
  const waterfall=intervals.filter(interval=>interval.end>=0).map(row=>({id:row.id,label:row.label,start:Math.max(0,row.begin)/scale*1000,width:Math.max(0,row.end-Math.max(0,row.begin))/scale*1000,value:row.value,note:row.note,repeated:row.repeated,minor:row.minor??false}));
