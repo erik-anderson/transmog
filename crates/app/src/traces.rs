@@ -4315,6 +4315,82 @@ mod tests {
         writer.seal().unwrap();
     }
     #[tokio::test]
+    async fn saved_caller_cancellation_reopens_with_clear_status_details_and_timeline() {
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("source.tmcap");
+        native(&source, Some(b"abc".to_vec()), 3);
+        let records =
+            transmog_capture::recover(File::open(source).unwrap(), CaptureLimits::default())
+                .unwrap()
+                .records;
+        for response_started in [false, true] {
+            let path = root
+                .path()
+                .join(format!("cancelled-{response_started}.tmcap"));
+            let mut writer =
+                CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default()).unwrap();
+            let mut sequence = 0;
+            for mut record in records.clone() {
+                if matches!(record.kind, CaptureRecordKind::Seal { .. })
+                    || (!response_started
+                        && matches!(record.kind, CaptureRecordKind::ResponseHead { .. }))
+                {
+                    continue;
+                }
+                if matches!(record.kind, CaptureRecordKind::Completed) {
+                    record.kind = CaptureRecordKind::Failed {
+                        category: "Cancelled".into(),
+                        // Existing captures retain the original explanation.
+                        message: "Request handling was cancelled before a response was returned."
+                            .into(),
+                    };
+                }
+                if record.exchange_id != 0 {
+                    sequence += 1;
+                    record.sequence = sequence;
+                }
+                writer.append(&record).unwrap();
+            }
+            writer.seal().unwrap();
+            drop(writer);
+            let workspace = app(&root.path().join(format!("app-{response_started}")));
+            workspace
+                .import_trace(request(path, "cancelled"), Arc::new(|_| {}))
+                .await
+                .unwrap();
+            let rows = workspace
+                .query_sessions(SessionQueryInput {
+                    terminal: Some(true),
+                    filters: vec![crate::SessionColumnFilter {
+                        column: crate::workspace::TrafficColumn::State,
+                        operator: crate::FilterOperator::Equals,
+                        value: "cancelled".into(),
+                    }],
+                    ..SessionQueryInput::default()
+                })
+                .unwrap()
+                .sessions;
+            assert_eq!(rows.len(), 1);
+            assert_eq!(rows[0].terminal, "cancelled");
+            assert_eq!(rows[0].status, response_started.then_some(204));
+            let detail = workspace.session_detail(&rows[0].id).unwrap();
+            assert_eq!(detail.terminal_state, "cancelled");
+            assert!(detail.terminal.starts_with("Cancelled by caller."));
+            let snapshot = workspace
+                .session_service()
+                .catalog()
+                .project_retained(Clone::clone)
+                .remove(0);
+            let timeline = crate::sessions::timeline_row(
+                &snapshot,
+                SystemTime::now(),
+                &TraceRegistry::default(),
+            );
+            assert_eq!(timeline.terminal, "cancelled");
+        }
+    }
+
+    #[tokio::test]
     async fn native_body_completion_preserves_chunked_bodies_in_failed_exchanges() {
         let root = tempfile::tempdir().unwrap();
         for (name, samples, finished, expected) in [

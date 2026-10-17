@@ -18,6 +18,8 @@ export async function checkTrafficFailures(page, artifacts) {
         {...seed,id:'http-failure',status:503,terminal:'failed'},
         {...seed,id:'dns-failure',status:null,terminal:'failed',protocol:'Unavailable',requestBytes:0,responseBytes:0,topLevelNavigation:false,storedBodies:[]},
         {...seed,id:'http2-failure',status:null,terminal:'failed',protocol:'HTTP/2'},
+        {...seed,id:'caller-cancelled',status:null,terminal:'cancelled',traceId:'cancelled-import',terminalText:'Cancelled by caller. The caller closed or reset the request before a response was returned.'},
+        {...seed,id:'caller-cancelled-after-headers',status:200,terminal:'cancelled',terminalText:'Cancelled by caller. The caller stopped receiving the response.'},
       ].map(row=>({...row,url:'http://example.test/'+row.id,path:'/'+row.id}));
       await traffic.refreshSessions(undefined,true);
     });
@@ -37,6 +39,38 @@ export async function checkTrafficFailures(page, artifacts) {
     assert.equal(await dns.locator('td[data-column-id="protocol"]').getAttribute('title'),'Unavailable');
     assert.equal(await page.locator('.selection-bar .status-badge').textContent(),'Failed');
     await page.screenshot({path:resolve(artifacts,'dns-failure-small.png')});
+    await page.setViewportSize(viewport);
+    for (const [id,badge,cell] of [['caller-cancelled','Cancelled by caller','Cancelled'],['caller-cancelled-after-headers','200 · Cancelled by caller','Cancelled']]) {
+      const row=page.locator(`tr[data-session-id="${id}"]`);
+      assert.equal((await row.locator('td[data-column-id="status"]').textContent()).trim(),cell);
+      await row.focus();await page.keyboard.press('Enter');
+      await page.waitForFunction(id=>document.querySelector('app-shell').traffic.selectedDetail?.id===id,id);
+      const status=page.locator('.selection-bar .status-badge');
+      assert.equal(await status.textContent(),badge);
+      assert.equal(await status.getAttribute('data-tone'),'cancelled');
+      assert.match(await page.locator('#selected-request-actions button').filter({hasText:'Serve a saved response…'}).getAttribute('title'),/caller cancelled/);
+      await page.evaluate(()=>document.querySelector('app-shell').traffic.copyRequestSummary(true));
+      assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Cancelled by caller/);
+    }
+    await page.locator('tr[data-session-id="caller-cancelled"]').click();
+    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='caller-cancelled');
+    const cancelledRequest=page.locator('message-inspector[side="request"]');
+    await cancelledRequest.getByRole('button',{name:'Raw data',exact:true}).click();
+    assert.match(await cancelledRequest.locator('.exchange-details').textContent(),/Cancelled by caller/);
+    await cancelledRequest.getByRole('button',{name:'Headers',exact:true}).click();
+    for(const width of [1440,960,800]) {
+      await page.setViewportSize({width,height:width===1440?900:720});
+      assert.equal(await page.locator('.selection-bar .status-badge').textContent(),'Cancelled by caller');
+      await page.screenshot({path:resolve(artifacts,`caller-cancelled-${width}.png`)});
+    }
+    const timelineToggle=page.getByRole('button',{name:'Timeline',exact:true});
+    await timelineToggle.click();
+    const cancelledTimeline=page.locator('.timeline-row[data-state="cancelled"]');
+    await cancelledTimeline.first().waitFor({state:'visible'});
+    assert.match(await cancelledTimeline.first().getAttribute('aria-label'),/Cancelled by caller/);
+    assert.match(await cancelledTimeline.first().locator('small').textContent(),/^Cancelled by caller/);
+    await page.screenshot({path:resolve(artifacts,'caller-cancelled-timeline.png')});
+    await timelineToggle.click();
     await page.setViewportSize(viewport);
     for (const [id, label] of [['active-post','Pending'],['failed-post','Failed'],['missing-status','Unavailable'],['http-failure','503']]) {
       const row = page.locator(`tr[data-session-id="${id}"]`);

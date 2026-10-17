@@ -12,7 +12,7 @@ export const columnDefinitions: ReadonlyArray<{id: ColumnId; label: string; nume
   {id:'response-bytes', label:'Response size', numeric:true, placeholder:'Bytes'},
   {id:'protocol', label:'Protocol', numeric:false, placeholder:'HTTP/1.1'},
   {id:'request-bytes', label:'Request size', numeric:true, placeholder:'Bytes'},
-  {id:'state', label:'State', numeric:false, placeholder:'active, completed, failed'},
+  {id:'state', label:'State', numeric:false, placeholder:'active, completed, cancelled, failed'},
   {id:'content-type', label:'Content type', numeric:false, placeholder:'application/json'},
   {id:'started-at', label:'Start time', numeric:true, placeholder:'Unix milliseconds'},
   {id:'pid', label:'Process ID', numeric:true, placeholder:'PID'},
@@ -54,11 +54,13 @@ export function formatBytes(value: number): string {
 type ResponseStatus = Pick<SessionSummary, 'status' | 'terminal'>;
 
 export function statusText(row: ResponseStatus): string {
+  if (row.terminal === 'cancelled') return (row.status === null ? '' : row.status+' · ')+'Cancelled by caller';
   if (row.status === null) return row.terminal === 'active' ? 'Pending' : row.terminal === 'failed' ? 'Failed' : 'Unavailable';
   return row.status === 304 ? '304 Not Modified' : String(row.status);
 }
 
 export function statusTone(row: ResponseStatus): string {
+  if (row.terminal === 'cancelled') return 'cancelled';
   if (row.terminal === 'failed') return 'failed';
   if (row.status === 304) return 'not-modified';
   if (row.status === null) return 'pending';
@@ -68,11 +70,15 @@ export function statusTone(row: ResponseStatus): string {
   return 'success';
 }
 
+export function stateText(state: SessionSummary['terminal']): string {
+  return {active:'In progress',completed:'Completed',failed:'Failed',cancelled:'Cancelled by caller',interrupted:'Interrupted','open-at-capture':'Open at capture',incomplete:'Incomplete'}[state];
+}
+
 export function cellText(row: SessionSummary, column: ColumnId): string {
   switch (column) {
     case 'request-number': return row.requestNumber ?? '—';
     case 'method': return row.method;
-    case 'status': return statusText(row);
+    case 'status': return row.terminal === 'cancelled' ? 'Cancelled' : statusText(row);
     case 'process': return row.caller.kind === 'remote' ? 'Remote' : (row.caller.processName ?? 'Unknown process') + (row.caller.processId === null ? '' : ' ('+row.caller.processId+')');
     case 'pid': return row.caller.processId?.toString() ?? '—';
     case 'host': return row.host;
@@ -82,7 +88,7 @@ export function cellText(row: SessionSummary, column: ColumnId): string {
     case 'duration': return row.durationMs == null ? '—' : row.durationMs+' ms';
     case 'response-bytes': return formatBytes(row.responseBytes);
     case 'request-bytes': return formatBytes(row.requestBytes);
-    case 'state': return row.terminal === 'active' ? 'In progress' : row.terminal === 'completed' ? 'Completed' : 'Failed';
+    case 'state': return stateText(row.terminal);
     case 'content-type': return row.contentType ?? '—';
     case 'started-at': return row.startedAt ? new Date(row.startedAt).toLocaleTimeString() : '—';
   }

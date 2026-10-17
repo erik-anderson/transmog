@@ -297,6 +297,15 @@ struct MutableSession {
 impl SessionSnapshot {
     /// Effective category used consistently by traffic queries and inspectors.
     pub fn state(&self) -> &'static str {
+        if matches!(
+            self.terminal,
+            Some(SessionTerminal::Failed(ExchangeFailure {
+                kind: ExchangeFailureKind::Cancelled,
+                ..
+            }))
+        ) {
+            return "cancelled";
+        }
         if let Some(stream) = &self.stream {
             if stream.status.is_active() {
                 return if self.imported {
@@ -1728,6 +1737,35 @@ mod tests {
     }
 
     #[test]
+    fn caller_cancellation_is_distinct_from_proxy_shutdown_and_transport_failure() {
+        for (kind, expected) in [
+            (ExchangeFailureKind::Cancelled, "cancelled"),
+            (ExchangeFailureKind::Shutdown, "failed"),
+            (ExchangeFailureKind::Upstream, "failed"),
+        ] {
+            let catalog = SessionCatalog::new(limits(10));
+            start(&catalog, 1, "cancelled.test");
+            catalog.apply(event(
+                1,
+                2,
+                ObserverEventKind::Failed(ExchangeFailure {
+                    metadata: metadata(1, "cancelled.test"),
+                    stage: ExchangeStage::Terminal,
+                    kind,
+                    request_committed: false,
+                    response_committed: false,
+                    message: "Recorded outcome".into(),
+                }),
+            ));
+            let snapshot = catalog.get(ExchangeId(1)).unwrap();
+            assert_eq!(snapshot.state(), expected);
+            let imported = SessionCatalog::new(limits(10));
+            imported.import_sessions(vec![snapshot]).unwrap();
+            assert_eq!(imported.get(ExchangeId(1)).unwrap().state(), expected);
+        }
+    }
+
+    #[test]
     fn cancellation_ends_a_connecting_application_stream_without_waiting_for_stop() {
         use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
         for protocol in [StreamProtocol::WebSocket, StreamProtocol::Sse] {
@@ -1756,7 +1794,8 @@ mod tests {
                 }),
             ));
             let snapshot = catalog.get(ExchangeId(1)).unwrap();
-            assert_eq!(snapshot.state(), "interrupted");
+            assert_eq!(snapshot.state(), "cancelled");
+            assert_eq!(snapshot.stream.unwrap().status, StreamStatus::Interrupted);
             assert!(snapshot.terminal_at.is_some());
         }
     }

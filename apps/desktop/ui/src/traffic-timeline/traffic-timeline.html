@@ -34,7 +34,7 @@
       <div class="timeline-spacer" data-size="{{timelineDisplay.top}}"></div>
       <for each="row in timelineDisplay.rows">
         <button key="{{row.id}}" id="timeline-{{row.id}}" type="button" class="timeline-row" data-id="{{row.id}}" data-state="{{row.terminal}}" ?data-current="{{row.id == current}}" title="{{row.description}}" aria-label="{{row.description}}" @click="{inspect(row.id)}" @keydown="{rowKey(row.id,e)}">
-          <span class="timeline-request"><span>{{row.label}}</span><small><if condition="row.host">{{row.host}} · </if>{{row.source}} · {{row.terminal}}</small></span>
+          <span class="timeline-request"><span>{{row.label}}</span><small>{{row.stateLabel}} · <if condition="row.host">{{row.host}} · </if>{{row.source}}</small></span>
           <svg viewBox="0 0 1000 20" preserveAspectRatio="none" aria-hidden="true"><rect class="timeline-span" ?hidden="{{!row.plottable}}" x="{{row.x}}" y="4" width="{{row.width}}" height="12"></rect><rect class="timeline-response" ?hidden="{{!row.hasResponse}}" x="{{row.responseX}}" y="4" width="{{row.responseWidth}}" height="12"></rect><circle class="timeline-zero" ?hidden="{{!row.plottable || row.width != 0}}" cx="{{row.x}}" cy="10" r="3"></circle></svg>
           <span class="timeline-duration">{{row.duration}}</span>
         </button>

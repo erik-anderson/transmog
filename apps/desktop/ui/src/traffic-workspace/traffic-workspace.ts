@@ -17,7 +17,7 @@ import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { TrafficRuleKind,TrafficRuleRequest,SelectedResponse, ResponsePreviewIntent, AutomationStatus, ColumnId, Lifecycle, SessionSummary, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
-import { cellText, columnDefinitions, defaultWorkspace, displayColumns, statusText, statusTone } from '../table-model.js';
+import { cellText, columnDefinitions, defaultWorkspace, displayColumns, stateText, statusText, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
@@ -1463,7 +1463,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       const head=detail.requests.find(head=>head.boundary==='client-request')??detail.requests[0],response=detail.responses.find(head=>head.boundary==='client-response');
       const trace=detail.traceId?(await invoke<TraceMetadata[]>('trace_metadata_list')).find(trace=>trace.id===detail.traceId):null;
       const row=this.sessions.find(row=>row.id===id);
-      const outcome=response?.status!=null?'HTTP '+response.status:detail.terminalState;
+      const outcome=detail.terminalState==='cancelled'?statusText({status:response?.status??null,terminal:detail.terminalState}):response?.status!=null?'HTTP '+response.status:stateText(detail.terminalState);
       const duration=row?.durationMs==null?'':` · ${row.durationMs} ms`;
       await navigator.clipboard.writeText(`${head?.method??'Request'} ${head?.target??''}\n${outcome}${duration}\nRequest #${detail.requestNumber} in this workspace\n${trace?'Capture: '+trace.name:'Live traffic'}`);
       this.diagnostic='Request summary copied.';

@@ -6,6 +6,16 @@ request and response together in a wide pane or use the message selector when sp
 limited; the narrow selector sits beside the URL/status. Incomplete, unavailable, redacted and evicted evidence are distinct
 states; display previews can be shorter than the retained source.
 
+Caller cancellation appears as **Cancelled** in the Status column and
+**Cancelled by caller** in the inspector, State column, Timeline and copied
+request summary. Cancellation uses a neutral badge.
+An observed HTTP status remains in the inspector and copied summary when
+cancellation followed response headers. Cancellation means the caller stopped
+waiting; it does not establish whether the server processed the request.
+Proxy shutdown remains a separate outcome with a proxy-stop explanation.
+These distinctions also apply when opening a capture that already recorded its
+cancellation category.
+
 For a complete response, **Actions → Create experiment** opens a disabled response
 draft in Automation. Edit, compare and preview it before explicitly enabling live
 use. **Actions → Create rule → Serve a saved response…** creates an ordinary

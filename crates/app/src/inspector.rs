@@ -657,6 +657,14 @@ pub(crate) fn detail_from_snapshot(
         .collect();
     let terminal = match &snapshot.terminal {
         Some(SessionTerminal::Completed(_)) => "completed".to_owned(),
+        Some(SessionTerminal::Failed(failure))
+            if failure.kind == transmog_core::intercept::ExchangeFailureKind::Cancelled =>
+        {
+            display_text(format!(
+                "Cancelled by caller. {} (stage: {:?}; request_committed={}; response_committed={})",
+                failure.message, failure.stage, failure.request_committed, failure.response_committed
+            ).as_bytes())
+        }
         Some(SessionTerminal::Failed(failure)) => display_text(
             format!(
                 "failed at {:?}: {:?}; request_committed={}; response_committed={}; {}",

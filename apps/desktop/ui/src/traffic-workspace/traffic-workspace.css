@@ -103,6 +103,7 @@ traffic-workspace { display:contents; }
 .cell-value[data-tone="warning"], .status-badge[data-tone="warning"] { color:var(--warning); background:var(--warning-soft); }
 .cell-value[data-tone="failed"], .status-badge[data-tone="failed"] { color:var(--danger); background:var(--danger-soft); }
 .cell-value[data-tone="not-modified"], .status-badge[data-tone="not-modified"], .cell-value[data-tone="pending"] { color:var(--muted); background:var(--panel-raised); }
+.cell-value[data-tone="cancelled"], .status-badge[data-tone="cancelled"] { color:var(--muted); background:var(--panel-raised); }
 .auto-badge { display:inline-block; margin-left:.2rem; color:var(--accent-strong); font-size:.55rem; font-weight:750; }
 .navigation-badge { display:inline-block; margin-inline-end:.4rem; padding:.08rem .3rem; border:1px solid var(--line); border-radius:.25rem; color:var(--muted); font-size:.62rem; font-weight:600; vertical-align:baseline; }
 .active-stream-badge { display:inline-block; margin-inline-start:.4rem; padding:.08rem .3rem; border:1px solid var(--accent-strong); border-radius:.25rem; color:var(--accent-strong); background:var(--accent-soft); font-size:.62rem; font-weight:650; white-space:nowrap; vertical-align:baseline; }

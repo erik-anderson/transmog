@@ -5,8 +5,9 @@ import {clampWindow,intervalEnd,overlaps,requestAddress,timelineTime,timelineRan
 import initialState from '../initial-state.json';
 import {markerGroups,type TraceMarker,type MarkerGroup} from '../markers.js';
 import {isTextEditing} from '../list-selection.js';
+import {stateText} from '../table-model.js';
 
-type DisplayRow=TrafficTimelineRow&{label:string;source:string;host:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
+type DisplayRow=TrafficTimelineRow&{label:string;stateLabel:string;source:string;host:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
 
 export class TrafficTimeline extends WebUIElement {
   @observable entries:TrafficTimelineRow[]=[];
@@ -139,8 +140,8 @@ export class TrafficTimeline extends WebUIElement {
       const responseX=response==null?right:Math.max(x,Math.min(right,(response-this.from)/extent*1000));
       const source=row.traceId?sourceNames.get(row.traceId)??'Imported capture':'Live traffic';
       const address=requestAddress(row.url),label=`#${row.requestNumber} ${row.method} ${address.path}`,duration=timelineTime(row.durationMicros);
-      return {...row,label,host:address.host,source,duration,x,width:Math.max(0,right-x),responseX,responseWidth:Math.max(0,right-responseX),plottable,hasResponse:response!=null,
-        description:`#${row.requestNumber} ${row.method} ${row.url} · ${milliseconds(row.durationMicros)} · ${row.terminal} · ${source} · ${row.basis}${row.startMillis==null?' · Start time unavailable':' · '+timestamp(row.startMillis)}`};
+      return {...row,label,stateLabel:stateText(row.terminal),host:address.host,source,duration,x,width:Math.max(0,right-x),responseX,responseWidth:Math.max(0,right-responseX),plottable,hasResponse:response!=null,
+        description:`#${row.requestNumber} ${row.method} ${row.url} · ${milliseconds(row.durationMicros)} · ${stateText(row.terminal)} · ${source} · ${row.basis}${row.startMillis==null?' · Start time unavailable':' · '+timestamp(row.startMillis)}`};
     });
     this.timelineDisplay={...this.timelineDisplay,rows,top:start*rowHeight+'px',bottom:Math.max(0,this.matching.length-end)*rowHeight+'px'};
     if(resized){this.$flushUpdates();if(this.viewport)this.viewport.scrollTop=scroll;}

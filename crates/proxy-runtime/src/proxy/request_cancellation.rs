@@ -102,7 +102,7 @@ impl Drop for RequestCancellation {
             message: if shutdown {
                 "Proxy stopped while the request was being handled."
             } else {
-                "Request handling was cancelled before a response was returned."
+                "The caller closed or reset the request before a response was returned."
             }
             .into(),
         };
