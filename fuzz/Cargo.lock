@@ -1139,7 +1139,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-capture"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -1160,7 +1160,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-content"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "async-compression",
  "bytes",
@@ -1188,7 +1188,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-core"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "bytes",
  "http",
@@ -1199,7 +1199,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-websocket"
-version = "0.1.4"
+version = "0.1.5"
 dependencies = [
  "base64",
  "bytes",
