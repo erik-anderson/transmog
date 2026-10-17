@@ -2,9 +2,10 @@
 <section id="automation" class="app-view tool-view" aria-labelledby="automation-heading" ?hidden="{{view != 'automation'}}" ?data-active="{{view == 'automation'}}">
   <div class="automation-page">
     <header class="workspace-header"><h1 id="automation-heading">Automation</h1><nav class="workspace-tabs" aria-label="Automation tools"><button type="button" ?data-selected="{{automationSection == 'responses'}}" @click="{showAutomationSection('responses')}">Auto-responses</button><button type="button" ?data-selected="{{automationSection == 'experiments'}}" @click="{showAutomationSection('experiments')}">Experiments</button><button type="button" ?data-selected="{{automationSection == 'header-rules'}}" @click="{showAutomationSection('header-rules')}">Header rules</button><button type="button" ?data-selected="{{automationSection == 'response-text'}}" @click="{showAutomationSection('response-text')}">Response edits</button><button type="button" ?data-selected="{{automationSection == 'headers'}}" @click="{showAutomationSection('headers')}">UA header overrides<if condition="headerOverrideCount"><span class="automation-enabled-badge" title="Enabled UA header override rules" aria-label="{{headerOverrideCount}} enabled UA header override rules">{{headerOverrideCount}}</span></if></button><button type="button" ?data-selected="{{automationSection == 'scripts'}}" @click="{showAutomationSection('scripts')}">Scripts</button></nav></header>
-    <div class="automation-panel" ?hidden="{{automationSection != 'responses'}}">
-      <section class="auto-response-workspace" aria-labelledby="autoresponder-heading">
-        <header class="auto-response-header">
+    <div class="automation-panel" ?hidden="{{automationSection != 'responses' && automationSection != 'experiments'}}">
+      <section class="auto-response-workspace" ?data-experiments="{{automationSection == 'experiments'}}" ?data-experiment-editor="{{responseExperiment && !editorHidden}}">
+        <experiment-variants w-ref="{experimentVariants}" :status="{{autoresponseState}}" @variant-status="{onVariantStatus(e)}" @variant-edit="{editVariant(e)}" @variant-preview="{previewVariant(e)}" @variant-new="{newNamedExperiment()}"></experiment-variants>
+        <header class="auto-response-header" ?hidden="{{automationSection != 'responses'}}">
           <div>
             <h2 id="autoresponder-heading" class="sr-only">Auto-responses</h2>
 
@@ -15,7 +16,7 @@
             <button w-ref="{newResponseOptionsButton}" type="button" class="secondary compact-button" aria-label="More autoresponse options" popovertarget="new-response-menu" @click="{positionRuleMenu(e)}" ?disabled="{{savingAutoResponse || changingAutoResponse}}">More</button>
           </div>
         </header>
-        <div class="auto-response-start-hint" ?hidden="{{rules.length}}">
+        <div class="auto-response-start-hint" ?hidden="{{rules.length || automationSection != 'responses'}}">
           Select one or more captured responses in Traffic, then choose “Create autoresponses…”.
         </div>
         <div class="auto-response-manager" ?data-detail="{{!editorHidden || !batchReviewHidden}}" data-list-share="{{ruleListShare}}">
@@ -32,7 +33,7 @@
             <details class="list-help"><summary>Selection and priority</summary><p>First enabled match wins. Search and filters preserve priority. Shift selects a range; Ctrl adds rules. Del removes selected rules; Ctrl+Z undoes a list action. Drag above or below a rule to change priority; hold near the list’s top or bottom to scroll. Escape cancels a drag. More or Ctrl+Alt+↑/↓ moves selected rules.</p></details>
           </div>
           <pane-divider orientation="vertical" label="Resize rule list and properties" value="{{ruleListSplit}}" initial="45" @pane-resize="{resizeRuleList(e)}"></pane-divider>
-          <div class="rule-properties-pane"><button type="button" class="secondary compact-button rule-back" @click="{backToRules()}">← Back to rules</button>
+          <div class="rule-properties-pane"><button type="button" class="secondary compact-button rule-back" ?hidden="{{responseExperiment}}" @click="{backToRules()}">← Back to rules</button>
             <div class="rule-properties-empty" ?hidden="{{!editorHidden || !batchReviewHidden}}"><strong>{{ruleSelectionText}}</strong><p>Select one rule to edit its properties. Select several to enable, disable, duplicate, reorder or remove them together.</p><div class="actions" ?hidden="{{!ruleSelectionCount}}"><button type="button" class="secondary compact-button" @click="{mutateSelectedRules('enable')}">Enable selected</button><button type="button" class="secondary compact-button" @click="{mutateSelectedRules('disable')}">Disable selected</button></div></div>
             <section class="batch-review" ?hidden="{{batchReviewHidden}}">
               <header class="batch-header"><h3>Create auto-response rules</h3><p role="status">{{batchReviewText}}</p></header>
@@ -123,7 +124,6 @@
         <dialog w-ref="{unsavedDialog}" class="unsaved-rule-dialog" @cancel="{unsavedCancelled(e)}"><h3>Save changes to this rule?</h3><p>Your current edits have not been saved.</p><div class="actions"><button type="button" @click="{resolveUnsaved('save')}">Save and continue</button><button type="button" class="secondary" @click="{resolveUnsaved('discard')}">Discard changes</button><button type="button" class="secondary" autofocus @click="{resolveUnsaved('stay')}">Keep editing</button></div></dialog>
       </section>
     </div>
-    <section class="automation-panel" ?hidden="{{automationSection != 'experiments'}}"><experiment-variants w-ref="{experimentVariants}" :status="{{autoresponseState}}" @variant-status="{onVariantStatus(e)}" @variant-edit="{editVariant(e)}" @variant-preview="{previewVariant(e)}" @variant-new="{newNamedExperiment()}"></experiment-variants></section>
     <section class="automation-panel" ?hidden="{{automationSection != 'header-rules'}}"><header-rules editor-kind="headers" :headerState="{{autoresponseState}}" :selection="{{selection}}" ?active="{{view == 'automation' && automationSection == 'header-rules'}}" @header-rules-state="{onHeaderRulesState(e)}"></header-rules></section>
     <section class="automation-panel" ?hidden="{{automationSection != 'response-text'}}"><header-rules w-ref="{responseTextEditor}" editor-kind="response-text" :headerState="{{autoresponseState}}" :selection="{{selection}}" ?active="{{view == 'automation' && automationSection == 'response-text'}}" @header-rules-state="{onHeaderRulesState(e)}"></header-rules></section>
     <section class="automation-panel override-panel" ?hidden="{{automationSection != 'headers'}}"><user-agent-overrides w-ref="{userAgentOverrides}" :uaState="{{autoresponseState}}"></user-agent-overrides></section>

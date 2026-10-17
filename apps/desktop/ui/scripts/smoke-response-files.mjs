@@ -11,7 +11,12 @@ export async function smokeResponseFiles({main,traffic,documentId,pageSource,tar
  const blue=css('rgb(0, 0, 255)'),red=css('rgb(255, 0, 0)');
  assert.equal(Buffer.byteLength(blue),2048);assert.equal(Buffer.byteLength(red),2048);
  const choose=async mode=>main.evaluate(`(async()=>{const a=${editor},info=await window.__TAURI_INTERNALS__.invoke('response_body_file_info',{path:${JSON.stringify(path)},reference:null});a.bodyFileTouched=true;a.draftDirty=true;a.setResponseFile(info);a.$flushUpdates();const select=a.autoResponseForm.elements.namedItem('bodyFileMode');select.value=${JSON.stringify(mode)};select.dispatchEvent(new Event('change',{bubbles:true}));})()`);
- const save=async()=>{assert.equal(await main.evaluate(`${editor}.saveAutoResponse(new Event('submit',{cancelable:true}))`),true,'File-source rule did not save');await waitFor(()=>main.evaluate(`!${editor}.loadingSavedResponse&&!${editor}.fileChoiceBusy`),'Saved file source did not load');};
+ const save=async()=>{
+  assert.equal(await main.evaluate(`${editor}.saveAutoResponse(new Event('submit',{cancelable:true}))`),true,'File-source rule did not save');
+  assert.equal(await main.evaluate(`${editor}.editorHidden`),true,'File save did not return to Experiments');
+  await main.evaluate(`${editor}.experimentVariants.editRule(${editor}.editingAutoResponseId)`);
+  await waitFor(()=>main.evaluate(`!${editor}.editorHidden&&!${editor}.loadingSavedResponse&&!${editor}.fileChoiceBusy`),'Saved file source did not load');
+ };
  const open=async()=>{
   const prior=(await targets()).map(row=>row.id);
   await main.evaluate(`(async()=>{await ${shell}.activateView('automation');${editor}.previewSavedRule();})()`);

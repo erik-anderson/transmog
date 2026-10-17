@@ -548,6 +548,7 @@ await page.addInitScript((configuration) => {
         case 'experiment_overlaps': return structuredClone(state.variantOverlaps??[]);
         case 'change_experiment': {
           if(state.uaRejectValidation||state.variantReject)throw new Error('Fixture validation failed; saved and live rules unchanged');
+          if(state.deferExperimentSave&&['create','save'].includes(args.change.action)){state.deferExperimentSave=false;await new Promise(resolve=>state.finishExperimentSave=resolve);}
           if(state.deferExperimentActivation&&args.change.action==='activate'){state.deferExperimentActivation=false;await new Promise(resolve=>state.finishExperimentActivation=resolve);}
           if(args.generation!==state.automation.generation)throw new Error('Automation changed. Refresh before retrying; your draft has been preserved.');
           const next=structuredClone(state.automation),c=args.change;next.experiments??=[];

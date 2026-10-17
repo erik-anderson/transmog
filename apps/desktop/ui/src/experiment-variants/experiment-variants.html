@@ -1,6 +1,6 @@
 <template>
 <section class="variant-workspace" aria-label="Response experiments" aria-busy="{{variantBusy}}">
-  <header><h2>Response experiments</h2><button type="button" @click="{newExperiment()}" ?disabled="{{variantBusy}}">New from selected response</button></header>
+  <header><h2>Response experiments</h2><button w-ref="{newExperimentButton}" type="button" @click="{newExperiment()}" ?disabled="{{variantBusy}}">New from selected response</button></header>
   <p ?hidden="{{experimentItems.length}}">Select a captured response in Traffic and choose Create experiment. Keep named alternatives here, then deliberately activate one revision.</p>
   <div class="variant-content" ?hidden="{{!experimentItems.length}}">
     <div class="variant-pickers"><label>Experiment <select w-ref="{experimentSelect}" aria-label="Experiment" @change="{selectExperiment(e)}" ?disabled="{{variantBusy}}"><for each="item in experimentItems"><option value="{{item.id}}" ?selected="{{item.id == experimentId}}">{{item.name}}</option></for></select></label><label>Variant <select w-ref="{variantSelect}" aria-label="Variant" @change="{selectVariant(e)}" ?disabled="{{variantBusy}}"><for each="item in variantItems"><option value="{{item.id}}" ?selected="{{item.id == variantId}}">{{item.name}}</option></for></select></label><label>Revision <select aria-label="Variant revision" @change="{selectRevision(e)}" ?disabled="{{variantBusy}}"><for each="revision in revisionItems"><option value="{{revision}}" ?selected="{{revision == variantRevision}}">{{revision}}</option></for></select></label></div>

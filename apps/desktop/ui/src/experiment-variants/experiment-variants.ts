@@ -25,6 +25,7 @@ export class ExperimentVariants extends WorkspaceElement {
   @observable variantWarnings:string[]=[];
   @observable variantReviewed=false;
   experimentSelect!:HTMLSelectElement;
+  newExperimentButton!:HTMLButtonElement;
   variantSelect!:HTMLSelectElement;
   variantName!:HTMLInputElement;
   experimentName!:HTMLInputElement;
@@ -62,7 +63,7 @@ export class ExperimentVariants extends WorkspaceElement {
     if(this.variantName&&(this.renderedExperiment!==this.experimentId||this.renderedVariant!==this.variantId||this.variantName.value===this.renderedVariantName))this.variantName.value=variant?.name??'';
     this.renderedExperiment=this.experimentId;this.renderedVariant=this.variantId;this.renderedExperimentName=experiment?.name??'';this.renderedVariantName=variant?.name??'';
   }
-  async reveal(selection:ExperimentSelection):Promise<void> {this.experimentId=selection.experimentId;this.variantId=selection.variantId;this.variantRevision=selection.revision;this.clearReview();this.render();this.experimentSelect.focus();}
+  async reveal(selection:ExperimentSelection,focus=true):Promise<void> {this.experimentId=selection.experimentId;this.variantId=selection.variantId;this.variantRevision=selection.revision;this.clearReview();this.render();if(focus)this.experimentSelect.focus();}
   selectExperiment(event:Event):void {this.experimentId=(event.currentTarget as HTMLSelectElement).value;this.variantId='';this.variantRevision=0;this.clearReview();this.render();}
   selectVariant(event:Event):void {this.variantId=(event.currentTarget as HTMLSelectElement).value;this.variantRevision=0;this.clearReview();this.render();}
   selectRevision(event:Event):void {this.variantRevision=Number((event.currentTarget as HTMLSelectElement).value);this.clearReview();this.render();}

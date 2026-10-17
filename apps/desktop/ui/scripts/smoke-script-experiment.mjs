@@ -18,8 +18,11 @@ export async function smokeScriptExperiment({main,traffic,documentId,targets,con
     assert.equal(await main.evaluate(`${shell}.comparison.comparisonResult.rows.some(row=>row.field==='Decoded bytes'&&row.state==='different')`),true);
     await main.evaluate(`${shell}.comparison.closeComparison()`);
     assert.equal(await main.evaluate(`${editor}.saveAutoResponse(new Event('submit',{cancelable:true}))`),true);
-    await waitFor(()=>main.evaluate(`!${editor}.loadingSavedResponse`),'Saved script experiment did not reopen');
+    await waitFor(()=>main.evaluate(`${editor}.editorHidden&&!${editor}.loadingSavedResponse`),'Saved script experiment did not return to Experiments');
     const selection=await main.evaluate(`${editor}.editingVariant`);
+    await main.evaluate(`${editor}.experimentVariants.editRule(${editor}.editingAutoResponseId)`);
+    await waitFor(()=>main.evaluate(`!${editor}.editorHidden&&!${editor}.loadingSavedResponse`),'Saved script response did not reopen in Experiments');
+    assert.equal(await main.evaluate(`${editor}.autoResponseForm.elements.namedItem('name').getRootNode().activeElement===${editor}.autoResponseForm.elements.namedItem('name')`),true,'Native experiment edit did not focus the response properties');
     const saved=await invoke('automation_status');
     assert.deepEqual(saved.rules,before.rules,'Saving a script experiment changed live rules');
     assert.equal(saved.autoresponsesEnabled,before.autoresponsesEnabled);

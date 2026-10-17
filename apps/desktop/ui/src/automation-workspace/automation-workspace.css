@@ -12,6 +12,18 @@ automation-workspace { display:contents; }
 .auto-response-header .actions { align-items:baseline; flex-wrap:wrap; }
 .auto-response-start-hint { grid-row:2; margin:.4rem 0; padding:.5rem; }
 .auto-response-manager { grid-row:3; height:100%; min-height:0; margin:0; grid-template-columns:minmax(0,var(--rule-list-share)) .5rem minmax(0,1fr); }
+.auto-response-workspace > experiment-variants { grid-row:1; min-height:0; }
+.auto-response-workspace:not([data-experiments]) > experiment-variants,
+.auto-response-workspace[data-experiment-editor] > experiment-variants,
+.auto-response-workspace[data-experiments]:not([data-experiment-editor]) > .auto-response-manager { display:none; }
+.auto-response-workspace[data-experiments] { grid-template-rows:minmax(0,1fr); }
+.auto-response-workspace[data-experiments] > .auto-response-manager { grid-row:1; grid-template-columns:minmax(0,1fr); }
+.auto-response-workspace[data-experiments] .rule-list-pane,
+.auto-response-workspace[data-experiments] .auto-response-manager > pane-divider { display:none; }
+.auto-response-workspace:not([data-experiments])[data-experiment-editor] > .auto-response-manager { grid-template-columns:minmax(0,1fr); }
+.auto-response-workspace:not([data-experiments])[data-experiment-editor] .rule-properties-pane,
+.auto-response-workspace:not([data-experiments])[data-experiment-editor] .auto-response-manager > pane-divider { display:none; }
+.auto-response-workspace:not([data-experiments])[data-experiment-editor] .rule-list-pane { display:grid; }
 .rule-list-pane { max-height:none; min-height:0; }
 .rule-list-tools { align-items:baseline; padding:.35rem .5rem; }
 .rule-selection-toolbar { min-height:1.7rem; padding:.2rem .5rem; font-size:.75rem; }

@@ -67,12 +67,15 @@ isolation](captured-page-preview.md#isolation-and-implementation).
 
 Select one complete captured response in the main window, then choose **Actions →
 Create experiment**. Name the hypothesis and edit its status, headers or body in
-the existing response editor. **Test match** checks the request conditions without
-sending traffic; **Compare with captured source** shows the unsaved difference.
-Switching workspaces preserves the draft. Failed saves keep it available for retry.
+the shared response editor within **Experiments**. **Test match** checks the request
+conditions without sending traffic; **Compare with captured source** shows the
+unsaved difference. Switching workspaces preserves the draft. Failed saves keep
+it available for retry.
 
 **Save experiment** creates an experiment with an empty **Baseline** and an
-**Edited response** variant. Each saved variant revision contains complete ordered
+**Edited response** variant, then returns to **Experiments** with that saved revision
+selected. Editing a saved response stays in **Experiments**, and saving returns to
+its updated revision. Each saved variant revision contains complete ordered
 rules and exact response-asset revisions. Saving never changes live traffic, even
 when an earlier revision is active. Unrelated rules and the global On/Paused
 setting are preserved. The original **Create auto-response** flow still creates

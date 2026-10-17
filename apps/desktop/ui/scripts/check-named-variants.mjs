@@ -33,7 +33,7 @@ export async function checkNamedVariants(page,root){
   await editor.getByRole('button',{name:'Save experiment',exact:true}).click();
   await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.savingAutoResponse&&!a.loadingSavedResponse&&!a.draftDirty;});
   assert.deepEqual((await state()).rules,before.rules,'Saving variant rules changed live traffic');
-  await editor.getByRole('button',{name:'Versions and history…',exact:true}).click();
+  assert.equal(await manager.isVisible(),true,'Saving a response did not return to its experiment');
  }
  assert.equal(await manager.locator('.variant-rule-list li').count(),2);
  await manager.getByRole('button',{name:'Move Second script later',exact:true}).click();await settle();
