@@ -47,7 +47,7 @@ export async function checkTrafficFailures(page, artifacts) {
       if (id==='failed-post') assert.equal(await page.locator('.selection-bar .status-badge').getAttribute('data-tone'),'failed');
     }
     await page.locator('tr[data-session-id="failed-post"]').click();
-    assert.equal(await page.locator('#selected-request-actions button').filter({hasText:'Serve a saved response…'}).getAttribute('title'),'This request failed; its response cannot be saved as an auto-response.');
+    assert.equal(await page.locator('#selected-request-actions button').filter({hasText:'Serve a saved response…'}).getAttribute('title'),'This request failed; its response cannot be saved as a saved response.');
     const request = page.locator('message-inspector[side="request"]');
     await request.getByRole('button',{name:'Body',exact:true}).click();
     await request.getByLabel('Body viewer',{exact:true}).selectOption('metadata');

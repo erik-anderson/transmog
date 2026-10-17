@@ -231,7 +231,7 @@ file's internal associations and its parent entry mapping remain explicit.
 
 Every rule has an ID/revision, label, kind, evaluation boundary, authored enabled
 intent, match definition and typed action. Variants carry ordered rule references.
-Auto-responses use array order and first-enabled-match precedence. General header
+Saved responses use array order and first-enabled-match precedence. General header
 and literal rules carry an explicit signed numeric priority; equal-priority
 overlapping writes use the production compiler's conflict rejection. Preserve
 the original rule ID as provenance while allocating/remapping local import IDs.
@@ -696,7 +696,7 @@ source associations; K3 packages and protects that same object model.
 
 Open a case through **Files → Open case…** or ordinary file import. Choose a
 capture and **Preview…**, select an included complete HTML response and
-choose **Captured baseline**, **Saved auto-responses**, or an exact named
+choose **Captured baseline**, **Saved responses**, or an exact named
 variant revision. Read the warning before **Open preview**. Scripts start off
 each time. The resource scope defaults to the document’s original source;
 **All opened captures in this case** is an explicit choice that can mix captures. Inspect
@@ -705,7 +705,7 @@ additional case sources first when they are needed by that broader scope.
 Preview preparation reads the package’s verified immutable response objects into
 bounded owned snapshots. It neither imports nor activates automation, resolves
 original linked-file paths, executes packaged automation scripts, nor changes the live
-pause switch. Ordinary auto-responses explicitly selected for preview participate
+pause switch. Ordinary saved responses explicitly selected for preview participate
 even if their saved enabled intent is false. Named variants retain each rule’s
 participation and recorded precedence. A variant containing participating live
 header/body transformations cannot run in this captured-response preview.

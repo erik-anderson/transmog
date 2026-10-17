@@ -79,8 +79,9 @@ export async function checkTrafficTimeline(page,root) {
     // Inspector actions follow the inspected request without narrowing Timeline.
     await traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
     const actions=traffic.locator('#selected-request-actions');
+    await openActionGroup(actions,'Compare');
     assert.equal(await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).isEnabled(),true);
-    await openActionGroup(actions,'Compare');await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).click();
+    await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.comparisonBaseline),'tl-fast');
     await traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
     await openActionGroup(actions,'Copy');await actions.getByRole('button',{name:'Copy request summary',exact:true}).click();

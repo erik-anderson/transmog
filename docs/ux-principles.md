@@ -25,6 +25,10 @@ when changing the experience.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.
+- Present built-in traffic changes as rules named by their outcome, with request
+  and response direction visible. Share discovery and properties while preserving
+  each operation’s execution and activation semantics. Group secondary actions
+  into at most one level of submenus; retain direct actions for the current task.
 - Keep selection, editing, saving and activation understandable. A combined
   save-and-activate action is appropriate when its label explains the effect and
   validation and persistence succeed before activation. Keep saving a draft

@@ -11,7 +11,7 @@ explicit choice to mix opened case evidence. It does not import or activate rule
 See [case previews and saved comparisons](portable-investigations.md#desktop-previews-and-saved-comparisons).
 
 In the main window, **Responses** defaults to **Captured**. Choose **Captured with
-auto-responses** and expand **Select saved rules in priority order** to include
+saved responses** and expand **Select saved rules in priority order** to include
 saved rules. Enabled rules are selected initially; disabled rules may also
 participate. This choice is **For this preview only**: it does not enable live
 rules, and the live On/Paused switch does not gate preview participation. Resolve
@@ -52,7 +52,7 @@ small CSS and JavaScript files. Saving an external edit affects a newly opened
 updated preview; it cannot change a running preview. **Copy into response** uses
 the saved bytes until you save a replacement. A preview still has its existing
 per-resource and scene limits even when a file is valid for a larger live
-response. See [file choices and repair](automation.md#ordered-auto-responses).
+response. See [file choices and repair](automation.md#saved-responses).
 
 Traffic marks identifiable top-level navigations with a subtle **Page** badge
 beside the path. This uses the original request's `Sec-Fetch-Dest: document`
@@ -125,8 +125,8 @@ saved revision of that same variant and freezes new bytes; an explicit revision
 selection in Experiments continues to use that exact revision. A new preview of
 an old linked-file configuration reads the current file; it does not claim to reconstruct earlier served bytes.
 
-Preview participation covers saved response assets. Standalone Header rules,
-Response edits and script modules do not execute here. Edit the selected
+Preview participation covers saved response assets. Standalone header changes,
+response text replacements and script modules do not execute here. Edit the selected
 response asset's headers or body to test those changes against a captured page.
 For the connected script-editing flow and live activation, see [choose an editing
 workflow](automation.md#choose-an-editing-workflow).

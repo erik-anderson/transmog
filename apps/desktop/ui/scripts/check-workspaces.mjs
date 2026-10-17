@@ -2468,7 +2468,7 @@ try {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.enableScripts),true);
   assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options),{scope:'all-loaded'});
   assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
-  await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).click();const previewReport=page.locator('.captured-preview-report[open]');
+  await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await openActionGroup(page.locator('#selected-request-actions'),'Preview');await page.getByRole('button',{name:'Last preview diagnostics…',exact:true}).click();const previewReport=page.locator('.captured-preview-report[open]');
   await previewReport.getByText(/3 frozen variants.*1 skipped.*4 served.*2 network failures.*Scripts enabled/).waitFor();
   await previewReport.getByText('Captured resource versions',{exact:true}).click();await previewReport.getByText('POST · fixture.saz',{exact:true}).waitFor();
   await page.setViewportSize({width:1280,height:800});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-wide.png')});await page.setViewportSize({width:760,height:520});await page.screenshot({path:resolve(root,'../../../target/ui-check/preview-diagnostics-compact.png')});

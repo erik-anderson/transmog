@@ -95,7 +95,7 @@ header rules, response edits, scripts and other experiments keep their own state
 For external CSS/JavaScript editing, choose **Read file on each request** instead
 of Copy. A future live request or newly opened preview acquires current file
 bytes; an existing preview and historical Traffic comparison keep their frozen
-evidence. See [file choices](#ordered-saved responses), [snapshot
+evidence. See [file choices](#saved-responses), [snapshot
 evidence](#linked-file-snapshots-and-historical-evidence) and [preview
 isolation](captured-page-preview.md#isolation-and-implementation).
 
@@ -209,7 +209,7 @@ Preserve is the default when no hint overrides are authored. The Automation
 navigation count includes enabled non-auto-response rules and active script
 modules. The Rules list shows each browser-header rule and its enabled state.
 
-## Ordered saved responses
+## Saved responses
 
 Auto-response rules form a compact top-to-bottom list beside a resizable
 properties pane. The first enabled rule that matches wins and bypasses the
@@ -490,7 +490,7 @@ Select a request and choose **Actions → Create rule → Find and replace respo
 or choose the same action under **Automation → Rules → New rule…**. The disabled draft uses the selected
 method/address and a supported media type. It modifies fresh origin text rather
 than substituting a saved response. **Save rule** respects Enabled; **Save and
-enable** explicitly affects new requests. Auto-response pause does not pause
+enable** explicitly affects new requests. The Saved responses switch does not pause
 these edits. Scoped revisions, position repair and remove/Undo preserve unrelated
 automation through the same transaction used by header rules.
 
@@ -552,7 +552,7 @@ diagnostics.
 ## Captured-page experiments
 
 The main window's [captured-page preview](captured-page-preview.md) can snapshot
-selected saved saved responses, including disabled rules. Preview participation is
+selected saved responses, including disabled rules. Preview participation is
 independent of live enabled states and the On/Paused gate. Preview never changes
 those states. The same request matcher evaluates actual browser method, normalized
 URL and explicit header conditions before captured fallback; the first

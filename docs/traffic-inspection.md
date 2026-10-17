@@ -87,7 +87,7 @@ The compact **Markers** panel shares horizontal space between its list and the
 selected note. Timeline flags show marked times in the overview and zoomed range.
 Click a flag or marker row to navigate without applying a filter; **Show nearby
 requests** explicitly filters its trace around that time. The inspector's **Actions**
-and the request context menu offer **Flag request…** and **Flag response…**.
+and the request context menu offer **Flag → Flag request…** and **Flag → Flag response…**.
 An optional note and exact message link travel with TMCap and extended SAZ copies.
 Edit, clear, delete and Undo remain in the panel; **Save copy…** preserves changes.
 See [marker review](support-capture-profiles.md#developer-intake-and-export-review)
@@ -250,7 +250,7 @@ their text. Headers, bodies, the full URL popover and reports remain selectable
 for copying. **Remove selected entries** / Del and **Remove unselected
 entries** operate across the whole workspace, including hidden rows. Undo / Ctrl+Z
 restores them while their underlying evidence is retained. These actions do not
-delete source capture files or saved auto-responses.
+delete source capture files or saved responses.
 
 ## Edit and replay
 
@@ -293,7 +293,7 @@ and columns. Bulk actions appear for multiple selected requests.
 
 ## Comparing captured evidence
 
-For linked auto-responses, **Details → Timings → Response file evidence** shows
+For linked saved responses, **Details → Timings → Response file evidence** shows
 which encoded file snapshot the matched rule selected and whether complete
 client-response bytes remain retained. It distinguishes selected and captured
 hashes when later processing changes output. Compare the Traffic entries to
@@ -400,8 +400,8 @@ existing source Hex/Save as. Cancellation cooperates with file/codec work; an
 in-progress operating-system file read must return before its worker can stop.
 
 
-For a targeted edit of fresh server text, choose **Modify current response…**
-from the selected request's actions. The draft starts disabled in Response edits
+For a targeted edit of server text, choose **Actions → Create rule → Find and replace response text…**
+from the selected request's actions. The draft starts disabled in Rules
 and keeps the selected method/address. See [literal response editing](automation.md#literal-edits-to-fresh-responses)
 for bounds, encoding and activation. Recorded body edits in Details offer the
 original/effective response comparison with normal retained-evidence limits.

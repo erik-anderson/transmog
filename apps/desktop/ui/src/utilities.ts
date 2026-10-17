@@ -185,7 +185,7 @@ export function clientResponseSource(detail: SessionDetail): {request: HeadView;
 
 export function autoResponseUnavailableReason(detail: SessionDetail): string {
   if(detail.terminalState==='active')return 'Wait for this request to complete before saving its response.';
-  if(detail.terminalState==='failed')return 'This request failed; its response cannot be saved as an auto-response.';
+  if(detail.terminalState==='failed')return 'This request failed; its response cannot be saved as a saved response.';
   if((detail.sequenceLoss??0)>0)return 'Some exchange evidence was lost; this response cannot be copied faithfully.';
   const status=detail.responses.find(head=>head.boundary==='client-response')?.status;
   if(status!==undefined && status!==null && (status<200 || status>599))return 'This response status cannot be replayed as a saved response.';

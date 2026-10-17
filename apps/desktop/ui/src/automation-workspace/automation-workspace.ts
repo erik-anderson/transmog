@@ -1187,7 +1187,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const preserveEncoding = this.autoResponsePreserveEncoding.checked;
     this.savingAutoResponse = true;
     this.autoResponseError = ''; this.requestHeadersError = ''; this.responseHeadersError = '';
-    this.automationText = 'Validating and saving the auto-response…';
+    this.automationText = 'Validating and saving the saved response…';
     this.automationKind = 'progress';
     try {
       const displayName = String(data.get('name') ?? '').trim();

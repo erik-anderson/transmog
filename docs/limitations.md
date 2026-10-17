@@ -65,7 +65,7 @@ extensions belong in the [roadmap](roadmap.md).
 - Persisted automation, scripts, response assets, and preferences are bounded
   product workspaces, not a durable indexed traffic database or full project
   model.
-- Auto-responses support exact URLs, address patterns and bounded regular
+- Saved responses support exact URLs, address patterns and bounded regular
   expressions, with request-header criteria for every method. Request-body
   matching is not yet available in the auto-response editor.
 - Experimental control revision 0 is a same-build, in-process contract. There
