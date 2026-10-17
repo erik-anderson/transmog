@@ -1,5 +1,7 @@
 """Release checks preserve failures and use a source-bound advisory database."""
 import json
+from contextlib import redirect_stdout
+import io
 from pathlib import Path
 import subprocess
 import sys
@@ -69,7 +71,7 @@ class ReleasePolicyTests(unittest.TestCase):
                     return subprocess.CompletedProcess(arguments, 1, "", failed)
                 return subprocess.CompletedProcess(arguments, 0)
             argv = ["release-policy", "--snapshot", str(root / "snapshot"), "--output", str(root / "output")]
-            with patch.object(sys, "argv", argv), patch.object(policy, "ROOT", root), patch.object(policy, "git", return_value="source"), patch.object(policy, "validate_snapshot", return_value=metadata), patch.object(policy.subprocess, "run", side_effect=run):
+            with redirect_stdout(io.StringIO()), patch.object(sys, "argv", argv), patch.object(policy, "ROOT", root), patch.object(policy, "git", return_value="source"), patch.object(policy, "validate_snapshot", return_value=metadata), patch.object(policy.subprocess, "run", side_effect=run):
                 with self.assertRaisesRegex(ValueError, "dependency policy failed"):
                     policy.main()
             report = json.loads((root / "output/policy.json").read_text(encoding="utf-8"))
