@@ -30,7 +30,27 @@ export async function smokeComparison(viewer,main,traffic,screenshot){
   assert.deepEqual(draft,{different:true,status:true,body:true,rulesUnchanged:true,gateUnchanged:true});
   if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-comparison-draft.png'),Buffer.from(image.data,'base64'));}
   await main.evaluate(`document.querySelector('app-shell').comparison.closeComparison()`);
+  const reordered=await main.evaluate(`(async()=>{
+    const invoke=window.__TAURI_INTERNALS__.invoke,bytes=text=>Array.from(new TextEncoder().encode(text));
+    const headers=[['Content-Type','text/plain; charset=utf-8'],['X-Repeat','same'],['x-repeat','same'],['X-Repeat','distinct'],['X-Repeat','same']].map(([name,value])=>({name:bytes(name),value:bytes(value)}));
+    const asset=await invoke('create_response_asset',{input:{id:'native-header-order',revision:1,status:200,headers,body:bytes('same'),mediaType:'text/plain'}});
+    const base={kind:'asset',reference:asset.id+'@'+asset.revision},comparison=document.querySelector('app-shell').comparison;
+    await comparison.open({left:base,right:{kind:'draft',label:'Reordered headers',status:'200',headers:[...asset.headers].reverse(),decodedBody:bytes('same'),base,bodyPath:null}});
+    const result=comparison.comparisonResult;
+    if(!result)throw new Error(comparison.comparisonStatus);
+    return {different:result.different,headerState:result.rows.find(r=>r.field==='Header summary')?.state,headerFindings:result.rows.filter(r=>r.field.startsWith('Header ')&&r.field!=='Header summary').length,summary:comparison.comparisonSummary};
+  })()`);
+  assert.equal(reordered.different,false);assert.equal(reordered.headerState,'equal');assert.equal(reordered.headerFindings,0);assert.match(reordered.summary,/0 change findings/);
+  try{
+    for(const [width,height] of [[1440,900],[960,720],[800,600]]){
+      await main.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+      const bounds=await main.evaluate(`(()=>{const dialog=document.querySelector('app-shell').comparison.comparisonDialog,r=dialog.getBoundingClientRect();return {fits:r.width<=innerWidth&&r.height<=innerHeight,overflow:dialog.scrollWidth-dialog.clientWidth};})()`);
+      assert.equal(bounds.fits,true);assert.ok(bounds.overflow<=1);
+      if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-comparison-header-order-'+width+'.png'),Buffer.from(image.data,'base64'));}
+    }
+  }finally{await main.call('Emulation.clearDeviceMetricsOverride');await main.evaluate(`document.querySelector('app-shell').comparison.closeComparison()`);}
   process.stdout.write('Native comparison: viewer evidence/permissions, byte equality and unsaved response differences verified.\n');
+  process.stdout.write('Native header comparison: reordered names/values and duplicate occurrences produce no change findings at wide and compact sizes.\n');
 }
 
 export async function smokePreviewComparison(owner,other,label){

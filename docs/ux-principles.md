@@ -75,6 +75,9 @@ when changing the experience.
 - Distinguish observed behavior from configured intent, and original evidence
   from generated summaries or previews. Opening a capture does not reverify its
   historical connections. Preserve original values when display requires escaping.
+- Keep comparison findings focused on changed content. Reordering identical
+  headers does not create a change finding; retain original positions in source
+  evidence and in findings for actual header changes.
 - Distinguish measured zero, empty, unavailable, incomplete, truncated, redacted
   and expired data. Name the relevant boundary; a later failure does not establish
   that an earlier complete body was truncated or that a server did not process it.

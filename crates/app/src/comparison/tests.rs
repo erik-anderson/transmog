@@ -66,7 +66,7 @@ async fn compares_beyond_inspector_display_caps_and_keeps_partial_coverage() {
     );
 }
 #[tokio::test]
-async fn duplicate_headers_keep_occurrences_and_moves_and_explicit_exclusions() {
+async fn duplicate_headers_keep_spelling_changes_and_explicit_exclusions() {
     let a = evidence(headers(&[
         ("Set-Cookie", "a=1"),
         ("Set-Cookie", "b=2"),
@@ -94,12 +94,111 @@ async fn duplicate_headers_keep_occurrences_and_moves_and_explicit_exclusions() 
         rows.iter()
             .filter(|r| r.field.contains("set-cookie") && r.state == ComparisonState::Different)
             .count(),
-        2
+        1
+    );
+    let spelling = rows
+        .iter()
+        .find(|r| r.field.contains("set-cookie") && r.state == ComparisonState::Different)
+        .unwrap();
+    assert_eq!(spelling.left, "Set-Cookie: b=2");
+    assert_eq!(spelling.right, "set-cookie: b=2");
+    assert_eq!(
+        spelling.note,
+        "Original field-name spelling changed; value unchanged"
     );
     assert!(
         rows.iter()
             .any(|r| r.state == ComparisonState::Excluded && r.field.contains("date"))
     );
+}
+#[tokio::test]
+async fn reordered_identical_headers_and_duplicates_are_equal() {
+    let a = evidence(headers(&[
+        ("X-Repeat", "same"),
+        ("Accept", "text/plain"),
+        ("x-repeat", "same"),
+        ("X-Repeat", "distinct"),
+        ("X-Repeat", "same"),
+    ]));
+    let b = evidence(headers(&[
+        ("x-repeat", "same"),
+        ("X-Repeat", "distinct"),
+        ("X-Repeat", "same"),
+        ("X-Repeat", "same"),
+        ("Accept", "text/plain"),
+    ]));
+    for (left, right) in [(&a, &b), (&b, &a)] {
+        let registry = ComparisonRegistry::default();
+        let op = registry.begin("reordered").unwrap();
+        let (rows, _, tally) = algorithm::compare(left, right, &ComparisonOptions::default(), &op)
+            .await
+            .unwrap();
+        assert_eq!(tally.changed, 0);
+        assert!(
+            !rows
+                .iter()
+                .any(|r| r.field.starts_with("Header ") && r.field != "Header summary")
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.field == "Header summary" && r.state == ComparisonState::Equal)
+        );
+    }
+}
+#[tokio::test]
+async fn added_or_removed_duplicates_do_not_flag_shifted_headers() {
+    let a = evidence(headers(&[("X-Repeat", "same"), ("Accept", "text/plain")]));
+    let b = evidence(headers(&[
+        ("X-Repeat", "same"),
+        ("X-Repeat", "same"),
+        ("Accept", "text/plain"),
+    ]));
+    for (left, right) in [(&a, &b), (&b, &a)] {
+        let registry = ComparisonRegistry::default();
+        let op = registry.begin("duplicate-count").unwrap();
+        let (rows, _, _) = algorithm::compare(left, right, &ComparisonOptions::default(), &op)
+            .await
+            .unwrap();
+        let changes = rows
+            .iter()
+            .filter(|r| r.field.starts_with("Header x-repeat"))
+            .collect::<Vec<_>>();
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].state, ComparisonState::Different);
+        assert!(changes[0].left == "Absent" || changes[0].right == "Absent");
+        assert!(!rows.iter().any(|r| r.field.contains("accept")));
+        assert!(
+            rows.iter()
+                .any(|r| r.field == "Header summary" && r.state == ComparisonState::Different)
+        );
+    }
+}
+#[tokio::test]
+async fn reordered_headers_still_show_changed_values() {
+    let a = evidence(headers(&[
+        ("Accept", "text/plain"),
+        ("X-Repeat", "before"),
+        ("X-Repeat", "same"),
+    ]));
+    let b = evidence(headers(&[
+        ("X-Repeat", "same"),
+        ("X-Repeat", "after"),
+        ("Accept", "text/plain"),
+    ]));
+    let registry = ComparisonRegistry::default();
+    let op = registry.begin("changed-value").unwrap();
+    let (rows, _, _) = algorithm::compare(&a, &b, &ComparisonOptions::default(), &op)
+        .await
+        .unwrap();
+    let changes = rows
+        .iter()
+        .filter(|r| r.field.starts_with("Header x-repeat"))
+        .collect::<Vec<_>>();
+    assert_eq!(changes.len(), 1);
+    assert_eq!(changes[0].state, ComparisonState::Different);
+    assert_eq!(changes[0].left, "X-Repeat: before");
+    assert_eq!(changes[0].right, "X-Repeat: after");
+    assert!(!rows.iter().any(|r| r.field.contains("accept")));
 }
 #[test]
 fn url_pairing_preserves_path_query_and_encoded_separators() {

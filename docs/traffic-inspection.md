@@ -297,7 +297,10 @@ compact windows stack labeled values. Source actions return to original evidence
 if the source was removed or a view switch is canceled, the comparison stays open.
 
 Equality uses complete original fields and bytes, including duplicate header
-occurrences, rather than shortened inspector text. Redacted values are unknown.
+occurrences, rather than shortened inspector text. Header order is ignored;
+identical names and values are matched before spelling changes. Changed values,
+original field-name spelling and added or removed duplicate occurrences remain
+visible. Redacted values are unknown.
 Exact encoded bytes, decoded bytes and faithfully decoded text have separate
 verdicts. Newline normalization is an explicit derived view. Header exclusions are
 explicit comma-separated names; none are enabled by default. Differences can be

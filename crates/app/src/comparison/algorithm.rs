@@ -301,19 +301,36 @@ fn headers(
             );
             continue;
         }
-        // Exact values first, then remaining occurrences in order. Duplicate identical
-        // values have deterministic occurrence order, not an inferred semantic identity.
-        let mut exact = HashMap::<Vec<u8>, VecDeque<usize>>::new();
+        // Match identical names and values before spelling changes, then pair remaining
+        // occurrences in order. Position alone does not make a header different.
+        let mut exact = HashMap::<_, VecDeque<usize>>::new();
         for (j, (_, f)) in b.iter().enumerate() {
             if !f.is_redacted() {
-                exact.entry(f.value().to_vec()).or_default().push_back(j);
+                exact.entry((f.name(), f.value())).or_default().push_back(j);
             }
         }
         let mut matched = vec![None; a.len()];
         let mut used = HashSet::new();
         for (i, (_, f)) in a.iter().enumerate() {
             if !f.is_redacted()
-                && let Some(j) = exact.get_mut(f.value()).and_then(VecDeque::pop_front)
+                && let Some(j) = exact
+                    .get_mut(&(f.name(), f.value()))
+                    .and_then(VecDeque::pop_front)
+            {
+                matched[i] = Some(j);
+                used.insert(j);
+            }
+        }
+        let mut values = HashMap::<_, VecDeque<usize>>::new();
+        for (j, (_, f)) in b.iter().enumerate() {
+            if !used.contains(&j) && !f.is_redacted() {
+                values.entry(f.value()).or_default().push_back(j);
+            }
+        }
+        for (i, (_, f)) in a.iter().enumerate() {
+            if matched[i].is_none()
+                && !f.is_redacted()
+                && let Some(j) = values.get_mut(f.value()).and_then(VecDeque::pop_front)
             {
                 matched[i] = Some(j);
                 used.insert(j);
@@ -338,14 +355,14 @@ fn headers(
                         "Redacted values cannot establish equality; lengths and presence only",
                     )
                 }
-                Some((j, g)) if f.value() == g.value() => {
-                    if *index == j && f.name() == g.name() {
+                Some((_, g)) if f.value() == g.value() => {
+                    if f.name() == g.name() {
                         continue;
                     }
                     changed = true;
                     (
                         ComparisonState::Different,
-                        "Same value moved or original field-name spelling changed; identical duplicates aligned in occurrence order",
+                        "Original field-name spelling changed; value unchanged",
                     )
                 }
                 _ => {
@@ -387,7 +404,7 @@ fn headers(
             }
         }
     }
-    rows.push(section,"Ordered header summary",if changed{ComparisonState::Different}else if unknown{ComparisonState::Unavailable}else{ComparisonState::Equal},format!("{} fields",left.iter().count()),format!("{} fields",right.iter().count()),"Case-insensitive name grouping; exact values and original spelling/order compared; exclusions listed separately");
+    rows.push(section,"Header summary",if changed{ComparisonState::Different}else if unknown{ComparisonState::Unavailable}else{ComparisonState::Equal},format!("{} fields",left.iter().count()),format!("{} fields",right.iter().count()),"Case-insensitive name grouping; exact values, original spelling and duplicate counts compared; field order ignored; exclusions listed separately");
     Ok(())
 }
 fn header_value(f: &transmog_core::HeaderField) -> String {
