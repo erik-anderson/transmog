@@ -23,7 +23,7 @@ Transmog includes the following third-party software.
 | ast_node | 5.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 | https://github.com/smol-rs/async-broadcast |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-channel |
-| async-compression | 0.4.50 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
+| async-compression | 0.4.51 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | async-executor | 1.14.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-executor |
 | async-io | 2.6.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-io |
 | async-lock | 3.4.2 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-lock |
@@ -95,11 +95,11 @@ Transmog includes the following third-party software.
 | color_quant | 1.1.0 | MIT | https://github.com/image-rs/color_quant.git |
 | combine | 4.6.8 | MIT | https://github.com/Marwes/combine |
 | compact_str | 0.7.1 | MIT | https://github.com/ParkMyCar/compact_str |
-| compression-codecs | 0.4.45 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
-| compression-core | 0.4.33 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
+| compression-codecs | 0.4.46 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
+| compression-core | 0.4.34 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/concurrent-queue |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
-| constant_time_eq | 0.4.2 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://github.com/cesarb/constant_time_eq |
+| constant_time_eq | 0.6.1 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://codeberg.org/cesarb/constant_time_eq |
 | cooked-waker | 5.0.0 | MPL-2.0 | https://github.com/Lucretiel/cooked-waker |
 | cookie | 0.18.2 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs |
 | core_maths | 0.1.1 | MIT | https://github.com/robertbastian/core_maths |
@@ -310,7 +310,7 @@ Transmog includes the following third-party software.
 | keyboard-types | 0.8.3 | MIT OR Apache-2.0 | https://github.com/rust-windowing/keyboard-types |
 | keyring | 3.6.3 | MIT OR Apache-2.0 | https://github.com/hwchen/keyring-rs.git |
 | lazy_static | 1.5.1 | MIT OR Apache-2.0 | https://github.com/rust-lang-nursery/lazy-static.rs |
-| libc | 0.2.190 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
+| libc | 0.2.191 | MIT OR Apache-2.0 | https://github.com/rust-lang/libc |
 | libdbus-sys | 0.2.7 | Apache-2.0/MIT | https://github.com/diwic/dbus-rs |
 | libloading | 0.8.9 | ISC | https://github.com/nagisa/rust_libloading/ |
 | libm | 0.2.16 | MIT | https://github.com/rust-lang/compiler-builtins |
@@ -336,7 +336,7 @@ Transmog includes the following third-party software.
 | microsoft-webui-tokens | 0.0.30 | MIT | https://github.com/microsoft/webui |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
-| minisign-verify | 0.2.5 | MIT | https://github.com/jedisct1/rust-minisign-verify |
+| minisign-verify | 0.3.0 | MIT | https://github.com/jedisct1/rust-minisign-verify |
 | miniz_oxide | 0.8.9 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | miniz_oxide | 0.9.1 | MIT OR Zlib OR Apache-2.0 | https://github.com/Frommi/miniz_oxide/tree/master/miniz_oxide |
 | mio | 1.2.3 | MIT | https://github.com/tokio-rs/mio |
@@ -348,6 +348,7 @@ Transmog includes the following third-party software.
 | ndk-sys | 0.6.0+11769913 | MIT OR Apache-2.0 | https://github.com/rust-mobile/ndk |
 | new_debug_unreachable | 1.0.6 | MIT | https://github.com/mbrubeck/rust-debug-unreachable |
 | nix | 0.29.0 | MIT | https://github.com/nix-rust/nix |
+| nix | 0.31.3 | MIT | https://github.com/nix-rust/nix |
 | nom | 7.1.3 | MIT | https://github.com/Geal/nom |
 | ntapi | 0.4.3 | Apache-2.0 OR MIT | https://github.com/MSxDOS/ntapi |
 | nu-ansi-term | 0.50.3 | MIT | https://github.com/nushell/nu-ansi-term |
@@ -474,7 +475,7 @@ Transmog includes the following third-party software.
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustls | 0.23.46 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls |
-| rustls-native-certs | 0.8.4 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
+| rustls-native-certs | 0.8.5 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/rustls-native-certs |
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
 | rustls-platform-verifier-android | 0.2.0 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
@@ -501,7 +502,7 @@ Transmog includes the following third-party software.
 | serde_core | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
 | serde_derive | 1.0.229 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
 | serde_derive_internals | 0.29.1 | MIT OR Apache-2.0 | https://github.com/serde-rs/serde |
-| serde_json | 1.0.151 | MIT OR Apache-2.0 | https://github.com/serde-rs/json |
+| serde_json | 1.0.154 | MIT OR Apache-2.0 | https://github.com/serde-rs/json |
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/serde-repr |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | serde_spanned | 1.1.1 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
@@ -536,6 +537,7 @@ Transmog includes the following third-party software.
 | stable_deref_trait | 1.2.1 | MIT OR Apache-2.0 | https://github.com/storyyeller/stable_deref_trait |
 | stacker | 0.1.25 | MIT OR Apache-2.0 | https://github.com/rust-lang/stacker |
 | static_assertions | 1.1.0 | MIT OR Apache-2.0 | https://github.com/nvzqz/static-assertions-rs |
+| static_vcruntime | 3.0.0 | MIT OR Apache-2.0 OR Zlib | https://github.com/ChrisDenton/static_vcruntime |
 | strck | 1.0.0 | MIT | https://github.com/QnnOkabayashi/strck |
 | string_cache | 0.9.0 | MIT OR Apache-2.0 | https://github.com/servo/string-cache |
 | string_cache_codegen | 0.6.1 | MIT OR Apache-2.0 | https://github.com/servo/string-cache |
@@ -568,7 +570,7 @@ Transmog includes the following third-party software.
 | swc_macros_common | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_sourcemap | 9.3.4 | BSD-3-Clause | https://github.com/swc-project/swc-sourcemap |
 | swc_visit | 2.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swift-rs | 1.0.8 | MIT OR Apache-2.0 | https://github.com/Brendonovich/swift-rs |
+| swift-rs | 1.0.9 | MIT OR Apache-2.0 | https://github.com/Brendonovich/swift-rs |
 | syn | 1.0.109 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 2.0.119 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 3.0.6 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
@@ -587,16 +589,16 @@ Transmog includes the following third-party software.
 | tap | 1.0.1 | MIT | https://github.com/myrrlyn/tap |
 | tar | 0.4.46 | MIT OR Apache-2.0 | https://github.com/composefs/tar-rs |
 | target-lexicon | 0.12.16 | Apache-2.0 WITH LLVM-exception | https://github.com/bytecodealliance/target-lexicon |
-| tauri | 2.12.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-build | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-codegen | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-macros | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri | 2.12.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-build | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-codegen | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-macros | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-plugin | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-plugin-single-instance | 2.4.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
-| tauri-plugin-updater | 2.13.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
-| tauri-runtime | 2.12.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-runtime-wry | 2.12.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-utils | 2.10.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-plugin-single-instance | 2.5.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
+| tauri-plugin-updater | 2.14.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
+| tauri-runtime | 2.12.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-runtime-wry | 2.12.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-utils | 2.10.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-winres | 0.3.6 | MIT | https://github.com/tauri-apps/winres |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | https://github.com/Stebalien/tempfile |
 | temporal_capi | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
@@ -615,7 +617,7 @@ Transmog includes the following third-party software.
 | timezone_provider | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
 | tinystr | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
-| tokio | 1.53.1 | MIT | https://github.com/tokio-rs/tokio |
+| tokio | 1.53.3 | MIT | https://github.com/tokio-rs/tokio |
 | tokio-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
 | tokio-macros | 2.7.2 | MIT | https://github.com/tokio-rs/tokio |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | https://github.com/rustls/tokio-rustls |
@@ -647,7 +649,7 @@ Transmog includes the following third-party software.
 | uds_windows | 1.2.1 | MIT | https://github.com/haraldh/rust_uds_windows |
 | unicode-id-start | 1.5.0 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/Boshen/unicode-id-start |
 | unicode-ident | 1.0.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/dtolnay/unicode-ident |
-| unicode-normalization | 0.1.25 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-normalization |
+| unicode-normalization | 0.1.26 | (MIT OR Apache-2.0) AND Unicode-3.0 | https://github.com/unicode-rs/unicode-normalization |
 | unicode-segmentation | 1.13.3 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-segmentation |
 | unicode-width | 0.2.2 | MIT OR Apache-2.0 | https://github.com/unicode-rs/unicode-width |
 | universal-hash | 0.5.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
@@ -696,27 +698,19 @@ Transmog includes the following third-party software.
 | windows | 0.62.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_aarch64_gnullvm | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_aarch64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_aarch64_gnullvm | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_aarch64_msvc | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_aarch64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_aarch64_msvc | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_i686_gnu | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_i686_gnu | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_i686_gnu | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_i686_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_i686_gnullvm | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_i686_msvc | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_i686_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_i686_msvc | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_gnu | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_gnu | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_x86_64_gnu | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_gnullvm | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_gnullvm | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_x86_64_gnullvm | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_msvc | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows_x86_64_msvc | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows_x86_64_msvc | 0.53.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-collections | 0.2.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-collections | 0.3.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-core | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -737,11 +731,9 @@ Transmog includes the following third-party software.
 | windows-sys | 0.45.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.52.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.59.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows-sys | 0.60.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-sys | 0.61.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.42.2 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-targets | 0.52.6 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
-| windows-targets | 0.53.5 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-threading | 0.1.0 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-threading | 0.2.1 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
 | windows-version | 0.1.7 | MIT OR Apache-2.0 | https://github.com/microsoft/windows-rs |
@@ -768,18 +760,18 @@ Transmog includes the following third-party software.
 | zerocopy-derive | 0.8.59 | BSD-2-Clause OR Apache-2.0 OR MIT | https://github.com/google/zerocopy |
 | zerofrom | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerofrom-derive | 0.1.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
-| zeroize | 1.9.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
+| zeroize | 1.9.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | zeroize_derive | 1.5.0 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | zerotrie | 0.2.5 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec | 0.11.8 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | zerovec-derive | 0.11.6 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
-| zip | 8.6.0 | MIT | https://github.com/zip-rs/zip2 |
+| zip | 9.0.4 | MIT | https://github.com/zip-rs/zip2 |
 | zlib-rs | 0.6.8 | Zlib | https://github.com/trifectatechfoundation/zlib-rs |
 | zmij | 1.0.23 | MIT | https://github.com/dtolnay/zmij |
 | zoneinfo64 | 0.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
-| zstd | 0.14.0 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
-| zstd-safe | 8.0.0 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
-| zstd-sys | 2.1.0+zstd.1.5.7 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
+| zstd | 0.14.3 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
+| zstd-safe | 8.2.0 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
+| zstd-sys | 2.1.2+zstd.1.5.7 | BSD-3-Clause | https://github.com/gyscos/zstd-rs |
 | zune-core | 0.5.3 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image |
 | zune-jpeg | 0.5.15 | MIT OR Apache-2.0 OR Zlib | https://github.com/etemesi254/zune-image/tree/dev/crates/zune-jpeg |
 | zvariant | 4.2.0 | MIT | https://github.com/dbus2/zbus/ |
@@ -804,9 +796,9 @@ The registry archives below are vendored with local patches. Original license an
 | Package | Version | License expression | Source |
 |---|---:|---|---|
 | @microsoft/webui-framework | 0.0.30 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-0.0.30.tgz |
-| @tauri-apps/api | 2.12.1 | Apache-2.0 OR MIT | https://registry.npmjs.org/@tauri-apps/api/-/api-2.12.1.tgz |
+| @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT | https://registry.npmjs.org/@tauri-apps/api/-/api-2.12.4.tgz |
 | @types/trusted-types | 2.0.7 | MIT | https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz |
-| dompurify | 3.4.15 | (MPL-2.0 OR Apache-2.0) | https://registry.npmjs.org/dompurify/-/dompurify-3.4.15.tgz |
+| dompurify | 3.4.17 | (MPL-2.0 OR Apache-2.0) | https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz |
 | marked | 14.0.0 | MIT | https://registry.npmjs.org/marked/-/marked-14.0.0.tgz |
 | monaco-editor | 0.57.0 | MIT | https://registry.npmjs.org/monaco-editor/-/monaco-editor-0.57.0.tgz |
 
