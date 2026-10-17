@@ -80,9 +80,19 @@ when changes take effect.
 Settings → Connection → **Manage loopback exemptions…** lists Windows
 AppContainers with their display name, description, package, AppContainer name,
 SID and users. Filter or sort the inventory, then use checkboxes, Ctrl-click,
-Shift-click or keyboard range selection. **Exempt selected** allows those apps
-to connect to a proxy on this computer; **Remove exemptions** reverses the
-selection. Windows requests administrator approval. Canceling approval changes
+Shift-click or keyboard range selection. **Add selected exemptions (N)** allows
+selected apps that are not already exempt to connect to a proxy on this computer;
+**Remove selected exemptions (N)** removes exemptions only from selected apps
+that currently have one, regardless of which tool added it. Counts describe the
+apps that would change; actions with nothing to change are disabled. For up to
+three removal targets, the app names appear beside the actions. Selection stays
+after applying changes so the same set can be changed again. Transmog does not
+persist exemption ownership or change history.
+
+Use **Exempt only** to find currently exempt apps. **Select all** selects the
+whole inventory without a filter; **Select filtered** selects all matches when
+search or Exempt only is active, including rows outside the scroll viewport.
+Windows requests administrator approval. Canceling approval changes
 nothing; failed or completed operations refresh the authoritative Windows state.
 Saved exemptions with unavailable installed metadata remain visible for removal.
 Selection is independent of exemption status; disclose selected rows hidden by a

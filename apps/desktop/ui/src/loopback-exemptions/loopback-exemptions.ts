@@ -16,7 +16,12 @@ export class LoopbackExemptions extends WebUIElement {
   @observable loopbackStatus=initialState.loopbackStatus;
   @observable loopbackError=initialState.loopbackError;
   @observable loopbackQuery=initialState.loopbackQuery;
+  @observable loopbackExemptOnly=initialState.loopbackExemptOnly;
   @observable loopbackSelected=initialState.loopbackSelected;
+  @observable loopbackAddCount=initialState.loopbackAddCount;
+  @observable loopbackRemoveCount=initialState.loopbackRemoveCount;
+  @observable loopbackActionText=initialState.loopbackActionText;
+  @observable loopbackSelectText=initialState.loopbackSelectText;
   @observable loopbackSelectionText=initialState.loopbackSelectionText;
   @observable loopbackCountText=initialState.loopbackCountText;
   @observable loopbackSort:SortKey=initialState.loopbackSort as SortKey;
@@ -62,8 +67,9 @@ export class LoopbackExemptions extends WebUIElement {
   }
   async apply(enabled:boolean):Promise<void> {
     if(this.loopbackBusy||!this.loopbackCurrent||!this.selected.size)return;
+    const sids=this.containers.filter(row=>this.selected.has(row.sid)&&row.exempt!==enabled).map(row=>row.sid);
+    if(!sids.length)return;
     const generation=++this.generation;
-    const sids=[...this.selected];
     this.loopbackBusy=true;this.loopbackError='';this.loopbackStatus='Waiting for Windows approval and applying the selection… You can close this dialog while it finishes.';
     try {
       const containers=await invoke<AppContainer[]>('set_loopback_exemptions',{change:{sids,enabled}});
@@ -85,6 +91,7 @@ export class LoopbackExemptions extends WebUIElement {
     } finally {if(generation===this.generation)this.loopbackBusy=false;}
   }
   search(event:Event):void {this.loopbackQuery=(event.currentTarget as HTMLInputElement).value;this.render();}
+  filterExempt(event:Event):void {this.loopbackExemptOnly=(event.currentTarget as HTMLInputElement).checked;this.render();}
   sortBy(key:SortKey):void {
     this.loopbackDirection=this.loopbackSort===key&&this.loopbackDirection==='ascending'?'descending':'ascending';
     this.loopbackSort=key;this.render();
@@ -96,18 +103,25 @@ export class LoopbackExemptions extends WebUIElement {
   }
   private render():void {
     const query=this.loopbackQuery.trim().toLocaleLowerCase();
-    const visible=this.containers.filter(row=>!query||[row.displayName,row.description,row.package,row.name,row.sid,row.users.join(' '),this.value(row,'exempt')].join(' ').toLocaleLowerCase().includes(query));
+    const visible=this.containers.filter(row=>(!this.loopbackExemptOnly||row.exempt)&&(!query||[row.displayName,row.description,row.package,row.name,row.sid,row.users.join(' '),this.value(row,'exempt')].join(' ').toLocaleLowerCase().includes(query)));
     visible.sort((left,right)=>(this.loopbackDirection==='ascending'?1:-1)*this.collator.compare(this.value(left,this.loopbackSort),this.value(right,this.loopbackSort))||this.collator.compare(left.sid,right.sid));
     if(!visible.some(row=>row.sid===this.focused))this.focused=visible[0]?.sid??'';
     this.loopbackSortStates=Object.fromEntries(Object.keys(this.loopbackSortStates).map(key=>[key,key===this.loopbackSort?this.loopbackDirection:'none'])) as Record<SortKey,string>;
     this.loopbackRows=visible.map(row=>({...row,usersText:row.users.join('\n')||'Unavailable',exemptionText:row.exempt?'Enabled':'Not exempt',selectionLabel:'Select '+row.displayName,selected:this.selected.has(row.sid),selectionState:String(this.selected.has(row.sid)),tabIndex:row.sid===this.focused?'0':'-1'}));
     this.loopbackSelected=this.selected.size;
+    const selected=this.containers.filter(row=>this.selected.has(row.sid));
+    const exempt=selected.filter(row=>row.exempt);
+    this.loopbackAddCount=selected.length-exempt.length;
+    this.loopbackRemoveCount=exempt.length;
+    this.loopbackSelectText=query||this.loopbackExemptOnly?'Select filtered':'Select all';
+    const targets=exempt.length<=3?new Intl.ListFormat(undefined,{style:'long',type:'conjunction'}).format(exempt.map(row=>row.displayName)):exempt.length+' selected AppContainers';
+    this.loopbackActionText=!selected.length?'Select apps to add or remove exemptions.':!exempt.length?'Selected apps have no exemptions to remove.':(this.loopbackAddCount?'':'Selected apps already have exemptions. ')+'Remove exemptions for '+targets+'.';
     const visibleSids=new Set(visible.map(row=>row.sid));
     const hidden=[...this.selected].filter(sid=>!visibleSids.has(sid)).length;
     this.loopbackSelectionText=this.selected.size+' selected'+(hidden?' · '+hidden+' hidden by the filter':'');
     this.loopbackCountText=visible.length+' of '+this.containers.length+' AppContainers';
   }
-  selectVisible():void {if(this.loopbackBusy)return;this.selected=new Set(this.loopbackRows.map(row=>row.sid));this.render();}
+  selectMatching():void {if(this.loopbackBusy)return;this.selected=new Set(this.loopbackRows.map(row=>row.sid));this.render();}
   clearSelection():void {if(this.loopbackBusy)return;this.selected.clear();this.anchor='';this.render();}
   toggle(event:Event,sid:string):void {
     if(this.loopbackBusy)return;
@@ -134,7 +148,7 @@ export class LoopbackExemptions extends WebUIElement {
   rowKey(event:KeyboardEvent,sid:string):void {
     if(this.loopbackBusy||(event.target as Element).closest('input'))return;
     const control=event.ctrlKey||event.metaKey;
-    if(control&&event.key.toLowerCase()==='a'){event.preventDefault();this.selectVisible();return;}
+    if(control&&event.key.toLowerCase()==='a'){event.preventDefault();this.selectMatching();return;}
     if(event.key===' '){event.preventDefault();this.select(sid,event.shiftKey,true);return;}
     const index=this.loopbackRows.findIndex(row=>row.sid===sid);
     const next=event.key==='ArrowDown'?Math.min(index+1,this.loopbackRows.length-1):event.key==='ArrowUp'?Math.max(0,index-1):event.key==='Home'?0:event.key==='End'?this.loopbackRows.length-1:-1;
