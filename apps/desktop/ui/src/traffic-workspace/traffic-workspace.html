@@ -4,8 +4,8 @@
     <div class="traffic-toolbar-stack"><header class="view-toolbar">
       <div class="view-title"><h1 id="traffic-heading">Traffic</h1></div>
       <form w-ref="{filterForm}" class="filters" @submit="{runContentSearch(e)}">
-        <select class="traffic-search-kind" aria-label="Traffic search mode" @change="{changeTrafficSearchKind(e)}"><option value="filter" ?selected="{{trafficSearchKind == 'filter'}}">Filter</option><option value="contents" ?selected="{{trafficSearchKind == 'contents'}}">Search contents</option></select>
-        <label class="traffic-search"><span class="sr-only">Filter or search traffic</span><input w-ref="{searchInput}" name="search" type="search" placeholder="{{searchPlaceholder}}" maxlength="4096" @input="{searchChanged(e)}"></label>
+        <select class="traffic-search-kind" aria-label="Traffic search mode" title="Search contents (Ctrl+Shift+F)" aria-keyshortcuts="Control+Shift+F" @change="{changeTrafficSearchKind(e)}"><option value="filter" ?selected="{{trafficSearchKind == 'filter'}}">Filter</option><option value="contents" ?selected="{{trafficSearchKind == 'contents'}}">Search contents</option></select>
+        <label class="traffic-search"><span class="sr-only">Filter or search traffic</span><input w-ref="{searchInput}" name="search" type="search" placeholder="{{searchPlaceholder}}" title="Focus filter or search (Ctrl+F)" aria-keyshortcuts="Control+F" maxlength="4096" @input="{searchChanged(e)}"></label>
         <span class="search-actions" ?hidden="{{trafficSearchKind != 'contents'}}"><button type="submit" class="secondary compact-button" ?disabled="{{searchingTraffic}}">Search</button><button type="button" class="secondary compact-button search-options-trigger" popovertarget="traffic-search-options" aria-label="Search options" title="Search options">⋯</button></span>
       </form>
       <div class="traffic-tools">
@@ -14,7 +14,7 @@
         <button type="button" class="secondary compact-button" @click="{clearTraffic()}" ?disabled="{{removingTraffic}}" title="Clear every entry in this window. Undo expires after 5 minutes for 100 MB or more and is unavailable for 1 GB or more.">Clear all</button>
         <button type="button" class="secondary compact-button" popovertarget="filter-fields">Filters <if condition="filterCount">({{filterCount}})</if></button>
         <button type="button" class="secondary compact-button timeline-toggle" aria-label="Timeline" aria-pressed="{{timelineMode}}" title="{{timelineMode ? 'Show request list' : 'Show timeline'}}" @click="{toggleTimeline()}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4h7M5 10h10M10 16h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg></button>
-        <button type="button" class="secondary compact-button" popovertarget="table-settings">View</button>
+        <button type="button" w-ref="{viewMenuButton}" class="secondary compact-button" popovertarget="table-settings">View</button>
       </div>
 
     </header><if condition="incidentWindow"><div class="content-search-status"><span>{{incidentWindowLabel}}. Other filters still apply.</span><button type="button" class="secondary compact-button" @click="{clearIncidentWindow()}">Clear time filter</button><button type="button" class="secondary compact-button" @click="{clearIncidentWindow(true)}">Clear other filters</button></div></if>
@@ -155,9 +155,9 @@
 
     <div id="trace-files-menu" w-ref="{filesMenu}" class="table-popover trace-files-menu" popover="auto">
       <strong>Traffic files</strong>
-      <button type="button" w-ref="{importButton}" @click="{openSavedTrace(false)}" ?disabled="{{importingTrace}}">Import traffic…</button>
-      <button type="button" @click="{showSaveTrace()}"><if condition="!savingTrace">Save copy…</if><if condition="savingTrace">Save progress…</if></button>
-      <button type="button" @click="{openSavedTrace(true)}" ?disabled="{{importingTrace}}">Import into separate viewer…</button>
+      <button type="button" w-ref="{importButton}" @click="{openSavedTrace(false)}" ?disabled="{{importingTrace || pickingTrace}}" aria-keyshortcuts="Control+O">Import traffic… <kbd aria-hidden="true">Ctrl+O</kbd></button>
+      <button type="button" @click="{showSaveTrace()}" aria-keyshortcuts="Control+S"><if condition="!savingTrace">Save copy…</if><if condition="savingTrace">Save progress…</if> <kbd aria-hidden="true">Ctrl+S</kbd></button>
+      <button type="button" @click="{openSavedTrace(true)}" ?disabled="{{importingTrace || pickingTrace}}">Import into separate viewer…</button>
       <button type="button" @click="{showTraceMetadata()}" ?disabled="{{!traceMetadataRows.length}}">View current imports…</button>
       <button type="button" @click="{compareCaptureScopes()}">Compare capture scopes…</button>
       <hr><strong>Cases</strong>
@@ -256,8 +256,8 @@
       </div>
       <for each="column in settingsColumns"><button key="{{column.id}}" type="button" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}">{{column.label}}</button></for>
     </div>
-    <div id="table-settings" class="table-popover table-settings" popover="auto">
-      <strong class="popover-title">View</strong>
+    <div id="table-settings" w-ref="{viewMenu}" class="table-popover table-settings" popover="auto">
+      <div class="view-menu-heading"><strong>View</strong><button type="button" class="secondary compact-button" @click="{openViewer()}" ?disabled="{{openingViewer}}" aria-keyshortcuts="Control+N" title="Open new viewer window (Ctrl+N)">Open new viewer window</button></div>
       <label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">Inspector below</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">Inspector beside</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
       <if condition="!timelineMode"><details class="list-column-settings"><summary>List columns</summary><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>

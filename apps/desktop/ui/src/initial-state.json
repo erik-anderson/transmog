@@ -943,6 +943,7 @@
   "composerBodyMissing": false,
   "viewerMode": false,
   "importingTrace": false,
+  "openingViewer": false,
   "importStatus": "",
   "importPercent": 0,
   "openedTraceName": "",

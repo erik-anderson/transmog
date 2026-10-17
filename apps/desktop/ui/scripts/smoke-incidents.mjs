@@ -60,7 +60,10 @@ export async function smokeMarkerReview(client,traffic,screenshot){
   assert.equal(await ready(0),true,'Deleted marker remained visible');
   assert.equal(await client.evaluate(`(async()=>{const w=${traffic},changed=await w.markerIntake.changeMarker('undo');await w.refreshMarkers();return changed;})()`),true);
   assert.equal(await ready(1),true,'Undo did not restore the marker');
-  const guarded=await client.evaluate(`(async()=>{await window.__TAURI_INTERNALS__.invoke('close_trace_window');const w=${traffic};for(let i=0;i<100&&!w.markerUnsaved.open;i++)await new Promise(resolve=>setTimeout(resolve,30));return w.markerUnsaved.open;})()`);assert.equal(guarded,true,'Native close discarded unsaved marker work');
+  await client.evaluate(`${traffic}.filesMenuButton.focus()`);
+  await client.call('Input.dispatchKeyEvent',{type:'rawKeyDown',key:'w',code:'KeyW',windowsVirtualKeyCode:87,modifiers:2});
+  await client.call('Input.dispatchKeyEvent',{type:'keyUp',key:'w',code:'KeyW',windowsVirtualKeyCode:87,modifiers:2});
+  const guarded=await client.evaluate(`(async()=>{const w=${traffic};for(let i=0;i<100&&!w.markerUnsaved.open;i++)await new Promise(resolve=>setTimeout(resolve,30));return w.markerUnsaved.open;})()`);assert.equal(guarded,true,'Native Ctrl+W discarded unsaved marker work');
   await client.evaluate(`${traffic}.resolveMarkerUnsaved('stay')`);
 
  }finally{

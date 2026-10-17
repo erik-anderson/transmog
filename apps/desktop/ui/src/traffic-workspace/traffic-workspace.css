@@ -123,6 +123,9 @@ traffic-workspace { display:contents; }
 .column-menu { inset:5rem auto auto 20%; }
 @supports (left:attr(data-x type(<length>))) { .column-menu { top:attr(data-y type(<length>),80px); left:attr(data-x type(<length>),12px); max-height:min(80vh,680px,calc(100dvh - attr(data-y type(<length>),80px) - 12px)); } }
 .filter-menu, .table-settings { inset:5.5rem 1rem auto auto; }
+.table-settings { width:min(23rem,calc(100vw - 2rem)); }
+.view-menu-heading { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:.4rem; padding:.3rem .5rem .6rem; margin-bottom:.35rem; border-bottom:1px solid var(--line); }
+.trace-files-menu kbd { float:right; margin-left:.5rem; color:var(--muted); font:inherit; }
 .fetch-destination-trigger { anchor-name:--fetch-destination-filter; }
 .fetch-destination-trigger span { float:right; }
 .fetch-destination-menu { width:min(18rem,calc(100vw - 2rem)); inset:auto 2rem 6rem auto; max-height:calc(100dvh - 2rem); }

@@ -58,7 +58,7 @@
           <span class="nav-label">Capture tools</span>
         </a></if>
         <span class="nav-spacer"></span>
-        <if condition="!viewerMode"><a href="#settings" title="Settings" data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}">
+        <if condition="!viewerMode"><a href="#settings" title="Settings (Ctrl+,)" aria-keyshortcuts="Control+," data-view="settings" ?data-active="{{activeView == 'settings'}}" aria-current="{{currentNavigation.settings}}" @click="{showView(e)}">
           <svg class="nav-icon" viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.5 3h3l.5 2 1.5.6 1.8-1 2.1 2.1-1 1.8.6 1.5 2 .5v3l-2 .5-.6 1.5 1 1.8-2.1 2.1-1.8-1-1.5.6-.5 2h-3l-.5-2-1.5-.6-1.8 1-2.1-2.1 1-1.8-.6-1.5-2-.5v-3l2-.5.6-1.5-1-1.8 2.1-2.1 1.8 1 1.5-.6Z"></path><circle cx="12" cy="12" r="3"></circle></svg>
           <span class="nav-label">Settings</span>
         </a></if>

@@ -53,6 +53,10 @@ when changing the experience.
 - Lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A and
   Escape. Where supported, Ctrl+arrow moves focus, Del removes and Ctrl+Z undoes.
   Text fields retain ordinary editing shortcuts; Ctrl+S saves an explicit draft.
+- Prefer familiar shortcuts for existing actions and show them beside the action
+  or in its tooltip. Scope window and workspace commands to their context; let
+  dialogs and editors handle their own keys first. Holding a shortcut must not
+  repeatedly open windows or file dialogs.
 - Application chrome and selectable lists do not select text during pointer or
   range selection. Editors and inspection evidence, including headers, bodies,
   full URLs and reports, retain ordinary text selection and copying.

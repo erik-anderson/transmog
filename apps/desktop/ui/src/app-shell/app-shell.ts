@@ -163,8 +163,38 @@ export class AppShell extends WebUIElement {
   private saveTimer: number | undefined;
   private saving = false;
   private saveAgain = false;
+  private readonly shortcutListener = (event:KeyboardEvent):void => {
+    if(event.defaultPrevented || event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey)return;
+    // Let dialogs and editors own their input before handling application commands.
+    if(event.composedPath().some(node=>node instanceof HTMLDialogElement && node.open))return;
+    const key=event.key.toLowerCase();
+    if(event.shiftKey && key!=='f')return;
+    const traffic=this.activeView==='traffic';
+    if(!['n','o'].includes(key) && !(key==='w'&&this.viewerMode) && !(key===','&&!this.viewerMode) && !(traffic&&['f','s'].includes(key)))return;
+    event.preventDefault();
+    if(event.repeat)return;
+    if(key==='n')void this.traffic.openViewer();
+    else if(key==='w')void this.closeViewer();
+    else if(key==='o')void this.importTraffic();
+    else if(key===',')void this.openSettings();
+    else if(key==='s')this.traffic.showSaveTrace();
+    else if(key==='f')void this.traffic.focusSearch(event.shiftKey);
+  };
+  private async importTraffic():Promise<void> {
+    const switching=this.activeView!=='traffic';
+    if(await this.activateView('traffic')){
+      if(switching)this.traffic.filesMenuButton.focus();
+      await this.traffic.openSavedTrace(false);
+    }
+  }
+  private async openSettings():Promise<void> {if(await this.activateView('settings'))this.workspaceContent.focus();}
+  private async closeViewer():Promise<void> {
+    try {await invoke('close_trace_window');}
+    catch(error:unknown){this.diagnosticText='Viewer could not be closed: '+describeError(error);}
+  }
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
   protected hydratedCallback():void {
+    document.addEventListener('keydown',this.shortcutListener);
     if(this.viewerMode)void invoke<ProductState>('product_state').then(state=>this.onPreferences(new CustomEvent('preferences-changed',{detail:{theme:state.preferences.theme,workspace:state.workspace}}))).catch(error=>{this.diagnosticText=describeError(error);});
     else void this.refreshAutoresponses();
   }
@@ -324,7 +354,7 @@ export class AppShell extends WebUIElement {
   async onReplay(event: CustomEvent<SessionDetail>): Promise<void> {
     if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);
   }
-  disconnectedCallback(): void { window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); for(const error of this.operationErrors)error.resolve();this.operationErrors=[];super.disconnectedCallback(); }
+  disconnectedCallback(): void { document.removeEventListener('keydown',this.shortcutListener);window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); for(const error of this.operationErrors)error.resolve();this.operationErrors=[];super.disconnectedCallback(); }
 
 }
 

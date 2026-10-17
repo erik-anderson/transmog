@@ -132,6 +132,19 @@ with a capture path opens a viewer when no main window exists; otherwise the app
 asks whether to import into the main session or open a separate viewer. Closing
 a viewer does not stop the main window's proxy.
 
+**Ctrl+N** opens an empty Capture viewer from either window. The same action is
+beside the **View** heading in Traffic's View flyout: **Open new viewer window**.
+**Ctrl+W** closes the current viewer through the normal close flow, including
+the unsaved-marker prompt; it does not close the main proxy window.
+**Ctrl+O** opens the import picker for the current window and brings Traffic
+forward. **Ctrl+,** opens Settings in the main window.
+
+In Traffic, **Ctrl+F** focuses and selects the filter/search text without changing
+the current mode. **Ctrl+Shift+F** selects Search contents and focuses that field.
+**Ctrl+S** opens Save copy, or the progress dialog for a save already in flight.
+Dialogs and editor-specific shortcuts retain priority. Unassigned modifier combinations and
+held-key repeats do not start additional window or file operations.
+
 **Files → Save copy…** saves retained traffic across the entire list and searches, with optional
 password encryption, export-only header redaction and network context for TMCap
 or SAZ, or HAR output for HTTP archive interchange. SAZ offers compatibility and

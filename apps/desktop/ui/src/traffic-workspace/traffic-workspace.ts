@@ -404,6 +404,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   saveTraceDialog!:HTMLDialogElement;
   saveTraceForm!:HTMLFormElement;
   @observable importingTrace=false;
+  @observable pickingTrace=false;
+  @observable openingViewer=false;
+  viewMenu!:HTMLElement;
+  viewMenuButton!:HTMLButtonElement;
   @observable showTraceImportHelp=initialState.showTraceImportHelp;
   @observable importStatus='';
   importButton!:HTMLButtonElement;
@@ -659,9 +663,19 @@ export class TrafficWorkspace extends WorkspaceElement {
   cancelOpenedTrace(event?:Event):void {event?.preventDefault();this.openedTracePath='';this.openTraceDialog.close();void this.processOpenedTraces();}
   async openSavedTrace(separate:boolean):Promise<void> {
     this.closePopover(this.filesMenu,this.filesMenuButton);
-    if(this.importingTrace)return;
+    if(this.importingTrace||this.pickingTrace)return;
+    this.pickingTrace=true;
     try {const path=await invoke<string|null>('pick_trace_path');if(!path||!this.isConnected)return;if(separate)await invoke('open_trace_viewer',{paths:[path]});else{this.openedFileQueue.push({path,ask:false});await this.processOpenedTraces();}}
     catch(error:unknown){this.importStatus='Capture could not be opened: '+describeError(error);await this.showError('Could not open capture',describeError(error));}
+    finally{this.pickingTrace=false;}
+  }
+  async openViewer():Promise<void> {
+    this.closePopover(this.viewMenu,this.viewMenuButton);
+    if(this.openingViewer)return;
+    this.openingViewer=true;
+    try{await invoke('open_trace_viewer',{paths:[]});}
+    catch(error:unknown){await this.showError('Could not open capture viewer',describeError(error));}
+    finally{this.openingViewer=false;}
   }
   private async importTrace(path:string):Promise<void> {
     this.importingTrace=true;this.importPercent=0;this.importStatus='Indexing '+(path.split(/[\\/]/).pop()??'capture')+'…';
@@ -960,13 +974,24 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.searchTimer=window.setTimeout(()=>void this.refreshSessions(undefined,true),120);
   }
   async changeTrafficSearchKind(event:Event):Promise<void> {
-    const text=this.searchInput.value,kind=(event.currentTarget as HTMLSelectElement).value;
-    await this.clearContentSearch(false);
-    this.trafficSearchKind=kind;
-    this.searchPlaceholder=this.trafficSearchKind==='filter'?'Filter URLs and processes':'Search headers and bodies';
-    this.searchText=text;this.searchInput.value=text;
-    this.liveFilter=this.trafficSearchKind==='filter'?text:'';
-    this.searchInput.focus();this.queryRevision++;await this.refreshSessions(undefined,true);
+    await this.setTrafficSearchKind((event.currentTarget as HTMLSelectElement).value);
+  }
+  async focusSearch(contents=false):Promise<void> {
+    for(const menu of this.querySelectorAll<HTMLElement>(':popover-open'))menu.hidePopover();
+    this.searchInput.focus();this.searchInput.select();
+    if(contents&&this.trafficSearchKind!=='contents')await this.setTrafficSearchKind('contents');
+  }
+  private async setTrafficSearchKind(kind:string):Promise<void> {
+    const text=this.searchInput.value,focus=this.trackNavigationFocus();
+    try{
+      await this.clearContentSearch(false);
+      this.trafficSearchKind=kind;
+      this.searchPlaceholder=this.trafficSearchKind==='filter'?'Filter URLs and processes':'Search headers and bodies';
+      this.searchText=text;this.searchInput.value=text;
+      this.liveFilter=this.trafficSearchKind==='filter'?text:'';
+      if(focus.unchanged()&&this.view==='traffic'){this.searchInput.focus();this.searchInput.select();}
+      this.queryRevision++;await this.refreshSessions(undefined,true);
+    }finally{focus.dispose();}
   }
   setSearchOption(option:'searchCaseSensitive'|'searchIgnoreAccents'|'searchMetadata'|'searchRequestHeaders'|'searchResponseHeaders'|'searchRequestBodies'|'searchBodies'|'selectSearchMatches',event:Event):void {this[option]=(event.currentTarget as HTMLInputElement).checked;}
   setSearchMode(event:Event):void {this.searchMode=(event.currentTarget as HTMLSelectElement).value;}

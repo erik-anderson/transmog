@@ -14,6 +14,7 @@ import {checkMatchingTests,checkMatchingSelectionRace} from './check-matching-te
 import {checkScripts} from './check-scripts.mjs';
 import {checkAutoResponseDragging} from './check-autoresponse-dragging.mjs';
 import { checkStreams } from './check-streams.mjs';
+import {checkWindowShortcuts} from './check-window-shortcuts.mjs';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
@@ -159,7 +160,7 @@ await page.addInitScript((configuration) => {
         }
         case 'record_frontend_diagnostic': throw new Error('Unexpected frontend diagnostic: ' + args.message);
         case 'take_opened_traces': {const paths=state.openedTraces??[];state.openedTraces=[];return paths;}
-        case 'pick_trace_path': return state.pickedTrace??null;
+        case 'pick_trace_path': if(state.deferTracePicker)await new Promise(resolve=>state.releaseTracePicker=resolve);return state.pickedTrace??null;
         case 'open_trace_viewer': state.openedViewer=structuredClone(args.paths);return 'viewer-fixture';
         case 'open_main_window': return;
         case 'compare_evidence': {
@@ -686,6 +687,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--shortcuts-only')) {await checkWindowShortcuts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Window and Traffic shortcuts, scopes, dialogs, import and responsive menus verified.\n');process.exit(0);}
   if(process.argv.includes('--browser-headers-only')) {await page.goto('https://workspace.test/');await view('automation');await checkUserAgentOverrides(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Browser header authoring, presets, ordering, drafts and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--rules-only')) {await checkUnifiedRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Unified rule creation, direction/search filters, pause scope, drafts and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--actions-only')) {await checkActionMenus(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Actions submenus, keyboard focus, copying and responsive layouts verified.\n');process.exit(0);}
@@ -2490,6 +2492,7 @@ try {
   await checkStreams(page,root);
   await checkUnifiedRules(page,root);
   await checkActionMenus(page,root);
+  await checkWindowShortcuts(page,root);
   await checkTrafficPresentation(page,root);
   await checkRequestOrder(page,root);
   await checkTrafficNavigation(page);
