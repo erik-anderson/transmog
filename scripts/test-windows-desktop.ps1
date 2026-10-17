@@ -7,6 +7,7 @@ param(
     [switch]$SkipReleaseBuild,
     [string]$ExecutablePath,
     [switch]$StartupOnly,
+    [switch]$WindowGeometryChecks,
     [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
     [switch]$CapturedPageChecks,
@@ -26,6 +27,7 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($WindowGeometryChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'WindowGeometryChecks is an isolated close/reopen flow.' }
 if ($PortableCaseChecks -and ($StartupOnly -or $ViewerChecks -or $SoakMinutes)) { throw 'PortableCaseChecks is an isolated main-window flow.' }
 if ($PortableCaseChecks -and -not $ExecutablePath) { throw 'PortableCaseChecks requires an explicit desktop-test-fixtures build via ExecutablePath and SkipReleaseBuild.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
@@ -65,6 +67,10 @@ if (-not $SkipReleaseBuild) {
 }
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw 'Release desktop executable is unavailable.'
+}
+if ($WindowGeometryChecks) {
+    & (Join-Path $PSScriptRoot 'test-window-geometry.ps1') -ExecutablePath $executable
+    return
 }
 
 $priorArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS

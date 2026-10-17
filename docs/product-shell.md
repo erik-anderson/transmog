@@ -44,6 +44,9 @@ installs. `/AUTOUPDATECHECKS=0` opts out explicitly; `=1` enables checking.
 
 ## Start and stop
 
+The main window restores its saved size, position and maximized state across
+launches, including on displays with Windows scaling.
+
 On first use, **Set up now** in the HTTPS setup banner, or **Settings → Connection
 → Set up HTTPS interception**, creates the desktop's CA and asks for approval to
 trust its public certificate. Start verifies its recorded identity and trust

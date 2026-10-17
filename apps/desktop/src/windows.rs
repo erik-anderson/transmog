@@ -2601,20 +2601,25 @@ fn create_main_window(
 ) -> tauri::Result<()> {
     let url =
         tauri::Url::parse("transmog-ui://localhost/").expect("fixed application URL must parse");
-    let mut builder = WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
+    let window = WebviewWindowBuilder::new(app, "main", WebviewUrl::CustomProtocol(url))
         .title(format!("Transmog {}", transmog_app::application_version()))
-        .inner_size(f64::from(initial.width), f64::from(initial.height))
         .min_inner_size(760.0, 520.0)
+        .visible(false)
         .data_directory(webview_data_path)
         .on_navigation(is_allowed_navigation)
-        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny);
+        .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+        .build()?;
+    // WindowState stores physical pixels; builder geometry uses logical pixels.
+    // Move to the saved monitor before sizing so its DPI applies, and finish
+    // restoring the normal bounds before maximizing or showing the window.
     if let (Some(x), Some(y)) = (initial.x, initial.y) {
-        builder = builder.position(f64::from(x), f64::from(y));
+        window.set_position(tauri::PhysicalPosition::new(x, y))?;
     }
-    let window = builder.build()?;
+    window.set_size(tauri::PhysicalSize::new(initial.width, initial.height))?;
     if initial.maximized {
         window.maximize()?;
     }
+    window.show()?;
     Ok(())
 }
 

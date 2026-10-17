@@ -119,6 +119,7 @@ single-instance routing. Run the relevant paths for UI or asynchronous changes:
 npm --prefix apps/desktop/ui run check
 npm --prefix apps/desktop/ui run test:workspaces
 ./scripts/test-windows-desktop.ps1
+./scripts/test-windows-desktop.ps1 -WindowGeometryChecks
 ./scripts/test-windows-desktop.ps1 -ViewerChecks
 ```
 
@@ -127,6 +128,10 @@ window roles and captured-page isolation. The release soak adds
 `-SoakMinutes 3` to the main-window gate. These probes isolate app data and close
 only their owned windows. See [UI guidance](../apps/desktop/ui/AGENTS.md) for
 populated, wide/compact and keyboard review.
+
+The window geometry gate repeats native close/reopen and maximize/restore cycles
+on every connected display. It retains physical bounds and actual display DPI in
+`artifacts/window-geometry`; use a scaled display to qualify the DPI regression.
 
 For CLI changes, build the CLI and run its Windows console lifecycle probe:
 
