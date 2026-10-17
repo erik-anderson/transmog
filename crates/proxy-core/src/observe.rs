@@ -3,7 +3,7 @@ use std::{
     num::NonZeroUsize,
     pin::Pin,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
     },
     time::Duration,
@@ -12,7 +12,7 @@ use std::{
 use bytes::Bytes;
 use thiserror::Error;
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore, mpsc},
+    sync::{Mutex, OwnedSemaphorePermit, Semaphore, mpsc},
     task::JoinHandle,
     time::timeout,
 };
@@ -638,19 +638,20 @@ impl ObserverDispatcher {
 
     async fn shutdown(&self) {
         self.drain.cancel();
-        let worker = self.worker.lock().unwrap().take();
-        if let Some(worker) = worker {
-            let _ = worker.await;
+        // Retain the handle while waiting so cancellation or another shutdown
+        // caller cannot bypass the remaining accepted observer callbacks.
+        let mut worker = self.worker.lock().await;
+        if let Some(handle) = worker.as_mut() {
+            let _ = handle.await;
         }
+        *worker = None;
     }
 }
 
 impl Drop for ObserverDispatcher {
     fn drop(&mut self) {
         self.force_stop.cancel();
-        if let Ok(worker) = self.worker.get_mut()
-            && let Some(worker) = worker.take()
-        {
+        if let Some(worker) = self.worker.get_mut().take() {
             worker.abort();
         }
     }
@@ -1578,6 +1579,45 @@ mod tests {
             [ObserverDelivery::AlreadyDisconnected]
         );
         hub.shutdown().await;
+    }
+
+    #[tokio::test]
+    async fn observer_drain_survives_cancellation_of_its_waiting_caller() {
+        use std::{future::poll_fn, task::Poll};
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let events = Arc::new(StdMutex::new(Vec::new()));
+        let hub = ObserverHub::new(vec![(
+            Arc::new(GatedObserver {
+                entered: entered.clone(),
+                release: release.clone(),
+                events: events.clone(),
+            }),
+            ObserverConfig::default(),
+        )]);
+        let metadata = metadata();
+        hub.start_exchange(metadata.clone())
+            .emit(started(&metadata))
+            .await;
+        entered.notified().await;
+
+        let mut first = Box::pin(hub.shutdown());
+        poll_fn(|cx| {
+            assert!(first.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(first);
+        let mut retry = Box::pin(hub.shutdown());
+        poll_fn(|cx| {
+            assert!(retry.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        release.notify_one();
+        timeout(Duration::from_secs(1), retry).await.unwrap();
+        assert_eq!(events.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

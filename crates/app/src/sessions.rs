@@ -518,7 +518,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
     let request = snapshot.request_heads.last().map(|head| &head.head);
     let end = snapshot
         .terminal_at
-        .or_else(|| (!snapshot.imported).then_some(now));
+        .or_else(|| (!snapshot.imported && snapshot.terminal.is_none()).then_some(now));
     let duration_ms = end
         .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
         .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
@@ -965,9 +965,10 @@ pub(crate) fn timeline_row(
         |point| (point.unix_millis > 0).then_some(point.unix_millis),
     );
     let measured = snapshot.performance.elapsed_micros();
-    let end = snapshot
-        .terminal_at
-        .or_else(|| (!snapshot.imported && summary.terminal == "active").then_some(now));
+    let end = snapshot.terminal_at.or_else(|| {
+        (!snapshot.imported && snapshot.terminal.is_none() && summary.terminal == "active")
+            .then_some(now)
+    });
     let source_duration = end
         .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
         .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
@@ -1319,6 +1320,56 @@ mod tests {
         assert_eq!(row.start_millis, None);
         assert_eq!(row.duration_micros, None);
         assert_eq!(row.response_micros, None);
+    }
+
+    #[tokio::test]
+    async fn stopped_proxy_freezes_traffic_and_timeline_durations() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let mut start = started(1);
+        if let ObserverEventKind::ExchangeStarted { metadata } = &mut start.kind {
+            Arc::make_mut(metadata).started_at =
+                SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        }
+        service.catalog().apply(start);
+        service.catalog().apply(ObserverEvent {
+            exchange_id: ExchangeId(1),
+            sequence: 2,
+            kind: ObserverEventKind::Performance(transmog_core::performance::PerformanceEvidence {
+                points: vec![transmog_core::performance::TimingPoint {
+                    milestone: transmog_core::performance::Milestone::RequestHeaders,
+                    unix_millis: 1_700_000_000_000,
+                    offset_micros: 0,
+                }],
+                ..Default::default()
+            }),
+        });
+        service.stop().await.unwrap();
+        let snapshot = service.catalog().get(ExchangeId(1)).unwrap();
+        let now = SystemTime::now();
+        let later = now + std::time::Duration::from_secs(3600);
+        let traces = crate::traces::TraceRegistry::default();
+        assert_eq!(summarize(&snapshot, now, false).terminal, "failed");
+        assert!(summarize(&snapshot, now, false).duration_ms.is_some());
+        assert!(
+            timeline_row(&snapshot, now, &traces)
+                .duration_micros
+                .is_some()
+        );
+        assert_eq!(
+            summarize(&snapshot, now, false).duration_ms,
+            summarize(&snapshot, later, false).duration_ms
+        );
+        assert_eq!(
+            timeline_row(&snapshot, now, &traces).duration_micros,
+            timeline_row(&snapshot, later, &traces).duration_micros
+        );
+        assert_eq!(timeline_row(&snapshot, later, &traces).terminal, "failed");
+        // A terminal entry with a missing timestamp must remain unknown.
+        let mut untimed = snapshot;
+        untimed.terminal_at = None;
+        assert_eq!(summarize(&untimed, later, false).duration_ms, None);
+        assert_eq!(timeline_row(&untimed, later, &traces).duration_micros, None);
     }
 
     #[test]

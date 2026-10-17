@@ -7,7 +7,7 @@ use tokio::sync::Notify;
 pub struct ProxyActivity {
     /// New requests and connections can be admitted.
     pub accepting: bool,
-    /// Requests whose response bodies have not finished.
+    /// Requests whose responses or terminal cleanup are still in progress.
     pub requests: usize,
     /// Active TLS negotiations and upgraded relays.
     pub transports: usize,

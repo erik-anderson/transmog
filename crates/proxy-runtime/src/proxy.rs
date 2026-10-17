@@ -97,6 +97,8 @@ use crate::{
 
 const FAILED_EXCHANGE_BODY: &[u8] = b"Transmog exchange failed\n";
 mod connect_tunnel;
+mod request_cancellation;
+use request_cancellation::RequestCancellation;
 
 /// Complete configuration for one explicit proxy instance.
 #[derive(Clone, Debug)]
@@ -433,6 +435,11 @@ impl ProxyControl {
         self.state.finish_connection_cleanup.cancel();
         true
     }
+    /// Closes observer admission and drains accepted records after the runtime
+    /// ends, including when its serving task was explicitly aborted.
+    pub async fn finish_observation(&self) {
+        self.state.observers.shutdown().await;
+    }
     /// Replaces the complete upstream TLS context and connection-pool generation.
     ///
     /// Exchanges that already captured the previous generation may finish on
@@ -617,6 +624,7 @@ impl ProxyServer {
             activity: Arc::new(ActivityTracker::default()),
             final_shutdown: ExchangeCancellation::new(),
             finish_connection_cleanup: ExchangeCancellation::new(),
+            request_cleanup: Arc::default(),
             tunnels: Mutex::new(JoinSet::new()),
             hooks: components.hooks,
             content: components.content,
@@ -757,6 +765,16 @@ impl ProxyServer {
             let mut tunnels = self.state.tunnels.lock().await;
             tunnels.shutdown().await;
         }
+        // Dropped HTTP/2 handlers enqueue terminal cleanup before releasing their
+        // activity leases. Drain it before shutting down the observer workers.
+        let mut cleanup = std::mem::take(
+            &mut *self
+                .state
+                .request_cleanup
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        );
+        while cleanup.join_next().await.is_some() {}
         self.state.observers.shutdown().await;
         Ok(())
     }
@@ -772,6 +790,7 @@ struct ProxyState {
     activity: Arc<ActivityTracker>,
     final_shutdown: ExchangeCancellation,
     finish_connection_cleanup: ExchangeCancellation,
+    request_cleanup: Arc<std::sync::Mutex<JoinSet<()>>>,
     tunnels: Mutex<JoinSet<()>>,
     hooks: InterceptorChainFactory,
     content: ContentPolicy,
@@ -1073,14 +1092,22 @@ async fn serve_explicit_connection(
             let Some(activity) = state.activity.acquire(ActivityKind::Request) else {
                 return Ok::<_, Infallible>(draining_response());
             };
-            let mut response = match Box::pin(state.handle_outer_request(request, context)).await {
-                Ok(response) => response,
-                Err(error) => {
-                    warn!(%error, "explicit proxy request failed");
-                    failed_exchange_response(&error)
-                }
-            };
-            response.body_mut().activity = Some(activity);
+            let mut cancellation = RequestCancellation::new(
+                activity,
+                state.final_shutdown.clone(),
+                state.request_cleanup.clone(),
+            );
+            let mut response =
+                match Box::pin(state.handle_outer_request(request, context, &mut cancellation))
+                    .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        warn!(%error, "explicit proxy request failed");
+                        failed_exchange_response(&error)
+                    }
+                };
+            response.body_mut().activity = Some(cancellation.finish());
             *response.version_mut() = client_version;
             Ok::<_, Infallible>(response)
         }
@@ -1108,9 +1135,10 @@ impl ProxyState {
         self: Arc<Self>,
         mut request: Request<Incoming>,
         context: ConnectionContext,
+        cancellation: &mut RequestCancellation,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         if request.method() != Method::CONNECT {
-            return Box::pin(self.handle_intercepted_request(request, context)).await;
+            return Box::pin(self.handle_intercepted_request(request, context, cancellation)).await;
         }
         let authority_text = request
             .uri()
@@ -1277,15 +1305,25 @@ impl ProxyState {
                 let Some(activity) = state.activity.acquire(ActivityKind::Request) else {
                     return Ok::<_, Infallible>(draining_response());
                 };
-                let mut response =
-                    match Box::pin(state.handle_intercepted_request(request, context)).await {
-                        Ok(response) => response,
-                        Err(error) => {
-                            warn!(%error, "intercepted request failed");
-                            failed_exchange_response(&error)
-                        }
-                    };
-                response.body_mut().activity = Some(activity);
+                let mut cancellation = RequestCancellation::new(
+                    activity,
+                    state.final_shutdown.clone(),
+                    state.request_cleanup.clone(),
+                );
+                let mut response = match Box::pin(state.handle_intercepted_request(
+                    request,
+                    context,
+                    &mut cancellation,
+                ))
+                .await
+                {
+                    Ok(response) => response,
+                    Err(error) => {
+                        warn!(%error, "intercepted request failed");
+                        failed_exchange_response(&error)
+                    }
+                };
+                response.body_mut().activity = Some(cancellation.finish());
                 *response.version_mut() = client_version;
                 Ok::<_, Infallible>(response)
             }
@@ -1324,6 +1362,7 @@ impl ProxyState {
         &self,
         mut request: Request<Incoming>,
         context: ConnectionContext,
+        cancellation: &mut RequestCancellation,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         let extended_websocket = request.version() == Version::HTTP_2
             && request.method() == Method::CONNECT
@@ -1388,11 +1427,18 @@ impl ProxyState {
                 metadata: Arc::new(metadata.clone()),
             })
             .await;
+        // Start admission is atomic: a cancelled capacity wait has not exposed
+        // this request, while an admitted start must receive terminal evidence.
+        cancellation.start(
+            Arc::clone(&observer),
+            Arc::new(metadata.clone()),
+            performance.clone(),
+        );
         let initialized = {
             let _timing = performance.work("initialization", "Hook initialization");
             self.hooks.create_exchange(metadata)
         };
-        let mut chain = match initialized {
+        let chain = match initialized {
             Ok(chain) => chain,
             Err(error) => {
                 performance.mark(Milestone::ExchangeDone);
@@ -1416,6 +1462,11 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        cancellation.initializing_chain = Some(chain);
+        let chain = cancellation
+            .initializing_chain
+            .as_mut()
+            .expect("initialized exchange chain");
         chain
             .context()
             .extensions()
@@ -1431,8 +1482,8 @@ impl ProxyState {
                 context: context.clone(),
                 shared: shared_connection,
             });
-        publish_performance(&chain, None).await;
-        watch_performance(&chain);
+        publish_performance(chain, None).await;
+        watch_performance(chain);
         for diagnostic in chain.initialization_diagnostics() {
             observer
                 .emit(ObserverEventKind::HookInitializationSkipped(
@@ -1440,14 +1491,14 @@ impl ProxyState {
                 ))
                 .await;
         }
-        observe_request_head(&chain, ExchangeBoundary::ClientRequest, &request_head).await;
+        observe_request_head(chain, ExchangeBoundary::ClientRequest, &request_head).await;
         let request_outcome = chain.request_head(request_head).await;
-        observe_hook_effects(&chain).await;
+        observe_hook_effects(chain).await;
         let request_outcome = match request_outcome {
             Ok(outcome) => outcome,
             Err(error) => {
                 self.fail_chain(
-                    &chain,
+                    chain,
                     ExchangeStage::RequestHead,
                     hook_failure_kind(&error),
                     error.to_string(),
@@ -1472,7 +1523,7 @@ impl ProxyState {
                         effective_request.clone(),
                     ))
                     .await;
-                let chain = Arc::new(chain);
+                let chain = cancellation.share_chain();
                 return self
                     .finish_local_response(response, &session, &effective_request, chain)
                     .await;
@@ -1486,14 +1537,14 @@ impl ProxyState {
                         effective_request.clone(),
                     ))
                     .await;
-                let chain = Arc::new(chain);
+                let chain = cancellation.share_chain();
                 return self
                     .finish_local_streaming_response(response, &session, &effective_request, chain)
                     .await;
             }
             RequestHeadOutcome::Abort(reason) => {
                 self.fail_chain(
-                    &chain,
+                    chain,
                     ExchangeStage::RequestHead,
                     ExchangeFailureKind::HookAborted(reason.clone()),
                     format!("hook aborted exchange: {reason:?}"),
@@ -1509,7 +1560,7 @@ impl ProxyState {
                 request_head.clone(),
             ))
             .await;
-        let chain = Arc::new(chain);
+        let chain = cancellation.share_chain();
 
         let isolation_key = if self.isolate_outbound.load(Ordering::Acquire) {
             let computed = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -5630,6 +5681,10 @@ impl From<HookAbort> for ProxyRuntimeError {
 #[cfg(test)]
 #[path = "content_matrix_tests.rs"]
 mod content_matrix_tests;
+
+#[cfg(test)]
+#[path = "request_cancellation_tests.rs"]
+mod request_cancellation_tests;
 
 #[cfg(test)]
 mod tests {

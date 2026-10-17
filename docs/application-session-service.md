@@ -49,6 +49,14 @@ generation-scoped trust-reload and observer-statistics handle while the run is
 owned. Start-twice is typed; concurrent stops serialize and become idempotent.
 An unexpected runtime failure remains visible until the failed run is stopped.
 
+After a run ends, the service closes observer admission and drains accepted
+records, including after a force stop. It then finalizes any remaining live
+entries with a proxy-stop explanation before sealing its active capture. Late
+runtime events cannot overlap with these local terminal records. Durations stop
+growing; open application streams become interrupted without changing an already
+measured HTTP duration. Imported entries retain their original state and timing
+evidence.
+
 Dropping the last service owner cancels its task, closes the bounded capture
 worker, and invokes an armed host restore guard. Explicit `stop` remains the
 required normal path because it waits for drain and reports capture or restore

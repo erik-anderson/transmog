@@ -138,6 +138,7 @@ struct ServiceInner {
     observer_queue_capacity: NonZeroUsize,
     lifecycle: Mutex<Lifecycle>,
     operation: AsyncMutex<()>,
+    finalization: AsyncMutex<()>,
     stopping: tokio::sync::Notify,
 }
 
@@ -197,6 +198,7 @@ impl ApplicationSessionService {
                     pending_restore: None,
                 }),
                 operation: AsyncMutex::new(()),
+                finalization: AsyncMutex::new(()),
                 stopping: tokio::sync::Notify::new(),
                 redact_sensitive: Arc::new(AtomicBool::new(true)),
             }),
@@ -435,6 +437,7 @@ impl ApplicationSessionService {
             (Ok(()), pending_restore)
         };
 
+        finish_run(&self.inner).await;
         let capture_result = if matches!(
             self.inner.capture.status(),
             CaptureStatus::Active { .. } | CaptureStatus::Failed(_)
@@ -705,6 +708,7 @@ impl ApplicationSessionService {
             let Some(inner) = inner.upgrade() else {
                 return result;
             };
+            finish_run(&inner).await;
             let mut lifecycle = inner
                 .lifecycle
                 .lock()
@@ -773,6 +777,35 @@ impl ApplicationSessionService {
 }
 
 type RunnerFuture = Pin<Box<dyn Future<Output = Result<(), String>> + Send>>;
+
+async fn finish_run(inner: &Arc<ServiceInner>) {
+    let inner = Arc::clone(inner);
+    // Capture admission can outlive its waiting caller. Keep finalization owned
+    // until every local terminal event is recorded, even if force-stop aborts
+    // the run wrapper or a caller drops its stop future. A retry waits for it.
+    let _ = tokio::spawn(async move {
+        let _finalization = inner.finalization.lock().await;
+        let control = {
+            let lifecycle = inner
+                .lifecycle
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            lifecycle.stopping_control.clone().or_else(|| {
+                lifecycle
+                    .task
+                    .as_ref()
+                    .and_then(|task| task.control.clone())
+            })
+        };
+        if let Some(control) = control {
+            control.finish_observation().await;
+        }
+        for event in inner.catalog.finish_live() {
+            inner.capture.record(event).await;
+        }
+    })
+    .await;
+}
 
 trait SessionRunner: Send {
     fn local_addr(&self) -> SocketAddr;
@@ -889,6 +922,261 @@ mod tests {
         })
     }
 
+    fn request_metadata(id: u128) -> Arc<transmog_core::intercept::ExchangeMetadata> {
+        use transmog_core::{
+            ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
+            intercept::ExchangeMetadata,
+        };
+        Arc::new(ExchangeMetadata::from_session(
+            &SessionMetadata {
+                session_id: SessionId(id),
+                downstream_connection_id: ConnectionId(id),
+                stream_id: StreamId(id),
+                client_addr: "127.0.0.1:1234".parse().unwrap(),
+                proxy_addr: "127.0.0.1:43210".parse().unwrap(),
+                client_identity: transmog_core::ClientIdentity::default(),
+                ingress_version: HttpLegVersion::Http2,
+                egress_version: None,
+            },
+            Target {
+                scheme: "https".into(),
+                authority: "example.test:443".into(),
+                host: "example.test".into(),
+                port: 443,
+                path: "/".into(),
+                query: None,
+            },
+        ))
+    }
+
+    fn pending_request(service: &ApplicationSessionService, id: u128) {
+        use transmog_core::observe::{ObserverEvent, ObserverEventKind};
+        service.catalog().apply(ObserverEvent {
+            exchange_id: transmog_core::intercept::ExchangeId(id),
+            sequence: 1,
+            kind: ObserverEventKind::ExchangeStarted {
+                metadata: request_metadata(id),
+            },
+        });
+    }
+
+    fn assert_request_stopped(service: &ApplicationSessionService, id: u128) {
+        let snapshot = service
+            .catalog()
+            .get(transmog_core::intercept::ExchangeId(id))
+            .unwrap();
+        assert_eq!(snapshot.state(), "failed");
+        assert!(snapshot.terminal_at.is_some());
+    }
+
+    #[tokio::test]
+    async fn run_finalization_survives_cancellation_of_its_waiting_caller() {
+        use std::{
+            future::{Future, poll_fn},
+            task::Poll,
+        };
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        pending_request(&service, 1);
+        let held = service.inner.finalization.lock().await;
+        let mut finalization = Box::pin(finish_run(&service.inner));
+        poll_fn(|cx| {
+            assert!(finalization.as_mut().poll(cx).is_pending());
+            Poll::Ready(())
+        })
+        .await;
+        drop(finalization);
+        drop(held);
+        tokio::time::timeout(Duration::from_secs(1), async {
+            while service
+                .catalog()
+                .get(transmog_core::intercept::ExchangeId(1))
+                .unwrap()
+                .terminal_at
+                .is_none()
+            {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        assert_request_stopped(&service, 1);
+        finish_run(&service.inner).await;
+    }
+
+    #[tokio::test]
+    async fn stop_records_orphaned_requests_before_sealing_capture() {
+        use transmog_core::{
+            intercept::ExchangeId,
+            observe::{ObserverEvent, ObserverEventKind},
+            stream::{StreamProtocol, StreamState, StreamStatus},
+        };
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "transmog-stopped-request-{}-{}.tmcap",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        service
+            .start_capture(CaptureStart {
+                path: path.clone(),
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                limits: transmog_capture::CaptureLimits::default(),
+                policy: transmog_capture::CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        service.start_runner(runner(None)).await.unwrap();
+        for (id, stream) in [
+            (1, None),
+            (2, Some(StreamProtocol::Sse)),
+            (3, Some(StreamProtocol::WebSocket)),
+        ] {
+            pending_request(&service, id);
+            service
+                .capture()
+                .record(ObserverEvent {
+                    exchange_id: ExchangeId(id),
+                    sequence: 1,
+                    kind: ObserverEventKind::ExchangeStarted {
+                        metadata: service.catalog().get(ExchangeId(id)).unwrap().metadata,
+                    },
+                })
+                .await;
+            if let Some(protocol) = stream {
+                let event = ObserverEvent {
+                    exchange_id: ExchangeId(id),
+                    sequence: 2,
+                    kind: ObserverEventKind::StreamState(StreamState::now(
+                        protocol,
+                        StreamStatus::Open,
+                        None,
+                    )),
+                };
+                service.catalog().apply(event.clone());
+                service.capture().record(event).await;
+            }
+        }
+        service.stop().await.unwrap();
+        assert_request_stopped(&service, 1);
+        let saved = transmog_capture::recover(
+            std::fs::File::open(&path).unwrap(),
+            transmog_capture::CaptureLimits::default(),
+        )
+        .unwrap();
+        assert!(saved.sealed);
+        assert!(saved.records.iter().all(|record| !matches!(
+            record.kind,
+            transmog_capture::CaptureRecordKind::Loss { .. }
+        )));
+        assert_eq!(saved.records.iter().filter(|record| matches!(&record.kind, transmog_capture::CaptureRecordKind::Failed { category, .. } if category == "Shutdown")).count(), 3);
+        assert_eq!(saved.records.iter().filter(|record| matches!(&record.kind, transmog_capture::CaptureRecordKind::StreamState(state) if state.status == StreamStatus::Interrupted)).count(), 2);
+        for id in 2..=3 {
+            assert_eq!(
+                service.catalog().get(ExchangeId(id)).unwrap().state(),
+                "interrupted"
+            );
+        }
+        service.capture().shutdown().await;
+        std::fs::remove_file(path).unwrap();
+    }
+
+    #[tokio::test]
+    async fn force_stop_closes_observation_before_finalizing_and_sealing_capture() {
+        use transmog_core::{
+            intercept::{HookLimits, InterceptorChainFactory},
+            observe::{ObserverDelivery, ObserverEventKind, ObserverHub},
+            performance::PerformanceEvidence,
+        };
+        use transmog_tls::{
+            CachedMitmCertificateResolver, ProxyCa, SystemTrustSource, TrustSnapshot,
+        };
+
+        let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        let observers = ObserverHub::new(vec![(
+            Arc::new(SessionObserver::new(
+                service.catalog().clone(),
+                service.capture().clone(),
+            )),
+            session_observer_config(NonZeroUsize::new(8).unwrap()),
+        )]);
+        let server = ProxyServer::bind_with_components(
+            transmog_runtime::ProxyConfig::default(),
+            Arc::new(TrustSnapshot::load(&SystemTrustSource, 1).unwrap()),
+            ProxyComponents::new(
+                InterceptorChainFactory::new(Vec::new(), HookLimits::default()),
+                Arc::new(
+                    CachedMitmCertificateResolver::new(
+                        ProxyCa::generate("Force stop observation test", 2).unwrap(),
+                        16,
+                        1,
+                    )
+                    .unwrap(),
+                ),
+            )
+            .with_observers(observers.clone()),
+        )
+        .await
+        .unwrap();
+        let path = std::env::temp_dir().join(format!(
+            "transmog-forced-request-{}-{}.tmcap",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        service
+            .start_capture(CaptureStart {
+                path: path.clone(),
+                encoding: transmog_capture::CaptureEncoding::default(),
+                metadata: None,
+                limits: transmog_capture::CaptureLimits::default(),
+                policy: transmog_capture::CapturePolicy::default(),
+            })
+            .await
+            .unwrap();
+        service.start(server).await.unwrap();
+        let metadata = request_metadata(1);
+        let exchange = observers.start_exchange(metadata.clone());
+        exchange
+            .emit(ObserverEventKind::ExchangeStarted { metadata })
+            .await;
+        service.stop_now().await.unwrap();
+        assert_eq!(
+            exchange
+                .emit(ObserverEventKind::Performance(
+                    PerformanceEvidence::default()
+                ))
+                .await
+                .deliveries(),
+            [ObserverDelivery::AlreadyDisconnected]
+        );
+        assert_request_stopped(&service, 1);
+        let saved = transmog_capture::recover(
+            std::fs::File::open(&path).unwrap(),
+            transmog_capture::CaptureLimits::default(),
+        )
+        .unwrap();
+        assert!(saved.sealed);
+        assert!(saved.records.iter().all(|record| !matches!(
+            record.kind,
+            transmog_capture::CaptureRecordKind::Loss { .. }
+        )));
+        assert!(matches!(
+            &saved.records[0].kind,
+            transmog_capture::CaptureRecordKind::ExchangeStarted { .. }
+        ));
+        assert!(
+            matches!(&saved.records[1].kind, transmog_capture::CaptureRecordKind::Failed { category, .. } if category == "Shutdown")
+        );
+        service.capture().shutdown().await;
+        std::fs::remove_file(path).unwrap();
+    }
+
     #[tokio::test]
     async fn explicit_force_stop_unblocks_a_shutdown_already_waiting_for_the_runner() {
         struct StalledRunner;
@@ -914,6 +1202,7 @@ mod tests {
             )
             .await
             .unwrap();
+        pending_request(&service, 1);
         let stopping = {
             let service = service.clone();
             tokio::spawn(async move { service.stop().await })
@@ -928,12 +1217,14 @@ mod tests {
         stopping.await.unwrap().unwrap();
         assert_eq!(service.status(), ServiceStatus::Stopped);
         assert_eq!(host.restored.lock().unwrap().len(), 1);
+        assert_request_stopped(&service, 1);
     }
 
     #[tokio::test]
     async fn start_twice_is_typed_and_stop_is_idempotent() {
         let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
         let address = service.start_runner(runner(None)).await.unwrap();
+        pending_request(&service, 1);
         assert_eq!(
             service.status(),
             ServiceStatus::Running {
@@ -947,11 +1238,13 @@ mod tests {
         service.stop().await.unwrap();
         service.stop().await.unwrap();
         assert_eq!(service.status(), ServiceStatus::Stopped);
+        assert_request_stopped(&service, 1);
     }
 
     #[tokio::test]
     async fn unexpected_runner_failure_becomes_visible_and_restartable() {
         let service = ApplicationSessionService::new(ServiceConfig::default()).unwrap();
+        pending_request(&service, 1);
         service
             .start_runner(runner(Some("accept failed")))
             .await
@@ -963,6 +1256,7 @@ mod tests {
         })
         .await
         .unwrap();
+        assert_request_stopped(&service, 1);
         assert_eq!(
             service.start_runner(runner(None)).await,
             Err(ServiceError::FailedRunNeedsStop)

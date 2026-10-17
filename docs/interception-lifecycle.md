@@ -40,11 +40,20 @@ lifecycle stage and commitment flags.
 Terminal callbacks use their own finite cleanup timeout. A failure or panic in
 one cleanup callback is reported but does not suppress later cleanup callbacks.
 The terminal guard accepts the first completed-or-failed outcome only.
+Once terminal cleanup starts, its owned task continues through the remaining
+hooks even if its waiting caller is cancelled. `wait_for_terminal_cleanup` lets
+an owner wait for that work without starting a second terminal outcome.
 
-Dropping an interceptor, route, upstream, or observer boundary future aborts its
-child task. Dropping a body consumer makes its bounded producer fail and release
-the exchange. HTTP/2 and HTTP/3 callbacks hold per-exchange pause permits, so a
-paused stream does not pause unrelated streams.
+Dropping a non-terminal interceptor, route, upstream, or observer boundary
+future aborts its child task. Dropping a body consumer makes its bounded producer
+fail and release the exchange. HTTP/2 and HTTP/3 callbacks hold per-exchange
+pause permits, so a paused stream does not pause unrelated streams.
+
+Dropping a request handler before its response is returned, including an HTTP/2
+client reset, cancels its exchange signal and runs failure cleanup for the hooks
+already entered. The runtime records one cancellation terminal event and measures
+the end at the cancellation itself. Cleanup retains the request's activity lease,
+and shutdown waits for its terminal evidence before draining observer workers.
 
 ## Observation
 

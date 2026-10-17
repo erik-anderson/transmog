@@ -11,8 +11,8 @@ use tokio::sync::broadcast;
 use transmog_core::{
     HeaderBlock, RequestHead, ResponseHead,
     intercept::{
-        CompletedExchange, ExchangeFailure, ExchangeId, ExchangeMetadata, HookEffect,
-        InitializationDiagnostic,
+        CompletedExchange, ExchangeFailure, ExchangeFailureKind, ExchangeId, ExchangeMetadata,
+        ExchangeStage, HookEffect, InitializationDiagnostic,
     },
     observe::{
         ExchangeBoundary, ObservedBodyChunk, ObservedBodyTrailers, ObservedRouteAttempt,
@@ -272,6 +272,7 @@ struct MutableBody {
 
 #[derive(Debug)]
 struct MutableSession {
+    run_ended: bool,
     request_number: u64,
     performance: transmog_core::performance::PerformanceEvidence,
     imported: bool,
@@ -463,6 +464,7 @@ impl SessionCatalog {
             state.by_id.insert(
                 exchange_id,
                 MutableSession {
+                    run_ended: false,
                     request_number: admission,
                     performance: transmog_core::performance::PerformanceEvidence::default(),
                     imported: false,
@@ -494,6 +496,9 @@ impl SessionCatalog {
         if session.imported {
             return CatalogApply::PostTerminal;
         }
+        if session.run_ended {
+            return CatalogApply::PostTerminal;
+        }
         let (last_sequence, terminal) = { (session.last_sequence, session.terminal.is_some()) };
         if event.sequence <= last_sequence {
             state.counters.stale_events = state.counters.stale_events.saturating_add(1);
@@ -523,6 +528,74 @@ impl SessionCatalog {
         drop(state);
         let _ = self.inner.deltas.send(delta);
         CatalogApply::Applied
+    }
+
+    /// Finalizes live evidence only after its runtime has ended. Returned local
+    /// terminal observations are also written to any active native capture.
+    pub(crate) fn finish_live(&self) -> Vec<ObserverEvent> {
+        let mut state = self.lock_state();
+        let mut events = Vec::new();
+        let mut deltas = Vec::new();
+        for session in state
+            .by_id
+            .values_mut()
+            .filter(|session| !session.imported && !session.run_ended)
+        {
+            let mut kinds = Vec::new();
+            if let Some(stream) = &session.stream
+                && stream.status.is_active()
+            {
+                // Stream state precedes the HTTP terminal record: capture
+                // sequencing retires an exchange after its final HTTP event.
+                kinds.push(ObserverEventKind::StreamState(
+                    transmog_core::stream::StreamState::now(
+                        stream.protocol,
+                        transmog_core::stream::StreamStatus::Interrupted,
+                        Some("Proxy stopped before the stream closed.".into()),
+                    ),
+                ));
+            }
+            if session.terminal.is_none() {
+                kinds.push(ObserverEventKind::Failed(ExchangeFailure {
+                    metadata: Arc::clone(&session.metadata),
+                    stage: ExchangeStage::Terminal,
+                    kind: ExchangeFailureKind::Shutdown,
+                    request_committed: session
+                        .request_heads
+                        .iter()
+                        .any(|head| head.boundary == ExchangeBoundary::UpstreamRequest),
+                    response_committed: session
+                        .response_heads
+                        .iter()
+                        .any(|head| head.boundary == ExchangeBoundary::ClientResponse),
+                    message: "Proxy stopped before this request recorded a completion.".into(),
+                }));
+            }
+            session.run_ended = true;
+            if kinds.is_empty() {
+                continue;
+            }
+            for kind in kinds {
+                session.last_sequence = session.last_sequence.saturating_add(1);
+                events.push(ObserverEvent {
+                    exchange_id: session.metadata.exchange_id,
+                    sequence: session.last_sequence,
+                    kind: kind.clone(),
+                });
+                apply_kind(session, kind, self.inner.limits, &mut 0);
+            }
+            deltas.push(CatalogDelta {
+                exchange_id: session.metadata.exchange_id,
+                sequence: session.last_sequence,
+                terminal: true,
+            });
+        }
+        trim_live_entries(&mut state);
+        drop(state);
+        for delta in deltas {
+            let _ = self.inner.deltas.send(delta);
+        }
+        events
     }
 
     /// Gets one immutable snapshot by exchange ID.
@@ -621,6 +694,7 @@ impl SessionCatalog {
             state.by_id.insert(
                 id,
                 MutableSession {
+                    run_ended: true,
                     request_number: admission,
                     imported: true,
                     performance: snapshot.performance,
@@ -1120,15 +1194,20 @@ fn apply_kind(
             }
         }
         ObserverEventKind::Failed(failure) => {
+            let interrupted = matches!(
+                failure.kind,
+                ExchangeFailureKind::Cancelled | ExchangeFailureKind::Shutdown
+            );
             session.terminal = Some(SessionTerminal::Failed(failure));
             session.terminal_at = Some(SystemTime::now());
             if let Some(stream) = &mut session.stream
-                && stream.protocol == transmog_core::stream::StreamProtocol::Sse
+                && stream.status.is_active()
+                && (interrupted || stream.protocol == transmog_core::stream::StreamProtocol::Sse)
             {
-                stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_))) {
-                    transmog_core::stream::StreamStatus::Failed
+                stream.status = if interrupted {
+                    transmog_core::stream::StreamStatus::Interrupted
                 } else {
-                    transmog_core::stream::StreamStatus::Closed
+                    transmog_core::stream::StreamStatus::Failed
                 };
                 stream.at_millis = transmog_core::stream::observed_millis();
             }
@@ -1553,6 +1632,133 @@ mod tests {
         assert_eq!(catalog.lock_state().imported_count, 0);
         catalog.import_sessions(vec![saved]).unwrap();
         assert!(catalog.get(ExchangeId(77)).unwrap().imported);
+    }
+
+    #[test]
+    fn ending_a_run_closes_only_live_entries_and_rejects_late_updates() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let catalog = SessionCatalog::new(SessionLimits {
+            subscriber_capacity: NonZeroUsize::new(8).unwrap(),
+            ..limits(10)
+        });
+        for id in 1..=3 {
+            start(&catalog, id, "live.test");
+        }
+        catalog.apply(event(
+            2,
+            2,
+            ObserverEventKind::Completed(CompletedExchange {
+                metadata: metadata(2, "live.test"),
+                request_head: head("GET"),
+                response_head: ResponseHead {
+                    status: 101,
+                    headers: HeaderBlock::default(),
+                    source_version: transmog_core::HttpLegVersion::Http1,
+                },
+            }),
+        ));
+        let completed_at = catalog.get(ExchangeId(2)).unwrap().terminal_at;
+        // A completed HTTP handshake can still have an open WebSocket.
+        catalog.apply(event(
+            2,
+            3,
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Open,
+                None,
+            )),
+        ));
+        catalog.apply(event(
+            3,
+            2,
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::Sse,
+                StreamStatus::Open,
+                None,
+            )),
+        ));
+        let saved = SessionCatalog::new(limits(10));
+        start(&saved, 4, "saved.test");
+        catalog
+            .import_sessions(vec![saved.get(ExchangeId(4)).unwrap()])
+            .unwrap();
+        let mut updates = catalog.inner.deltas.subscribe();
+        let events = catalog.finish_live();
+        assert_eq!(events.len(), 4); // Two HTTP failures and two interrupted streams.
+        assert!(updates.try_recv().unwrap().terminal);
+        let request = catalog.get(ExchangeId(1)).unwrap();
+        assert_eq!(request.state(), "failed");
+        assert!(request.terminal_at.is_some());
+        assert!(matches!(
+            request.terminal,
+            Some(SessionTerminal::Failed(ExchangeFailure {
+                kind: ExchangeFailureKind::Shutdown,
+                ..
+            }))
+        ));
+        let websocket = catalog.get(ExchangeId(2)).unwrap();
+        assert_eq!(websocket.state(), "interrupted");
+        assert_eq!(
+            websocket.terminal_at, completed_at,
+            "stream closure must preserve HTTP duration"
+        );
+        assert_eq!(catalog.get(ExchangeId(3)).unwrap().state(), "interrupted");
+        let imported = catalog.get(ExchangeId(4)).unwrap();
+        assert_eq!(imported.state(), "incomplete");
+        assert_eq!(imported.terminal_at, None);
+        assert!(catalog.finish_live().is_empty());
+        assert_eq!(
+            catalog.get(ExchangeId(1)).unwrap().terminal_at,
+            request.terminal_at
+        );
+        assert_eq!(
+            catalog.apply(event(
+                2,
+                100,
+                ObserverEventKind::StreamState(StreamState::now(
+                    StreamProtocol::WebSocket,
+                    StreamStatus::Open,
+                    None
+                ))
+            )),
+            CatalogApply::PostTerminal
+        );
+        start(&catalog, 5, "next-run.test");
+        assert_eq!(catalog.get(ExchangeId(5)).unwrap().state(), "active");
+    }
+
+    #[test]
+    fn cancellation_ends_a_connecting_application_stream_without_waiting_for_stop() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        for protocol in [StreamProtocol::WebSocket, StreamProtocol::Sse] {
+            let catalog = SessionCatalog::new(limits(10));
+            start(&catalog, 1, "cancelled.test");
+            catalog.apply(event(
+                1,
+                2,
+                ObserverEventKind::StreamState(StreamState::now(
+                    protocol,
+                    StreamStatus::Connecting,
+                    None,
+                )),
+            ));
+            catalog.apply(event(
+                1,
+                3,
+                ObserverEventKind::Failed(ExchangeFailure {
+                    metadata: metadata(1, "cancelled.test"),
+                    stage: ExchangeStage::Terminal,
+                    kind: ExchangeFailureKind::Cancelled,
+                    request_committed: false,
+                    response_committed: false,
+                    message: "Request handling was cancelled before a response was returned."
+                        .into(),
+                }),
+            ));
+            let snapshot = catalog.get(ExchangeId(1)).unwrap();
+            assert_eq!(snapshot.state(), "interrupted");
+            assert!(snapshot.terminal_at.is_some());
+        }
     }
 
     #[test]

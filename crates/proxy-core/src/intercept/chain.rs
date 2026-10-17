@@ -3,14 +3,14 @@ use std::{
     panic::{AssertUnwindSafe, catch_unwind},
     sync::{
         Arc,
-        atomic::{AtomicU8, Ordering},
+        atomic::{AtomicBool, AtomicU8, Ordering},
     },
     time::Duration,
 };
 
 use thiserror::Error;
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::{Notify, OwnedSemaphorePermit, Semaphore},
     task::JoinHandle,
     time::timeout,
 };
@@ -315,6 +315,7 @@ impl InterceptorChainFactory {
             diagnostics,
             runner: self.runner.clone(),
             terminal: AtomicU8::new(TERMINAL_OPEN),
+            terminal_cleanup: Arc::default(),
         })
     }
 
@@ -441,6 +442,27 @@ pub struct ExchangeChain {
     diagnostics: Vec<InitializationDiagnostic>,
     runner: CallbackGate,
     terminal: AtomicU8,
+    terminal_cleanup: Arc<TerminalCleanup>,
+}
+
+#[derive(Debug, Default)]
+struct TerminalCleanup {
+    finished: AtomicBool,
+    changed: Notify,
+}
+
+struct TerminalCleanupOwner(Arc<TerminalCleanup>);
+
+impl Drop for TerminalCleanupOwner {
+    fn drop(&mut self) {
+        self.0.finished.store(true, Ordering::Release);
+        self.0.changed.notify_waiters();
+    }
+}
+
+enum TerminalOutcome {
+    Completed(CompletedExchange),
+    Failed(ExchangeFailure),
 }
 
 impl ExchangeChain {
@@ -785,63 +807,82 @@ impl ExchangeChain {
     }
 
     /// Delivers successful terminal cleanup exactly once in reverse order.
+    /// Cleanup continues if the waiting caller is cancelled.
     pub async fn completed(&self, outcome: CompletedExchange) -> TerminalReport {
-        if self
-            .terminal
-            .compare_exchange(
-                TERMINAL_OPEN,
-                TERMINAL_COMPLETING,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
-            .is_err()
-        {
-            return TerminalReport::default();
-        }
-        let mut report = TerminalReport::default();
-        for entry in self.interceptors[..self.entered].iter().rev() {
-            if let Err(source) = self
-                .runner
-                .completed(Arc::clone(&entry.interceptor), outcome.clone())
-                .await
-            {
-                report.errors.push(ChainExecutionError {
-                    name: Arc::clone(&entry.identity.name),
-                    source,
-                });
-            }
-        }
-        report
+        self.run_terminal(TERMINAL_COMPLETING, TerminalOutcome::Completed(outcome))
+            .await
     }
 
     /// Delivers failed terminal cleanup exactly once in reverse order.
+    /// Cleanup continues if the waiting caller is cancelled.
     pub async fn failed(&self, failure: ExchangeFailure) -> TerminalReport {
+        self.run_terminal(TERMINAL_FAILED, TerminalOutcome::Failed(failure))
+            .await
+    }
+
+    /// Waits for already-started terminal callbacks, including cleanup whose
+    /// original waiter was cancelled. Returns immediately before cleanup starts.
+    pub async fn wait_for_terminal_cleanup(&self) {
+        loop {
+            let changed = self.terminal_cleanup.changed.notified();
+            tokio::pin!(changed);
+            changed.as_mut().enable();
+            if self.terminal.load(Ordering::Acquire) == TERMINAL_OPEN
+                || self.terminal_cleanup.finished.load(Ordering::Acquire)
+            {
+                return;
+            }
+            changed.await;
+        }
+    }
+
+    async fn run_terminal(&self, state: u8, outcome: TerminalOutcome) -> TerminalReport {
         if self
             .terminal
-            .compare_exchange(
-                TERMINAL_OPEN,
-                TERMINAL_FAILED,
-                Ordering::AcqRel,
-                Ordering::Acquire,
-            )
+            .compare_exchange(TERMINAL_OPEN, state, Ordering::AcqRel, Ordering::Acquire)
             .is_err()
         {
             return TerminalReport::default();
         }
-        let mut report = TerminalReport::default();
-        for entry in self.interceptors[..self.entered].iter().rev() {
-            if let Err(source) = self
-                .runner
-                .failed(Arc::clone(&entry.interceptor), failure.clone())
-                .await
-            {
-                report.errors.push(ChainExecutionError {
-                    name: Arc::clone(&entry.identity.name),
-                    source,
-                });
+        let entries = self.interceptors[..self.entered].to_vec();
+        let runner = self.runner.clone();
+        let context = self.context.clone();
+        let owner = TerminalCleanupOwner(Arc::clone(&self.terminal_cleanup));
+        // A terminal outcome has been claimed. Its remaining callbacks must not
+        // disappear when an HTTP service future or an embedding waiter is dropped.
+        let task = tokio::spawn(async move {
+            let _owner = owner;
+            // Exchange-local resources must outlive the remaining callbacks too.
+            let _context = context;
+            let mut report = TerminalReport::default();
+            for entry in entries.into_iter().rev() {
+                let result = match &outcome {
+                    TerminalOutcome::Completed(outcome) => {
+                        runner.completed(entry.interceptor, outcome.clone()).await
+                    }
+                    TerminalOutcome::Failed(failure) => {
+                        runner.failed(entry.interceptor, failure.clone()).await
+                    }
+                };
+                if let Err(source) = result {
+                    report.errors.push(ChainExecutionError {
+                        name: entry.identity.name,
+                        source,
+                    });
+                }
             }
-        }
-        report
+            report
+        });
+        task.await.unwrap_or_else(|error| TerminalReport {
+            errors: vec![ChainExecutionError {
+                name: "terminal cleanup".into(),
+                source: if error.is_panic() {
+                    HookExecutionError::Panicked
+                } else {
+                    HookExecutionError::ShuttingDown
+                },
+            }],
+        })
     }
 }
 
@@ -1707,6 +1748,92 @@ mod tests {
                 "completed:A"
             ]
         );
+    }
+
+    #[tokio::test]
+    async fn cancelling_a_terminal_waiter_does_not_abandon_remaining_cleanup() {
+        #[derive(Clone)]
+        struct TerminalHook {
+            name: &'static str,
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+            log: Arc<Mutex<Vec<&'static str>>>,
+        }
+        impl InterceptorFactory for TerminalHook {
+            fn create(
+                &self,
+                _: &ExchangeMetadata,
+            ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+                Ok(Arc::new(self.clone()))
+            }
+        }
+        impl TerminalHook {
+            async fn finish(&self) {
+                if self.name == "C" {
+                    self.entered.notify_one();
+                    self.release.notified().await;
+                }
+                self.log.lock().unwrap().push(self.name);
+            }
+        }
+        impl ExchangeInterceptor for TerminalHook {
+            fn on_completed(&self, _: CompletedExchange) -> BoxHookFuture<'_, ()> {
+                Box::pin(self.finish())
+            }
+            fn on_failed(&self, _: ExchangeFailure) -> BoxHookFuture<'_, ()> {
+                Box::pin(self.finish())
+            }
+        }
+        for success in [true, false] {
+            let entered = Arc::new(tokio::sync::Notify::new());
+            let release = Arc::new(tokio::sync::Notify::new());
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let factory = InterceptorChainFactory::new(
+                ["A", "B", "C"]
+                    .into_iter()
+                    .map(|name| {
+                        InterceptorRegistration::new(
+                            name,
+                            Arc::new(TerminalHook {
+                                name,
+                                entered: entered.clone(),
+                                release: release.clone(),
+                                log: log.clone(),
+                            }),
+                            InterceptorRequirement::Required,
+                        )
+                    })
+                    .collect(),
+                HookLimits::default(),
+            );
+            let mut chain = factory.create_exchange(metadata(1)).unwrap();
+            chain.request_head(request_head()).await.unwrap();
+            let chain = Arc::new(chain);
+            let task_chain = chain.clone();
+            let waiter = tokio::spawn(async move {
+                if success {
+                    task_chain
+                        .completed(completed(&task_chain, request_head(), response_head()))
+                        .await
+                } else {
+                    task_chain.failed(failed(&task_chain)).await
+                }
+            });
+            entered.notified().await;
+            waiter.abort();
+            assert!(waiter.await.unwrap_err().is_cancelled());
+            release.notify_one();
+            tokio::time::timeout(Duration::from_secs(1), async {
+                while log.lock().unwrap().len() < 3 {
+                    tokio::task::yield_now().await;
+                }
+            })
+            .await
+            .expect("cancelling the terminal waiter abandoned hook cleanup");
+            assert_eq!(*log.lock().unwrap(), ["C", "B", "A"]);
+            assert!(chain.failed(failed(&chain)).await.is_clean());
+            assert_eq!(*log.lock().unwrap(), ["C", "B", "A"]);
+        }
     }
 
     #[test]

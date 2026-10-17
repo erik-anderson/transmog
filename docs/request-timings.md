@@ -54,6 +54,14 @@ does not establish client receipt or socket flush. First-body markers identify
 adapter observations and queue acceptance. Zero means a measured zero;
 unavailable means there is no measurement.
 
+Client cancellation before response headers ends the request locally and records
+a cancellation failure. Its duration stops at cancellation, even when terminal
+hook cleanup or capture storage takes longer. When a proxy run ends, any live
+entry still missing terminal evidence is closed with an explicit proxy-stop
+explanation; its elapsed duration no longer increases. This does not establish
+whether the upstream server received or processed the request. Imported captures
+retain their original incomplete state and missing timing evidence.
+
 Named operation rows show breakpoint decisions, hook/script callbacks, codec
 work and forwarding-channel waits. Local measurements below 1 ms are in the
 collapsed **Proxy operations under 1 ms** section; expand it to inspect them. Latency phase
