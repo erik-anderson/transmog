@@ -56,10 +56,11 @@ function Assert-ReleasePayload {
     $platform = Get-WindowsReleaseTarget $manifest.Target
     $root = [System.IO.Path]::GetFullPath($PayloadRoot).TrimEnd('\', '/') + [System.IO.Path]::DirectorySeparatorChar
     $seen = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+    $allowedPath = '^(target/release/[^/]+\.exe|apps/desktop/ui/dist/.+|evidence/[^/]+|evidence/gates/(UI|Browser|Analysis|Tests|Native|Archives|Build|Qualify)\.json|evidence/policy/(policy\.json|(workspace|fuzz)\.(toml|jsonl)))$'
     foreach ($entry in $manifest.Files) {
         if ([System.IO.Path]::IsPathRooted($entry.Path)) { throw 'An artifact path is absolute.' }
         if (-not $seen.Add($entry.Path) -or $entry.Path -match '[:\\]' -or $entry.Sha256 -notmatch '^[0-9a-fA-F]{64}$') { throw 'Invalid or duplicate artifact entry.' }
-        if ($entry.Path -notmatch '^(target/release/[^/]+\.exe|apps/desktop/ui/dist/.+|evidence/[^/]+)$') { throw 'Unexpected build payload path.' }
+        if ($entry.Path -notmatch $allowedPath) { throw "Unexpected build payload path: $($entry.Path)" }
         $path = [System.IO.Path]::GetFullPath((Join-Path $PayloadRoot $entry.Path))
         if (-not $path.StartsWith($root, [StringComparison]::OrdinalIgnoreCase)) { throw 'An artifact path escapes the payload root.' }
         $file = Get-Item -LiteralPath $path

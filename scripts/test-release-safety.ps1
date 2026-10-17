@@ -9,6 +9,16 @@ $files = @(foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'tran
 })
 $symbolsDirectory = Join-Path $fixture 'evidence'
 New-Item -ItemType Directory -Path $symbolsDirectory | Out-Null
+$files += @(foreach ($relative in @(
+    'gates/UI.json','gates/Browser.json','gates/Analysis.json','gates/Tests.json',
+    'gates/Native.json','gates/Archives.json','gates/Build.json','gates/Qualify.json',
+    'policy/policy.json','policy/workspace.toml','policy/workspace.jsonl','policy/fuzz.toml','policy/fuzz.jsonl'
+)) {
+    $path = Join-Path $symbolsDirectory $relative
+    New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
+    'evidence fixture' | Set-Content -LiteralPath $path
+    [ordered]@{ Path = "evidence/$relative"; Sha256 = (Get-FileHash -LiteralPath $path).Hash }
+})
 $symbolsPath = Join-Path $symbolsDirectory 'Transmog_0.1.0_windows-x64-symbols.zip'
 'symbols archive fixture' | Set-Content -LiteralPath $symbolsPath
 $files += [ordered]@{ Path = 'evidence/Transmog_0.1.0_windows-x64-symbols.zip'; Sha256 = (Get-FileHash -LiteralPath $symbolsPath).Hash }
@@ -23,6 +33,21 @@ function Require-Rejection([scriptblock]$Action, [string]$Reason) {
 }
 Set-TestManifest
 Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' | Out-Null
+$policyPath = Join-Path $symbolsDirectory 'policy/policy.json'
+'tampered policy' | Set-Content -LiteralPath $policyPath
+Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'changed nested policy evidence'
+'evidence fixture' | Set-Content -LiteralPath $policyPath
+foreach ($relative in @('gates/Unexpected.json','gates/UI.exe','policy/unexpected.json','policy/workspace.exe','policy/db/advisory.md')) {
+    $path = Join-Path $symbolsDirectory $relative
+    New-Item -ItemType Directory -Force (Split-Path -Parent $path) | Out-Null
+    'unexpected evidence' | Set-Content -LiteralPath $path
+    $invalid = $baseline | ConvertFrom-Json
+    $invalid.Files += [pscustomobject]@{ Path="evidence/$relative"; Sha256=(Get-FileHash -LiteralPath $path).Hash }
+    $invalid | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+    Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } "an unexpected nested evidence path: $relative"
+    Remove-Item -LiteralPath $path
+}
+Set-TestManifest
 $arm64 = $baseline | ConvertFrom-Json
 $arm64.Target = 'aarch64-pc-windows-msvc'
 $armSymbolsPath = Join-Path $symbolsDirectory 'Transmog_0.1.0_windows-arm64-symbols.zip'

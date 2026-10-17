@@ -43,18 +43,17 @@ jobs:
         with:
           node-version: '24.21.0'
           package-manager-cache: false
-      - name: Cache verified dependency downloads
+      # Keep policy downloads separate so preflight cannot reserve a partial native build cache.
+      - name: Cache Cargo dependency downloads
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: |
-            .tools/downloads
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ~/.cargo/.rusty_v8
-          key: release-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock') }}
+          key: release-policy-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock') }}
           restore-keys: |
-            release-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-
+            release-policy-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-
       - name: Set up pinned policy tools
         run: |
           $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value
@@ -228,18 +227,17 @@ jobs:
         with:
           node-version: '24.21.0'
           package-manager-cache: false
-      - name: Cache verified dependency downloads
+      # Keep policy downloads separate so preflight cannot reserve a partial native build cache.
+      - name: Cache Cargo dependency downloads
         uses: actions/cache@a7833574556fa59680c1b7cb190c1735db73ebf0 # v5.0.0
         with:
           path: |
-            .tools/downloads
             ~/.cargo/registry/index
             ~/.cargo/registry/cache
             ~/.cargo/git/db
-            ~/.cargo/.rusty_v8
-          key: release-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock') }}
+          key: release-policy-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-${{ hashFiles('Cargo.lock', 'fuzz/Cargo.lock') }}
           restore-keys: |
-            release-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-
+            release-policy-downloads-v1-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('rust-toolchain.toml', 'scripts/setup-windows-ci.ps1', 'scripts/cache-v8.py') }}-
       - name: Set up pinned policy tools
         run: |
           $pin = [regex]::Match((Get-Content -Raw rust-toolchain.toml), '(?m)^channel\s*=\s*"([^"]+)"').Groups[1].Value

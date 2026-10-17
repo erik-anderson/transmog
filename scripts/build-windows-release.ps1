@@ -116,6 +116,8 @@ try {
         })
         $manifest = [ordered]@{ Commit = $sourceCommit; RunId = $env:GITHUB_RUN_ID; SourceBranch = $env:GITHUB_REF_NAME; Version = $buildResult.Version; Channel = $buildResult.Channel; ReleaseType = $env:RELEASE_TYPE; Target = $buildResult.Target; BuiltAtUtc = [DateTimeOffset]::UtcNow.ToString('o'); Files = $files }
         $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath (Join-Path $payloadRoot 'build-manifest.json') -Encoding utf8NoBOM
+        . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
+        Assert-ReleasePayload -PayloadRoot $payloadRoot -Commit $sourceCommit -RunId $env:GITHUB_RUN_ID | Out-Null
         if ($env:GITHUB_OUTPUT) { "version=$($buildResult.Version)" | Add-Content -LiteralPath $env:GITHUB_OUTPUT -Encoding utf8NoBOM }
         Write-Host "Prepared tested unsigned build payload for Transmog $($buildResult.Version)."
     }
