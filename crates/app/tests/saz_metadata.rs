@@ -180,7 +180,7 @@ fn assert_xml_projection(path: &Path, encrypted: bool, projected: bool) {
         } else {
             archive.by_index(index).unwrap()
         };
-        if member.name().ends_with("_m.xml") {
+        if member.name().unwrap().ends_with("_m.xml") {
             xml_count += 1;
             let mut xml = String::new();
             member.read_to_string(&mut xml).unwrap();
@@ -197,7 +197,7 @@ fn assert_xml_projection(path: &Path, encrypted: bool, projected: bool) {
                 assert!(xml.contains("\\u{0000}"));
             }
         }
-        if member.name().ends_with("_s.txt") {
+        if member.name().unwrap().ends_with("_s.txt") {
             let mut text = String::new();
             member.read_to_string(&mut text).unwrap();
             assert!(!text.contains('\0') && !text.contains('\u{ffff}'));
@@ -273,7 +273,7 @@ fn rewrite_destination(source: &Path, destination: &Path, authority: &str) {
     let mut writer = zip::ZipWriter::new(std::fs::File::create(destination).unwrap());
     for index in 0..archive.len() {
         let mut member = archive.by_index(index).unwrap();
-        let name = member.name().to_owned();
+        let name = member.name().unwrap().into_owned();
         let mut bytes = Vec::new();
         member.read_to_end(&mut bytes).unwrap();
         if name.ends_with("_m.xml") {

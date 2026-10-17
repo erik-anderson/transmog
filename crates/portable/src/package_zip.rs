@@ -608,7 +608,7 @@ mod tests {
         bytes.extend_from_slice(&directory);
         bytes.extend_from_slice(&footer);
         let mut standard = zip::ZipArchive::new(Cursor::new(&bytes)).unwrap();
-        assert_eq!(standard.by_index(0).unwrap().name(), "../../alias");
+        assert_eq!(standard.by_index(0).unwrap().name().unwrap(), "../../alias");
         assert!(matches!(
             read(&mut Cursor::new(&bytes), &flag),
             Err(Error::Unsupported(_))

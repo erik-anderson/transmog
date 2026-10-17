@@ -274,7 +274,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         let mut total = 0_u64;
         for index in 0..archive.len() {
             let member = archive.by_index_raw(index)?;
-            let name = safe_name(member.name())?;
+            let name = safe_name(&member.name()?)?;
             if !names.insert(name) {
                 return Err(SazError::UnsafeMember);
             }
@@ -335,7 +335,7 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
                 return Err(SazError::Canceled);
             }
             let member = self.archive.by_index_raw(index)?;
-            let name = safe_name(member.name())?;
+            let name = safe_name(&member.name()?)?;
             let encrypted = member.encrypted();
             let expected = member.size();
             drop(member);

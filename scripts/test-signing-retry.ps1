@@ -13,6 +13,7 @@ try {
     )) {
         $fixture = [pscustomobject]@{ Calls=0; Delays=[Collections.Generic.List[int]]::new() }
         $failure = $null
+        Write-Host "[Signing retry fixture] $($case.Name); failures below are simulated."
         try {
             Invoke-SigningWithTimestampRetry -Operation {
                 $code = $case.Codes[$fixture.Calls++]

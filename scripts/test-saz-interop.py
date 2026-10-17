@@ -2,10 +2,12 @@
 import argparse
 from datetime import datetime
 import hashlib
+import json
 import os
 from pathlib import Path
 import re
 import shutil
+import sys
 import tempfile
 from urllib.request import urlopen
 import xml.etree.ElementTree as ET
@@ -80,6 +82,7 @@ def digest(path):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--seven-zip-path", type=Path)
+    parser.add_argument("--workspace-features", action="store_true", help="Reuse the release gate's all-features workspace test graph")
     args = parser.parse_args()
     tool = seven_zip(args.seven_zip_path)
     env = development_environment()
@@ -88,8 +91,26 @@ def main():
     # Retain each run's independent-reader evidence for inspection.
     directory = Path(tempfile.mkdtemp(prefix="run-", dir=artifacts))
     env["TRANSMOG_SAZ_INTEROP_DIR"] = str(directory)
+    if args.workspace_features:
+        # Select the SAZ executable from Cargo's full workspace graph instead of
+        # rebuilding a smaller graph or running every unrelated library fixture.
+        compiled = command(["cargo", "test", "--locked", "--workspace", "--all-features", "--lib", "--no-run", "--message-format=json"], env=env, capture=True, check=False)
+        artifacts = [json.loads(line) for line in compiled.stdout.splitlines() if line.startswith("{")]
+        if compiled.returncode:
+            print(compiled.stderr, file=sys.stderr)
+            for artifact in artifacts:
+                if artifact.get("reason") == "compiler-message":
+                    print(artifact["message"].get("rendered", ""), file=sys.stderr)
+            raise ValueError("The all-features archive fixture build failed")
+        executables = [artifact["executable"] for artifact in artifacts if artifact.get("reason") == "compiler-artifact"
+                       and artifact.get("target", {}).get("name") == "transmog_saz" and artifact.get("executable")]
+        if len(executables) != 1:
+            raise ValueError("Expected one all-features SAZ test executable")
+        test_arguments = [executables[0]]
+    else:
+        test_arguments = ["cargo", "test", "--locked", "-p", "transmog-saz"]
     for case in ("encrypted_saz_round_trips_and_produces_interop_fixtures", "classic_metadata_required_dates_preserve_unavailable_and_original_times", "websocket_saz_exports_frames_in_both_profiles_and_encrypted_archives"):
-        command(["cargo", "test", "--locked", "-p", "transmog-saz", case], env=env)
+        command([*test_arguments, case], env=env)
     verify_metadata(directory)
     if os.name == "nt":
         # Keep the additional .NET XmlConvert compatibility check on Windows.
@@ -112,7 +133,7 @@ def main():
     payload = bytes(range(256)) * 1024
     (raw / "1_c.txt").write_bytes(f"POST https://example.test/upload HTTP/1.1\r\nContent-Length: {len(payload)}\r\n\r\n".encode("ascii") + payload)
     command([tool, "a", "-tzip", directory / "external-zipcrypto.saz", "raw/1_c.txt", "-mem=ZipCrypto", "-pTransmog-interop-password"], cwd=raw.parent, env=env)
-    command(["cargo", "test", "--locked", "-p", "transmog-saz", "external_zipcrypto_imports_exact_binary_without_extraction"], env=env)
+    command([*test_arguments, "external_zipcrypto_imports_exact_binary_without_extraction"], env=env)
 
 
 if __name__ == "__main__":

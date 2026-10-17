@@ -85,6 +85,7 @@ Invoke-EnvironmentIsolatedFixture 'test-release-publication.ps1'
 Invoke-EnvironmentIsolatedFixture 'test-hosted-client-certificate-policy.ps1'
 & (Join-Path $PSScriptRoot 'test-release-native-exit.ps1')
 & (Join-Path $PSScriptRoot 'test-windows-release-target.ps1')
+& (Join-Path $PSScriptRoot 'test-release-build-phases.ps1')
 & (Join-Path $PSScriptRoot 'test-signing-retry.ps1')
 & (Get-TransmogPython) -m unittest discover -s (Join-Path $PSScriptRoot 'tests') -v
 if ($LASTEXITCODE) { throw 'Portable tooling and release lifecycle fixtures failed.' }

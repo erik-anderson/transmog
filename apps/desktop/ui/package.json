@@ -25,5 +25,12 @@
   },
   "engines": {
     "node": ">=24"
+  },
+  "overrides": {
+    "dompurify": "3.4.17"
+  },
+  "allowScripts": {
+    "@microsoft/webui@0.0.30": true,
+    "esbuild@0.28.2": true
   }
 }

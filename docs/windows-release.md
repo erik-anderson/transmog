@@ -71,6 +71,17 @@ Transmog first. The client-certificate checks use owned CurrentUser/My fixture
 identities and clean them up afterward. Prepare the pinned policy tool with
 `./scripts/setup-release-validation-tools.ps1` if it is not already available.
 
+The workflow checks dependency policy before compiling either architecture.
+`release-policy.py` records the source commit, lockfile/policy hashes and RustSec
+database commit. Both build jobs use that immutable snapshot; a separate fresh
+check runs after both builds and before signing. Policy summaries stay concise in
+the console, with complete JSON diagnostics retained as artifacts. Each build
+gate has a named workflow step and source-bound timing/result evidence.
+
+Only dependency downloads are cached, separated by architecture and pinned tool
+versions. Native tool and V8 archives are checksum-verified after restoration.
+Compiled targets, unsigned payloads and signed outputs are not restored from caches.
+
 From the repository root in PowerShell 7, check versions and formatting first,
 then prepare the same locked dependencies used by the hosted build:
 
@@ -84,6 +95,7 @@ $releaseTestCommit = git rev-parse HEAD
 if (git status --porcelain) { throw 'Qualify a clean, committed release candidate.' }
 python ./scripts/set-release-version.py --check
 cargo fmt --all -- --check
+python ./scripts/release-policy.py --prepare --snapshot artifacts/release-policy/local-snapshot --output artifacts/release-policy/local-check
 cargo fetch --locked
 npm ci --prefix apps/desktop/ui
 npm ci --prefix e2e/playwright
@@ -104,17 +116,20 @@ npm --prefix apps/desktop/ui run check
 npm --prefix apps/desktop/ui run test:workspaces
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo test --workspace --all-features --locked
-cargo test --locked -p transmog-tls --test windows_client_certificates -- --ignored
-cargo test --locked -p transmog-runtime -p transmog-app --test client_authentication -- --ignored
-./scripts/test-windows-client-certificate-ui.ps1
-python ./scripts/test-saz-interop.py
-cargo deny check
-cargo deny --manifest-path fuzz/Cargo.toml --config fuzz/deny.toml --locked check
+cargo test --workspace --all-features --locked --test windows_client_certificates -- --ignored
+cargo test --workspace --all-features --locked --test client_authentication -- --ignored
+cargo build --workspace --all-features --locked
+./scripts/test-windows-client-certificate-ui.ps1 -SkipBuild
+python ./scripts/test-saz-interop.py --workspace-features
 python ./scripts/check-crypto-graph.py
 python ./scripts/vendor-boringssl-pki.py --check
 python ./scripts/test-chromium-psl.py
 python ./scripts/generate-supply-chain-artifacts.py
 ```
+
+The native fixture commands retain the workspace's all-features graph so the
+certificate and archive gates can reuse the binaries compiled by workspace tests.
+The production optimized build continues to use its own shipping feature set.
 
 After those checks pass, build the optimized app and helpers once, qualify the
 CLI, check all four matching full PDBs, and run the release's three-minute WebView

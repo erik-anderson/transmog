@@ -7,6 +7,9 @@ from repo_tools import ROOT, command, development_environment, main_guard
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
     env = development_environment()
+    command([sys.executable, ROOT / "scripts/release-policy.py", "--prepare",
+             "--snapshot", ROOT / "artifacts/release-policy/local-snapshot",
+             "--output", ROOT / "artifacts/release-policy/local-check"], env=env)
     command([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests"], env=env)
     command([sys.executable, ROOT / "scripts/vendor-boringssl-pki.py", "--check"], env=env)
     command([sys.executable, ROOT / "scripts/test-chromium-psl.py"], env=env)
@@ -15,8 +18,6 @@ def main():
     command(["cargo", "fmt", "--all", "--", "--check"], env=env)
     command(["cargo", "clippy", "--workspace", "--all-targets", "--all-features", "--locked", "--", "-D", "warnings"], env=env)
     command(["cargo", "test", "--workspace", "--all-features", "--locked"], env=env)
-    command(["cargo", "deny", "check"], env=env)
-    command(["cargo", "deny", "--manifest-path", "fuzz/Cargo.toml", "--config", "fuzz/deny.toml", "--locked", "check"], env=env)
     command([sys.executable, ROOT / "scripts/check-crypto-graph.py"], env=env)
     command([sys.executable, ROOT / "scripts/generate-supply-chain-artifacts.py"], env=env)
 

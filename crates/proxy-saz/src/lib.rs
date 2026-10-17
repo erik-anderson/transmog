@@ -147,7 +147,7 @@ impl<W: Write + Seek> SazExporter<W> {
         Ok(self)
     }
 
-    fn file_options(&self) -> FileOptions<'_, ()> {
+    fn file_options(&self) -> FileOptions<'_, '_, ()> {
         let options = SimpleFileOptions::default()
             .compression_method(CompressionMethod::Deflated)
             .large_file(true);
@@ -867,7 +867,7 @@ fn write_http_session<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     id: usize,
     session: &Session,
-    options: FileOptions<'_, ()>,
+    options: FileOptions<'_, '_, ()>,
     remaining: usize,
 ) -> Result<bool, SazError> {
     if remaining < 3 {
@@ -1076,7 +1076,7 @@ fn length_header(bytes: usize) -> CapturedHeader {
 fn write_trace_context<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     capture: &RecoveredCapture,
-    options: FileOptions<'_, ()>,
+    options: FileOptions<'_, '_, ()>,
     remaining: usize,
 ) -> Result<usize, SazError> {
     let metadata = capture
@@ -1109,7 +1109,7 @@ fn write_member<W: Write + Seek>(
     writer: &mut ZipWriter<W>,
     name: &str,
     bytes: &[u8],
-    options: FileOptions<'_, ()>,
+    options: FileOptions<'_, '_, ()>,
 ) -> Result<(), SazError> {
     writer.start_file(name, options)?;
     writer.write_all(bytes)?;

@@ -551,7 +551,7 @@ fn assert_saz_text(path: &Path, encrypted: bool, expected: &PerformanceEvidence)
         } else {
             archive.by_index(index).unwrap()
         };
-        let name = member.name().to_owned();
+        let name = member.name().unwrap().into_owned();
         if name.ends_with("_s.txt") {
             member.read_to_string(&mut summaries).unwrap();
         }
@@ -624,7 +624,7 @@ fn crowd_saz_flags(source: &Path, destination: &Path, conventional: bool) {
     let mut writer = zip::ZipWriter::new(std::fs::File::create(destination).unwrap());
     for index in 0..archive.len() {
         let mut member = archive.by_index(index).unwrap();
-        let name = member.name().to_owned();
+        let name = member.name().unwrap().into_owned();
         let mut bytes = Vec::new();
         member.read_to_end(&mut bytes).unwrap();
         if name.ends_with("_m.xml") {
