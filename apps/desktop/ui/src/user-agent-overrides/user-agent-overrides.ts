@@ -1,4 +1,4 @@
-import {observable} from '@microsoft/webui-framework';
+import {attr,observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
 import {WorkspaceElement} from '../workspace-element.js';
 import type {AutomationCandidate,AutomationRule,AutomationStatus,UserAgentOverride,SelectedResponse} from '../models.js';
@@ -10,6 +10,10 @@ const hintNames=['Sec-CH-UA','Sec-CH-UA-Mobile','Sec-CH-UA-Platform','Sec-CH-UA-
 interface HintField {name:string;value:string;enabled:boolean;}
 interface Row {id:string;name:string;scope:string;enabled:boolean;selected:boolean;first:boolean;last:boolean;dropBefore:boolean;dropAfter:boolean;}
 export class UserAgentOverrides extends WorkspaceElement {
+  @attr({mode:'boolean'}) embedded=false;
+  @observable uaOrderOpen=false;
+  embeddedChanged():void {this.uaOrderOpen=!this.embedded;}
+  orderToggled(event:Event):void {this.uaOrderOpen=(event.target as HTMLDetailsElement).open;}
   @observable uaState:AutomationStatus|null=null;
   @observable uaRows:Row[]=[];
   @observable uaEditing=false;
@@ -22,7 +26,7 @@ export class UserAgentOverrides extends WorkspaceElement {
   @observable uaPath='';
   @observable uaValue='';
   @observable uaVersion='';
-  @observable uaEnabled=true;
+  @observable uaEnabled=false;
   @observable uaPreset='custom';
   @observable uaHintMode='preserve';
   @observable uaHintFields:HintField[]=[];
@@ -66,7 +70,7 @@ export class UserAgentOverrides extends WorkspaceElement {
     this.loadedRevision=rule?.revision??0;
     const policy=rule?.request.userAgent;
     this.uaSelectedId=rule?.id??'';this.uaName=rule?.displayName??'';this.uaHost=rule?.matcher.host??'';this.uaPath=rule?.matcher.pathPrefix??'';
-    this.uaValue=policy?.template??(rule?'':'Transmog/1.0');this.uaVersion=policy?.versionOverride??'';this.uaEnabled=rule?.enabled!==false;
+    this.uaValue=policy?.template??(rule?'':'Transmog/1.0');this.uaVersion=policy?.versionOverride??'';this.uaEnabled=rule?rule.enabled!==false:false;
     const presets=userAgentPresets.filter(preset=>preset.value===this.uaValue);
     const platform=Object.entries(policy?.clientHints??{}).find(([name])=>name.toLowerCase()==='sec-ch-ua-platform')?.[1];
     this.uaPreset=(presets.find(preset=>platform&&presetClientHints(preset)['Sec-CH-UA-Platform']===platform)??presets[0])?.id??'custom';
@@ -80,7 +84,8 @@ export class UserAgentOverrides extends WorkspaceElement {
     try{const url=new URL(source.detail.requests[0]?.target??'');this.uaHost=url.hostname;this.uaPath=url.pathname;}catch{this.uaHost='';this.uaPath='';}
     this.uaDirty=true;this.$flushUpdates();this.uaNameInput.focus();
   }
-  private leaveDraft():boolean {return !this.uaDirty||window.confirm('Discard unsaved UA header override changes?');}
+  private leaveDraft():boolean {return !this.uaDirty||window.confirm('Discard unsaved browser header changes?');}
+  canLeaveDraft():boolean {return this.leaveDraft();}
   edit(field:'uaName'|'uaHost'|'uaPath'|'uaValue'|'uaVersion',event:Event):void {this[field]=(event.currentTarget as HTMLInputElement).value;this.uaDirty=true;if(field==='uaValue')this.uaPreset='custom';}
   setEnabled(event:Event):void {this.uaEnabled=(event.currentTarget as HTMLInputElement).checked;this.uaDirty=true;}
   choosePreset(event:Event):void {
@@ -123,10 +128,11 @@ export class UserAgentOverrides extends WorkspaceElement {
       if(!target)next.push(rule);
       const rules=this.ranked(current.rules,next);
       const status=await this.activate(current,rules);if(operation!==this.operation)return;
-      this.accept(status);this.load(status.rules.find(candidate=>candidate.id===rule.id)??rule);this.uaStatus='Override saved for new matching requests.';
+      this.accept(status);this.load(status.rules.find(candidate=>candidate.id===rule.id)??rule);this.uaStatus=this.uaEnabled?'Rule saved and enabled for new matching requests.':'Rule saved disabled. Enable it when ready.';
     }catch(error){if(operation===this.operation)this.uaStatus='Override could not be saved: '+describeError(error);}
-    finally{if(operation===this.operation){this.uaBusy=false;this.$flushUpdates();this.uaSaveButton?.focus({preventScroll:true});}}
+    finally{if(operation===this.operation){this.uaBusy=false;this.$flushUpdates();const active=(this.getRootNode() as ShadowRoot).activeElement;if(this.uaSaveButton?.getClientRects().length&&active&&this.contains(active))this.uaSaveButton.focus({preventScroll:true});}}
   }
+  async saveAndEnable():Promise<void> {this.uaEnabled=true;this.uaDirty=true;await this.save(new Event('submit',{cancelable:true}));}
   private confirmDuplicate(rule:AutomationRule):Promise<boolean> {
     this.uaDuplicateName=rule.displayName??'User-Agent override';this.uaDuplicateScope=this.scope(rule.matcher.host,rule.matcher.pathPrefix);
     return new Promise(resolve=>{this.confirmResolve=resolve;this.uaDuplicateDialog.showModal();});

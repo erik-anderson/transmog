@@ -52,7 +52,7 @@ export class AppShell extends WebUIElement {
   private updateAutomationBadge():void {
     const count=(this.autoresponseState?.rules??[]).filter(rule=>rule.enabled!==false&&!rule.request.responseAsset&&(rule.request.userAgent||rule.request.headers.length||rule.request.replaceBody!=null||rule.request.discardBody||rule.request.abortReason||rule.response.textTransform||rule.response.headers.length||rule.response.replaceBody!=null||rule.response.discardBody||rule.response.abortReason)).length;
     this.automationEnabledCount=count+this.enabledScriptCount;
-    this.automationEnabledLabel=`${count} enabled rule${count===1?'':'s'} · ${this.enabledScriptCount} enabled script${this.enabledScriptCount===1?'':'s'}. Auto-responses have their own switch.`;
+    this.automationEnabledLabel=`${count} enabled rule${count===1?'':'s'} · ${this.enabledScriptCount} enabled script${this.enabledScriptCount===1?'':'s'}. Saved responses have their own switch.`;
   }
   onScriptActivity(event:CustomEvent<{generation:number;activeCount:number}>):void {
     if(event.detail.generation<this.scriptGeneration)return;this.scriptGeneration=event.detail.generation;this.enabledScriptCount=event.detail.activeCount;this.updateAutomationBadge();
@@ -142,7 +142,7 @@ export class AppShell extends WebUIElement {
     if (this.installPending) return;
     this.installPending = true;
     try {
-      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.settings?.clientCertificates?.certificateSettingsDirty ? 'Client certificates' : '', this.automation?.draftDirty ? 'Autoresponses' : '', this.automation?.userAgentOverrides?.uaDirty ? 'UA header overrides' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
+      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.settings?.clientCertificates?.certificateSettingsDirty ? 'Client certificates' : '', this.automation?.draftDirty ? 'Saved responses' : '', this.automation?.headerRulesEditor?.hrDirty ? 'Header changes' : '', this.automation?.responseTextEditor?.hrDirty ? 'Response text replacements' : '', this.automation?.userAgentOverrides?.uaDirty ? 'Browser headers' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
       if (dirty.length) {
         this.updateDraftSummary = `There are unsaved changes in ${dirty.join(', ')}. Installing will close Transmog and discard those drafts. Keep working to save them first.`;
         const proceed = await new Promise<boolean>(resolve => { this.resolveUpdateDrafts = resolve; this.updateDraftDialog.showModal(); });
@@ -184,8 +184,8 @@ export class AppShell extends WebUIElement {
     try {
       const current=this.autoresponseState??await invoke<AutomationStatus>('automation_status');
       const status=await invoke<AutomationStatus>('set_autoresponses_enabled',{enabled:!(current.autoresponsesEnabled??true),generation:current.generation});
-      this.autoresponseState=status;this.diagnosticText=status.autoresponsesEnabled?'Autoresponses resumed for new requests.':'Autoresponses paused. Individual rule states are preserved.';
-    } catch(error:unknown){this.diagnosticText='Autoresponse switch failed: '+describeError(error);await this.refreshAutoresponses();}
+      this.autoresponseState=status;this.diagnosticText=status.autoresponsesEnabled?'Saved responses resumed for new requests.':'Saved responses paused. Individual rule states are preserved.';
+    } catch(error:unknown){this.diagnosticText='Saved response switch failed: '+describeError(error);await this.refreshAutoresponses();}
     finally{this.autoresponsePending=false;}
   }
 

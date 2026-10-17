@@ -1,4 +1,4 @@
-# Automation and auto-responses
+# Automation and traffic rules
 
 `transmog-automation` is an optional declarative layer over the core
 interception API. It is not a second execution engine and is not required by
@@ -17,13 +17,49 @@ and script revisions. Activation is atomic: an invalid candidate never replaces
 the last working snapshot, and an in-flight exchange keeps the immutable
 snapshot with which it started.
 
+## Rules workspace
+
+**Automation** has three tools: **Rules**, **Experiments**, and **Scripts**.
+Rules brings saved responses, header changes, browser-header presets and response
+text replacements into one searchable list and properties pane. Filter by Requests
+or Responses and by enabled state; a saved response belongs to Responses because
+it supplies the response before the server is contacted. Each row identifies the
+action, request target and enabled state. Selecting another type preserves its
+editor's draft; replacing a draft within the same editor requires resolving its
+unsaved changes. Compact windows switch between the list and properties with
+**Back to rules**. New rule creation stays available above both views.
+
+**New rule…** offers **Change request headers…**, **Change browser headers…**,
+**Change response headers…**, **Find and replace response text…**, **Serve a
+captured response…**, and **Create saved response from scratch…**. Traffic's
+**Actions → Create rule** menu prefills the selected request and action. These
+operations change future matching traffic; they do not edit historical captures.
+Header, text and browser-header drafts start disabled. **Save rule** retains the
+authored Enabled choice; **Save and enable** explicitly enables a saved rule.
+Saved-response creation retains its visible Enabled choice and existing batch
+creation behavior.
+
+The shared list supports Ctrl+click, Shift ranges, keyboard selection and batch
+enable, disable, remove and disabled copies. Undo checks that the affected saved
+configuration is still current. The priority column and dragging apply to saved
+responses; **Execution order** disclosures expose each other editor's own ordering
+and conflict controls. A shared list does not make first-match policies and
+composing edits interchangeable.
+
+**Saved responses · On / Paused** gates only saved responses, including those
+used by live experiments. Enabled rules affected by this switch show **Enabled ·
+Paused**. Header and text edits, browser-header rules and scripts keep their own
+state. Experiments manage saved-response alternatives and revisions; Scripts is
+the advanced editor for custom logic. Neither changes activation just by opening
+or selecting content.
+
 ## Choose an editing workflow
 
 | Task | Start here | Preview and activation |
 | --- | --- | --- |
 | Replace a captured response, compare alternatives or edit a local file | **Actions → Create experiment**, then the response editor and **Experiments** | Saved response assets participate in captured-page previews. Saving a named revision is passive; live activation is explicit. |
-| Change request/response headers while retaining fresh traffic | **Automation → Header rules** | Standalone live rules. Test the draft without traffic; explicitly enable it for new requests. |
-| Change a literal in each fresh origin response | **Actions → Modify current response…** or **Automation → Response edits** | Standalone live rules with bounded UTF-8 input. Test the draft, then explicitly enable it. |
+| Change request/response headers while retaining fresh traffic | **Automation → Rules → New rule… → Change request headers… / Change response headers…** | Standalone live rules. Test the draft without traffic; explicitly enable it for new requests. |
+| Find and replace text in server responses | **Actions → Create rule → Find and replace response text…** or the same action under **Automation → Rules → New rule…** | Standalone live rules with bounded UTF-8 input. Test the draft, then explicitly enable it. |
 
 Header rules, fresh-response edits and scripts are not members of the named
 response-asset variants and do not execute in captured-page previews. To compare
@@ -54,12 +90,12 @@ header rules, response edits, scripts and other experiments keep their own state
 6. Choose **Use saved revision for live traffic** only when ready. Review any
    overlap warnings. To remove this experiment's live edits, activate its
    **Baseline**; **Undo activation** is available until another automation change.
-   The global auto-response pause remains independent of all these actions.
+   The global saved-response pause remains independent of all these actions.
 
 For external CSS/JavaScript editing, choose **Read file on each request** instead
 of Copy. A future live request or newly opened preview acquires current file
 bytes; an existing preview and historical Traffic comparison keep their frozen
-evidence. See [file choices](#ordered-auto-responses), [snapshot
+evidence. See [file choices](#ordered-saved responses), [snapshot
 evidence](#linked-file-snapshots-and-historical-evidence) and [preview
 isolation](captured-page-preview.md#isolation-and-implementation).
 
@@ -78,7 +114,7 @@ selected. Editing a saved response stays in **Experiments**, and saving returns 
 its updated revision. Each saved variant revision contains complete ordered
 rules and exact response-asset revisions. Saving never changes live traffic, even
 when an earlier revision is active. Unrelated rules and the global On/Paused
-setting are preserved. The original **Create auto-response** flow still creates
+setting are preserved. The original **Create rule → Serve a saved response…** flow still creates
 ordinary rules with its established save behavior.
 
 Open **Automation → Experiments** or **Versions and history…**
@@ -112,7 +148,7 @@ This changes only the selected variant; unrelated rule priorities stay unchanged
 Only one revision participates per experiment. **Baseline** means no rules from
 this experiment; unrelated automation remains active. **Pause experiment** gates
 participation without rewriting authored rules, enabled choices or revisions.
-Activation and resume preserve the global auto-response pause. **Undo activation**
+Activation and resume preserve the global saved-response pause. **Undo activation**
 restores the previous owned subset only if no automation generation has changed
 since that activation. On conflict, current work is preserved; inspect saved
 history and explicitly activate the desired revision instead.
@@ -150,7 +186,7 @@ stale-update detection, and audit evidence.
 
 ## User-Agent and client hints
 
-UA header overrides contains an ordered list of User-Agent rules. The first enabled
+Choose **Automation → Rules → New rule… → Change browser headers…** for User-Agent and client hints. Browser-header rules are part of the shared Rules list; their **Execution order** disclosure contains the ordered browser policies. The first enabled
 matching rule wins, even if the request has no headers to replace. Host filters
 are exact and case-insensitive; path prefixes are case-sensitive. Drag the
 handle or use Move up and Move down to change precedence. Saving filters already
@@ -171,9 +207,9 @@ preserving duplicate fields and never adding missing headers. Client hints can
 be preserved, overridden from preset metadata or custom values, or stripped.
 Preserve is the default when no hint overrides are authored. The Automation
 navigation count includes enabled non-auto-response rules and active script
-modules; UA header overrides shows its enabled header-rule count.
+modules. The Rules list shows each browser-header rule and its enabled state.
 
-## Ordered auto-responses
+## Ordered saved responses
 
 Auto-response rules form a compact top-to-bottom list beside a resizable
 properties pane. The first enabled rule that matches wins and bypasses the
@@ -186,8 +222,7 @@ Move earlier/Move later or Ctrl+Alt+Up/Down also changes priority. Reordering
 preserves unsaved properties, and list Undo restores the previous order. New rules are inserted
 first. Disabled copies provide a convenient starting point for a variant.
 
-The primary creation flow starts from a completed traffic item. **Create
-auto-response** copies the exact client-visible status, ordered response headers,
+The primary creation flow starts from a completed traffic item. **Create rule → Serve a saved response…** copies the exact client-visible status, ordered response headers,
 and encoded body into an immutable response asset, then pre-fills a method and
 exact normalized absolute-URL match.
 
@@ -294,7 +329,7 @@ identity edits remove it. Apply original compression type names the original
 stack and applies it to text and binary replacement files. Copied files store
 encoded bytes; linked files freeze and encode current input before streaming with
 bounded backpressure, without reusing a stale Content-Length. Pasted framing and encoding
-fields cannot override these choices in the editor. Response edits create an
+fields cannot override these choices in the editor. Response text replacement rules create an
 immutable configuration revision; copied bytes, earlier revisions and captured evidence remain
 intact. The response body editor
 starts at twelve lines and automatically selects Text or Hex for complete editable
@@ -390,11 +425,12 @@ remain available to preserve them and their selection identity.
 
 ## Request and response header rules
 
-In **Automation → Header rules**, choose **New header rule**, select Request or
+In **Automation → Rules → New rule…**, choose **Change request headers…** or
+**Change response headers…**, select Request or
 Response, and use the shared method/address matcher to target the traffic.
 New rules start disabled. **Save rule** respects the Enabled choice; **Save and
 enable** explicitly applies the saved rule to new matching live requests. The
-auto-response On/Paused switch does not pause header rules. Existing exchanges
+Saved responses On/Paused switch does not pause header rules. Existing exchanges
 retain their captured configuration. Header rules are standalone live automation;
 named response variants and captured-page previews currently use response assets.
 
@@ -432,7 +468,7 @@ targets; use routing, response-asset or body facilities for those tasks.
 | Native response-head hooks | Earlier to later native response rule position; each rule sees the current effective response and request. |
 | Response body planning | After all response-head hooks; matching sees the final effective heads. Script body hooks run in reverse registration order, then native body rules run in saved order. Later body hooks see earlier output. Fresh-response literal edits exclude local responses. |
 
-The **Execution order and conflict repair** disclosure includes native auto-responses, User-Agent
+The **Execution order and conflict repair** disclosure includes native saved responses, User-Agent
 policies and advanced rules relevant to the selected phase. Use Earlier/Later
 for neighboring header rules or save **Before other native rules** / **After
 other native rules** to resolve a shared-position conflict. Overlapping writes
@@ -450,8 +486,8 @@ Original and effective message heads remain the source for header-value evidence
 
 ## Literal edits to fresh responses
 
-Select a request and choose **Modify current response…**, or open **Automation →
-Response edits → New response edit**. The disabled draft uses the selected
+Select a request and choose **Actions → Create rule → Find and replace response text…**,
+or choose the same action under **Automation → Rules → New rule…**. The disabled draft uses the selected
 method/address and a supported media type. It modifies fresh origin text rather
 than substituting a saved response. **Save rule** respects Enabled; **Save and
 enable** explicitly affects new requests. Auto-response pause does not pause
@@ -516,7 +552,7 @@ diagnostics.
 ## Captured-page experiments
 
 The main window's [captured-page preview](captured-page-preview.md) can snapshot
-selected saved auto-responses, including disabled rules. Preview participation is
+selected saved saved responses, including disabled rules. Preview participation is
 independent of live enabled states and the On/Paused gate. Preview never changes
 those states. The same request matcher evaluates actual browser method, normalized
 URL and explicit header conditions before captured fallback; the first

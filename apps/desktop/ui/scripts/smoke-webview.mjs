@@ -192,10 +192,10 @@ try {
       }
       const automation = element.shadowRoot.querySelector('#automation');
       const scratchButton = [...(automation?.querySelectorAll('button') ?? [])]
-        .find((candidate) => candidate.textContent?.trim() === 'Create from scratch');
-      const capturedResponsePrimary=automation.querySelector('.capture-response-button')?.textContent.trim()==='Choose responses in Traffic';
-      const scratchSecondary=scratchButton?.getClientRects().length===0 && automation.querySelector('.capture-response-button')?.getClientRects().length>0;
-      automation.querySelector('[aria-label="More autoresponse options"]').click();
+        .find((candidate) => candidate.textContent?.trim() === 'Create saved response from scratch…');
+      const capturedResponsePrimary=Boolean(automation.querySelector('[popovertarget="rule-kind-menu"]')?.getClientRects().length);
+      const scratchSecondary=scratchButton?.getClientRects().length===0 && capturedResponsePrimary;
+      automation.querySelector('[popovertarget="rule-kind-menu"]').click();
       await Promise.resolve();
       scratchButton?.click();
       await Promise.resolve();
@@ -365,7 +365,7 @@ try {
   assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
-  assert(['Auto-responses','Experiments','Header rules','Response edits','UA header overrides','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
+  assert(['Rules','Experiments','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
     && result.ux.captureStartHint === 1 && result.ux.exactUrlFields === 1
     && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened

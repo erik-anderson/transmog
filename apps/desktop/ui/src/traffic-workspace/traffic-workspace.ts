@@ -445,7 +445,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable selectedSessionId:string | null = null;
   @observable selectedTrafficCount=0;
   @observable trafficSelectionText='';
-  @observable trafficCreateLabel='Create auto-responses…';
+  @observable trafficCreateLabel='Create saved responses…';
   @observable removingTraffic=false;
   @observable trafficUndoText='';
   @observable trafficMenuX='12px';
@@ -763,7 +763,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     });
     this.selectedTrafficCount=this.trafficSelection.ids.size;
     this.trafficSelectionText=`${this.selectedTrafficCount.toLocaleString()} selected`;
-    this.trafficCreateLabel=`Create ${this.selectedTrafficCount} auto-response${this.selectedTrafficCount===1?'':'s'}…`;
+    this.trafficCreateLabel=`Create ${this.selectedTrafficCount} saved response${this.selectedTrafficCount===1?'':'s'}…`;
     this.activeRowId=this.sessions.some(row=>row.id===this.trafficSelection.focused)?'session-'+this.trafficSelection.focused:'';
   }
   private releaseView(view:TrafficView|null):void {if(view)void invoke('release_traffic_view',{viewId:view.id}).catch(()=>{});}

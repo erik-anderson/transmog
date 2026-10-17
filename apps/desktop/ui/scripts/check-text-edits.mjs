@@ -1,3 +1,4 @@
+import {newTrafficRule} from './check-unified-rules.mjs';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 export async function checkTextEdits(page,root) {
@@ -10,10 +11,10 @@ export async function checkTextEdits(page,root) {
  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');await shell.activateView('traffic');await shell.traffic.revealSession('first');const selected=structuredClone(shell.traffic.selectedDetail);selected.requests.find(h=>h.boundary==='client-request').method='POST';shell.traffic.selectedDetail=selected;shell.traffic.beginTextEditFromSelected();});
  await page.waitForFunction(()=>document.querySelector('app-shell').automation.responseTextEditor.hrEditor);
  assert.equal(await editor.getByLabel('Header rule method',{exact:true}).inputValue(),'POST');
- await pane.getByRole('button',{name:'New response edit',exact:true}).click();
+ await newTrafficRule(page,'Find and replace response text…');
  await editor.getByLabel('Rule name',{exact:true}).fill('Change a literal while keeping a long fresh customer token');
  await editor.getByLabel('Matching address',{exact:true}).fill('https://example.test/fresh');
- await editor.getByLabel('Find text',{exact:true}).fill('old');await editor.getByLabel('Replacement text',{exact:true}).fill('new $& é');
+ await editor.getByLabel('Find text',{exact:true}).fill('old');await editor.getByLabel('Replace with',{exact:true}).fill('new $& é');
  const tester=editor.locator('.header-draft-test');await tester.locator('summary').click();
  await tester.getByLabel('Sample URL',{exact:true}).fill('https://example.test/fresh');
  await tester.getByLabel('Decoded UTF-8 sample',{exact:true}).fill('old token=keep old');
@@ -22,8 +23,8 @@ export async function checkTextEdits(page,root) {
  await editor.getByLabel('Occurrences',{exact:true}).selectOption('first');await tester.getByRole('button',{name:'Test draft',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.querySelector('[editor-kind="response-text"]').hrTestBusy);assert.equal(await tester.getByLabel('After sample text',{exact:true}).inputValue(),'new $& é token=keep old');
  await editor.getByLabel('Required total match count',{exact:true}).fill('3');await tester.getByRole('button',{name:'Test draft',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.querySelector('[editor-kind="response-text"]').hrTestBusy);assert.match(await tester.textContent(),/Failed: required match count/);assert.equal(await tester.getByLabel('After sample text',{exact:true}).inputValue(),'old token=keep old');
  await editor.getByLabel('Required total match count',{exact:true}).fill('');await tester.getByLabel('Decoded UTF-8 sample',{exact:true}).fill('fresh token');await tester.getByRole('button',{name:'Test draft',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.querySelector('[editor-kind="response-text"]').hrTestBusy);assert.match(await tester.textContent(),/Not applied: text not found/);
- await page.evaluate(()=>globalThis.__workspaceFixture.holdHeaderTest=true);await tester.getByRole('button',{name:'Test draft',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.finishHeaderTest);await editor.getByLabel('Replacement text',{exact:true}).fill('newer draft');await page.evaluate(()=>globalThis.__workspaceFixture.finishHeaderTest());assert.equal(await pane.evaluate(h=>h.hrBodySummary),'');
- await page.evaluate(()=>globalThis.__workspaceFixture.headerReject=true);await editor.getByRole('button',{name:'Save rule',exact:true}).click();await settle();assert.match(await pane.textContent(),/not saved/);assert.equal(await editor.getByLabel('Replacement text',{exact:true}).inputValue(),'newer draft');
+ await page.evaluate(()=>globalThis.__workspaceFixture.holdHeaderTest=true);await tester.getByRole('button',{name:'Test draft',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.finishHeaderTest);await editor.getByLabel('Replace with',{exact:true}).fill('newer draft');await page.evaluate(()=>globalThis.__workspaceFixture.finishHeaderTest());assert.equal(await pane.evaluate(h=>h.hrBodySummary),'');
+ await page.evaluate(()=>globalThis.__workspaceFixture.headerReject=true);await editor.getByRole('button',{name:'Save rule',exact:true}).click();await settle();assert.match(await pane.textContent(),/not saved/);assert.equal(await editor.getByLabel('Replace with',{exact:true}).inputValue(),'newer draft');
  await page.evaluate(()=>globalThis.__workspaceFixture.headerReject=false);await editor.getByRole('button',{name:'Save rule',exact:true}).click();await settle();assert.equal((await state()).rules[0].enabled,false);
  await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settle();assert.equal((await state()).rules[0].enabled,true);assert.equal((await state()).autoresponsesEnabled,false);
  for(const [width,height] of [[1440,900],[960,720],[800,600]]) {await page.setViewportSize({width,height});await editor.getByRole('button',{name:'Save rule',exact:true}).scrollIntoViewIfNeeded();const b=await editor.getByRole('button',{name:'Save rule',exact:true}).boundingBox();assert.ok(b.y>=0&&b.y+b.height<=height);await page.screenshot({path:resolve(root,`../../../target/ui-check/text-edits-${width}.png`)});}

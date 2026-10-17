@@ -1,3 +1,4 @@
+import {checkUnifiedRules,newTrafficRule} from './check-unified-rules.mjs';
 import {checkActionMenus,openActionGroup} from './check-action-menus.mjs';
 import {checkPortableCases} from './check-portable-cases.mjs';
 import { checkResponseSnapshots } from './check-response-snapshots.mjs';
@@ -681,10 +682,12 @@ const view = async (name) => {
   await page.locator('#' + name).waitFor({ state: 'visible' });
 };
 const discardIfAsked=async()=>{const dialog=page.locator('automation-workspace .unsaved-rule-dialog');if(await dialog.isVisible())await dialog.getByRole('button',{name:'Discard changes',exact:true}).click();};
-const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('button',{name:'Auto-responses',exact:true}).click();await page.getByRole('button',{name:'More autoresponse options',exact:true}).click();await page.getByRole('button',{name:'Create from scratch',exact:true}).click();await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
+const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('button',{name:'Rules',exact:true}).click();await newTrafficRule(page,'Create saved response from scratch…');await discardIfAsked();await page.locator('.auto-response-editor').waitFor({state:'visible'});};
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--browser-headers-only')) {await page.goto('https://workspace.test/');await view('automation');await checkUserAgentOverrides(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Browser header authoring, presets, ordering, drafts and responsive layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--rules-only')) {await checkUnifiedRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Unified rule creation, direction/search filters, pause scope, drafts and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--actions-only')) {await checkActionMenus(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Actions submenus, keyboard focus, copying and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--timeline-only')) {await page.goto('https://workspace.test/');await checkTrafficTimeline(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timeline scope, dragging, keyboard, live updates, races, failures and virtualization verified.\n');process.exit(0);}
   if(process.argv.includes('--timing-labels-only')) {await page.goto('https://workspace.test/');await checkTimingLabels(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timing names, values and reports verified.\n');process.exit(0);}
@@ -730,17 +733,17 @@ try {
   await view('automation');
   await checkUserAgentOverrides(page,root);
   assert.equal(requests.some(path=>path==='/monaco.js'),false,'Response management eagerly loaded the script editor');
-  await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false,'Scratch authoring is prominent');
-  assert.match(await page.locator('.auto-response-start-hint').textContent(),/Select one or more captured responses in Traffic/);
-  await page.getByRole('button',{name:'Choose responses in Traffic',exact:true}).click();
+  await page.getByRole('button',{name:'New rule…',exact:true}).waitFor({state:'visible'});
+  assert.equal(await page.getByRole('button',{name:'Create saved response from scratch…',exact:true}).isVisible(),false,'Scratch authoring is prominent');
+  assert.match(await page.locator('.auto-response-start-hint').textContent(),/Change matching requests and server responses/);
+  await newTrafficRule(page,'Serve a captured response…');
   await page.locator('#traffic').waitFor({state:'visible'});
   // Populated lists must leave bulk actions reachable by an actual mouse click.
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.reviewOriginalRows=state.sessions;state.sessions=Array.from({length:60},(_,index)=>({...state.sessions[1],id:'layout-'+index,path:'/layout/'+index,url:'http://example.test/layout/'+index,startedAt:2000+index}));await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').refreshSessions(undefined,true);});
   await page.evaluate(async()=>await document.querySelector('app-shell').traffic.revealCurrent('layout-59'));
   await page.locator('tr[data-session-id="layout-59"]').click();
   await page.keyboard.press('Control+A');
-  const bulkAction=page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ auto-responses?…$/});
+  const bulkAction=page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ saved responses?…$/});
   const selectionBounds=await page.locator('.traffic-selection-bar').boundingBox();
   const tableBounds=await page.locator('.table-wrap').boundingBox();
   assert.ok(selectionBounds.y+selectionBounds.height<=tableBounds.y+1,'Traffic table overlaps bulk actions');
@@ -1251,8 +1254,8 @@ try {
   const autoEditor=page.locator('.auto-response-editor');
   const sourceLink=page.locator('.auto-response-source a');
   const autoField=name=>autoEditor.locator('[name="'+name+'"]');
-  assert.equal(await page.getByRole('button',{name:'Use selected response',exact:true}).isVisible(),true);
-  assert.equal(await page.getByRole('button',{name:'Create from scratch',exact:true}).isVisible(),false);
+  assert.equal(await page.getByRole('button',{name:'New rule…',exact:true}).isVisible(),true);
+  assert.equal(await page.getByRole('button',{name:'Create saved response from scratch…',exact:true}).isVisible(),false);
   assert.equal(await autoField('body').getAttribute('rows'),'12');
   assert.equal(await autoField('responseHeaders').getAttribute('rows'),'10');
   assert.equal(await autoField('status').evaluate(el=>el.closest('details').querySelector('summary').textContent),'Response');
@@ -1447,7 +1450,7 @@ try {
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetError=false;globalThis.__workspaceFixture.assetDelay=400;});
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click({clickCount:2});
   await autoEditor.getByRole('button',{name:'Saving…',exact:true}).waitFor({state:'visible'});
-  assert.equal(await page.getByRole('button',{name:'More autoresponse options',exact:true}).isEnabled(),false,'Creation remains available during a save');
+  assert.equal(await page.getByRole('button',{name:'New rule…',exact:true}).isEnabled(),false,'Creation remains available during a save');
   assert.equal(await autoField('body').isEnabled(),false,'Body can change during a save');
   await savedProperties();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.displayName==='Authored response').length),1,'Double submit created duplicate rules');
@@ -1633,7 +1636,7 @@ try {
   await page.locator('tr[data-session-id="second"]').click({modifiers:['Control']});
   await page.locator('tr[data-session-id="cached"]').click({modifiers:['Control']});
   assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),3);
-  await page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ auto-responses?…$/}).click();
+  await page.locator('.traffic-selection-bar').getByRole('button',{name:/^Create \d+ saved responses?…$/}).click();
   await page.waitForFunction(()=>{const auto=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !auto.batchReviewHidden && !auto.batchLoading && auto.batchRows.length===3;});
   assert.match(await page.locator('.batch-review').textContent(),/3 selected · 2 ready · 1 unavailable/);
   assert.match(await page.locator('.batch-review').textContent(),/Wait for this request to complete/);
@@ -2485,6 +2488,7 @@ try {
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
   await checkStreams(page,root);
+  await checkUnifiedRules(page,root);
   await checkActionMenus(page,root);
   await checkTrafficPresentation(page,root);
   await checkRequestOrder(page,root);

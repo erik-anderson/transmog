@@ -1,4 +1,9 @@
 user-agent-overrides {display:block;min-width:0;min-height:0;height:100%;}
+user-agent-overrides[embedded] .ua-layout {display:flex;flex-direction:column;overflow:auto;}
+user-agent-overrides[embedded] .ua-order {flex:none;}
+user-agent-overrides[embedded] .ua-order[open] .ua-list {max-height:14rem;}
+user-agent-overrides[embedded] .ua-properties {overflow:visible;flex:1;}
+user-agent-overrides[embedded] .ua-toolbar {flex-wrap:wrap;}
 .ua-workspace {display:flex;flex-direction:column;gap:.5rem;height:100%;min-height:0;}
 .ua-toolbar {display:flex;align-items:baseline;gap:.5rem;}
 .ua-toolbar h2 {font-size:.95rem;margin:0 auto 0 0;}

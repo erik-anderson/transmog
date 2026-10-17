@@ -1,3 +1,4 @@
+import {newTrafficRule} from './check-unified-rules.mjs';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 
@@ -8,7 +9,7 @@ export async function checkHeaderRules(page,root){
  const pane=page.locator('header-rules[editor-kind="headers"]'),editor=pane.locator('form'),ops=pane.locator('.header-operations li');
  const settle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').automation.querySelector('header-rules').hrBusy);
  const current=()=>page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation));
- await pane.getByRole('button',{name:'New header rule',exact:true}).click();
+ await newTrafficRule(page,'Change response headers…');
  await editor.getByLabel('Rule name',{exact:true}).fill('Remove CSP and patch policy with duplicate fields and preserved byte values');
  await editor.getByLabel('Matching address',{exact:true}).fill('https://example.test/policy');
  await ops.nth(0).getByLabel('Operation header name',{exact:true}).fill('Content-Security-Policy');
@@ -57,10 +58,10 @@ export async function checkHeaderRules(page,root){
  await page.evaluate(()=>document.querySelector('app-shell').activateView('traffic'));const search=page.locator('traffic-workspace input[name="search"]');await search.focus();await page.evaluate(()=>globalThis.__workspaceFixture.finishHeaderSave());await settle();assert.equal(await search.evaluate(e=>e===e.getRootNode().activeElement),true);
  await page.evaluate(()=>document.querySelector('app-shell').activateView('automation'));
  // Keyboard unsaved protection and ordinary workspace changes keep the draft.
- await editor.getByLabel('Rule name',{exact:true}).fill('Pending name');await pane.getByRole('button',{name:'New header rule',exact:true}).click();const unsaved=pane.locator('.header-unsaved');await unsaved.waitFor();await page.keyboard.press('Escape');assert.equal(await editor.getByLabel('Rule name',{exact:true}).inputValue(),'Pending name');
+ await editor.getByLabel('Rule name',{exact:true}).fill('Pending name');await newTrafficRule(page,'Change response headers…');const unsaved=pane.locator('.header-unsaved');await unsaved.waitFor();await page.keyboard.press('Escape');assert.equal(await editor.getByLabel('Rule name',{exact:true}).inputValue(),'Pending name');
  await editor.getByRole('button',{name:'Discard edits',exact:true}).click();
  await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settle();assert.equal((await current()).rules.length,0);
- await pane.getByRole('button',{name:'New header rule',exact:true}).click();await editor.getByLabel('Rule name',{exact:true}).fill('Preserve this draft during Undo');
+ await newTrafficRule(page,'Change response headers…');await editor.getByLabel('Rule name',{exact:true}).fill('Preserve this draft during Undo');
  await pane.getByRole('button',{name:'Undo remove',exact:true}).click();await unsaved.waitFor();await page.keyboard.press('Escape');assert.equal((await current()).rules.length,0);assert.equal(await editor.getByLabel('Rule name',{exact:true}).inputValue(),'Preserve this draft during Undo');
  await editor.getByRole('button',{name:'Discard edits',exact:true}).click();
  await pane.getByRole('button',{name:'Undo remove',exact:true}).click();await settle();assert.equal((await current()).rules[0].id,ruleId);

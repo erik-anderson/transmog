@@ -25,7 +25,7 @@ export async function checkResponseExperiments(page,root){
  const reopen=async()=>{await manager.getByRole('button',{name:'Edit response',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse);assert.equal(await editor.getByLabel('Rule name',{exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true,'Opening an experiment response did not move focus into its editor');};
  await editor.getByRole('button',{name:'Save experiment',exact:true}).waitFor();
  assert.equal(await tabs.getByRole('button',{name:'Experiments',exact:true}).getAttribute('data-selected'),'');
- assert.equal(await page.getByRole('grid',{name:'Autoresponse rules in first-match order'}).isVisible(),false);
+ assert.equal(await page.getByRole('grid',{name:'Traffic rules'}).isVisible(),false);
  assert.equal(await editor.getByLabel('Rule name',{exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);
  await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.loadingSavedResponse&&!a.editBodyDisabled;});
  assert.equal(await editor.getByRole('checkbox',{name:/Rule enabled/}).count(),0);
@@ -33,9 +33,9 @@ export async function checkResponseExperiments(page,root){
  await editor.getByLabel('Rule name',{exact:true}).fill('Checkout succeeds with patched script');
  await editor.getByLabel('Edit response body',{exact:true}).check();
  await editor.locator('textarea[name="body"]').fill('globalThis.checkout = true;');
- await tabs.getByRole('button',{name:'Auto-responses',exact:true}).click();
+ await tabs.getByRole('button',{name:'Rules',exact:true}).click();
  assert.equal(await editor.isVisible(),false);
- assert.equal(await page.getByRole('grid',{name:'Autoresponse rules in first-match order'}).isVisible(),true);
+ assert.equal(await page.getByRole('grid',{name:'Traffic rules'}).isVisible(),true);
  await tabs.getByRole('button',{name:'Experiments',exact:true}).click();
  await page.evaluate(async()=>{const s=document.querySelector('app-shell');await s.activateView('traffic');await s.activateView('automation');});
  assert.equal(await editor.locator('textarea[name="body"]').inputValue(),'globalThis.checkout = true;','Workspace changes lost the experiment draft');
@@ -90,11 +90,11 @@ export async function checkResponseExperiments(page,root){
  await page.evaluate(()=>globalThis.__workspaceFixture.deferExperimentSave=true);
  await editor.getByLabel('Rule name',{exact:true}).press('Control+s');
  await page.waitForFunction(()=>globalThis.__workspaceFixture.finishExperimentSave);
- await tabs.getByRole('button',{name:'Header rules',exact:true}).click();
+ await tabs.getByRole('button',{name:'Rules',exact:true}).click();
  await page.evaluate(()=>globalThis.__workspaceFixture.finishExperimentSave());
  await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.savingAutoResponse&&!a.loadingSavedResponse&&!a.draftDirty;});
- assert.equal(await tabs.getByRole('button',{name:'Header rules',exact:true}).getAttribute('data-selected'),'');
- assert.equal(await tabs.getByRole('button',{name:'Header rules',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true,'Late save stole focus');
+ assert.equal(await tabs.getByRole('button',{name:'Rules',exact:true}).getAttribute('data-selected'),'');
+ assert.equal(await tabs.getByRole('button',{name:'Rules',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true,'Late save stole focus');
  await tabs.getByRole('button',{name:'Experiments',exact:true}).click();
  assert.equal(await manager.getByLabel('Variant revision',{exact:true}).inputValue(),'2');
  await reopen();
