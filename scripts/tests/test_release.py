@@ -94,6 +94,7 @@ class ReleaseDecisions(unittest.TestCase):
             if url == base + "/releases?per_page=100&page=1": return releases
             if url.endswith("page=2"): return []
             if url.endswith("/releases/tags/canary"): return None
+            if url.endswith("/git/ref/tags/canary"): return None
             if url.endswith("/releases/assets/200"): return manifest("0.2.0", "Canary")
             if url.endswith("/releases/assets/201"): return updates["0.2.0"]
             if url.endswith("/releases/assets/210"): return manifest("0.2.1", "Canary")
@@ -109,6 +110,80 @@ class ReleaseDecisions(unittest.TestCase):
         module.synchronize("fixture/repository", api, lambda url, name, payload: uploads.append((url, name, payload)))
         self.assertEqual(mutations[0][1]["sha"], "b" * 40)
         self.assertEqual(uploads, [("https://uploads.github.com/feed", "latest.json", updates["0.2.1"])])
+
+    def test_canary_feed_recovers_independent_tag_release_and_asset_states(self):
+        module = load("sync-canary-update-feed")
+        base = "https://api.github.com/repos/fixture/repository"
+        commit = "b" * 40
+        payload = b'{"version":"0.2.1"}'
+        manifest = json.dumps({"Version": "0.2.1", "ReleaseType": "Canary", "Commit": commit}).encode()
+        release = dict(tag_name="v0.2.1", id=21, prerelease=True, assets=[
+            dict(name="release-manifest.json", id=210), dict(name="latest.json", id=211)])
+        for has_release, tag, content in (
+            (False, commit, None),  # A deleted rolling release leaves its tag.
+            (False, "a" * 40, None),
+            (True, None, payload),  # A deleted tag leaves the rolling release.
+            (True, "a" * 40, payload),
+            (True, commit, payload),
+            (True, commit, b'{"version":"0.2.0"}'),
+            (True, commit, None),  # Recover an interrupted asset replacement.
+        ):
+            with self.subTest(has_release=has_release, tag=tag, content=content):
+                state = {"tag": tag, "release": has_release, "content": content}
+                mutations, uploads = [], []
+                def api(url, **kwargs):
+                    method = kwargs.get("method", "GET")
+                    if method != "GET":
+                        mutations.append((url, method, kwargs.get("data")))
+                    if url.endswith("/releases?per_page=100&page=1"):
+                        return [release]
+                    if url.endswith("/releases/assets/210"):
+                        self.assertTrue(kwargs.get("binary"))
+                        return manifest
+                    if url.endswith("/releases/assets/211"):
+                        self.assertTrue(kwargs.get("binary"))
+                        return payload
+                    if url.endswith("/releases/tags/canary"):
+                        return {"upload_url": "https://uploads.github.com/feed{?name}", "assets":
+                                [] if state["content"] is None else [dict(name="latest.json", id=300)]} if state["release"] else None
+                    if url.endswith("/git/ref/tags/canary"):
+                        return {"object": {"sha": state["tag"]}} if state["tag"] else None
+                    if url.endswith("/git/refs") and method == "POST":
+                        self.assertIsNone(state["tag"], "Do not create an existing tag")
+                        state["tag"] = kwargs["data"]["sha"]
+                        return {}
+                    if url.endswith("/git/refs/tags/canary") and method == "PATCH":
+                        self.assertEqual(kwargs["data"], {"sha": commit, "force": True})
+                        state["tag"] = commit
+                        return {}
+                    if url.endswith("/releases") and method == "POST":
+                        self.assertFalse(state["release"])
+                        self.assertEqual(kwargs["data"]["tag_name"], "canary")
+                        self.assertEqual(kwargs["data"]["target_commitish"], commit)
+                        self.assertEqual(kwargs["data"]["make_latest"], "false")
+                        self.assertTrue(kwargs["data"]["prerelease"])
+                        state["release"] = True
+                        return {"upload_url": "https://uploads.github.com/feed{?name}", "assets": []}
+                    if url.endswith("/releases/assets/300"):
+                        if method == "DELETE":
+                            state["content"] = None
+                            return None
+                        self.assertTrue(kwargs.get("binary"))
+                        return state["content"]
+                    self.fail(f"Unexpected fixture request: {method} {url}")
+                def upload(url, name, data):
+                    self.assertIsNone(state["content"])
+                    self.assertEqual((url, name, data), ("https://uploads.github.com/feed", "latest.json", payload))
+                    uploads.append(data)
+                    state["content"] = data
+                module.synchronize("fixture/repository", api, upload)
+                self.assertEqual(state, {"tag": commit, "release": True, "content": payload})
+                self.assertEqual(len(uploads), 0 if has_release and content == payload else 1)
+                mutations.clear()
+                uploads.clear()
+                module.synchronize("fixture/repository", api, upload)
+                self.assertEqual(mutations, [])
+                self.assertEqual(uploads, [])
 
 
 def fixture(root):

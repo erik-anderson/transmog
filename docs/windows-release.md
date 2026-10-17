@@ -491,6 +491,8 @@ from the stable feed. Publication and Beta-to-Stable promotion refresh GitHub's
 Latest pointer to the highest stable version with update assets. The release
 maintenance workflow also refreshes the rolling Canary manifest to the highest
 published Canary version; Beta prereleases are excluded from that feed.
+It repairs a missing rolling release or tag independently and leaves an identical
+manifest in place, so repeated release events do not interrupt the existing feed.
 
 Before the first signed update, configure `TRANSMOG_UPDATER_PRIVATE_KEY` in the
 protected `release-signing` GitHub environment. The matching local key is kept in

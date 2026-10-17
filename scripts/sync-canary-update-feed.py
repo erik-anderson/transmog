@@ -47,19 +47,25 @@ def synchronize(repository, api=request, upload=upload_asset):
     _, newest, commit, payload = max(candidates, key=lambda item: item[0])
 
     rolling = api(f"{base}/releases/tags/canary")
-    if rolling is None:
+    # A release can be removed without deleting its Git tag (or vice versa).
+    # Reconcile the two resources independently so retries recover either state.
+    ref = api(f"{base}/git/ref/tags/canary")
+    if ref is None:
         api(f"{base}/git/refs", method="POST", data={"ref": "refs/tags/canary", "sha": commit})
+    elif ref["object"]["sha"] != commit:
+        api(f"{base}/git/refs/tags/canary", method="PATCH", data={"sha": commit, "force": True})
+    if rolling is None:
         rolling = api(f"{base}/releases", method="POST", data={
             "tag_name": "canary", "target_commitish": commit, "name": "Canary update feed",
-            "draft": False, "prerelease": True,
+            "draft": False, "prerelease": True, "make_latest": "false",
             "body": "Rolling signed updater manifest for the newest published Canary release.",
         })
-    else:
-        ref = api(f"{base}/git/ref/tags/canary")
-        if ref["object"]["sha"] != commit:
-            api(f"{base}/git/refs/tags/canary", method="PATCH", data={"sha": commit, "force": True})
     for asset in rolling.get("assets", []):
         if asset["name"] == "latest.json":
+            existing = api(f"{base}/releases/assets/{asset['id']}", binary=True)
+            if existing == payload:
+                print(f"Canary update feed already selects {newest['tag_name']}.")
+                return
             api(f"{base}/releases/assets/{asset['id']}", method="DELETE")
     upload(rolling["upload_url"].split("{")[0], "latest.json", payload)
     print(f"Canary update feed now selects {newest['tag_name']}.")
