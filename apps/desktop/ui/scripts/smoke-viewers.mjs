@@ -1,5 +1,5 @@
 import {createHash} from 'node:crypto';
-import {smokeIncidentRecording,smokeIncidentIntake} from './smoke-incidents.mjs';
+import {smokeIncidentRecording,smokeIncidentIntake,smokeMarkerReview} from './smoke-incidents.mjs';
 import {smokeComparison,smokePreviewComparison} from './smoke-comparison.mjs';
 import assert from 'node:assert/strict';
 import {smokePreviewRules} from './smoke-preview-rules.mjs';
@@ -55,6 +55,7 @@ try{
   const viewer=await connect(pages[0]);
   await waitFor(()=>viewer.evaluate(`${root}?.viewerMode && ${traffic}?.sessions.length===1 && !${traffic}.importingTrace`),'Saved-file viewer did not finish automatic import');
   process.stdout.write('Viewer file import verified.\n');
+  await smokeMarkerReview(viewer,traffic,screenshot);
   const traceSave=await smokeTraceSave(viewer,screenshot);
   if(process.argv.includes('--trace-save-only')) {
     process.stdout.write(JSON.stringify({nativeTraceSave:traceSave})+'\n');

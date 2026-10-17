@@ -613,3 +613,12 @@ markers retain their own run identity through merged source namespaces. Applicat
 imports retain markers under source `context.incidentMarkers`; source-preserving
 saves keep this context without rewriting original timestamps. These optional
 extensions do not change the experimental container/header/record revision.
+
+Reviewer copies may include source `context.markerReview` version 1, containing
+`editedMarkerIds` and optional `links`. Each link has a `markerId`, a source-local
+random 32-hex `anchorId`, `boundary` (`request` or `response`), and `timeBasis`
+(`request-start` or `response-headers`). The matching saved entry carries optional
+`markerAnchor`. Links remain unavailable if that entry was excluded; runtime row
+IDs are never persisted. Reviewer edits retain marker identity, recording origin
+and original time, while authored markers use `analyst` / `later-annotation`.
+Review metadata contains current text and provenance, never Undo or replaced text.

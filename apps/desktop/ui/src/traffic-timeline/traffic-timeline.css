@@ -44,3 +44,19 @@ traffic-timeline { display:block; flex:1; min-height:0; min-width:0; overflow:hi
 .timeline-overview [tabindex]:focus-visible,.timeline-viewport:focus-visible,.timeline-row:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
 @container (max-width:850px) { .timeline-overview > svg { height:28px; } }
 @media (forced-colors:active) { .timeline-window { fill:Canvas; stroke:Highlight; } .timeline-handle,.timeline-response,.timeline-zero { fill:Highlight; } .timeline-span,.timeline-density { fill:CanvasText; } .timeline-row[data-current] { border-inline-start:3px solid Highlight; } }
+
+.timeline-overview{position:relative}
+.timeline-marker-overlay{position:absolute;top:.35rem;left:.6rem;right:.6rem;height:44px;pointer-events:none}
+.timeline-marker-track{position:relative;height:32px;min-width:0}
+.timeline-marker{position:absolute;left:attr(data-position type(<percentage>),50%);top:0;transform:translateX(-50%);height:100%;min-width:24px;padding:0 .15rem;border:0;border-inline-start:2px solid currentColor;border-radius:0;background:transparent;color:var(--text);font-size:1rem;pointer-events:auto;cursor:pointer}
+.timeline-marker small{font-size:.65rem;background:var(--panel)}
+.timeline-marker:hover{background:var(--accent-soft)}
+.timeline-marker:focus-visible{outline:2px solid var(--focus);outline-offset:-2px}
+.timeline-marker[data-current]{color:var(--accent-strong);border-inline-start-width:4px;background:var(--accent-soft)}
+.timeline-marker-lane{align-items:center;flex:none}
+.marker-picker{inset:0;margin:auto}
+.marker-picker button{display:block;white-space:normal;text-align:left;margin:.4rem 0;overflow-wrap:anywhere}
+@container(max-width:850px){.timeline-marker-overlay{height:28px}}
+@media(forced-colors:active){.timeline-marker{color:CanvasText}.timeline-marker[data-current]{color:Highlight}}
+
+@media(max-height:700px){.timeline-overview>svg,.timeline-marker-overlay{height:20px}.timeline-overview{padding-block:.2rem}.timeline-marker-overlay{top:.2rem}.timeline-marker-track{height:24px}.timeline-viewport{min-height:64px;flex-basis:64px}.timeline-tools{padding-block:.2rem}}

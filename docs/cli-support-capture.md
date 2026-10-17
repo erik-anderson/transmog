@@ -137,7 +137,7 @@ canceled, public recovery metadata stays available for another attempt.
 
 In Transmog, use **Files → Import traffic…** to open the leftover `.tmcap`. The viewer recovers
 the valid prefix without changing the original and explains incomplete evidence
-in **Trace metadata**. Use **Save trace…** and choose a new filename such as
+in **Trace metadata**. Use **Save copy…** and choose a new filename such as
 `recovered-trace.tmcap`; each chunk is already compressed. Choose password
 encryption when the recovered copy also needs protection. Review it, then
 share the recovered copy. Missing bytes cannot be reconstructed.

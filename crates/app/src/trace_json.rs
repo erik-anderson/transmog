@@ -564,6 +564,7 @@ fn har(
         result.entries.insert(
             format!("{:032x}", id.0),
             TraceEntry {
+                marker_anchor: None,
                 trace_id: trace_id.into(),
                 original_id: (position + 1).to_string(),
                 original_number: None,

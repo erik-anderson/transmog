@@ -235,3 +235,22 @@ traffic-workspace { display:contents; }
 
 traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywhere}traffic-workspace .trace-export-facts div{display:grid;grid-template-columns:minmax(8rem,1fr) minmax(0,2fr);gap:.5rem}traffic-workspace .trace-export-facts dd{margin:0}
 @media(max-width:650px){traffic-workspace .trace-export-facts div{grid-template-columns:1fr}}
+
+.trace-markers-panel{border-bottom:1px solid var(--line);font-size:.78rem;background:var(--panel)}
+.trace-markers-panel>summary{padding:.2rem .7rem;cursor:pointer;font-weight:600}
+.trace-markers-content{padding:0 .7rem .35rem;min-width:0}
+.trace-markers-content>incident-intake{display:block;max-height:min(18vh,10rem);overflow:auto;overscroll-behavior:contain}
+.trace-markers-tools{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}
+.trace-markers-tools label{display:flex;gap:.4rem;align-items:baseline;min-width:0;flex:1}
+.trace-markers-tools select{min-width:0;max-width:24rem;flex:1}
+.trace-markers-content p{margin:.3rem 0}
+
+.request-marker-flag{color:var(--accent-strong);padding-inline-end:.3rem}
+
+.traffic-view:has(.trace-markers-panel[open]) .traffic-workspace[data-layout="stacked"]:has(.timeline-surface:not([hidden])){grid-template-rows:minmax(8rem,45%) 6px minmax(0,1fr)}
+
+.marker-summary-row{display:inline-flex;align-items:baseline;gap:.6rem;width:calc(100% - 1rem);min-width:0}
+.marker-summary-row>span:first-child{flex:none}
+.marker-source-name{color:var(--muted);font-weight:400;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;min-width:0}
+.marker-summary-row>select{min-width:0;max-width:28rem;flex:1;padding:.15rem .35rem;font:inherit}
+.marker-summary-row>button{margin-inline-start:auto;flex:none;min-height:1.5rem;padding:.15rem .4rem}

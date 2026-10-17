@@ -416,6 +416,71 @@ pub fn validate_context(context: &serde_json::Value) -> io::Result<()> {
             }
         }
     }
+    validate_marker_review(context)
+}
+
+fn validate_marker_review(context: &serde_json::Value) -> io::Result<()> {
+    if let Some(review) = context.get("markerReview") {
+        let edited = review
+            .get("editedMarkerIds")
+            .and_then(serde_json::Value::as_array)
+            .filter(|ids| ids.len() <= MAX_MARKERS)
+            .ok_or_else(|| invalid("markerReview: invalid edited markers"))?;
+        if review.get("version").and_then(serde_json::Value::as_u64) != Some(1) {
+            return Err(invalid("markerReview: unsupported version"));
+        }
+        let mut seen = std::collections::HashSet::new();
+        for id in edited {
+            let id = id
+                .as_str()
+                .filter(|id| valid_id(id))
+                .ok_or_else(|| invalid("markerReview: invalid marker identity"))?;
+            if !seen.insert(id)
+                || !context
+                    .get("incidentMarkers")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|markers| markers.iter().any(|marker| marker["id"] == id))
+            {
+                return Err(invalid(
+                    "markerReview: edited marker is missing or duplicated",
+                ));
+            }
+        }
+        if let Some(links) = review.get("links") {
+            let links = links
+                .as_array()
+                .filter(|links| links.len() <= MAX_MARKERS)
+                .ok_or_else(|| invalid("markerReview: invalid links"))?;
+            let mut seen = std::collections::HashSet::new();
+            for link in links {
+                let id = link
+                    .get("markerId")
+                    .and_then(serde_json::Value::as_str)
+                    .filter(|id| valid_id(id))
+                    .ok_or_else(|| invalid("markerReview: invalid linked marker"))?;
+                if !seen.insert(id)
+                    || !context
+                        .get("incidentMarkers")
+                        .and_then(serde_json::Value::as_array)
+                        .is_some_and(|markers| markers.iter().any(|m| m["id"] == id))
+                    || link
+                        .get("anchorId")
+                        .and_then(serde_json::Value::as_str)
+                        .is_none_or(|id| !valid_id(id))
+                    || !matches!(
+                        link.get("boundary").and_then(serde_json::Value::as_str),
+                        Some("request" | "response")
+                    )
+                    || !matches!(
+                        link.get("timeBasis").and_then(serde_json::Value::as_str),
+                        Some("request-start" | "response-headers")
+                    )
+                {
+                    return Err(invalid("markerReview: invalid marker link"));
+                }
+            }
+        }
+    }
     Ok(())
 }
 

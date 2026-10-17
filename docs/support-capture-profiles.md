@@ -98,27 +98,48 @@ they do not promise power-loss durability. See [native capture](native-capture-f
 
 ## Developer intake and export review
 
-Import the customer trace, then open **Files → View current imports…** and choose
-its original source. Incident intake shows reproduction steps, user marks,
-expected/actual behavior, entered client/version, observed client/User-Agent
-samples, collector version and explicit collection gaps. These sources of client
-information remain separate. Selecting **Show surrounding requests** applies a
-source-specific recorded-time window before virtual paging. Before/after intervals
-are adjustable from 0 to 86,400 seconds. Relevant-host restriction is explicit.
-Clock skew/adjustment and missing timestamps limit chronology; an empty window is
-not evidence of a network failure. **Show source traffic** works without markers.
+Opening a customer trace exposes **Markers** above Traffic. The panel expands
+in a fresh capture viewer when markers are present. It uses a compact marker
+list beside the selected note and actions, leaving the request list and inspector
+available. Choose a trace when several original sources are loaded. Reproduction
+steps, expected/actual behavior, client evidence and collection gaps live under
+**Capture details**; raw context remains in **Files → View current imports…**.
 
-The Traffic banner exposes active time/host restrictions. **Clear incident
-restriction** restores the preceding selection/scroll and keeps ordinary filters;
-**Show all traffic** also clears those filters. Original inspected evidence stays
-available during incident navigation. Use the existing comparison actions to
-compare requests or filtered capture scopes.
+Timeline shows flags in its overview and visible range. Click a flag or marker
+row to go to its recorded time and scroll the nearest matching request into view.
+Overlapping flags open a chooser. Keyboard users can Tab to a flag, use Left/Right
+to move between flags, and Enter to open one. Navigation preserves request
+selection and ordinary filters. **Show nearby requests** explicitly applies a
+source-specific time filter, initially 30 seconds before and after the marker.
+**Time range** adjusts those intervals from 0 to 86,400 seconds and optionally
+restricts suggested hosts. **Clear time filter** restores the preceding view;
+**Clear other filters** also removes ordinary Traffic filters. **Show full trace**
+works when no markers are present. Source clocks may differ, and missing nearby
+requests do not establish a network failure.
+
+Use **Flag request…** or **Flag response…** in a request's context menu or the
+inspector's **Actions** menu to add a reviewer marker with an optional note.
+These markers retain an exact message link through supported copies, independently
+of workspace request numbers. A response marker uses recorded response-header
+timing when available; otherwise it explicitly uses the request time. Requests
+without recorded timestamps cannot be flagged. Selecting a linked marker also
+opens its request or response in the inspector. A flag beside the request number
+identifies flagged requests in List.
+
+**Edit note → Apply** changes the review copy. **Clear note** removes only its
+text; **Delete marker** removes its timestamp, note and message link. **Undo**
+restores recent marker changes. **Edited note** identifies revised text; **Unsaved
+changes** means the current markers have not been preserved in a supported copy.
+Drafts survive trace and view changes. **Save copy…** includes pending note edits;
+closing a window with unsaved marker work offers saving, discarding or continuing
+review. Clearing traffic keeps its capture-level markers available, including
+when no requests remain.
 
 **Capture tools → Record to file → Issue happened here** uses the same durable
 marker model. These file-only recordings still do not populate live Traffic;
 import the resulting file to inspect its incidents.
 
-**Save trace…** reviews all retained entries, selected requests, current filters
+**Save copy…** reviews all retained entries, selected requests, current filters
 (including incident windows), or an original source. The inventory includes sources,
 hosts, recorded time range, body/stream availability and incident-marker counts.
 Review freezes membership without pinning every body; new traffic is excluded.
@@ -126,17 +147,21 @@ Four reviews of up to 100,000 entries are retained per window. Missing reviewed
 entries require a new review before saving. Host/source name inventories display
 up to 100 names; counts cover the complete reviewed membership.
 
-The original capture-context checkbox controls original capture-level metadata,
-incident notes/markers, source notes and descriptive source paths. It does not
-remove HTTP URLs, bodies, per-request fidelity or stream payloads. Sensitive-header
-redaction also projects trailers and omits raw header evidence that could bypass
-it. It is not complete anonymization. Selected exclusions are recorded in the new
-copy. TMCap and extended SAZ retain source incident context; HAR and compatibility
-SAZ report omitted incident-marker counts. Encryption is a new choice for the
-exported copy; opening an encrypted source does not encrypt a copy automatically.
-No password is remembered. Failed/canceled exports preserve original and existing
-target files through the existing safe export transaction. Imported originals cannot
-be overwritten by Save trace; choose a new filename.
+**Include markers and notes** controls the current marker set independently of
+**Include capture details**, which controls recorded configuration, reproduction
+context, source notes and descriptive paths. TMCap and extended SAZ retain marker
+text, reviewer provenance and exact message links. HAR and compatibility SAZ
+omit them and disclose the omission before saving. Exported copies contain
+current notes only, without replaced text, deleted markers or session Undo history.
+All remaining markers for included sources are preserved even when only some
+requests are selected. A link to a request omitted from the copy stays unavailable.
+
+Export review checks marker revisions; edits made after review require a refreshed
+inventory. Edits made during writing remain unsaved. Failed, canceled, or
+marker-omitting exports keep unsaved state. Imported files cannot be overwritten;
+choose a new filename. Encryption is a separate choice for each copy, with no
+remembered password. Header removal is not complete anonymization and does not
+remove private data from URLs, bodies or notes.
 
 True host/time retention filtering and extra browser context remain separate
 future increments; advisory profile hints do not enable them.

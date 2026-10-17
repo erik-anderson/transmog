@@ -18,6 +18,10 @@ when changing the experience.
   Case sharing uses one native package format with optional password protection;
   keep packaging internals out of the save flow. Traffic interchange formats,
   including SAZ, remain in the ordinary traffic workflow.
+- Review markers alongside traffic, with concise notes and actions sharing
+  horizontal space. Marker navigation reveals time or linked evidence; applying
+  a time filter is explicit. Preserve edits in a new copy and distinguish clearing
+  note text from deleting its marker.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.

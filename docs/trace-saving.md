@@ -20,7 +20,7 @@ plaintext working copies and reviewed disabled rule import are separate actions.
 Normal file import and drag/drop recognize case files and open the case overview.
 Case inspection and forwarding remain secondary actions in the Files menu.
 
-Use **Traffic → Files → Save trace…** in the main window or a Capture viewer. Review all retained entries, selected requests, the current filters/incident window,
+Use **Traffic → Files → Save copy…** in the main window or a Capture viewer. Review all retained entries, selected requests, the current filters/incident window,
 or an original source; removed entries are excluded.
 Undo a removal before saving if those entries should be included. The file dialog
 confirms overwriting other exports; imported originals require a new filename. An existing destination is replaced only after a complete
@@ -38,12 +38,12 @@ references. Ordinary readers can ignore these extensions. Imported Chromium
 NetLog PEM paths use the same viewer, while SAZ HTTPS flags and HAR security
 summaries remain available even when their files omitted certificate bytes.
 
-The Save trace dialog shows concise help for the selected format; detailed
+The Save copy dialog shows concise help for the selected format; detailed
 limitations are under **Format details and capture limits**, and the full
 inventory/refresh action is under **Included evidence inventory**. Password,
 context and header-removal choices stay visible.
 
-The Save trace dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
+The Save copy dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
 fidelity. Select **SAZ · compatibility** for ordinary SAZ readers, or **SAZ ·
 extended fidelity** to preserve original source associations and additional
 evidence. SAZ supports optional encryption and network context; ZIP member names
@@ -121,7 +121,7 @@ closes. Large Clear operations expire Undo and release source context too.
 
 ## Comparison snapshots
 
-Current TMCap recording and **Save trace…** preserve observed request/response
+Current TMCap recording and **Save copy…** preserve observed request/response
 head-edit order, captured hook identities/names and structural header-name
 changes, including no-op head replacements. Header values are excluded from
 this audit metadata; original and effective heads follow the trace's ordinary
@@ -143,18 +143,19 @@ their separate API/artifact work. See [Traffic comparison](traffic-inspection.md
 
 ## Incident intake and reviewed evidence export
 
-Native source metadata retains support profile revisions, independent incident
-markers and original source clocks. **View current imports…** offers incident
-intake and source-specific adjustable time navigation. A marker is never an HTTP
-exchange or a request-order value. Circular gaps and recovered/unsealed sources
-remain explicit. See [support profiles and incident intake](support-capture-profiles.md).
+Native sources retain support profiles, original clocks and independent markers.
+The **Markers** panel and Timeline flags provide direct review and navigation.
+Requests can be flagged from their context menu or **Actions**, with an optional
+note and a persistent request/response link. Marker text can be edited or cleared,
+and markers can be deleted, with session Undo. See [marker review and export](support-capture-profiles.md#developer-intake-and-export-review).
 
-**Save trace…** inventories and freezes all, selected, filtered or source membership
-before saving, including offscreen entries. The original-context choice can omit
-capture context, markers, source notes and source paths from the copy. HTTP/stream
-content is controlled separately by whole-entry selection and sensitive-header
-projection. TMCap/extended SAZ preserve source incident context; HAR/compatibility
-SAZ report incident-marker omissions. Review is not complete anonymization.
+**Save copy…** inventories selected, filtered or source membership before saving,
+including offscreen entries. **Include markers and notes** preserves the current
+marker set independently of **Include capture details**. TMCap and extended SAZ
+preserve markers and message links; HAR and compatibility SAZ disclose omissions.
+Changed notes require a refreshed inventory, and only successfully preserved
+source revisions become saved. Copies contain current note text and reviewer
+provenance, without replaced text or Undo history. Imported originals stay intact.
 
 
 ## Literal response edit evidence

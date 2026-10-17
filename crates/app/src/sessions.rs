@@ -948,7 +948,7 @@ pub(crate) fn traffic_timeline_rows(
         .collect())
 }
 
-fn timeline_row(
+pub(crate) fn timeline_row(
     snapshot: &SessionSnapshot,
     now: SystemTime,
     traces: &crate::traces::TraceRegistry,

@@ -3,6 +3,7 @@ import type {TrafficTimelineRow,TraceMetadata} from '../models.js';
 import {milliseconds} from '../timings.js';
 import {clampWindow,intervalEnd,overlaps,requestAddress,timelineTime,timelineRange} from './timeline-model.js';
 import initialState from '../initial-state.json';
+import {markerGroups,type TraceMarker,type MarkerGroup} from '../markers.js';
 import {isTextEditing} from '../list-selection.js';
 
 type DisplayRow=TrafficTimelineRow&{label:string;source:string;host:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
@@ -13,6 +14,13 @@ export class TrafficTimeline extends WebUIElement {
   @observable sources:TraceMetadata[]=[];
   @observable compact=true;
   @attr current='';
+  @attr markerCurrent='';
+  @observable markers:TraceMarker[]=[];
+  @observable overviewMarkers:MarkerGroup[]=[];
+  @observable rangeMarkers:MarkerGroup[]=[];
+  @observable markerChoices:TraceMarker[]=[];
+  markerPicker!:HTMLDialogElement;
+  private markerReturn:HTMLElement|null=null;
   @observable timelineDisplay={...initialState.timelineDisplay,rows:[] as DisplayRow[]};
   viewport!:HTMLElement;
   overview!:SVGSVGElement;
@@ -30,6 +38,7 @@ export class TrafficTimeline extends WebUIElement {
   private minimum=0;
   private maximum=1;
   private adjusted=false;
+  private markerNavigation=false;
   private order='start';
   private rowHeight=32;
   private rebuildPending=false;
@@ -37,8 +46,10 @@ export class TrafficTimeline extends WebUIElement {
 
   protected hydratedCallback():void {this.observer=new ResizeObserver(()=>this.renderRows());this.observer.observe(this.viewport);this.observer.observe(this.rowMetric);this.rebuild();}
   entriesChanged():void {if(this.drag)this.rebuildPending=true;else this.rebuild();}
-  chosenChanged():void {this.rebuild();}
+  chosenChanged():void {this.markerNavigation=false;this.rebuild();}
+  markerCurrentChanged():void{this.renderRange();}
   sourcesChanged():void {this.renderRows();}
+  markersChanged():void {this.rebuild();}
   compactChanged():void {
     if(this.rowMetric){this.$flushUpdates();this.renderRows();}
   }
@@ -46,16 +57,17 @@ export class TrafficTimeline extends WebUIElement {
     // Deliberate scope changes cancel a gesture; live snapshots wait for its end.
     if(this.drag)this.cancelDrag();
     const selected=new Set(this.chosen);
-    this.scoped=this.entries.filter(row=>!selected.size||selected.has(row.id));
+    this.scoped=this.entries.filter(row=>this.markerNavigation||!selected.size||selected.has(row.id));
     let first=Infinity,last=-Infinity;
     for(const row of this.scoped)if(row.startMillis!=null){first=Math.min(first,row.startMillis);last=Math.max(last,intervalEnd(row)??row.startMillis);}
+    for(const marker of this.markers){first=Math.min(first,marker.unixMillis);last=Math.max(last,marker.unixMillis);}
     if(!Number.isFinite(first)){first=0;last=1;}
     this.minimum=this.adjusted?Math.min(first,this.from):first;
     this.maximum=Math.max(this.minimum+1,this.adjusted?Math.max(last,this.to):last);
     if(!this.adjusted){this.from=this.minimum;this.to=this.maximum;}
     this.renderRange();
   }
-  resetRange():void {this.adjusted=false;this.rebuild();}
+  resetRange():void {this.markerNavigation=false;this.adjusted=false;this.rebuild();}
   changeOrder(event:Event):void {this.order=(event.currentTarget as HTMLSelectElement).value;this.renderRange();}
   private renderRange():void {
     this.matching=this.scoped.filter(row=>overlaps(row,this.from,this.to)).sort((a,b)=>this.order==='duration'?
@@ -71,17 +83,40 @@ export class TrafficTimeline extends WebUIElement {
     for(let i=0;i<200;i++){count+=counts[i]!;bins.push(count);peak=Math.max(peak,count);}
     const unavailable=this.scoped.filter(row=>row.startMillis==null||row.durationMicros==null).length;
     const clocks=new Set(this.scoped.map(row=>row.traceId??'live'));
+    const axis=this.markerNavigation?{fromLabel:clockTime(this.from),toLabel:clockTime(this.to),range:clockTime(this.from)+' – '+clockTime(this.to)}:timelineRange((this.from-this.minimum)*1000,(this.to-this.minimum)*1000);
     this.timelineDisplay={...this.timelineDisplay,
       densityPath:bins.map((value,index)=>value?`M${index*5} 40V${40-value/peak*36}H${index*5+5}V40Z`:'').join(''),
       windowX:(this.from-this.minimum)/extent*1000,windowWidth:(this.to-this.from)/extent*1000,
       startHandle:(this.from-this.minimum)/extent*1000-4,endHandle:(this.to-this.minimum)/extent*1000-4,
       fromValue:(this.from-this.minimum)/extent*1000,toValue:(this.to-this.minimum)/extent*1000,
-      ...timelineRange((this.from-this.minimum)*1000,(this.to-this.minimum)*1000),
-      origin:this.minimum>0?timestamp(this.minimum):'Start time unavailable',
-      summary:(this.matching.length===this.scoped.length?`${this.scoped.length.toLocaleString()}${this.chosen.length?' selected':''} request${this.scoped.length===1?'':'s'}`:`${this.matching.length.toLocaleString()} of ${this.scoped.length.toLocaleString()}${this.chosen.length?' selected':''} requests in range`)+(unavailable?` · ${unavailable.toLocaleString()} without timing`:''),
-      clocks:clocks.size>1?'Recorded source clocks may differ; alignment does not establish cross-source chronology.':'Times are relative to the first recorded start in this scope.',
-      selected:this.chosen.length>0,empty:this.matching.length===0,mixedClocks:clocks.size>1};
+      ...axis,
+      origin:this.minimum>0?timestamp(this.markerNavigation?this.from:this.minimum):'Start time unavailable',
+      summary:(this.matching.length===this.scoped.length?`${this.scoped.length.toLocaleString()}${this.chosen.length&&!this.markerNavigation?' selected':''} request${this.scoped.length===1?'':'s'}`:`${this.matching.length.toLocaleString()} of ${this.scoped.length.toLocaleString()}${this.chosen.length&&!this.markerNavigation?' selected':''} requests in range`)+(unavailable?` · ${unavailable.toLocaleString()} without timing`:''),
+      clocks:clocks.size>1?'Recorded source clocks may differ; alignment does not establish cross-source chronology.':this.markerNavigation?'Recorded source time at the selected marker.':'Times are relative to the first recorded start in this scope.',
+      selected:this.chosen.length>0&&!this.markerNavigation,empty:this.matching.length===0,mixedClocks:clocks.size>1};
+    const pixels=this.overview?.clientWidth??600;
+    this.overviewMarkers=markerGroups(this.markers,this.minimum,this.maximum,pixels).map(g=>({...g,selected:g.markers.some(m=>m.key===this.markerCurrent)}));
+    this.rangeMarkers=markerGroups(this.markers,this.from,this.to,pixels*.6).map(g=>({...g,selected:g.markers.some(m=>m.key===this.markerCurrent)}));
     this.renderRows();
+  }
+  closeMarkerPicker():void{this.markerPicker.close();}
+  chooseMarker(key:string,overview:boolean,event:Event):void{
+    event.stopPropagation();const group=(overview?this.overviewMarkers:this.rangeMarkers).find(g=>g.key===key);if(!group)return;
+    if(group.markers.length===1){this.$emit('timeline-marker',group.markers[0]!.key);return;}
+    this.markerReturn=event.currentTarget as HTMLElement;this.markerChoices=group.markers;this.$flushUpdates();this.markerPicker.showModal();
+  }
+  pickMarker(key:string):void{this.markerPicker.close();this.$emit('timeline-marker',key);}
+  markerPickerClosed():void{if(this.markerReturn?.isConnected)this.markerReturn.focus({preventScroll:true});this.markerReturn=null;}
+  markerKey(key:string,overview:boolean,event:KeyboardEvent):void{
+    if(event.key==='Enter'||event.key===' '){event.preventDefault();this.chooseMarker(key,overview,event);return;}
+    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
+    event.preventDefault();event.stopPropagation();const groups=overview?this.overviewMarkers:this.rangeMarkers,index=groups.findIndex(g=>g.key===key),next=event.key==='Home'?0:event.key==='End'?groups.length-1:Math.max(0,Math.min(groups.length-1,index+(event.key==='ArrowLeft'?-1:1)));
+    const group=groups[next];if(group)(this.getRootNode() as ShadowRoot).getElementById((overview?'marker-overview-':'marker-range-')+group.key)?.focus({preventScroll:true});
+  }
+  goToTime(time:number,id?:string,focus=false):void{
+    this.markerNavigation=true;
+    const width=Math.max(2000,Math.min(60000,this.to-this.from));this.from=time-width/2;this.to=time+width/2;this.adjusted=true;this.rebuild();
+    if(id){const index=this.matching.findIndex(row=>row.id===id);if(index>=0){this.viewport.scrollTop=index*this.rowHeight;this.renderRows();if(focus)this.reveal(id);}}
   }
   renderRows(scroll=this.viewport?.scrollTop??0):void {
     // The CSS metric tracks rem-based density even when only text size changes.
@@ -165,7 +200,7 @@ export class TrafficTimeline extends WebUIElement {
     this.reveal(row.id);this.inspect(row.id);
   }
   startDrag(event:PointerEvent):void {
-    if(event.button!==0||!this.scoped.some(row=>intervalEnd(row)!=null))return;
+    if(event.button!==0||!this.scoped.some(row=>intervalEnd(row)!=null)&&!this.markers.length)return;
     event.preventDefault();event.stopPropagation();
     const target=event.target as Element,part=target.getAttribute('data-part')??'new';
     (target instanceof SVGElement&&target.hasAttribute('tabindex')?target:this.overview).focus({preventScroll:true});
@@ -205,5 +240,6 @@ export class TrafficTimeline extends WebUIElement {
   }
   disconnectedCallback():void {window.clearTimeout(this.helpCloseTimer);this.releaseDrag();this.observer?.disconnect();super.disconnectedCallback();}
 }
+function clockTime(value:number):string{return new Date(value).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit',fractionalSecondDigits:3,timeZoneName:'short'});}
 function timestamp(value:number):string {const date=new Date(value);return Number.isFinite(date.getTime())?date.toISOString():'Outside supported calendar range';}
 TrafficTimeline.define('traffic-timeline');

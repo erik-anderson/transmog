@@ -2157,6 +2157,12 @@ pub fn run() {
                 captured_preview::captured_page_report,
                 captured_preview::cancel_captured_page,
                 incidents::incident_intake,
+                incidents::trace_marker_reviews,
+                incidents::change_trace_marker,
+                incidents::add_trace_marker,
+                incidents::discard_marker_changes,
+                incidents::set_marker_draft_dirty,
+                incidents::close_trace_window,
                 incidents::review_traffic_export,
                 portable_cases::case_export_choices,
                 portable_cases::prepare_case_export,
@@ -2337,6 +2343,12 @@ pub fn run() {
             Ok(())
         })
         .on_window_event(move |window, event| {
+            if let tauri::WindowEvent::CloseRequested { api, .. } = event {
+                let state=window.state::<DesktopState>();
+                if window.get_webview_window(window.label()).and_then(|webview| state.window_application(&webview).ok()).is_some_and(|application| application.has_marker_changes()) {
+                    api.prevent_close();let _=tauri::Emitter::emit_to(window, window.label(), "trace-close-requested", ());return;
+                }
+            }
             if matches!(event, tauri::WindowEvent::Destroyed) {
                 portable_cases::release(window.label());
                 if window.label() == "main" {

@@ -212,12 +212,34 @@ await page.addInitScript((configuration) => {
           state.savedTraceArgs=structuredClone({options:args.options});state.saveTraceChannel=args.onProgress;
           if(state.deferTraceSave){state.traceSavePending=true;await new Promise(resolve=>state.releaseTraceSave=resolve);state.traceSavePending=false;}
           if(state.saveTraceError)throw new Error('Fixture trace write failed');
+          if(!state.cancelTraceSave&&args.options.includeMarkers&&['native','saz-extended'].includes(args.options.format))for(const r of Object.values(state.markerReviews??{}))r.dirty=false;
           return state.cancelTraceSave?null:{destination:'C:/captures/shared.tmcap',entries:state.sessions.length,bytes:1234,incompleteBodies:0,placeholderEntries:state.tracePlaceholders??0,connectionEntries:state.traceConnections??0};
+        }
+        case 'close_trace_window': state.traceCloseRequested=true;return;
+        case 'set_marker_draft_dirty': state.markerDraftDirty=args.dirty;return;
+        case 'discard_marker_changes': for(const r of Object.values(state.markerReviews??{}))r.dirty=false;return;
+        case 'trace_marker_reviews': {
+          state.markerReviews??={};
+          return (state.traces??[]).map(source=>{let r=state.markerReviews[source.id];if(!r)r=state.markerReviews[source.id]={traceId:source.id,name:source.name,revision:0,dirty:false,canUndo:false,markers:structuredClone(state.incidentIntakes?.[source.id]?.markers??source.context?.incidentMarkers??[]),editedMarkerIds:[],editedNotes:0,deletedMarkers:0};return structuredClone(r);});
+        }
+        case 'add_trace_marker': {
+          state.markerReviews??={};const row=state.sessions.find(r=>r.id===args.exchangeId),traceId=row.traceId??'live';
+          if(traceId==='live'&&!state.traces.some(t=>t.id===traceId))state.traces.push({id:traceId,name:'Live traffic',context:{},sessions:1});
+          const r=state.markerReviews[traceId]??={traceId,name:state.traces.find(t=>t.id===traceId).name,revision:0,dirty:false,canUndo:false,markers:[],editedMarkerIds:[],editedNotes:0,deletedMarkers:0};
+          state.markerUndo??={};(state.markerUndo[traceId]??=[]).push(structuredClone(r));
+          const marker={id:'analyst-'+r.revision,runId:'analyst-run',unixMillis:row.startedAt,offsetMillis:null,origin:'analyst',creationKind:'later-annotation',note:args.note};r.markers.push(marker);r.revision++;r.dirty=true;r.canUndo=true;r.links??=[];r.links.push({markerId:marker.id,anchorId:'anchor-'+row.id,boundary:args.boundary,timeBasis:'request-start'});r.markerEntries??={};r.markerEntries[marker.id]=row.id;state.lastAddedMarker=structuredClone(args);return structuredClone(r);
+        }
+        case 'change_trace_marker': {
+          const r=state.markerReviews[args.traceId];if(r.revision!==args.revision)throw new Error('Markers changed. Reload them and try again.');
+          state.markerUndo??={};const history=state.markerUndo[args.traceId]??=[];
+          if(args.change.action==='undo'){const previous=history.pop();if(previous){const revision=r.revision+1;Object.assign(r,previous,{revision});}}
+          else {history.push(structuredClone(r));if(args.change.action==='delete'){r.markers=r.markers.filter(m=>m.id!==args.change.id);r.deletedMarkers++;}else {r.markers.find(m=>m.id===args.change.id).note=args.change.note;r.editedMarkerIds.push(args.change.id);r.editedNotes++;}r.revision++;r.dirty=true;}
+          r.canUndo=history.length>0;const source=state.traces.find(t=>t.id===args.traceId);source.context={...source.context,incidentMarkers:structuredClone(r.markers)};return structuredClone(r);
         }
         case 'incident_intake': {
           if(state.deferIntake){state.deferIntake=false;await new Promise(resolve=>state.releaseIntake=resolve);}
           const source=state.traces?.find(t=>t.id===args.traceId);
-          return structuredClone(state.incidentIntakes?.[args.traceId]??{traceId:args.traceId,source:source?.name??'Fixture',profile:null,markers:[],expectedBehavior:'',actualBehavior:'',enteredClientVersion:'',collector:'Fixture collector',observedClients:[],observedUserAgents:[],entries:state.sessions.filter(r=>r.traceId===args.traceId).length,incompleteBodies:0,note:'Original source context; clocks do not establish cross-source chronology.'});
+          const intake=structuredClone(state.incidentIntakes?.[args.traceId]??{traceId:args.traceId,source:source?.name??'Fixture',profile:null,markers:[],expectedBehavior:'',actualBehavior:'',enteredClientVersion:'',collector:'Fixture collector',observedClients:[],observedUserAgents:[],entries:state.sessions.filter(r=>r.traceId===args.traceId).length,incompleteBodies:0,note:'Original source context; clocks do not establish cross-source chronology.'});const review=state.markerReviews?.[args.traceId];if(review){intake.review=structuredClone(review);intake.markers=structuredClone(review.markers);}return intake;
         }
         case 'review_traffic_export': {
           const id='export-review-'+(state.reviewGeneration=(state.reviewGeneration??0)+1);
@@ -862,7 +884,6 @@ try {
   await page.getByRole('button',{name:'Start proxy',exact:true}).first().waitFor({state:'visible'});
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.stop_application),2,'Proxy action did not track refreshed lifecycle state');
 
-
   await page.evaluate(async()=>{globalThis.__workspaceFixture.testDrain=true;globalThis.__workspaceFixture.lifecycle='running';await document.querySelector('app-shell').refreshStatus();});
   await proxy.click();
   await page.waitForFunction(()=>{const shell=document.querySelector('app-shell');return shell.lifecycleKind==='draining'&&!shell.proxyPending;});
@@ -1430,7 +1451,6 @@ try {
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),assetsBeforeInvalid+1);
   assert.deepEqual(await page.evaluate(()=>{const asset=globalThis.__workspaceFixture.assets.find(asset=>asset.id+'@'+asset.revision===globalThis.__workspaceFixture.automation.rules.find(rule=>rule.displayName==='Authored response').request.responseAsset);return asset.headers.map(header=>new TextDecoder().decode(new Uint8Array(header.name)));}),['X-Fixture']);
   await page.evaluate(()=>{globalThis.__workspaceFixture.assetDelay=0;});
-
 
   await checkResponseBodyEditor(page,root);
   await checkBinaryResponse(page,root);
@@ -2264,7 +2284,7 @@ try {
   await page.getByText('Capture viewer',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);
   assert.equal(await page.locator('settings-workspace').count(),0);
-  assert.equal(await page.locator('#trace-files-menu button').filter({hasText:'Save trace…'}).count(),1);
+  assert.equal(await page.locator('#trace-files-menu button').filter({hasText:'Save copy…'}).count(),1);
   await page.locator('#traffic').getByRole('button',{name:'Files',exact:true}).waitFor();
   const viewerRows=await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,rows=s.sessions;s.sessions=[];await t.refreshSessions(undefined,true);return rows;});
   assert.match(await page.locator('.empty-cell').textContent(),/Import a saved capture/);
@@ -2296,13 +2316,13 @@ try {
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').importingTrace);
   assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.sessions)).length,passwordRowsBefore.length+1);
   await page.evaluate(rows=>{const state=globalThis.__workspaceFixture;state.sessions=rows;delete state.importPassword;state.traces.pop();},passwordRowsBefore);
-  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save trace…',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save copy…',exact:true}).click();
   const saveTrace=page.locator('.trace-save-dialog[open]');
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('saz-strict');
   assert.equal(await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).isDisabled(),false);
   await checkTraceSave(page,root,saveTrace);
   assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs)).options.format,'saz-strict');
-  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save trace…',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save copy…',exact:true}).click();
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('har');
   assert.equal(await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).isDisabled(),true);
   assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isDisabled(),true);
@@ -2331,8 +2351,8 @@ try {
   assert.equal(await page.locator('.trace-password-dialog input[name="password"]').inputValue(),'');
   await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).uncheck();
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
-  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>{const {reviewId,...options}=globalThis.__workspaceFixture.savedTraceArgs.options;return options;}),{includeOriginalContext:true,format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true});
-  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save trace…',exact:true}).click();
+  assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>{const {reviewId,...options}=globalThis.__workspaceFixture.savedTraceArgs.options;return options;}),{includeOriginalContext:true,includeMarkers:true,format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true});
+  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save copy…',exact:true}).click();
   await page.locator('.trace-save-dialog[open]').getByLabel('Encrypt with a password (AES-256)',{exact:true}).check();
   const callbacksBeforeCancel=await page.evaluate(()=>globalThis.__workspaceFixture.callbackCount());
   for(let attempt=0;attempt<3;attempt++) {

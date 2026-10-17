@@ -6,7 +6,8 @@ import type {PortableCase} from '../portable-case/portable-case.js';
 import {bodyEditSummary} from '../text-edit-report.js';
 import { responseEvidence } from '../response-evidence.js';
 import '../incident-intake/incident-intake.js';
-import type {IncidentWindow} from '../incident-intake/incident-intake.js';
+
+import type {IncidentIntake,IncidentWindow} from '../incident-intake/incident-intake.js';
 import {timingView, type TimingRow, type TimelineRow, type TransportView, type WaterfallRow} from '../timings.js';
 import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
@@ -22,10 +23,96 @@ import type {ComparisonOpen,ComparisonSubject,ScopeChoice} from '../comparison-m
 import type { CertificateInspector } from '../certificate-inspector/certificate-inspector.js';
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport, PreviewRuleSnapshot } from '../models.js';
 
+import {traceMarkers,type MarkerReview,type TraceMarker} from '../markers.js';
+
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
-type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
+type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;markerLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
+
+  @observable flagBoundary='request';
+  @observable flagStatus='';
+  @observable flagBusy=false;
+  @observable flagRequestLabel='';
+  flagDialog!:HTMLDialogElement;
+  flagNote!:HTMLTextAreaElement;
+  private flagId='';
+  private flagReturn:HTMLElement|null=null;
+  flagMessage(boundary:string,inspected=false):void{
+    const id=this.actionSource(inspected);if(!id)return;
+    this.flagReturn=inspected?this.actionsButton:this.trafficTable;this.trafficMenu.hidePopover();this.requestActionsMenu.hidePopover();
+    this.flagId=id;this.flagBoundary=boundary;this.flagStatus='';this.flagRequestLabel=this.selectedDetail?.id===id?'#'+this.selectedDetail.requestNumber+' '+this.selectedMethodText+' '+this.selectedUrlText:'Selected request';this.flagNote.value='';this.flagDialog.showModal();this.flagNote.focus();
+  }
+  changeFlagBoundary(event:Event):void{this.flagBoundary=(event.target as HTMLSelectElement).value;}
+  closeFlag():void{if(!this.flagBusy)this.flagDialog.close();}
+  flagClosed():void{this.flagReturn?.focus({preventScroll:true});this.flagReturn=null;}
+  async addMarker(event:Event):Promise<void>{
+    event.preventDefault();if(this.flagBusy)return;
+    const note=this.flagNote.value;if(new TextEncoder().encode(note).length>2048){this.flagStatus='Note is too long. Shorten it to continue.';return;}
+    this.flagBusy=true;this.flagStatus='Adding marker…';
+    try{const review=await invoke<MarkerReview>('add_trace_marker',{exchangeId:this.flagId,boundary:this.flagBoundary,note});this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();this.markersTraceId=review.traceId;this.markersOpen=true;this.flagDialog.close();this.markerStatus='Marker added. Save a copy to keep your changes.';const marker=review.markers.at(-1);if(marker){this.markerCurrent=review.traceId+':'+marker.id;this.$flushUpdates();this.markerIntake.selectMarker(marker.id,false);}}
+    catch(error:unknown){this.flagStatus='Marker could not be added: '+describeError(error);}finally{this.flagBusy=false;}
+  }
+  @observable markerReviews:MarkerReview[]=[];
+  @observable markerItems:TraceMarker[]=[];
+  @observable markerCount=0;
+  @observable markersOpen=false;
+  @observable markersTraceId='';
+  @observable markerTraceName='';
+  @observable markersRefresh='';
+  @observable markerStatus='';
+  @observable markersDirty=false;
+  @observable markerDraftDirty=false;
+  @observable markerCurrent='';
+  markerIntake!:IncidentIntake;
+  markerUnsaved!:HTMLDialogElement;
+  private markerGeneration=0;
+  private markerNavigation=0;
+  private markerPendingAction:'close'|'clear'|null=null;
+  async refreshMarkers():Promise<void>{
+    const generation=++this.markerGeneration;
+    try{const reviews=await invoke<MarkerReview[]>('trace_marker_reviews');if(!this.isConnected||generation!==this.markerGeneration)return;
+      this.markerStatus='';this.markerReviews=reviews;this.markerTraceName=reviews.length===1?reviews[0]!.name:'';this.markerItems=traceMarkers(reviews);this.markerCount=this.markerItems.length;this.rebuildRows(this.sessions);this.markersDirty=reviews.some(r=>r.dirty);
+      if(!reviews.some(r=>r.traceId===this.markersTraceId))this.markersTraceId=reviews.find(r=>r.markers.length)?.traceId??reviews[0]?.traceId??'';
+      this.markersRefresh=String(generation);
+    }catch(error:unknown){if(generation===this.markerGeneration)this.markerStatus='Markers could not be loaded: '+describeError(error);}
+  }
+  changeMarkerTrace(event:Event):void{this.markersTraceId=(event.target as HTMLSelectElement).value;this.markerCurrent='';}
+  markersToggled(event:Event):void{this.markersOpen=(event.target as HTMLDetailsElement).open;}
+  reviewMetadataMarkers():void{this.markersTraceId=this.metadataTraceId;this.closeMetadata();this.reviewMarkers();}
+  reviewMarkers():void{this.markersOpen=true;this.$flushUpdates();}
+  async markersChanged(event:CustomEvent<{traceId:string;deletedId:string}>):Promise<void>{
+    event.stopPropagation();if(event.detail.deletedId&&this.incidentWindow?.traceId===event.detail.traceId&&this.incidentWindow.markerId===event.detail.deletedId)await this.clearIncidentWindow();
+    this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();
+    if(this.saveTraceDialog.open&&!this.savingTrace)await this.reviewTraceExport();
+  }
+  markerDraftChanged(event:CustomEvent<boolean>):void{event.stopPropagation();this.markerDraftDirty=event.detail;void invoke('set_marker_draft_dirty',{dirty:event.detail}).catch(()=>{});}
+  async markerSave():Promise<void>{if(await this.markerIntake.applyPending()){await this.refreshMarkers();this.showSaveTrace(this.markerPendingAction?undefined:this.markersTraceId);}}
+  async markerTimeRequest(event:CustomEvent<{traceId:string;markerId:string}>):Promise<void>{event.stopPropagation();await this.goToMarker(event.detail.traceId,event.detail.markerId);}
+  async timelineMarker(event:CustomEvent<string>):Promise<void>{event.stopPropagation();const marker=this.markerItems.find(m=>m.key===event.detail);if(marker)await this.goToMarker(marker.traceId,marker.id);}
+  private async goToMarker(traceId:string,id:string):Promise<void>{
+    const marker=this.markerItems.find(m=>m.traceId===traceId&&m.id===id);if(!marker)return;
+    if(!this.importingTrace&&this.importStatus.startsWith('Imported ')&&!this.importStatus.includes('incomplete'))this.importStatus='';
+    const navigation=++this.markerNavigation,focus=this.trackNavigationFocus();this.markersOpen=true;this.markersTraceId=traceId;this.markerCurrent=marker.key;this.markerStatus='';this.$flushUpdates();this.markerIntake.selectMarker(id,false);this.followLatest=false;
+    try{
+      if(!this.trafficView)await this.refreshSessions(undefined,true);const view=this.trafficView;if(!view)return;
+      let nearest:TrafficTimelineRow|undefined,distance=Infinity;
+      for(let offset=0;offset<view.ids.length;offset+=2048){const rows=await invoke<TrafficTimelineRow[]>('traffic_timeline_rows',{viewId:view.id,offset,limit:2048});if(navigation!==this.markerNavigation||!this.isConnected||view!==this.trafficView)return;
+        for(const row of rows)if((row.traceId===traceId||traceId==='live'&&row.traceId==null)&&row.startMillis!=null&&(row.id===marker.entryId||nearest?.id!==marker.entryId&&Math.abs(row.startMillis-marker.unixMillis)<distance)){nearest=row;distance=Math.abs(row.startMillis-marker.unixMillis);}
+      }
+      if(marker.entryId&&nearest?.id===marker.entryId){await this.inspectTimelineRequest(nearest.id);if(navigation!==this.markerNavigation)return;this.inspectorSide=marker.boundary||'response';}
+      if(this.timelineMode){await this.refreshTimeline();if(navigation!==this.markerNavigation)return;this.timeline.goToTime(marker.unixMillis,nearest?.id,focus.unchanged());}
+      else if(nearest)await this.revealCurrent(nearest.id,false,()=>navigation===this.markerNavigation&&view===this.trafficView);
+      if(marker.entryId&&!view.ids.includes(marker.entryId))this.markerStatus='The linked request is hidden or unavailable. Check the Traffic filters.';else if(!nearest)this.markerStatus='No requests available near this marker. Check the Traffic filters.';
+      else if(nearest.id!==marker.entryId&&distance>Math.max(this.markerIntake.incidentBefore,this.markerIntake.incidentAfter)*1000)this.markerStatus='Showing the nearest available request. No requests are available in the nearby time range.';
+    }catch(error:unknown){if(navigation===this.markerNavigation)this.markerStatus='Could not go to marker: '+describeError(error);}finally{focus.dispose();}
+  }
+  async resolveMarkerUnsaved(choice:'save'|'discard'|'stay'):Promise<void>{
+    if(choice==='stay'){this.markerPendingAction=null;this.markerUnsaved.close();return;}
+    if(choice==='save'){this.markerUnsaved.close();await this.markerSave();return;}
+    await invoke('discard_marker_changes');this.markerIntake.discardDrafts();this.markerDraftDirty=false;this.markersDirty=false;this.markerUnsaved.close();await this.continueMarkerAction();
+  }
+  private async continueMarkerAction():Promise<void>{const action=this.markerPendingAction;this.markerPendingAction=null;if(action==='close'){await invoke('close_trace_window');}else if(action==='clear')await this.clearTraffic();}
   @observable timelineMode=false;
   @observable timelineBusy=false;
   @observable timelineError='';
@@ -38,7 +125,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   private timelineAgain=false;
   private timelineRevision=-1;
   private syncTimelineSelection():void {
-    const ids=[...this.trafficSelection.ids];
+
+    const ids=this.incidentWindow?[]:[...this.trafficSelection.ids];
     if(ids.length!==this.timelineSelection.length||ids.some((id,index)=>id!==this.timelineSelection[index]))this.timelineSelection=ids;
   }
   toggleTimeline():void {this.setTimeline(!this.timelineMode,false);}
@@ -141,8 +229,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   async changeExportScope(event:Event):Promise<void>{this.exportReviewScope=(event.currentTarget as HTMLSelectElement).value;await this.reviewTraceExport();}
   async reviewTraceExport():Promise<void>{const revision=++this.exportReviewRevision;this.exportReviewBusy=true;this.exportReviewId='';this.exportReviewSummary='Reviewing retained evidence…';
    try{let selection:unknown=null;if(this.exportReviewScope==='selected')selection={kind:'selected',ids:[...this.trafficSelection.ids]};else if(this.exportReviewScope==='filtered')selection={kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}};else if(this.exportReviewScope.startsWith('source:'))selection={kind:'source',traceId:this.exportReviewScope.slice(7)};
-    const inventory=await invoke<{id:string;entries:number;retainedEntries:number;sources:string[];sourceCount:number;hosts:string[];firstMillis:number|null;lastMillis:number|null;incompleteBodies:number;retainedBodyBytes:number;streamRecords:number;retainedStreamBytes:number;incidentMarkers:number;note:string}>('review_traffic_export',{selection});if(revision!==this.exportReviewRevision||!this.isConnected)return;
-    this.exportReviewId=inventory.id;this.exportReviewSummary=`${inventory.entries} of ${inventory.retainedEntries} retained entries · ${inventory.sourceCount} original source${inventory.sourceCount===1?'':'s'} · ${inventory.incidentMarkers} incident marker${inventory.incidentMarkers===1?'':'s'}`;
+
+    const inventory=await invoke<{id:string;entries:number;retainedEntries:number;sources:string[];sourceCount:number;hosts:string[];firstMillis:number|null;lastMillis:number|null;incompleteBodies:number;retainedBodyBytes:number;streamRecords:number;retainedStreamBytes:number;incidentMarkers:number;addedMarkers?:number;editedNotes?:number;deletedMarkers?:number;note:string}>('review_traffic_export',{selection});if(revision!==this.exportReviewRevision||!this.isConnected)return;
+
+    this.exportReviewId=inventory.id;this.exportReviewSummary=`${inventory.entries} of ${inventory.retainedEntries} retained entries · ${inventory.sourceCount} original source${inventory.sourceCount===1?'':'s'} · ${inventory.incidentMarkers} marker${inventory.incidentMarkers===1?'':'s'}${inventory.addedMarkers?' · '+inventory.addedMarkers+' added':''}${inventory.editedNotes?' · '+inventory.editedNotes+' note'+(inventory.editedNotes===1?'':'s')+' edited':''}${inventory.deletedMarkers?' · '+inventory.deletedMarkers+' marker'+(inventory.deletedMarkers===1?'':'s')+' deleted':''}`;
     const date=(value:number|null)=>value==null?'Unavailable':Number.isFinite(new Date(value).valueOf())?new Date(value).toISOString():'Outside supported calendar range';this.exportReviewFacts=[{label:'Included sources (up to 100)',value:inventory.sources.join(' · ')||'Live traffic'},{label:'Included hosts (up to 100)',value:inventory.hosts.join(' · ')||'No known hosts'},{label:'Recorded start range (UTC, source clocks)',value:date(inventory.firstMillis)+' to '+date(inventory.lastMillis)},{label:'Retained HTTP body bytes',value:inventory.retainedBodyBytes.toLocaleString()},{label:'Incomplete body observations',value:String(inventory.incompleteBodies)},{label:'Observed stream records / retained stream storage',value:inventory.streamRecords+' / '+inventory.retainedStreamBytes.toLocaleString()+' bytes'}];this.exportReviewNote=inventory.note;
    }catch(error:unknown){if(revision===this.exportReviewRevision)this.exportReviewSummary='Export review failed: '+describeError(error);}finally{if(revision===this.exportReviewRevision)this.exportReviewBusy=false;}}
   private emitComparison(detail:ComparisonOpen):void{this.$emit('comparison-request',detail);}
@@ -512,11 +602,16 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   lifecycleChanged():void { this.renderSessionState(); this.renderFollowState(); }
   viewerModeChanged():void {this.renderSessionState();this.renderFollowState();}
-  traceMetadataRowsChanged():void {this.metadataTraceOptions=this.traceMetadataRows.map((trace,index)=>({id:trace.id,label:`${index+1}. ${trace.name} · ${trace.sessions} ${trace.sessions===1?'entry':'entries'}`}));}
+
+  traceMetadataRowsChanged():void {if(this.isConnected)void this.refreshMarkers();this.metadataTraceOptions=this.traceMetadataRows.map((trace,index)=>({id:trace.id,label:`${index+1}. ${trace.name} · ${trace.sessions} ${trace.sessions===1?'entry':'entries'}`}));}
   sessionsChanged():void {if(this.sessions.length)this.showTraceImportHelp=false;}
 
   private async watchOpenedTraces():Promise<void> {
     try {
+
+      const closing=await listen('trace-close-requested',()=>{this.markerPendingAction='close';if(!this.markerUnsaved.open)this.markerUnsaved.showModal();});
+
+      if(!this.isConnected){closing();return;}this.nativeUnlisteners.push(closing);
       const opened=await listen('trace-open-request',()=>{void this.takeOpenedTraces();});
       if(!this.isConnected){opened();return;}this.nativeUnlisteners.push(opened);
     } catch { /* Browser-hosted verification has no native file events. */ }
@@ -566,7 +661,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       if(result===null){this.importStatus='Import canceled. Traffic is unchanged.';return;}
       if(!this.isConnected||this.importOperation!==operationId)return;
       this.importPercent=100;this.importStatus=`Imported ${result.trace.sessions} ${result.trace.sessions===1?'entry':'entries'} from ${result.trace.name}.${result.issues.length?' Some saved evidence is incomplete; see Trace metadata.':''}`;
-      this.traceMetadataRows=[...this.traceMetadataRows,result.trace];this.queryRevision++;await this.refreshSessions(undefined,true);
+
+      this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();if(this.viewerMode&&this.markerCount){this.markersOpen=true;if(!result.issues.length)this.importStatus='';}this.queryRevision++;await this.refreshSessions(undefined,true);
     }catch(error:unknown){if(this.isConnected&&this.importOperation===operationId){const message=describeError(error);if(message.includes('canceled'))this.importStatus='Import canceled. Traffic is unchanged.';else{failure=message;this.importStatus='Import failed: '+message;}}}
     finally{onProgress.onmessage=()=>{};if(this.importOperation===operationId){this.importOperation='';this.importingTrace=false;}}
     if(failure&&this.isConnected){await this.showError('Import failed',(path.split(/[\\/]/).pop()??path)+'\n\n'+failure+'\n\nTraffic is unchanged. Choose another capture or try importing again.');if(this.isConnected&&this.view==='traffic')this.filesMenuButton.focus();}
@@ -650,7 +746,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       const activeStreamLabel = row.terminal === 'active'
         ? row.streamProtocol === 'web-socket' ? 'WebSocket · Active' : row.streamProtocol === 'sse' ? 'SSE · Active' : ''
         : '';
-      return {...row,activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(activeStreamLabel ? activeStreamLabel+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
+      return {...row,markerLabel:this.markerItems.some(m=>m.entryId===row.id)?'Flagged':'',activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(activeStreamLabel ? activeStreamLabel+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
       cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id)+(column.id==='protocol'&&activeStreamLabel?' · '+activeStreamLabel:''),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))};
     });
     this.selectedTrafficCount=this.trafficSelection.ids.size;
@@ -1125,10 +1221,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
   private pushTrafficUndo(action:{ids:string[];expiresAt?:number|undefined}):void {this.trafficUndo=[...this.trafficUndo.slice(-19),action];this.scheduleTrafficUndoExpiry();}
   async clearTraffic():Promise<void> {
+
+
     if(this.removingTraffic)return;this.removingTraffic=true;
     try {
       const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null}>('clear_traffic');
-      this.trafficUndo=[];this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;this.metadataGeneration++;this.traceMetadataRows=[];this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
+      this.trafficUndo=[];this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;this.metadataGeneration++;this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
       if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
 
       this.trafficUndoText=result.ids.length?'Cleared '+result.ids.length.toLocaleString()+' entries.'+(result.undoable?(result.undoSeconds?' Undo expires in 5 minutes.':' Undo is available.'):' Undo is unavailable because 1 GB or more was cleared.'): 'Traffic is already empty.';
@@ -1433,11 +1531,14 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   @observable saveTraceFormat='native';
   changeSaveTraceFormat(event:Event):void {this.saveTraceFormat=(event.target as HTMLSelectElement).value;}
-  showSaveTrace():void {this.closePopover(this.filesMenu,this.filesMenuButton);if(!this.savingTrace){this.saveTraceStatus='';this.exportReviewScope='all';void this.reviewTraceExport();}this.saveTraceOpen=true;this.saveTraceDialog.showModal();}
+
+  showSaveTrace(traceId?:string):void {this.closePopover(this.filesMenu,this.filesMenuButton);if(!this.savingTrace){this.saveTraceStatus='';this.exportReviewScope=traceId?'source:'+traceId:'all';void this.reviewTraceExport();}this.saveTraceOpen=true;this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
   saveTraceClosed():void {this.saveTraceOpen=false;if(!this.savingTrace){this.exportReviewRevision++;this.exportReviewBusy=false;this.exportReviewId="";this.exportReviewFacts=[];this.exportReviewNote="";this.exportReviewSummary="";}this.filesMenuButton.focus({preventScroll:true});}
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace||this.exportReviewBusy||!this.exportReviewId)return;
+
+    if(this.markerDraftDirty||this.markerIntake.editingMarkerId){if(!await this.markerIntake.applyPending())return;await this.refreshMarkers();await this.reviewTraceExport();if(!this.exportReviewId)return;}
     const data=new FormData(this.saveTraceForm);
     this.savingTrace=true;this.saveTraceCompleted=0;this.saveTraceTotal=0;
     this.saveTraceStatus='Choose a destination, then the trace will be saved…';
@@ -1452,11 +1553,16 @@ export class TrafficWorkspace extends WorkspaceElement {
       const phase=progress.phase==='writing'?'Writing trace':progress.phase==='converting'?'Creating SAZ archive':progress.phase==='finalizing'?'Finalizing trace':'Preparing trace';
       this.saveTraceStatus=phase+(progress.total?` · ${progress.completed.toLocaleString()} of ${progress.total.toLocaleString()} entries…`:'…');
       };
-      const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number;placeholderEntries:number;connectionEntries:number;omittedIncidentMarkers?:number}|null>('save_traffic_trace',{options:{reviewId:this.exportReviewId,includeOriginalContext:data.get('originalContext')==='on',format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},onProgress});
+
+      const result=await invoke<{destination:string;entries:number;bytes:number;incompleteBodies:number;placeholderEntries:number;connectionEntries:number;omittedIncidentMarkers?:number}|null>('save_traffic_trace',{options:{reviewId:this.exportReviewId,includeOriginalContext:data.get('originalContext')==='on',includeMarkers:data.get('markers')==='on',format:String(data.get('format')??'native'),password,includeNetworkContext:data.get('networkContext')==='on',redactSensitiveHeaders:data.get('redactHeaders')==='on'},onProgress});
       if(!this.isConnected)return;
       if(result){
-        this.saveTraceDialog.close();
-        this.showNotice('Trace saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.omittedIncidentMarkers?' · '+result.omittedIncidentMarkers+' incident markers omitted by format/context choices.':'')+(result.connectionEntries?' · '+result.connectionEntries.toLocaleString()+' generated connection '+(result.connectionEntries===1?'summary':'summaries'):'')+(result.placeholderEntries?' · '+result.placeholderEntries.toLocaleString()+' entries use labeled placeholders for uncaptured headers.':'')+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);
+
+        await this.refreshMarkers();this.saveTraceDialog.close();
+
+        this.showNotice('Copy saved',result.destination+' · '+result.entries.toLocaleString()+' entries'+(result.omittedIncidentMarkers?' · '+result.omittedIncidentMarkers+' incident markers omitted by format/context choices.':'')+(result.connectionEntries?' · '+result.connectionEntries.toLocaleString()+' generated connection '+(result.connectionEntries===1?'summary':'summaries'):'')+(result.placeholderEntries?' · '+result.placeholderEntries.toLocaleString()+' entries use labeled placeholders for uncaptured headers.':'')+(result.incompleteBodies?' · '+result.incompleteBodies.toLocaleString()+' body boundaries were unavailable or incomplete.':''),null,null);
+
+        if(!this.markersDirty&&!this.markerDraftDirty)await this.continueMarkerAction();
       }else this.saveTraceStatus='Save canceled.';
     }
     catch(error:unknown){if(onProgress)onProgress.onmessage=()=>{};this.savingTrace=false;if(this.isConnected){this.saveTraceStatus='Trace could not be saved: '+describeError(error);await this.showError('Trace save failed',describeError(error));}}
@@ -1467,7 +1573,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch (error:unknown) { await this.showError('TMCap export failed',describeError(error)); }
   }
   disconnectedCallback():void {
-    this.timelineGeneration++;window.clearTimeout(this.timelineTimer);
+
+    this.markerGeneration++;this.markerNavigation++;this.timelineGeneration++;window.clearTimeout(this.timelineTimer);
     this.clearColumnDrag();
     for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;
     window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;

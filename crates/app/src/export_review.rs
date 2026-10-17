@@ -12,6 +12,7 @@ pub(crate) struct ReviewedScope {
     pub id: String,
     pub ids: HashSet<String>,
     pub sources: HashSet<String>,
+    pub marker_revisions: std::collections::BTreeMap<String, u64>,
 }
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -29,6 +30,9 @@ pub struct ExportInventory {
     pub stream_records: u64,
     pub retained_stream_bytes: u64,
     pub incident_markers: usize,
+    pub edited_notes: usize,
+    pub added_markers: usize,
+    pub deleted_markers: usize,
     pub note: String,
 }
 impl ReviewRegistry {
@@ -61,7 +65,9 @@ pub(crate) fn scope_ids(
                 .catalog()
                 .project_retained(|s| {
                     let id = format!("{:032x}", s.exchange_id.0);
-                    (app.traces.source_id(&id) == *trace_id).then_some(id)
+                    (app.traces.source_id(&id) == *trace_id
+                        || trace_id.as_deref() == Some("live") && !s.imported)
+                        .then_some(id)
                 })
                 .into_iter()
                 .flatten()
@@ -122,6 +128,8 @@ impl Application {
                     found += 1;
                     if let Some(source) = self.traces.source_id(&id) {
                         sources.insert(source);
+                    } else if !s.imported && self.traces.metadata("live").is_some() {
+                        sources.insert("live".into());
                     }
                     if let Some(head) = s.request_heads.iter().find(|h| {
                         h.boundary == transmog_core::observe::ExchangeBoundary::ClientRequest
@@ -163,18 +171,35 @@ impl Application {
             .iter()
             .filter_map(|id| self.traces.metadata(id))
             .collect::<Vec<_>>();
-        let markers = metadata
-            .iter()
-            .map(|s| {
-                s.context
-                    .get("incidentMarkers")
-                    .and_then(serde_json::Value::as_array)
-                    .map_or(0, Vec::len)
-            })
-            .sum();
         let id = transmog_capture::support::new_id()
             .map_err(|_| error("Export review identity unavailable"))?;
-        let result=ExportInventory{id:id.clone(),entries:found,retained_entries:total,sources:metadata.iter().take(100).map(|s|s.name.clone()).collect(),source_count:metadata.len(),hosts:hosts.into_iter().collect(),first_millis:first,last_millis:last,incomplete_bodies:incomplete,retained_body_bytes:body_bytes,stream_records:streams,retained_stream_bytes:stream_bytes,incident_markers:markers,note:"Entry membership is frozen for this review; new traffic is excluded. Body/stream availability can change before save and is disclosed in the resulting file. Host inventory shows at most 100 distinct hosts. Source notes, incident context, URLs, bodies and stream content may contain private data. Header redaction is not complete anonymization. User-entered client versions and observed client evidence stay distinct.".into()};
+        let reviews = self.trace_marker_reviews()?;
+        let markers = reviews
+            .iter()
+            .filter(|r| sources.contains(&r.trace_id))
+            .map(|r| r.markers.len())
+            .sum();
+        let marker_revisions = reviews
+            .iter()
+            .filter(|r| sources.contains(&r.trace_id))
+            .map(|r| (r.trace_id.clone(), r.revision))
+            .collect();
+        let edited_notes = reviews
+            .iter()
+            .filter(|r| sources.contains(&r.trace_id))
+            .map(|r| r.edited_notes)
+            .sum();
+        let deleted_markers = reviews
+            .iter()
+            .filter(|r| sources.contains(&r.trace_id))
+            .map(|r| r.deleted_markers)
+            .sum();
+        let added_markers = reviews
+            .iter()
+            .filter(|r| sources.contains(&r.trace_id))
+            .map(|r| r.added_markers)
+            .sum();
+        let result=ExportInventory{added_markers,edited_notes,deleted_markers,id:id.clone(),entries:found,retained_entries:total,sources:metadata.iter().take(100).map(|s|s.name.clone()).collect(),source_count:metadata.len(),hosts:hosts.into_iter().collect(),first_millis:first,last_millis:last,incomplete_bodies:incomplete,retained_body_bytes:body_bytes,stream_records:streams,retained_stream_bytes:stream_bytes,incident_markers:markers,note:"Entry membership is frozen for this review; new traffic is excluded. Body/stream availability can change before save and is disclosed in the resulting file. Host inventory shows at most 100 distinct hosts. Source notes, incident context, URLs, bodies and stream content may contain private data. Header redaction is not complete anonymization. User-entered client versions and observed client evidence stay distinct.".into()};
         let mut reviews = self
             .export_reviews
             .0
@@ -183,7 +208,12 @@ impl Application {
         if reviews.len() == 4 {
             reviews.pop_front();
         }
-        reviews.push_back(Arc::new(ReviewedScope { id, ids, sources }));
+        reviews.push_back(Arc::new(ReviewedScope {
+            id,
+            ids,
+            sources,
+            marker_revisions,
+        }));
         Ok(result)
     }
     pub(crate) fn export_scope(
@@ -192,6 +222,14 @@ impl Application {
     ) -> Result<Option<Arc<ReviewedScope>>, AppError> {
         id.map(|id| {
             let review = self.export_reviews.get(id)?;
+            let revisions = self.marker_revisions()?;
+            if review
+                .marker_revisions
+                .iter()
+                .any(|(id, revision)| revisions.get(id) != Some(revision))
+            {
+                return Err(error("Notes changed. Refresh the inventory before saving."));
+            }
             let available = self
                 .service
                 .catalog()

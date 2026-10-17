@@ -69,6 +69,18 @@ hide, pin, resize, fit and move actions. Upgrading an old layout inserts the pin
 column while preserving existing widths, order, visibility, pinning and splits.
 Hiding it persists, and Reset columns restores the new default.
 
+## Markers
+
+The compact **Markers** panel shares horizontal space between its list and the
+selected note. Timeline flags show marked times in the overview and zoomed range.
+Click a flag or marker row to navigate without applying a filter; **Show nearby
+requests** explicitly filters its trace around that time. The inspector's **Actions**
+and the request context menu offer **Flag request…** and **Flag response…**.
+An optional note and exact message link travel with TMCap and extended SAZ copies.
+Edit, clear, delete and Undo remain in the panel; **Save copy…** preserves changes.
+See [marker review](support-capture-profiles.md#developer-intake-and-export-review)
+for limits, missing evidence and time interpretation.
+
 ## Timeline
 
 Click the **Timeline** button (waterfall icon) beside **View** to replace the

@@ -45,3 +45,66 @@ fn error(message: &str) -> AppError {
         retryable: false,
     }
 }
+
+#[tauri::command]
+pub(super) fn trace_marker_reviews(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<transmog_app::incidents::MarkerReview>, AppError> {
+    state.window_application(&window)?.trace_marker_reviews()
+}
+#[tauri::command]
+pub(super) fn change_trace_marker(
+    trace_id: String,
+    revision: u64,
+    change: transmog_app::incidents::MarkerChange,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::incidents::MarkerReview, AppError> {
+    state
+        .window_application(&window)?
+        .change_trace_marker(&trace_id, revision, change)
+}
+#[tauri::command]
+pub(super) fn discard_marker_changes(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state.window_application(&window)?.discard_marker_changes()
+}
+
+#[tauri::command]
+pub(super) fn set_marker_draft_dirty(
+    dirty: bool,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .set_marker_draft_dirty(dirty);
+    Ok(())
+}
+
+#[tauri::command]
+pub(super) fn add_trace_marker(
+    exchange_id: String,
+    boundary: String,
+    note: String,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::incidents::MarkerReview, AppError> {
+    state
+        .window_application(&window)?
+        .add_trace_marker(&exchange_id, &boundary, note)
+}
+
+#[tauri::command]
+pub(super) fn close_trace_window(
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state.window_application(&window)?;
+    window
+        .close()
+        .map_err(|_| error("Window could not be closed"))
+}

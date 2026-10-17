@@ -22,6 +22,9 @@ pub struct TraceSaveOptions {
     /// Keep original source notes, incident markers and optional capture context in this copy.
     #[serde(default = "include_context")]
     pub include_original_context: bool,
+    /// Override marker inclusion independently of other source context.
+    #[serde(default)]
+    pub include_markers: Option<bool>,
     /// Native trace, SAZ archive, or standard HTTP Archive.
     #[serde(default)]
     pub format: TraceSaveFormat,
@@ -38,11 +41,41 @@ pub struct TraceSaveOptions {
 fn include_context() -> bool {
     true
 }
+
+fn project_sources(
+    sources: &[crate::traces::TraceMetadataView],
+    context: bool,
+    markers: bool,
+) -> Vec<crate::traces::TraceMetadataView> {
+    sources
+        .iter()
+        .map(|original| {
+            let mut source = original.clone();
+            if !context {
+                source.context = serde_json::json!({});
+                source.path = PathBuf::new();
+                source.notes = vec!["Capture details omitted from this copy.".into()];
+                if markers {
+                    for key in ["incidentMarkers", "markerReview", "captureRunId"] {
+                        if let Some(value) = original.context.get(key) {
+                            source.context[key] = value.clone();
+                        }
+                    }
+                }
+            } else if !markers && let Some(object) = source.context.as_object_mut() {
+                object.remove("incidentMarkers");
+                object.remove("markerReview");
+            }
+            source
+        })
+        .collect()
+}
 impl Default for TraceSaveOptions {
     fn default() -> Self {
         Self {
             review_id: None,
             include_original_context: true,
+            include_markers: None,
             format: TraceSaveFormat::default(),
             password: None,
             redact_sensitive_headers: false,
@@ -176,10 +209,7 @@ fn write(
     let format = options.format;
     let original_sources = application
         .traces
-        .list()
-        .into_iter()
-        .filter(|s| review.as_ref().is_none_or(|r| r.sources.contains(&s.id)))
-        .collect::<Vec<_>>();
+        .marker_export_sources(review.as_deref())?;
     let marker_count = original_sources
         .iter()
         .map(|s| {
@@ -189,7 +219,10 @@ fn write(
                 .map_or(0, Vec::len)
         })
         .sum::<usize>();
-    let omitted_markers = if options.include_original_context
+    let include_markers = options
+        .include_markers
+        .unwrap_or(options.include_original_context);
+    let omitted_markers = if include_markers
         && matches!(
             format,
             TraceSaveFormat::Native | TraceSaveFormat::SazExtended
@@ -272,7 +305,11 @@ fn write(
         },
         progress,
         options.include_original_context,
-        &original_sources,
+        &project_sources(
+            &original_sources,
+            options.include_original_context,
+            include_markers,
+        ),
     )?;
     let (placeholder_entries, connection_entries) = if let Some(native) = native {
         write_saz(native, temporary.as_file_mut(), format, password, progress)?
@@ -296,6 +333,14 @@ fn write(
     temporary
         .persist(&destination)
         .map_err(|_| error("Trace could not be saved at this destination"))?;
+    if include_markers
+        && matches!(
+            format,
+            TraceSaveFormat::Native | TraceSaveFormat::SazExtended
+        )
+    {
+        application.traces.markers_saved(&original_sources)?;
+    }
     Ok(TraceSaveResult {
         destination,
         entries: sessions.len(),
@@ -386,7 +431,7 @@ fn write_records(
     )?;
     for original in original_sources {
         let mut source = original.clone();
-        if !include_original_context {
+        if !include_original_context && source.context.get("incidentMarkers").is_none() {
             source.context = serde_json::Value::Null;
             source.path = std::path::PathBuf::new();
             source.notes=vec!["Original notes, profile/incident and optional context omitted from this exported copy.".into()];
@@ -402,7 +447,9 @@ fn write_records(
             },
         )?;
     }
-    if sessions.iter().any(|session| !session.imported) {
+    if sessions.iter().any(|session| !session.imported)
+        && !original_sources.iter().any(|source| source.id == "live")
+    {
         append(
             &mut writer,
             0,
@@ -444,6 +491,7 @@ pub(crate) fn source_entry(application: &Application, session: &SessionSnapshot)
         .traces
         .entry(&format!("{id:032x}"))
         .unwrap_or_else(|| TraceEntry {
+            marker_anchor: None,
             trace_id: "live".into(),
             original_id: format!("{id:032x}"),
             original_number: None,

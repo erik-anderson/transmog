@@ -132,7 +132,7 @@ await dialog.getByRole('button',{name:'Review selected content',exact:true}).cli
   await page.evaluate(()=>{globalThis.__workspaceFixture.caseLocked=false;globalThis.__workspaceFixture.pickedTrace='C:/captures/received.tmcase.tmcap';});
   await traffic.getByRole('button',{name:'Files',exact:true}).click();
   const fileButtons=await traffic.locator('#trace-files-menu').getByRole('button').allTextContents();
-  assert.deepEqual(fileButtons.slice(0,2),['Import traffic…','Save trace…']);
+  assert.deepEqual(fileButtons.slice(0,2),['Import traffic…','Save copy…']);
   await traffic.getByRole('button',{name:'Import traffic…',exact:true}).click();
   await dialog.getByRole('heading',{name:'Notes-only case',exact:true}).waitFor();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);

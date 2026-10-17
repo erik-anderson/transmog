@@ -71,7 +71,7 @@ export async function checkTrafficPresentation(page,root) {
     } finally {await page.evaluate(detail=>document.querySelector('app-shell').traffic.applyDetail(detail),detail);}
     const files=traffic.getByRole('button',{name:'Files',exact:true});
     for(const close of ['Escape','Close']) {
-      await files.click();await traffic.locator('#trace-files-menu').getByRole('button',{name:'Save trace…',exact:true}).click();
+      await files.click();await traffic.locator('#trace-files-menu').getByRole('button',{name:'Save copy…',exact:true}).click();
       if(close==='Escape')await page.keyboard.press('Escape');else await traffic.locator('.trace-save-dialog[open]').getByRole('button',{name:close,exact:true}).click();
       assert.equal(await focused(files),true,'Closing Save trace lost focus');
     }

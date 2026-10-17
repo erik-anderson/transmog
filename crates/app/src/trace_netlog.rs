@@ -591,7 +591,7 @@ pub(super) fn import(
                 &mut result,
                 &serde_json::json!({"request":request.headers,"response":response.as_ref().map(|r| &r.headers),"timings":timings}),
             )?;
-            result.entries.insert(format!("{:032x}", id.0), TraceEntry { trace_id: trace_id.into(), original_id: format!("{source_id}:{}", hop + 1), original_number: None, raw_headers: None, timings, protocol_known: !request_protocol.is_empty(), target_known: true, diagnostics: vec![if complete { "Response body recovered from Chromium's complete filtered-byte events. Request body bytes are unavailable." } else { "Complete HTTP body bytes are unavailable; socket bytes are not reconstructed as HTTP bodies." }.into()] });
+            result.entries.insert(format!("{:032x}", id.0), TraceEntry { marker_anchor: None, trace_id: trace_id.into(), original_id: format!("{source_id}:{}", hop + 1), original_number: None, raw_headers: None, timings, protocol_known: !request_protocol.is_empty(), target_known: true, diagnostics: vec![if complete { "Response body recovered from Chromium's complete filtered-byte events. Request body bytes are unavailable." } else { "Complete HTTP body bytes are unavailable; socket bytes are not reconstructed as HTTP bodies." }.into()] });
             result.sessions.push(snapshot);
             progress(position as u64, sources.len() as u64);
         }

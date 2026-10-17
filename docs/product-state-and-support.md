@@ -127,7 +127,7 @@ record-count ceiling, while metadata indexing and processing stay bounded.
 Oversized or unknown-length requests in Auto routing stream over HTTP/1 or HTTP/2
 rather than requiring a buffered HTTP/3 retry.
 
-Starting the proxy does not create an automatic trace journal. **Save trace…** and
+Starting the proxy does not create an automatic trace journal. **Save copy…** and
 explicit recording write files. See [trace saving](trace-saving.md) and the
 [CLI support guide](cli-support-capture.md); the CLI has separate preferences
 and root ownership under `%LOCALAPPDATA%\Transmog-cli`. Its read-only

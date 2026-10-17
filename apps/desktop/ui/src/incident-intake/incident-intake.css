@@ -1,8 +1,25 @@
-incident-intake .incident-intake{border-block:1px solid var(--border);padding:.65rem 0;overflow-wrap:anywhere}
-incident-intake h3{margin:.2rem 0}incident-intake .incident-instructions,incident-intake article p{white-space:pre-wrap}
-incident-intake .incident-window-controls{display:flex;gap:.7rem;flex-wrap:wrap}incident-intake .incident-window-controls label{display:flex;flex-direction:column;gap:.25rem}incident-intake input[type=number]{max-width:9rem}
-incident-intake article{padding:.6rem 0;border-top:1px solid var(--border)}incident-intake article strong,incident-intake article small{display:block}incident-intake article p{margin:.35rem 0}
+incident-intake .incident-intake{overflow-wrap:anywhere;font-size:.75rem}
+incident-intake .marker-review-grid{display:grid;grid-template-columns:minmax(10rem,30%) minmax(0,1fr);gap:.6rem;max-height:6rem;align-items:start;margin-top:.35rem}
+incident-intake .incident-marker-list,incident-intake .marker-detail{min-width:0;max-height:6rem;overflow:auto;overscroll-behavior:contain}
+incident-intake .marker-location{display:block;text-align:left;width:100%;white-space:normal;padding:.25rem .4rem;border:0;border-bottom:1px solid var(--line);border-radius:0;font-weight:400}
+incident-intake .marker-location strong{display:block;font-size:.7rem}
+incident-intake .marker-location span{display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+incident-intake .marker-location[data-selected]{border-inline-start:3px solid var(--accent-strong);background:var(--accent-soft)}
+incident-intake .marker-detail small{color:var(--muted)}
+incident-intake .marker-note{white-space:pre-wrap;max-height:3rem;overflow:auto;margin:.25rem 0}
+incident-intake .marker-actions{display:flex;align-items:baseline;flex-wrap:wrap;gap:.3rem;margin:.2rem 0}
+incident-intake .marker-actions details[open]{display:flex;flex-wrap:wrap;gap:.3rem}
+incident-intake .marker-editor textarea{width:100%;box-sizing:border-box;resize:vertical;min-height:2.8rem;max-height:5rem}
+incident-intake .marker-shared-actions{border-top:1px solid var(--line);padding-top:.3rem}
+incident-intake .incident-window-controls{display:flex;gap:.5rem;align-items:baseline;flex-wrap:wrap}
+incident-intake .incident-window-controls label{display:flex;gap:.25rem;align-items:baseline}
+incident-intake input[type=number]{width:4.5rem}
+incident-intake .incident-instructions{white-space:pre-wrap}
 incident-intake dl{display:grid;gap:.4rem}incident-intake dl div{display:grid;grid-template-columns:minmax(8rem,1fr) minmax(0,2fr);gap:.5rem}incident-intake dd{margin:0;white-space:pre-wrap}
-@media(max-width:650px){incident-intake dl div{grid-template-columns:1fr}}
+@media(max-width:650px){incident-intake .marker-review-grid{grid-template-columns:minmax(7rem,35%) minmax(0,1fr)}incident-intake dl div{grid-template-columns:1fr}}
 
-incident-intake .incident-marker-list{max-height:20rem;overflow:auto;overscroll-behavior:contain}
+@media(min-width:1100px){incident-intake .marker-detail{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:.2rem .65rem;align-content:start}incident-intake .marker-detail>small{grid-column:1/-1}incident-intake .marker-detail>.marker-note{margin:0;max-height:5rem}incident-intake .marker-detail>.marker-actions{align-content:start;max-width:18rem}incident-intake .marker-editor{grid-column:1/-1}}
+
+@media(max-height:700px){incident-intake .marker-review-grid,incident-intake .incident-marker-list,incident-intake .marker-detail{max-height:4.5rem}}
+
+incident-intake .marker-shared-actions>details[open]{flex-basis:100%}

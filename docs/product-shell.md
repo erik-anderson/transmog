@@ -129,7 +129,7 @@ with a capture path opens a viewer when no main window exists; otherwise the app
 asks whether to import into the main session or open a separate viewer. Closing
 a viewer does not stop the main window's proxy.
 
-**Files → Save trace…** saves retained traffic across the entire list and searches, with optional
+**Files → Save copy…** saves retained traffic across the entire list and searches, with optional
 password encryption, export-only header redaction and network context for TMCap
 or SAZ, or HAR output for HTTP archive interchange. SAZ offers compatibility and
 extended-fidelity choices. File-only recording and conversion are in Capture tools.

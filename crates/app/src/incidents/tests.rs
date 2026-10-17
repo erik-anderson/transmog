@@ -118,6 +118,360 @@ async fn import(app: &Application, path: &Path) -> String {
     .trace
     .id
 }
+
+#[tokio::test]
+async fn marker_edits_are_isolated_revisioned_and_roundtrip_without_old_text() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("original.tmcap");
+    let marker = fixture(&path);
+    let original = std::fs::read(&path).unwrap();
+    let app = application(root.path());
+    let source = import(&app, &path).await;
+    let duplicate = import(&app, &path).await;
+    let review = app
+        .review_traffic_export(Some(crate::comparison::ComparisonScope::Source {
+            trace_id: Some(source.clone()),
+        }))
+        .unwrap();
+    let edited = app
+        .change_trace_marker(
+            &source,
+            0,
+            MarkerChange::Edit {
+                id: marker.id.clone(),
+                note: "Reviewer: checkout failed after submit.".into(),
+            },
+        )
+        .unwrap();
+    assert!(edited.dirty);
+    assert_eq!(edited.markers[0].unix_millis, marker.unix_millis);
+    assert_eq!(edited.markers[0].origin, marker.origin);
+    assert_eq!(app.incident_intake(&duplicate).unwrap().markers[0], marker);
+    assert!(
+        app.change_trace_marker(
+            &source,
+            0,
+            MarkerChange::Delete {
+                id: marker.id.clone()
+            }
+        )
+        .is_err()
+    );
+    assert!(app.export_scope(Some(&review.id)).is_err());
+    let output = root.path().join("reviewed.tmcap");
+    let current = app
+        .review_traffic_export(Some(crate::comparison::ComparisonScope::Source {
+            trace_id: Some(source.clone()),
+        }))
+        .unwrap();
+    app.save_traffic_trace(
+        output.clone(),
+        crate::TraceSaveOptions {
+            review_id: Some(current.id),
+            include_original_context: false,
+            include_markers: Some(true),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    assert!(!app.traces.marker_review(&source).unwrap().dirty);
+    assert_eq!(std::fs::read(&path).unwrap(), original);
+    let reopened = application(&root.path().join("reopened"));
+    import(&reopened, &output).await;
+    let sources = reopened.trace_metadata_list();
+    let source = sources
+        .iter()
+        .find(|s| s.context.get("incidentMarkers").is_some())
+        .unwrap();
+    let context = serde_json::to_string(&source.context).unwrap();
+    assert!(!context.contains(&marker.note));
+    assert!(source.context.get("supportCapture").is_none());
+    let intake = reopened.incident_intake(&source.id).unwrap();
+    assert_eq!(
+        intake.markers[0].note,
+        "Reviewer: checkout failed after submit."
+    );
+    assert_eq!(intake.review.edited_marker_ids, [marker.id]);
+}
+
+#[tokio::test]
+async fn clear_delete_undo_and_marker_only_exports_keep_the_review_available() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("original.tmcap");
+    let marker = fixture(&path);
+    let app = application(root.path());
+    let source = import(&app, &path).await;
+    let cleared = app
+        .change_trace_marker(
+            &source,
+            0,
+            MarkerChange::Edit {
+                id: marker.id.clone(),
+                note: String::new(),
+            },
+        )
+        .unwrap();
+    assert_eq!(cleared.markers.len(), 1);
+    assert!(cleared.markers[0].note.is_empty());
+    let deleted = app
+        .change_trace_marker(
+            &source,
+            cleared.revision,
+            MarkerChange::Delete {
+                id: marker.id.clone(),
+            },
+        )
+        .unwrap();
+    assert!(deleted.markers.is_empty());
+    assert_eq!(deleted.deleted_markers, 1);
+    let restored = app
+        .change_trace_marker(&source, deleted.revision, MarkerChange::Undo)
+        .unwrap();
+    assert_eq!(restored.markers.len(), 1);
+    assert!(restored.markers[0].note.is_empty());
+    let original = app
+        .change_trace_marker(&source, restored.revision, MarkerChange::Undo)
+        .unwrap();
+    assert_eq!(original.markers[0], marker);
+    assert!(!original.dirty);
+    app.change_trace_marker(
+        &source,
+        original.revision,
+        MarkerChange::Delete {
+            id: marker.id.clone(),
+        },
+    )
+    .unwrap();
+    let ids = app
+        .matching_traffic_ids(&crate::SessionQueryInput::default())
+        .unwrap();
+    app.remove_traffic_entries(&ids, false).unwrap();
+    let review = app
+        .review_traffic_export(Some(crate::comparison::ComparisonScope::Source {
+            trace_id: Some(source.clone()),
+        }))
+        .unwrap();
+    assert_eq!(review.entries, 0);
+    assert_eq!(review.deleted_markers, 1);
+    let output = root.path().join("empty.tmcap");
+    app.save_traffic_trace(
+        output.clone(),
+        crate::TraceSaveOptions {
+            review_id: Some(review.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let reopened = application(&root.path().join("reopened"));
+    import(&reopened, &output).await;
+    assert!(
+        reopened
+            .trace_marker_reviews()
+            .unwrap()
+            .iter()
+            .all(|r| r.markers.is_empty())
+    );
+    assert!(!app.traces.marker_review(&source).unwrap().dirty);
+}
+
+#[tokio::test]
+async fn incompatible_export_and_late_edits_do_not_clear_unsaved_state() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("original.tmcap");
+    let marker = fixture(&path);
+    let app = application(root.path());
+    let source = import(&app, &path).await;
+    app.change_trace_marker(
+        &source,
+        0,
+        MarkerChange::Edit {
+            id: marker.id.clone(),
+            note: "First revision".into(),
+        },
+    )
+    .unwrap();
+    let snapshot = app.trace_metadata_list();
+    app.change_trace_marker(
+        &source,
+        1,
+        MarkerChange::Edit {
+            id: marker.id.clone(),
+            note: "Newer revision".into(),
+        },
+    )
+    .unwrap();
+    app.traces.markers_saved(&snapshot).unwrap();
+    assert!(app.has_marker_changes());
+    let result = app
+        .save_traffic_trace(
+            root.path().join("copy.har"),
+            crate::TraceSaveOptions {
+                format: crate::TraceSaveFormat::Har,
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+    assert_eq!(result.omitted_incident_markers, 1);
+    assert!(app.has_marker_changes());
+    app.discard_marker_changes().unwrap();
+    assert!(!app.has_marker_changes());
+    assert_eq!(
+        app.incident_intake(&source).unwrap().markers[0].note,
+        "First revision"
+    );
+}
+
+#[tokio::test]
+async fn flagged_messages_reopen_with_exact_links_in_supported_copies() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("original.tmcap");
+    fixture(&path);
+    let app = application(root.path());
+    import(&app, &path).await;
+    let ids = app
+        .matching_traffic_ids(&crate::SessionQueryInput::default())
+        .unwrap();
+    let flagged = app
+        .add_trace_marker(&ids[0], "response", "Reviewer response note".into())
+        .unwrap();
+    let marker = flagged.markers.last().unwrap();
+    assert_eq!(
+        marker.origin,
+        transmog_capture::support::MarkerOrigin::Analyst
+    );
+    assert_eq!(
+        marker.creation_kind,
+        transmog_capture::support::CreationKind::LaterAnnotation
+    );
+    assert_eq!(flagged.marker_entries.get(&marker.id), Some(&ids[0]));
+    assert_eq!(flagged.links[0].boundary, "response");
+    for (format, extension) in [
+        (crate::TraceSaveFormat::Native, "tmcap"),
+        (crate::TraceSaveFormat::SazExtended, "saz"),
+    ] {
+        let review = app
+            .review_traffic_export(Some(crate::comparison::ComparisonScope::Selected {
+                ids: vec![ids[0].clone()],
+            }))
+            .unwrap();
+        let output = root.path().join(format!("flagged.{extension}"));
+        app.save_traffic_trace(
+            output.clone(),
+            crate::TraceSaveOptions {
+                review_id: Some(review.id),
+                format,
+                include_original_context: false,
+                include_markers: Some(true),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap();
+        let reopened = application(&root.path().join(extension));
+        import(&reopened, &output).await;
+        let review = reopened
+            .trace_marker_reviews()
+            .unwrap()
+            .into_iter()
+            .find(|r| r.links.iter().any(|link| link.marker_id == marker.id))
+            .unwrap();
+        let id = review
+            .marker_entries
+            .get(&marker.id)
+            .expect("reopened exact request link");
+        assert!(
+            reopened
+                .matching_traffic_ids(&crate::SessionQueryInput::default())
+                .unwrap()
+                .contains(id)
+        );
+        assert_eq!(
+            review
+                .markers
+                .iter()
+                .find(|m| m.id == marker.id)
+                .unwrap()
+                .note,
+            "Reviewer response note"
+        );
+    }
+}
+
+#[tokio::test]
+async fn flagging_live_requests_keeps_live_scopes_and_exports_their_markers() {
+    use transmog_core::{
+        ClientIdentity, ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId, Target,
+        intercept::{ExchangeId, ExchangeMetadata},
+        observe::{ObserverEvent, ObserverEventKind},
+    };
+    let root = tempfile::tempdir().unwrap();
+    let app = application(root.path());
+    let session = SessionMetadata {
+        session_id: SessionId(1),
+        downstream_connection_id: ConnectionId(1),
+        stream_id: StreamId(1),
+        client_addr: "127.0.0.1:1".parse().unwrap(),
+        client_identity: ClientIdentity::default(),
+        proxy_addr: "127.0.0.1:2".parse().unwrap(),
+        ingress_version: HttpLegVersion::Http1,
+        egress_version: None,
+    };
+    let target = Target {
+        scheme: "https".into(),
+        authority: "example.test".into(),
+        host: "example.test".into(),
+        port: 443,
+        path: "/".into(),
+        query: None,
+    };
+    app.service.catalog().apply(ObserverEvent {
+        exchange_id: ExchangeId(1),
+        sequence: 1,
+        kind: ObserverEventKind::ExchangeStarted {
+            metadata: Arc::new(ExchangeMetadata::from_session(&session, target)),
+        },
+    });
+    let id = format!("{:032x}", 1);
+    assert!(
+        app.add_trace_marker(&id, "response", String::new())
+            .is_err()
+    );
+    let review = app.add_trace_marker(&id, "request", String::new()).unwrap();
+    assert_eq!(review.trace_id, "live");
+    assert_eq!(review.added_markers, 1);
+    assert!(app.traces.source_id(&id).is_none());
+    for source in [None, Some("live".into())] {
+        let scope = crate::comparison::ComparisonScope::Source { trace_id: source };
+        let found = crate::export_review::scope_ids(&app, &scope).unwrap();
+        assert_eq!(found.len(), 1);
+        assert_eq!(found[0], id);
+    }
+    let export = app
+        .review_traffic_export(Some(crate::comparison::ComparisonScope::Selected {
+            ids: vec![id.clone()],
+        }))
+        .unwrap();
+    assert_eq!(export.incident_markers, 1);
+    let output = root.path().join("live.tmcap");
+    app.save_traffic_trace(
+        output.clone(),
+        crate::TraceSaveOptions {
+            review_id: Some(export.id),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let reopened = application(&root.path().join("reopened"));
+    import(&reopened, &output).await;
+    let reviews = reopened.trace_marker_reviews().unwrap();
+    let source = reviews.iter().find(|r| !r.markers.is_empty()).unwrap();
+    assert_eq!(source.marker_entries.len(), 1);
+    assert!(source.markers[0].note.is_empty());
+}
 #[tokio::test]
 async fn intake_uses_original_source_and_filters_before_virtual_paging() {
     let root = tempfile::tempdir().unwrap();

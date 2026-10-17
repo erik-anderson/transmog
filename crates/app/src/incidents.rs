@@ -2,12 +2,66 @@
 #![allow(missing_docs)]
 use crate::{AppError, Application, ErrorCategory};
 use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::{
     collections::{BTreeSet, HashSet},
     sync::Arc,
 };
 pub use transmog_capture::support::IncidentMarker;
 use transmog_capture::support::SupportProfile;
+
+#[allow(missing_docs)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct MarkerLink {
+    pub marker_id: String,
+    pub anchor_id: String,
+    pub boundary: String,
+    pub time_basis: String,
+}
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct MarkerSnapshot {
+    pub links: Vec<MarkerLink>,
+    pub markers: Vec<IncidentMarker>,
+    pub edited: Vec<String>,
+}
+pub(crate) struct MarkerReviewState {
+    pub revision: u64,
+    pub baseline: MarkerSnapshot,
+    pub saved: MarkerSnapshot,
+}
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MarkerReview {
+    pub links: Vec<MarkerLink>,
+    pub marker_entries: BTreeMap<String, String>,
+    pub added_markers: usize,
+    pub trace_id: String,
+    pub name: String,
+    pub revision: u64,
+    pub dirty: bool,
+    pub can_undo: bool,
+    pub markers: Vec<IncidentMarker>,
+    pub edited_marker_ids: Vec<String>,
+    pub edited_notes: usize,
+    pub deleted_markers: usize,
+}
+#[derive(Clone, Debug, Deserialize)]
+#[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum MarkerChange {
+    Add {
+        marker: IncidentMarker,
+        link: MarkerLink,
+    },
+    Edit {
+        id: String,
+        note: String,
+    },
+    Delete {
+        id: String,
+    },
+    Undo,
+}
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct IncidentWindow {
@@ -21,6 +75,7 @@ pub struct IncidentWindow {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct IncidentIntake {
+    pub review: MarkerReview,
     pub trace_id: String,
     pub source: String,
     pub profile: Option<SupportProfile>,
@@ -35,7 +90,7 @@ pub struct IncidentIntake {
     pub incomplete_bodies: usize,
     pub note: String,
 }
-fn markers(context: &serde_json::Value) -> Result<Vec<IncidentMarker>, AppError> {
+pub(crate) fn markers(context: &serde_json::Value) -> Result<Vec<IncidentMarker>, AppError> {
     context
         .get("incidentMarkers")
         .and_then(serde_json::Value::as_array)
@@ -60,6 +115,124 @@ fn profile(context: &serde_json::Value) -> Result<Option<SupportProfile>, AppErr
         .transpose()
 }
 impl Application {
+    /// Adds a reviewer marker linked to a retained request or response.
+    /// # Errors
+    /// Rejects unavailable evidence, absent timestamps and invalid notes.
+    pub fn add_trace_marker(
+        &self,
+        exchange_id: &str,
+        boundary: &str,
+        note: String,
+    ) -> Result<MarkerReview, AppError> {
+        let id = crate::inspector::parse_session_id(exchange_id)?;
+        let session = self
+            .service
+            .catalog()
+            .get(transmog_core::intercept::ExchangeId(id))
+            .ok_or_else(|| error("Request is no longer available"))?;
+        if !matches!(boundary, "request" | "response") {
+            return Err(error("Choose Request or Response"));
+        }
+        if boundary == "response" && session.response_heads.is_empty() {
+            return Err(error("No response is available for this request"));
+        }
+        let row =
+            crate::sessions::timeline_row(&session, std::time::SystemTime::now(), &self.traces);
+        let start = row.start_millis.ok_or_else(|| {
+            error("This request has no recorded time. Choose a request with a timestamp.")
+        })?;
+        let response = if boundary == "response" {
+            row.response_micros.map(|v| v / 1000)
+        } else {
+            None
+        };
+        let time = start.saturating_add(response.unwrap_or(0));
+        let entry = self
+            .traces
+            .entry(exchange_id)
+            .unwrap_or_else(|| crate::trace_save::source_entry(self, &session));
+        let trace_id = entry.trace_id.clone();
+        self.traces.ensure_marker_source(&trace_id)?;
+        let review = self.traces.marker_review(&trace_id)?;
+        let context = self
+            .traces
+            .metadata(&trace_id)
+            .ok_or_else(|| error("Trace is no longer available"))?
+            .context;
+        let run = context
+            .get("captureRunId")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned)
+            .or_else(|| review.markers.first().map(|m| m.run_id.clone()))
+            .map_or_else(transmog_capture::support::new_id, Ok)
+            .map_err(|_| error("Marker identity unavailable"))?;
+        let mut marker = IncidentMarker::new(
+            run,
+            None,
+            transmog_capture::support::MarkerOrigin::Analyst,
+            note,
+        )
+        .map_err(|e| error(&e.to_string()))?;
+        marker.unix_millis = time;
+        marker.creation_kind = transmog_capture::support::CreationKind::LaterAnnotation;
+        let anchor = entry
+            .marker_anchor
+            .clone()
+            .map_or_else(transmog_capture::support::new_id, Ok)
+            .map_err(|_| error("Marker identity unavailable"))?;
+        let link = MarkerLink {
+            marker_id: marker.id.clone(),
+            anchor_id: anchor.clone(),
+            boundary: boundary.into(),
+            time_basis: if response.is_some() {
+                "response-headers"
+            } else {
+                "request-start"
+            }
+            .into(),
+        };
+        self.traces
+            .add_linked_marker(exchange_id, entry, anchor, review.revision, marker, link)
+    }
+    /// Lists current markers, links and unsaved changes for this window.
+    /// # Errors
+    /// Returns malformed retained marker metadata.
+    pub fn trace_marker_reviews(&self) -> Result<Vec<MarkerReview>, AppError> {
+        self.traces.marker_reviews()
+    }
+    /// Applies a note edit, deletion or Undo to the expected source revision.
+    /// # Errors
+    /// Returns stale revisions, unavailable markers or invalid note content.
+    pub fn change_trace_marker(
+        &self,
+        trace_id: &str,
+        revision: u64,
+        change: MarkerChange,
+    ) -> Result<MarkerReview, AppError> {
+        if matches!(change, MarkerChange::Add { .. }) {
+            return Err(error("Choose a request or response to flag"));
+        }
+        self.traces.change_marker(trace_id, revision, change)
+    }
+    pub fn set_marker_draft_dirty(&self, dirty: bool) {
+        self.traces.set_marker_draft_dirty(dirty);
+    }
+    pub fn has_marker_changes(&self) -> bool {
+        self.traces.has_marker_changes()
+    }
+    /// Restores the last saved marker state and releases session Undo history.
+    /// # Errors
+    /// Returns unavailable retained source metadata.
+    pub fn discard_marker_changes(&self) -> Result<(), AppError> {
+        self.traces.accept_marker_changes()
+    }
+    pub(crate) fn marker_revisions(&self) -> Result<BTreeMap<String, u64>, AppError> {
+        Ok(self
+            .trace_marker_reviews()?
+            .into_iter()
+            .map(|r| (r.trace_id, r.revision))
+            .collect())
+    }
     /// Summarizes original support context and currently retained source evidence.
     /// # Errors
     /// Returns missing source or invalid support metadata.
@@ -76,7 +249,9 @@ impl Application {
         let mut entries = 0;
         self.service.catalog().project_retained(|s| {
             let id = format!("{:032x}", s.exchange_id.0);
-            if self.traces.source_id(&id).as_deref() != Some(trace_id) {
+            if (s.imported || trace_id != "live")
+                && self.traces.source_id(&id).as_deref() != Some(trace_id)
+            {
                 return;
             }
             entries += 1;
@@ -129,6 +304,7 @@ impl Application {
         };
         let retention=context.get("circularRetention").map_or_else(String::new,|r|format!(" Circular retention: {} exchanges evicted; surrounding incident traffic may be missing.",r["evictedExchanges"]));
         Ok(IncidentIntake {
+            review: self.traces.marker_review(trace_id)?,
             trace_id: trace_id.into(),
             source: trace.name,
             profile: profile(context)?,
@@ -209,7 +385,8 @@ pub(crate) fn restrict(
         .catalog()
         .project_retained(|s| {
             let id = format!("{:032x}", s.exchange_id.0);
-            if app.traces.source_id(&id).as_deref() != Some(&window.trace_id)
+            if ((s.imported || window.trace_id != "live")
+                && app.traces.source_id(&id).as_deref() != Some(&window.trace_id))
                 || matching.as_ref().is_some_and(|ids| !ids.contains(&id))
             {
                 return None;

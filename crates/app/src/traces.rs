@@ -154,6 +154,8 @@ pub(crate) async fn inspect(request: crate::ImportRequest) -> Result<TraceInspec
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub(crate) struct TraceEntry {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker_anchor: Option<String>,
     pub trace_id: String,
     pub original_id: String,
     /// Explicit source number, never inferred from an opaque exchange ID.
@@ -176,6 +178,9 @@ pub(crate) struct SourceRequestNumber {
 
 #[derive(Default)]
 struct State {
+    marker_reviews: BTreeMap<String, crate::incidents::MarkerReviewState>,
+    marker_draft_dirty: bool,
+    marker_undo: std::collections::VecDeque<(String, crate::incidents::MarkerSnapshot)>,
     index_bytes: usize,
     stream_index_bytes: usize,
     // Keep each import's full charge until its last entry is released. An
@@ -250,7 +255,19 @@ impl TraceRegistry {
             .values()
             .map(|entry| entry.trace_id.clone())
             .collect::<std::collections::HashSet<_>>();
-        state.metadata.retain(|id, _| sources.contains(id));
+        // Capture-level annotations remain reviewable without surviving requests.
+        let annotated = state
+            .metadata
+            .iter()
+            .filter(|(id, source)| {
+                source.context.get("incidentMarkers").is_some()
+                    || state.marker_reviews.contains_key(*id)
+            })
+            .map(|(id, _)| id.clone())
+            .collect::<HashSet<_>>();
+        state
+            .metadata
+            .retain(|id, _| sources.contains(id) || annotated.contains(id));
         state.artifacts.retain(|id, _| sources.contains(id));
         for (entries, _, _) in &mut state.index_batches {
             entries.retain(|id| !removed.contains(id));
@@ -270,6 +287,7 @@ impl TraceRegistry {
         self.lock()
             .entries
             .get(id)
+            .filter(|entry| entry.trace_id != "live")
             .map(|entry| entry.trace_id.clone())
     }
     pub(crate) fn entry(&self, id: &str) -> Option<TraceEntry> {
@@ -633,6 +651,9 @@ impl TraceRegistry {
         })
     }
 }
+
+#[path = "trace_markers.rs"]
+mod marker_review;
 
 fn restore_case_context(
     imported: &mut ImportData,
@@ -1428,6 +1449,7 @@ fn import_saz(
             saved.source
         } else {
             TraceEntry {
+                marker_anchor: None,
                 trace_id: trace_id.into(),
                 original_number: if evidence.is_none() {
                     session
@@ -2595,6 +2617,7 @@ fn append_native(
         saved.source
     } else {
         TraceEntry {
+            marker_anchor: None,
             trace_id: trace_id.into(),
             original_id: format!("{original:032x}"),
             original_number: None,
@@ -2914,6 +2937,10 @@ impl SavedEntry {
     fn valid(&self) -> bool {
         let source = &self.source;
         source.trace_id.len() <= 256
+            && source
+                .marker_anchor
+                .as_deref()
+                .is_none_or(transmog_capture::support::valid_id)
             && source.original_number.as_ref().is_none_or(|number| {
                 number.version == 1
                     && number.value.len() <= 20
