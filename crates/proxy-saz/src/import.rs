@@ -266,7 +266,14 @@ impl<R: Read + Seek + Clone> SazArchive<R> {
         }
         check_directory_bounds(&mut reader, limits)?;
         reader.rewind()?;
-        let mut archive = ZipArchive::new(reader)?;
+        // SAZ is a ZIP file, not an embedded/self-extracting archive. Avoid
+        // searching body payloads to infer an offset for prepended data.
+        let mut archive = ZipArchive::with_config(
+            zip::read::Config {
+                archive_offset: zip::read::ArchiveOffset::Known(0),
+            },
+            reader,
+        )?;
         if archive.len() > limits.max_members {
             return Err(SazError::ImportLimitExceeded);
         }
@@ -1511,7 +1518,11 @@ mod tests {
         };
         let mut archive = SazArchive::open(reader, SazImportLimits::default()).unwrap();
         let result = archive.index(|_, _| {}, || false).unwrap();
-        assert!(read.load(Ordering::Relaxed) < 200 * 1024);
+        let indexed_bytes = read.load(Ordering::Relaxed);
+        assert!(
+            indexed_bytes < 200 * 1024,
+            "Indexing read {indexed_bytes} bytes"
+        );
         let mut output = Vec::new();
         archive
             .copy_body(

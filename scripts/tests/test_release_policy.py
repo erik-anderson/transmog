@@ -14,6 +14,20 @@ policy = load("release-policy")
 
 
 class ReleasePolicyTests(unittest.TestCase):
+    def test_policy_hashes_ignore_checkout_line_endings_but_detect_content_changes(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            for name in policy.INPUTS:
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(b"policy\nvalue\n")
+            expected = policy.input_hashes(root)
+            for name in policy.INPUTS:
+                (root / name).write_bytes(b"policy\r\nvalue\r\n")
+            self.assertEqual(policy.input_hashes(root), expected)
+            (root / "Cargo.lock").write_bytes(b"changed\r\nvalue\r\n")
+            self.assertNotEqual(policy.input_hashes(root), expected)
+
     def test_snapshot_rejects_different_source_locks_revision_and_dirty_database(self):
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary).resolve()

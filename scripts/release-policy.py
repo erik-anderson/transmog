@@ -19,7 +19,9 @@ def git(directory, *arguments):
 
 
 def input_hashes(root=ROOT):
-    return {name: hashlib.sha256((root / name).read_bytes()).hexdigest() for name in INPUTS}
+    # All inputs are TOML/text. Git checkout line-ending preferences can differ
+    # across Windows runners without changing the dependency graph or policy.
+    return {name: hashlib.sha256((root / name).read_bytes().replace(b"\r\n", b"\n")).hexdigest() for name in INPUTS}
 
 
 def configuration(policy, database):
