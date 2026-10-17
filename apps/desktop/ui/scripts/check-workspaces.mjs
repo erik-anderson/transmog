@@ -200,7 +200,7 @@ await page.addInitScript((configuration) => {
           return 'C:/cases/investigation.tmcase.tmcap';
         case 'cancel_case_operation':state.caseCanceled=true;state.releaseCaseSave?.();return;
         case 'read_case_context':return 'Original config output <script>inert</script>\r\nDNS=value';
-        case 'saved_file_is_case':return /\.(tmcase|tmrules)\.(tmcap|zip)$/i.test(args.path);
+        case 'saved_file_is_case':return /\.(tmcase|tmrules)\.tmcap$/i.test(args.path);
         case 'choose_case':return 'portable-fixture.tmcase.tmcap';
         case 'open_case':if(state.caseLocked&&args.password!=='fixture')throw {category:args.password?'invalid-password':'password-required',message:args.password?'The package password is incorrect':'This package requires a password'};return structuredClone(state.caseReview);
         case 'inspect_case_source':return {links:[{reference:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},exchangeId:'first'}],imported:{trace:state.traces?.[0],issues:[]}};

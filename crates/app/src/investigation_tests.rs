@@ -264,7 +264,6 @@ async fn encrypted_package_inspects_without_extraction_and_keeps_pinned_bodies_a
     wire::write_case_package(
         &prepared,
         &path,
-        wire::PackageFormat::Native,
         Some(password.clone()),
         false,
         &AtomicBool::new(false),

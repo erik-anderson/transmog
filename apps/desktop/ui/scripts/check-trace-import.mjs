@@ -36,8 +36,18 @@ export async function checkTraceImport(page, root, view) {
   const importsBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0);
   await drag(trafficDrop,'drop',['C:/captures/not-a-trace.txt']);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);
+  for(const path of ['C:/captures/old.tmcase.zip','C:/captures/old.tmrules.zip']) {
+    await drag(trafficDrop,'enter',[path]);
+    assert.equal(await trafficDrop.locator('[data-drag-active]').count(),0);
+    await drag(trafficDrop,'drop',[path]);
+    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);
+  }
+  await drag(trafficDrop,'drop',['C:/captures/drop.SAZ']);
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.lastImport?.path==='C:/captures/drop.SAZ');
+  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastImport.path),'C:/captures/drop.SAZ');
   await drag(trafficDrop,'drop',['C:/captures/drop.jsonl']);
-  await page.waitForFunction(count=>globalThis.__workspaceFixture.calls.import_trace>count,importsBefore);
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.lastImport?.path==='C:/captures/drop.jsonl');
   await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.importingTrace);
   await page.getByRole('button',{name:'Files',exact:true}).click();
   assert.equal(await filesMenu.getByRole('button',{name:'View current imports…',exact:true}).isEnabled(),true);

@@ -48,10 +48,10 @@ object bytes. Paths are derived from digests, never supplied filesystem locators
 There are no absolute paths, URLs to fetch, links, scripts to run or environment
 variable substitutions in dependency resolution.
 
-Use `.tmcase.zip` for a bare ZIP/ZIP64 interchange export of a case directory and
-`.tmrules.zip` for a rule collection. Writers use Stored members so ZIP entries remain
-seekable and TMCap owns package compression. Native captures and many encoded
-response assets already compress internally. Readers reject other ZIP compression,
+Transfers use `.tmcase.tmcap` for cases and `.tmrules.tmcap` for rule collections.
+Each contains a ZIP/ZIP64 payload inside TMCap. Writers use Stored members so
+ZIP entries remain seekable and TMCap owns package compression. Native captures
+and many encoded response assets already compress internally. Readers reject other ZIP compression,
 member encryption, directories, duplicate names, unsafe names, reparse points,
 symlinks, inconsistent local/central headers, overlapping entries and trailing
 archive data. Standard streaming data descriptors and ZIP64 size fields are
@@ -66,14 +66,15 @@ timestamp precision. This is packaging time, not a claim about when original
 evidence was modified. Forwarding an existing package preserves its timestamps.
 Nested archive-looking asset bytes are ordinary response content, never extracted.
 
-Native transfers default to `.tmcase.tmcap` or `.tmrules.tmcap`: the exact ZIP byte
-stream stored as one logical artifact in a compressed TMCap container, with
-optional password encryption. Compression does not require encryption. The inner
-ZIP is unchanged by wrapping/unwrapping and remains usable by standard archive
+Transfers store the exact ZIP byte stream as one logical artifact in a compressed
+TMCap container, with optional password encryption. Compression does not require
+encryption. The inner ZIP is unchanged by wrapping/unwrapping and remains usable by standard archive
 tools after explicit unwrap/decryption. The portable manifest does not depend on
 the compression/encryption mode. Do not add ZIP member encryption or a second
-encryption format. Bare ZIP is an explicit interchange option and leaves its
-Stored members uncompressed; it is not the native compression path.
+encryption format. Bare ZIP case and rule packages are unsupported, including
+archives renamed with a native extension. The internal ZIP profile remains part
+of native package validation. SAZ traffic import/export is a separate format and
+retains its own ZIP compression and encryption support.
 
 When encryption is enabled, reuse
 [TMCap's encryption](tmcap-format.md#encryption-and-integrity): AES-256-GCM,
@@ -564,12 +565,10 @@ or proof of an earlier experiment's outcome.
 The native format compresses a Stored ZIP64 stream inside TMCap. Optional password
 protection covers the complete ZIP, including notes, context, object names and
 manifest. The masked output prompt is separate from source/embedded-source
-password prompts. The desktop labels these **Transmog case (compressed)** and
-**ZIP package (for tools)**. ZIP output contains a JSON manifest and binary
-capture/response objects for compatible readers; it is not a readable traffic
-export. It is uncompressed and cannot be password-protected.
-ZIP case exports use `.tmcase.zip`; ZIP rule collections use `.tmrules.zip` so
-ordinary archive tools recognize them directly.
+password prompts. Saving a case or rule collection always uses its native
+compressed format; there is no format selector. The password checkbox remains
+available for new exports and copies. An encrypted opened package starts with
+protection selected when saving a copy.
 An error or canceled password prompt never selects plaintext as a fallback.
 
 Opening verifies the complete outer stream and all declared object hashes before
@@ -586,8 +585,8 @@ verification. **More → Unload case** releases its owner, while already
 imported Traffic retains the source/key handles needed by lazy bodies. Moving or
 deleting the original filename does not reopen another file under that name.
 
-**More → Save a copy…** opens output options, then forwards the exact inner ZIP, optionally changing its outer
-compression/password. It preserves ZIP metadata as well as declared contents;
+**More → Save a copy…** opens output options, then forwards the exact inner ZIP,
+optionally changing its password protection. It preserves ZIP metadata as well as declared contents;
 it is not redaction. An encrypted opened package starts with protection selected.
 Writing a readable copy requires an explicit output choice. Native dialogs confirm
 replacement; failed writes, failed verification and cancellation preserve existing
@@ -618,9 +617,9 @@ copying or inspecting never imports automation automatically or executes scripts
 | --- | --- |
 | `open(path, source_password, canceled)` | Pinned, fully verified read-only source; bounded ZIP directory and strict manifest validation. |
 | `open_object(digest)` | Independent seekable cursor over declared bytes; no source-machine path resolution. |
-| `write_transfer(...)` | Stream the exact ZIP into native or bare output; verify before publication. |
+| `write_transfer(...)` | Stream the exact inner ZIP into native output, optionally changing its password; verify before publication. |
 | `save_working_copy(...)` | Explicit create-new plaintext directory using K2 transactional persistence. |
-| `write_case_package` / `write_rules_package` | Stream a frozen dependency closure directly into Stored ZIP64 and optionally TMCap; exclude working history/recovery. |
+| `write_case_package` / `write_rules_package` | Stream a frozen dependency closure into Stored ZIP64 inside native TMCap; exclude working history/recovery. |
 | `Application::open_package_evidence` | Existing bounded native importer and body sources, with package/source handles pinned for lazy reads. |
 
 The ZIP preflight rejects unsafe/unlisted/duplicate names, links/directories,

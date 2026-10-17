@@ -15,6 +15,9 @@ when changing the experience.
   occasional sharing workflow, grouped secondarily; opening a case leads toward
   inspecting its traffic. Recognize supported file kinds through normal opening
   paths so users need not choose a specialized command first.
+  Case sharing uses one native package format with optional password protection;
+  keep packaging internals out of the save flow. Traffic interchange formats,
+  including SAZ, remain in the ordinary traffic workflow.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.

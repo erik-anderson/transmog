@@ -46,7 +46,8 @@ capture-wide loss, encrypted inputs and changed originals. Unix no-follow/lockin
 checks run in the Linux container; Windows tests cover blocked replacement.
 These K1/K2 checks alone do not qualify archive readers, package encryption or CLI support.
 K3's `cargo test -p transmog-portable --test packages` qualifies production ZIP64
-preflight, hostile corpus, encryption, exact-ZIP forwarding, independent readers,
+preflight and hostile payloads inside native packages, bare-archive rejection,
+encryption, exact-ZIP forwarding, independent readers,
 working copies and publication failures. Capture artifact tests cover authenticated
 random reads, incomplete/tampered completion and failed-output poisoning. A sparse
 ZIP64 metadata test exceeds four GiB without reading/allocating its declared body.

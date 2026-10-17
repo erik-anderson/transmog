@@ -33,9 +33,7 @@
         <details><summary>Excluded content</summary><ul><for each="item in caseExcluded"><li>{{item.text}}</li></for></ul></details>
       </if>
       <form ?hidden="{{caseStage != 'export' && caseStage != 'copy'}}" id="case-save" w-ref="{saveForm}" @submit="{save(e)}">
-        <label>File format<select name="format" aria-label="File format" @change="{setFormat(e)}"><option value="native">Transmog case (compressed)</option><option value="bare-zip">ZIP package (for tools)</option></select></label>
-        <if condition="caseFormat == 'bare-zip'"><p>Contains JSON and binary capture/response files for compatible tools. It is not a readable traffic export. ZIP packages are uncompressed and cannot be password-protected.</p></if>
-        <label class="check"><input type="checkbox" name="encrypt" ?disabled="{{caseFormat == 'bare-zip'}}" @change="{setEncryption(e)}">Protect the saved file with a password</label><p>Without a password, anyone with the file can read its contents.</p>
+        <label class="check"><input type="checkbox" name="encrypt">Protect the saved file with a password</label><p>Without a password, anyone with the file can read its contents.</p>
       </form>
       <if condition="caseStage == 'inspect' && !viewerMode && caseImportAvailable"><details><summary>Import rules and experiments</summary><form id="case-import" w-ref="{importForm}" @submit="{reviewImport(e)}">
         <if condition="!caseIsCase"><p>Imports this rule collection and its response files.</p></if><if condition="caseIsCase"><if condition="caseOrdinaryRules"><label class="check"><input type="checkbox" name="ordinary">Saved rules</label></if><for each="experiment in caseExperiments"><label class="check"><input type="checkbox" name="experiment" value="{{experiment.id}}" ?disabled="{{!experiment.available}}">{{experiment.label}} · {{experiment.state}}</label><if condition="experiment.reason"><p>{{experiment.reason}}</p></if></for></if>

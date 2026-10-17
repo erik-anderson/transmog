@@ -57,13 +57,16 @@ export async function checkPortableCases(page,root){
   assert.match(await dialog.locator('.case-summary').textContent(),/99 requests/);
   assert.match(await dialog.locator('.case-summary').textContent(),/1 unavailable file$/);
   await dialog.getByText('Capture observations',{exact:true}).click();await dialog.getByText(/these counts alone do not indicate an export failure/).waitFor();
-  await dialog.getByLabel('File format',{exact:true}).selectOption('bare-zip');await dialog.getByText(/not a readable traffic export/).waitFor();assert.equal(await dialog.getByLabel('Protect the saved file with a password',{exact:true}).isDisabled(),true);await dialog.getByLabel('File format',{exact:true}).selectOption('native');
+  assert.equal(await dialog.getByLabel('File format',{exact:true}).count(),0);
+  assert.equal(await dialog.getByLabel('Protect the saved file with a password',{exact:true}).isEnabled(),true);
   assert.equal(await dialog.locator('script,img').count(),0);
   for(const [width,height] of [[1440,900],[960,720],[800,600]]){
     await page.setViewportSize({width,height});await dialog.getByRole('button',{name:'Save case…',exact:true}).scrollIntoViewIfNeeded();
     await dialog.locator('.case-scroll').evaluate(el=>el.scrollTop=0);
     const rect=await dialog.boundingBox();assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=width+1&&rect.y+rect.height<=height+1);
     await page.screenshot({path:resolve(root,`../../../target/ui-check/portable-case-${width}.png`)});
+    await dialog.getByLabel('Protect the saved file with a password',{exact:true}).scrollIntoViewIfNeeded();
+    await page.screenshot({path:resolve(root,`../../../target/ui-check/case-save-options-${width}.png`)});
   }
   await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/portable-case-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseSave=true;});
@@ -126,7 +129,7 @@ await dialog.getByRole('button',{name:'Review selected content',exact:true}).cli
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
   // The ordinary import/drop route recognizes cases; it never admits them as traces.
   const importsBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0);
-  await page.evaluate(()=>{globalThis.__workspaceFixture.caseLocked=false;globalThis.__workspaceFixture.pickedTrace='C:/captures/received.tmcase.zip';});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.caseLocked=false;globalThis.__workspaceFixture.pickedTrace='C:/captures/received.tmcase.tmcap';});
   await traffic.getByRole('button',{name:'Files',exact:true}).click();
   const fileButtons=await traffic.locator('#trace-files-menu').getByRole('button').allTextContents();
   assert.deepEqual(fileButtons.slice(0,2),['Import traffic…','Save trace…']);

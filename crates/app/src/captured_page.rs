@@ -1277,7 +1277,6 @@ mod tests {
         transmog_portable::write_case_package(
             &prepared,
             &package_path,
-            transmog_portable::PackageFormat::Native,
             Some(password.clone()),
             false,
             &AtomicBool::new(false),

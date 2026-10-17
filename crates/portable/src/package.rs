@@ -1,4 +1,4 @@
-//! Pinned read-only packages and transactional native/bare ZIP publication.
+//! Pinned read-only packages and transactional native package publication.
 use crate::{
     CaseManifest, Collection, Error, Object, PreparedCase, PreparedCollection, WorkingCase,
     invalid, package_zip as zip,
@@ -61,16 +61,6 @@ impl PackageManifest {
         }
     }
 }
-/// Explicit native compressed transfer or uncompressed bare ZIP interchange.
-#[derive(Clone, Copy, Debug, serde::Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum PackageFormat {
-    /// `TMCap` compression and optional whole-case encryption.
-    Native,
-    /// Stored ZIP64, without encryption.
-    BareZip,
-}
-
 /// Read-only validated package. Cloned member cursors keep the source pinned.
 #[derive(Clone)]
 pub struct Package {
@@ -116,25 +106,24 @@ impl Package {
         let mut magic = [0; 9];
         input.read_exact(&mut magic)?;
         input.rewind()?;
-        let mut protected_media = None;
-        let mut encrypted = false;
-        let mut input: Box<dyn ReadSeek> = if &magic == b"TMCAP001\0" {
-            let mut wrapped = ArtifactReader::new(input, password).map_err(capture_error)?;
-            wrapped
-                .verify(|| canceled.load(Ordering::Acquire))
-                .map_err(|e| {
-                    if canceled.load(Ordering::Acquire) {
-                        Error::Canceled
-                    } else {
-                        capture_error(e)
-                    }
-                })?;
-            protected_media = Some(wrapped.descriptor().media_type.clone());
-            encrypted = wrapped.encrypted();
-            Box::new(wrapped)
-        } else {
-            Box::new(input)
-        };
+        if &magic != b"TMCAP001\0" {
+            return Err(Error::Unsupported(
+                "Choose a Transmog case or rule collection in TMCap format".into(),
+            ));
+        }
+        let mut wrapped = ArtifactReader::new(input, password).map_err(capture_error)?;
+        wrapped
+            .verify(|| canceled.load(Ordering::Acquire))
+            .map_err(|e| {
+                if canceled.load(Ordering::Acquire) {
+                    Error::Canceled
+                } else {
+                    capture_error(e)
+                }
+            })?;
+        let protected_media = wrapped.descriptor().media_type.clone();
+        let encrypted = wrapped.encrypted();
+        let mut input: Box<dyn ReadSeek> = Box::new(wrapped);
         let members = zip::read(&mut *input, canceled)?;
         let member = members
             .get("manifest.json")
@@ -158,10 +147,7 @@ impl Package {
             Some("rules") => PackageManifest::Rules(Collection::parse(&bytes)?),
             _ => return Err(Error::Unsupported("Unknown package manifest kind".into())),
         };
-        if protected_media
-            .as_deref()
-            .is_some_and(|m| m != manifest.media())
-        {
+        if protected_media != manifest.media() {
             return Err(invalid("Outer artifact type disagrees with manifest"));
         }
         if members.len() != manifest.objects().len() + 1 {
@@ -227,23 +213,17 @@ impl Package {
         self.encrypted
     }
     /// Copies the exact inner ZIP, with optional new outer compression/encryption.
-    /// No decrypted archive is staged unless bare/readable output is explicitly selected.
+    /// No decrypted archive is staged.
     /// # Errors
     /// Verifies before atomic publication; preserves source and existing destinations on failure.
     pub fn write_transfer(
         &self,
         path: &Path,
-        format: PackageFormat,
         password: Option<&CapturePassword>,
         replace: bool,
         canceled: &AtomicBool,
     ) -> Result<(), Error> {
         check(canceled)?;
-        if matches!(format, PackageFormat::BareZip) && password.is_some() {
-            return Err(invalid(
-                "Bare ZIP cannot be encrypted; choose native transfer",
-            ));
-        }
         let length = self
             .input
             .lock()
@@ -287,29 +267,22 @@ impl Package {
             }
             Ok(())
         };
-        match format {
-            PackageFormat::BareZip => {
-                copy(staged.as_file_mut(), &mut 0, length, &mut input)?;
-            }
-            PackageFormat::Native => {
-                let mut writer = ArtifactWriter::new(
-                    staged.as_file_mut(),
-                    self.manifest.media(),
-                    &CaptureEncoding {
-                        password: password.cloned(),
-                    },
-                    true,
-                )
-                .map_err(capture_error)?;
-                let mut position = 0;
-                for end in boundaries {
-                    copy(&mut writer, &mut position, end, &mut input)?;
-                    writer.member_boundary().map_err(capture_error)?;
-                }
-                copy(&mut writer, &mut position, length, &mut input)?;
-                writer.finish().map_err(capture_error)?;
-            }
+        let mut writer = ArtifactWriter::new(
+            staged.as_file_mut(),
+            self.manifest.media(),
+            &CaptureEncoding {
+                password: password.cloned(),
+            },
+            true,
+        )
+        .map_err(capture_error)?;
+        let mut position = 0;
+        for end in boundaries {
+            copy(&mut writer, &mut position, end, &mut input)?;
+            writer.member_boundary().map_err(capture_error)?;
         }
+        copy(&mut writer, &mut position, length, &mut input)?;
+        writer.finish().map_err(capture_error)?;
         staged.as_file().sync_all()?;
         let staged = staged.into_temp_path();
         drop(Self::open(&staged, password, canceled)?);
@@ -448,7 +421,6 @@ fn capture_error(error: transmog_capture::CaptureError) -> Error {
 pub fn write_case_package(
     case: &PreparedCase,
     path: &Path,
-    format: PackageFormat,
     password: Option<CapturePassword>,
     replace: bool,
     canceled: &AtomicBool,
@@ -457,7 +429,6 @@ pub fn write_case_package(
         &PackageManifest::Case(case.manifest().clone()),
         |sha| case.open_object(sha),
         path,
-        format,
         password,
         replace,
         canceled,
@@ -469,7 +440,6 @@ pub fn write_case_package(
 pub fn write_rules_package(
     rules: &PreparedCollection,
     path: &Path,
-    format: PackageFormat,
     password: Option<CapturePassword>,
     replace: bool,
     canceled: &AtomicBool,
@@ -478,7 +448,6 @@ pub fn write_rules_package(
         &PackageManifest::Rules(rules.manifest().clone()),
         |sha| rules.open_object(sha),
         path,
-        format,
         password,
         replace,
         canceled,
@@ -512,22 +481,16 @@ fn write_zip<W: io::Write>(
     }
     writer.finish()
 }
-#[allow(clippy::too_many_arguments, clippy::needless_pass_by_value)] // Own the transient password through verification/publication.
+#[allow(clippy::needless_pass_by_value)] // Own the transient password through verification/publication.
 fn write_package(
     manifest: &PackageManifest,
     open: impl FnMut(&str) -> Result<File, Error>,
     path: &Path,
-    format: PackageFormat,
     password: Option<CapturePassword>,
     replace: bool,
     canceled: &AtomicBool,
 ) -> Result<(), Error> {
     check(canceled)?;
-    if matches!(format, PackageFormat::BareZip) && password.is_some() {
-        return Err(invalid(
-            "Bare ZIP cannot be encrypted; choose native transfer",
-        ));
-    }
     let absolute = std::path::absolute(path)?;
     let parent = absolute
         .parent()
@@ -535,26 +498,19 @@ fn write_package(
     let mut staged = tempfile::Builder::new()
         .prefix(".case-transfer-")
         .tempfile_in(parent)?;
-    match format {
-        PackageFormat::BareZip => {
-            write_zip(staged.as_file_mut(), manifest, open, canceled, |_| Ok(()))?;
-        }
-        PackageFormat::Native => {
-            let writer = ArtifactWriter::new(
-                staged.as_file_mut(),
-                manifest.media(),
-                &CaptureEncoding {
-                    password: password.clone(),
-                },
-                true,
-            )
-            .map_err(capture_error)?;
-            let writer = write_zip(writer, manifest, open, canceled, |w| {
-                w.member_boundary().map_err(capture_error)
-            })?;
-            writer.finish().map_err(capture_error)?;
-        }
-    }
+    let writer = ArtifactWriter::new(
+        staged.as_file_mut(),
+        manifest.media(),
+        &CaptureEncoding {
+            password: password.clone(),
+        },
+        true,
+    )
+    .map_err(capture_error)?;
+    let writer = write_zip(writer, manifest, open, canceled, |w| {
+        w.member_boundary().map_err(capture_error)
+    })?;
+    writer.finish().map_err(capture_error)?;
     staged.as_file().sync_all()?;
     let staged = staged.into_temp_path();
     drop(Package::open(&staged, password.as_ref(), canceled)?);

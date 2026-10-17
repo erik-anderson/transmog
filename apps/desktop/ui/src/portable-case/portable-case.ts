@@ -30,8 +30,6 @@ export class PortableCase extends WorkspaceElement {
   private viewRevision=0;
   private previewOperation='';
 
-  @observable caseFormat='native';
-  @observable caseEncrypt=false;
   @observable caseBusy=false;
   @observable caseStatus='';
   @observable caseContexts:Array<Context&{available:boolean}>=[];
@@ -149,7 +147,7 @@ export class PortableCase extends WorkspaceElement {
   private display(review:Review,inspection:boolean):void{
     const sameReview=review===this.displayedReview;
     if(!sameReview){this.caseScroll.scrollTop=0;this.displayedReview=review;}
-    this.caseFormat='native';this.caseEncrypt=review.encrypted??false;this.saveForm.reset();(this.saveForm.elements.namedItem('encrypt') as HTMLInputElement).checked=this.caseEncrypt;
+    this.saveForm.reset();(this.saveForm.elements.namedItem('encrypt') as HTMLInputElement).checked=review.encrypted??false;
     const m=review.manifest,rules=m.rules??[],assets=m.assets??[],experiments=m.experiments??[],objects=m.objects??[];this.caseTitle=m.title;this.caseInspection=inspection;this.caseIsCase=m.kind==='case';
     this.caseSources=(m.sources??[]).map(s=>({...s,available:['present','locked'].includes(s.dependency.state),summary:[s.requestCount===undefined?'Request count not recorded':`${s.requestCount} request${s.requestCount==='1'?'':'s'}`,s.dependency.state==='present'?'Included':s.dependency.state==='locked'?'Source password required':'Unavailable'].join(' · '),completenessLabel:s.evidenceCompleteness==='complete'?'Capture reports complete evidence.':s.evidenceCompleteness==='unknown'?'Capture completeness was not established.':s.evidenceCompleteness==='redacted'?'Some captured content was redacted.':'Some content was not fully captured or retained.'}));
     this.caseExperiments=experiments.map(e=>{const availability=review.inventory.experiments.find(v=>v.id===e.id);return{id:e.id,label:e.label??e.id,state:availability?.state==='ready-for-explicit-import'?'Ready to import':'Unavailable in this build',reason:availability?.reason??'',available:availability?.state==='ready-for-explicit-import'};});
@@ -169,17 +167,14 @@ export class PortableCase extends WorkspaceElement {
     this.caseImportAvailable=this.caseOrdinaryRules||this.caseExperiments.some(e=>e.available);
     this.caseManifestText=JSON.stringify(m,null,2);this.caseImportItems=[];
   }
-  setFormat(event:Event):void{this.caseFormat=(event.target as HTMLSelectElement).value;if(this.caseFormat==='bare-zip'){this.caseEncrypt=false;(this.saveForm.elements.namedItem('encrypt') as HTMLInputElement).checked=false;}}
-  setEncryption(event:Event):void{this.caseEncrypt=(event.target as HTMLInputElement).checked;}
   async save(event:SubmitEvent):Promise<void>{
-    event.preventDefault();const data=new FormData(this.saveForm);const format=String(data.get('format'));let password:string|null=null;
+    event.preventDefault();const data=new FormData(this.saveForm);let password:string|null=null;
     await this.run('Saving and verifying the case…',async()=>{
       try{
         if(data.get('encrypt')==='on'){
-          if(format!=='native')throw new Error('Encryption requires the native transfer format.');
           password=await this.promptTracePassword('Protect the whole case',true,'This protects the manifest, notes, context and every object in the saved package.');if(password===null){this.caseStatus='Save canceled.';return;}
         }
-        const destination=await invoke<string|null>(this.caseInspection?'save_open_case':'save_case_export',{format,password});
+        const destination=await invoke<string|null>(this.caseInspection?'save_open_case':'save_case_export',{password});
         this.caseStatus=destination?`Saved ${destination}`:'Save canceled.';
         if(destination)this.showNotice('Case saved',destination,null,null);
       }finally{password=null;}
@@ -194,7 +189,7 @@ export class PortableCase extends WorkspaceElement {
   selectSource(event:Event):void{this.caseSelectedSource=(event.target as HTMLSelectElement).value;this.updateSource();}
   private updateSource():void{const source=this.caseSources.find(s=>s.id===this.caseSelectedSource);this.caseSourceAvailable=source?.available??false;this.caseSourceStatus=source?.dependency.reason??(source?.available?'Open this capture to inspect its requests.':'This capture is unavailable.');}
   private closeMore():void{if(this.caseMore?.matches(':popover-open')){this.caseMore.hidePopover();this.caseMoreButton.focus();}}
-  showSaveCopy():void{this.closeMore();this.caseStage='copy';this.$flushUpdates();this.caseScroll.scrollTop=this.caseScroll.scrollHeight;(this.saveForm.elements.namedItem('format') as HTMLSelectElement).focus();}
+  showSaveCopy():void{this.closeMore();this.caseStage='copy';this.$flushUpdates();this.caseScroll.scrollTop=this.caseScroll.scrollHeight;(this.saveForm.elements.namedItem('encrypt') as HTMLInputElement).focus();}
   async openPackage(path?:string):Promise<void>{
     this.closeMore();
     await this.run(path?'Opening case…':'Choose a case or rule collection…',async()=>{

@@ -7,6 +7,15 @@ import {nativeFixture} from './native-fixture.mjs';
 // Every file, process and window is owned by the isolated native harness.
 export async function smokeCaseIntegration({page,output,chromium,processId,closeHelper}) {
   const invoke=(command,args={})=>page.evaluate(({command,args})=>window.__TAURI_INTERNALS__.invoke(command,args),{command,args});
+  const bare=resolve(output,'unsupported.tmcase.zip');
+  await writeFile(bare,await readFile(new URL('../../../../verification/fixtures/portable/packages/simple.tmcase',import.meta.url)));
+  assert.equal(await invoke('saved_file_is_case',{path:bare}),false);
+  const rejected=await page.evaluate(async path=>{
+    try{await window.__TAURI_INTERNALS__.invoke('open_case',{path,password:null});return null;}
+    catch(error){return {category:error.category,message:error.message};}
+  },bare);
+  assert.equal(rejected?.category,'unsupported');
+  assert.match(rejected.message,/Choose a Transmog case or rule collection in TMCap format/);
   const bytes=s=>Array.from(Buffer.from(s));
   const records=[];
   for(const [id,path,type,body] of [[101,'/case-page','text/html',`<h1 id="case-heading">Portable fixture</h1><link rel="stylesheet" href="/case.css"><script>globalThis.caseScript=true;fetch('/missing').catch(()=>globalThis.caseMiss=true)</script>`],[102,'/case.css','text/css','h1 {color: green;}'],[103,'/case.css','text/css','h1 {color: red;}']]) {
@@ -46,7 +55,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
   await invoke('capture_comparison_page',{id:captures.id,offset:0,options:null,left:css[0].id,right:css[1].id,action:'pair'});
   assert.ok(rows[0].traceId);
   const review=await invoke('prepare_case_export',{input:{title:'Native frozen case',scope:{kind:'source',traceId:rows[0].traceId},ruleIds:[],selections:[{experimentId:'native-case-experiment',variantId:'blue',revision:1}],notes:'Portable frozen responses and saved comparisons',includeContext:true,comparisonIds:[comparison.id,captures.id]}});
-  assert.equal(review.manifest.comparisons.length,2);assert.equal(review.traffic.entries,99);assert.equal(review.manifest.sources[0].requestCount,'99');const packagePath=await invoke('save_case_export',{format:'native',password:null});
+  assert.equal(review.manifest.comparisons.length,2);assert.equal(review.traffic.entries,99);assert.equal(review.manifest.sources[0].requestCount,'99');const packagePath=await invoke('save_case_export',{password:null});
   assert.equal(await invoke('saved_file_is_case',{path:input}),false);
   assert.equal(await invoke('saved_file_is_case',{path:packagePath}),true);
   const renamed=resolve(output,'received.tmcap');await copyFile(packagePath,renamed);
@@ -83,13 +92,12 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
     const scope=page.getByRole('dialog',{name:'Compare capture scopes'});await scope.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.captureBusy);
     const restored=await page.evaluate(()=>document.querySelector('app-shell').comparison.captureResult);assert.ok(restored,await page.evaluate(()=>document.querySelector('app-shell').comparison.captureStatus));assert.deepEqual(restored.options.excludedQueryNames,['nonce']);assert.ok(restored.rows.some(r=>r.reason==='Explicit user choice'));await scope.getByRole('button',{name:'Close',exact:true}).click();
     assert.equal(JSON.stringify(await invoke('automation_status')),original);
-    // Standard ZIP drag/drop reaches the same overview, and import review uses names.
+    // Native case drag/drop reaches the same overview, and import review uses names.
     await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
-    const bare=await invoke('save_open_case',{format:'bare-zip',password:null});
-    const zip=resolve(output,'received.tmcase.zip');await copyFile(bare,zip);
-    await invoke('save_open_case',{format:'native',password:null});
+    const saved=await invoke('save_open_case',{password:null});
+    const copy=resolve(output,'received.tmcase.tmcap');await copyFile(saved,copy);
     await dialog.getByRole('button',{name:'Close',exact:true}).click();
-    await traffic.locator('trace-drop-target').evaluate((element,path)=>{const b=element.dropRegion.getBoundingClientRect();element.handleNativeDrag({type:'drop',paths:[path],position:{x:(b.left+10)*devicePixelRatio,y:(b.top+10)*devicePixelRatio}});},zip);
+    await traffic.locator('trace-drop-target').evaluate((element,path)=>{const b=element.dropRegion.getBoundingClientRect();element.handleNativeDrag({type:'drop',paths:[path],position:{x:(b.left+10)*devicePixelRatio,y:(b.top+10)*devicePixelRatio}});},copy);
     await dialog.getByRole('heading',{name:'Native frozen case',exact:true}).waitFor();
     await dialog.getByText('Import rules and experiments',{exact:true}).click();
     await dialog.getByLabel('Native case experiment · Ready to import',{exact:true}).check();

@@ -11,8 +11,7 @@ mod strict_json;
 mod validate;
 mod working;
 pub use package::{
-    Package, PackageFormat, PackageManifest, PackageMember, ReadSeek, write_case_package,
-    write_rules_package,
+    Package, PackageManifest, PackageMember, ReadSeek, write_case_package, write_rules_package,
 };
 
 pub use case_model::*;

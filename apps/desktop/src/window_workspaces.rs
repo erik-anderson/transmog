@@ -158,12 +158,9 @@ pub(super) fn opened_files(arguments: &[String], cwd: &Path) -> Vec<PathBuf> {
             } else {
                 cwd.join(path)
             };
-            (transmog_app::detect_trace_format(&path).is_some()
-                || path
-                    .extension()
-                    .and_then(|v| v.to_str())
-                    .is_some_and(|v| v.eq_ignore_ascii_case("zip")))
-            .then_some(path)
+            transmog_app::detect_trace_format(&path)
+                .is_some()
+                .then_some(path)
         })
         .take(16)
         .collect()
@@ -356,7 +353,7 @@ pub(super) async fn pick_trace_path(window: WebviewWindow) -> Option<String> {
         .set_title("Open saved traffic")
         .add_filter(
             "Traffic captures",
-            &["saz", "tmcap", "har", "netlog", "json", "jsonl", "zip"],
+            &["saz", "tmcap", "har", "netlog", "json", "jsonl"],
         )
         .pick_file()
         .await
@@ -372,6 +369,34 @@ fn error(message: &str) -> AppError {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn file_launch_keeps_saz_and_native_inputs_and_ignores_bare_case_zips() {
+        let root = tempfile::tempdir().unwrap();
+        for name in [
+            "traffic.saz",
+            "traffic.SAZ",
+            "old.tmcase.zip",
+            "old.tmrules.zip",
+        ] {
+            std::fs::write(root.path().join(name), b"PK\x03\x04fixture").unwrap();
+        }
+        std::fs::write(root.path().join("case.tmcase.tmcap"), b"TMCAP001\0").unwrap();
+        let arguments: Vec<_> = [
+            "transmog",
+            "traffic.saz",
+            "traffic.SAZ",
+            "case.tmcase.tmcap",
+            "old.tmcase.zip",
+            "old.tmrules.zip",
+        ]
+        .into_iter()
+        .map(String::from)
+        .collect();
+        assert_eq!(
+            super::opened_files(&arguments, root.path()),
+            ["traffic.saz", "traffic.SAZ", "case.tmcase.tmcap"].map(|name| root.path().join(name))
+        );
+    }
     use super::*;
     #[tokio::test]
     async fn profile_updates_reach_open_viewers_without_replacing_their_workspace() {

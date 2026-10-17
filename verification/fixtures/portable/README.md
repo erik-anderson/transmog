@@ -15,11 +15,13 @@ encryption implementation or proof that the application supports these formats.
   in the shared `objects/sha256/` fixture store; this corpus root is not itself a
   standalone case working directory. A consumer must stage only one manifest's
   declared closure when testing an actual case.
-- `packages/simple.tmcase` contains a complete plain Stored ZIP example.
+- `packages/simple.tmcase` contains an internal Stored ZIP payload fixture.
   `zip64-streamed.tmcase` also uses actual ZIP64 local size fields and streaming
   data descriptors; its logical members match the simple example.
   Other packages deliberately contain unsafe names, duplicate members, unlisted
   content or corrupt bytes. Never extract fixture member names directly.
+  These raw archives are not supported transfer files. Package tests wrap them
+  in valid native TMCap containers to exercise the inner archive validation.
 - `seeds/` contains real current-format TMCap files. Two reuse root/exchange IDs
   and labels but contain different body bytes. They include ordered duplicate
   and non-UTF-8 header values, a retained response prefix, loss markers and SSE
@@ -84,7 +86,8 @@ and loss, preserve original source context, and verify stable source/entry links
 They do not run tools or activate rules/scripts. Directory tests qualify history,
 interruption, stale writers, bounded streaming and Windows blocked replacement.
 
-K3's production `packages` tests exercise the bare/streamed ZIP64 and hostile
-archives, plus native encryption, forwarding, exact object/ZIP bytes, independent
+K3's production `packages` tests exercise internal streamed ZIP64 and hostile
+archives inside native containers, plus bare-archive rejection, native encryption,
+forwarding, exact object/ZIP bytes, independent
 readers and failure cleanup. Native desktop checks use a fresh profile. CLI
 scenarios still need their K4 consumers; these tests do not qualify future commands.

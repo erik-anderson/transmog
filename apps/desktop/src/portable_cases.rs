@@ -16,7 +16,7 @@ use transmog_app::{
     PreparedRuleImport, RuleExportRequest,
 };
 use transmog_capture::CapturePassword;
-use transmog_portable::{Package, PackageFormat, PackageManifest, PreparedCase};
+use transmog_portable::{Package, PackageManifest, PreparedCase};
 
 #[derive(Default)]
 struct WindowCase {
@@ -158,7 +158,7 @@ async fn pick_case(
     } else {
         picker
             .set_title("Open case or rule collection")
-            .add_filter("Portable investigations", &["tmcap", "zip"])
+            .add_filter("Portable investigations", &["tmcap"])
             .pick_file()
             .await
     };
@@ -305,7 +305,6 @@ pub(super) async fn prepare_case_export(
 }
 #[tauri::command]
 pub(super) async fn save_case_export(
-    format: PackageFormat,
     password: Option<CapturePassword>,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
@@ -315,18 +314,13 @@ pub(super) async fn save_case_export(
     let prepared = operation
         .update(|owner| owner.export.clone())?
         .ok_or_else(|| error("Review the selected case before saving"))?;
-    let suffix = if matches!(format, PackageFormat::Native) {
-        "tmcase.tmcap"
-    } else {
-        "tmcase.zip"
-    };
-    let Some(path) = pick_case(&window, &state, Some(suffix)).await else {
+    let Some(path) = pick_case(&window, &state, Some("tmcase.tmcap")).await else {
         return Ok(None);
     };
     let label = path.to_string_lossy().into_owned();
     let flag = operation.flag.clone();
     tokio::task::spawn_blocking(move || {
-        transmog_portable::write_case_package(&prepared, &path, format, password, true, &flag)
+        transmog_portable::write_case_package(&prepared, &path, password, true, &flag)
             .map_err(portable)
     })
     .await
@@ -354,7 +348,6 @@ pub(super) async fn choose_case(
 
 #[tauri::command]
 pub(super) async fn save_open_case(
-    format: PackageFormat,
     password: Option<CapturePassword>,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
@@ -362,11 +355,9 @@ pub(super) async fn save_open_case(
     state.window_application(&window)?;
     let operation = Operation::begin(window.label())?;
     let package = package(window.label())?;
-    let suffix = match (package.manifest(), format) {
-        (PackageManifest::Case(_), PackageFormat::Native) => "tmcase.tmcap",
-        (PackageManifest::Case(_), PackageFormat::BareZip) => "tmcase.zip",
-        (PackageManifest::Rules(_), PackageFormat::Native) => "tmrules.tmcap",
-        (PackageManifest::Rules(_), PackageFormat::BareZip) => "tmrules.zip",
+    let suffix = match package.manifest() {
+        PackageManifest::Case(_) => "tmcase.tmcap",
+        PackageManifest::Rules(_) => "tmrules.tmcap",
     };
     let Some(path) = pick_case(&window, &state, Some(suffix)).await else {
         return Ok(None);
@@ -375,7 +366,7 @@ pub(super) async fn save_open_case(
     let flag = operation.flag.clone();
     tokio::task::spawn_blocking(move || {
         package
-            .write_transfer(&path, format, password.as_ref(), true, &flag)
+            .write_transfer(&path, password.as_ref(), true, &flag)
             .map_err(portable)
     })
     .await
@@ -416,13 +407,6 @@ pub(super) async fn saved_file_is_case(
 ) -> Result<bool, AppError> {
     state.window_application(&window)?;
     tokio::task::spawn_blocking(move || {
-        if path
-            .extension()
-            .and_then(|e| e.to_str())
-            .is_some_and(|e| e.eq_ignore_ascii_case("zip"))
-        {
-            return Ok(true);
-        }
         let file = std::fs::File::open(&path).map_err(|e| portable(e.into()))?;
         transmog_capture::is_portable_archive(file).map_err(|e| error(&e.to_string()))
     })
