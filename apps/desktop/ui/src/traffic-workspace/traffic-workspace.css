@@ -131,8 +131,9 @@ traffic-workspace { display:contents; }
 @supports (anchor-name:--fetch-destination-filter) {
   .fetch-destination-menu { position-anchor:--fetch-destination-filter; inset:auto; position-area:inline-start span-block-end; margin:0 .25rem 0 0; position-try-fallbacks:flip-inline,flip-block; }
 }
-.table-popover > button { display:block; width:100%; min-height:2rem; padding:.4rem .5rem; border:0; border-radius:.2rem; color:var(--text); background:transparent; text-align:left; font-size:.76rem; font-weight:400; }
-.table-popover > button:hover { background:var(--row-hover); }
+.table-popover > button,.table-popover action-submenu > button { display:block; width:100%; min-height:2rem; padding:.4rem .5rem; border:0; border-radius:.2rem; color:var(--text); background:transparent; text-align:left; font-size:.76rem; font-weight:400; }
+.table-popover > button:hover,.table-popover action-submenu > button:hover { background:var(--row-hover); }
+.table-popover action-submenu > button:disabled { color:var(--muted); }
 .list-column-settings { margin-top:.5rem; font-size:.76rem; }
 .list-column-settings summary { cursor:pointer; }
 .list-column-settings > button { font:inherit; }

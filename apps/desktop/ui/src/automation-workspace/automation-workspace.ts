@@ -8,7 +8,7 @@ import '../experiment-variants/experiment-variants.js';
 import '../header-rules/header-rules.js';
 import type {HeaderRules} from '../header-rules/header-rules.js';
 import type {ExperimentVariants} from '../experiment-variants/experiment-variants.js';
-import type {ExperimentSelection,VariantEdit} from '../models.js';
+import type {ExperimentSelection,VariantEdit,TrafficRuleRequest} from '../models.js';
 import {responseBodyLanguage, type BodyCommit, type ResponseBodyEditor} from '../response-body-editor/response-body-editor.js';
 import type {UserAgentOverrides} from '../user-agent-overrides/user-agent-overrides.js';
 import type { MatchEditor } from '../match-editor/match-editor.js';
@@ -30,6 +30,12 @@ type CapturedDraft={sessionId:string;detail:SessionDetail;headers:ResponseAsset[
 
 export class AutomationWorkspace extends WorkspaceElement {
   responseTextEditor!:HeaderRules;
+  headerRulesEditor!:HeaderRules;
+  async beginRule(request:TrafficRuleRequest):Promise<void> {
+    if(request.kind==='response-text'){await this.beginTextEdit(request.source);return;}
+    if(request.kind==='browser-headers'){this.showAutomationSection('headers');this.userAgentOverrides.addFromSource(request.source);return;}
+    this.showAutomationSection('header-rules');await this.headerRulesEditor.newRule(request.source,request.kind==='request-headers'?'request':'response');
+  }
   async beginTextEdit(selected:SelectedResponse):Promise<void>{this.showAutomationSection('response-text');await this.responseTextEditor.newRule(selected);}
   compareResponseMenu!:HTMLElement;
   compareResponseButton!:HTMLButtonElement;

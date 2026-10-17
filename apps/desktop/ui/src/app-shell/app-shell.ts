@@ -7,7 +7,7 @@ import '../app-updates/app-updates.js';
 import '../client-certificate-requests/client-certificate-requests.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
-import type { AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, ResponsePreviewIntent, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
+import type { TrafficRuleRequest, AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, ResponsePreviewIntent, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
@@ -296,6 +296,7 @@ export class AppShell extends WebUIElement {
   }
   async openConnectionSettings():Promise<void> {if(await this.activateView('settings'))this.settings.showSettingsSection('connection');}
   dismissNotice(): void { this.noticeAction = null; this.noticeVisible = false; }
+  async onTrafficRule(event:CustomEvent<TrafficRuleRequest>):Promise<void>{event.stopPropagation();if(!this.viewerMode&&await this.activateView('automation'))await this.automation.beginRule(event.detail);}
   async onResponseText(event:CustomEvent<SelectedResponse>):Promise<void>{if(!this.viewerMode&&await this.activateView('automation'))await this.automation.beginTextEdit(event.detail);}
   async onResponseExperiment(event:CustomEvent<SelectedResponse>):Promise<void> {
     const selected=event.detail;

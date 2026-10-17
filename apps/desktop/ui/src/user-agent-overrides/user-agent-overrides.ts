@@ -1,7 +1,7 @@
 import {observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
 import {WorkspaceElement} from '../workspace-element.js';
-import type {AutomationCandidate,AutomationRule,AutomationStatus,UserAgentOverride} from '../models.js';
+import type {AutomationCandidate,AutomationRule,AutomationStatus,UserAgentOverride,SelectedResponse} from '../models.js';
 import {describeError} from '../utilities.js';
 import {userAgentPresets,presetClientHints} from '../user-agent-presets.js';
 
@@ -75,6 +75,11 @@ export class UserAgentOverrides extends WorkspaceElement {
   }
   async select(id:string):Promise<void> {if(this.uaBusy||id===this.uaSelectedId)return;if(!this.leaveDraft())return;const rule=this.ordered().find(rule=>rule.id===id);if(rule)this.load(rule);}
   add():void {if(this.uaBusy||!this.leaveDraft())return;this.load(null);this.uaDirty=true;this.$flushUpdates();this.uaNameInput.focus();}
+  addFromSource(source:SelectedResponse):void {
+    if(this.uaBusy||!this.leaveDraft())return;this.load(null);
+    try{const url=new URL(source.detail.requests[0]?.target??'');this.uaHost=url.hostname;this.uaPath=url.pathname;}catch{this.uaHost='';this.uaPath='';}
+    this.uaDirty=true;this.$flushUpdates();this.uaNameInput.focus();
+  }
   private leaveDraft():boolean {return !this.uaDirty||window.confirm('Discard unsaved UA header override changes?');}
   edit(field:'uaName'|'uaHost'|'uaPath'|'uaValue'|'uaVersion',event:Event):void {this[field]=(event.currentTarget as HTMLInputElement).value;this.uaDirty=true;if(field==='uaValue')this.uaPreset='custom';}
   setEnabled(event:Event):void {this.uaEnabled=(event.currentTarget as HTMLInputElement).checked;this.uaDirty=true;}

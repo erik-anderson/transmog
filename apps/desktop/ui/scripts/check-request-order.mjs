@@ -1,3 +1,4 @@
+import {openActionGroup} from './check-action-menus.mjs';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {build} from 'esbuild';
@@ -34,8 +35,8 @@ export async function checkRequestOrder(page,root) {
     await traffic.locator('tr[data-session-id="request-order-5"] .session-link').click();
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='request-order-5');
     const actions=traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true});
-    await actions.click();await traffic.locator('#selected-request-actions').getByRole('button',{name:'Copy request reference',exact:true}).click();
-    assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Workspace request 9007199254740993 \(workspace-local\)/);
+    await actions.click();await openActionGroup(traffic.locator('#selected-request-actions'),'Copy');await traffic.locator('#selected-request-actions').getByRole('button',{name:'Copy request summary',exact:true}).click();
+    assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/Request #9007199254740993 in this workspace/);
     assert.equal(await actions.evaluate(node=>node===node.getRootNode().activeElement),true);
     // A late query must not take focus or change the selected opaque ID.
     await page.evaluate(()=>{globalThis.__workspaceFixture.deferRefresh=true;globalThis.__workspaceFixture.refreshPending=false;});

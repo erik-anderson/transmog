@@ -165,7 +165,7 @@ export async function smokeTrafficList(client,screenshot) {
   assert.notEqual(await client.evaluate(`${t}.selectedUrlText`),'Loading request…');
   await client.evaluate(`${t}.actionsButton.focus()`);await key('Enter','Enter',13);
   assert.equal(await client.evaluate(`[...${t}.requestActionsMenu.querySelectorAll('button')].find(button=>button.textContent==='Set as comparison baseline').disabled`),false);
-  assert.equal(await client.evaluate(`[...${t}.requestActionsMenu.querySelectorAll('button')].find(button=>button.textContent==='Copy request reference').disabled`),false);
+  assert.equal(await client.evaluate(`[...${t}.requestActionsMenu.querySelectorAll('button')].find(button=>button.textContent==='Copy request summary').disabled`),false);
   await key('Escape','Escape',27);
   const timelinePreferences=await client.evaluate(`${t}.preferences`);
   await client.evaluate(`${t}.timeline.helpButton.focus()`);await key('Enter','Enter',13);

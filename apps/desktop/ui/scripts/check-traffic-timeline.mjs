@@ -1,3 +1,4 @@
+import {openActionGroup} from './check-action-menus.mjs';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 
@@ -79,10 +80,10 @@ export async function checkTrafficTimeline(page,root) {
     await traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
     const actions=traffic.locator('#selected-request-actions');
     assert.equal(await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).isEnabled(),true);
-    await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).click();
+    await openActionGroup(actions,'Compare');await actions.getByRole('button',{name:'Set as comparison baseline',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.comparisonBaseline),'tl-fast');
     await traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
-    await actions.getByRole('button',{name:'Copy request reference',exact:true}).click();
+    await openActionGroup(actions,'Copy');await actions.getByRole('button',{name:'Copy request summary',exact:true}).click();
     assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/scenario\/fast/);
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0);
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.clearComparisonBaseline();t.diagnostic='';});

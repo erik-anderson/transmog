@@ -1,3 +1,4 @@
+import {openActionGroup} from './check-action-menus.mjs';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 export async function checkIncidents(page,root){
@@ -32,7 +33,7 @@ export async function checkIncidents(page,root){
  await intake.getByRole('button',{name:'Undo',exact:true}).click();await intake.getByText('Issue happened <img src=x onerror=alert(1)>',{exact:true}).first().waitFor();
  // Flagging a response creates a reviewer marker linked to the inspected request.
  await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;t.setTimeline(false,false);await t.revealSession('first');});
- await page.locator('#selected-request-actions').evaluate(el=>el.showPopover());await page.locator('#selected-request-actions').getByRole('button',{name:'Flag response…',exact:true}).click();
+ await page.locator('#selected-request-actions').evaluate(el=>el.showPopover());await openActionGroup(page.locator('#selected-request-actions'),'Flag');await page.locator('#selected-request-actions').getByRole('button',{name:'Flag response…',exact:true}).click();
  const flag=page.getByRole('dialog',{name:'Add marker',exact:true});await flag.getByLabel('Note (optional)',{exact:true}).fill('Flagged response');await flag.getByRole('button',{name:'Add marker',exact:true}).click();
  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.markerCount===2);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastAddedMarker.boundary),'response');
  assert.equal(await page.locator('tr[data-session-id=first] .request-marker-flag').count(),1);

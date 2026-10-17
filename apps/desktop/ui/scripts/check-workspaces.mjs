@@ -1,3 +1,4 @@
+import {checkActionMenus,openActionGroup} from './check-action-menus.mjs';
 import {checkPortableCases} from './check-portable-cases.mjs';
 import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
@@ -684,6 +685,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--actions-only')) {await checkActionMenus(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Actions submenus, keyboard focus, copying and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--timeline-only')) {await page.goto('https://workspace.test/');await checkTrafficTimeline(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timeline scope, dragging, keyboard, live updates, races, failures and virtualization verified.\n');process.exit(0);}
   if(process.argv.includes('--timing-labels-only')) {await page.goto('https://workspace.test/');await checkTimingLabels(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timing names, values and reports verified.\n');process.exit(0);}
   if(process.argv.includes('--selection-only')) {await page.goto('https://workspace.test/');await checkAppSelection(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('App selection and selectable evidence verified.\n');process.exit(0);}
@@ -1005,7 +1007,7 @@ try {
   await page.setViewportSize({width:1280,height:800});
   await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;delete state.fullHeaders;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').inspectSession(state.sessions[0]);await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').inspectSession(state.sessions[1]);});
   await page.locator('tr[data-session-id="second"]').click({button:'right'});
-  await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
+  await openActionGroup(page.locator('#traffic-entry-menu'),'Copy');await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
   const commandDialog=page.locator('.request-command-dialog');
   await commandDialog.getByText('Command copied. Supply the body file before running it.',{exact:true}).waitFor({state:'visible'});
   assert.equal(await commandDialog.getByLabel('Generated command').inputValue(),'fixture generated curl');
@@ -1022,13 +1024,13 @@ try {
   await page.setViewportSize({width:1280,height:800});
   await page.evaluate(()=>globalThis.__workspaceFixture.directCommand=true);
   await page.locator('tr[data-session-id="second"]').click({button:'right'});
-  await page.getByRole('button',{name:'Copy as PowerShell',exact:true}).click();
+  await openActionGroup(page.locator('#traffic-entry-menu'),'Copy');await page.getByRole('button',{name:'Copy as PowerShell',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').commandBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastRequestCommand.format),'powershell');
   assert.equal(await commandDialog.isVisible(),false,'A direct clipboard command unnecessarily opened the body-save dialog');
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'fixture direct powershell');
   await page.locator('tr[data-session-id="second"]').click({button:'right'});
-  await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
+  await openActionGroup(page.locator('#traffic-entry-menu'),'Copy');await page.getByRole('button',{name:'Copy as cURL',exact:true}).click();
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').commandBusy);
   assert.equal(await commandDialog.isVisible(),false);
   assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'fixture direct curl');
@@ -1240,8 +1242,9 @@ try {
   await page.locator('tr[data-session-id="second"]').click();
   await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · JSON',{exact:true}).waitFor({state:'visible'});
   await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();
-  assert.equal(await page.getByRole('button', { name: 'Create auto-response', exact: true }).isEnabled(), true);
-  await page.getByRole('button', { name: 'Create auto-response', exact: true }).click();
+  await openActionGroup(page.locator('#selected-request-actions'),'Create rule');
+  assert.equal(await page.getByRole('button', { name: 'Serve a saved response…', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: 'Serve a saved response…', exact: true }).click();
   await page.locator('#automation').waitFor({ state: 'visible' });
   await page.locator('.auto-response-editor').waitFor({ state: 'visible' });
   await page.locator('#auto-response-body-help').getByText('Complete body preview. Enable editing or open the dialog to replace it.',{exact:true}).waitFor({state:'visible'});
@@ -2316,13 +2319,13 @@ try {
   await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').importingTrace);
   assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.sessions)).length,passwordRowsBefore.length+1);
   await page.evaluate(rows=>{const state=globalThis.__workspaceFixture;state.sessions=rows;delete state.importPassword;state.traces.pop();},passwordRowsBefore);
-  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save copy…',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();await page.locator('#trace-files-menu').getByRole('button',{name:'Save copy…',exact:true}).click();
   const saveTrace=page.locator('.trace-save-dialog[open]');
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('saz-strict');
   assert.equal(await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).isDisabled(),false);
   await checkTraceSave(page,root,saveTrace);
   assert.equal((await page.evaluate(()=>globalThis.__workspaceFixture.savedTraceArgs)).options.format,'saz-strict');
-  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save copy…',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();await page.locator('#trace-files-menu').getByRole('button',{name:'Save copy…',exact:true}).click();
   await saveTrace.getByLabel('Format',{exact:true}).selectOption('har');
   assert.equal(await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).isDisabled(),true);
   assert.equal(await saveTrace.getByLabel('Include this computer’s network configuration',{exact:true}).isDisabled(),true);
@@ -2352,7 +2355,7 @@ try {
   await saveTrace.getByLabel('Encrypt with a password (AES-256)',{exact:true}).uncheck();
   await saveTrace.getByRole('button',{name:'Save as…',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').savingTrace);
   assert.equal(await page.locator('.trace-save-dialog[open]').count(),0);assert.deepEqual(await page.evaluate(()=>{const {reviewId,...options}=globalThis.__workspaceFixture.savedTraceArgs.options;return options;}),{includeOriginalContext:true,includeMarkers:true,format:'native',password:null,includeNetworkContext:true,redactSensitiveHeaders:true});
-  await page.getByRole('button',{name:'Files',exact:true}).click();await page.getByRole('button',{name:'Save copy…',exact:true}).click();
+  await page.getByRole('button',{name:'Files',exact:true}).click();await page.locator('#trace-files-menu').getByRole('button',{name:'Save copy…',exact:true}).click();
   await page.locator('.trace-save-dialog[open]').getByLabel('Encrypt with a password (AES-256)',{exact:true}).check();
   const callbacksBeforeCancel=await page.evaluate(()=>globalThis.__workspaceFixture.callbackCount());
   for(let attempt=0;attempt<3;attempt++) {
@@ -2444,7 +2447,7 @@ try {
   await page.locator('.selection-actions').getByRole('button',{name:'Details…',exact:true}).click();
   await timing.getByText(/no measured proxy timeline/).waitFor();await page.keyboard.press('Escape');assert.equal(await page.locator('.timing-dialog[open]').count(),0);
   await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');const detail=structuredClone(workspace.selectedDetail);detail.storedBodies[0].mediaType='text/html';workspace.applyDetail(detail);});
-  await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('button',{name:'Preview page…',exact:true}).click();
+  await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await openActionGroup(page.locator('#selected-request-actions'),'Preview');await page.getByRole('button',{name:'Preview page…',exact:true}).click();
   const pageWarning=page.locator('.captured-page-warning[open]');
   assert.equal(await pageWarning.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);
   assert.match(await pageWarning.textContent(),/may be malicious/);
@@ -2454,7 +2457,7 @@ try {
   await page.keyboard.press('Escape');await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').previewPageBusy);
   assert.equal(await page.locator('.captured-page-warning[open]').count(),0);
   await page.evaluate(()=>{globalThis.__workspaceFixture.deferPagePreview=false;globalThis.__workspaceFixture.pagePreviewCanceled=false;});
-  await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await page.getByRole('button',{name:'Preview page…',exact:true}).click();
+  await page.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}).click();await openActionGroup(page.locator('#selected-request-actions'),'Preview');await page.getByRole('button',{name:'Preview page…',exact:true}).click();
   await pageWarning.getByLabel('Resource source',{exact:true}).selectOption('all-loaded');await pageWarning.getByText(/may mix content from different captures/).waitFor();
   await pageWarning.getByLabel('Enable scripts for this preview',{exact:true}).check();await pageWarning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').previewPageBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.enableScripts),true);
@@ -2482,6 +2485,7 @@ try {
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
   await checkStreams(page,root);
+  await checkActionMenus(page,root);
   await checkTrafficPresentation(page,root);
   await checkRequestOrder(page,root);
   await checkTrafficNavigation(page);

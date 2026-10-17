@@ -8,7 +8,8 @@ states; display previews can be shorter than the retained source.
 
 For a complete response, **Actions → Create experiment** opens a disabled response
 draft in Automation. Edit, compare and preview it before explicitly enabling live
-use. The existing **Create auto-response** action retains its established behavior.
+use. **Actions → Create rule → Serve a saved response…** creates an ordinary
+saved-response rule from the captured response.
 See [response experiments](automation.md#response-experiments).
 
 Use [choose an editing workflow](automation.md#choose-an-editing-workflow) to
@@ -60,9 +61,20 @@ not claim that missing initial requests or records were captured.
 an explicit source request number with its provenance when available (for example,
 a conventional SAZ session number). An opaque ID, HAR array position, or observer
 event sequence is not presented as an original measured request number.
-**Copy request reference** in Actions or the row context menu includes the exact
-workspace number, its scope, and available source path, original ID and URL.
+**Actions → Copy → Copy request summary** (also in the row context menu) copies
+the method, URL, observed status or request state, available duration, exact
+workspace request number and capture name. This readable text is useful in notes
+and issue reports. **Details → Capture source → Copy source details** additionally
+copies the available source path, original ID and source request number.
 Workspace numbers and runtime import namespaces alone are not portable case IDs.
+
+Actions groups comparison, rule creation, page previews, flags and copying into
+one level of submenus. Right arrow opens a focused submenu; Up/Down and Home/End
+move between actions. Left arrow or Escape returns to its parent; Escape again
+returns to Actions or the traffic list. Disabled comparison actions explain the
+required selection or baseline. The selected baseline is identified by its
+workspace request number. **Server response with client response** compares the
+upstream and downstream evidence for one exchange, including all recorded edits.
 
 **View → Columns** calls the column **Request order (#)**. It supports the existing
 hide, pin, resize, fit and move actions. Upgrading an old layout inserts the pinned

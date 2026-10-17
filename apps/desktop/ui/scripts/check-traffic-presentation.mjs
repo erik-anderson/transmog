@@ -1,3 +1,4 @@
+import {openActionGroup} from './check-action-menus.mjs';
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 
@@ -54,17 +55,17 @@ export async function checkTrafficPresentation(page,root) {
     const actions=traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true});
     const focused=locator=>locator.evaluate(e=>e===e.getRootNode().activeElement);
     for(const name of ['Copy URL','Copy all headers']) {
-      await actions.click();await traffic.locator('#selected-request-actions').getByRole('button',{name,exact:true}).click();
+      await actions.click();await openActionGroup(traffic.locator('#selected-request-actions'),'Copy');await traffic.locator('#selected-request-actions').getByRole('button',{name,exact:true}).click();
       assert.equal(await focused(actions),true,name+' left focus in a hidden menu');
     }
     await page.evaluate(()=>globalThis.__workspaceFixture.directCommand=false);
-    await actions.click();await traffic.locator('#selected-request-actions').getByRole('button',{name:'Copy as cURL',exact:true}).click();
+    await actions.click();await openActionGroup(traffic.locator('#selected-request-actions'),'Copy');await traffic.locator('#selected-request-actions').getByRole('button',{name:'Copy as cURL',exact:true}).click();
     await traffic.locator('.request-command-dialog[open]').waitFor();await page.keyboard.press('Escape');
     assert.equal(await focused(actions),true,'Closing a generated command lost focus');
     const detail=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,detail=structuredClone(t.selectedDetail),html=structuredClone(detail);html.storedBodies[0].mediaType='text/html';t.applyDetail(html);return detail;});
     try {
       for(const close of ['Escape','Cancel']) {
-        await actions.click();await traffic.locator('#selected-request-actions').getByRole('button',{name:'Preview page…',exact:true}).click();
+        await actions.click();await openActionGroup(traffic.locator('#selected-request-actions'),'Preview');await traffic.locator('#selected-request-actions').getByRole('button',{name:'Preview page…',exact:true}).click();
         if(close==='Escape')await page.keyboard.press('Escape');else await traffic.locator('.captured-page-warning[open]').getByRole('button',{name:close,exact:true}).click();
         assert.equal(await focused(actions),true,'Closing preview lost focus');
       }

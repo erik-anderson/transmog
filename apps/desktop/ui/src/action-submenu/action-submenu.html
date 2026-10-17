@@ -1,0 +1,4 @@
+<template shadowrootmode="open">
+  <button type="button" w-ref="{trigger}" popovertarget="submenu" aria-haspopup="true" aria-submenuExpanded="{{submenuExpanded}}" @keydown="{triggerKey(e)}"><span>{{label}}</span><span aria-hidden="true">›</span></button>
+  <div id="submenu" w-ref="{panel}" popover="auto" aria-label="{{label}}" @toggle="{toggled(e)}" @keydown="{panelKey(e)}" @click="{command(e)}"><slot w-ref="{items}"></slot></div>
+</template>

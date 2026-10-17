@@ -107,7 +107,7 @@ export class HeaderRules extends WorkspaceElement {
  private accept(status:AutomationStatus):void{if(this.headerState&&status.generation<this.headerState.generation)return;this.headerState=status;this.$emit('header-rules-state',status);this.headerStateChanged();}
  private async leave():Promise<boolean>{if(this.hrBusy)return false;if(!this.hrDirty)return true;return new Promise(resolve=>{this.leaveResolve=resolve;this.hrUnsaved.showModal();});}
  async resolveUnsaved(choice:string,event?:Event):Promise<void>{event?.preventDefault();if(choice==='save'){if(!this.hrForm.reportValidity()||!await this.save())return;}if(choice==='discard')this.hrDirty=false;const resolve=this.leaveResolve;this.leaveResolve=null;this.hrUnsaved.close();resolve?.(choice!=='stay');}
- async newRule(source?:SelectedResponse):Promise<void>{if(!await this.leave())return;if(source)this.selection=source;this.load(null);}
+ async newRule(source?:SelectedResponse,phase?:Phase):Promise<void>{if(!await this.leave())return;if(source)this.selection=source;this.load(null);if(phase)this.hrPhase=phase;}
  async selectRule(ruleId:string):Promise<void>{if(!await this.leave())return;const rule=this.headerState?.rules.find(r=>r.id===ruleId);if(rule)this.load(rule);}
  private load(rule:AutomationRule|null,focus=true):void {
   ++this.context;this.invalidateTest();this.loaded=rule?structuredClone(rule):null;this.baseMatcher=rule?structuredClone(rule.matcher):null;this.hrId=rule?.id??'';this.hrName=rule?.displayName??'';this.hrPhase=rule?this.phase(rule)??'response':'response';this.hrMethod=rule?.matcher.method??(rule?'ANY':this.selection?.detail.requests.find(head=>head.boundary==='client-request')?.method??'GET');this.hrEnabled=rule?.enabled??false;this.hrPlacement='keep';

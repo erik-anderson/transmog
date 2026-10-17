@@ -352,6 +352,8 @@ export interface ScriptCandidate { candidateId: string; scriptId: string; revisi
 
 
 export interface SelectedResponse { sessionId: string; detail: SessionDetail; reusable: boolean; }
+export type TrafficRuleKind='request-headers'|'browser-headers'|'response-headers'|'response-text';
+export interface TrafficRuleRequest {kind:TrafficRuleKind;source:SelectedResponse;}
 export type ViewName = 'traffic' | 'breakpoints' | 'automation' | 'composer' | 'captures' | 'settings';
 export type NoticeAction = 'setup-ca' | 'reset-ca' | 'start-proxy' | 'settings' | 'recover-proxy' | null;
 export type RequestCommandFormat = 'curl' | 'powershell';
