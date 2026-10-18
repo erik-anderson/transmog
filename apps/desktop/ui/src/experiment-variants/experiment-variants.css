@@ -32,3 +32,18 @@ experiment-variants { display:block; height:100%; min-height:0; }
 .variant-state { display:flex; flex-wrap:wrap; gap:.4rem 1.4rem; padding:.5rem 0; }
 .variant-state p { margin:0; }
 .variant-state small { flex-basis:100%; color:var(--muted); }
+
+.response-set-help { position:static; box-sizing:border-box; width:100%; margin:0; padding:.6rem .75rem; border:1px solid var(--line); border-radius:.3rem; background:var(--panel); color:var(--text); }
+.response-set-help p { margin:.25rem 0 .6rem; }
+.response-set-invitation { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.4rem .8rem; padding:.5rem .7rem; background:var(--accent-soft); border:1px solid var(--line); border-radius:.3rem; }
+.response-set-invitation p { margin:0; }
+.variant-workspace [data-tour-target] { outline:2px solid var(--accent-strong); outline-offset:2px; border-radius:.2rem; }
+.variant-workspace[data-touring] .variant-pickers { position:static; }
+.variant-preview-actions { padding:.25rem 0; }
+.variant-workspace[data-touring] .variant-content { flex:none; overflow:visible; }
+.variant-workspace[data-touring] { display:block; }
+.variant-workspace[data-touring] > * { margin-bottom:.6rem; }
+@media (forced-colors:active) {
+  .variant-workspace [data-tour-target] { outline-color:Highlight; }
+  .response-set-invitation { border-color:CanvasText; }
+}

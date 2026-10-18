@@ -365,7 +365,7 @@ try {
   assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
-  assert(['Rules','Experiments','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
+  assert(['Rules','Response sets','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
     && result.ux.automationActivity === 1 && result.ux.exactUrlFields === 1
     && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened

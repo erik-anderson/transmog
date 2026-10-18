@@ -1,0 +1,8 @@
+response-set-tour { display:block; min-width:0; margin:.65rem 0; }
+.response-set-callout { position:static; box-sizing:border-box; width:min(29rem,100%); max-width:100%; margin:0 0 0 auto; padding:.65rem .8rem; border:1px solid var(--accent-strong); border-radius:.4rem; background:var(--panel); color:var(--text); font-size:.8125rem; }
+.response-set-callout .tour-heading { display:flex; align-items:center; justify-content:space-between; gap:.5rem; font-size:.75rem; color:var(--muted); }
+.response-set-callout h3 { margin:.4rem 0; font-size:.9375rem; }
+.response-set-callout p { margin:.4rem 0; line-height:1.45; overflow-wrap:anywhere; }
+.response-set-callout .tour-buttons { display:flex; flex-wrap:wrap; justify-content:flex-end; gap:.4rem; margin-top:.65rem; }
+.response-set-callout .tour-context { color:var(--muted); font-size:.75rem; }
+@media (forced-colors:active) { .response-set-callout { border:2px solid Highlight; } }

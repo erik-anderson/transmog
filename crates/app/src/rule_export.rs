@@ -59,7 +59,7 @@ impl AutomationRegistry {
                 .experiments
                 .iter()
                 .find(|e| e.id == selection.experiment_id)
-                .ok_or_else(|| invalid("Selected experiment is unavailable"))?;
+                .ok_or_else(|| invalid("Selected response set is unavailable"))?;
             let revision = experiment
                 .revision(selection)
                 .ok_or_else(|| invalid("Selected saved revision is unavailable"))?;

@@ -16,11 +16,11 @@ Proxy shutdown remains a separate outcome with a proxy-stop explanation.
 These distinctions also apply when opening a capture that already recorded its
 cancellation category.
 
-For a complete response, **Actions → Create experiment** opens a disabled response
+For a complete response, **Actions → Create response set** opens a disabled response
 draft in Automation. Edit, compare and preview it before explicitly enabling live
 use. **Actions → Create rule → Serve a saved response…** creates an ordinary
 saved-response rule from the captured response.
-See [response experiments](automation.md#response-experiments).
+See [response sets](automation.md#response-sets).
 
 Use [choose an editing workflow](automation.md#choose-an-editing-workflow) to
 distinguish saved response replacements from header rules and literal edits to

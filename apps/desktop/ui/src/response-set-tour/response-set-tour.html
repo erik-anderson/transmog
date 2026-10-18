@@ -1,0 +1,8 @@
+<template>
+<dialog open class="response-set-callout" aria-modal="false" aria-labelledby="response-set-step-title" aria-describedby="response-set-step-copy" @keydown="{keyboard(e)}">
+  <div class="tour-heading"><span>{{stepNumber}} of 4</span><button type="button" class="secondary compact-button" @click="{end()}">End tour</button></div>
+  <div aria-live="polite" aria-atomic="true"><h3 id="response-set-step-title">{{stepTitle}}</h3><p id="response-set-step-copy">{{stepCopy}}</p></div>
+  <p class="tour-context" ?hidden="{{!tourContext}}">{{tourContext}}</p>
+  <div class="tour-buttons"><button type="button" class="secondary" @click="{back()}" ?disabled="{{stepNumber == 1}}">Back</button><button w-ref="{nextButton}" type="button" @click="{next()}"><if condition="stepLast">Done</if><if condition="!stepLast">Next</if></button></div>
+</dialog>
+</template>

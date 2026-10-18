@@ -147,7 +147,7 @@ impl Application {
                 .iter()
                 .map(serde_json::to_value)
                 .collect::<Result<_, _>>()
-                .map_err(|_| invalid("Experiment serialization failed"))?,
+                .map_err(|_| invalid("Response set serialization failed"))?,
             notes: vec![],
             markers: vec![],
             contexts: vec![],

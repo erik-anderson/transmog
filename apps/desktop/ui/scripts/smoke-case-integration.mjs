@@ -39,7 +39,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
   const traffic=page.locator('traffic-workspace'),dialog=page.locator('portable-case dialog');
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
   await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
-  await dialog.getByText('Rules and experiments · 0 selected',{exact:true}).click();await dialog.getByLabel('Matches request beyond visible rows',{exact:false}).check();
+  await dialog.getByText('Rules and response sets · 0 selected',{exact:true}).click();await dialog.getByLabel('Matches request beyond visible rows',{exact:false}).check();
   await dialog.getByLabel('Native case experiment / Blue / revision 1',{exact:false}).check();
   assert.equal(await dialog.getByLabel('Missing resource override',{exact:false}).count(),0);
   assert.equal(await dialog.getByLabel('Frozen case CSS',{exact:false}).count(),0,'Owned rules must not need a separate selection');
@@ -99,7 +99,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
     await dialog.getByRole('button',{name:'Close',exact:true}).click();
     await traffic.locator('trace-drop-target').evaluate((element,path)=>{const b=element.dropRegion.getBoundingClientRect();element.handleNativeDrag({type:'drop',paths:[path],position:{x:(b.left+10)*devicePixelRatio,y:(b.top+10)*devicePixelRatio}});},copy);
     await dialog.getByRole('heading',{name:'Native frozen case',exact:true}).waitFor();
-    await dialog.getByText('Import rules and experiments',{exact:true}).click();
+    await dialog.getByText('Import rules and response sets',{exact:true}).click();
     await dialog.getByLabel('Native case experiment · Ready to import',{exact:true}).check();
     await dialog.getByRole('button',{name:'Review rule import',exact:true}).click();
     await dialog.getByRole('heading',{name:'Rules to import',exact:true}).waitFor();

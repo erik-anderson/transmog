@@ -227,9 +227,9 @@ fn selected_collection(
         .experiments
         .iter()
         .find(|e| e["id"].as_str() == Some(&selection.experiment_id))
-        .ok_or_else(|| invalid("The frozen experiment is unavailable"))?;
+        .ok_or_else(|| invalid("The frozen response set is unavailable"))?;
     let mut experiment: wire::Experiment = serde_json::from_value(value.clone())
-        .map_err(|_| invalid("Unsupported frozen experiment semantics"))?;
+        .map_err(|_| invalid("Unsupported frozen response set semantics"))?;
     let variant = experiment
         .variants
         .iter_mut()
@@ -239,7 +239,7 @@ fn selected_collection(
         .revisions
         .retain(|r| r.revision == selection.revision);
     if variant.revisions.len() != 1 {
-        return Err(invalid("The frozen experiment revision is unavailable"));
+        return Err(invalid("The frozen response set revision is unavailable"));
     }
     experiment
         .variants
@@ -247,7 +247,7 @@ fn selected_collection(
     experiment.active_intent = None;
     let mut narrowed = manifest.clone();
     narrowed.experiments = vec![
-        serde_json::to_value(experiment).map_err(|_| invalid("Frozen experiment is invalid"))?,
+        serde_json::to_value(experiment).map_err(|_| invalid("Frozen response set is invalid"))?,
     ];
     narrowed
         .rules_for_import(std::slice::from_ref(&selection.experiment_id), false)

@@ -33,7 +33,7 @@ impl Application {
     /// Returns invalid/removed source or unavailable body metadata.
     pub fn captured_page_choices(&self, source_id: &str) -> Result<CapturedPageChoices, AppError> {
         let original = self.service.catalog().get(ExchangeId(parse_session_id(source_id)?))
-            .ok_or_else(|| error("The experiment's source request is no longer retained. Select an HTML response in Traffic."))?;
+            .ok_or_else(|| error("The response set's source request is no longer retained. Select an HTML response in Traffic."))?;
         let source = self.traces.source_id(source_id);
         let store = self
             .body_store

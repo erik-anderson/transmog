@@ -19,7 +19,7 @@ snapshot with which it started.
 
 ## Rules workspace
 
-**Automation** has three tools: **Rules**, **Experiments**, and **Scripts**.
+**Automation** has three tools: **Rules**, **Response sets**, and **Scripts**.
 Rules brings saved responses, header changes, browser-header presets and response
 text replacements into one searchable list and properties pane. Filter by Requests
 or Responses and by enabled state; a saved response belongs to Responses because
@@ -47,19 +47,19 @@ and conflict controls. A shared list does not make first-match policies and
 composing edits interchangeable.
 
 **Saved responses · On / Paused** gates only saved responses, including those
-used by live experiments. Enabled rules affected by this switch show **Enabled ·
+used by live response sets. Enabled rules affected by this switch show **Enabled ·
 Paused**. Header and text edits, browser-header rules and scripts keep their own
-state. Experiments manage saved-response alternatives and revisions; Scripts is
+state. Response sets manage saved-response alternatives and revisions; Scripts is
 the advanced editor for custom logic. Neither changes activation just by opening
 or selecting content.
 
 ### Activation and editing state
 
-The sidebar and Rules, Experiments and Scripts tabs share one activity count.
+The sidebar and Rules, Response sets and Scripts tabs share one activity count.
 Active means enabled and unpaused for future matching traffic; it is independent
 of search filters and does not establish that traffic has matched or that the
 proxy is running. Ordinary rules include saved responses. Each participating
-experiment counts once, and its owned rules are excluded from Rules. Baseline,
+response set counts once, and its owned rules are excluded from Rules. Baseline,
 archived content and paused items do not contribute to the active total. The
 summary reports paused items separately, including the saved-response pause.
 
@@ -90,23 +90,23 @@ saved script source and settings without changing the active script.
 
 | Task | Start here | Preview and activation |
 | --- | --- | --- |
-| Replace a captured response, compare alternatives or edit a local file | **Actions → Create experiment**, then the response editor and **Experiments** | Saved response assets participate in captured-page previews. Saving a named revision is passive; live activation is explicit. |
+| Replace a captured response, compare alternatives or edit a local file | **Actions → Create response set**, then the response editor and **Response sets** | Saved response assets participate in captured-page previews. Saving a named revision is passive; live activation is explicit. |
 | Change request/response headers while retaining fresh traffic | **Automation → Rules → New rule… → Change request headers… / Change response headers…** | Standalone live rules. Test the draft without traffic; explicitly enable it for new requests. |
 | Find and replace text in server responses | **Actions → Create rule → Find and replace response text…** or the same action under **Automation → Rules → New rule…** | Standalone live rules with bounded UTF-8 input. Test the draft, then explicitly enable it. |
 
 Header rules, fresh-response edits and scripts are not members of the named
 response-asset variants and do not execute in captured-page previews. To compare
 policy headers in a preview, edit the saved response asset's headers. Activating
-an experiment's **Baseline** removes only that experiment's live rules; unrelated
-header rules, response edits, scripts and other experiments keep their own state.
+a response set's **Baseline** removes only that response set's live rules; unrelated
+header rules, response edits, scripts and other response sets keep their own state.
 
 ### Try a captured script change
 
 1. Select a complete captured JavaScript response in Traffic and choose **Actions
-   → Create experiment**. Name the hypothesis and edit the body. The script stays
+   → Create response set**. Name the response set and edit the body. The script stays
    inert in the workbench. **Test match** checks targeting; **Compare with captured
    source** compares the proposed response without saving or sending traffic.
-2. Choose **Save experiment**. This saves an **Edited response** revision and an
+2. Choose **Save response set**. This saves an **Edited response** revision and an
    empty **Baseline** without changing live traffic. Failed saves preserve the
    draft. Saving further revisions also leaves an active revision unchanged.
 3. Choose **Preview captured page…**, select a retained HTML page from the same
@@ -121,7 +121,7 @@ header rules, response edits, scripts and other experiments keep their own state
    frozen snapshot and fresh InPrivate browser session. F5 in the earlier window
    keeps that run's saved bytes and browser state, including its cache policy.
 6. Choose **Use saved revision for live traffic** only when ready. Review any
-   overlap warnings. To remove this experiment's live edits, activate its
+   overlap warnings. To remove this response set's live edits, activate its
    **Baseline**; **Undo activation** is available until another automation change.
    The global saved-response pause remains independent of all these actions.
 
@@ -132,44 +132,74 @@ evidence. See [file choices](#saved-responses), [snapshot
 evidence](#linked-file-snapshots-and-historical-evidence) and [preview
 isolation](captured-page-preview.md#isolation-and-implementation).
 
-## Response experiments
+<a id="response-experiments"></a>
+
+## Response sets
+
+**How response sets work** opens concise help on the saved-set overview. Before
+the first save, help explains how to unlock the optional tour. The overview
+offers **Take a quick tour** once after the first successful save, or when an
+existing user first opens a saved set after this update. The invitation never
+opens the tour or moves focus automatically; **Not now** dismisses it.
+
+The four-step tour explains organization, editing and saving, saved previews,
+and deliberate live use. It highlights one region at a time without a scrim.
+Viewing selectors remain passive; saved-content and preview actions are
+unavailable during the tour. Baseline and unavailable editing targets can still
+be explained without changing the selection or saved content. **Back**, **Next**,
+**End tour**, **Done**, and Escape require no edits, saves, previews or activation.
+Leaving the overview closes help and the tour while preserving drafts and
+selection. Explicit closing restores visible help focus.
+
+Invitation and replay history are non-sensitive per-user native preferences,
+shared across response sets and retained across sessions. Ending early and
+finishing both leave **Replay tour** available in help, always from step one.
+Layout resets and independent settings/window saves preserve this history. The
+guide never changes automation generation, live participation or activation Undo.
 
 Select one complete captured response in the main window, then choose **Actions →
-Create experiment**. Name the hypothesis and edit its status, headers or body in
-the shared response editor within **Experiments**. **Test match** checks the request
+Create response set**. Name the response set and edit its status, headers or body in
+the shared response editor within **Response sets**. **Test match** checks the request
 conditions without sending traffic; **Compare with captured source** shows the
 unsaved difference. Switching workspaces preserves the draft. Failed saves keep
 it available for retry.
 
-**Save experiment** creates an experiment with an empty **Baseline** and an
-**Edited response** variant, then returns to **Experiments** with that saved revision
-selected. Editing a saved response stays in **Experiments**, and saving returns to
-its updated revision. Each saved variant revision contains complete ordered
+**Save response set** creates a response set with an empty **Baseline** and an
+**Edited response** variant, then returns to **Response sets** with that saved revision
+selected. The first editor uses **Response set name**; editing or adding an individual
+response uses **Response name**. Rename the set under **Names, duplicates and archive**
+with **Response set name → Save name**. Editing a saved response stays in
+**Response sets**; **Save revision** returns to its updated revision. The expanded
+body editor uses the same save label and saves all pending response fields.
+First-save feedback is **Response set saved. Live traffic is unchanged.** Later
+saves report **Revision {number} saved. Live traffic is unchanged.**
+Each saved variant revision contains complete ordered
 rules and exact response-asset revisions. Saving never changes live traffic, even
 when an earlier revision is active. Unrelated rules and the global On/Paused
 setting are preserved. The original **Create rule → Serve a saved response…** flow still creates
 ordinary rules with its established save behavior.
 
-Open **Automation → Experiments** or **Versions and history…**
-from the shared response editor. Select an experiment, variant and revision to
+Open **Automation → Response sets** or **Versions and history…**
+from the shared response editor. Select a response set, variant and revision to
 inspect them without changing live participation. These selector labels remain
 visible while scrolling. Duplicate a saved revision to
 create another approach, rename it, include/exclude or reorder its rules, and use
 **Add selected response** to add another captured response through the same editor.
 Earlier revisions remain inspectable; duplicate an earlier revision to edit it.
-Archive keeps identities and history, and **Restore (Undo archive)** reverses it.
+Archive keeps identities and history. **Restore response set** reverses a set archive;
+**Restore variant (Undo archive)** reverses a variant archive.
 Activate Baseline or another variant before archiving active content.
 
 **Preview saved revision…** uses the exact selected definitions and included rules,
 independently of live activation and pause. Individual rule participation is locked
-for that run. **Preview baseline…** uses the captured scene without this experiment.
+for that run. **Preview baseline…** uses the captured scene without this response set.
 For a script or stylesheet, choose a retained HTML page from the same source.
 Recorded referrer and timing are hints, not proof of which page used the resource.
 If that source has expired, select a complete HTML response in Traffic first.
 Browser session/reload behavior is documented in [captured-page
 preview](captured-page-preview.md).
 
-**Use saved revision for live traffic** explicitly replaces only this experiment's
+**Use saved revision for live traffic** explicitly replaces only this response set's
 live subset, in one validated persisted transaction. Possible overlaps with other
 native rules are shown first; **Activate despite overlaps** acknowledges those
 warnings. Conservative overlap warnings are not proof that two rules match the
@@ -178,8 +208,8 @@ configuration intact. For an equal-priority conflict, expand **Activation order*
 and save a revision before or after other live rules, then activate that revision.
 This changes only the selected variant; unrelated rule priorities stay unchanged.
 
-Only one revision participates per experiment. **Baseline** means no rules from
-this experiment; unrelated automation remains active. **Pause experiment** gates
+Only one revision participates per response set. **Baseline** means no rules from
+this response set; unrelated automation remains active. **Pause response set** gates
 participation without rewriting authored rules, enabled choices or revisions.
 Activation and resume preserve the global saved-response pause. **Undo activation**
 restores the previous owned subset only if no automation generation has changed
@@ -187,11 +217,13 @@ since that activation. On conflict, current work is preserved; inspect saved
 history and explicitly activate the desired revision instead.
 
 Definitions and revision history survive restart in the existing automation
-workspace. Limits are 32 experiments, 16 variants per experiment (including
+workspace. Limits are 32 response sets, 16 variants per response set (including
 Baseline), 32 revisions per variant, 64 rules per revision, and the existing 4 MiB
 workspace limit. Reaching a limit rejects the save and preserves the draft;
 history is never silently discarded. Display names are separate from stable IDs.
 Captured source links remain on the saved assets after source Traffic is evicted.
+The persisted schema, commands and internal model identifiers retain their
+`experiment` names for compatibility; the desktop calls these objects response sets.
 
 An immutable linked-file asset reference identifies configuration, not historical
 file bytes. A new preview or live request reads a fresh coherent file snapshot;

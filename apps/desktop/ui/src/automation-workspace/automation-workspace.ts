@@ -70,6 +70,8 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable ruleDetail=false;
   @observable hasNativeSelection=false;
   @observable experimentEditorVisible=false;
+  @observable overviewVisible=false;
+  @observable preferencesReady=false;
   @observable advancedRuleText='';
   @observable catalogActivationRule:AutomationRule|null=null;
   private lastRuleSection='responses';
@@ -83,6 +85,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   responseExperimentChanged():void {this.updateRuleDetail();}
   private updateRuleDetail():void {
     this.experimentEditorVisible=this.responseExperiment&&!this.editorHidden&&['responses','experiments'].includes(this.automationSection);
+    this.overviewVisible=this.view==='automation'&&this.automationSection==='experiments'&&!this.experimentEditorVisible;
     this.ruleDetail=this.automationSection==='responses'&&this.responseExperiment?false:['responses','experiments'].includes(this.automationSection)?!this.editorHidden||!this.batchReviewHidden:this.nativeDetail;
   }
   filterRuleDirection(event:Event):void {this.finishRuleDrag();this.ruleDirection=(event.target as HTMLSelectElement).value;this.renderRuleSelection();}
@@ -158,10 +161,15 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable responseExperiment=false;
   @observable experimentLive=false;
   @observable experimentStateText='';
+  @observable responseSaveLabel=initialState.responseSaveLabel;
+  @observable responseNameLabel=initialState.responseNameLabel;
   @observable variantHistorical=false;
   experimentVariants!:ExperimentVariants;
   private editingVariant:ExperimentSelection|null=null;
-  onVariantStatus(event:CustomEvent<AutomationStatus>):void {this.renderAutomation(event.detail);}
+  onVariantStatus(event:CustomEvent<AutomationStatus>):void {
+    if(event.detail.generation>=(this.automationStatus?.generation??0)&&this.automationKind==='success')this.automationText='';
+    this.renderAutomation(event.detail);
+  }
   onHeaderRulesState(event:CustomEvent<AutomationStatus>):void {const editor=this.automationSection==='header-rules'?this.headerRulesEditor:this.automationSection==='response-text'?this.responseTextEditor:null;if(editor)this.catalogSelectedId=editor.hrId;this.renderAutomation(event.detail);const section=this.automationSection;queueMicrotask(()=>{if(editor&&this.automationSection===section){this.catalogSelectedId=editor.hrId;if(editor.hrId)this.ruleSelection.replace(editor.hrId);this.renderRuleSelection();}});}
   async showVariants():Promise<void> {
     if(!await this.canLeaveEditor())return;
@@ -170,7 +178,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     else this.experimentVariants.newExperimentButton.focus();
   }
   async newNamedExperiment():Promise<void> {
-    if(!this.selection?.reusable){this.showNotice('Select a response','Select a reusable captured response in Traffic, then choose Create experiment.',null,null);return;}
+    if(!this.selection?.reusable){this.showNotice('Select a response','Select a reusable captured response in Traffic, then choose Create response set.',null,null);return;}
     await this.populateCapturedAutoResponse(this.selection.sessionId,this.selection.detail,undefined,true);
   }
   async editVariant(event:CustomEvent<VariantEdit>):Promise<void> {
@@ -194,17 +202,19 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.$emit('page-preview-request',{ruleId,sourceSessionId,mode:'modified',variant:selection} satisfies ResponsePreviewIntent);
   }
   private renderExperimentState():void {
+    this.responseSaveLabel=this.responseExperiment?(this.editingVariant?'Save revision':'Save response set'):'Save rule';
+    this.responseNameLabel=this.responseExperiment?(this.editingVariant?'Response name':'Response set name'):'Rule name';
     if(!this.responseExperiment){this.experimentStateText='';return;}
     if(this.editingVariant){
       const selection=this.editingVariant,experiment=this.automationStatus?.experiments?.find(e=>e.id===selection.experimentId),variant=experiment?.variants.find(v=>v.id===selection.variantId);
       this.variantHistorical=variant?.revisions.at(-1)?.revision!==selection.revision||variant?.archived===true||experiment?.archived===true;
       this.experimentLive=JSON.stringify(experiment?.active)===JSON.stringify(selection);
-      this.experimentStateText=`${experiment?.name??'Experiment'} · ${variant?.name??'Variant'} · revision ${selection.revision}. ${this.variantHistorical?'Read-only revision: restore archived items or duplicate earlier revisions in Experiments to edit.':'Saving creates a new revision; live traffic keeps its explicitly activated revision.'}`;
+      this.experimentStateText=`${experiment?.name??'Response set'} · ${variant?.name??'Variant'} · revision ${selection.revision}. ${this.variantHistorical?'Read-only revision: restore archived items or duplicate earlier revisions in Response sets to edit.':'Saving creates a new revision; live traffic keeps its explicitly activated revision.'}`;
       return;
     }
     const saved=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
     this.experimentLive=saved?.enabled===true;
-    this.experimentStateText=!saved?'Unsaved experiment. Saving keeps it disabled for live traffic.':!saved.enabled?'Saved experiment · Disabled for live traffic. Preview uses the saved response.':this.automationStatus?.autoresponsesEnabled===false?'Enabled experiment · Live saved responses are paused.':'Enabled experiment · New matching live requests use the saved response.';
+    this.experimentStateText=!saved?'Unsaved response set. Saving keeps it disabled for live traffic.':!saved.enabled?'Saved response set · Disabled for live traffic. Preview uses the saved response.':this.automationStatus?.autoresponsesEnabled===false?'Enabled response set · Live saved responses are paused.':'Enabled response set · New matching live requests use the saved response.';
   }
   async useExperimentForLive():Promise<void> {
     if(!this.editingVariant||this.draftDirty||this.savingAutoResponse)return;
@@ -387,7 +397,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.resolveLeave?.(false);this.resolveLeave=null;this.leaveEditorPromise=null;
     super.disconnectedCallback();
   }
-  viewChanged(): void { if (this.view === 'automation') {void this.refreshSourceAvailability();this.refreshUsageSoon();}else this.finishRuleDrag(); }
+  viewChanged(): void { this.updateRuleDetail();if (this.view === 'automation') {void this.refreshSourceAvailability();this.refreshUsageSoon();}else this.finishRuleDrag(); }
   refreshUsageSoon():void {
     if(this.usageTimer!==undefined)return;
     this.usageTimer=window.setTimeout(()=>{this.usageTimer=undefined;if(this.view==='automation')void invoke<AutomationStatus>('automation_status').then(status=>{if(this.isConnected){this.renderAutomation(status);void this.refreshResponseFile();}}).catch(()=>undefined);},500);
@@ -431,7 +441,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   previewSavedRule(mode:'captured'|'modified'='modified'):void {
     this.closeResponseMenu(this.previewResponseMenu,this.previewResponseButton);
     if(mode==='modified'&&!this.editingAutoResponseId)return;
-    if(this.responseExperiment&&this.draftDirty){this.autoResponseError='Save the experiment before previewing. Your draft is preserved.';return;}
+    if(this.responseExperiment&&this.draftDirty){this.autoResponseError=`${this.responseSaveLabel} before previewing. Your draft is preserved.`;return;}
     this.$emit('page-preview-request',{ruleId:this.editingAutoResponseId,sourceSessionId:this.sourceSessionId,mode,...(mode==='modified'&&this.editingVariant?{variant:this.editingVariant}:{})} satisfies ResponsePreviewIntent);
   }
   async canLeaveEditor():Promise<boolean> {
@@ -460,7 +470,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     let bytes:number[];try{bytes=this.currentBodyBytes();}catch(error:unknown){this.autoResponseError=describeError(error);return;}
     this.bodyDialogBefore={revision:this.editorRevision,value:this.autoResponseBody.value,mode:this.bodyMode,viewValue:this.bodyViewValue,viewBytes:this.bodyViewBytes,status:this.bodyStatusText,edit:this.autoResponseEditBody.checked,readOnly:this.bodyReadOnly,dirty:this.draftDirty,error:this.autoResponseError};this.bodyDialogCommitted=false;
     const canSave=Boolean(this.editingAutoResponseId&&this.savedResponse);
-    this.bodyEditor.open(this.autoResponseBody.value,responseBodyLanguage(this.autoResponseMediaType.value,this.autoResponseBody.value),canSave,this.bodyDialogButton,{mode:this.bodyMode,textEncoding:this.bodyTextEncoding,bytes,saveUnavailableReason:this.editingAutoResponseId?'Apply to draft, then save the rule.':'Apply to draft, then save the new rule.'});
+    this.bodyEditor.open(this.autoResponseBody.value,responseBodyLanguage(this.autoResponseMediaType.value,this.autoResponseBody.value),canSave,this.bodyDialogButton,{mode:this.bodyMode,textEncoding:this.bodyTextEncoding,bytes,saveLabel:this.responseSaveLabel,saveDescription:this.responseExperiment?`${this.responseSaveLabel} saves all pending response changes. Live traffic is unchanged.`:'Save rule saves all pending rule changes.',saveUnavailableReason:this.responseExperiment?'Apply to draft, then '+this.responseSaveLabel.toLowerCase()+'.':this.editingAutoResponseId?'Apply to draft, then save the rule.':'Apply to draft, then save the new rule.'});
   }
   async commitBodyDialog(event:CustomEvent<BodyCommit>):Promise<void> {
     const before=this.bodyDialogBefore;
@@ -805,6 +815,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.automationSection=experiment?'experiments':'responses';
     this.responseExperiment=experiment;this.experimentLive=false;this.experimentStateText='';
     this.editingVariant=null;this.variantHistorical=false;
+    this.responseSaveLabel=experiment?'Save response set':'Save rule';this.responseNameLabel=experiment?'Response set name':'Rule name';
     this.fileInfoRevision++;this.responseBodyFileMode='copy';this.responseCopiedFrom='';this.responseBodyFileBytes=null;
     this.editorRevision++;
     if (this.editorHidden) {const opener=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.editorOpener=opener?.closest('#rule-kind-menu')?this.newRuleButton:opener;}
@@ -1077,7 +1088,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.encodingOptionsHidden = source.body.contentCodings.length === 0;
     this.autoResponseBody.value = '';
     this.bodyReadOnly = true;
-    this.editorTitle = experiment?'New response experiment':'New rule from captured response';
+    this.editorTitle = experiment?(variant?'Add response':'New response set'):'New rule from captured response';
     this.renderExperimentState();
     this.sourceText = `${source.response.status} · ${formatBytes(source.body.retainedBytes)} · ${source.body.mediaType ?? 'Unknown content type'}${source.body.contentCodings.length === 0 ? '' : ` · ${source.body.contentCodings.join(', ')}`}`;
     this.sourceSessionId = sessionId;
@@ -1234,7 +1245,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   async saveAutoResponse(event: Event): Promise<boolean> {
     event.preventDefault();
     if (this.savingAutoResponse || this.changingAutoResponse || this.fileChoiceBusy) return false;
-    if(this.variantHistorical){this.autoResponseError='Duplicate an earlier revision in Experiments before editing it.';return false;}
+    if(this.variantHistorical){this.autoResponseError='Duplicate an earlier revision in Response sets before editing it.';return false;}
     if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return false;}
     if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return false;}
     this.refreshResponseDirty();
@@ -1251,7 +1262,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.automationKind = 'progress';
     try {
       const displayName = String(data.get('name') ?? '').trim();
-      if (!displayName) throw new Error('Enter a rule name.');
+      if (!displayName) throw new Error(`Enter a ${this.responseNameLabel.toLowerCase()}.`);
       const editableResponseHeaders=this.parseEditorHeaders('responseHeaders',data).filter(header=>!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase()));
       const responseHeaders=this.mergeResponseHeaders(String(data.get('responseHeaders')??''),editableResponseHeaders);
       const capturedBytes=source.kind==='captured'&&replaceBody?this.currentBodyBytes():null;
@@ -1349,7 +1360,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.automationKind = 'success';
       if(experiment){
         this.editingAutoResponseId=id;this.editingVariant=savedVariant;this.editorHidden=true;this.renderExperimentState();
-        this.automationText='Variant revision saved. Live traffic is unchanged.';
+        this.automationText=variantSelection?`Revision ${savedVariant!.revision} saved. Live traffic is unchanged.`:'Response set saved. Live traffic is unchanged.';
         this.$flushUpdates();
         if(this.view==='automation'&&this.automationSection==='experiments')await this.showVariants();
         else if(savedVariant)await this.experimentVariants.reveal(savedVariant,false);

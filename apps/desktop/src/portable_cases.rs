@@ -291,7 +291,7 @@ pub(super) async fn prepare_case_export(
         serde_json::to_value(traffic).map_err(|_| error("Traffic inventory failed"))?;
     result["excluded"] = json!([
         "Working manifest history and recovery files",
-        "Unselected traffic, rules and experiment revisions",
+        "Unselected traffic, rules and response set revisions",
         "Script sources, compiled state and application credential/private-key stores",
         "Historical browser run results and temporary draft/asset/preview comparisons",
         if include_context {
@@ -648,7 +648,7 @@ pub(super) async fn review_case_rules(
         };
         if collection.rules.is_empty() && collection.experiments.is_empty() {
             return Err(error(
-                "Select ordinary rules or a supported experiment to import",
+                "Select ordinary rules or a supported response set to import",
             ));
         }
         app.prepare_rule_import(

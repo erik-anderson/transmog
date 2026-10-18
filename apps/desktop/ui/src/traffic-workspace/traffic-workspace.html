@@ -108,7 +108,7 @@
         <button type="button" @click="{beginRuleFromSelected('response-text',true)}" ?disabled="{{!selectedDetail}}">Find and replace response text…</button>
         <button type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}" title="{{reuseTitle}}">Serve a saved response…</button><p ?hidden="{{!reuseDisabled}}">{{reuseTitle}}</p>
       </action-submenu>
-      <button type="button" ?hidden="{{viewerMode}}" @click="{beginExperimentFromSelected()}" ?disabled="{{reuseDisabled}}" title="{{reuseTitle}}">Create experiment</button>
+      <button type="button" ?hidden="{{viewerMode}}" @click="{beginExperimentFromSelected()}" ?disabled="{{reuseDisabled}}" title="{{reuseTitle}}">Create response set</button>
       <if condition="windowsCommands"><action-submenu label="Preview">
         <button type="button" @click="{showCapturedPage()}" ?disabled="{{!selectedDetail || !previewPageAvailable || previewPageBusy}}">Preview page…</button><p ?hidden="{{previewPageAvailable}}">Select a complete retained HTML response.</p>
         <button type="button" ?hidden="{{!previewSceneAvailable}}" @click="{showRelatedPreview('captured')}">Captured baseline…</button>
@@ -139,7 +139,7 @@
         <button type="button" @click="{beginRuleFromSelected('response-text',false)}" ?disabled="{{selectedTrafficCount != 1}}">Find and replace response text…</button>
         <button type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled || selectedTrafficCount != 1}}" title="{{reuseTitle}}">Serve a saved response…</button><p ?hidden="{{!reuseDisabled}}">{{reuseTitle}}</p>
       </action-submenu>
-      <button type="button" ?hidden="{{viewerMode}}" @click="{beginExperimentFromSelected()}" ?disabled="{{reuseDisabled || selectedTrafficCount != 1}}" title="{{reuseTitle}}">Create experiment</button>
+      <button type="button" ?hidden="{{viewerMode}}" @click="{beginExperimentFromSelected()}" ?disabled="{{reuseDisabled || selectedTrafficCount != 1}}" title="{{reuseTitle}}">Create response set</button>
       <if condition="windowsCommands"><action-submenu label="Preview">
         <button type="button" @click="{showCapturedPage()}" ?disabled="{{!selectedDetail || !previewPageAvailable || previewPageBusy}}">Preview page…</button><p ?hidden="{{previewPageAvailable}}">Select a complete retained HTML response.</p>
         <button type="button" ?hidden="{{!previewSceneAvailable}}" @click="{showRelatedPreview('captured')}">Captured baseline…</button>

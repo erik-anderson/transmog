@@ -167,7 +167,7 @@ recoverable garbage, not a completed revision. Start with 32 explicit authored
 manifest revisions, reject further history saves at the limit, and offer explicit
 pruning. Do not silently discard evidence. Keep working manifest history under
 `history/<revision>/manifest.json` and retain objects referenced by any retained
-revision. Transfer includes one selected manifest, its selected experiment
+revision. Transfer includes one selected manifest, its selected response set
 revisions and referenced objects; working manifest history and recovery files
 are excluded.
 
@@ -178,7 +178,7 @@ Required fields and a concrete example live in the [fixture corpus](../verificat
 This is a typed design, not the private persistence DTO or a stable public v1.
 Known nested types also reject unknown semantic fields; bounded namespaced
 `extensions` are the explicit preservation mechanism. An optional unsupported
-experiment can be retained opaquely within the manifest bound, but its unknown
+response set can be retained opaquely within the manifest bound, but its unknown
 fields are never translated into rules or treated as supported configuration.
 
 | Field | Revision-0 meaning |
@@ -191,11 +191,11 @@ fields are never translated into rules or treated as supported configuration.
 | `objects` | Unique SHA-256, decimal byte length and role (`capture`, `response-body`, `script-source`, `context`). All present members must match length/hash. |
 | `sources` | Capture object references, internal source keys, original/derived lineage and explicit loss/privacy context. |
 | `assets` | Exact asset ID/revision, status, ordered headers, encoded entity object and provenance/availability. |
-| `rules` | Optional ordered ordinary rules, separate from named experiment ownership. Defaults to an empty array. |
+| `rules` | Optional ordered ordinary rules, separate from named response set ownership. Defaults to an empty array. |
 | `experiments` | Named variants and ordered immutable rule revisions with selected saved definitions and enabled/paused intent. |
 | `notes` | Authored text/reproduction steps and optional stable evidence references. |
 | `contexts` | Optional case-only inventory of immutable capture-time and separately collected diagnostic objects, with original source association, collection origin, completeness and explicit failures/omissions. |
-| `runs` | Frozen experiment selection, actual retained response references/hashes, engine/script choice and authored outcomes with provenance. |
+| `runs` | Frozen response set selection, actual retained response references/hashes, engine/script choice and authored outcomes with provenance. |
 | `extensions` | Optional namespaced descriptive JSON; bounded and preserved without executing or using it for matching. |
 
 Portable IDs use `[a-z0-9][a-z0-9._-]{0,127}` and are scoped to their owning graph.
@@ -206,9 +206,9 @@ Object digests describe integrity/content identity, not publisher authenticity.
 The manifest has no self-hash; its exact stored bytes may be hashed externally.
 Within an entity's scope, repeated ID/revision pairs must have identical
 definitions. Identity remapping must remain consistent across all selected
-variant revisions and asset references. Known named experiments use
-`kind="response-variants"`; requirements on an optional experiment can make
-that experiment unavailable without invalidating known evidence.
+variant revisions and asset references. Known named response sets use
+`kind="response-variants"`; requirements on an optional response set can make
+that response set unavailable without invalidating known evidence.
 
 A source reference is `(artifactSha256, sourceKey, exchangeId, occurrence)` plus
 the requested message boundary. Hash the actual input artifact including its
@@ -275,15 +275,15 @@ Dependencies carry `state`: `present`, `missing`, `not-exported`, `unsupported` 
 `locked`, and a reason when unavailable. Evidence completeness separately records
 complete/truncated/redacted/evicted/not-retained/unknown; a present capture file
 can still have incomplete evidence. A missing asset is inspectable but prevents
-that experiment running. An absent body is not an empty object. Unknown optional
-experiment types remain inspectable as metadata with an unavailable result; they
+that response set running. An absent body is not an empty object. Unknown optional
+response set types remain inspectable as metadata with an unavailable result; they
 cannot be imported or executed. Unknown package-wide required features fail early.
 
 Linked files are exported as an explicitly acquired snapshot or an unavailable
 dependency. Do not export their absolute path, reopen an author's path on import,
 or claim an export-time copy was served earlier. A historical run needs retained
 boundary bytes matching its actual digest. Freeze failure aborts the selected
-experiment export; inspection-only export must explicitly report omissions.
+response set export; inspection-only export must explicitly report omissions.
 
 Scripts reference inert UTF-8 source objects, declared API revision, handlers,
 capabilities, limits and asset references. Imported scripts stay disabled drafts.
@@ -340,7 +340,7 @@ Review classifies entries as `new`, `identical-source-definition` or
 fresh local identities, including identical definitions; immutable body blobs
 deduplicate by digest. Existing content is never overwritten by label or ID.
 Original definitions, exact revision strings and mappings persist as provenance.
-Ordinary imported rules are disabled; imported named experiments are paused,
+Ordinary imported rules are disabled; imported named response sets are paused,
 unselected and inspectable. Source enabled/paused/archived/active intent remains
 metadata. Local variant histories start at revision 1 while exact original
 revision numbers remain in the retained source definition. Named saved rule
@@ -379,15 +379,15 @@ are separate from private Rust rule serialization:
 | Auto-response action | `assetId`, decimal `revision`. |
 | Header action | `operations:[{operation,name,valueBase64}]`; `operation` is `set`/`append`/`remove`; remove has no value. |
 | Literal action | `find`, `replacement`, `occurrences` (`first`/`all`), nullable decimal `expectedMatches`, `mediaType`, `encoding`, decimal `maxBytes`; current native UTF-8 and media/body bounds apply. |
-| Experiment | `id`, `kind:"response-variants"`, `requiredFeatures`, `label`, `pausedIntent`, optional `archivedIntent` (false), optional `activeIntent:{variantId,revision}`, `variants`. Active intent must reference an included revision. |
+| Response set | `id`, `kind:"response-variants"`, `requiredFeatures`, `label`, `pausedIntent`, optional `archivedIntent` (false), optional `activeIntent:{variantId,revision}`, `variants`. Active intent must reference an included revision. |
 | Variant/revision | Variant `id`, `label`, optional `archivedIntent` (false), ordered `revisions:[{revision,rules}]`. An empty `baseline` variant is mandatory. |
 
 K1 recognizes `response-assets/1`, `header-edits/1` and `literal-response/1`.
 Namespaced extension keys use the portable ID alphabet, contain a dot and are at
 most 128 bytes. All nested JSON shares depth 32 and the 8 MiB manifest bound.
 Assets/objects are bounded to 16,384 each, bodies to 1 GiB, headers to 256 fields
-and 64 KiB, examples to 64 per rule, experiments to 32, variants to 16 per
-experiment, saved revisions to 32 per variant, and rules to 64 per saved revision.
+and 64 KiB, examples to 64 per rule, response sets to 32, variants to 16 per
+response set, saved revisions to 32 per variant, and rules to 64 per saved revision.
 Ordinary compilation units retain the native 1,024-rule and action/regex limits.
 
 The private application workspace still has its 4 MiB persistence limit and
@@ -403,12 +403,12 @@ note, marker, context, lineage and run DTOs. `parse` / `encode` apply strict JSO
 identity/reference and native rule validation within the existing 8 MiB/depth-32
 bound. The production reader exercises the case corpus, including unavailable
 assets, locked native sources, duplicate source labels/IDs, optional future
-experiments and different historical/export-time response bytes.
+response sets and different historical/export-time response bytes.
 
 `inventory()` reports selected object bytes, source completeness, missing/locked
-dependencies and each experiment's availability. `ready-for-explicit-import`
+dependencies and each response set's availability. `ready-for-explicit-import`
 means supported rules and complete declared asset dependencies; it does not mean
-a browser run has occurred. Unsupported optional experiments remain opaque JSON
+a browser run has occurred. Unsupported optional response sets remain opaque JSON
 and inspectable as unavailable. Unknown required package features fail early.
 `rules_for_import(ids, ordinary)` selects only supported, complete dependencies
 for K1's separate reviewed disabled import. Opening or saving a case does not
@@ -506,17 +506,17 @@ still happens when opening. Opening cases never imports or enables automation.
 
 Saving defaults to selected requests, or current filtered traffic when nothing
 is selected. **Rules and notes only** explicitly omits traffic. The form adds
-selected saved rules/exact experiment revisions, authored notes and an original
+selected saved rules/exact response set revisions, authored notes and an original
 context choice. It does not run new configuration commands. Preparing selected
 evidence creates temporary unencrypted copies; the form discloses this before
 **Review selected content**. That explicit action prepares the copy without an
 additional acknowledgement checkbox. Output encryption protects the final file.
 
-The optional **Rules and experiments** disclosure starts collapsed with its
+The optional **Rules and response sets** disclosure starts collapsed with its
 selected count. When expanded, the picker initially shows saved content that
 matches the included requests. **Show all** also exposes
 nonmatching and unassessed choices, including overrides for uncaptured resources.
-Choosing a version includes its complete ordered rules; experiment-owned rules
+Choosing a version includes its complete ordered rules; rules owned by response sets
 do not appear again as standalone choices. Suggestions are not automatically
 selected. Selected content stays visible and selected when the evidence scope or
 visibility filter changes. With no evidence chosen, every saved choice is shown.
@@ -553,14 +553,14 @@ not zero. Selected native exports always record it, including on reopened cases.
 chooses its source. It closes the review and reveals a request from that capture.
 **Current case…** returns to the loaded case and selected capture without reopening its file. Detailed
 counts remain under **Content details**. Notes, context files, rules, response files,
-experiments and exclusions remain available. **Capture observations** explains
+response sets and exclusions remain available. **Capture observations** explains
 stream events and body records without full content; ordinary capture settings,
 protocol behavior and unknown completeness are not presented as export failures.
 The raw **Technical manifest (JSON)** contains file inventory and provenance,
 not an individual request list. Missing content remains missing;
-an optional unsupported experiment does not prevent unrelated inspection.
+an optional unsupported response set does not prevent unrelated inspection.
 **Ready to import** describes supported rule content, not browser replay
-or proof of an earlier experiment's outcome.
+or proof of an earlier response set's outcome.
 
 The native format compresses a Stored ZIP64 stream inside TMCap. Optional password
 protection covers the complete ZIP, including notes, context, object names and
@@ -604,10 +604,10 @@ directory at the chosen path and preserves
 existing paths. Portable manifest IDs are not used as filesystem names. Archive editing is not implicit. Shared `WorkingCase` APIs own
 transactional edits/history; this desktop increment does not add a project editor.
 
-In the main window, selected supported experiments/ordinary rules have a separate
+In the main window, selected supported response sets/ordinary rules have a separate
 import review showing names, counts and what will be added. Generated identifiers
 and identity conflicts remain under **Identity details**. **Import rules** imports rules disabled
-and experiments paused/unselected, preserving existing edits and activation.
+and response sets paused/unselected, preserving existing edits and activation.
 Rules-only packages are reviewed as one complete dependency graph. Opening,
 copying or inspecting never imports automation automatically or executes scripts.
 
@@ -667,7 +667,7 @@ internal source key, with collection purpose/time/machine recorded separately.
 Never substitute the importing or saving machine's current state for the original
 machine's snapshot. A new case-save collection has
 `origin.kind="collected-for-case"`, not a captured-source attribution. A
-capture-only bundle can use the same case manifest with empty experiments,
+capture-only bundle can use the same case manifest with empty response sets,
 assets, notes and runs; it does not need another archive format.
 
 Active capture documents keep recorder context in committed capture metadata so
@@ -837,8 +837,8 @@ Results use `resultVersion:0`, `command`, `status` (`ok`/`error`), `diagnostics`
 (category, field path, human message) and command-specific `data`. Machine
 categories/counts are explicit; messages may evolve. Source references and large
 lengths use the manifest's exact string representations. Validation validity,
-evidence completeness and experiment runnability are separate fields. A valid
-inspection-only case succeeds with unavailable experiments. Define a separate
+evidence completeness and response set runnability are separate fields. A valid
+inspection-only case succeeds with unavailable response sets. Define a separate
 streaming result mode before exposing enormous per-exchange JSON inventories.
 
 | Exit | New structured-command meaning |

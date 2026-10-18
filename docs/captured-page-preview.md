@@ -22,7 +22,7 @@ Recorded referrer and time proximity are advisory. Choose the page explicitly;
 Transmog does not claim to reconstruct a navigation. A matching retained preview
 scene can be reused. Authored responses without a captured source use the last
 retained scene or selected complete HTML response. See [response
-experiments](automation.md#response-experiments) for the inactive draft and named
+sets](automation.md#response-sets) for the inactive draft and named
 variant workflow.
 
 The first participating rule matching the actual browser method, normalized URL
@@ -116,13 +116,13 @@ a failed top-level navigation closes the preview.
 The preview is Windows-only; other platforms require their own
 resource-interception boundary.
 
-Named experiment previews use an exact saved experiment/variant/revision
+Named response set previews use an exact saved response set/variant/revision
 selection, including its ordered included rules. Switching live variants, saving
 another revision, or pausing automation cannot alter an already-open run. The
 preview report retains that selection alongside the frozen rule and byte
 identities. From a named variant run, **Open updated preview** selects the latest
 saved revision of that same variant and freezes new bytes; an explicit revision
-selection in Experiments continues to use that exact revision. A new preview of
+selection in Response sets continues to use that exact revision. A new preview of
 an old linked-file configuration reads the current file; it does not claim to reconstruct earlier served bytes.
 
 Preview participation covers saved response assets. Standalone header changes,

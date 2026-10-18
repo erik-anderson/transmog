@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
+import {smokeResponseSetGuide} from './smoke-response-set-guide.mjs';
 
 // Uses production workspace actions and real native commands, in the harness's isolated app data.
 export async function smokeResponseExperiments({main,traffic,documentId,targets,connect,waitFor,closeNative,screenshot}) {
@@ -9,6 +10,9 @@ export async function smokeResponseExperiments({main,traffic,documentId,targets,
   try {
     const source=await main.evaluate(`(async()=>{const t=${traffic};const row=t.sessions.find(row=>row.path==='/page.css');await t.revealSession(row.id);t.beginExperimentFromSelected();return row.id;})()`);
     await waitFor(()=>main.evaluate(`${editor}.responseExperiment&&!${editor}.editBodyDisabled&&!${editor}.loadingSavedResponse`),'Native experiment draft did not load');
+    assert.equal(await main.evaluate(`${editor}.responseSaveLabel`),'Save response set');
+    assert.equal(await main.evaluate(`${editor}.responseNameLabel`),'Response set name');
+    assert.equal(await main.evaluate(`${editor}.editorTitle`),'New response set');
     assert.equal(await main.evaluate(`${editor}.automationSection`),'experiments','Native experiment opened outside Experiments');
     await main.evaluate(`(()=>{const a=${editor},name=a.autoResponseForm.elements.namedItem('name');name.value='Native CSS hypothesis';name.dispatchEvent(new Event('input',{bubbles:true}));a.autoResponseEditBody.checked=true;a.updateAutoResponseBodyEditState();a.autoResponseBody.value='h1 { color: rgb(0, 0, 255); }';a.autoResponseBody.dispatchEvent(new Event('input',{bubbles:true}));a.compareResponseDraft('source');})()`);
     await waitFor(()=>main.evaluate(`${shell}.comparison.comparisonResult&&!${shell}.comparison.comparisonBusy`),'Native experiment comparison did not complete');
@@ -17,10 +21,13 @@ export async function smokeResponseExperiments({main,traffic,documentId,targets,
     if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-experiment-editor.png'),Buffer.from(image.data,'base64'));}
     assert.equal(await main.evaluate(`${editor}.saveAutoResponse(new Event('submit',{cancelable:true}))`),true,'Native experiment save failed');
     await waitFor(()=>main.evaluate(`${editor}.editorHidden&&!${editor}.loadingSavedResponse`),'Saved experiment did not return to Experiments');
+    assert.equal(await main.evaluate(`${editor}.automationText`),'Response set saved. Live traffic is unchanged.');
+    assert.equal(await main.evaluate(`${editor}.responseSaveLabel`),'Save revision');
     assert.equal(await main.evaluate(`${editor}.automationSection==='experiments'&&${editor}.editorHidden`),true,'Native save did not return to Experiments');
     assert.deepEqual(await main.evaluate(`(()=>{const v=${editor}.experimentVariants;return {experimentId:v.experimentId,variantId:v.variantId,revision:v.variantRevision};})()`),await main.evaluate(`${editor}.editingVariant`));
     const ruleId=await main.evaluate(`${editor}.editingAutoResponseId`);
     const saved=await invoke('automation_status');
+    await smokeResponseSetGuide({main,waitFor,screenshot});
     assert.equal(saved.rules.some(row=>row.id===ruleId),false);
     assert.equal(saved.autoresponsesEnabled,before.autoresponsesEnabled);
     assert.deepEqual(saved.rules.filter(row=>row.id!==ruleId),before.rules);
@@ -64,6 +71,7 @@ export async function smokeResponseExperiments({main,traffic,documentId,targets,
     await closeNative('Modified preview · Scripts off — Transmog');
     preview.close();
     await waitFor(async()=>!(await targets()).some(row=>row.id===target.id),'Native experiment preview did not close');
+    await smokeResponseSetGuide({main,waitFor,screenshot,reload:true});
     process.stdout.write('Native response experiment: captured CSS → saved variant → exact-revision preview → duplicate → scoped activation → pause → Baseline → Undo; unrelated rules, global gate and open preview preserved.\n');
   } finally {
     let current=await invoke('automation_status');

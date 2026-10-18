@@ -103,15 +103,15 @@ impl CaseManifest {
         let mut selected = BTreeSet::new();
         for id in ids {
             if !selected.insert(id) {
-                return Err(invalid("Duplicate selected experiment"));
+                return Err(invalid("Duplicate selected response set"));
             }
             let value = self
                 .experiments
                 .iter()
                 .find(|e| e["id"].as_str() == Some(id))
-                .ok_or_else(|| invalid("Selected experiment is not included"))?;
+                .ok_or_else(|| invalid("Selected response set is not included"))?;
             if !crate::case_validate::supported(value) {
-                return Err(Error::Unsupported("Opaque experiment semantics".into()));
+                return Err(Error::Unsupported("Opaque response set semantics".into()));
             }
             result
                 .experiments
@@ -141,7 +141,7 @@ impl CaseManifest {
             .cloned()
             .collect();
         if result.assets.iter().any(|a| a.body.state != "present") {
-            return Err(invalid("Selected experiment has an unavailable asset"));
+            return Err(invalid("Selected response set has an unavailable asset"));
         }
         let digests = result
             .assets

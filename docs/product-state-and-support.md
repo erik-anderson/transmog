@@ -15,24 +15,24 @@ Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.
 
-Response experiments use the existing persisted automation rules and response
-assets, including named variants and immutable revision history. Saving an
-experiment revision does not change the explicitly activated live revision;
-activation and experiment pause are separate actions. The editor draft remains in
-the mounted workspace for the current session. See [response experiments](automation.md#response-experiments).
+Response sets use the existing persisted automation rules and response
+assets, including named variants and immutable revision history. Saving a
+response set revision does not change the explicitly activated live revision;
+activation and response set pause are separate actions. The editor draft remains in
+the mounted workspace for the current session. See [response sets](automation.md#response-sets).
 
 Saving a trace preserves retained network evidence; it does not package these
-experiment definitions, script sources, linked files or temporary preview scenes.
+response set definitions, script sources, linked files or temporary preview scenes.
 Copying the application state directory is not a portable investigation format.
-For sharing boundaries and unavailable bytes, see [trace saving](trace-saving.md#response-experiment-sharing).
+For sharing boundaries and unavailable bytes, see [trace saving](trace-saving.md#response-set-sharing).
 The [portable investigation APIs](portable-investigations.md#implemented-rule-interchange-apis-k1)
 provide selected rule/asset interchange for library callers. Imported source
 definitions, identity mappings and asset metadata share one automation commit;
 their immutable body blobs use the existing asset store. Imported named
-experiments start paused with no active selection, and ordinary rules start
+response sets start paused with no active selection, and ordinary rules start
 disabled. A saved state directory is still not a portable case.
 [Working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
-now keep selected evidence, source-associated notes/context, frozen experiments
+now keep selected evidence, source-associated notes/context, frozen response sets
 and up to 32 manifest revisions in an explicit plaintext directory. Current
 publication is transactional; interrupted staging remains separate recovery data.
 Desktop Files actions now open/save reviewed ZIP64/TMCap transfers, with optional

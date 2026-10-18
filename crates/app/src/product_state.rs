@@ -309,15 +309,38 @@ impl ProductStateManager {
 
     pub(crate) fn save_workspace(
         &self,
-        preferences: WorkspacePreferences,
+        mut preferences: WorkspacePreferences,
     ) -> Result<WorkspacePreferences, AppError> {
         let mut inner = self.inner.lock().unwrap();
+        // Stale independent-window layout writes cannot reset guide history.
+        preferences.response_set_guide = inner.state.workspace.response_set_guide;
         let state = validate(ProductState {
             workspace: preferences,
             ..inner.state.clone()
         })?;
         self.persist(&mut inner, &state)?;
         Ok(state.workspace)
+    }
+
+    pub(crate) fn update_response_set_guide(
+        &self,
+        action: crate::ResponseSetGuideAction,
+    ) -> Result<crate::ResponseSetGuideUpdate, AppError> {
+        use crate::{ResponseSetGuideAction as Action, ResponseSetGuideHistory as History};
+        let mut inner = self.inner.lock().unwrap();
+        let previous = inner.state.workspace.response_set_guide;
+        let offered = action == Action::Offer && previous == History::NotOffered;
+        let history = match action {
+            Action::Start => History::Started,
+            Action::Offer if offered => History::Offered,
+            Action::Offer => previous,
+        };
+        if history != previous {
+            let mut state = inner.state.clone();
+            state.workspace.response_set_guide = history;
+            self.persist(&mut inner, &state)?;
+        }
+        Ok(crate::ResponseSetGuideUpdate { history, offered })
     }
 
     pub(crate) fn save_client_certificate_policy(
@@ -1330,6 +1353,67 @@ mod tests {
             assert!(store.save_workspace(invalid).is_err());
             assert_eq!(store.snapshot().workspace, original);
         }
+    }
+
+    #[test]
+    fn response_set_guide_claim_is_atomic_and_history_survives_stale_writes_and_restart() {
+        use crate::{ResponseSetGuideAction as Action, ResponseSetGuideHistory as History};
+        let path = prefix("response-set-guide");
+        cleanup(&path);
+        let (store, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        let stale = store.snapshot();
+        let offers = std::thread::scope(|scope| {
+            let workers: Vec<_> = (0..8)
+                .map(|_| scope.spawn(|| store.update_response_set_guide(Action::Offer).unwrap()))
+                .collect();
+            workers
+                .into_iter()
+                .map(|worker| worker.join().unwrap().offered)
+                .filter(|offered| *offered)
+                .count()
+        });
+        assert_eq!(offers, 1);
+        assert_eq!(
+            store.snapshot().workspace.response_set_guide,
+            History::Offered
+        );
+        store.update_response_set_guide(Action::Start).unwrap();
+        store.save_workspace(stale.workspace.clone()).unwrap();
+        store.save(stale).unwrap();
+        let (reloaded, warning) = ProductStateManager::load(Some(path.clone()));
+        assert!(warning.is_none());
+        assert_eq!(
+            reloaded.snapshot().workspace.response_set_guide,
+            History::Started
+        );
+        assert!(
+            !reloaded
+                .update_response_set_guide(Action::Offer)
+                .unwrap()
+                .offered
+        );
+        assert_eq!(
+            reloaded
+                .update_response_set_guide(Action::Start)
+                .unwrap()
+                .history,
+            History::Started
+        );
+        cleanup(&path);
+    }
+
+    #[test]
+    fn older_workspace_preferences_gain_guide_history_without_losing_layout() {
+        let mut value = serde_json::to_value(WorkspacePreferences::default()).unwrap();
+        value.as_object_mut().unwrap().remove("responseSetGuide");
+        value["listSplit"] = serde_json::json!(67);
+        let restored: WorkspacePreferences = serde_json::from_value(value).unwrap();
+        assert_eq!(restored.list_split, 67);
+        assert_eq!(
+            restored.response_set_guide,
+            crate::ResponseSetGuideHistory::NotOffered
+        );
     }
 
     #[test]

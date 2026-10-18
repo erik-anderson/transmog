@@ -170,7 +170,7 @@ fn experiments(value: &CaseManifest, base: &Collection) -> Result<(), Error> {
         let kind = experiment
             .get("kind")
             .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| invalid("Experiment kind is required"))?;
+            .ok_or_else(|| invalid("Response set kind is required"))?;
         if kind.is_empty()
             || kind.len() > 128
             || !experiment
@@ -183,7 +183,7 @@ fn experiments(value: &CaseManifest, base: &Collection) -> Result<(), Error> {
                             .all(|f| f.as_str().is_some_and(|s| !s.is_empty() && s.len() <= 128))
                 })
         {
-            return Err(invalid("Invalid experiment capability declaration"));
+            return Err(invalid("Invalid response set capability declaration"));
         }
         if !supported(experiment) {
             continue;
@@ -578,7 +578,7 @@ fn run_inventory(value: &CaseManifest, objects: &BTreeMap<&String, &Object>) -> 
             })
         {
             return Err(invalid(
-                "Run references an unselected frozen experiment revision",
+                "Run references an unselected frozen response set revision",
             ));
         }
         if run.outcome.origin != "authored" {

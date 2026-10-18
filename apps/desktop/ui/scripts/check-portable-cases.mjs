@@ -11,7 +11,7 @@ export async function checkPortableCases(page,root){
   const traffic=page.locator('traffic-workspace');const dialog=page.locator('portable-case dialog');
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
   assert.equal(await dialog.getByLabel('Traffic to include',{exact:true}).inputValue(),'filtered');
-  await dialog.getByText('Rules and experiments · 0 selected',{exact:true}).click();
+  await dialog.getByText('Rules and response sets · 0 selected',{exact:true}).click();
   await dialog.getByText('Comparisons · 0 selected',{exact:true}).click();
   await dialog.getByLabel('Title',{exact:true}).fill('A portable investigation');
   await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');
@@ -81,7 +81,7 @@ export async function checkPortableCases(page,root){
   await dialog.getByRole('button',{name:'Open in Traffic',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedSessionId==='first');assert.equal(await dialog.isVisible(),false);
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
   await dialog.getByText('Saved context',{exact:true}).click();await dialog.getByRole('button',{name:'View context',exact:true}).click();await dialog.getByText(/Original config output <script>/).waitFor();assert.equal(await dialog.locator('script,img').count(),0);
-  await dialog.getByText('Import rules and experiments',{exact:true}).click();
+  await dialog.getByText('Import rules and response sets',{exact:true}).click();
   assert.equal(await dialog.getByLabel('Unsupported optional experiment',{exact:false}).isDisabled(),true);
   await dialog.getByLabel('Saved rules',{exact:true}).check();await dialog.getByRole('button',{name:'Review rule import',exact:true}).click();
   await dialog.getByText('Adds a separate copy; keeps the existing definition.',{exact:true}).waitFor();await dialog.getByRole('button',{name:'Import rules',exact:true}).click();
@@ -160,19 +160,19 @@ await dialog.getByRole('button',{name:'Review selected content',exact:true}).cli
     const review=globalThis.__workspaceFixture.caseReview;
     review.manifest.sources=[{id:'one',label:'First capture',dependency:{state:'present'},evidenceCompleteness:'unknown'},{id:'two',label:'Second capture',requestCount:'1',dependency:{state:'present'},evidenceCompleteness:'complete'}];
     review.manifest.experiments=[{id:'future',label:'Future experiment'}];
-    review.inventory.experiments=[{id:'future',state:'unavailable',reason:'Requires a newer experiment engine.'}];
+    review.inventory.experiments=[{id:'future',state:'unavailable',reason:'Requires a newer response set engine.'}];
   });
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open case…',exact:true}).click();
   await dialog.getByLabel('Capture',{exact:true}).waitFor();
   assert.match(await dialog.locator('.case-summary').textContent(),/^Request count not recorded · 2 captures/);
-  assert.equal(await dialog.getByText('Import rules and experiments',{exact:true}).count(),0);
-  await dialog.locator('summary').filter({hasText:/^Experiments$/}).click();await dialog.getByText('Requires a newer experiment engine.',{exact:true}).waitFor();
+  assert.equal(await dialog.getByText('Import rules and response sets',{exact:true}).count(),0);
+  await dialog.locator('summary').filter({hasText:/^Response sets$/}).click();await dialog.getByText('Requires a newer response set engine.',{exact:true}).waitFor();
   await dialog.getByLabel('Capture',{exact:true}).selectOption('two');
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
   assert.equal(await dialog.getByLabel('Capture',{exact:true}).inputValue(),'two','Reopening the case lost the selected capture');
   await page.evaluate(()=>{document.querySelector('app-shell').traffic.portableCase.viewerMode=true;});
-  await dialog.getByText('Open this case in the main window to import supported experiments.',{exact:true}).waitFor();
+  await dialog.getByText('Open this case in the main window to import supported response sets.',{exact:true}).waitFor();
   await page.evaluate(()=>{document.querySelector('app-shell').traffic.portableCase.viewerMode=false;});
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
 }

@@ -122,7 +122,7 @@ fn groups(value: &Collection, resolver: &Arc<DeclaredAssets>) -> Result<(), Erro
             || experiment.variants.len() > 16
             || experiment.variants.is_empty()
         {
-            return Err(invalid("Duplicate experiment or variant bound exceeded"));
+            return Err(invalid("Duplicate response set or variant bound exceeded"));
         }
         let mut variants = BTreeSet::new();
         for variant in &experiment.variants {
@@ -203,7 +203,7 @@ fn provenance(value: &crate::Provenance) -> Result<(), Error> {
 }
 fn name(value: &str) -> Result<(), Error> {
     if value.trim().is_empty() || value.len() > 128 || value.chars().any(char::is_control) {
-        return Err(invalid("Experiment/variant name exceeds native limits"));
+        return Err(invalid("Response set/variant name exceeds native limits"));
     }
     Ok(())
 }

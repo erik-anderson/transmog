@@ -160,7 +160,7 @@ export class AppShell extends WebUIElement {
   private noticeAction: NoticeAction = null;
   private navigationGeneration = 0;
   private workspaceTouched = false;
-  private workspaceLoaded = false;
+  @observable workspaceLoaded = false;
   private saveTimer: number | undefined;
   private saving = false;
   private saveAgain = false;
@@ -248,6 +248,7 @@ export class AppShell extends WebUIElement {
   onPreferences(event: CustomEvent<{theme: ProductState['preferences']['theme']; workspace?: WorkspacePreferences}>): void {
     this.theme = event.detail.theme;
     if (!this.workspaceLoaded && !this.workspaceTouched) this.workspace = normalizeWorkspace(event.detail.workspace);
+    else if(!this.workspaceLoaded&&event.detail.workspace)this.workspace={...this.workspace,responseSetGuide:event.detail.workspace.responseSetGuide??'not-offered'};
     this.workspaceLoaded = true;
   }
   onProxyOperation(event: CustomEvent<string>): void { this.proxyPending = event.detail; }
@@ -265,7 +266,7 @@ export class AppShell extends WebUIElement {
     window.clearTimeout(this.saveTimer);
     this.saveTimer = window.setTimeout(() => { void this.saveWorkspace(); },250);
   }
-  resetWorkspace(): void { this.changeWorkspace(defaultWorkspace()); }
+  resetWorkspace(): void { this.changeWorkspace({...defaultWorkspace(),responseSetGuide:this.workspace.responseSetGuide}); }
   private async saveWorkspace(): Promise<void> {
     this.saveAgain = true;
     if (this.saving) return;

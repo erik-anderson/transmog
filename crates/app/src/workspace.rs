@@ -2,6 +2,39 @@
 
 use serde::{Deserialize, Serialize};
 
+/// Per-user optional response-set guide history; no content or in-progress step.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResponseSetGuideHistory {
+    /// The invitation has never been offered.
+    #[default]
+    NotOffered,
+    /// Offered once, whether dismissed explicitly or left behind.
+    Offered,
+    /// Started previously, whether ended early or completed; help offers replay.
+    Started,
+}
+
+/// Narrow guide operation independent of layout and automation changes.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResponseSetGuideAction {
+    /// Atomically claim the one-time invitation.
+    Offer,
+    /// Remember a first start or replay.
+    Start,
+}
+
+/// Result of an atomic guide-history update.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ResponseSetGuideUpdate {
+    /// Current durable history, including other windows' changes.
+    pub history: ResponseSetGuideHistory,
+    /// Only the caller which first claimed the invitation receives true.
+    pub offered: bool,
+}
+
 /// Available traffic metadata columns.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -73,6 +106,9 @@ pub enum TrafficLayout {
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct WorkspacePreferences {
+    /// Optional guide history, preserved independently of layout writes.
+    #[serde(default)]
+    pub response_set_guide: ResponseSetGuideHistory,
     /// Collapse navigation to its icon rail.
     pub sidebar_collapsed: bool,
     /// Traffic layout preset.
@@ -103,6 +139,7 @@ impl Default for WorkspacePreferences {
             StreamSent, Url,
         };
         Self {
+            response_set_guide: ResponseSetGuideHistory::NotOffered,
             sidebar_collapsed: false,
             layout: TrafficLayout::Stacked,
             list_split: 45,

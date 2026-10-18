@@ -284,7 +284,7 @@ impl AutomationRegistry {
                 validate_scope(&rule, text)?;
                 if owned(&document, &rule.id) {
                     return Err(invalid(
-                        "Edit experiment-owned rules through their saved variant.",
+                        "Edit rules owned by a response set through their saved variant.",
                     ));
                 }
                 let old = expected_revision

@@ -25,6 +25,10 @@ when changing the experience.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.
+- Optional introductory help never opens or moves focus automatically. Offer it
+  briefly, keep a permanent replay path, and teach through the current saved
+  view without requiring content changes. Preserve per-user dismissal history
+  independently of layout resets; leaving the view closes its guide safely.
 - Present built-in traffic changes as rules named by their outcome, with request
   and response direction visible. Share discovery and properties while preserving
   each operation’s execution and activation semantics. Group secondary actions

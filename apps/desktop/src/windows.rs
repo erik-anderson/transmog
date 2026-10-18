@@ -486,6 +486,14 @@ fn save_workspace_preferences(
 }
 
 #[tauri::command]
+fn update_response_set_guide(
+    action: transmog_app::ResponseSetGuideAction,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ResponseSetGuideUpdate, AppError> {
+    state.application.update_response_set_guide(action)
+}
+
+#[tauri::command]
 fn desktop_bootstrap(
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
@@ -2225,6 +2233,7 @@ pub fn run() {
                 save_product_state,
                 save_network_profiles,
                 save_workspace_preferences,
+                update_response_set_guide,
                 desktop_bootstrap,
                 record_frontend_diagnostic,
                 automation_status,

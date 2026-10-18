@@ -263,7 +263,7 @@ impl Application {
                                 &variant.id,
                                 revision.revision
                             ))
-                            .map_err(|_| invalid("Invalid experiment identity"))?
+                            .map_err(|_| invalid("Invalid response set identity"))?
                         ),
                         label: format!(
                             "{} / {} / revision {}",

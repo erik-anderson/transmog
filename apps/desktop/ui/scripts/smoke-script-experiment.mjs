@@ -30,7 +30,7 @@ export async function smokeScriptExperiment({main,traffic,documentId,targets,con
     try {
       await main.call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
       await main.evaluate(`document.documentElement.style.zoom='1.5'`);
-      for(const name of ['Preview…','Use for live traffic','Save experiment']){
+      for(const name of ['Preview…','Use for live traffic','Save revision']){
         assert.equal(await main.evaluate(`(()=>{const button=Array.from(${editor}.querySelectorAll('.auto-response-editor-actions button')).find(row=>row.textContent.trim()===${JSON.stringify(name)});if(!button)return false;button.focus();button.scrollIntoView({block:'nearest'});const box=button.getBoundingClientRect();return box.top>=0&&box.bottom<=innerHeight&&button.contains(button.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2));})()`),true,`${name} is unreachable in native compact/zoom layout`);
       }
       if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-script-editor-zoom.png'),Buffer.from(image.data,'base64'));}

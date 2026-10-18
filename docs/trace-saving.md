@@ -78,7 +78,7 @@ SHA-256 and compression stack with the historical rule/asset decision. It saves
 the retained client-response bytes independently, including their availability.
 Importing or comparing an earlier result never reads the external source path.
 The exchange ID, client-response boundary and complete body hash form the byte
-reference for future experiment packaging. A current path or configuration
+reference for future response set packaging. A current path or configuration
 revision cannot replace missing, truncated or expired bytes. SAZ/HAR projections
 do not preserve the local snapshot selection record; use TMCap for that evidence.
 
@@ -169,7 +169,9 @@ failure or interruption can prevent a report. Details and response comparison
 read retained boundaries, never today's rule. No TMCap migration or compatibility
 translation is added.
 
-## Response experiment sharing
+<a id="response-experiment-sharing"></a>
+
+## Response set sharing
 
 Save TMCap while complete original/effective response bodies remain retained to
 preserve the observed response bytes and historical rule, asset and operation
@@ -181,9 +183,9 @@ Save trace does not export the automation workspace, named variant definitions,
 script sources, external file dependencies or temporary captured-page preview
 scenes/reports. The [working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
 can now combine reviewed retained evidence, source context, notes and selected
-saved experiments in an explicit plaintext directory. Desktop case file actions,
+saved response sets in an explicit plaintext directory. Desktop case file actions,
 archive transfer and binary-only rule management remain future work.
-See [response experiments](automation.md#response-experiments)
+See [response sets](automation.md#response-sets)
 for current authoring and activation behavior.
 
 The [portable investigation guide](portable-investigations.md) specifies a

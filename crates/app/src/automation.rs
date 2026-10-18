@@ -254,7 +254,7 @@ impl AutomationRegistry {
                     .is_ok_and(|test| test.matched)
         });
         let experiment_block = input.rule_id.as_ref().and_then(|id| status.experiments.iter().find(|experiment| experiment.owns(id))).and_then(|experiment| {
-            if experiment.paused { Some("The request matches, but this experiment is paused.") }
+            if experiment.paused { Some("The request matches, but this response set is paused.") }
             else if !status.rules.iter().any(|rule| Some(&rule.id) == input.rule_id.as_ref()) { Some("The request matches this saved variant. Activate its revision explicitly to use it for live traffic.") }
             else { None }
         });

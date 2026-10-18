@@ -14,7 +14,7 @@ export async function checkUnifiedRules(page,root) {
   await page.evaluate(()=>{globalThis.__workspaceFixture.automation=structuredClone(document.querySelector('app-shell').automation.autoresponseState);});
   await page.setViewportSize({width:1440,height:900});
   const workspace=page.locator('automation-workspace'),headers=workspace.locator('header-rules[editor-kind="headers"]'),text=workspace.locator('header-rules[editor-kind="response-text"]'),browser=workspace.locator('user-agent-overrides');
-  assert.deepEqual(await workspace.locator('.workspace-tabs button').allTextContents(),['Rules','Experiments','Scripts']);
+  assert.deepEqual(await workspace.locator('.workspace-tabs button').allTextContents(),['Rules','Response sets','Scripts']);
   for(const [label,name] of [['Change request headers…','Outbound headers'],['Change response headers…','Inbound headers']]) {
     await newTrafficRule(page,label);await headers.getByLabel('Rule name',{exact:true}).fill(name);
     await headers.getByLabel('Operation header name',{exact:true}).fill('X-Example');

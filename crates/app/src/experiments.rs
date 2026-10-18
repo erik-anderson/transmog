@@ -208,7 +208,7 @@ pub(super) fn validate_owned_rules(
     let after = rules.iter().filter(owned).collect::<Vec<_>>();
     if before != after {
         return Err(conflict(
-            "Experiment rules changed outside their variant. Edit the variant or use its activation controls.",
+            "Response set rules changed outside their variant. Edit the variant or use its activation controls.",
         ));
     }
     Ok(())
@@ -216,7 +216,7 @@ pub(super) fn validate_owned_rules(
 
 pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), AppError> {
     if document.experiments.len() > 32 {
-        return Err(invalid("At most 32 experiments can be retained."));
+        return Err(invalid("At most 32 response sets can be retained."));
     }
     let mut experiments = HashSet::new();
     let mut owners = std::collections::HashMap::new();
@@ -228,7 +228,7 @@ pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), A
             || experiment.variants.len() > 16
         {
             return Err(invalid(
-                "Experiment identity, name or variant limit is invalid.",
+                "Response set identity, name or variant limit is invalid.",
             ));
         }
         let mut variants = HashSet::new();
@@ -276,13 +276,15 @@ pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), A
                         .insert(&rule.id, &experiment.id)
                         .is_some_and(|owner| owner != &experiment.id)
                     {
-                        return Err(invalid("A rule cannot belong to more than one experiment."));
+                        return Err(invalid(
+                            "A rule cannot belong to more than one response set.",
+                        ));
                     }
                 }
             }
         }
         if !variants.contains(&"baseline".to_owned()) {
-            return Err(invalid("An experiment must retain its empty Baseline."));
+            return Err(invalid("A response set must retain its empty Baseline."));
         }
         let expected = experiment
             .active
@@ -296,7 +298,7 @@ pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), A
             .map_or(&[][..], |r| r.rules.as_slice());
         if experiment.archived && !expected.is_empty() {
             return Err(invalid(
-                "Activate Baseline before archiving this experiment.",
+                "Activate Baseline before archiving this response set.",
             ));
         }
         let actual = document
@@ -306,7 +308,7 @@ pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), A
             .collect::<Vec<_>>();
         if actual != expected.iter().collect::<Vec<_>>() {
             return Err(invalid(
-                "Live experiment rules must match its exact active revision.",
+                "Live response set rules must match its exact active revision.",
             ));
         }
     }
@@ -355,7 +357,9 @@ impl AutomationRegistry {
                 rules,
             } => {
                 if document.experiments.iter().any(|e| e.id == id) || variant_id == "baseline" {
-                    return Err(invalid("Choose unused experiment and variant identities."));
+                    return Err(invalid(
+                        "Choose unused response set and variant identities.",
+                    ));
                 }
                 check_new_rule_ids(&document, &rules, None)?;
                 document.experiments.push(Experiment {
@@ -512,7 +516,7 @@ impl AutomationRegistry {
                     .ok_or_else(|| invalid("Variant unavailable."))?;
                 if experiment.archived || variant.archived {
                     return Err(invalid(
-                        "Restore this experiment and variant before activation.",
+                        "Restore this response set and variant before activation.",
                     ));
                 }
                 experiment.undo = Some(ActivationUndo {
@@ -568,7 +572,7 @@ fn find_mut<'a>(
         .experiments
         .iter_mut()
         .find(|e| e.id == id)
-        .ok_or_else(|| invalid("Experiment is unavailable. Refresh the collection."))
+        .ok_or_else(|| invalid("Response set is unavailable. Refresh the collection."))
 }
 
 fn check_new_rule_ids(
@@ -592,7 +596,7 @@ fn check_new_rule_ids(
         if !allowed && (existing_owner.is_some() || document.rules.iter().any(|r| r.id == rule.id))
         {
             return Err(invalid(
-                "Copy rules with new identities before adding them to an experiment.",
+                "Copy rules with new identities before adding them to a response set.",
             ));
         }
         if let Some((eid, vid)) = owner {
@@ -621,7 +625,7 @@ fn project(
         .experiments
         .iter()
         .find(|e| e.id == selection.experiment_id)
-        .ok_or_else(|| invalid("Experiment unavailable."))?;
+        .ok_or_else(|| invalid("Response set unavailable."))?;
     let rules = experiment
         .revision(selection)
         .ok_or_else(|| invalid("Saved revision unavailable."))?
@@ -641,7 +645,7 @@ fn overlaps(
         .experiments
         .iter()
         .find(|e| e.id == selection.experiment_id)
-        .ok_or_else(|| invalid("Experiment unavailable."))?;
+        .ok_or_else(|| invalid("Response set unavailable."))?;
     let revision = experiment
         .revision(selection)
         .ok_or_else(|| invalid("Saved revision unavailable."))?;

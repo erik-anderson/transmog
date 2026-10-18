@@ -5,7 +5,7 @@ import {describeError} from '../utilities.js';
 import {bodyByteLength,encodeBody,renderBodyBytes,type BodyMode} from '../response-body-codec.js';
 
 export interface BodyCommit {value:string;save:boolean;mode:BodyMode;bytes?:number[];}
-export interface BodyEditorOptions {mode?:BodyMode;textEncoding?:string|null;bytes?:number[];saveUnavailableReason?:string;}
+export interface BodyEditorOptions {mode?:BodyMode;textEncoding?:string|null;bytes?:number[];saveUnavailableReason?:string;saveLabel?:string;saveDescription?:string;}
 export type BodyLanguage='plaintext'|'html'|'svg'|'css'|'javascript'|'json';
 let modelSequence=0;
 
@@ -36,6 +36,8 @@ export class ResponseBodyEditor extends WebUIElement {
   @observable bodyEditorReady=false;
   @observable bodyEditorLoaded=false;
   @observable bodyCanSave=false;
+  @observable bodySaveLabel='Save rule';
+  @observable bodySaveDescription='Save rule saves all pending rule changes.';
   @observable bodyBusy=false;
   @observable bodyFormatting=false;
   @observable bodyError='';
@@ -72,6 +74,7 @@ export class ResponseBodyEditor extends WebUIElement {
   open(value:string,language:BodyLanguage,canSave:boolean,opener:HTMLElement,options:BodyEditorOptions={}):void {
     this.disposeEditor();const generation=++this.generation;
     this.opener=opener;this.bodyLanguage=language;this.bodyMode=options.mode??'text';this.textEncoding=options.textEncoding===undefined?'utf-8':options.textEncoding;
+    this.bodySaveLabel=options.saveLabel??'Save rule';this.bodySaveDescription=options.saveDescription??'Save rule saves all pending rule changes.';
     this.bodyCanSave=canSave;this.bodyBusy=false;this.bodyFormatting=false;this.bodyError='';
     this.bodySaveUnavailableReason=options.saveUnavailableReason??'Apply to the draft, then save the rule from its properties.';
     this.bodyValueLabel=this.bodyMode==='hex'?'Response body hex bytes':'Response body text';

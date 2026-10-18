@@ -156,7 +156,10 @@ use transmog_session::{
     ServiceStatus,
 };
 pub use version::application_version;
-pub use workspace::{ColumnPreference, TrafficColumn, TrafficLayout, WorkspacePreferences};
+pub use workspace::{
+    ColumnPreference, ResponseSetGuideAction, ResponseSetGuideHistory, ResponseSetGuideUpdate,
+    TrafficColumn, TrafficLayout, WorkspacePreferences,
+};
 
 /// Stable application failure category suitable for presentation boundaries.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -664,6 +667,17 @@ impl Application {
         preferences: WorkspacePreferences,
     ) -> Result<WorkspacePreferences, AppError> {
         self.product_state.save_workspace(preferences)
+    }
+
+    /// Atomically updates per-user guide history without changing automation or layout.
+    ///
+    /// # Errors
+    /// Returns a persistence failure without changing the previous history.
+    pub fn update_response_set_guide(
+        &self,
+        action: ResponseSetGuideAction,
+    ) -> Result<ResponseSetGuideUpdate, AppError> {
+        self.product_state.update_response_set_guide(action)
     }
 
     /// Validates and crash-safely persists product state when configured.

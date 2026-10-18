@@ -5,6 +5,7 @@ import {checkPortableCases} from './check-portable-cases.mjs';
 import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
 import {checkResponseExperiments} from './check-response-experiments.mjs';
+import {checkResponseSetGuide} from './check-response-set-guide.mjs';
 import {checkNamedVariants} from './check-named-variants.mjs';
 import {checkTextEdits} from './check-text-edits.mjs';
 import {checkHeaderRules} from './check-header-rules.mjs';
@@ -312,7 +313,14 @@ await page.addInitScript((configuration) => {
         case 'save_client_certificate_policy': {if(state.certificateSaveError)throw {category:'unavailable',message:'Fixture certificate policy persistence failed',retryable:true};state.certificatePolicy=structuredClone(args.policy);localStorage.setItem('certificatePolicy',JSON.stringify(state.certificatePolicy));return structuredClone(state.certificatePolicy);}
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
         case 'product_state': {const product=state.savedProduct?{...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)}:{ schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };product.preferences.networkProfiles=structuredClone(state.networkProfiles??networkProfiles);product.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??JSON.parse(localStorage.getItem('certificatePolicy')??'{"default":"noCertificate","rules":[]}'));return product;}
-        case 'save_workspace_preferences': state.workspace = structuredClone(args.preferences); localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
+        case 'save_workspace_preferences': state.workspace = {...structuredClone(args.preferences),responseSetGuide:state.workspace.responseSetGuide??'not-offered'}; localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
+        case 'update_response_set_guide': {
+          if(state.deferGuide)await new Promise(resolve=>state.finishGuide=resolve);
+          if(state.guideFailure)throw new Error('Fixture preference save failed');
+          const previous=state.workspace.responseSetGuide??'not-offered',offered=args.action==='offer'&&previous==='not-offered';
+          state.workspace.responseSetGuide=args.action==='start'?'started':offered?'offered':previous;
+          localStorage.setItem('workspace',JSON.stringify(state.workspace));return {history:state.workspace.responseSetGuide,offered};
+        }
         case 'app_status': if(state.statusError)throw new Error('Fixture status unavailable');return { lifecycle: state.lifecycle, listener: state.lifecycle==='running'?'127.0.0.1:8888':null, summary: 'Proxy '+state.lifecycle, hostRestorePending: false };
         case 'start_proxy': if(state.holdProxyStart)await new Promise(resolve=>state.releaseProxyStart=resolve);else await new Promise(resolve => setTimeout(resolve,80)); state.lifecycle='running'; return {lifecycle:'running',listener:'127.0.0.1:8888',summary:'Proxy running',hostRestorePending:false};
         case 'stop_application': if(state.holdProxyStop)await new Promise(resolve=>state.releaseProxyStop=resolve);else await new Promise(resolve => setTimeout(resolve,80));if(state.testDrain){state.lifecycle='draining';return {lifecycle:'draining',listener:'127.0.0.1:8888',summary:'Finishing 1 active request/connection',hostRestorePending:false};}state.lifecycle='stopped'; return {lifecycle:'stopped',listener:null,summary:'Proxy stopped',hostRestorePending:false};
@@ -725,6 +733,7 @@ try {
   if(process.argv.includes('--selection-only')) {await page.goto('https://workspace.test/');await checkAppSelection(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('App selection and selectable evidence verified.\n');process.exit(0);}
   if(process.argv.includes('--text-edits-only')) {await checkTextEdits(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Literal response edit flows, async drafts, comparison evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--header-rules-only')) {await checkHeaderRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Header rule authoring, raw bytes, ordered tests, activation, stale updates, Undo, evidence and responsive layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--guide-only')) {await checkResponseSetGuide(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set guide lifecycle, native preference contract, focus and compact layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--variants-only')) {await checkResponseExperiments(page,root);await checkNamedVariants(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Named variants, scoped activation, history, preview, pause, archive, Undo and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--file-snapshots-only')) {await checkResponseSnapshots(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response snapshot identities, changed output, incomplete retention and responsive evidence verified.\n');process.exit(0);}
   await checkResponseSnapshots(page,root);
@@ -2542,6 +2551,7 @@ try {
   await checkPortableCases(page,root);
   await checkIncidents(page,root);
   await checkResponseFiles(page,root);
+  await checkResponseSetGuide(page,root);
   await checkResponseExperiments(page,root);
   await checkNamedVariants(page,root);
   await checkHeaderRules(page,root);

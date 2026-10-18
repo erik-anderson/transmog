@@ -8,11 +8,16 @@ export async function checkNamedVariants(page,root){
  const settle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').automation.experimentVariants.variantBusy);
  const state=()=>page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation));
  await page.evaluate(async()=>{const shell=document.querySelector('app-shell');await shell.activateView('automation');const a=shell.automation;a.draftDirty=false;await a.refreshAutomation();a.showAutomationSection('experiments');});
- await manager.getByLabel('Experiment',{exact:true}).waitFor();
+ await manager.getByLabel('Response set',{exact:true}).waitFor();
  const before=await state(),experiment=before.experiments[0];
  await manager.getByLabel('Variant',{exact:true}).selectOption('baseline');
  assert.deepEqual((await state()).rules,before.rules,'Selecting Baseline changed live rules');
  await manager.getByText('Names, duplicates and archive',{exact:true}).click();
+ await manager.getByLabel('Response set name',{exact:true}).fill('Related checkout responses');
+ await manager.getByRole('button',{name:'Save response set name',exact:true}).click();await settle();
+ assert.equal((await state()).experiments[0].name,'Related checkout responses');
+ assert.equal(await manager.getByRole('button',{name:'Save response set name',exact:true}).textContent(),'Save name');
+ assert.deepEqual((await state()).rules,before.rules,'Renaming the response set changed live rules');
  const name='Patched script with a long customer hypothesis and a second response';
  await manager.getByLabel('Duplicate name',{exact:true}).fill(name);
  await manager.getByRole('button',{name:'Duplicate saved revision',exact:true}).click();await settle();
@@ -28,17 +33,20 @@ export async function checkNamedVariants(page,root){
  for(const [index,url] of ['https://example.test/a.js','https://example.test/b.js'].entries()){
   await manager.getByRole('button',{name:'Add selected response',exact:true}).click();
   await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.editorHidden&&!a.loadingSavedResponse&&!a.editBodyDisabled;});
-  await editor.getByLabel('Rule name',{exact:true}).fill(index?'Second script':'First script');
+  await editor.getByLabel('Response name',{exact:true}).fill(index?'Second script':'First script');
   await editor.getByLabel('Matching address',{exact:true}).fill(url);
-  await editor.getByRole('button',{name:'Save experiment',exact:true}).click();
+  await editor.getByRole('button',{name:'Save revision',exact:true}).click();
   await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.savingAutoResponse&&!a.loadingSavedResponse&&!a.draftDirty;});
   assert.deepEqual((await state()).rules,before.rules,'Saving variant rules changed live traffic');
   assert.equal(await manager.isVisible(),true,'Saving a response did not return to its experiment');
+  assert.equal(await manager.getByText('Variant duplicated. Live traffic is unchanged.',{exact:true}).count(),0,'Editor save retained feedback from an older overview action');
  }
  assert.equal(await manager.locator('.variant-rule-list li').count(),2);
  await manager.getByRole('button',{name:'Move Second script later',exact:true}).click();await settle();
  let saved=(await state()).experiments[0].variants.find(v=>v.id===variantId);
  assert.equal(saved.revisions.at(-1).rules[0].displayName,'First script');
+ await manager.getByText(`Revision ${saved.revisions.at(-1).revision} saved. Live traffic is unchanged.`,{exact:true}).waitFor();
+ assert.equal(await page.locator('automation-workspace .automation-feedback').isVisible(),false,'Overview save retained the earlier editor save notification');
  // Review overlaps, then switch while keeping unrelated rules and global pause.
  await page.evaluate(()=>globalThis.__workspaceFixture.variantOverlaps=['First script may overlap another saved rule (earlier live rule)']);
  await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).click();await settle();
@@ -51,9 +59,9 @@ export async function checkNamedVariants(page,root){
  await page.evaluate(()=>globalThis.__workspaceFixture.variantOverlaps=[]);
  await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).click();await settle();
  const authored=(await state()).experiments[0].variants;
- await manager.getByRole('button',{name:'Pause experiment',exact:true}).click();await settle();assert.deepEqual((await state()).experiments[0].variants,authored);
- assert.match(await manager.getByRole('status').first().textContent(),/Experiment paused/);
- await manager.getByRole('button',{name:'Resume experiment',exact:true}).click();await settle();
+ await manager.getByRole('button',{name:'Pause response set',exact:true}).click();await settle();assert.deepEqual((await state()).experiments[0].variants,authored);
+ assert.match(await manager.getByRole('status').first().textContent(),/Response set paused/);
+ await manager.getByRole('button',{name:'Resume response set',exact:true}).click();await settle();
  // Old revisions are inspectable; selecting them is passive and preview uses exact selection.
  const live=(await state()).rules;
  await manager.getByLabel('Variant revision',{exact:true}).selectOption('2');
@@ -75,7 +83,7 @@ export async function checkNamedVariants(page,root){
  await manager.getByLabel('Variant revision',{exact:true}).selectOption(String(saved.revisions.at(-1).revision));
  await page.evaluate(()=>globalThis.__workspaceFixture.variantReject=true);
  await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).click();await settle();
- assert.match(await manager.locator('.field-error').textContent(),/validation failed/);assert.deepEqual((await state()).rules,live);
+ assert.match(await manager.locator('footer .field-error').textContent(),/validation failed/);assert.deepEqual((await state()).rules,live);
  await page.evaluate(()=>globalThis.__workspaceFixture.variantReject=false);
  // Baseline is an explicit activation and archive is reversible.
  await manager.getByLabel('Variant',{exact:true}).selectOption('baseline');
@@ -86,6 +94,10 @@ export async function checkNamedVariants(page,root){
  await page.evaluate(()=>document.querySelector('app-shell').activateView('automation'));
  await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).click();await settle();
  assert.deepEqual((await state()).rules,[before.rules.find(r=>r.id==='unrelated')]);
+ await manager.getByRole('button',{name:'Archive response set',exact:true}).click();await settle();
+ assert.equal((await state()).experiments[0].archived,true);
+ await manager.getByRole('button',{name:'Restore response set',exact:true}).click();await settle();
+ assert.equal((await state()).experiments[0].archived,false);
  await manager.getByLabel('Variant',{exact:true}).selectOption(variantId);
  await manager.getByRole('button',{name:'Archive variant',exact:true}).click();await settle();
  assert.equal(await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).isDisabled(),true);
@@ -106,7 +118,7 @@ export async function checkNamedVariants(page,root){
  await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).scrollIntoViewIfNeeded();
  await page.screenshot({path:resolve(root,'../../../target/ui-check/named-variants-zoom-contrast.png')});
  const activateButton=manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true});await activateButton.focus();await page.keyboard.press('Tab');
- assert.equal(await manager.getByRole('button',{name:'Pause experiment',exact:true}).evaluate(b=>b===b.getRootNode().activeElement),true);
+ assert.equal(await manager.getByRole('button',{name:'Pause response set',exact:true}).evaluate(b=>b===b.getRootNode().activeElement),true);
  await page.evaluate(()=>document.documentElement.style.zoom='');await page.emulateMedia({forcedColors:'none'});await page.setViewportSize({width:1440,height:900});
  // A delayed Add response must not attach an old variant to a different editor.
  await page.evaluate(()=>{const s=globalThis.__workspaceFixture,a=document.querySelector('app-shell').automation;s.deferSourceHeaders=true;s.variantAddPromise=a.editVariant(new CustomEvent('variant-edit',{detail:{selection:a.experimentVariants.selection(),ruleId:null}}));});

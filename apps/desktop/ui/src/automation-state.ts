@@ -24,8 +24,8 @@ export function automationActivity(status: AutomationStatus | null, scripts: num
   const total = rules + experiments + scripts;
   const paused = pausedRules + pausedExperiments;
   const count=(value:number,noun:string)=>`${value} ${noun}${value===1?'':'s'}`;
-  const summary=(total?'Enabled for new traffic: '+[rules?count(rules,'rule'):'',experiments?count(experiments,'experiment'):'',scripts?count(scripts,'script'):''].filter(Boolean).join(' · '):'No active automation')+(paused?` · ${paused} paused`:'');
-  const label = `${count(rules,'active rule')} · ${count(experiments,'active experiment')} · ${count(scripts,'active script')}` +
+  const summary=(total?'Enabled for new traffic: '+[rules?count(rules,'rule'):'',experiments?count(experiments,'response set'):'',scripts?count(scripts,'script'):''].filter(Boolean).join(' · '):'No active automation')+(paused?` · ${paused} paused`:'');
+  const label = `${count(rules,'active rule')} · ${count(experiments,'active response set')} · ${count(scripts,'active script')}` +
     (paused ? ` · ${paused} paused` : '') + '. Active means enabled and unpaused for new traffic; the proxy must be running.';
   return {rules, experiments, scripts, total, paused, label, summary};
 }

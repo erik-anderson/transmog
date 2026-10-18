@@ -229,6 +229,7 @@ export interface ClientCertificateRequestDetail {pending:ClientCertificatePendin
 export type ColumnId = 'request-number' | 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'http-duration' | 'stream-sent' | 'stream-received' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
 export interface ColumnPreference { id: ColumnId; width: number; visible: boolean; pinned: boolean; }
 export interface WorkspacePreferences {
+  responseSetGuide: ResponseSetGuideHistory;
   sidebarCollapsed: boolean;
   layout: 'stacked' | 'side-by-side';
   listSplit: number;
@@ -240,6 +241,8 @@ export interface WorkspacePreferences {
   compactRows: boolean;
   columns: ColumnPreference[];
 }
+export type ResponseSetGuideHistory = 'not-offered' | 'offered' | 'started';
+export interface ResponseSetGuideUpdate {history:ResponseSetGuideHistory;offered:boolean;}
 export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }
 export type TrafficDimension = ColumnId | 'traffic-type' | 'fetch-destination';
 export type TrafficFilterValue = {kind:'text';value:string}|{kind:'number';value:string}|{kind:'status-family';value:number}|{kind:'unavailable'};
