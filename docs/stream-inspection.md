@@ -4,6 +4,16 @@ Select an upgraded WebSocket or a `text/event-stream` response in Traffic to ope
 **Messages / Events**. The list updates while the connection is open. **HTTP
 handshake** returns to the request and response headers and body inspectors.
 
+The inspector names **Sent** and **Received** totals as observed decoded message
+bytes. They include observed message/control/event payloads, exclude the HTTP
+handshake body, WebSocket framing, compression and transport overhead, and are
+separate from Traffic's HTTP Request/Response size columns. Optional Stream sent
+and Stream received columns expose the same totals. A stream with no observed
+payload bytes can show zero; an ordinary HTTP entry has no stream byte value.
+Saved captures preserve their recorded totals, including totals for evicted
+messages; missing observer records or source limitations can leave these totals
+incomplete. Import never turns them into a claim about all original wire traffic.
+
 Messages show time, sender, type and decoded size. Select one to inspect text,
 JSON or hex, copy text, or save its retained bytes. SSE also exposes event name,
 last event ID, retry delay and decoded field syntax (normalized to LF). The
@@ -20,14 +30,37 @@ payload with **Messages**; taller or wider panes show both.
 
 ## Lifetime and stopping
 
-The HTTP handshake and application stream have separate lifetimes. A WebSocket
+The HTTP handshake and application stream have separate lifetimes. Traffic's
+Duration uses stream lifetime for WebSocket/SSE entries and HTTP exchange duration
+for ordinary HTTP. The optional **HTTP duration** column preserves the HTTP
+exchange interval; the HTTP waterfall retains its original meaning.
+
+Stream lifetime starts only at an explicit Open observation. Connecting and
+never-established streams have unavailable lifetime. Quiet live streams continue
+aging on a monotonic clock; Closed, Failed and Interrupted observations stop it.
+The final message time is never treated as a close time. Native saves retain
+establishment, explicit end and the known observation cutoff separately from
+the older first-observation timestamp. Missing older evidence stays unavailable.
+Imported open streams use only a saved cutoff or recorded observed interval;
+they never age against today's clock. Their interval remains open-at-capture,
+not a claim that the connection closed at that boundary.
+
+A WebSocket
 remains **active** after its opening response (101 on H1, 200 on H2), including while quiet. SSE remains active
-until its response ends. Traffic marks these rows beside the HTTP version in **Protocol** with
-**WebSocket · Active** or **SSE · Active**, including while quiet. The badge
-disappears when the stream ends; saved captures never show a live badge.
-Both appear in State contains **active**. Closed, failed
-and interrupted streams stop matching that filter. Imported open streams show
-**open-at-capture**, because a saved file is not a live connection.
+until its response ends. **Protocol** keeps **WebSocket** or **SSE** as the primary
+identity for live, closed and imported rows, with the recorded HTTP version beside
+it. Click that identity, or focus it and press Enter/Space, for lifecycle and timing
+details plus **Filter WebSocket** / **Filter SSE** and **Filter in progress** (or
+the recorded state). Opening this disclosure preserves row selection.
+
+**Filters → State → In progress** includes quiet live streams. Closed, failed
+and interrupted streams stop matching that choice. Imported open streams show
+**Open at capture**, because a saved file is not a live connection. The stream
+inspector shows Lifetime alongside the WebSocket handshake or SSE response-header
+timing. **Timing boundaries** explains the interval and recorded timestamps.
+Live lifetime and duration filters refresh while Traffic is visible even without
+messages. Imported evidence never ticks; paused list ordering and inspection stay
+in place while new matches are offered through **Show updates**.
 
 Stop restores proxy routing and permits existing WebSocket/SSE streams to finish
 without an inactivity deadline. Start resumes that listener while streams remain
@@ -82,3 +115,5 @@ handshakes are normalized to HTTP/1.1 upgrades for compatibility. Incomplete or
 unavailable message payloads are omitted and counted in session comments.
 HAR omits stream activity. Parsed SSE events require TMCap; SAZ and HAR retain
 the available HTTP response body. Use TMCap for full stream lifecycle and diagnostics.
+
+Decoded byte totals retain availability per direction. A live observer initializes both totals at stream establishment, so a quiet live stream has known zero totals. Imported state alone does not establish a total; absent counters show unavailable. An explicit saved zero or a decoded empty message establishes zero for that direction, and saving/reimporting preserves missing counters without inventing zero.

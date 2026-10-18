@@ -710,12 +710,20 @@ fn stream_metadata(left: &Evidence, right: &Evidence, rows: &mut Rows) {
         Some(&format!("{:?}", right.state.status)),
     );
     for (field, a, b) in [
-        ("Observed stream records", left.observed, right.observed),
-        ("Evicted stream records", left.evicted, right.evicted),
+        (
+            "Observed stream records",
+            Some(left.observed),
+            Some(right.observed),
+        ),
+        (
+            "Evicted stream records",
+            Some(left.evicted),
+            Some(right.evicted),
+        ),
         (
             "Missing stream records",
-            left.sequence_loss,
-            right.sequence_loss,
+            Some(left.sequence_loss),
+            Some(right.sequence_loss),
         ),
         (
             "Decoded client message bytes",
@@ -731,8 +739,8 @@ fn stream_metadata(left: &Evidence, right: &Evidence, rows: &mut Rows) {
         rows.value(
             "Overview",
             field,
-            Some(&a.to_string()),
-            Some(&b.to_string()),
+            a.map(|value| value.to_string()).as_deref(),
+            b.map(|value| value.to_string()).as_deref(),
         );
     }
     rows.value(

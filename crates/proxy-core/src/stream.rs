@@ -107,8 +107,21 @@ pub struct StreamHistory {
     pub client_bytes: u64,
     /// Total decoded bytes sent by the server.
     pub server_bytes: u64,
-    /// Time the stream was first observed.
+    /// Whether client totals were initialized live or explicitly recorded.
+    pub client_bytes_known: bool,
+    /// Whether server totals were initialized live or explicitly recorded.
+    pub server_bytes_known: bool,
+    /// First stream observation (legacy name; may be Connecting, not established).
     pub opened_at: Option<u64>,
+    /// Explicit Open observation; never inferred from the legacy first observation.
+    pub established_at: Option<u64>,
+    /// Explicit Closed, Failed or Interrupted observation, never last message time.
+    pub ended_at: Option<u64>,
+    /// Known observation cutoff for an unfinished stream snapshot.
+    pub observed_until: Option<u64>,
+    /// Established lifetime measured monotonically, or a recorded source interval.
+    pub elapsed_millis: Option<u64>,
+    live_clock: Option<std::time::Instant>,
     /// Most recent observed message time.
     pub last_activity: Option<u64>,
     /// Bytes charged to retained items.
@@ -117,6 +130,102 @@ pub struct StreamHistory {
 }
 
 impl StreamHistory {
+    /// Records lifecycle evidence. Imported event timestamps retain their source clock.
+    pub fn observe_state(&mut self, state: &StreamState, live: bool) {
+        self.opened_at.get_or_insert(state.at_millis);
+        if state.status == StreamStatus::Open
+            && self.established_at.is_none()
+            && state.at_millis > 0
+        {
+            self.established_at = Some(state.at_millis);
+            if live {
+                self.client_bytes_known = true;
+                self.server_bytes_known = true;
+            }
+            self.elapsed_millis = live.then_some(0);
+            self.live_clock = live.then(std::time::Instant::now);
+        }
+        if !state.status.is_active() && self.ended_at.is_none() {
+            self.ended_at = (state.at_millis > 0).then_some(state.at_millis);
+            self.elapsed_millis = if live {
+                self.lifetime_millis()
+            } else {
+                self.ended_at
+                    .zip(self.established_at)
+                    .and_then(|(end, start)| end.checked_sub(start))
+            };
+            self.live_clock = None;
+        }
+        if self.established_at.is_some()
+            && state.at_millis > 0
+            && (live || state.status != StreamStatus::Open)
+        {
+            self.observed_until = Some(state.at_millis);
+        }
+    }
+
+    /// Lifetime through this instant, including quiet periods on a live stream.
+    pub fn lifetime_millis(&self) -> Option<u64> {
+        self.lifetime_millis_at(std::time::Instant::now())
+    }
+
+    fn lifetime_millis_at(&self, now: std::time::Instant) -> Option<u64> {
+        self.established_at?;
+        self.elapsed_millis.map(|elapsed| {
+            elapsed.saturating_add(self.live_clock.map_or(0, |clock| {
+                u64::try_from(now.saturating_duration_since(clock).as_millis()).unwrap_or(u64::MAX)
+            }))
+        })
+    }
+
+    /// Freezes timing at the catalog read boundary, including a reliable capture cutoff.
+    #[must_use]
+    pub fn snapshot(&self, live: bool) -> Self {
+        let mut history = self.clone();
+        if live {
+            history.elapsed_millis = self.lifetime_millis();
+            if self.live_clock.is_some() {
+                history.observed_until = Some(observed_millis());
+            }
+        }
+        history.live_clock = None;
+        history
+    }
+
+    /// Copies only lifetime/counter metadata at a shared catalog read boundary.
+    #[must_use]
+    pub fn metadata_snapshot(
+        &self,
+        live: bool,
+        now: std::time::Instant,
+        cutoff_millis: u64,
+    ) -> Self {
+        Self {
+            observed: self.observed,
+            evicted: self.evicted,
+            client_bytes: self.client_bytes,
+            server_bytes: self.server_bytes,
+            client_bytes_known: self.client_bytes_known,
+            server_bytes_known: self.server_bytes_known,
+            opened_at: self.opened_at,
+            established_at: self.established_at,
+            ended_at: self.ended_at,
+            observed_until: if live && self.live_clock.is_some() {
+                Some(cutoff_millis)
+            } else {
+                self.observed_until
+            },
+            elapsed_millis: if live {
+                self.lifetime_millis_at(now)
+            } else {
+                self.elapsed_millis
+            },
+            last_activity: self.last_activity,
+            retained_bytes: self.retained_bytes,
+            ..Self::default()
+        }
+    }
+
     /// Accounts for message storage, charging a shared persistent ID once.
     pub fn charge_message(&mut self, message: &StreamMessage) {
         let mut bytes = message.retained_bytes();
@@ -135,8 +244,10 @@ impl StreamHistory {
         if message.kind == "unavailable" || message.kind == "incomplete" {
             // Diagnostic text is not application payload.
         } else if message.sender == "client" {
+            self.client_bytes_known = true;
             self.client_bytes = self.client_bytes.saturating_add(message.byte_count);
-        } else {
+        } else if message.sender == "server" {
+            self.server_bytes_known = true;
             self.server_bytes = self.server_bytes.saturating_add(message.byte_count);
         }
         self.charge_message(&message);
@@ -231,4 +342,92 @@ pub fn is_event_stream(headers: &crate::HeaderBlock) -> bool {
                 .eq_ignore_ascii_case("text/event-stream")
         })
     })
+}
+
+#[cfg(test)]
+mod lifetime_tests {
+    use super::*;
+    fn state(status: StreamStatus, at_millis: u64) -> StreamState {
+        StreamState {
+            protocol: StreamProtocol::WebSocket,
+            status,
+            at_millis,
+            reason: None,
+        }
+    }
+    #[test]
+    fn byte_evidence_distinguishes_quiet_live_imports_and_each_direction() {
+        let mut imported = StreamHistory::default();
+        imported.observe_state(&state(StreamStatus::Open, 2000), false);
+        assert!(!imported.client_bytes_known && !imported.server_bytes_known);
+        imported.push(
+            1,
+            StreamMessage::new("server", "unavailable", bytes::Bytes::new()),
+        );
+        assert!(!imported.client_bytes_known && !imported.server_bytes_known);
+        imported.push(2, StreamMessage::new("client", "text", bytes::Bytes::new()));
+        assert!(imported.client_bytes_known && !imported.server_bytes_known);
+        assert_eq!(imported.client_bytes, 0);
+        let metadata = imported.metadata_snapshot(false, std::time::Instant::now(), 5000);
+        assert!(metadata.client_bytes_known && !metadata.server_bytes_known);
+        imported.push(
+            3,
+            StreamMessage::new("server", "text", b"hello".to_vec().into()),
+        );
+        assert!(imported.server_bytes_known);
+        assert_eq!(imported.server_bytes, 5);
+        let mut live = StreamHistory::default();
+        live.observe_state(&state(StreamStatus::Open, 2000), true);
+        let quiet = live.snapshot(true);
+        assert!(quiet.client_bytes_known && quiet.server_bytes_known);
+        assert_eq!((quiet.client_bytes, quiet.server_bytes), (0, 0));
+    }
+    #[test]
+    fn actual_open_has_a_monotonic_clock_and_terminal_states_freeze_it() {
+        for status in [
+            StreamStatus::Closed,
+            StreamStatus::Failed,
+            StreamStatus::Interrupted,
+        ] {
+            let mut history = StreamHistory::default();
+            history.observe_state(&state(StreamStatus::Connecting, 1000), true);
+            assert_eq!(history.established_at, None);
+            assert_eq!(history.lifetime_millis(), None);
+            history.observe_state(&state(StreamStatus::Open, 2000), true);
+            assert_eq!(history.opened_at, Some(1000));
+            assert_eq!(history.established_at, Some(2000));
+            history.live_clock =
+                std::time::Instant::now().checked_sub(std::time::Duration::from_secs(10));
+            let quiet = history.snapshot(true);
+            assert!(quiet.elapsed_millis.unwrap() >= 10_000);
+            assert!(quiet.observed_until.unwrap() > 2000);
+            // A wall-clock adjustment does not change the measured live interval.
+            history.observe_state(&state(status, 1500), true);
+            let frozen = history.lifetime_millis().unwrap();
+            assert!(frozen >= 10_000);
+            assert_eq!(history.ended_at, Some(1500));
+            assert!(history.live_clock.is_none());
+            assert_eq!(history.snapshot(true).elapsed_millis, Some(frozen));
+        }
+    }
+    #[test]
+    fn imported_timing_requires_explicit_open_and_never_uses_last_message_as_close() {
+        let mut old = StreamHistory {
+            opened_at: Some(1000),
+            last_activity: Some(9000),
+            ..Default::default()
+        };
+        old.observe_state(&state(StreamStatus::Closed, 10_000), false);
+        assert_eq!(old.established_at, None);
+        assert_eq!(old.lifetime_millis(), None);
+        let mut imported = StreamHistory::default();
+        imported.observe_state(&state(StreamStatus::Open, 2000), false);
+        assert_eq!(imported.elapsed_millis, None);
+        assert_eq!(imported.observed_until, None);
+        imported.last_activity = Some(5000);
+        assert_eq!(imported.ended_at, None);
+        imported.observe_state(&state(StreamStatus::Closed, 12_000), false);
+        assert_eq!(imported.lifetime_millis(), Some(10_000));
+        assert_eq!(imported.ended_at, Some(12_000));
+    }
 }

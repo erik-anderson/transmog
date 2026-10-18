@@ -509,6 +509,17 @@ async fn intake_uses_original_source_and_filters_before_virtual_paging() {
     assert_eq!(ids.len(), 2);
     let view = app.query_traffic_view(&query).unwrap();
     assert_eq!(view.ids.len(), 2);
+    let counts = app
+        .traffic_facets(&crate::TrafficFacetInput {
+            include_values: vec![],
+            query: query.clone(),
+            dimension: crate::TrafficDimension::Column(crate::TrafficColumn::Method),
+            search: None,
+            offset: 0,
+            limit: None,
+        })
+        .unwrap();
+    assert_eq!(counts.matching_entries, 2);
     assert!(
         view.page
             .sessions

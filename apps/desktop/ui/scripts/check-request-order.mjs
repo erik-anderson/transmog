@@ -6,6 +6,8 @@ import {build} from 'esbuild';
 export async function checkRequestOrderModel(root) {
   const compiled=await build({entryPoints:[resolve(root,'src/table-model.ts')],bundle:true,write:false,format:'esm',platform:'node'});
   const {defaultWorkspace,normalizeWorkspace,cellText}=await import('data:text/javascript;base64,'+Buffer.from(compiled.outputFiles[0].text).toString('base64'));
+  const sixteen=defaultWorkspace();sixteen.columns=sixteen.columns.filter(c=>!['stream-sent','stream-received'].includes(c.id));sixteen.columns.reverse();sixteen.columns[0].width=399;sixteen.columns[1].pinned=true;sixteen.columns[2].visible=false;
+  const streamUpgrade=normalizeWorkspace(sixteen);assert.deepEqual(streamUpgrade.columns.slice(0,16),sixteen.columns);assert.ok(streamUpgrade.columns.slice(16).every(c=>!c.visible&&!c.pinned));
   const legacy=defaultWorkspace();legacy.columns.shift();legacy.columns.reverse();legacy.columns[0].width=311;legacy.columns[1].visible=false;legacy.listSplit=67;
   const upgraded=normalizeWorkspace(legacy);
   assert.deepEqual(upgraded.columns.slice(1),legacy.columns);
@@ -17,7 +19,7 @@ export async function checkRequestOrderModel(root) {
 }
 
 export async function checkRequestOrder(page,root) {
-  const traffic=page.locator('traffic-workspace'),header=traffic.locator('#header-request-number'),menu=traffic.locator('#column-actions');
+  const traffic=page.locator('traffic-workspace'),header=traffic.locator('#header-request-number'),menu=traffic.locator('#column-actions'),picker=traffic.locator('#traffic-filter-picker');
   const saved=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {rows:globalThis.__workspaceFixture.sessions,preferences:t.preferences,sort:t.sort,filters:t.filters};});
   const settle=()=>page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return !t.queryPending&&t.sessions.length&&t.sessions.every(row=>!row.loading);});
   try {
@@ -61,10 +63,11 @@ export async function checkRequestOrder(page,root) {
     assert.ok(Math.abs(await header.evaluate(node=>node.getBoundingClientRect().width)-beforeResize+10)<1,'Automatic digit sizing overrode manual resize');
     await resize.press('Home');
     await header.getByRole('button',{name:'Request order',exact:true}).focus();await page.keyboard.press('Enter');
-    await menu.getByLabel('Filter comparison').selectOption('minimum');
-    await menu.getByLabel('Column filter value').fill('18446744073709551616');await menu.getByRole('button',{name:'Apply filter',exact:true}).click();
-    assert.equal(await menu.getByLabel('Column filter value').evaluate(node=>node.validity.valid),false);
-    await menu.getByLabel('Column filter value').fill('9007199254740993');await menu.getByRole('button',{name:'Apply filter',exact:true}).click();await settle();
+    await menu.getByRole('button',{name:'Filter Request order…',exact:true}).click();
+    await picker.getByLabel('Filter comparison').selectOption('minimum');
+    await picker.getByLabel('Column filter value').fill('18446744073709551616');await picker.getByRole('button',{name:'Apply filter',exact:true}).click();
+    assert.equal(await picker.getByLabel('Column filter value').evaluate(node=>node.validity.valid),false);
+    await picker.getByLabel('Column filter value').fill('9007199254740993');await picker.getByRole('button',{name:'Apply filter',exact:true}).click();await settle();
     assert.deepEqual((await traffic.locator('tr[data-session-id] td[data-column-id="request-number"]').allTextContents()).map(text=>text.trim()),['18446744073709551615','9007199254740993']);
     // Arrival updates existing references without deriving numbers from row positions.
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions[5].status=201;s.sessions.push({...s.sessions[0],id:'arrived',requestNumber:'9007199254740994'});await t.refreshSessions(undefined,true);});await settle();

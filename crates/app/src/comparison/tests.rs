@@ -974,10 +974,20 @@ async fn stream_metadata_differences_keep_message_content_explicitly_uncompared(
         evicted: 0,
         sequence_loss: 0,
         retained: 5,
-        client_bytes: 10,
-        server_bytes: 20,
+        client_bytes: Some(10),
+        server_bytes: Some(20),
         opened_at: None,
         last_activity: None,
+        lifetime: crate::StreamLifetime {
+            duration_ms: None,
+            established_at: None,
+            ended_at: None,
+            observed_until: None,
+            live: false,
+            boundary: "never-established",
+        },
+        http_duration_ms: None,
+        response_headers_ms: None,
     };
     let mut left = evidence(headers(&[]));
     let mut right = evidence(headers(&[]));
@@ -986,6 +996,7 @@ async fn stream_metadata_differences_keep_message_content_explicitly_uncompared(
     left.stream = Some(summary.clone());
     let mut other = summary;
     other.observed = 6;
+    other.client_bytes = None;
     right.stream = Some(other);
     let registry = ComparisonRegistry::default();
     let op = registry.begin("streams").unwrap();
@@ -997,6 +1008,11 @@ async fn stream_metadata_differences_keep_message_content_explicitly_uncompared(
             .any(|r| r.field == "Observed stream records" && r.state == ComparisonState::Different)
     );
     assert!(rows.iter().any(|r|r.field=="Stream messages/events"&&r.state==ComparisonState::NotCompared));
+    assert!(
+        rows.iter()
+            .any(|r| r.field == "Decoded client message bytes"
+                && r.state == ComparisonState::Unavailable)
+    );
 }
 
 #[tokio::test]

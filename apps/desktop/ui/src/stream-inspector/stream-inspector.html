@@ -1,6 +1,7 @@
 <template>
   <section class="stream-inspector" w-ref="{streamPanelScroller}" ?data-reading="{{streamReading}}" aria-label="Stream activity">
     <p class="stream-status">{{streamStatus}}</p>
+    <div class="stream-timing" ?hidden="{{!detail || !detail.stream}}"><dl><div><dt>Lifetime</dt><dd>{{streamLifetimeText}}</dd></div><div><dt>{{streamHttpLabel}}</dt><dd>{{streamHttpTiming}}</dd></div></dl><details><summary>Timing boundaries</summary><p>{{streamTimingNote}}</p></details></div>
     <p class="stream-notice" ?hidden="{{!streamNotice}}">{{streamNotice}}</p>
     <form class="stream-tools" @submit="{search(e)}">
       <select aria-label="Message sender" @change="{filter(e,'sender')}"><option value="">Both directions</option><option value="client">Client → Server</option><option value="server">Server → Client</option></select>

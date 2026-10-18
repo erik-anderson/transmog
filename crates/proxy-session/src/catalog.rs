@@ -341,6 +341,19 @@ impl MutableSession {
             .map_or(self.terminal.is_none(), |stream| stream.status.is_active())
     }
     fn snapshot(&self) -> SessionSnapshot {
+        self.snapshot_with_content(
+            true,
+            std::time::Instant::now(),
+            transmog_core::stream::observed_millis(),
+        )
+    }
+
+    fn snapshot_with_content(
+        &self,
+        content: bool,
+        now: std::time::Instant,
+        cutoff_millis: u64,
+    ) -> SessionSnapshot {
         SessionSnapshot {
             request_number: self.request_number,
             performance: self.performance.clone(),
@@ -357,7 +370,11 @@ impl MutableSession {
                 .map(|body| BodySnapshot {
                     boundary: body.boundary,
                     observed_bytes: body.observed_bytes,
-                    retained_prefix: body.retained_prefix.clone().freeze(),
+                    retained_prefix: if content {
+                        body.retained_prefix.clone().freeze()
+                    } else {
+                        bytes::Bytes::new()
+                    },
                     truncated: body.truncated,
                     trailers: body.trailers.clone(),
                 })
@@ -370,7 +387,12 @@ impl MutableSession {
             terminal_at: self.terminal_at,
             websocket: self.websocket.clone(),
             stream: self.stream.clone(),
-            stream_history: self.stream_history.clone(),
+            stream_history: if content {
+                self.stream_history.snapshot(!self.imported)
+            } else {
+                self.stream_history
+                    .metadata_snapshot(!self.imported, now, cutoff_millis)
+            },
         }
     }
 }
@@ -960,6 +982,25 @@ impl SessionCatalog {
             .collect()
     }
 
+    /// Atomically copies retained metadata at one lifecycle/time boundary.
+    /// Body prefixes and message collections are omitted; formatting happens after unlocking.
+    pub fn retained_metadata(&self) -> Vec<SessionSnapshot> {
+        let state = self.lock_state();
+        let now = std::time::Instant::now();
+        let cutoff_millis = transmog_core::stream::observed_millis();
+        state
+            .order
+            .values()
+            .filter(|id| !state.dismissed.contains(id))
+            .filter_map(|id| {
+                state
+                    .by_id
+                    .get(id)
+                    .map(|session| session.snapshot_with_content(false, now, cutoff_millis))
+            })
+            .collect()
+    }
+
     /// Maximum number of rows returned by a presentation query.
     pub fn page_size_limit(&self) -> usize {
         self.inner.limits.max_page_size.get()
@@ -1139,8 +1180,7 @@ fn apply_kind(
         ObserverEventKind::StreamState(stream) => {
             session
                 .stream_history
-                .opened_at
-                .get_or_insert(stream.at_millis);
+                .observe_state(&stream, !session.imported);
             session.stream = Some(stream);
         }
         ObserverEventKind::Performance(evidence) => session.performance.merge(&evidence),
@@ -1193,13 +1233,13 @@ fn apply_kind(
             session.terminal_at = Some(SystemTime::now());
             if let Some(stream) = &mut session.stream
                 && stream.protocol == transmog_core::stream::StreamProtocol::Sse
+                && stream.status.is_active()
             {
-                stream.status = if matches!(session.terminal, Some(SessionTerminal::Failed(_))) {
-                    transmog_core::stream::StreamStatus::Failed
-                } else {
-                    transmog_core::stream::StreamStatus::Closed
-                };
+                stream.status = transmog_core::stream::StreamStatus::Closed;
                 stream.at_millis = transmog_core::stream::observed_millis();
+                session
+                    .stream_history
+                    .observe_state(stream, !session.imported);
             }
         }
         ObserverEventKind::Failed(failure) => {
@@ -1219,6 +1259,9 @@ fn apply_kind(
                     transmog_core::stream::StreamStatus::Failed
                 };
                 stream.at_millis = transmog_core::stream::observed_millis();
+                session
+                    .stream_history
+                    .observe_state(stream, !session.imported);
             }
         }
     }
@@ -2316,5 +2359,163 @@ mod tests {
         }
         assert_eq!(count, EXCHANGES);
         assert_eq!(catalog.counters(), CatalogCounters::default());
+    }
+    #[test]
+    fn atomic_metadata_snapshot_freezes_lifecycle_and_omits_content_collections() {
+        use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+        let catalog = SessionCatalog::new(limits(3));
+        catalog.set_stream_content_retention(true, true);
+        for id in 1..=2 {
+            start(&catalog, id, "snapshot.test");
+            catalog.apply(event(
+                id,
+                2,
+                ObserverEventKind::StreamState(StreamState::now(
+                    StreamProtocol::WebSocket,
+                    StreamStatus::Open,
+                    None,
+                )),
+            ));
+            catalog.apply(event(
+                id,
+                3,
+                ObserverEventKind::StreamMessage(StreamMessage::new(
+                    "server",
+                    "text",
+                    Bytes::from_static(b"private message"),
+                )),
+            ));
+            catalog.apply(event(
+                id,
+                4,
+                ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 3,
+                    sample: Some(Bytes::from_static(b"abc")),
+                    truncated: false,
+                }),
+            ));
+        }
+        let snapshot = catalog.retained_metadata();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(
+            snapshot[0].stream_history.observed_until,
+            snapshot[1].stream_history.observed_until
+        );
+        assert!(snapshot.iter().all(|row| {
+            row.stream_history.items.is_empty()
+                && row.stream_history.observed == 1
+                && row.stream_history.server_bytes == 15
+                && row
+                    .bodies
+                    .iter()
+                    .all(|body| body.retained_prefix.is_empty())
+        }));
+        catalog.apply(event(
+            1,
+            5,
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Closed,
+                None,
+            )),
+        ));
+        catalog.dismiss(&[ExchangeId(2)]);
+        assert!(snapshot.iter().all(|row| row.state() == "active"));
+        assert_eq!(catalog.retained_metadata().len(), 1);
+        assert_eq!(
+            catalog
+                .get(ExchangeId(1))
+                .unwrap()
+                .stream_history
+                .items
+                .len(),
+            1
+        );
+        assert!(
+            !catalog.get(ExchangeId(1)).unwrap().bodies[0]
+                .retained_prefix
+                .is_empty()
+        );
+    }
+    #[test]
+    fn http_terminal_paths_freeze_established_stream_lifetimes() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        for (protocol, failure_kind) in [
+            (StreamProtocol::Sse, None),
+            (StreamProtocol::Sse, Some(ExchangeFailureKind::Upstream)),
+            (StreamProtocol::Sse, Some(ExchangeFailureKind::Cancelled)),
+            (StreamProtocol::Sse, Some(ExchangeFailureKind::Shutdown)),
+            (
+                StreamProtocol::WebSocket,
+                Some(ExchangeFailureKind::Cancelled),
+            ),
+            (
+                StreamProtocol::WebSocket,
+                Some(ExchangeFailureKind::Shutdown),
+            ),
+        ] {
+            let catalog = SessionCatalog::new(limits(3));
+            start(&catalog, 1, "terminal.test");
+            catalog.apply(event(
+                1,
+                2,
+                ObserverEventKind::StreamState(StreamState::now(
+                    protocol,
+                    StreamStatus::Open,
+                    None,
+                )),
+            ));
+            let terminal = failure_kind.map_or_else(
+                || {
+                    ObserverEventKind::Completed(CompletedExchange {
+                        metadata: metadata(1, "terminal.test"),
+                        request_head: head("GET"),
+                        response_head: ResponseHead {
+                            status: 200,
+                            headers: HeaderBlock::default(),
+                            source_version: HttpLegVersion::Http2,
+                        },
+                    })
+                },
+                |kind| {
+                    ObserverEventKind::Failed(ExchangeFailure {
+                        metadata: metadata(1, "terminal.test"),
+                        stage: ExchangeStage::Terminal,
+                        kind,
+                        request_committed: true,
+                        response_committed: true,
+                        message: "terminal fixture".into(),
+                    })
+                },
+            );
+            catalog.apply(event(1, 3, terminal));
+            let snapshot = catalog.get(ExchangeId(1)).unwrap();
+            let stream = snapshot.stream.as_ref().unwrap();
+            assert!(!stream.status.is_active());
+            assert_eq!(snapshot.stream_history.ended_at, Some(stream.at_millis));
+            let elapsed = snapshot.stream_history.elapsed_millis;
+            assert!(elapsed.is_some());
+            let state = catalog.lock_state();
+            let history = &state.by_id[&ExchangeId(1)].stream_history;
+            let later = std::time::Instant::now()
+                .checked_add(std::time::Duration::from_secs(60))
+                .unwrap();
+            assert_eq!(
+                history
+                    .metadata_snapshot(true, later, u64::MAX)
+                    .elapsed_millis,
+                elapsed
+            );
+            drop(state);
+            assert_eq!(
+                catalog
+                    .get(ExchangeId(1))
+                    .unwrap()
+                    .stream_history
+                    .elapsed_millis,
+                elapsed
+            );
+        }
     }
 }

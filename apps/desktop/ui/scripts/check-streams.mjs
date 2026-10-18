@@ -12,14 +12,16 @@ export async function checkStreams(page,root) {
   });
   const inspector=page.locator('stream-inspector');await inspector.locator('.stream-row').last().waitFor();
   const socketRow=page.locator('#session-socket');
-  await socketRow.locator('.active-stream-badge').waitFor();
-  assert.equal(await socketRow.locator('.active-stream-badge').textContent(),'WebSocket · Active');
-  assert.match(await socketRow.getAttribute('aria-label'),/WebSocket · Active/);
-  assert.equal(await socketRow.locator('[data-column-id="path"] .active-stream-badge').count(),0);
-  assert.equal(await socketRow.locator('[data-column-id="protocol"] .active-stream-badge').textContent(),'WebSocket · Active');
+  await socketRow.locator('.stream-identity').waitFor();
+  assert.equal(await socketRow.locator('.stream-identity').textContent(),'WebSocket⌄');
+  assert.match(await socketRow.getAttribute('aria-label'),/WebSocket · In progress/);
+  assert.equal(await socketRow.locator('[data-column-id="path"] .stream-identity').count(),0);
+  assert.equal(await socketRow.locator('[data-column-id="protocol"] .stream-identity').textContent(),'WebSocket⌄');
   assert.equal(await page.getByLabel('Wrap cells',{exact:true}).count(),0);
   assert.ok(await inspector.locator('.stream-row').count()<=100);
   assert.match(await inspector.locator('.stream-status').textContent(),/WebSocket.*open.*1,200/);
+  await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.applyDetail({...t.selectedDetail,stream:{...t.selectedDetail.stream,clientBytes:null,serverBytes:0}});});assert.match(await inspector.locator('.stream-status').textContent(),/Sent Unavailable · Received 0 B/);
+  await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.applyDetail({...t.selectedDetail,stream:{...t.selectedDetail.stream,clientBytes:600,serverBytes:20000}});});
   assert.match(await inspector.locator('.stream-notice').first().textContent(),/5 older/);
   await inspector.locator('.stream-row').last().click();await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload!==null);await inspector.locator('pre').filter({hasText:/"index":1199/}).waitFor();
   assert.equal(await inspector.locator('.stream-payload img').count(),0);
@@ -63,8 +65,8 @@ export async function checkStreams(page,root) {
     s.streamItems=[{sequence:10,message:{...s.streamItems[1].message,kind:'event',event:'update',eventId:'next-id',retry:1500,payload:[...new TextEncoder().encode('first\nsecond')],raw:'id: next-id\nretry: 1500\nevent: update\ndata: first\ndata: second\n\n'}}];
     await t.revealSession('events');
   });
-  await page.locator('#session-events .active-stream-badge').waitFor();
-  assert.equal(await page.locator('#session-events .active-stream-badge').textContent(),'SSE · Active');
+  await page.locator('#session-events .stream-identity').waitFor();
+  assert.equal(await page.locator('#session-events .stream-identity').textContent(),'SSE⌄');
   await inspector.getByLabel('Message sender').selectOption('');
   await inspector.locator('.stream-row').filter({hasText:'update'}).click();
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload?.eventId==='next-id');
@@ -80,7 +82,7 @@ export async function checkStreams(page,root) {
     for(const compact of [false,true]) {
       await page.evaluate(compact=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:compact};},compact);
       for(const id of ['socket','events']) {
-        const badge=page.locator('#session-'+id+' .active-stream-badge');
+        const badge=page.locator('#session-'+id+' .stream-identity');
         const box=await badge.boundingBox();assert.ok(box.width>0&&box.height>0);
         assert.equal(await badge.evaluate(el=>{
           const cell=el.closest('td').getBoundingClientRect(),box=el.getBoundingClientRect();
@@ -114,13 +116,13 @@ export async function checkStreams(page,root) {
         return cell&&Math.abs(cell.getBoundingClientRect().width-width)<1;
       },{id,width});
       const layout=await cell.evaluate(cell=>{
-        const badge=cell.querySelector('.active-stream-badge'),text=document.createRange();text.selectNodeContents(badge);
-        return {row:cell.closest('tr').getBoundingClientRect().height,header:cell.closest('table').tHead.getBoundingClientRect().height,cellSpace:getComputedStyle(cell).whiteSpace,badgeSpace:getComputedStyle(badge).whiteSpace,lines:text.getClientRects().length,clips:cell.scrollWidth>cell.clientWidth,title:cell.title};
+        const badge=cell.querySelector('.stream-identity'),text=document.createRange();text.selectNodeContents(badge);
+        return {row:cell.closest('tr').getBoundingClientRect().height,header:cell.closest('table').tHead.getBoundingClientRect().height,cellSpace:getComputedStyle(cell).whiteSpace,badgeSpace:getComputedStyle(badge).whiteSpace,lines:new Set([...text.getClientRects()].map(rect=>Math.round(rect.top))).size,clips:cell.scrollWidth>cell.clientWidth,title:cell.title};
       });
       assert.equal(layout.cellSpace,'nowrap');assert.equal(layout.badgeSpace,'nowrap');assert.equal(layout.lines,1);
       assert.ok(Math.abs(layout.row-baseline.row)<1&&Math.abs(layout.header-baseline.header)<1,'Narrow columns changed row or header height');
       assert.equal(layout.clips,true,'Narrow Protocol cell should clip before wrapping');
-      assert.match(layout.title,id==='socket'?/WebSocket · Active/:/SSE · Active/);
+      assert.match(layout.title,id==='socket'?/WebSocket/:/SSE/);
     }
     await page.screenshot({path:resolve(root,'../../../target/ui-check/stream-active-protocol-'+width+'.png')});
   }
@@ -130,14 +132,14 @@ export async function checkStreams(page,root) {
       const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;
       s.sessions=s.sessions.map(row=>({...row,terminal}));await t.refreshSessions(undefined,true);
     },terminal);
-    assert.equal(await page.locator('.active-stream-badge').count(),0,'Ended or saved streams appear active');
+    assert.equal(await page.locator('.stream-identity').count(),2,'Ended or saved streams lost their identity');
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'events');
   }
   await page.evaluate(async()=>{
     const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;
     s.sessions=s.sessions.map(row=>({...row,terminal:'active',streamProtocol:null}));await t.refreshSessions(undefined,true);
   });
-  assert.equal(await page.locator('.active-stream-badge').count(),0,'Ordinary active HTTP appears as a stream');
+  assert.equal(await page.locator('.stream-identity').count(),0,'Ordinary active HTTP appears as a stream');
   await page.evaluate(async(saved)=>{Object.assign(globalThis.__workspaceFixture,saved,{streams:{},streamItems:[]});const t=document.querySelector('app-shell').traffic;t.preferences=saved.preferences;t.showStream(false);await t.refreshSessions(undefined,true);},saved);
   await page.setViewportSize({width:1280,height:800});
 }

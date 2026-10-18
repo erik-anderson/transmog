@@ -623,8 +623,10 @@ pub(crate) fn write_session<W: Write>(
         emit(CaptureRecordKind::Unknown {
             kind: "stream-summary".into(),
             payload: serde_json::json!({
-                "observed": history.observed, "evicted": history.evicted, "clientBytes": history.client_bytes,
-                "serverBytes": history.server_bytes, "openedAt": history.opened_at, "lastActivity": history.last_activity,
+                "observed": history.observed, "evicted": history.evicted, "clientBytes": history.client_bytes_known.then_some(history.client_bytes),
+                "serverBytes": history.server_bytes_known.then_some(history.server_bytes), "openedAt": history.opened_at, "lastActivity": history.last_activity,
+                "establishedAt": history.established_at, "endedAt": history.ended_at,
+                "observedUntil": history.observed_until, "elapsedMillis": history.elapsed_millis,
             }),
         })?;
     }

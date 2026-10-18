@@ -1850,7 +1850,7 @@ fn apply_native_frame(
                 .retained_bytes
                 .saturating_sub(old)
                 .saturating_add(state.reason.as_ref().map_or(0, String::len));
-            row.stream_history.opened_at.get_or_insert(state.at_millis);
+            row.stream_history.observe_state(&state, false);
             row.stream = Some(state);
         }
         CaptureRecordKind::StreamMessage(message) => {
@@ -1891,8 +1891,10 @@ fn apply_native_frame(
             if matches!(message.kind.as_str(), "unavailable" | "incomplete") {
                 // Match live accounting: diagnostics are not application payload.
             } else if message.sender == "client" {
+                history.client_bytes_known = true;
                 history.client_bytes = history.client_bytes.saturating_add(message.byte_count);
-            } else {
+            } else if message.sender == "server" {
+                history.server_bytes_known = true;
                 history.server_bytes = history.server_bytes.saturating_add(message.byte_count);
             }
             history
@@ -1907,14 +1909,21 @@ fn apply_native_frame(
             let history = &mut row.stream_history;
             history.observed = payload["observed"].as_u64().unwrap_or(history.observed);
             history.evicted = payload["evicted"].as_u64().unwrap_or(history.evicted);
-            history.client_bytes = payload["clientBytes"]
-                .as_u64()
-                .unwrap_or(history.client_bytes);
-            history.server_bytes = payload["serverBytes"]
-                .as_u64()
-                .unwrap_or(history.server_bytes);
+            if let Some(bytes) = payload["clientBytes"].as_u64() {
+                history.client_bytes = bytes;
+                history.client_bytes_known = true;
+            }
+            if let Some(bytes) = payload["serverBytes"].as_u64() {
+                history.server_bytes = bytes;
+                history.server_bytes_known = true;
+            }
             history.opened_at = payload["openedAt"].as_u64().or(history.opened_at);
             history.last_activity = payload["lastActivity"].as_u64().or(history.last_activity);
+            // Legacy openedAt is first observation, so it cannot establish a lifetime.
+            history.established_at = payload["establishedAt"].as_u64().or(history.established_at);
+            history.ended_at = payload["endedAt"].as_u64().or(history.ended_at);
+            history.observed_until = payload["observedUntil"].as_u64().or(history.observed_until);
+            history.elapsed_millis = payload["elapsedMillis"].as_u64().or(history.elapsed_millis);
         }
         CaptureRecordKind::Unknown { kind, payload } if kind == "body-representation" => {
             let boundary = parse_boundary(payload["boundary"].as_str().unwrap_or_default())?;
@@ -2429,17 +2438,6 @@ fn append_native(
     snapshot.hook_effects = row.response_effects;
     snapshot.stream = row.stream;
     snapshot.stream_history = row.stream_history;
-    if let Some(stream) = &mut snapshot.stream
-        && stream.protocol == transmog_core::stream::StreamProtocol::Sse
-        && stream.status.is_active()
-        && (row.completed || row.failed)
-    {
-        stream.status = if row.failed {
-            transmog_core::stream::StreamStatus::Failed
-        } else {
-            transmog_core::stream::StreamStatus::Closed
-        };
-    }
     snapshot.request_heads = row.requests;
     snapshot.response_heads = row.responses;
     snapshot.sequence_loss = row.loss;
@@ -2448,7 +2446,10 @@ fn append_native(
         .performance
         .points
         .iter()
-        .find(|point| point.milestone == transmog_core::performance::Milestone::ExchangeDone)
+        .find(|point| {
+            point.milestone == transmog_core::performance::Milestone::ExchangeDone
+                && point.unix_millis > 0
+        })
         .and_then(|point| {
             SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(point.unix_millis))
         });
@@ -2457,6 +2458,7 @@ fn append_native(
             .provenance
             .as_ref()
             .and_then(|saved| saved.terminal_unix_millis)
+            .filter(|millis| *millis > 0)
             .and_then(|millis| SystemTime::UNIX_EPOCH.checked_add(Duration::from_millis(millis)));
     }
     snapshot.performance = row.performance;
@@ -2467,6 +2469,22 @@ fn append_native(
             row.failure.as_ref().map(|failure| failure.1.as_str()),
         ));
     }
+    let incomplete_stream = !row.completed && !row.failed
+        || row
+            .failure
+            .as_ref()
+            .is_some_and(|(category, _)| category == "incomplete");
+    if incomplete_stream
+        && snapshot
+            .stream
+            .as_ref()
+            .is_some_and(|stream| stream.status.is_active())
+    {
+        // An absent terminal or explicit save boundary is not an observed HTTP failure.
+        // Preserve this distinction when an open capture is saved again.
+        snapshot.terminal = None;
+    }
+    finish_native_stream(&mut snapshot, row.completed, row.failed, incomplete_stream);
     // A completed empty body often has no segment record. Preserve that
     // case, but do not manufacture a complete empty body when a declared
     // entity was omitted from the saved file.
@@ -2819,6 +2837,39 @@ fn empty_snapshot(
 fn import_failure(metadata: Arc<ExchangeMetadata>) -> SessionTerminal {
     saved_failure(metadata, None, None)
 }
+fn finish_native_stream(
+    snapshot: &mut SessionSnapshot,
+    completed: bool,
+    failed: bool,
+    incomplete: bool,
+) {
+    use transmog_core::stream::{StreamProtocol, StreamStatus};
+    let interrupted = matches!(&snapshot.terminal, Some(SessionTerminal::Failed(failure))
+        if matches!(failure.kind, ExchangeFailureKind::Cancelled | ExchangeFailureKind::Shutdown));
+    if let Some(stream) = &mut snapshot.stream
+        && stream.status.is_active()
+        && !incomplete
+        && (stream.protocol == StreamProtocol::Sse && (completed || failed)
+            || interrupted && failed)
+    {
+        stream.status = if interrupted {
+            StreamStatus::Interrupted
+        } else if failed {
+            StreamStatus::Failed
+        } else {
+            StreamStatus::Closed
+        };
+        // HTTP completion ends SSE, but only its recorded terminal timestamp can date that end.
+        // Missing timing remains unavailable rather than reusing Open or lastActivity.
+        stream.at_millis = snapshot
+            .terminal_at
+            .and_then(|time| time.duration_since(SystemTime::UNIX_EPOCH).ok())
+            .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+            .unwrap_or(0);
+        snapshot.stream_history.observe_state(stream, false);
+    }
+}
+
 fn saved_failure(
     metadata: Arc<ExchangeMetadata>,
     category: Option<&str>,

@@ -30,7 +30,11 @@ Snapshot metadata never grants filesystem access and contains no external path.
 
 TMCap is an indexed, block-based capture container. `TMCAP001\0`, header version
 `1`, and record schema revision `1` identify the current format. Stream lifecycle
-and WebSocket/SSE content are independently indexed. Persistent SSE IDs are
+and WebSocket/SSE content are independently indexed. Optional stream-summary
+metadata retains explicit establishment, terminal observation, observation cutoff
+and elapsed lifetime. Its legacy `openedAt` remains first observation and is not
+reinterpreted as establishment. Older summaries without explicit timing evidence
+remain readable without inventing missing timestamps. Persistent SSE IDs are
 stored once and referenced by later messages, avoiding repeated large fields
 on disk and in reopened histories. There is no
 compatibility reader for earlier experimental layouts.

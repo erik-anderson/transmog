@@ -1299,6 +1299,22 @@ fn query_sessions(
 }
 
 #[tauri::command]
+async fn traffic_facets(
+    request: transmog_app::TrafficFacetInput,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::TrafficFacetPage, AppError> {
+    let application = state.window_application(&window)?;
+    tauri::async_runtime::spawn_blocking(move || application.traffic_facets(&request))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Traffic facet worker failed".into(),
+            retryable: true,
+        })?
+}
+
+#[tauri::command]
 async fn query_traffic_view(
     query: SessionQueryInput,
     window: tauri::WebviewWindow,
@@ -2274,6 +2290,7 @@ pub fn run() {
                 reset_ca,
                 query_sessions,
                 query_traffic_view,
+                traffic_facets,
                 traffic_timeline_rows,
                 traffic_view_rows,
                 release_traffic_view,

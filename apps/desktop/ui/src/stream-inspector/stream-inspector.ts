@@ -4,7 +4,7 @@ import { WorkspaceElement } from '../workspace-element.js';
 import type { SessionDetail, StreamMessage, StreamPage, StreamRow, StreamSummary } from '../models.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 import { describeError } from '../utilities.js';
-import { formatBytes } from '../table-model.js';
+import {formatDuration,lifetimeDescription, formatBytes } from '../table-model.js';
 
 interface Row extends StreamRow { time:string; size:string; label:string; selected:string; tabIndex:number; }
 export class StreamInspector extends WorkspaceElement {
@@ -12,6 +12,10 @@ export class StreamInspector extends WorkspaceElement {
   @observable streamRows:Row[]=[];
   @observable streamStatus='';
   @observable streamNotice='';
+  @observable streamLifetimeText='';
+  @observable streamHttpLabel='Handshake';
+  @observable streamHttpTiming='';
+  @observable streamTimingNote='';
   @observable streamError='';
   @observable streamTotal=0;
   @observable streamFollow=true;
@@ -54,8 +58,14 @@ export class StreamInspector extends WorkspaceElement {
   }
   private describe(summary:StreamSummary|null):void {
     if(!summary){this.streamStatus='';return;}
+    this.streamLifetimeText=summary.lifetime?.durationMs==null?'Unavailable':(summary.lifetime.live?'Live · ':summary.lifetime.boundary==='open-at-capture'?'Open at capture · ':summary.lifetime.boundary==='incomplete'?'Incomplete · ':'Final · ')+formatDuration(summary.lifetime.durationMs);
+    this.streamHttpLabel=summary.state.protocol==='sse'?'Response headers':'Handshake';
+    this.streamHttpTiming=formatDuration(summary.state.protocol==='sse'?summary.responseHeadersMs:summary.httpDurationMs);
+    this.streamTimingNote=lifetimeDescription(summary.lifetime)+' '+(summary.state.protocol==='sse'?'Response headers measures request headers to upstream response headers.':'Handshake uses the original HTTP request interval.')+' HTTP timing stays separate from stream lifetime. Sent and received totals count decoded message bytes, including observed controls/events; they exclude HTTP handshake bodies, framing and transport overhead. Recorded totals can be incomplete when observations are missing; imported traffic keeps its saved totals.';
+    const date=(value:number|null|undefined)=>value==null?'Unavailable':Number.isFinite(new Date(value).valueOf())?new Date(value).toISOString():'Outside supported calendar range';
+    if(summary.lifetime)this.streamTimingNote+=' Established: '+date(summary.lifetime.establishedAt)+'. Ended: '+date(summary.lifetime.endedAt)+'. Observed until: '+date(summary.lifetime.observedUntil)+'. Times use the recorded source clock.';
     const state=summary.imported&&['connecting','open','closing'].includes(summary.state.status)?'Open at capture':summary.state.status;
-    this.streamStatus=(summary.state.protocol==='sse'?'SSE':'WebSocket')+' · '+state+' · '+summary.observed.toLocaleString()+' items · ↑ '+formatBytes(summary.clientBytes)+' · ↓ '+formatBytes(summary.serverBytes);
+    this.streamStatus=(summary.state.protocol==='sse'?'SSE':'WebSocket')+' · '+state+' · '+summary.observed.toLocaleString()+' items · Sent '+(summary.clientBytes==null?'Unavailable':formatBytes(summary.clientBytes))+' · Received '+(summary.serverBytes==null?'Unavailable':formatBytes(summary.serverBytes));
     this.streamNotice=(summary.evicted?summary.evicted.toLocaleString()+' older items evicted. ':'')+(summary.sequenceLoss?summary.sequenceLoss+' observation records missing. ':'')+(summary.state.reason??'');
   }
   private schedule():void {if(this.detail?.stream&&this.sessionId&&this.timer===undefined)this.timer=window.setTimeout(()=>{this.timer=undefined;void this.load();},100);}

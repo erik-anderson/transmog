@@ -17,6 +17,9 @@ export const columnDefinitions: ReadonlyArray<{id: ColumnId; label: string; nume
   {id:'started-at', label:'Start time', numeric:true, placeholder:'Unix milliseconds'},
   {id:'pid', label:'Process ID', numeric:true, placeholder:'PID'},
   {id:'url', label:'Full URL', numeric:false, placeholder:'https://example.com/api/'},
+  {id:'stream-sent',label:'Stream sent',numeric:true,placeholder:'Decoded message bytes'},
+  {id:'stream-received',label:'Stream received',numeric:true,placeholder:'Decoded message bytes'},
+  {id:'http-duration', label:'HTTP duration', numeric:true, placeholder:'Milliseconds'},
 ];
 
 export function defaultWorkspace(): WorkspacePreferences {
@@ -30,9 +33,12 @@ export function normalizeWorkspace(value: WorkspacePreferences | undefined): Wor
   const known = new Set(columnDefinitions.map((column) => column.id));
   const ids = new Set(value.columns.map((column) => column.id));
   if (ids.size !== value.columns.length || value.columns.some((column) => !known.has(column.id) || Object.keys(column).some(key=>!['id','width','visible','pinned'].includes(key)) || !Number.isInteger(column.width) || column.width<32 || column.width>1200 || typeof column.visible!=='boolean' || typeof column.pinned!=='boolean') || !value.columns.some(column=>column.visible)) return fallback;
-  const legacy = value.columns.length === known.size-1 && !ids.has('request-number');
-  if (!legacy && ids.size !== known.size) return fallback;
-  return { ...fallback, ...value, wrapCells:false, columns:legacy ? [fallback.columns[0]!,...value.columns] : value.columns.map(column=>({...column})) };
+  let columns = value.columns.map(column=>({...column}));
+  const missing = fallback.columns.filter(column=>!ids.has(column.id));
+  if (missing.some(column=>!['request-number','http-duration','stream-sent','stream-received'].includes(column.id))) return fallback;
+  if (!ids.has('request-number')) columns.unshift({...fallback.columns[0]!});
+  for(const id of ['http-duration','stream-sent','stream-received'])if(!ids.has(id as ColumnId))columns.push({...fallback.columns.find(column=>column.id===id)!});
+  return { ...fallback, ...value, wrapCells:false, columns };
 }
 
 export function displayColumns(columns: ColumnPreference[]) {
@@ -74,6 +80,18 @@ export function stateText(state: SessionSummary['terminal']): string {
   return {active:'In progress',completed:'Completed',failed:'Failed',cancelled:'Cancelled by caller',interrupted:'Interrupted','open-at-capture':'Open at capture',incomplete:'Incomplete'}[state];
 }
 
+export function formatDuration(value:number|null|undefined):string {
+  if(value==null)return 'Unavailable';
+  if(value<1000)return value+' ms';
+  if(value<60_000)return (value/1000).toFixed(1).replace(/\.0$/,'')+' s';
+  const seconds=Math.floor(value/1000),minutes=Math.floor(seconds/60);
+  return minutes<60?minutes+'m '+seconds%60+'s':Math.floor(minutes/60)+'h '+minutes%60+'m';
+}
+export function lifetimeDescription(lifetime:SessionSummary['streamLifetime']):string {
+  if(!lifetime)return 'Stream lifetime unavailable.';
+  const duration=formatDuration(lifetime.durationMs);
+  return lifetime.boundary==='never-established'?'Lifetime unavailable: no established stream was observed.':lifetime.boundary==='live'?'Open for '+duration+'; lifetime continues while quiet.':lifetime.boundary==='final'?'Lifetime '+duration+'; stopped at the recorded stream end.':lifetime.boundary==='open-at-capture'?'Observed lifetime '+duration+'; open at capture. Saved traffic does not age.':'Observed lifetime '+duration+'; end timing is incomplete.';
+}
 export function cellText(row: SessionSummary, column: ColumnId): string {
   switch (column) {
     case 'request-number': return row.requestNumber ?? '—';
@@ -85,7 +103,10 @@ export function cellText(row: SessionSummary, column: ColumnId): string {
     case 'path': return row.path;
     case 'url': return row.url ?? row.host+row.path;
     case 'protocol': return row.protocol === 'Http1' ? 'HTTP/1.1' : row.protocol === 'Http2' ? 'HTTP/2' : row.protocol;
-    case 'duration': return row.durationMs == null ? '—' : row.durationMs+' ms';
+    case 'duration': return row.durationMs == null ? '—' : row.streamProtocol ? (row.streamLifetime?.boundary==='open-at-capture'||row.streamLifetime?.boundary==='incomplete'?'≥ ':'')+formatDuration(row.durationMs)+(row.streamLifetime?.live?' · live':'') : row.durationMs+' ms';
+    case 'http-duration': return row.httpDurationMs == null ? '—' : row.httpDurationMs+' ms';
+    case 'stream-sent': return row.streamSent==null?'—':formatBytes(row.streamSent);
+    case 'stream-received': return row.streamReceived==null?'—':formatBytes(row.streamReceived);
     case 'response-bytes': return formatBytes(row.responseBytes);
     case 'request-bytes': return formatBytes(row.requestBytes);
     case 'state': return stateText(row.terminal);

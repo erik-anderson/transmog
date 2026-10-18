@@ -892,6 +892,30 @@ mod tests {
                     input.response_bodies = false;
                     let result = app.search_traffic(input, Arc::new(|_| {})).await.unwrap();
                     assert_eq!(result.ids, expected, "content search: {pattern}");
+                    let counts = app
+                        .traffic_facets(&crate::TrafficFacetInput {
+                            include_values: vec![],
+                            query: SessionQueryInput {
+                                search_result_id: Some(result.id.clone()),
+                                ..Default::default()
+                            },
+                            dimension: crate::TrafficDimension::Column(
+                                crate::TrafficColumn::Method,
+                            ),
+                            search: None,
+                            offset: 0,
+                            limit: Some(100),
+                        })
+                        .unwrap();
+                    assert_eq!(counts.matching_entries, 2);
+                    assert_eq!(
+                        counts
+                            .options
+                            .iter()
+                            .map(|option| option.count)
+                            .sum::<usize>(),
+                        2
+                    );
                     let entry = app
                         .traffic_search_entry(&result.id, &expected[0])
                         .await

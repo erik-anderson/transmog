@@ -31,8 +31,10 @@ Traffic uses one continuous list and a native scrollbar spanning all matching
 entries. Only rows near the viewport are rendered, so large captures remain
 usable. Compact and ordinary rows have consistent heights. Headers and cells
 stay on one line and clip with ellipsis when columns are narrow; hover shows
-the complete value. Protocol includes the active WebSocket or SSE badge beside
-the HTTP version and participates in column fitting. If upstream DNS, TCP, TLS or
+the complete value. Protocol keeps the WebSocket or SSE identity beside the
+secondary HTTP version through closure and import, and participates in column fitting.
+A narrow Protocol column uses **WS ⌄** while retaining the full WebSocket name
+in its accessible description and disclosure; saved column widths are preserved. If upstream DNS, TCP, TLS or
 connection policy fails before an upstream HTTP protocol is observed, Protocol
 shows **Unavailable**. The inspector still preserves the recorded client-side
 HTTP version. A failed connection attempt does not hide HTTP evidence from
@@ -221,6 +223,72 @@ status line and complete response headers, with exactly two blank lines between
 the blocks. An unrecorded protocol is labeled unavailable rather than guessed.
 
 ## Search and select
+
+**Filters** opens a shared field picker directly. Method, State, HTTP version,
+Traffic type, HTTP status families/codes and Fetch destination offer counted
+checkbox choices. Column menus open the same picker, and each active field has
+one chip with separate Edit and Remove actions. Choices remain a draft until
+**Apply filter**; Escape closes the draft and returns focus. Custom contains,
+equals and numeric conditions remain available under **Custom match**.
+
+Counts describe the surrounding filters across all retained entries. Zero values
+stay selectable; longer zero lists use **More values**, and selected values stay
+visible when the picker is reopened. Loading or failed counts are shown as
+unavailable rather than zero. Values outside exact filter limits are disclosed;
+use a custom contains condition to narrow long text.
+
+Host, Process and normalized Content type offer searched observed choices with
+contextual counts. **Load more** continues the list; after 200 observed values,
+search narrows the remaining set. Selected values remain visible outside the
+searched page. **Use exact value** accepts a new value before it appears in traffic;
+custom Contains and Equals remain available. Content type choices omit parameters
+and compare without case. **No process name** means no captured process name,
+including remote callers; **Unavailable status** and **Missing content type** are
+explicit evidence states, distinct from zero or the literal text of those labels.
+
+Duration and size ranges use inclusive From/To bounds with milliseconds, seconds
+or minutes and bytes, KiB, MiB or GiB. Blank ends are unrestricted; decimal values
+must resolve exactly to whole milliseconds or bytes. Request-order ranges retain
+the complete positive unsigned 64-bit decimal value. Start-time controls use local
+calendar time, preserving milliseconds; the picker names the time zone. Skipped
+daylight-saving times reject, and repeated times choose the first occurrence.
+Presets resolve when chosen and retain a fixed lower bound for later traffic.
+Unavailable starts never appear as an observed epoch-zero timestamp. Existing
+incident-time restrictions continue to apply alongside these filters.
+
+The row context menu and selected request's **Actions → Filter by** open the same
+picker with Host, Process, Status or Content type selected as a draft. Apply is
+explicit. Existing selection and inspection remain in place while choosing values.
+
+**View → List columns** offers optional **Stream sent** and **Stream received**
+columns. These count observed decoded message bytes, including controls/events;
+ordinary HTTP entries show unavailable. **Request size** and **Response size**
+continue to describe HTTP bodies. New stream columns start hidden and unpinned;
+upgrades preserve existing widths, order, visibility, pins and pane splits.
+
+Filtering preserves Follow newest or the paused inspection state. A following
+empty live view automatically displays later matches; a paused view offers new
+matches through **Show updates**. Saved viewers remain static, and Search contents
+keeps its completed snapshot until searched again. Filters never clear themselves.
+Duration uses established stream lifetime for WebSocket/SSE and the HTTP interval
+for ordinary requests; **HTTP duration** remains available as a separate column.
+The HTTP waterfall and Timeline retain their original HTTP timing boundaries.
+
+Traffic query metadata supports exact typed alternatives: choices within one
+dimension use OR, and distinct dimensions and existing text/numeric constraints
+use AND. Traffic type (HTTP, WebSocket or SSE) is independent of HTTP version and
+stream state, and dimensions do not need visible columns. Common status families
+are alternatives alongside exact numeric codes, so selecting 2xx and 404 includes
+both. Missing evidence is distinct from measured zero.
+
+Contextual facet counts use all retained traffic, with the edited dimension's own
+constraints excluded and all other filters, metadata text, incident window and
+completed content-search snapshot retained. Counts describe traffic entries,
+not stream messages, and never decode bodies. The API returns bounded options
+in stable order with option search and an offset continuation. Each request is
+a fresh metadata snapshot; callers restart paging after scope or capture changes.
+Fixed presets can merge absent options with zero counts without disabling them.
+
 
 The live **Filter** matches complete URLs, including text spanning the domain
 and path, as well as process metadata. Both Filter and metadata searches in

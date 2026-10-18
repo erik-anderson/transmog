@@ -14,6 +14,8 @@ import {checkBinaryResponse} from './check-binary-response.mjs';
 import {checkMatchingTests,checkMatchingSelectionRace} from './check-matching-tests.mjs';
 import {checkScripts} from './check-scripts.mjs';
 import {checkAutoResponseDragging} from './check-autoresponse-dragging.mjs';
+import {checkTrafficFilters} from './check-traffic-filters.mjs';
+import {checkTrafficAdvanced} from './check-traffic-advanced.mjs';
 import { checkStreams } from './check-streams.mjs';
 import {checkWindowShortcuts} from './check-window-shortcuts.mjs';
 import assert from 'node:assert/strict';
@@ -62,7 +64,7 @@ resources.set('/document.css', { file: resolve(root, 'src/document.css'), conten
 resources.set('/transmog-icon.svg', { file: resolve(root, '../icons/icon.svg'), contentType: 'image/svg+xml' });
 for (let index = 0; index < built.cssFiles.length; index += 2) resources.set('/' + built.cssFiles[index], { body: built.cssFiles[index + 1], contentType: 'text/css' });
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+const page = await browser.newPage({ viewport: { width: 1280, height: 800 }, timezoneId:'America/Los_Angeles' });
 await page.context().grantPermissions(['clipboard-read','clipboard-write'],{origin:'https://workspace.test'});
 const errors = [];
 const requests = [];
@@ -86,12 +88,30 @@ await page.addInitScript((configuration) => {
   const summary = (id, index = 0) => ({ id, requestNumber:String(index+1), caller, method: 'GET', host: 'example.test', path: '/' + id, url:'http://example.test/'+id, startedAt:1000+index, contentType:id==='second'?'application/json':id==='image'?'image/webp':'text/plain', topLevelNavigation:id==='first', fetchDestination:({first:'document',second:'script',image:'image'})[id]??null, protocol: 'HTTP/1.1', status: id==='cached'?304:200, durationMs: index+1, requestBytes: 0, responseBytes: id==='cached'?0:4, terminal: 'completed', loss: false, capturing: false, autoResponse: null });
   const detail = (id) => {
     if(state.composerResponseDetail?.id===id)return structuredClone(state.composerResponseDetail);
-    const row = state.sessions.find(row => row.id===id) ?? summary(id);
+    const row = structuredClone(state.sessions.find(row => row.id===id) ?? summary(id));
+    if(row.streamLifetime?.live&&row.quietStartedAt!=null){row.durationMs=Date.now()-row.quietStartedAt;row.streamLifetime.durationMs=row.durationMs;}
     const fullHeaders=state.fullHeaders??[{name:'Accept',value:'*/*',valueBytes:3,fieldBytes:13,sensitive:false,binary:false},{name:'Authorization',value:'[redacted]',valueBytes:5133,fieldBytes:5150,sensitive:true,binary:false}];
     const headerSummary={totalFields:fullHeaders.length,valueBytes:fullHeaders.reduce((total,header)=>total+header.valueBytes,0),serializedBytes:fullHeaders.reduce((total,header)=>total+header.fieldBytes,2),authorization:fullHeaders.some(header=>header.name==='Authorization')?'present':'absent',proxyAuthorization:fullHeaders.some(header=>header.name==='Proxy-Authorization')?'present':'absent'};
-    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]??null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], headerEffects:row.headerEffects??[],bodyEdits:row.bodyEdits??[], routeSelection: null, routeAttempts: [], terminal: row.terminalText??(row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal), terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: row.autoResponse??null };
+    return { id, requestNumber:row.requestNumber, originalId:row.originalId??null, originalRequestNumber:row.originalRequestNumber??null, originalRequestNumberProvenance:row.originalRequestNumberProvenance??null, stream:state.streams?.[id]?{...state.streams[id],lifetime:row.streamLifetime??state.streams[id].lifetime,httpDurationMs:row.httpDurationMs??state.streams[id].httpDurationMs,responseHeadersMs:row.responseHeadersMs??state.streams[id].responseHeadersMs}:null, performance:state.performance, savedEvidence:state.savedTiming, traceId:row.traceId??null, startedAt:row.startedAt, caller, requests: [{ boundary: 'client-request', method: row.method, target: row.url, status: null, protocol: 'HTTP/1.1', headers: fullHeaders.slice(0,512), summary:headerSummary }], responses: [{ boundary: 'client-response', method: null, target: null, status: row.status, protocol: 'HTTP/1.1', headers: [{name:'Content-Type',value:row.contentType,sensitive:false,binary:false}] }], bodies: [], storedBodies: row.storedBodies??[{ exchangeId: id, boundary: 'client-response', observedBytes: row.responseBytes, retainedBytes: row.responseBytes, availability: 'complete', mediaType: row.contentType, charset: 'utf-8', contentCodings: [], sha256: null, reason: null }], diagnostics: [], hookEffects: [], headerEffects:row.headerEffects??[],bodyEdits:row.bodyEdits??[], routeSelection: null, routeAttempts: [], terminal: row.terminalText??(row.terminal==='failed'?'failed at Upstream: Upstream; request_committed=true; response_committed=false; client error (Connect)':row.terminal), terminalState: row.terminal, websocket: null, sequenceLoss: 0, autoResponse: row.autoResponse??null };
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
+
+  const trafficKey=(row,column)=>({'request-number':row.requestNumber??'0',method:row.method,status:row.status,process:row.caller.processName,pid:row.caller.processId,host:row.host,path:row.path,url:row.url,protocol:row.protocol,duration:row.durationMs,'http-duration':row.httpDurationMs,'response-bytes':row.responseBytes,'request-bytes':row.requestBytes,state:row.terminal,'content-type':row.contentType,'started-at':row.startedAt>0?row.startedAt:null,'stream-sent':row.streamSent,'stream-received':row.streamReceived,'traffic-type':row.streamProtocol==='web-socket'?'websocket':row.streamProtocol==='sse'?'sse':'http','fetch-destination':row.fetchDestination})[column];
+  const numericColumns=new Set(['request-number','status','pid','duration','http-duration','response-bytes','request-bytes','started-at','stream-sent','stream-received']);
+  const trafficRows=(query={},exclude=null)=>{
+    const snapshot=query.searchResultId?new Set(state.searchResults?.find(result=>result.id===query.searchResultId)?.ids??[]):null;
+    const number=value=>BigInt(value??0);
+    let rows=structuredClone(state.sessions).map(row=>{
+      if(row.streamLifetime?.live&&row.quietStartedAt!=null){const duration=Date.now()-row.quietStartedAt;row.durationMs=duration;row.streamLifetime.durationMs=duration;}
+      return row;
+    }).filter(row=>!state.dismissedIds?.includes(row.id)&&(!snapshot||snapshot.has(row.id))&&(!query.search||(row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(query.search.toLowerCase())));
+    if(query.incidentWindow){const w=query.incidentWindow,intake=state.incidentIntakes?.[w.traceId],marker=intake?.markers.find(m=>m.id===w.markerId);rows=rows.filter(row=>row.traceId===w.traceId&&(!w.markerId||!!marker&&row.startedAt>=marker.unixMillis-w.beforeSeconds*1000&&row.startedAt<=marker.unixMillis+w.afterSeconds*1000)&&(!w.relevantHostsOnly||intake?.profile?.relevantHosts.some(h=>row.host===h.host||h.includeSubdomains&&row.host.endsWith('.'+h.host))));}
+    if(exclude!=='fetch-destination'&&query.fetchDestinations?.length)rows=rows.filter(row=>query.fetchDestinations.includes(row.fetchDestination));
+    for(const filter of query.filters??[]){if(filter.column===exclude)continue;rows=rows.filter(row=>{const value=trafficKey(row,filter.column);return filter.operator==='minimum'?value!=null&&number(value)>=number(filter.value):filter.operator==='maximum'?value!=null&&number(value)<=number(filter.value):filter.operator==='equals'?String(value).toLowerCase()===filter.value.toLowerCase():String(value).toLowerCase().includes(filter.value.toLowerCase());});}
+    for(const group of query.filterGroups??[]){if(group.dimension===exclude||!group.values.length)continue;rows=rows.filter(row=>group.values.some(value=>{const candidate=trafficKey(row,group.dimension);return value.kind==='unavailable'?candidate==null||candidate==='Unavailable':value.kind==='status-family'?Math.floor(row.status/100)===value.value:value.kind==='number'?candidate!=null&&number(candidate)===number(value.value):String(candidate).toLowerCase()===value.value.toLowerCase();}));}
+    if(query.sort){const {column,direction}=query.sort;rows.sort((a,b)=>{const left=trafficKey(a,column),right=trafficKey(b,column);const compared=numericColumns.has(column)?left==null?right==null?0:1:right==null?-1:number(left)<number(right)?-1:number(left)>number(right)?1:0:String(left).localeCompare(String(right));return (direction==='descending'?-compared:compared)||a.id.localeCompare(b.id);});}
+    return rows;
+  };
   const applyResponseFile=(asset,input)=>{
     asset.linkedBody=input.bodyFileMode==='linked'?{path:input.bodyPath,originalContentCodings:state.assetCodings??[],applyOriginalCompression:input.preserveContentEncoding??false}:null;
     asset.copiedFrom=asset.linkedBody?null:input.bodyPath;
@@ -248,7 +268,7 @@ await page.addInitScript((configuration) => {
         }
         case 'review_traffic_export': {
           const id='export-review-'+(state.reviewGeneration=(state.reviewGeneration??0)+1);
-          let rows=state.sessions;if(args.selection?.kind==='selected')rows=rows.filter(r=>args.selection.ids.includes(r.id));if(args.selection?.kind==='source')rows=rows.filter(r=>(r.traceId??null)===args.selection.traceId);
+          let rows=state.sessions;if(args.selection?.kind==='selected')rows=rows.filter(r=>args.selection.ids.includes(r.id));if(args.selection?.kind==='source')rows=rows.filter(r=>(r.traceId??null)===args.selection.traceId);if(args.selection?.kind==='filtered')rows=trafficRows(args.selection.query);
           const result={id,entries:rows.length,retainedEntries:state.sessions.length,sources:['Customer fixture'],sourceCount:1,hosts:['example.test'],firstMillis:1800000000000,lastMillis:1800000003000,incompleteBodies:1,retainedBodyBytes:512,streamRecords:3,retainedStreamBytes:1024,incidentMarkers:1,note:'Entry membership is frozen. Header redaction is not complete anonymization.'};
           if(state.deferExportReview){state.deferExportReview=false;await new Promise(resolve=>state.releaseExportReview=resolve);}
           state.lastReviewSelection=structuredClone(args.selection);return result;
@@ -310,11 +330,20 @@ await page.addInitScript((configuration) => {
         }
         case 'traffic_search_entry': return {entryId:args.id,moreMatches:false,matches:[{boundary:'client-response',field:'Decoded text body',startUtf16:3,endUtf16:7,before:'😀 ',matched:'Café',after:' marker <script>globalThis.matchUnsafe=true</script>',shortened:false},{boundary:'client-response',field:'Decoded text body',startUtf16:10,endUtf16:15,before:'Café / ',matched:'Café',after:' again',shortened:false}]};
         case 'cancel_traffic_search': state.searchCanceled=true;return;
-        case 'matching_traffic_ids': {
-          const result=state.searchResults?.find(result=>result.id===args.query.searchResultId);let rows=state.sessions.filter(row=>!state.dismissedIds?.includes(row.id)&&(!result||result.ids.includes(row.id)));
-          if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
-          for(const filter of args.query.filters??[])rows=rows.filter(row=>filter.column==='status'?String(row.status)===filter.value:filter.column==='host'?row.host.includes(filter.value):true);
-          return rows.map(row=>row.id);
+        case 'matching_traffic_ids': return trafficRows(args.query).map(row=>row.id);
+        case 'traffic_facets': {
+          const request=structuredClone(args.request);
+          if(state.deferFacets){state.deferFacets=false;state.facetPending=true;await new Promise(resolve=>state.releaseFacets=resolve);state.facetPending=false;}
+          if(state.facetError)throw new Error('Fixture facet failure');
+          const rows=trafficRows(request.query,request.dimension),counts=new Map();
+          const add=(key,value,label)=>{const current=counts.get(key);if(current)current.count++;else counts.set(key,{key,value,label,count:1});};
+          let omittedEntries=0;
+          for(const row of rows){const candidate=trafficKey(row,request.dimension);if(candidate==null||candidate==='Unavailable')add('unavailable',{kind:'unavailable'},'Unavailable');else if(String(candidate).length>255){omittedEntries++;}else if(numericColumns.has(request.dimension))add('number:'+candidate,{kind:'number',value:String(candidate)},String(candidate));else{const value=String(candidate).toLowerCase();add('text:'+value,{kind:'text',value},request.dimension==='method'||request.dimension==='protocol'?value.toUpperCase():value);}
+            if(request.dimension==='status'&&row.status>=100&&row.status<600){const family=Math.floor(row.status/100);add('status-family:'+family,{kind:'status-family',value:family},family+'xx');}}
+          state.facetRequests??=[];state.facetRequests.push(request);
+          const options=[...counts.values()].filter(option=>!request.search||option.label.toLowerCase().includes(request.search.toLowerCase())).sort((a,b)=>a.key.localeCompare(b.key)),offset=request.offset??0,limit=request.limit??100;
+          const includedOptions=(request.includeValues??[]).map(value=>{const key=value.kind==='unavailable'?'unavailable':value.kind+':'+String(value.value).toLowerCase();return counts.get(key)??{key,label:value.kind==='unavailable'?'Unavailable':String(value.value),value,count:0};});
+          return {dimension:request.dimension,includedOptions,options:options.slice(offset,offset+limit),matchingEntries:rows.length,omittedEntries,totalOptions:options.length,nextOffset:offset+limit<options.length?offset+limit:null};
         }
         case 'remove_unselected_traffic_entries': {
           state.dismissedIds??=[];const changed=state.sessions.map(row=>row.id).filter(id=>!args.ids.includes(id)&&!state.dismissedIds.includes(id));state.dismissedIds.push(...changed);return changed;
@@ -328,15 +357,9 @@ await page.addInitScript((configuration) => {
           if (state.deferFocus && args.query.focusId) { state.deferFocus=false; state.focusPending=true; await new Promise(resolve=>state.releaseFocus=resolve); }
           if (state.deferRefresh && !args.query.focusId) { state.deferRefresh=false; state.refreshPending=true; await new Promise(resolve=>state.releaseRefresh=resolve); }
           await new Promise((resolve) => setTimeout(resolve, state.queryDelay)); state.lastQuery=args.query;
-          const key = (row, column) => ({'request-number':BigInt(row.requestNumber??'0'),method:row.method,status:row.status,process:row.caller.processName,host:row.host,path:row.path,duration:row.durationMs,'response-bytes':row.responseBytes,'started-at':row.startedAt,pid:row.caller.processId,url:row.url})[column];
-          const dismissedQuery=new Set(state.dismissedIds??[]),matchingQuery=args.query.searchResultId?new Set(state.searchResults?.find(result=>result.id===args.query.searchResultId)?.ids??[]):null;
-          let rows = structuredClone(state.sessions).filter(row => (!matchingQuery||matchingQuery.has(row.id)) && !dismissedQuery.has(row.id) && (!args.query.search || (row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(args.query.search.toLowerCase())));
-          if(args.query.incidentWindow){const w=args.query.incidentWindow;const intake=state.incidentIntakes?.[w.traceId];const marker=intake?.markers.find(m=>m.id===w.markerId);rows=rows.filter(row=>row.traceId===w.traceId&&(!w.markerId||!!marker&&row.startedAt>=marker.unixMillis-w.beforeSeconds*1000&&row.startedAt<=marker.unixMillis+w.afterSeconds*1000)&&(!w.relevantHostsOnly||intake?.profile?.relevantHosts.some(h=>row.host===h.host||h.includeSubdomains&&row.host.endsWith('.'+h.host))));}
-          if(args.query.fetchDestinations?.length)rows=rows.filter(row=>args.query.fetchDestinations.includes(row.fetchDestination));
-          for (const filter of args.query.filters ?? []) rows = rows.filter(row => filter.operator==='minimum'?key(row,filter.column)>=(filter.column==='request-number'?BigInt(filter.value):Number(filter.value)):filter.operator==='maximum'?key(row,filter.column)<=(filter.column==='request-number'?BigInt(filter.value):Number(filter.value)):filter.operator==='equals'?String(key(row,filter.column)).toLowerCase()===filter.value.toLowerCase():String(key(row,filter.column)).toLowerCase().includes(filter.value.toLowerCase()));
-          const {sort,limit=100} = args.query;
+          let rows=trafficRows(args.query);
+          const {sort,limit=100}=args.query;
           let offset=args.query.offset??0;
-          if (sort) rows.sort((a,b) => {const left=key(a,sort.column),right=key(b,sort.column);const result=typeof left==='bigint'?(left<right?-1:left>right?1:0):typeof left==='number'?left-right:String(left).localeCompare(String(right));return (sort.direction==='descending'?-result:result)||a.id.localeCompare(b.id);});
           if (args.query.focusId) {
             const index=rows.findIndex(row=>row.id===args.query.focusId);
             if (index<0) throw new Error('Source no longer in Traffic.');
@@ -358,7 +381,7 @@ await page.addInitScript((configuration) => {
           if(state.timelineFailure)throw new Error('Fixture timeline failure');
           if(state.deferTimeline){state.deferTimeline=false;state.timelinePending=true;await new Promise(resolve=>state.releaseTimeline=resolve);state.timelinePending=false;}
           const dismissed=new Set(state.dismissedIds??[]);
-          return view.ids.slice(args.offset,args.offset+args.limit).filter(id=>!dismissed.has(id)).map(id=>state.rowMap.get(id)).filter(Boolean).map(row=>({id:row.id,requestNumber:row.requestNumber,method:row.method,url:row.url,traceId:row.traceId??null,startMillis:row.startedAt||null,durationMicros:row.durationMs==null?null:row.durationMs*1000,responseMicros:row.responseOffset??null,basis:'Fixture recorded interval',terminal:row.terminal}));
+          return view.ids.slice(args.offset,args.offset+args.limit).filter(id=>!dismissed.has(id)).map(id=>state.rowMap.get(id)).filter(Boolean).map(row=>({id:row.id,requestNumber:row.requestNumber,method:row.method,url:row.url,traceId:row.traceId??null,startMillis:row.startedAt||null,durationMicros:(row.httpDurationMs??row.durationMs)==null?null:(row.httpDurationMs??row.durationMs)*1000,responseMicros:row.responseOffset??null,basis:'Fixture recorded interval',terminal:row.terminal}));
         }
         case 'composer_source': {
           if(state.sourceDelay)await new Promise(resolve=>setTimeout(resolve,state.sourceDelay));
@@ -378,7 +401,7 @@ await page.addInitScript((configuration) => {
         case 'stream_page': {
           const query=args.query;let rows=(state.streamItems??[]).filter(row=>(!query.sender||row.message.sender===query.sender)&&(query.controls||['text','binary','event'].includes(row.message.kind))&&(!query.search||new TextDecoder().decode(new Uint8Array(row.message.payload)).includes(query.search)));
           const total=rows.length;const offset=query.tail?Math.max(0,total-query.limit):Math.min(query.offset,Math.max(0,total-1));
-          return {total,offset,rows:rows.slice(offset,offset+query.limit).map(row=>({...row,message:{...row.message,payload:[],raw:null}})),summary:state.streams?.[query.sessionId]??null};
+          return {total,offset,rows:rows.slice(offset,offset+query.limit).map(row=>({...row,message:{...row.message,payload:[],raw:null}})),summary:detail(query.sessionId).stream};
         }
         case 'stream_message': {
           const message=structuredClone(state.streamItems.find(row=>row.sequence===args.sequence)?.message);
@@ -689,6 +712,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--traffic-filters-only')){await page.goto('https://workspace.test/');await checkTrafficFilters(page,root);await checkTrafficAdvanced(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic filtering and stream lifetime checks passed.\n');process.exit(0);}
   if(process.argv.includes('--scripts-only')) {await page.goto('https://workspace.test/');await view('automation');await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();await checkScripts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Script draft, activation, discard, async state and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--automation-ux-only')) {await checkAutomationContracts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Automation draft, activation, failure feedback and responsive contracts verified.\n');process.exit(0);}
   if(process.argv.includes('--shortcuts-only')) {await checkWindowShortcuts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Window and Traffic shortcuts, scopes, dialogs, import and responsive menus verified.\n');process.exit(0);}
@@ -767,26 +791,21 @@ try {
   assert.equal(await page.locator('tr[data-session-id="second"] .navigation-badge').count(),0);
   assert.equal(await page.evaluate(async()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');workspace.timingDialog.showModal();workspace.closeTimings();workspace.timingDialog.showModal();const generation=workspace.timingGeneration;await new Promise(resolve=>setTimeout(resolve,20));const stable=workspace.timingGeneration===generation;workspace.closeTimings();return stable;}),true,'A stale close event invalidated reopened timings');
   await page.getByRole('button',{name:'Filters',exact:true}).click();
-  await page.getByRole('button',{name:'Fetch destination',exact:true}).click();
-  const destinations=page.locator('#fetch-destination-options:popover-open');
-  assert.equal(await destinations.getByRole('checkbox').count(),24);
-  assert.equal(await destinations.locator('input[value="fencedframe"]').count(),0);
+  const destinations=page.locator('#traffic-filter-picker:popover-open');
+  await destinations.getByLabel('Filter field',{exact:true}).selectOption('fetch-destination');
+  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.pickerLoading);
   await destinations.getByRole('checkbox',{name:'Document',exact:true}).check();
   const imageDestination=destinations.getByRole('checkbox',{name:'Image',exact:true});await imageDestination.focus();await page.keyboard.press('Space');
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length===2);
-  assert.deepEqual(await page.locator('tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId).sort()),['first','image']);
-  assert.equal(await destinations.getByRole('checkbox',{name:'Document',exact:true}).isChecked(),true);
-  assert.equal(await imageDestination.isChecked(),true);
-  assert.equal(await page.locator('.filter-chip').count(),1);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/fetch-destinations-wide.png')});
   await page.setViewportSize({width:760,height:520});
   const destinationBounds=await destinations.boundingBox();assert.ok(destinationBounds.x>=0&&destinationBounds.y>=0&&destinationBounds.x+destinationBounds.width<=760&&destinationBounds.y+destinationBounds.height<=520,'Destination dropdown escaped the viewport');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/fetch-destinations-compact.png')});
-  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/fetch-destinations-contrast.png')});await page.emulateMedia({forcedColors:'none'});
-  await page.keyboard.press('Escape');await page.keyboard.press('Escape');
-  await page.getByRole('button',{name:'Remove fetch destination filter',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').sessions.length===4);
-  assert.equal(await page.locator('.filter-chip').count(),0);
+  await destinations.getByRole('button',{name:'Apply filter',exact:true}).click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.totalMatched===2);
+  assert.deepEqual(await page.locator('tr[data-session-id]').evaluateAll(rows=>rows.map(row=>row.dataset.sessionId).sort()),['first','image']);
+  assert.equal(await page.locator('.filter-chip').count(),1);
+  await page.locator('.filter-chip-remove').click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.totalMatched===4);
   await page.setViewportSize({width:1280,height:800});
   await page.evaluate(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace');globalThis.__workspaceFixture.deferResultQuery=true;workspace.searchText='/';workspace.searchInput.value='/';globalThis.__destinationSearch=(workspace.trafficSearchKind='contents',workspace.runContentSearch());});
   await page.waitForFunction(()=>globalThis.__workspaceFixture.resultQueryPending);
@@ -845,7 +864,7 @@ try {
   await page.locator('#table-settings').getByLabel('Response size',{exact:true}).check();
   await page.keyboard.press('Escape');
   assert.equal(await page.locator('#header-response-bytes').count(),1);
-  await openColumn('status'); await page.getByRole('textbox',{name:'Column filter value'}).fill('304'); await page.locator('#column-actions').getByRole('button',{name:'Apply filter'}).click();
+  await openColumn('status'); await page.locator('#column-actions').getByRole('button',{name:'Filter Status…',exact:true}).click();await page.locator('#traffic-filter-picker .filter-custom summary').click(); await page.getByRole('textbox',{name:'Column filter value'}).fill('304'); await page.locator('#traffic-filter-picker').getByRole('button',{name:'Apply filter'}).click();
   await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.querySelectorAll('.traffic-table tbody tr[data-session-id]').length===1);
   assert.equal(await page.locator('.traffic-table tbody tr[data-session-id]').getAttribute('data-session-id'),'cached');
   await page.getByRole('button',{name:'Clear filters',exact:true}).click();
@@ -2302,8 +2321,8 @@ try {
   const viewerRows=await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,rows=s.sessions;s.sessions=[];await t.refreshSessions(undefined,true);return rows;});
   assert.match(await page.locator('.empty-cell').textContent(),/Import a saved capture/);
   await page.getByLabel('Filter or search traffic',{exact:true}).fill('not-present');
-  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.sessionText.includes('No matching traffic'));
-  assert.match(await page.locator('.empty-cell').textContent(),/No matching traffic/);
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.sessionText.includes('No matching saved traffic'));
+  assert.match(await page.locator('.empty-cell').textContent(),/No matching (saved )?traffic/);
   await page.getByLabel('Filter or search traffic',{exact:true}).fill('');
   await page.evaluate(async rows=>{globalThis.__workspaceFixture.sessions=rows;await document.querySelector('app-shell').traffic.refreshSessions(undefined,true);},viewerRows);
 
@@ -2494,6 +2513,7 @@ try {
   await page.evaluate(async()=>{globalThis.__workspaceFixture.clearBytes=1000000000;await document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').clearTraffic();});
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
+  await page.goto('https://workspace.test/');await checkTrafficFilters(page,root);await checkTrafficAdvanced(page,root);
   await checkStreams(page,root);
   await checkAutomationContracts(page,root);
   await checkActionMenus(page,root);

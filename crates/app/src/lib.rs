@@ -39,7 +39,7 @@ mod search;
 mod sessions;
 mod streams;
 pub use streams::save_stream_content;
-pub use streams::{StreamPage, StreamQuery, StreamRow, StreamSummary};
+pub use streams::{StreamLifetime, StreamPage, StreamQuery, StreamRow, StreamSummary};
 pub use transmog_core::stream::StreamMessage;
 mod trace_body;
 mod trace_format;
@@ -140,7 +140,8 @@ use serde::Serialize;
 pub use sessions::{
     ClientIdentityView, FilterOperator, SessionColumnFilter, SessionHint, SessionPage,
     SessionQueryInput, SessionSort, SessionSummary, SessionUpdateSubscription, SortDirection,
-    TrafficTimelineRow, TrafficView,
+    TrafficDimension, TrafficFacet, TrafficFacetInput, TrafficFacetOption, TrafficFacetPage,
+    TrafficFilterGroup, TrafficFilterValue, TrafficTimelineRow, TrafficView,
 };
 use thiserror::Error;
 pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveProgress, TraceSaveResult};
@@ -1397,6 +1398,23 @@ impl Application {
             self.searches.resolve(query.search_result_id.as_deref())?,
         )?;
         sessions::matching_ids(&self.service, query, &self.traces, matching.as_deref())
+    }
+
+    /// Counts contextual metadata options across all retained traffic, excluding the edited dimension.
+    ///
+    /// # Errors
+    /// Returns invalid filters, facet bounds or expired content-search evidence.
+    pub fn traffic_facets(
+        &self,
+        request: &TrafficFacetInput,
+    ) -> Result<TrafficFacetPage, AppError> {
+        let query = &request.query;
+        let matching = incidents::restrict(
+            self,
+            query.incident_window.as_ref(),
+            self.searches.resolve(query.search_result_id.as_deref())?,
+        )?;
+        sessions::facet_counts(&self.service, request, &self.traces, matching.as_deref())
     }
 
     /// Creates an ordered traffic view without transferring offscreen row metadata.

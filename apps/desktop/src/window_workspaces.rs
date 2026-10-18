@@ -78,6 +78,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "record_frontend_diagnostic"
             | "query_sessions"
             | "query_traffic_view"
+            | "traffic_facets"
             | "traffic_view_rows"
             | "traffic_timeline_rows"
             | "release_traffic_view"

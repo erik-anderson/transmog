@@ -17,7 +17,7 @@ stream-inspector { container-type:size;container-name:stream-space;display:flex;
 .stream-back{display:none;}
 .stream-status,.stream-notice,.stream-facts,.stream-tools,.stream-payload-tools{flex-shrink:0;}
 @container stream-space (min-width:850px) {
-  .stream-inspector{display:grid;grid-template-columns:minmax(20rem,40%) minmax(0,1fr);grid-template-rows:auto auto auto auto auto auto minmax(0,1fr);grid-template-areas:"status status" "notice notice" "filters filters" "error error" "list actions" "list facts" "list payload";}
+  .stream-inspector{display:grid;grid-template-columns:minmax(20rem,40%) minmax(0,1fr);grid-template-rows:auto auto auto auto auto auto auto minmax(0,1fr);grid-template-areas:"status status" "timing timing" "notice notice" "filters filters" "error error" "list actions" "list facts" "list payload";}
   .stream-status{grid-area:status;}.stream-notice{grid-area:notice;}.stream-error{grid-area:error;}.stream-tools{grid-area:filters;}.stream-list{grid-area:list;min-height:0;border-right:1px solid var(--line);}.stream-payload-tools{grid-area:actions;}.stream-facts{grid-area:facts;}.stream-payload{grid-area:payload;min-height:0;}
 }
 @container stream-space (max-height:280px) and (max-width:849px) {
@@ -27,3 +27,5 @@ stream-inspector { container-type:size;container-name:stream-space;display:flex;
   .stream-back{display:inline-block;}
   .stream-list,.stream-payload{min-height:5rem;flex-shrink:0;}
 }
+
+.stream-timing {grid-area:timing;flex-shrink:0;padding:.25rem .5rem;font-size:.75rem;border-bottom:1px solid var(--line);}.stream-timing dl {display:flex;flex-wrap:wrap;gap:.35rem 1.2rem;margin:0;}.stream-timing dl div {display:flex;gap:.4rem;}.stream-timing dt {color:var(--muted);}.stream-timing dd {margin:0;font-variant-numeric:tabular-nums;}.stream-timing summary {cursor:pointer;margin-top:.25rem;}.stream-timing p {margin:.3rem 0;overflow-wrap:anywhere;}

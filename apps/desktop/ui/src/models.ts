@@ -37,7 +37,12 @@ export interface SessionSummary {
   streamProtocol?: 'web-socket' | 'sse' | null;
   status: number | null;
   durationMs: number | null;
+  httpDurationMs?: number | null;
+  responseHeadersMs?: number | null;
+  streamLifetime?: StreamLifetime | null;
   traceId?: string | null;
+  streamSent?: number | null;
+  streamReceived?: number | null;
   requestBytes: number;
   responseBytes: number;
   terminal: 'active' | 'completed' | 'failed' | 'cancelled' | 'interrupted' | 'open-at-capture' | 'incomplete';
@@ -221,7 +226,7 @@ export interface ClientCertificatePending {id:string;host:string;port:number;cal
 export interface ClientCertificateStatus {supported:boolean;pending:ClientCertificatePending[]}
 export interface ClientCertificateRequestDetail {pending:ClientCertificatePending;choices:ClientCertificateIdentity[];tlsVersion:string;acceptedIssuers:number;signatureAlgorithms:string[]}
 
-export type ColumnId = 'request-number' | 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
+export type ColumnId = 'request-number' | 'method' | 'status' | 'process' | 'pid' | 'host' | 'path' | 'url' | 'protocol' | 'duration' | 'http-duration' | 'stream-sent' | 'stream-received' | 'response-bytes' | 'request-bytes' | 'state' | 'content-type' | 'started-at';
 export interface ColumnPreference { id: ColumnId; width: number; visible: boolean; pinned: boolean; }
 export interface WorkspacePreferences {
   sidebarCollapsed: boolean;
@@ -236,6 +241,12 @@ export interface WorkspacePreferences {
   columns: ColumnPreference[];
 }
 export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }
+export type TrafficDimension = ColumnId | 'traffic-type' | 'fetch-destination';
+export type TrafficFilterValue = {kind:'text';value:string}|{kind:'number';value:string}|{kind:'status-family';value:number}|{kind:'unavailable'};
+export interface TrafficFilterGroup {dimension:TrafficDimension;values:TrafficFilterValue[];}
+export interface TrafficFacetOption {key:string;label:string;value:TrafficFilterValue;count:number;}
+export interface TrafficFacetPage {dimension:TrafficDimension;options:TrafficFacetOption[];includedOptions:TrafficFacetOption[];matchingEntries:number;omittedEntries:number;totalOptions:number;nextOffset:number|null;}
+export interface TrafficQuery {incidentWindow:unknown;search:string;searchResultId:string|null;sort:TrafficSort;fetchDestinations:string[];filters:Array<Pick<TrafficFilter,'column'|'operator'|'value'>>;filterGroups:TrafficFilterGroup[];}
 export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equals' | 'minimum' | 'maximum'; value: string; label: string; }
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
 export interface RawHeaderField {name:number[];value:number[];}
@@ -365,7 +376,8 @@ export interface TracePasswordPrompt {title:string;confirm:boolean;message:strin
 export interface OperationError {title:string;message:string;resolve:()=>void;}
 
 export interface StreamMessage { atMillis:number; sender:string; kind:string; byteCount:number; payload:number[]; truncated:boolean; compressed:boolean; event:string|null; eventId:string|null; retry:number|null; raw:string|null; closeCode:number|null; }
-export interface StreamSummary { state:{protocol:'web-socket'|'sse';status:string;atMillis:number;reason:string|null}; imported:boolean; revision:number; observed:number; evicted:number; sequenceLoss:number; retained:number; clientBytes:number; serverBytes:number; openedAt:number|null; lastActivity:number|null; }
+export interface StreamLifetime { durationMs:number|null; establishedAt:number|null; endedAt:number|null; observedUntil:number|null; live:boolean; boundary:'live'|'final'|'open-at-capture'|'incomplete'|'never-established'; }
+export interface StreamSummary { lifetime?:StreamLifetime; httpDurationMs?:number|null; responseHeadersMs?:number|null; state:{protocol:'web-socket'|'sse';status:string;atMillis:number;reason:string|null}; imported:boolean; revision:number; observed:number; evicted:number; sequenceLoss:number; retained:number; clientBytes:number|null; serverBytes:number|null; openedAt:number|null; lastActivity:number|null; }
 export interface StreamRow { sequence:number; message:StreamMessage; }
 export interface StreamPage { total:number; offset:number; rows:StreamRow[]; summary:StreamSummary|null; }
 

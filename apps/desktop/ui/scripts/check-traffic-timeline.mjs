@@ -197,13 +197,14 @@ export async function checkTrafficTimeline(page,root) {
     await page.evaluate(()=>globalThis.__workspaceFixture.releaseTimeline());
     await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.timelinePending);
     assert.equal(await input.evaluate(el=>el===el.getRootNode().activeElement),true,'Late source navigation stole focus');
-    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=s.sessions[0];s.sessions=Array.from({length:10000},(_,i)=>({...seed,id:'tl-load-'+i,requestNumber:String(i+1),startedAt:1800000000000+i*10,durationMs:50,url:'https://example.test/scenario/long-url/'+i+'?value='+('long-value-'.repeat(20))}));t.liveFilter='';t.searchText='';t.searchInput.value='';t.queryRevision++;await t.refreshSessions(undefined,true);await t.refreshTimeline();});
+    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic,seed=s.sessions[0];s.sessions=Array.from({length:10000},(_,i)=>({...seed,id:'tl-load-'+i,requestNumber:String(i+1),startedAt:1800000000000+i*10,durationMs:50,url:'https://example.test/scenario/long-url/'+i+'?value='+('long-value-'.repeat(20))}));for(const i of [2500,2501]){const row=s.sessions[i];Object.assign(row,{host:'timeline-'+i+'.test',url:row.url.replace('example.test','timeline-'+i+'.test'),caller:{kind:'local-process',processName:'timeline-'+i+'.exe',processId:i},status:202,contentType:'application/vnd.timeline-'+i+'+json'});}t.liveFilter='';t.searchText='';t.searchInput.value='';t.queryRevision++;await t.refreshSessions(undefined,true);await t.refreshTimeline();});
     await timeline.getByRole('button',{name:'Reset range',exact:true}).click();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),10000);
     assert.ok(await timeline.locator('.timeline-row').count()<100,'Timeline DOM grew with capture size');
     await show(false);
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.sessionScroller.scrollTop=t.virtualList.offset(5000);t.renderViewport();});
     await traffic.locator('#session-tl-load-5000').waitFor({state:'visible'});
+    await traffic.locator('#session-tl-load-5000').click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-5000');await page.evaluate(()=>document.querySelector('app-shell').traffic.clearTrafficSelection());
     const listScroll=await traffic.locator('.table-wrap').evaluate(el=>el.scrollTop);
     await show(true);await show(false);
     assert.ok(Math.abs(await traffic.locator('.table-wrap').evaluate(el=>el.scrollTop)-listScroll)<1,'Toggling Timeline lost the List scroll position');
@@ -223,6 +224,7 @@ export async function checkTrafficTimeline(page,root) {
     assert.ok(Math.abs(await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop/48)-5000)<1,'Density change lost the current request position');
     await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,compactRows:true};});
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.timeline.rowHeight===32);
+    await checkUncachedTimelineContext(page,traffic,timeline,root);
     await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=el.scrollHeight);
     await timeline.locator('#timeline-tl-load-9999').waitFor();await timeline.locator('#timeline-tl-load-9999').click();
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-9999');
@@ -250,4 +252,29 @@ export async function checkTrafficTimeline(page,root) {
     await page.evaluate(async saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.timelineFailure=false;s.deferTimeline=false;s.releaseTimeline?.();t.setTimeline(false);s.sessions=saved.rows;t.preferences=saved.preferences;t.comparisonBaseline=saved.baseline;t.comparisonBaselineLabel=saved.baselineLabel;t.liveFilter='';t.searchText='';t.searchInput.value='';t.clearTrafficSelection();t.queryRevision++;await t.refreshSessions(undefined,true);},saved);
     await page.setViewportSize({width:1280,height:800});
   }
+}
+
+async function checkUncachedTimelineContext(page,traffic,timeline,root) {
+ const actions=traffic.locator('.selection-actions').getByRole('button',{name:'Actions',exact:true}),menu=traffic.locator('#selected-request-actions'),picker=traffic.locator('#traffic-filter-picker');
+ assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.rowCache.has('tl-load-2500')),false,'Timeline context regression did not inspect beyond cached List pages');
+ await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=2500*32);await timeline.locator('#timeline-tl-load-2500').click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-2500');
+ await actions.click();await openActionGroup(menu,'Filter by');
+ for(const label of ['Host: timeline-2500.test…','Process: timeline-2500.exe…','Status: 202…','Content type: application/vnd.timeline-2500+json…'])assert.equal(await menu.getByRole('button',{name:label,exact:true}).isVisible(),true);
+ await menu.getByRole('button',{name:'Host: timeline-2500.test…',exact:true}).click();assert.equal(await picker.getByRole('checkbox',{name:'timeline-2500.test',exact:true}).isChecked(),true);await page.keyboard.press('Escape');
+ // Empty and failed metadata reads keep detail usable without exposing prior values.
+ for(const failure of ['empty','error']){
+  await page.evaluate(async failure=>{const t=document.querySelector('app-shell').traffic,raw=window.__TAURI_INTERNALS__.invoke;globalThis.__contextRaw=raw;window.__TAURI_INTERNALS__.invoke=async(name,args,options)=>{if(name==='query_sessions'&&args.query.focusId==='tl-load-2500'){if(failure==='error')throw new Error('Context fixture failure');return {sessions:[]};}return raw(name,args,options);};await t.inspectTimeline(new CustomEvent('inspect-request',{detail:'tl-load-2500'}));},failure);
+  assert.deepEqual(await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return [t.selectedDetail?.id,t.inspectorContextReady,t.inspectorContextValues.map(v=>v.label)];}),['tl-load-2500',false,['Host','Process','Status','Content type']]);
+  await actions.click();await openActionGroup(menu,'Filter by');await menu.getByText('Filter values unavailable. Reopen Actions to retry.',{exact:true}).waitFor();assert.equal(await menu.locator('action-submenu[label="Filter by"]').getByRole('button',{name:'Host…',exact:true}).isDisabled(),true);await traffic.getByRole('heading',{name:'Traffic',exact:true}).click();
+  await page.evaluate(()=>window.__TAURI_INTERNALS__.invoke=globalThis.__contextRaw);await actions.click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.inspectorContextReady);await openActionGroup(menu,'Filter by');assert.equal(await menu.getByRole('button',{name:'Host: timeline-2500.test…',exact:true}).isVisible(),true);await traffic.getByRole('heading',{name:'Traffic',exact:true}).click();
+ }
+ // Hold B's metadata while C is selected; the late B result must not replace C.
+ await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,s=globalThis.__workspaceFixture;s.deferFocus=true;globalThis.__lateTimelineContext=t.inspectTimeline(new CustomEvent('inspect-request',{detail:'tl-load-2500'}));});await page.waitForFunction(()=>globalThis.__workspaceFixture.focusPending);
+ await timeline.locator('#timeline-tl-load-2501').click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='tl-load-2501');await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.releaseFocus();await globalThis.__lateTimelineContext;s.focusPending=false;});
+ assert.deepEqual(await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return [t.selectedSessionId,t.selectedDetail?.id,t.selectedTrafficCount,t.followLatest,t.rowCache.has('tl-load-2501')];}),['tl-load-2501','tl-load-2501',0,false,false]);
+ await actions.click();await openActionGroup(menu,'Filter by');await menu.getByRole('button',{name:'Host: timeline-2501.test…',exact:true}).click();assert.equal(await picker.getByRole('checkbox',{name:'timeline-2501.test',exact:true}).isChecked(),true);await picker.getByRole('button',{name:'Apply filter',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.queryPending&&document.querySelector('app-shell').traffic.totalMatched===1);
+ assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'tl-load-2501');
+ await page.evaluate(async()=>await document.querySelector('app-shell').traffic.refreshTimeline());assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.timelineEntries.length),1);
+ await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-timeline-uncached-filter.png')});
+ await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;await t.clearFilters();await t.refreshTimeline();});await timeline.getByRole('button',{name:'Reset range',exact:true}).click();await timeline.locator('.timeline-viewport').evaluate(el=>el.scrollTop=el.scrollHeight);await timeline.locator('#timeline-tl-load-9999').waitFor({state:'visible'});
 }

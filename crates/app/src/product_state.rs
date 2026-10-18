@@ -1333,9 +1333,42 @@ mod tests {
     }
 
     #[test]
+    fn stream_columns_append_hidden_without_replacing_the_current_sixteen_column_layout() {
+        let mut state = ProductState::default();
+        state.workspace.columns.retain(|column| {
+            !matches!(
+                column.id,
+                crate::TrafficColumn::StreamSent | crate::TrafficColumn::StreamReceived
+            )
+        });
+        state.workspace.columns.reverse();
+        state.workspace.columns[0].width = 399;
+        state.workspace.columns[1].pinned = true;
+        state.workspace.columns[2].visible = false;
+        state.workspace.list_split = 63;
+        let previous = state.workspace.clone();
+        let upgraded = validate(state).unwrap();
+        assert_eq!(upgraded.workspace.columns[..16], previous.columns);
+        assert!(
+            upgraded.workspace.columns[16..]
+                .iter()
+                .all(|column| !column.visible && !column.pinned)
+        );
+        assert_eq!(upgraded.workspace.list_split, 63);
+    }
+
+    #[test]
     fn legacy_column_upgrade_preserves_custom_layout_and_hidden_number_survives() {
         let mut state = ProductState::default();
         state.workspace.columns.remove(0);
+        state.workspace.columns.retain(|column| {
+            !matches!(
+                column.id,
+                crate::TrafficColumn::HttpDuration
+                    | crate::TrafficColumn::StreamSent
+                    | crate::TrafficColumn::StreamReceived
+            )
+        }); // Complete original layout.
         state.workspace.columns.swap(0, 5);
         state.workspace.columns[0].width = 311;
         state.workspace.columns[1].visible = false;
@@ -1343,7 +1376,15 @@ mod tests {
         state.workspace.list_split = 67;
         let legacy = state.workspace.clone();
         let upgraded = validate(state).unwrap();
-        assert_eq!(upgraded.workspace.columns[1..], legacy.columns);
+        assert_eq!(
+            upgraded.workspace.columns[1..upgraded.workspace.columns.len() - 3],
+            legacy.columns
+        );
+        assert_eq!(
+            upgraded.workspace.columns[upgraded.workspace.columns.len() - 3].id,
+            crate::TrafficColumn::HttpDuration
+        );
+        assert!(!upgraded.workspace.columns.last().unwrap().visible);
         assert_eq!(upgraded.workspace.list_split, 67);
         let mut hidden = upgraded;
         hidden.workspace.columns[0].visible = false;

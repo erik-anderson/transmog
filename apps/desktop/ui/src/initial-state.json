@@ -430,7 +430,10 @@
         "width": 340,
         "visible": false,
         "pinned": false
-      }
+      },
+      {"id":"http-duration","width":112,"visible":false,"pinned":false},
+      {"id":"stream-sent","width":120,"visible":false,"pinned":false},
+      {"id":"stream-received","width":132,"visible":false,"pinned":false}
     ]
   },
   "preferences": {
@@ -532,7 +535,10 @@
         "width": 340,
         "visible": false,
         "pinned": false
-      }
+      },
+      {"id":"http-duration","width":112,"visible":false,"pinned":false},
+      {"id":"stream-sent","width":120,"visible":false,"pinned":false},
+      {"id":"stream-received","width":132,"visible":false,"pinned":false}
     ],
     "autoresponseSplit": 45
   },
@@ -552,6 +558,60 @@
     "direction": "descending"
   },
   "sortLabel": "Newest first",
+  "pickerObserved": false,
+  "pickerSearch": "",
+  "pickerNextOffset": null,
+  "pickerObservedTotal": 0,
+  "pickerObservedShown": 0,
+  "pickerCanMore": false,
+  "pickerSuggestionHint": "",
+  "pickerRange": false,
+  "pickerTime": false,
+  "pickerRangeKind": "",
+  "pickerRangeUnit": "ms",
+  "pickerRangeUnits": [],
+  "pickerTimeZone": "",
+  "contextValues": [{"dimension": "host", "label": "Host", "value": {"kind": "unavailable"}}, {"dimension": "process", "label": "Process", "value": {"kind": "unavailable"}}, {"dimension": "status", "label": "Status", "value": {"kind": "unavailable"}}, {"dimension": "content-type", "label": "Content type", "value": {"kind": "unavailable"}}],
+  "inspectorContextReady": false,
+  "inspectorContextStatus": "Filter values unavailable.",
+  "inspectorContextValues": [{"dimension": "host", "label": "Host", "value": {"kind": "unavailable"}}, {"dimension": "process", "label": "Process", "value": {"kind": "unavailable"}}, {"dimension": "status", "label": "Status", "value": {"kind": "unavailable"}}, {"dimension": "content-type", "label": "Content type", "value": {"kind": "unavailable"}}],
+  "pickerRangeInput": "text",
+  "pickerPresets": [],
+  "pickerRangeNotice": "",
+  "filterGroups": [],
+  "filterChips": [],
+  "pickerFields": [
+    {
+      "id": "traffic-type",
+      "label": "Traffic type",
+      "numeric": false,
+      "placeholder": "HTTP, WebSocket or SSE"
+    }
+  ],
+  "pickerDimension": "traffic-type",
+  "pickerLabel": "Traffic type",
+  "pickerNumeric": false,
+  "pickerCustom": false,
+  "pickerPlaceholder": "",
+  "pickerOptions": [],
+  "pickerMoreOptions": [],
+  "pickerConstraints": [],
+  "pickerLoading": false,
+  "pickerError": "",
+  "pickerOmission": "",
+  "pickerScope": "",
+  "pickerOpen": false,
+  "pickerMaxHeight": "500px",
+  "streamDisclosureLabel": "",
+  "streamDisclosureState": "",
+  "streamDisclosureTiming": "",
+  "streamDisclosureHttp": "",
+  "streamTypeAction": "Filter stream type",
+  "streamStateAction": "Filter stream state",
+  "streamLifetimeText": "",
+  "streamHttpLabel": "Handshake",
+  "streamHttpTiming": "",
+  "streamTimingNote": "",
   "filters": [],
   "filterCount": 0,
   "fetchDestinations": [],
@@ -729,6 +789,20 @@
       "sortDirection": "none",
       "sortArrow": "",
       "headerLabel": "Response size"
+    },
+    {
+      "id": "protocol",
+      "width": 210,
+      "visible": true,
+      "pinned": false,
+      "label": "Protocol",
+      "headerLabel": "Protocol",
+      "numeric": false,
+      "placeholder": "HTTP/1.1",
+      "widthCss": "210px",
+      "offsetCss": "232px",
+      "sortDirection": "none",
+      "sortArrow": ""
     }
   ],
   "settingsColumns": [
@@ -836,9 +910,30 @@
       "visible": false,
       "pinned": false,
       "label": "Full URL"
+    },
+    {
+      "id": "http-duration",
+      "width": 112,
+      "visible": false,
+      "pinned": false,
+      "label": "HTTP duration"
+    },
+    {
+      "id": "stream-sent",
+      "width": 120,
+      "visible": false,
+      "pinned": false,
+      "label": "Stream sent"
+    },
+    {
+      "id": "stream-received",
+      "width": 132,
+      "visible": false,
+      "pinned": false,
+      "label": "Stream received"
     }
   ],
-  "tableWidth": "986px",
+  "tableWidth": "1268px",
   "inspectorSide": "response",
   "bodySummary": "",
   "trafficCreateLabel": "Create saved responses…",

@@ -15,9 +15,12 @@ import { attr, observable } from '@microsoft/webui-framework';
 import { Channel, invoke } from '@tauri-apps/api/core';
 import { listen, type UnlistenFn } from '@tauri-apps/api/event';
 import { WorkspaceElement } from '../workspace-element.js';
-import type { TrafficRuleKind,TrafficRuleRequest,SelectedResponse, ResponsePreviewIntent, AutomationStatus, ColumnId, Lifecycle, SessionSummary, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
+import type { TrafficRuleKind,TrafficRuleRequest,SelectedResponse, ResponsePreviewIntent, AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
-import { cellText, columnDefinitions, defaultWorkspace, displayColumns, stateText, statusText, statusTone } from '../table-model.js';
+import {rangeKind,rangeUnits,inclusiveRange,localDateTime} from '../traffic-ranges.js';
+import {filterDimensions,fixedFilterChoices,filterValueKey,filterLabel,valueLabel,trafficFilterChips,columnDimension,type FilterChoice,type FilterChip} from '../traffic-filters.js';
+import type {TrafficDimension,TrafficFilterGroup,TrafficFilterValue,TrafficFacetPage,TrafficQuery} from '../models.js';
+import {formatDuration,lifetimeDescription, cellText, columnDefinitions, defaultWorkspace, displayColumns, stateText, statusText, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
 import {VirtualList} from '../virtual-list.js';
 import initialState from '../initial-state.json';
@@ -27,8 +30,9 @@ import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSear
 
 import {traceMarkers,type MarkerReview,type TraceMarker} from '../markers.js';
 
+type ContextValue={dimension:TrafficDimension;label:string;value:TrafficFilterValue};
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
-type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;markerLabel:string;activeStreamLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
+type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;markerLabel:string;activeStreamLabel:string;streamLabel:string;streamDisplay:string;streamAccessibleLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
 
 export class TrafficWorkspace extends WorkspaceElement {
 
@@ -155,7 +159,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         if(this.timelineRevision!==revision)this.timelineEntries=[];
         this.timelineBusy=true;this.timelineError='';let view:TrafficView|null=null;
         try {
-          view=await invoke<TrafficView>('query_traffic_view',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+          view=await invoke<TrafficView>('query_traffic_view',{query:this.trafficQuery()});
           const rows:TrafficTimelineRow[]=[];
           for(let offset=0;offset<view.ids.length&&current();offset+=2048)rows.push(...await invoke<TrafficTimelineRow[]>('traffic_timeline_rows',{viewId:view.id,offset,limit:2048}));
           if(!current())continue;
@@ -173,9 +177,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private async inspectTimelineRequest(id:string):Promise<void> {
     const generation=this.beginInspection(id);
-    try{const detail=await loadSessionDetail(id,false);if(this.isConnected&&generation===this.inspectionGeneration){
+    try{const [detail,row]=await Promise.all([loadSessionDetail(id,false),this.loadInspectorContext(id)]);if(this.isConnected&&generation===this.inspectionGeneration&&this.selectedSessionId===id){
       const head=detail.requests.find(head=>head.boundary==='client-request')??detail.requests[0];
-      this.inspectionSummaryId=id;this.selectedMethodText=head?.method??'Unavailable';this.selectedUrlText=head?.target??'Unavailable';this.applyDetail(detail);
+      this.inspectionSummaryId=id;this.selectedMethodText=head?.method??'Unavailable';this.selectedUrlText=head?.target??'Unavailable';this.applyDetail(detail,row);
     }}
     catch(error:unknown){if(generation===this.inspectionGeneration)this.diagnostic='Inspector unavailable: '+describeError(error);}
   }
@@ -203,7 +207,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.filesMenu.hidePopover();
     const choices:ScopeChoice[]=[];
     if(this.trafficSelection.ids.size)choices.unshift({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});
-    choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries`,scope:{kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});
+    choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries`,scope:{kind:'filtered',query:this.trafficQuery()}});
     choices.push({value:'none',label:'Rules and notes only',scope:null});
     await this.portableCase.show(mode,choices,returnFocus??this.filesMenuButton,comparisonId);
   }
@@ -220,7 +224,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable incidentWindowLabel='';
   private incidentReturn:{scroll:number;selection:ListSelection;follow:boolean}|null=null;
   async onIncidentWindow(event:CustomEvent<{window:IncidentWindow;label:string}>):Promise<void>{event.stopPropagation();if(!this.incidentReturn)this.incidentReturn={scroll:this.sessionScroller.scrollTop,selection:this.trafficSelection.clone(),follow:this.followLatest};this.incidentWindow=event.detail.window;this.incidentWindowLabel=event.detail.label;this.followLatest=false;this.queryRevision++;await this.refreshSessions(undefined,true);if(this.metadataDialog.open)this.closeMetadata();if(this.timingDialog.open)this.closeTimings();this.focusTraffic();}
-  async clearIncidentWindow(all=false):Promise<void>{const previous=this.incidentReturn;this.incidentReturn=null;this.incidentWindow=null;this.incidentWindowLabel='';if(all){this.filters=[];this.fetchDestinations=[];await this.clearContentSearch(false);}this.queryRevision++;this.followLatest=previous?.follow??false;await this.refreshSessions(undefined,true);if(previous&&!all){this.trafficSelection=previous.selection;for(const id of this.trafficSelection.ids)if(!this.virtualList.indexes.has(id))this.trafficSelection.ids.delete(id);this.updateTrafficSelection();this.sessionScroller.scrollTop=previous.scroll;this.scheduleViewport();}this.focusTraffic();}
+  async clearIncidentWindow(all=false):Promise<void>{const previous=this.incidentReturn;this.incidentReturn=null;this.incidentWindow=null;this.incidentWindowLabel='';if(all){this.filters=[];this.filterGroups=[];this.fetchDestinations=[];await this.clearContentSearch(false);}this.queryRevision++;this.followLatest=previous?.follow??false;await this.refreshSessions(undefined,true);if(previous&&!all){this.trafficSelection=previous.selection;for(const id of this.trafficSelection.ids)if(!this.virtualList.indexes.has(id))this.trafficSelection.ids.delete(id);this.updateTrafficSelection();this.sessionScroller.scrollTop=previous.scroll;this.scheduleViewport();}this.focusTraffic();}
   @observable exportReviewId='';
   @observable exportReviewBusy=false;
   @observable exportReviewScope='all';
@@ -230,7 +234,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private exportReviewRevision=0;
   async changeExportScope(event:Event):Promise<void>{this.exportReviewScope=(event.currentTarget as HTMLSelectElement).value;await this.reviewTraceExport();}
   async reviewTraceExport():Promise<void>{const revision=++this.exportReviewRevision;this.exportReviewBusy=true;this.exportReviewId='';this.exportReviewSummary='Reviewing retained evidence…';
-   try{let selection:unknown=null;if(this.exportReviewScope==='selected')selection={kind:'selected',ids:[...this.trafficSelection.ids]};else if(this.exportReviewScope==='filtered')selection={kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}};else if(this.exportReviewScope.startsWith('source:'))selection={kind:'source',traceId:this.exportReviewScope.slice(7)};
+   try{let selection:unknown=null;if(this.exportReviewScope==='selected')selection={kind:'selected',ids:[...this.trafficSelection.ids]};else if(this.exportReviewScope==='filtered')selection={kind:'filtered',query:this.trafficQuery()};else if(this.exportReviewScope.startsWith('source:'))selection={kind:'source',traceId:this.exportReviewScope.slice(7)};
 
     const inventory=await invoke<{id:string;entries:number;retainedEntries:number;sources:string[];sourceCount:number;hosts:string[];firstMillis:number|null;lastMillis:number|null;incompleteBodies:number;retainedBodyBytes:number;streamRecords:number;retainedStreamBytes:number;incidentMarkers:number;addedMarkers?:number;editedNotes?:number;deletedMarkers?:number;note:string}>('review_traffic_export',{selection});if(revision!==this.exportReviewRevision||!this.isConnected)return;
 
@@ -246,7 +250,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   compareSelected():void{const ids=[...this.trafficSelection.ids];if(ids.length!==2){this.diagnostic='Select exactly two requests, including requests outside the visible table window.';return;}this.trafficMenu.hidePopover();this.emitComparison({left:{kind:'exchange',id:ids[0]!},right:{kind:'exchange',id:ids[1]!}});}
   compareWithBaseline(inspected=false):void{const id=this.actionSource(inspected);if(!id||!this.comparisonBaseline)return;this.trafficMenu.hidePopover();this.emitComparison({left:{kind:'exchange',id:this.comparisonBaseline},right:{kind:'exchange',id}});}
   compareSelectedResponseStages(inspected=false):void {const id=this.actionSource(inspected);if(id)this.emitComparison({left:{kind:'exchange',id,responseBoundary:'upstream-response'},right:{kind:'exchange',id,responseBoundary:'client-response'}});}
-  async compareCaptureScopes():Promise<void>{this.filesMenu.hidePopover();const sources=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);const choices:ScopeChoice[]=sources.map(s=>({value:s.id,label:`${s.name} · ${s.sessions} imported entries`,scope:{kind:'source',traceId:s.id}}));choices.push({value:'live',label:'Live traffic · retained entries',scope:{kind:'source',traceId:null}});if(this.trafficSelection.ids.size)choices.push({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries before virtual windowing`,scope:{kind:'filtered',query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}}});this.$emit('capture-comparison-request',{choices});}
+  async compareCaptureScopes():Promise<void>{this.filesMenu.hidePopover();const sources=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);const choices:ScopeChoice[]=sources.map(s=>({value:s.id,label:`${s.name} · ${s.sessions} imported entries`,scope:{kind:'source',traceId:s.id}}));choices.push({value:'live',label:'Live traffic · retained entries',scope:{kind:'source',traceId:null}});if(this.trafficSelection.ids.size)choices.push({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries before virtual windowing`,scope:{kind:'filtered',query:this.trafficQuery()}});this.$emit('capture-comparison-request',{choices});}
   @observable previewComparisonBaselineLabel='';
   private previewComparisonBaseline:ComparisonSubject|null=null;
   setPreviewResponseBaseline(observation:string):void{this.previewComparisonBaseline={kind:'preview',run:this.previewReportLabel,observation:Number(observation)};this.previewComparisonBaselineLabel=`${this.previewReportLabel} · response ${observation}`;}
@@ -513,10 +517,267 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable sort:TrafficSort = {column:'started-at',direction:'descending'};
   @observable sortLabel = 'Newest first';
   @observable filters:TrafficFilter[] = [];
+  @observable filterGroups:TrafficFilterGroup[]=[];
+  @observable filterChips:FilterChip[]=[];
   @observable filterCount=0;
   @observable fetchDestinations:string[]=[];
   @observable fetchDestinationSummary='All destinations';
   @observable fetchDestinationOptions=structuredClone(initialState.fetchDestinationOptions);
+  @observable pickerFields=filterDimensions;
+  @observable pickerDimension:TrafficDimension='traffic-type';
+  @observable pickerLabel='Traffic type';
+  @observable pickerNumeric=false;
+  @observable pickerCustom=false;
+  @observable pickerPlaceholder='';
+  @observable pickerOptions:Array<FilterChoice&{selected:boolean;countText:string}>=[];
+  @observable pickerMoreOptions:Array<FilterChoice&{selected:boolean;countText:string}>=[];
+  @observable pickerConstraints:TrafficFilter[]=[];
+  @observable pickerLoading=false;
+  @observable pickerError='';
+  @observable pickerOmission='';
+  @observable pickerScope='';
+  @observable pickerObserved=false;
+  @observable pickerSearch='';
+  @observable pickerNextOffset:number|null=null;
+  @observable pickerObservedTotal=0;
+  @observable pickerObservedShown=0;
+  @observable pickerCanMore=false;
+  @observable pickerSuggestionHint='';
+  @observable pickerRange=false;
+  @observable pickerTime=false;
+  @observable pickerRangeInput='text';
+  @observable pickerRangeNotice='';
+  @observable pickerRangeKind='';
+  @observable pickerRangeUnit='ms';
+  @observable pickerRangeUnits:Array<{value:string;label:string}>=[];
+  @observable pickerPresets:Array<{value:string;label:string}>=[];
+  @observable pickerTimeZone='';
+  filterFrom!:HTMLInputElement;
+  filterTo!:HTMLInputElement;
+  observedSearch!:HTMLInputElement;
+  private facetMore=false;
+  private facetSearchTimer:number|undefined;
+  @observable contextValues:ContextValue[]=[];
+  @observable inspectorContextValues:ContextValue[]=[];
+  @observable inspectorContextReady=false;
+  @observable inspectorContextStatus='Filter values unavailable.';
+  private inspectorContextGeneration=0;
+  private inspectorContextRow:SessionSummary|null=null;
+  private pickerOriginalTimeBounds:{from?:{text:string;value:string};to?:{text:string;value:string}}={};
+  @observable pickerOpen=false;
+  @observable pickerMaxHeight='500px';
+  filterPicker!:HTMLElement;
+  filterField!:HTMLSelectElement;
+  filterButton!:HTMLButtonElement;
+  private pickerValues:TrafficFilterValue[]=[];
+  private pickerCounts=new Map<string,number>();
+  private pickerCountOptions:TrafficFacetPage['options']=[];
+  private pickerGeneration=0;
+  private pickerReturn:HTMLElement|null=null;
+  private facetPending:Promise<void>|null=null;
+  private facetAgain=false;
+  private trafficRevision=0;
+  private trafficClock:number|undefined;
+  private trafficClockBusy=false;
+  @observable streamDisclosureLabel='';
+  @observable streamDisclosureState='';
+  @observable streamDisclosureTiming='';
+  @observable streamDisclosureHttp='';
+  @observable streamTypeAction='Filter stream type';
+  @observable streamStateAction='Filter stream state';
+  streamDisclosure!:HTMLElement;
+  streamTypeButton!:HTMLButtonElement;
+  private disclosedStream:SessionSummary|null=null;
+  private streamReturn:HTMLElement|null=null;
+  trafficQuery(overrides:Partial<TrafficQuery>={}):TrafficQuery {
+    return {incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:[...this.fetchDestinations],filters:this.filters.map(({column,operator,value})=>({column,operator,value})),filterGroups:structuredClone(this.filterGroups),...overrides};
+  }
+  openFilters(event:Event):void {this.openFilterPicker(this.pickerDimension,event);}
+  openFilterPicker(dimension:TrafficDimension,event?:Event):void {
+    this.pickerReturn=dimension===this.menuColumn.id&&this.columnMenu.matches(':popover-open')?(this.getRootNode() as ShadowRoot).getElementById('header-'+dimension)?.querySelector('button')??this.filterButton:event?.currentTarget as HTMLElement??this.filterButton;
+    this.closeMenu();this.pickerOpen=true;this.resetPicker(dimension);this.$flushUpdates();
+    this.filterPicker.showPopover();this.fitFilterPicker();this.filterField.focus({preventScroll:true});void this.loadFacets();
+  }
+  private resetPicker(dimension:TrafficDimension):void {
+    this.pickerGeneration++;this.pickerDimension=dimension;this.pickerLabel=filterLabel(dimension);
+    const field=filterDimensions.find(field=>field.id===dimension)!;
+    this.pickerObserved=['host','process','content-type'].includes(dimension);this.pickerSearch='';this.pickerNextOffset=null;this.pickerObservedShown=0;this.pickerObservedTotal=0;this.pickerCanMore=false;this.pickerSuggestionHint='';this.facetMore=false;window.clearTimeout(this.facetSearchTimer);
+    const kind=rangeKind(dimension);this.pickerRangeKind=kind;this.pickerRange=!!kind;this.pickerTime=kind==='time';this.pickerRangeInput=this.pickerTime?'datetime-local':'text';this.pickerRangeUnits=rangeUnits(kind);this.pickerRangeUnit=this.pickerRangeUnits[0]!.value;
+    this.pickerPresets=kind==='duration'?[{value:'second',label:'At least 1 second'},{value:'ten-seconds',label:'At least 10 seconds'}]:kind==='bytes'?[{value:'kib',label:'At least 1 KiB'},{value:'mib',label:'At least 1 MiB'}]:kind==='time'?[{value:'five-minutes',label:'Since 5 minutes ago'},{value:'hour',label:'Since 1 hour ago'},{value:'today',label:'Since local midnight'}]:[];
+    this.pickerTimeZone='Local time · '+Intl.DateTimeFormat().resolvedOptions().timeZone+'. Repeated daylight-saving times use the first occurrence.';
+    this.pickerNumeric=field.numeric;this.pickerCustom=columnDimension(dimension)!==null;this.pickerPlaceholder=field.placeholder;
+    this.pickerValues=structuredClone(this.filterGroups.find(group=>group.dimension===dimension)?.values??[]);
+    if(dimension==='fetch-destination')for(const value of this.fetchDestinations)if(!this.pickerValues.some(item=>filterValueKey(item)==='text:'+value))this.pickerValues.push({kind:'text',value});
+    this.pickerConstraints=this.filters.filter(filter=>filter.column===dimension).map(filter=>({...filter}));
+    this.pickerCounts.clear();this.pickerCountOptions=[];this.pickerError='';this.pickerOmission='';this.pickerScope='Counts include other filters.';this.pickerLoading=true;
+    this.filterInput.value='';this.filterInput.setCustomValidity('');this.filterOperator.value=field.numeric?'equals':'contains';this.$flushUpdates();
+    if(this.observedSearch)this.observedSearch.value='';
+    const bound=(operator:string)=>this.pickerConstraints.find(filter=>filter.operator===operator)?.value??'';
+    this.pickerRangeNotice='';if(this.pickerTime&&[bound('minimum'),bound('maximum')].some(value=>value&&!localDateTime(value))){this.pickerRange=false;this.pickerRangeNotice='Existing time bounds are outside the calendar range. Custom match preserves their exact Unix milliseconds.';}
+    this.filterFrom.value=this.pickerTime?localDateTime(bound('minimum')):bound('minimum');this.filterTo.value=this.pickerTime?localDateTime(bound('maximum')):bound('maximum');this.filterFrom.setCustomValidity('');this.filterTo.setCustomValidity('');
+    this.pickerOriginalTimeBounds=this.pickerTime?{...(bound('minimum')?{from:{text:this.filterFrom.value,value:bound('minimum')}}:{}),...(bound('maximum')?{to:{text:this.filterTo.value,value:bound('maximum')}}:{})}:{};this.rebuildPickerOptions();
+  }
+  private fitFilterPicker():void {if(!this.pickerOpen||!this.filterPicker.matches(':popover-open'))return;const bounds=this.filterPicker.getBoundingClientRect(),scale=bounds.width/Math.max(1,this.filterPicker.offsetWidth);this.pickerMaxHeight=Math.max(100,(window.innerHeight-bounds.top-12)/scale)+'px';}
+  changePickerDimension(event:Event):void {this.resetPicker((event.currentTarget as HTMLSelectElement).value as TrafficDimension);void this.loadFacets();}
+  private rebuildPickerOptions():void {
+    const focused=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;
+    const restore=focused?.matches('.filter-options input')?focused.id:'';
+    const choices=fixedFilterChoices(this.pickerDimension);
+    if(this.pickerObserved)for(const option of this.pickerCountOptions)if(!choices.some(item=>item.key===option.key))choices.push({...option,label:valueLabel(this.pickerDimension,option.value)});
+    if(this.pickerDimension==='status')for(const option of this.pickerCountOptions)if(option.value.kind==='number'&&!choices.some(item=>item.key===option.key))choices.push(option);
+    for(const value of this.pickerValues)if(!choices.some(option=>option.key===filterValueKey(value)))choices.push({key:filterValueKey(value),label:valueLabel(this.pickerDimension,value),value});
+    const retained=[...this.pickerOptions,...this.pickerMoreOptions].find(option=>'filter-option-'+option.key===restore);
+    if(retained&&!choices.some(option=>option.key===retained.key))choices.push(retained);
+    const options=choices.map(choice=>({...choice,selected:this.pickerValues.some(value=>filterValueKey(value)===choice.key),countText:this.pickerLoading||this.pickerError?'—':String(this.pickerCounts.get(choice.key)??0)}));
+    const long=options.length>10;
+    // Keep a keyboard target visible when unchecking moves a zero value.
+    const primary=(option:typeof options[number])=>!long||option.selected||option.countText!=='0'||restore==='filter-option-'+option.key;
+    this.pickerOptions=options.filter(primary);
+    this.pickerMoreOptions=options.filter(option=>!primary(option));
+    this.$flushUpdates();
+    if(restore&&focused&&!focused.isConnected)(this.getRootNode() as ShadowRoot).getElementById(restore)?.focus({preventScroll:true});
+  }
+  togglePickerValue(key:string,event:Event):void {
+    const option=[...this.pickerOptions,...this.pickerMoreOptions].find(option=>option.key===key);if(!option)return;
+    if((event.currentTarget as HTMLInputElement).checked){if(this.pickerValues.length>=128){this.pickerError='Choose at most 128 values in one field.';this.rebuildPickerOptions();return;}this.pickerValues=[...this.pickerValues,option.value];}
+    else this.pickerValues=this.pickerValues.filter(value=>filterValueKey(value)!==key);
+    // Keep every selected value visible, restoring its focused checkbox if it moves.
+    this.rebuildPickerOptions();
+  }
+  clearPicker():void {this.pickerValues=[];this.pickerConstraints=[];this.filterInput.value='';this.filterInput.setCustomValidity('');this.filterFrom.value='';this.filterTo.value='';this.filterFrom.setCustomValidity('');this.rebuildPickerOptions();}
+  removePickerConstraint(operator:string):void {
+    this.pickerConstraints=this.pickerConstraints.filter(filter=>filter.operator!==operator);
+    if(operator==='minimum'){this.filterFrom.value='';delete this.pickerOriginalTimeBounds.from;}
+    if(operator==='maximum'){this.filterTo.value='';delete this.pickerOriginalTimeBounds.to;}
+    this.filterFrom.setCustomValidity('');this.filterTo.setCustomValidity('');
+  }
+  pickerOptionBlurred():void {
+    if(!this.pickerObserved)return;const generation=this.pickerGeneration;
+    queueMicrotask(()=>{if(this.pickerOpen&&generation===this.pickerGeneration)this.rebuildPickerOptions();});
+  }
+  closePicker():void {this.filterPicker.hidePopover();this.restorePickerFocus();}
+  private restorePickerFocus():void {const target=this.pickerReturn;this.pickerReturn=null;(target?.isConnected&&target.getClientRects().length?target:this.filterButton).focus({preventScroll:true});}
+  pickerToggled(event:ToggleEvent):void {if(event.newState==='closed'){this.pickerOpen=false;this.pickerGeneration++;this.pickerLoading=false;const active=(this.getRootNode() as ShadowRoot).activeElement;if(active&&this.filterPicker.contains(active))this.restorePickerFocus();}}
+  pickerKey(event:KeyboardEvent):void {if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closePicker();}}
+  observedSearchKey(event:KeyboardEvent):void {if(event.key==='Enter'){event.preventDefault();window.clearTimeout(this.facetSearchTimer);void this.loadFacets();}}
+  observedSearchChanged(event:Event):void {
+    this.pickerSearch=(event.currentTarget as HTMLInputElement).value;this.pickerGeneration++;this.pickerLoading=true;this.pickerCountOptions=[];this.pickerCounts.clear();this.pickerNextOffset=null;this.pickerObservedShown=0;this.facetMore=false;this.rebuildPickerOptions();
+    window.clearTimeout(this.facetSearchTimer);this.facetSearchTimer=window.setTimeout(()=>void this.loadFacets(),120);
+  }
+  addObservedValue():void {
+    let value=this.pickerSearch.trim().toLowerCase();if(this.pickerDimension==='content-type')value=value.split(';')[0]!.trim();
+    if(!value||[...value].length>255||/[\p{Cc}]/u.test(value)){this.pickerError='Enter a value of 1–255 characters without control characters.';return;}
+    const key='text:'+value;if(!this.pickerValues.some(item=>filterValueKey(item)===key)){
+      if(this.pickerValues.length>=128){this.pickerError='Choose at most 128 values in one field.';return;}
+      this.pickerValues=[...this.pickerValues,{kind:'text',value}];
+    }
+    this.rebuildPickerOptions();void this.loadFacets();
+  }
+  loadMoreFacets():void {if(!this.pickerCanMore||this.pickerLoading)return;this.facetMore=true;this.pickerLoading=true;void this.loadFacets();}
+  rangeEdited(event?:Event):void {
+    this.filterFrom.setCustomValidity('');this.filterTo.setCustomValidity('');
+    if(event?.currentTarget===this.filterFrom)delete this.pickerOriginalTimeBounds.from;
+    else if(event?.currentTarget===this.filterTo)delete this.pickerOriginalTimeBounds.to;
+    else this.pickerOriginalTimeBounds={};
+  }
+  changeRangeUnit(event:Event):void {this.pickerRangeUnit=(event.currentTarget as HTMLSelectElement).value;this.rangeEdited();}
+  rangePreset(event:Event):void {
+    const value=(event.currentTarget as HTMLSelectElement).value;this.rangeEdited();this.filterTo.value='';
+    if(value==='second'||value==='ten-seconds'){this.pickerRangeUnit='s';this.filterFrom.value=value==='second'?'1':'10';}
+    else if(value==='kib'||value==='mib'){this.pickerRangeUnit=value==='kib'?'KiB':'MiB';this.filterFrom.value='1';}
+    else if(['five-minutes','hour','today'].includes(value)){const date=new Date();if(value==='today')date.setHours(0,0,0,0);else date.setTime(date.valueOf()-(value==='hour'?3600000:300000));this.filterFrom.value=localDateTime(String(date.valueOf()));}
+    (event.currentTarget as HTMLSelectElement).value='';
+  }
+  async loadFacets():Promise<void> {
+    this.facetAgain=true;if(this.facetPending)return this.facetPending;
+    this.facetPending=(async()=>{while(this.facetAgain&&this.pickerOpen&&this.isConnected){
+      this.facetAgain=false;const generation=this.pickerGeneration,revision=this.queryRevision,dimension=this.pickerDimension,search=this.pickerObserved?this.pickerSearch:null;
+      const captureRevision=this.trafficRevision,query=this.trafficQuery(),observed=this.pickerObserved;
+      const append=observed&&this.facetMore&&this.pickerNextOffset!==null;this.facetMore=false;
+      const current=()=>this.isConnected&&this.pickerOpen&&generation===this.pickerGeneration&&revision===this.queryRevision;
+      const required=[...new Map([...fixedFilterChoices(dimension).map(option=>option.value),...this.pickerValues].map(value=>[filterValueKey(value),value])).values()];
+      try {
+        const offset=append?this.pickerNextOffset!:0,limit=observed?(append?Math.min(50,200-this.pickerObservedShown):Math.max(50,this.pickerObservedShown)):512;
+        let page=await invoke<TrafficFacetPage>('traffic_facets',{request:{query,dimension,search,offset,limit,includeValues:required}});
+        const options=[...page.options];const included=page.includedOptions;
+        const paged=dimension==='status'&&page.nextOffset!==null;
+        while(dimension==='status'&&page.nextOffset!==null&&current()&&captureRevision===this.trafficRevision){page=await invoke<TrafficFacetPage>('traffic_facets',{request:{query,dimension,search,offset:page.nextOffset,limit:512,includeValues:required}});options.push(...page.options);}
+        if(!current())continue;
+        if((append||paged)&&captureRevision!==this.trafficRevision){this.facetAgain=true;continue;}
+        const merged=observed?(append?[...this.pickerCountOptions,...options]:options):options;
+        this.pickerCountOptions=[...new Map(merged.map(option=>[option.key,option])).values()];
+        this.pickerCounts=new Map([...this.pickerCountOptions,...included].map(option=>[option.key,option.count]));
+        this.pickerNextOffset=observed?page.nextOffset:null;this.pickerObservedTotal=page.totalOptions;this.pickerObservedShown=this.pickerCountOptions.length;this.pickerCanMore=observed&&page.nextOffset!==null&&this.pickerObservedShown<200;
+        this.pickerSuggestionHint=observed?'Showing '+this.pickerObservedShown+' of '+page.totalOptions+' observed values.'+(this.pickerObservedShown>=200&&page.nextOffset!==null?' Search to narrow the remaining values.':''):'';
+        this.pickerLoading=false;this.pickerError='';this.pickerOmission=page.omittedEntries?`${page.omittedEntries.toLocaleString()} ${page.omittedEntries===1?'entry has a value':'entries have values'} outside exact filter limits.`+(this.pickerCustom?' Use a custom contains match.':''):'';
+        this.pickerScope=page.matchingEntries.toLocaleString()+' entries with this field unrestricted. Counts include other filters.';this.rebuildPickerOptions();
+      }catch(error:unknown){if(current()){this.pickerLoading=false;this.pickerError='Counts unavailable: '+describeError(error);this.rebuildPickerOptions();}}
+    }})();
+    try{await this.facetPending;}finally{this.facetPending=null;}
+  }
+  private contextFilterValues(row:SessionSummary):ContextValue[] {
+    return [
+      {dimension:'host',label:'Host: '+row.host,value:{kind:'text',value:row.host.toLowerCase()}},
+      {dimension:'process',label:'Process: '+(row.caller.processName??'No process name'),value:row.caller.processName==null?{kind:'unavailable'}:{kind:'text',value:row.caller.processName.toLowerCase()}},
+      {dimension:'status',label:'Status: '+(row.status??'Unavailable'),value:row.status==null?{kind:'unavailable'}:{kind:'number',value:String(row.status)}},
+      {dimension:'content-type',label:'Content type: '+(row.contentType??'Missing'),value:row.contentType==null?{kind:'unavailable'}:{kind:'text',value:row.contentType.toLowerCase()}},
+    ];
+  }
+  private prepareContextValues(row:SessionSummary):void {this.contextValues=this.contextFilterValues(row);}
+  private async loadInspectorContext(id:string):Promise<SessionSummary|null> {
+    const cached=this.rowCache.get(id);if(cached)return cached;
+    try{const page=await invoke<SessionPage>('query_sessions',{query:{focusId:id,limit:1}});return page.sessions.find(row=>row.id===id)??null;}catch{return null;}
+  }
+  prepareInspectorContext(retry=true):void {
+    const generation=++this.inspectorContextGeneration,id=this.selectedDetail?.id,row=this.rowCache.get(id??'')??(this.inspectorContextRow?.id===id?this.inspectorContextRow:null);
+    this.inspectorContextReady=!!row;this.inspectorContextValues=row?this.contextFilterValues(row):structuredClone(initialState.inspectorContextValues) as ContextValue[];
+    this.inspectorContextStatus='Filter values unavailable. Reopen Actions to retry.';
+    if(row||!id||!retry)return;
+    const selection=this.inspectionGeneration;this.inspectorContextStatus='Loading filter values…';
+    void this.loadInspectorContext(id).then(context=>{
+      if(!this.isConnected||generation!==this.inspectorContextGeneration||selection!==this.inspectionGeneration||this.selectedDetail?.id!==id)return;
+      this.inspectorContextRow=context;this.prepareInspectorContext(false);
+    });
+  }
+  openContextFilter(dimension:TrafficDimension,event:Event,inspector=false):void {
+    if(inspector&&!this.inspectorContextReady)return;
+    const option=(inspector?this.inspectorContextValues:this.contextValues).find(item=>item.dimension===dimension);if(!option)return;event.stopPropagation();
+    this.trafficMenu.hidePopover();this.requestActionsMenu.hidePopover();this.openFilterPicker(dimension);
+    const text=option.value.kind==='text'?option.value.value:'';
+    if([...text].length>255||/[\p{Cc}]/u.test(text)){this.pickerValues=[];this.pickerConstraints=[];this.pickerError='This value exceeds exact filter limits. Use a custom contains match.';}
+    else {this.pickerValues=[option.value];this.pickerConstraints=[];this.pickerCounts.clear();this.rebuildPickerOptions();void this.loadFacets();}
+    this.pickerReturn=inspector?this.actionsButton:this.trafficTable;
+  }
+  private refreshChips():void {this.filterChips=trafficFilterChips(this.filters,this.filterGroups,this.fetchDestinations);this.filterCount=this.filterChips.length;}
+  filterGroupsChanged():void {this.refreshChips();}
+  private clearDimension(dimension:TrafficDimension):void {this.filters=this.filters.filter(filter=>filter.column!==dimension);this.filterGroups=this.filterGroups.filter(group=>group.dimension!==dimension);if(dimension==='fetch-destination')this.fetchDestinations=[];}
+  async removeFilterDimension(dimension:TrafficDimension):Promise<void> {this.clearDimension(dimension);this.queryRevision++;await this.refreshSessions(undefined,true);}
+  private scheduleTrafficClock():void {
+    const enabled=this.isConnected&&this.view==='traffic'&&!this.viewerMode&&(this.lifecycle==='running'||this.lifecycle==='draining'||!!this.selectedDetail?.stream?.lifetime?.live);
+    if(!enabled){window.clearTimeout(this.trafficClock);this.trafficClock=undefined;return;}
+    if(this.trafficClock!==undefined||this.trafficClockBusy)return;
+    this.trafficClock=window.setTimeout(()=>{this.trafficClock=undefined;this.trafficClockBusy=true;
+      void (async()=>{try{await this.refreshSessions();if(this.selectedDetail?.stream?.lifetime?.live)await this.refreshInspection();}finally{this.trafficClockBusy=false;this.scheduleTrafficClock();}})();
+    },1000);
+  }
+  openStreamDisclosure(row:SessionSummary,event:MouseEvent):void {
+    event.stopPropagation();this.disclosedStream=row;this.streamReturn=event.currentTarget as HTMLElement;
+    this.describeStream(row);this.$flushUpdates();this.streamDisclosure.showPopover();this.streamTypeButton.focus({preventScroll:true});
+  }
+  streamControlKey(event:KeyboardEvent):void {event.stopPropagation();}
+  private describeStream(row:SessionSummary):void {
+    this.streamDisclosureLabel=row.streamProtocol==='sse'?'SSE':'WebSocket';this.streamDisclosureState=stateText(row.terminal);
+    this.streamDisclosureTiming=lifetimeDescription(row.streamLifetime);
+    this.streamDisclosureHttp=cellText(row,'protocol')+' · '+(row.streamProtocol==='sse'?'Response headers: '+formatDuration(row.responseHeadersMs):'Handshake: '+formatDuration(row.httpDurationMs));
+    this.streamTypeAction='Filter '+this.streamDisclosureLabel;this.streamStateAction='Filter '+stateText(row.terminal).toLowerCase();
+  }
+  closeStreamDisclosure():void {this.streamDisclosure.hidePopover();const target=this.streamReturn;this.streamReturn=null;(target?.isConnected?target:this.trafficTable).focus({preventScroll:true});}
+  streamDisclosureKey(event:KeyboardEvent):void {if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closeStreamDisclosure();}}
+  async filterDisclosedStream(state=false):Promise<void> {
+    const row=this.disclosedStream;if(!row)return;const dimension:TrafficDimension=state?'state':'traffic-type';
+    this.clearDimension(dimension);this.filterGroups=[...this.filterGroups,{dimension,values:[{kind:'text',value:state?row.terminal:row.streamProtocol==='sse'?'sse':'websocket'}]}];
+    this.queryRevision++;this.closeStreamDisclosure();await this.refreshSessions(undefined,true);
+  }
   @observable trafficSearchKind='filter';
   @observable searchPlaceholder='Filter URLs and processes';
   private liveFilter='';
@@ -604,7 +865,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   private watchError = '';
 
   protected hydratedCallback():void {
-    this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns();this.scheduleViewport(); });
+    this.pickerFields=filterDimensions;
+    this.layoutObserver = new ResizeObserver(() => { this.measurePinnedColumns();this.scheduleViewport();this.fitFilterPicker(); });
     this.layoutObserver.observe(this.sessionScroller);
     this.rowObserver=new ResizeObserver(entries=>{
       if(this.view!=='traffic'||!this.sessionScroller.clientHeight)return;
@@ -612,12 +874,13 @@ export class TrafficWorkspace extends WorkspaceElement {
       for(const entry of entries){const element=entry.target as HTMLElement;if(element.dataset.loading==='true')continue;const size=entry.borderBoxSize[0]?.blockSize??entry.target.getBoundingClientRect().height;changed=this.virtualList.uniformSize(size)||changed;}
       if(changed){this.updateSpacers();this.$flushUpdates();const top=this.virtualList.restore(anchor);if(top!==null)this.sessionScroller.scrollTop=top;this.scheduleViewport();}
     });
+    this.scheduleTrafficClock();
     void this.watchSessions();
     void this.watchOpenedTraces();
     void invoke<{windows:boolean}>('desktop_bootstrap').then(bootstrap=>{if(this.isConnected)this.windowsCommands=bootstrap.windows;}).catch(()=>{});
   }
-  lifecycleChanged():void { this.renderSessionState(); this.renderFollowState(); }
-  viewerModeChanged():void {this.renderSessionState();this.renderFollowState();}
+  lifecycleChanged():void { this.renderSessionState(); this.renderFollowState();this.scheduleTrafficClock(); }
+  viewerModeChanged():void {this.renderSessionState();this.renderFollowState();this.scheduleTrafficClock();}
 
   traceMetadataRowsChanged():void {if(this.isConnected)void this.refreshMarkers();this.metadataTraceOptions=this.traceMetadataRows.map((trace,index)=>({id:trace.id,label:`${index+1}. ${trace.name} · ${trace.sessions} ${trace.sessions===1?'entry':'entries'}`}));}
   sessionsChanged():void {if(this.sessions.length)this.showTraceImportHelp=false;}
@@ -751,7 +1014,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeMetadata():void {this.metadataDialog.close();}
   metadataClosed():void {if(this.metadataDialog.open)return;this.metadataGeneration++;this.metadataBusy=false;const focus=this.metadataReturnFocus?.isConnected&&this.metadataReturnFocus.getClientRects().length?this.metadataReturnFocus:this.filesMenuButton;focus.focus({preventScroll:true});this.metadataReturnFocus=null;}
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
-  viewChanged():void {if(this.view==='traffic'){this.scheduleViewport();if(this.timelineMode)void this.refreshTimeline();}}
+  viewChanged():void {this.scheduleTrafficClock();if(this.view==='traffic'){this.scheduleViewport();if(this.timelineMode)void this.refreshTimeline();}}
   preferencesChanged():void {
     this.listShare = this.preferences.listSplit+'%';
     this.requestShare = this.preferences.requestSplit+'%';
@@ -769,11 +1032,13 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private rebuildRows(rows:SessionSummary[]):void {
     this.sessions = rows.map((row) => {
+      const streamLabel=row.streamProtocol==='web-socket'?'WebSocket':row.streamProtocol==='sse'?'SSE':'';
+      const streamAccessibleLabel=streamLabel+' · '+stateText(row.terminal)+' · '+cellText(row,'protocol')+'; stream details and filters';
       const activeStreamLabel = row.terminal === 'active'
         ? row.streamProtocol === 'web-socket' ? 'WebSocket · Active' : row.streamProtocol === 'sse' ? 'SSE · Active' : ''
         : '';
-      return {...row,markerLabel:this.markerItems.some(m=>m.entryId===row.id)?'Flagged':'',activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(activeStreamLabel ? activeStreamLabel+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
-      cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:cellText(row,column.id)+(column.id==='protocol'&&activeStreamLabel?' · '+activeStreamLabel:''),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))};
+      return {...row,streamLabel,streamDisplay:streamLabel==='WebSocket'&&(this.preferences.columns.find(column=>column.id==='protocol')?.width??210)<145?'WS':streamLabel,streamAccessibleLabel,markerLabel:this.markerItems.some(m=>m.entryId===row.id)?'Flagged':'',activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(streamLabel ? streamLabel+' · '+stateText(row.terminal)+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
+      cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:column.id==='duration'&&streamLabel?lifetimeDescription(row.streamLifetime):cellText(row,column.id)+(column.id==='protocol'&&streamLabel?' · '+streamLabel+' · '+stateText(row.terminal):''),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))};
     });
     this.selectedTrafficCount=this.trafficSelection.ids.size;
     this.trafficSelectionText=`${this.selectedTrafficCount.toLocaleString()} selected`;
@@ -940,32 +1205,31 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   clearFilterValidity():void {this.filterInput.setCustomValidity('');}
   async applyFilter(event:Event):Promise<void> {
-    event.preventDefault(); const value = this.filterInput.value.trim(); if (!value) return;
-    const operator = this.filterOperator.value as TrafficFilter['operator'];
-    if(this.menuColumn.id==='request-number' && (!/^[0-9]+$/.test(value) || BigInt(value)<1n || BigInt(value)>18446744073709551615n)){this.filterInput.setCustomValidity('Enter a positive decimal request number from 1 to 18446744073709551615.');this.filterInput.reportValidity();return;}
-    this.filterInput.setCustomValidity('');
-    const others = this.filters.filter((filter) => filter.column !== this.menuColumn.id || filter.operator !== operator);
-    if (others.length >= 14) { this.diagnostic = 'Remove a filter before adding another (maximum 14).'; return; }
-    this.clearTrafficSelection();
-    this.filters = [...others,{column:this.menuColumn.id,operator,value,label:this.menuColumn.label+' '+operator+' '+value}];
-    this.queryRevision++; this.followLatest = false; this.closeMenu(); await this.refreshSessions(undefined,true);
+    event.preventDefault();const dimension=this.pickerDimension,column=columnDimension(dimension),value=this.filterInput.value.trim();
+    let constraints=[...this.pickerConstraints];
+    if(column&&this.pickerRange){try{const bounds=inclusiveRange(column,this.filterFrom.value,this.filterTo.value,this.pickerRangeUnit,this.pickerOriginalTimeBounds);constraints=[...constraints.filter(filter=>!['minimum','maximum'].includes(filter.operator)),...bounds];}catch(error:unknown){this.filterFrom.setCustomValidity(error instanceof Error?error.message:String(error));this.filterFrom.reportValidity();return;}}
+
+    if(value&&column){const operator=this.filterOperator.value as TrafficFilter['operator'];
+      if(this.pickerNumeric&&(!/^[0-9]+$/.test(value)||BigInt(value)>18446744073709551615n||column==='request-number'&&BigInt(value)<1n)){this.filterInput.setCustomValidity(column==='request-number'?'Enter a positive decimal request number up to 18446744073709551615.':'Enter an unsigned decimal integer up to 18446744073709551615.');this.filterInput.reportValidity();return;}
+      if(/[\p{Cc}]/u.test(value)){this.filterInput.setCustomValidity('Remove control characters from the value.');this.filterInput.reportValidity();return;}
+      constraints=[...constraints.filter(filter=>filter.operator!==operator),{column,operator,value,label:''}];
+    }
+    if(this.filterGroups.filter(group=>group.dimension!==dimension).reduce((total,group)=>total+group.values.length,0)+this.pickerValues.length>1024){this.pickerError='Choose at most 1024 values across all fields.';return;}
+    if(this.filters.filter(filter=>filter.column!==dimension).length+constraints.length>14){this.pickerError='Remove a custom condition before adding another (maximum 14).';return;}
+    this.clearDimension(dimension);this.filters=[...this.filters,...constraints];
+    if(this.pickerValues.length)this.filterGroups=[...this.filterGroups,{dimension,values:structuredClone(this.pickerValues)}];
+    this.queryRevision++;this.closePicker();await this.refreshSessions(undefined,true);
   }
-  async removeFilter(column:ColumnId,operator:string):Promise<void> { this.clearTrafficSelection();this.filters = this.filters.filter((filter) => filter.column !== column || filter.operator !== operator); this.queryRevision++; await this.refreshSessions(undefined,true); }
-  filtersChanged():void {this.filterCount=this.filters.length+(this.fetchDestinations.length?1:0);}
+  async removeFilter(column:ColumnId,operator:string):Promise<void> {this.filters=this.filters.filter(filter=>filter.column!==column||filter.operator!==operator);this.queryRevision++;await this.refreshSessions(undefined,true);}
+  filtersChanged():void {this.refreshChips();}
   fetchDestinationsChanged():void {
     this.fetchDestinationOptions=this.fetchDestinationOptions.map(option=>({...option,selected:this.fetchDestinations.includes(option.value)}));
     const selected=this.fetchDestinationOptions.filter(option=>option.selected);
-    this.fetchDestinationSummary=selected.length>2?selected.length+' selected':selected.map(option=>option.label).join(', ')||'All destinations';
-    this.filtersChanged();
+    this.fetchDestinationSummary=selected.length>2?selected.length+' selected':selected.map(option=>option.label).join(', ')||'All destinations';this.refreshChips();
   }
-  async setFetchDestination(value:string,event:Event):Promise<void> {
-    const checked=(event.currentTarget as HTMLInputElement).checked;
-    this.fetchDestinations=checked?[...new Set([...this.fetchDestinations,value])]:this.fetchDestinations.filter(destination=>destination!==value);
-    await this.refreshDestinationFilter();
-  }
-  private async refreshDestinationFilter():Promise<void> {this.clearTrafficSelection();this.queryRevision++;this.followLatest=false;await this.refreshSessions(undefined,true);}
-  async clearFetchDestinations():Promise<void> {this.fetchDestinations=[];await this.refreshDestinationFilter();}
-  async clearFilters():Promise<void> {this.clearTrafficSelection();this.filters=[];this.fetchDestinations=[];this.queryRevision++;await this.refreshSessions(undefined,true);}
+  async setFetchDestination(value:string,event:Event):Promise<void> {this.fetchDestinations=(event.currentTarget as HTMLInputElement).checked?[...new Set([...this.fetchDestinations,value])]:this.fetchDestinations.filter(destination=>destination!==value);this.queryRevision++;await this.refreshSessions(undefined,true);}
+  async clearFetchDestinations():Promise<void> {await this.removeFilterDimension('fetch-destination');}
+  async clearFilters():Promise<void> {this.filters=[];this.filterGroups=[];this.fetchDestinations=[];this.queryRevision++;await this.refreshSessions(undefined,true);}
   searchChanged(event:Event):void {
     this.searchText=(event.currentTarget as HTMLInputElement).value;
     if(this.trafficSearchKind!=='filter')return;
@@ -1008,7 +1272,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       let view:TrafficView,revision:number;
       do {
         revision=this.queryRevision;
-        view=await invoke<TrafficView>('query_traffic_view',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:result.id,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value})),sort:this.sort}});
+        view=await invoke<TrafficView>('query_traffic_view',{query:this.trafficQuery({searchResultId:result.id})});
         if(!this.isConnected||this.searchOperation!==operationId){this.releaseView(view);return;}
         if(revision!==this.queryRevision)this.releaseView(view);
       }while(revision!==this.queryRevision);
@@ -1042,7 +1306,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       if(!this.matchPreserveSelection)this.trafficSelection.replace(id);
       this.trafficSelection.focused=id;this.selectedSessionId=id;this.inspectionGeneration++;this.followLatest=false;
       this.setInspectionSummary(row);
-      this.applyDetail(detail);this.updateTrafficSelection();this.renderFollowState();this.matchCurrentId=id;
+      this.applyDetail(detail,row);this.updateTrafficSelection();this.renderFollowState();this.matchCurrentId=id;
       this.matchLocations=locations.matches;this.matchIndex=0;this.matchMore=locations.moreMatches;this.matchEntryLabel=(detail.requests[0]?.method??'Request')+' '+(detail.requests[0]?.target??id);this.renderMatch();
     }catch(error:unknown){if(generation===this.matchGeneration){this.matchError='Matches could not be shown: '+describeError(error);this.matchLocations=[];this.renderMatch();}}finally{if(generation===this.matchGeneration)this.matchBusy=false;}
   }
@@ -1085,7 +1349,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async refreshSearchMatchIds():Promise<boolean> {
     if(!this.searchResultId)return false;
     const resultId=this.searchResultId, revision=this.queryRevision;
-    const ids=await invoke<string[]>('matching_traffic_ids',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:resultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value})=>({column,operator,value}))}});
+    const ids=await invoke<string[]>('matching_traffic_ids',{query:this.trafficQuery({searchResultId:resultId})});
     if(!this.isConnected||this.searchResultId!==resultId||this.queryRevision!==revision)return false;
     this.searchMatchIds=ids;this.contentMatchCount=ids.length;this.matchRevision=revision;
     return true;
@@ -1152,7 +1416,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   fitColumn(id:ColumnId):void {
     const context = new OffscreenCanvas(1,1).getContext('2d');
     if (!context) return; context.font = getComputedStyle(this.trafficTable).font || '13px Segoe UI';
-    const width = Math.max(context.measureText((id==='request-number'?'#':columnDefinitions.find((column) => column.id === id)!.label)).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)+(id==='protocol'&&row.activeStreamLabel?context.measureText(row.activeStreamLabel).width+18:0)))+38;
+    const width = Math.max(context.measureText((id==='request-number'?'#':columnDefinitions.find((column) => column.id === id)!.label)).width,...this.sessions.map((row) => context.measureText(cellText(row,id)).width+(id==='path'&&row.topLevelNavigation?42:0)+(id==='protocol'&&row.streamLabel?context.measureText(row.streamLabel).width+32:0)))+38;
     this.setColumnWidth(id,width,true);
   }
   private setColumnWidth(id:ColumnId,width:number,committed:boolean):void { this.patchPreferences({columns:this.preferences.columns.map((column) => column.id === id ? {...column,width:Math.round(Math.max(32,Math.min(1200,width)))} : column)},committed); }
@@ -1166,7 +1430,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async querySessions(force:boolean):Promise<void> {
     const revision = this.queryRevision;
     try {
-      const view = await invoke<TrafficView>('query_traffic_view',{query:{incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:this.fetchDestinations,filters:this.filters.map(({column,operator,value}) => ({column,operator,value}))}});
+      const view = await invoke<TrafficView>('query_traffic_view',{query:this.trafficQuery()});
       if (!this.isConnected || revision !== this.queryRevision) {this.releaseView(view);return;}
       if(view.page.retainedCount>0||view.ids.length)this.showTraceImportHelp=false;
       if(this.contentSearchActive){this.searchMatchIds=view.ids;this.contentMatchCount=view.ids.length;this.matchRevision=revision;}
@@ -1183,6 +1447,8 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.queryLoaded = true; this.queryError = ''; this.renderSessionState();
       if (force) this.diagnostic = this.sessionText;
       this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
+      if(this.pickerOpen)void this.loadFacets();this.scheduleTrafficClock();
+      if(this.disclosedStream){const row=this.rowCache.get(this.disclosedStream.id);if(row){this.disclosedStream=row;this.describeStream(row);}}
       this.$emit('traffic-refreshed');
       this.syncTimelineSelection();this.scheduleTimeline();
     } catch (error:unknown) {if(!this.isConnected||revision!==this.queryRevision)return;this.queryError = 'Traffic query failed: '+describeError(error); this.renderSessionState(); this.diagnostic = this.sessionText; }
@@ -1190,6 +1456,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async watchSessions():Promise<void> {
     if (this.watching) return; this.watching = true;
     const onEvent = new Channel<SessionHint>(); onEvent.onmessage = (_hint) => {
+      this.trafficRevision++;
       if (!this.isConnected) return;
       if(this.refreshTimer===undefined)this.refreshTimer=window.setTimeout(()=>{this.refreshTimer=undefined;void this.refreshSessions();if(this.selectedSessionId)void this.refreshInspection();},200);
 
@@ -1247,12 +1514,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.handleTrafficKey(this.trafficSelection.focused??this.virtualList.ids[0]??'',event);
   }
   positionTrafficMenu(event:MouseEvent):void {
+    if(event.type!=='contextmenu'){const row=this.rowCache.get(this.trafficSelection.focused??this.selectedSessionId??'');if(row)this.prepareContextValues(row);}
     const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();
     this.trafficMenuX=Math.max(10,Math.min(event.type==='contextmenu'?event.clientX:rect.left,window.innerWidth-320))+'px';
     this.trafficMenuY=Math.max(50,Math.min(event.type==='contextmenu'?event.clientY:rect.bottom+4,window.innerHeight-230))+'px';this.$flushUpdates();
   }
   openTrafficMenu(session:SessionSummary,event:MouseEvent):void {
-    event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectTraffic(session.id,false,()=>this.trafficSelection.focused===session.id&&this.trafficSelection.ids.has(session.id));}
+    this.prepareContextValues(session);event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectTraffic(session.id,false,()=>this.trafficSelection.focused===session.id&&this.trafficSelection.ids.has(session.id));}
     this.positionTrafficMenu(event);this.trafficMenu.showPopover();
   }
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
@@ -1347,12 +1615,13 @@ export class TrafficWorkspace extends WorkspaceElement {
   private async loadInspection(session:SessionSummary,generation:number):Promise<void> {
     try {
       const detail = await loadSessionDetail(session.id,session.terminal === 'completed'); if (generation !== this.inspectionGeneration || !this.isConnected) return;
-      this.applyDetail(detail);
+      this.applyDetail(detail,session);
     } catch (error:unknown) { if (generation === this.inspectionGeneration) this.diagnostic = 'Inspector unavailable: '+describeError(error); }
   }
-  private applyDetail(detail:SessionDetail):void {
+  private applyDetail(detail:SessionDetail,row?:SessionSummary|null):void {
     if(detail.id!==this.selectedDetail?.id || (!this.selectedDetail?.stream&&detail.stream))this.streamPanel=!!detail.stream;
-    this.selectedDetail = detail;
+    if(row!==undefined)this.inspectorContextRow=row?.id===detail.id?row:null;
+    this.selectedDetail = detail;this.prepareInspectorContext(false);this.scheduleTrafficClock();
     this.previewPageAvailable=detail.storedBodies.some(body=>body.boundary==='client-response'&&body.availability==='complete'&&(body.mediaType==='text/html'||body.mediaType==='application/xhtml+xml')); const reusable = clientResponseSource(detail) !== null;
     const status = detail.responses.find((head) => head.boundary === 'client-response')?.status ?? null;
     const responseStatus = {status,terminal:detail.terminalState};
@@ -1369,8 +1638,9 @@ export class TrafficWorkspace extends WorkspaceElement {
       while (this.inspectionAgain && this.isConnected && this.selectedSessionId) {
         this.inspectionAgain = false; const generation = this.inspectionGeneration;
         try {
-          const detail = await invoke<SessionDetail>('session_detail',{id:this.selectedSessionId});
-          if (generation === this.inspectionGeneration && this.isConnected) this.applyDetail(detail);
+          const id=this.selectedSessionId;
+          const [detail,row]=await Promise.all([invoke<SessionDetail>('session_detail',{id}),this.loadInspectorContext(id)]);
+          if (generation === this.inspectionGeneration && this.isConnected && this.selectedSessionId===id) this.applyDetail(detail,row);
         } catch (error:unknown) { if (generation === this.inspectionGeneration) this.diagnostic = 'Inspector update unavailable: '+describeError(error); }
       }
     })();
@@ -1400,7 +1670,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       const filtered = this.filterCount > 0 || this.searchText.length > 0;
       if(this.searchOperation){void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.searchOperation='';this.searchingTraffic=false;}
       this.searchResultId=null;this.searchMatchIds=[];this.contentSearchActive=false;this.contentSearchStatus='';this.contentSearchLabel='';this.contentMatchCount=0;
-      this.filters = []; this.fetchDestinations=[]; this.searchText = ''; this.liveFilter='';window.clearTimeout(this.searchTimer);this.searchInput.value = '';
+      this.filters = []; this.filterGroups=[];this.fetchDestinations=[]; this.searchText = ''; this.liveFilter='';window.clearTimeout(this.searchTimer);this.searchInput.value = '';
       this.followLatest = false;this.closeMatches();this.applyView(view);this.queryLoaded = true; this.queryError = '';
       this.renderSessionState(); this.renderFollowState(); this.$flushUpdates(); this.measurePinnedColumns();
       if(this.timelineMode){
@@ -1490,7 +1760,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;
     const labels:Record<string,string> = {stopped:'Proxy stopped.',running:'Proxy running.',draining:'Finishing active requests.',starting:'Starting proxy.',stopping:'Stopping proxy.',failed:'Proxy failed.'};
-    const empty = this.filterCount || this.liveFilter || this.contentSearchActive ? 'No matching traffic. Adjust or clear your filters.' : this.viewerMode ? 'Import a saved capture to view traffic.' : state === 'running' ? 'Waiting for traffic. Make a request through the proxy.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
+    const empty = this.filterCount || this.liveFilter || this.contentSearchActive ? this.contentSearchActive?'No matching traffic in this search snapshot. Adjust filters or search again.':this.viewerMode?'No matching saved traffic. Adjust filters or import another capture.':this.lifecycle!=='running'&&this.lifecycle!=='draining'?'No matching traffic. Adjust or clear your filters.':this.followLatest?'No matching traffic. New matches appear while following; adjust or clear filters.':'No matching traffic. Auto-scroll is paused; new matches appear in Show updates.' : this.viewerMode ? 'Import a saved capture to view traffic.' : state === 'running' ? 'Waiting for traffic. Make a request through the proxy.' : state === 'stopped' ? 'Start the proxy to capture traffic.' : 'No exchanges captured.';
     this.emptyTrafficText=empty;
     const summary = this.queryError || this.watchError || (!this.queryLoaded ? 'Loading captured traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' traffic entries.' : empty);
     this.sessionText = this.viewerMode ? this.queryError || this.watchError || (!this.queryLoaded ? 'Loading saved traffic…' : this.totalMatched ? this.totalMatched.toLocaleString()+' saved entries.' : empty) : (labels[state] ?? 'Proxy status unavailable.')+' '+summary;
@@ -1632,6 +1902,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch (error:unknown) { await this.showError('TMCap export failed',describeError(error)); }
   }
   disconnectedCallback():void {
+    window.clearTimeout(this.facetSearchTimer);window.clearTimeout(this.trafficClock);this.trafficClock=undefined;this.pickerGeneration++;this.pickerOpen=false;
 
     this.markerGeneration++;this.markerNavigation++;this.timelineGeneration++;window.clearTimeout(this.timelineTimer);
     this.clearColumnDrag();

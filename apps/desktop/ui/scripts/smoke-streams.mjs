@@ -44,26 +44,48 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
     assert.equal(rows.find(row=>row.id===sseId).streamProtocol,'sse');
     const page=id=>invoke('stream_page',{query:{sessionId:id,offset:0,limit:100,tail:true,anchor:null,sender:null,controls:true,search:''}});
     await wait(async()=> (await page(socketId)).rows.length===2 && (await page(sseId)).rows.length===1);
+    const facet=await invoke('traffic_facets',{request:{query:{filterGroups:[{dimension:'state',values:[{kind:'text',value:'active'}]}]},dimension:'traffic-type',search:null,offset:0,limit:100}});
+    assert.ok(facet.options.some(option=>option.key==='text:websocket'&&option.count>=1));assert.ok(facet.options.some(option=>option.key==='text:sse'&&option.count>=1));
     const ws=await page(socketId);assert.deepEqual(ws.rows.map(row=>row.message.sender).sort(),['client','server']);
     const sse=await page(sseId),payload=await invoke('stream_message',{id:sseId,sequence:sse.rows[0].sequence});
     assert.equal(Buffer.from(payload.payload).toString(),'{"native":1}');assert.equal(payload.eventId,'first');
     await evaluate(`(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="traffic"]').click();await shell.traffic.revealSession(${JSON.stringify(socketId)});})()`);
     await wait(()=>evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamRows.length===2`));
-    const badges=()=>evaluate(`Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.active-stream-badge'),el=>el.textContent)`);
-    await wait(async()=> (await badges()).includes('WebSocket · Active') && (await badges()).includes('SSE · Active'));
+    const badges=()=>evaluate(`Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity[data-active]'),el=>el.textContent)`);
+    await wait(async()=> (await badges()).includes('WebSocket⌄') && (await badges()).includes('SSE⌄'));
+    const byteRows=await invoke('query_sessions',{query:{search:'/native-stream-socket',sort:{column:'started-at',direction:'descending'}}});
+    assert.equal(byteRows.sessions[0].streamSent,13);assert.equal(byteRows.sessions[0].streamReceived,13);assert.equal(byteRows.sessions[0].requestBytes,0);assert.equal(byteRows.sessions[0].responseBytes,0);
+    const quietDuration=await evaluate(`document.querySelector('app-shell').traffic.rowCache.get(${JSON.stringify(socketId)}).durationMs`);
+    await wait(()=>evaluate(`document.querySelector('app-shell').traffic.rowCache.get(${JSON.stringify(socketId)})?.durationMs>${quietDuration+500}`));
+    const quietSettings=await evaluate(`(()=>{const t=document.querySelector('app-shell').traffic;return {filters:t.filters,groups:t.filterGroups,search:t.liveFilter,text:t.searchText,follow:t.followLatest};})()`);
+    try {
+      await evaluate(`(async()=>{const t=document.querySelector('app-shell').traffic;t.liveFilter='/native-stream-socket';t.filterGroups=[{dimension:'traffic-type',values:[{kind:'text',value:'websocket'}]}];t.filters=[{column:'duration',operator:'minimum',value:String(t.rowCache.get(${JSON.stringify(socketId)}).durationMs+1800),label:''}];t.followLatest=true;t.queryRevision++;await t.refreshSessions(undefined,true);})()`);
+      assert.equal(await evaluate(`document.querySelector('app-shell').traffic.virtualList.ids.includes(${JSON.stringify(socketId)})`),false);
+      await wait(()=>evaluate(`document.querySelector('app-shell').traffic.virtualList.ids.includes(${JSON.stringify(socketId)})`));
+      assert.equal(await evaluate(`document.querySelector('app-shell').traffic.selectedSessionId`),socketId);
+    } finally {
+      await evaluate(`(async()=>{const t=document.querySelector('app-shell').traffic,s=${JSON.stringify(quietSettings)};t.filters=s.filters;t.filterGroups=s.groups;t.liveFilter=s.search;t.searchText=s.text;t.followLatest=s.follow;t.queryRevision++;await t.refreshSessions(undefined,true);})()`);
+    }
+    await evaluate(`(()=>{const t=document.querySelector('app-shell').traffic;t.querySelector('.stream-identity').click();t.streamDisclosure.querySelector('button:last-child').click();})()`);
+
     await evaluate(`(()=>{const inspector=document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector');inspector.select(inspector.streamRows[0]);})()`);
     await wait(()=>evaluate(`!!document.querySelector('app-shell').shadowRoot.querySelector('stream-inspector').streamPayload`));
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-streams.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
     const originalPreferences=await evaluate(`document.querySelector('app-shell').traffic.preferences`);
     const rowHeight=await evaluate(`document.querySelector('app-shell').traffic.querySelector('tr[data-session-id]').getBoundingClientRect().height`);
     try {
+      await evaluate(`(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,columns:t.preferences.columns.map(column=>column.id==='protocol'?{...column,width:72}:column)};})()`);
+      await wait(()=>evaluate(`Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity')).some(el=>el.textContent==='WS⌄')`));
+      assert.equal(await evaluate(`Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity')).every(el=>{const range=document.createRange();range.selectNodeContents(el);const cell=el.closest('td').getBoundingClientRect();return [...range.getClientRects()].every(rect=>rect.left>=cell.left&&rect.right<=cell.right);})`),true,'Compact stream identity lost its label or disclosure chevron');
+      await evaluate(`document.querySelector('app-shell').traffic.querySelector('.stream-identity').scrollIntoView({block:'nearest',inline:'nearest'})`);
+      if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-stream-compact-identity.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
       for(const width of [100,60,32]) {
         await evaluate(`(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,wrapCells:true,columns:t.preferences.columns.map(column=>column.id==='protocol'||column.id==='path'?{...column,width:${width}}:column)};})()`);
         await wait(()=>evaluate(`(()=>{
-          const badges=Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.active-stream-badge'));
+          const badges=Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity[data-active]'));
           return badges.length===2&&badges.every(badge=>{
             const cell=badge.closest('td'),text=document.createRange();text.selectNodeContents(badge);
-            return cell.dataset.columnId==='protocol'&&Math.abs(cell.getBoundingClientRect().width-${width})<1&&getComputedStyle(cell).whiteSpace==='nowrap'&&text.getClientRects().length===1&&Math.abs(cell.closest('tr').getBoundingClientRect().height-${rowHeight})<1&&cell.scrollWidth>cell.clientWidth&&cell.title.includes('Active');
+            return cell.dataset.columnId==='protocol'&&Math.abs(cell.getBoundingClientRect().width-${width})<1&&getComputedStyle(cell).whiteSpace==='nowrap'&&new Set([...text.getClientRects()].map(rect=>Math.round(rect.top))).size===1&&Math.abs(cell.closest('tr').getBoundingClientRect().height-${rowHeight})<1&&cell.scrollWidth>cell.clientWidth&&cell.title.includes('In progress');
           });
         })()`));
         if(width===60&&screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-stream-protocol-narrow.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
@@ -86,13 +108,15 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
     events.end();
     await wait(async()=> !(await active()).some(row=>row.id===sseId));
     await evaluate(`document.querySelector('app-shell').traffic.refreshSessions(undefined,true)`);
-    await wait(async()=> !(await badges()).includes('SSE · Active'));
-    assert.ok((await badges()).includes('WebSocket · Active'),'Quiet WebSocket lost its active badge');
+    await wait(async()=> !(await badges()).includes('SSE⌄'));
+    assert.ok((await badges()).includes('WebSocket⌄'),'Quiet WebSocket lost its active badge');
     client.destroy();
     await wait(async()=> (await active()).length===0);
     await evaluate(`document.querySelector('app-shell').traffic.refreshSessions(undefined,true)`);
     await wait(async()=> (await badges()).length===0);
     assert.deepEqual(await badges(),[],'Ended native streams still show active badges');
+    assert.equal(await evaluate(`document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity').length`),2,'Closed native streams lost their identity');
+    const ended=await invoke('query_sessions',{query:{search:'/native-stream-events',sort:{column:'started-at',direction:'descending'}}});const lifetime=ended.sessions[0].durationMs;await new Promise(resolve=>setTimeout(resolve,100));const endedAgain=await invoke('query_sessions',{query:{search:'/native-stream-events',sort:{column:'started-at',direction:'descending'}}});assert.equal(endedAgain.sessions[0].durationMs,lifetime,'Closed SSE lifetime kept aging');
     // Application exit must cancel a new quiet socket instead of waiting for a peer.
     client=await openSocket();client.on('error',()=>{});client.resume();
     await wait(async()=> (await active()).length===1);

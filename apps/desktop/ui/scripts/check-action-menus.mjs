@@ -15,6 +15,8 @@ export async function checkActionMenus(page,root) {
     const panel=menu.locator('action-submenu[label="Copy"]').locator('#submenu');
     const box=await panel.boundingBox();assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=width&&box.y+box.height<=height,'Submenu escaped the viewport');
     await page.screenshot({path:resolve(root,'../../../target/ui-check/actions-copy-'+width+'.png')});
+    await page.mouse.move(0,0);
+    await page.waitForFunction(node=>getComputedStyle(node).backgroundColor==='rgba(0, 0, 0, 0)',await menu.getByRole('button',{name:'Copy request summary',exact:true}).elementHandle());
     assert.equal(await menu.getByRole('button',{name:'Copy request summary',exact:true}).evaluate(node=>getComputedStyle(node).backgroundColor),'rgba(0, 0, 0, 0)');
     await menu.getByRole('button',{name:'Copy request summary',exact:true}).click();
     const text=await page.evaluate(()=>navigator.clipboard.readText());assert.match(text,/GET http:\/\/example.test\//);assert.match(text,/Request #\d+ in this workspace/);assert.doesNotMatch(text,/Request ID:|Path:/);

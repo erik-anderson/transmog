@@ -14,7 +14,13 @@ use transmog_session::{
 };
 
 use crate::workspace::TrafficColumn;
+mod facets;
 use crate::{AppError, AutoResponseMatchView, ErrorCategory, inspector::auto_response_match};
+pub(crate) use facets::facet_counts;
+pub use facets::{
+    TrafficDimension, TrafficFacet, TrafficFacetInput, TrafficFacetOption, TrafficFacetPage,
+    TrafficFilterGroup, TrafficFilterValue,
+};
 
 /// Direction of a retained-traffic metadata sort.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -147,6 +153,9 @@ pub struct SessionQueryInput {
     /// Column filters, combined with AND.
     #[serde(default)]
     pub filters: Vec<SessionColumnFilter>,
+    /// Exact alternatives OR within each dimension, AND across dimensions and constraints.
+    #[serde(default)]
+    pub filter_groups: Vec<TrafficFilterGroup>,
     /// Original client fetch destinations, combined with OR within this group.
     #[serde(default)]
     pub fetch_destinations: Vec<String>,
@@ -183,14 +192,24 @@ pub struct SessionSummary {
     pub stream_protocol: Option<transmog_core::stream::StreamProtocol>,
     /// Last response status, if observed.
     pub status: Option<u16>,
-    /// Milliseconds from start to terminal observation or the page snapshot.
+    /// Display duration: stream lifetime for WS/SSE; HTTP duration otherwise.
     pub duration_ms: Option<u64>,
+    /// Original HTTP exchange duration, independent of stream lifetime.
+    pub http_duration_ms: Option<u64>,
+    /// Request headers to upstream response headers, when measured (SSE latency).
+    pub response_headers_ms: Option<u64>,
+    /// Reliable stream timing and explicit evidence boundaries.
+    pub stream_lifetime: Option<crate::streams::StreamLifetime>,
     /// Original saved trace namespace, when this row was imported.
     pub trace_id: Option<String>,
     /// Request body bytes observed at all explicit boundaries.
     pub request_bytes: u64,
     /// Response body bytes observed at all explicit boundaries.
     pub response_bytes: u64,
+    /// Decoded client stream-message bytes; None for ordinary HTTP.
+    pub stream_sent: Option<u64>,
+    /// Decoded server stream-message bytes; None for ordinary HTTP.
+    pub stream_received: Option<u64>,
     /// Stable terminal category.
     pub terminal: &'static str,
     /// Whether this exchange has visible sequence loss.
@@ -416,6 +435,7 @@ pub(crate) fn query_sessions_with_traces(
     if input.sort.is_some()
         || input.search.is_some()
         || !input.filters.is_empty()
+        || !input.filter_groups.is_empty()
         || !input.fetch_destinations.is_empty()
         || input.offset.is_some()
         || input.focus_id.is_some()
@@ -516,18 +536,7 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
     let (fetch_destination, top_level_navigation) = fetch_context(snapshot);
     let target = snapshot.metadata.original_target.as_target();
     let request = snapshot.request_heads.last().map(|head| &head.head);
-    let end = snapshot
-        .terminal_at
-        .or_else(|| (!snapshot.imported && snapshot.terminal.is_none()).then_some(now));
-    let duration_ms = end
-        .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
-        .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
-        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
-    let duration_ms = snapshot
-        .performance
-        .elapsed_micros()
-        .map(|micros| micros / 1_000)
-        .or(duration_ms);
+    let duration_ms = http_duration(snapshot, now);
     let (request_bytes, response_bytes) =
         snapshot
             .bodies
@@ -550,6 +559,12 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
                 },
             );
     let terminal = snapshot.state();
+    let http_duration_ms = duration_ms;
+    let stream_lifetime = crate::streams::StreamLifetime::from_snapshot(snapshot);
+    let duration_ms = stream_lifetime
+        .as_ref()
+        .map_or(http_duration_ms, |stream| stream.duration_ms);
+    let response_headers_ms = response_header_duration(snapshot);
     SessionSummary {
         request_number: snapshot.request_number.to_string(),
         top_level_navigation,
@@ -587,13 +602,55 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         protocol: traffic_protocol(snapshot),
         status: snapshot.response_heads.last().map(|head| head.head.status),
         duration_ms,
+        http_duration_ms,
+        response_headers_ms,
+        stream_lifetime,
         request_bytes,
         response_bytes,
+        stream_sent: snapshot
+            .stream
+            .as_ref()
+            .filter(|_| snapshot.stream_history.client_bytes_known)
+            .map(|_| snapshot.stream_history.client_bytes),
+        stream_received: snapshot
+            .stream
+            .as_ref()
+            .filter(|_| snapshot.stream_history.server_bytes_known)
+            .map(|_| snapshot.stream_history.server_bytes),
         terminal,
         loss: snapshot.sequence_loss > 0,
         capturing: capturing && !snapshot.imported,
         auto_response: auto_response_match(snapshot),
     }
+}
+
+pub(crate) fn http_duration(snapshot: &SessionSnapshot, now: SystemTime) -> Option<u64> {
+    let end = snapshot
+        .terminal_at
+        .or_else(|| (!snapshot.imported && snapshot.terminal.is_none()).then_some(now));
+    let duration_ms = end
+        .filter(|_| snapshot.metadata.started_at != SystemTime::UNIX_EPOCH)
+        .and_then(|end| end.duration_since(snapshot.metadata.started_at).ok())
+        .map(|duration| u64::try_from(duration.as_millis()).unwrap_or(u64::MAX));
+    snapshot
+        .performance
+        .elapsed_micros()
+        .map(|micros| micros / 1_000)
+        .or(duration_ms)
+}
+
+pub(crate) fn response_header_duration(snapshot: &SessionSnapshot) -> Option<u64> {
+    use transmog_core::performance::Milestone;
+    let points = &snapshot.performance.points;
+    let start = points
+        .iter()
+        .find(|point| point.milestone == Milestone::RequestHeaders)?;
+    let end = points
+        .iter()
+        .find(|point| point.milestone == Milestone::ResponseHeaders)?;
+    u64::try_from(end.offset_micros.checked_sub(start.offset_micros)?)
+        .ok()
+        .map(|micros| micros / 1000)
 }
 
 fn traffic_protocol(snapshot: &SessionSnapshot) -> String {
@@ -694,9 +751,12 @@ fn numeric_value(row: &SessionSummary, column: TrafficColumn) -> Option<u64> {
         TrafficColumn::Status => row.status.map(u64::from),
         TrafficColumn::Pid => row.caller.process_id.map(u64::from),
         TrafficColumn::Duration => row.duration_ms,
+        TrafficColumn::HttpDuration => row.http_duration_ms,
         TrafficColumn::ResponseBytes => Some(row.response_bytes),
         TrafficColumn::RequestBytes => Some(row.request_bytes),
-        TrafficColumn::StartedAt => Some(row.started_at),
+        TrafficColumn::StartedAt => (row.started_at > 0).then_some(row.started_at),
+        TrafficColumn::StreamSent => row.stream_sent,
+        TrafficColumn::StreamReceived => row.stream_received,
         _ => None,
     }
 }
@@ -708,9 +768,12 @@ fn numeric_column(column: TrafficColumn) -> bool {
             | TrafficColumn::Status
             | TrafficColumn::Pid
             | TrafficColumn::Duration
+            | TrafficColumn::HttpDuration
             | TrafficColumn::ResponseBytes
             | TrafficColumn::RequestBytes
             | TrafficColumn::StartedAt
+            | TrafficColumn::StreamSent
+            | TrafficColumn::StreamReceived
     )
 }
 
@@ -786,6 +849,7 @@ fn ordered_rows(
         ));
     }
     validate_filter(input.search.as_deref())?;
+    let groups = facets::prepare_groups(&input.filter_groups)?;
     let filters = input
         .filters
         .iter()
@@ -799,11 +863,17 @@ fn ordered_rows(
     let now = SystemTime::now();
     let rows = service
         .catalog()
-        .project_retained(|snapshot| summarize_with_trace(snapshot, now, capturing, traces));
+        .retained_metadata()
+        .into_iter()
+        .map(|snapshot| summarize_with_trace(&snapshot, now, capturing, traces))
+        .collect::<Vec<_>>();
     let retained_count = rows.len();
     let mut rows: Vec<_> = rows
         .into_iter()
-        .filter(|row| matches_query_row(row, input, matching, search.as_deref(), &filters))
+        .filter(|row| {
+            matches_query_row(row, input, matching, search.as_deref(), &filters)
+                && groups.iter().all(|group| group.matches(row))
+        })
         .collect();
     if let Some(sort) = &input.sort {
         sort_rows(&mut rows, sort);
@@ -2139,6 +2209,637 @@ mod tests {
                 process_name: None,
                 process_id: None,
             }
+        );
+    }
+    fn exact_group(column: TrafficColumn, values: Vec<TrafficFilterValue>) -> TrafficFilterGroup {
+        TrafficFilterGroup {
+            dimension: TrafficDimension::Column(column),
+            values,
+        }
+    }
+
+    fn facet_fixture() -> ApplicationSessionService {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=350 {
+            service.catalog().apply(started(id));
+            service.catalog().apply(ObserverEvent {
+                exchange_id: ExchangeId(id),
+                sequence: 2,
+                kind: ObserverEventKind::RequestHeadObserved {
+                    boundary: transmog_core::observe::ExchangeBoundary::ClientRequest,
+                    head: transmog_core::RequestHead {
+                        method: if id % 2 == 0 { "GET" } else { "POST" }.into(),
+                        target: service
+                            .catalog()
+                            .get(ExchangeId(id))
+                            .unwrap()
+                            .metadata
+                            .original_target
+                            .as_target()
+                            .clone(),
+                        headers: transmog_core::HeaderBlock::default(),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                },
+            });
+            service.catalog().apply(ObserverEvent {
+                exchange_id: ExchangeId(id),
+                sequence: 3,
+                kind: ObserverEventKind::ResponseHeadObserved {
+                    boundary: transmog_core::observe::ExchangeBoundary::ClientResponse,
+                    head: transmog_core::ResponseHead {
+                        status: if id % 2 == 0 { 200 } else { 404 },
+                        headers: transmog_core::HeaderBlock::default(),
+                        source_version: HttpLegVersion::Http1,
+                    },
+                },
+            });
+        }
+        service
+    }
+
+    #[test]
+    fn typed_alternatives_share_scope_across_pages_ids_views_and_timeline() {
+        let service = facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let registry = Arc::new(Mutex::new(CursorRegistry::default()));
+        let query = SessionQueryInput {
+            limit: Some(2),
+            filter_groups: vec![
+                exact_group(
+                    TrafficColumn::Status,
+                    vec![
+                        TrafficFilterValue::StatusFamily(2),
+                        TrafficFilterValue::Number("404".into()),
+                    ],
+                ),
+                exact_group(
+                    TrafficColumn::Method,
+                    vec![TrafficFilterValue::Text("get".into())],
+                ),
+            ],
+            ..Default::default()
+        };
+        let page = query_sessions(&service, &registry, query.clone()).unwrap();
+        assert_eq!(
+            (page.total_matched, page.retained_count, page.sessions.len()),
+            (175, 350, 2)
+        );
+        let ids = matching_ids(&service, &query, &traces, None).unwrap();
+        assert_eq!(ids.len(), 175);
+        let views = Mutex::new(TrafficViews::default());
+        let view = traffic_view(&service, &views, &query, &traces, None).unwrap();
+        assert_eq!(ids, view.ids);
+        assert_eq!(
+            traffic_timeline_rows(&service, &views, &view.id, 0, 2048, &traces)
+                .unwrap()
+                .len(),
+            175
+        );
+        let restricted = ids.iter().take(5).cloned().collect();
+        assert_eq!(
+            matching_ids(&service, &query, &traces, Some(&restricted))
+                .unwrap()
+                .len(),
+            5
+        );
+        let mut query = query;
+        query.filters.push(SessionColumnFilter {
+            column: TrafficColumn::Status,
+            operator: FilterOperator::Minimum,
+            value: "400".into(),
+        });
+        assert!(
+            matching_ids(&service, &query, &traces, None)
+                .unwrap()
+                .is_empty(),
+            "legacy constraints retain AND semantics"
+        );
+    }
+
+    #[test]
+    fn facet_counts_exclude_own_dimension_and_use_all_retained_search_matches() {
+        let service = facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let request = TrafficFacetInput {
+            include_values: vec![],
+            dimension: TrafficDimension::Column(TrafficColumn::Status),
+            search: None,
+            offset: 0,
+            limit: Some(512),
+            query: SessionQueryInput {
+                limit: Some(1),
+                offset: Some(300),
+                search: Some("example.test".into()),
+                filters: vec![SessionColumnFilter {
+                    column: TrafficColumn::Status,
+                    operator: FilterOperator::Maximum,
+                    value: "100".into(),
+                }],
+                filter_groups: vec![
+                    exact_group(
+                        TrafficColumn::Status,
+                        vec![TrafficFilterValue::Number("500".into())],
+                    ),
+                    exact_group(
+                        TrafficColumn::Method,
+                        vec![TrafficFilterValue::Text("GET".into())],
+                    ),
+                ],
+                ..Default::default()
+            },
+        };
+        let page = facet_counts(&service, &request, &traces, None).unwrap();
+        assert_eq!(page.matching_entries, 175);
+        assert!(page.options.iter().any(|option| option.value
+            == TrafficFilterValue::Number("200".into())
+            && option.count == 175));
+        assert!(page.options.iter().any(|option| option.value
+            == TrafficFilterValue::StatusFamily(2)
+            && option.count == 175));
+        assert!(
+            !page
+                .options
+                .iter()
+                .any(|option| option.value == TrafficFilterValue::Number("404".into()))
+        );
+        let subset = [
+            format!("{:032x}", 2),
+            format!("{:032x}", 4),
+            format!("{:032x}", 5),
+        ]
+        .into_iter()
+        .collect();
+        assert_eq!(
+            facet_counts(&service, &request, &traces, Some(&subset))
+                .unwrap()
+                .matching_entries,
+            2
+        );
+        let mut empty = request.clone();
+        empty.query.search = Some("no such host".into());
+        let zero = facet_counts(&service, &empty, &traces, None).unwrap();
+        assert_eq!(zero.matching_entries, 0);
+        assert!(zero.options.is_empty());
+        let mut paged = request;
+        paged.dimension = TrafficDimension::Column(TrafficColumn::Path);
+        paged.query.filters.clear();
+        paged.query.filter_groups.clear();
+        paged.limit = Some(2);
+        let first = facet_counts(&service, &paged, &traces, None).unwrap();
+        assert_eq!(
+            (first.total_options, first.options.len(), first.next_offset),
+            (350, 2, Some(2))
+        );
+        paged.offset = 2;
+        let second = facet_counts(&service, &paged, &traces, None).unwrap();
+        assert_ne!(first.options, second.options);
+        paged.search = Some("/350".into());
+        paged.offset = 0;
+        assert_eq!(
+            facet_counts(&service, &paged, &traces, None)
+                .unwrap()
+                .total_options,
+            1
+        );
+    }
+
+    #[test]
+    fn typed_status_families_zero_missing_and_bounds_are_distinct() {
+        let service = facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let query = SessionQueryInput {
+            filter_groups: vec![exact_group(
+                TrafficColumn::Status,
+                vec![
+                    TrafficFilterValue::StatusFamily(4),
+                    TrafficFilterValue::Number("200".into()),
+                ],
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            matching_ids(&service, &query, &traces, None).unwrap().len(),
+            350
+        );
+        let mut zero = SessionQueryInput {
+            filter_groups: vec![exact_group(
+                TrafficColumn::ResponseBytes,
+                vec![TrafficFilterValue::Number("0".into())],
+            )],
+            ..Default::default()
+        };
+        assert_eq!(
+            matching_ids(&service, &zero, &traces, None).unwrap().len(),
+            350
+        );
+        zero.filter_groups[0].values = vec![TrafficFilterValue::Unavailable];
+        assert!(
+            matching_ids(&service, &zero, &traces, None)
+                .unwrap()
+                .is_empty()
+        );
+        zero.filter_groups[0] = exact_group(
+            TrafficColumn::ContentType,
+            vec![TrafficFilterValue::Unavailable],
+        );
+        assert_eq!(
+            matching_ids(&service, &zero, &traces, None).unwrap().len(),
+            350
+        );
+        zero.filter_groups.push(zero.filter_groups[0].clone());
+        assert!(matching_ids(&service, &zero, &traces, None).is_err());
+        zero.filter_groups.truncate(1);
+        zero.filter_groups[0].values = vec![TrafficFilterValue::StatusFamily(6)];
+        assert!(matching_ids(&service, &zero, &traces, None).is_err());
+        zero.filter_groups[0] = exact_group(
+            TrafficColumn::Status,
+            vec![TrafficFilterValue::Number("200".into()); 129],
+        );
+        assert!(matching_ids(&service, &zero, &traces, None).is_err());
+        zero.filter_groups[0] = exact_group(
+            TrafficColumn::Status,
+            (100..200)
+                .map(|status| TrafficFilterValue::Number(status.to_string()))
+                .collect(),
+        );
+        assert!(
+            matching_ids(&service, &zero, &traces, None)
+                .unwrap()
+                .is_empty(),
+            "one hundred checkboxes are one bounded dimension"
+        );
+        let legacy: SessionQueryInput = serde_json::from_value(
+            serde_json::json!({"filters":[{"column":"status","operator":"minimum","value":"200"}]}),
+        )
+        .unwrap();
+        assert!(legacy.filter_groups.is_empty());
+        assert_eq!(
+            matching_ids(&service, &legacy, &traces, None)
+                .unwrap()
+                .len(),
+            350
+        );
+    }
+
+    #[test]
+    fn traffic_type_is_independent_of_http_version_and_lifecycle() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for id in 1..=4 {
+            service.catalog().apply(started(id));
+            if id <= 3 {
+                let state = StreamState {
+                    protocol: if id == 3 {
+                        StreamProtocol::Sse
+                    } else {
+                        StreamProtocol::WebSocket
+                    },
+                    status: StreamStatus::Open,
+                    at_millis: 1000,
+                    reason: None,
+                };
+                service.catalog().apply(ObserverEvent {
+                    exchange_id: ExchangeId(id),
+                    sequence: 2,
+                    kind: ObserverEventKind::StreamState(state.clone()),
+                });
+                if id == 2 {
+                    service.catalog().apply(ObserverEvent {
+                        exchange_id: ExchangeId(id),
+                        sequence: 3,
+                        kind: ObserverEventKind::Performance(
+                            transmog_core::performance::PerformanceEvidence {
+                                protocols: vec![transmog_core::performance::ProtocolObservation {
+                                    boundary: "client-request".into(),
+                                    version: "HTTP/2".into(),
+                                    reason: None,
+                                }],
+                                ..Default::default()
+                            },
+                        ),
+                    });
+                }
+                if id == 1 {
+                    service.catalog().apply(ObserverEvent {
+                        exchange_id: ExchangeId(id),
+                        sequence: 3,
+                        kind: ObserverEventKind::StreamState(StreamState {
+                            status: StreamStatus::Closed,
+                            at_millis: 3000,
+                            ..state
+                        }),
+                    });
+                }
+            }
+        }
+        let query = SessionQueryInput {
+            filter_groups: vec![TrafficFilterGroup {
+                dimension: TrafficDimension::Facet(TrafficFacet::TrafficType),
+                values: vec![TrafficFilterValue::Text("websocket".into())],
+            }],
+            ..Default::default()
+        };
+        let rows = ordered_rows(
+            &service,
+            &query,
+            &crate::traces::TraceRegistry::default(),
+            None,
+        )
+        .unwrap()
+        .0;
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].terminal, "completed");
+        assert_eq!(rows[1].protocol, "HTTP/2");
+    }
+
+    #[test]
+    fn stream_duration_preserves_http_waterfall_and_import_boundaries() {
+        use transmog_core::performance::{Milestone, TimingPoint};
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        service.catalog().apply(started(1));
+        let mut snapshot = service.catalog().get(ExchangeId(1)).unwrap();
+        snapshot.performance.points = vec![
+            TimingPoint {
+                milestone: Milestone::RequestHeaders,
+                unix_millis: 1000,
+                offset_micros: 0,
+            },
+            TimingPoint {
+                milestone: Milestone::ResponseHeaders,
+                unix_millis: 1002,
+                offset_micros: 2500,
+            },
+            TimingPoint {
+                milestone: Milestone::ExchangeDone,
+                unix_millis: 1005,
+                offset_micros: 5750,
+            },
+        ];
+        let state = StreamState {
+            protocol: StreamProtocol::WebSocket,
+            status: StreamStatus::Connecting,
+            at_millis: 1000,
+            reason: None,
+        };
+        snapshot.stream_history.observe_state(&state, false);
+        snapshot.stream = Some(state.clone());
+        snapshot.imported = true;
+        let row = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!(row.duration_ms, None);
+        assert_eq!(row.http_duration_ms, Some(5));
+        let open = StreamState {
+            status: StreamStatus::Open,
+            at_millis: 2000,
+            ..state
+        };
+        snapshot.stream_history.observe_state(&open, false);
+        snapshot.stream = Some(open.clone());
+        let first = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!(first.duration_ms, None);
+        assert_eq!(first.stream_lifetime.unwrap().boundary, "open-at-capture");
+        snapshot.stream_history.observed_until = Some(7000);
+        snapshot.stream_history.elapsed_millis = Some(5000);
+        let row = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!(row.duration_ms, Some(5000));
+        assert_eq!(row.response_headers_ms, Some(2));
+        assert_eq!(
+            timeline_row(
+                &snapshot,
+                SystemTime::now(),
+                &crate::traces::TraceRegistry::default()
+            )
+            .duration_micros,
+            Some(5750)
+        );
+        let later = SystemTime::now() + std::time::Duration::from_secs(60 * 60 * 24 * 365);
+        assert_eq!(summarize(&snapshot, later, false).duration_ms, Some(5000));
+        for status in [
+            StreamStatus::Closed,
+            StreamStatus::Failed,
+            StreamStatus::Interrupted,
+        ] {
+            let mut ended = snapshot.clone();
+            let state = StreamState {
+                status,
+                at_millis: 9000,
+                ..open.clone()
+            };
+            ended.stream_history.observe_state(&state, false);
+            ended.stream = Some(state);
+            let summary = crate::streams::StreamSummary::from_snapshot(&ended).unwrap();
+            assert_eq!(summary.lifetime.duration_ms, Some(7000));
+            assert_eq!(summary.lifetime.ended_at, Some(9000));
+            assert!(!summary.lifetime.live);
+        }
+    }
+    #[test]
+    fn every_selectable_facet_option_roundtrips_and_omissions_are_explicit() {
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        let traces = crate::traces::TraceRegistry::default();
+        for id in 1..=3 {
+            let mut event = started(id);
+            if id == 1
+                && let ObserverEventKind::ExchangeStarted { metadata } = &mut event.kind
+            {
+                let mut target = metadata.original_target.as_target().clone();
+                target.path = format!("/{}", "x".repeat(300));
+                Arc::make_mut(metadata).original_target =
+                    transmog_core::intercept::OriginalTarget::new(target);
+            }
+            service.catalog().apply(event);
+            if id > 1 {
+                observe_request(
+                    &service,
+                    id,
+                    2,
+                    transmog_core::observe::ExchangeBoundary::ClientRequest,
+                    "GET",
+                    transmog_core::HeaderBlock::from_fields(vec![
+                        transmog_core::HeaderField::try_new(
+                            "Sec-Fetch-Dest",
+                            if id == 2 {
+                                "future-destination"
+                            } else {
+                                "DOCUMENT"
+                            },
+                        )
+                        .unwrap(),
+                    ]),
+                );
+            }
+        }
+        for dimension in [
+            TrafficDimension::Column(TrafficColumn::Url),
+            TrafficDimension::Column(TrafficColumn::Path),
+            TrafficDimension::Facet(TrafficFacet::FetchDestination),
+        ] {
+            let request = TrafficFacetInput {
+                include_values: vec![],
+                query: SessionQueryInput::default(),
+                dimension,
+                search: None,
+                offset: 0,
+                limit: None,
+            };
+            let page = facet_counts(&service, &request, &traces, None).unwrap();
+            assert_eq!(page.matching_entries, 3);
+            assert_eq!(page.omitted_entries, 1);
+            assert_eq!(
+                page.options
+                    .iter()
+                    .map(|option| option.count)
+                    .sum::<usize>(),
+                2
+            );
+            for option in page.options {
+                let query = SessionQueryInput {
+                    filter_groups: vec![TrafficFilterGroup {
+                        dimension,
+                        values: vec![option.value],
+                    }],
+                    ..Default::default()
+                };
+                assert_eq!(
+                    matching_ids(&service, &query, &traces, None).unwrap().len(),
+                    option.count
+                );
+            }
+        }
+    }
+    #[test]
+    fn explicit_facet_counts_ignore_option_search_and_paging_but_keep_scope() {
+        let service = facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let request = TrafficFacetInput {
+            query: SessionQueryInput {
+                search: Some("example.test".into()),
+                filter_groups: vec![exact_group(
+                    TrafficColumn::Method,
+                    vec![TrafficFilterValue::Text("GET".into())],
+                )],
+                ..Default::default()
+            },
+            dimension: TrafficDimension::Column(TrafficColumn::Status),
+            search: Some("nothing".into()),
+            offset: 500,
+            limit: Some(1),
+            include_values: vec![
+                TrafficFilterValue::Number("200".into()),
+                TrafficFilterValue::Number("404".into()),
+                TrafficFilterValue::Unavailable,
+            ],
+        };
+        let page = facet_counts(&service, &request, &traces, None).unwrap();
+        assert!(page.options.is_empty());
+        assert_eq!(page.matching_entries, 175);
+        assert!(
+            page.included_options
+                .iter()
+                .any(|option| option.key == "number:200" && option.count == 175)
+        );
+        assert!(
+            page.included_options
+                .iter()
+                .any(|option| option.key == "number:404" && option.count == 0)
+        );
+        assert!(
+            page.included_options
+                .iter()
+                .any(|option| option.key == "unavailable" && option.count == 0)
+        );
+        let mut invalid = request;
+        invalid.include_values = vec![TrafficFilterValue::Text("200".into())];
+        assert!(facet_counts(&service, &invalid, &traces, None).is_err());
+        invalid.include_values = vec![TrafficFilterValue::Unavailable; 257];
+        assert!(facet_counts(&service, &invalid, &traces, None).is_err());
+    }
+
+    #[test]
+    fn stream_bytes_are_nullable_decoded_totals_separate_from_http_and_missing_time() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let service = facet_fixture();
+        let mut snapshot = service.catalog().get(ExchangeId(1)).unwrap();
+        let http = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!(http.stream_sent, None);
+        snapshot.stream = Some(StreamState {
+            protocol: StreamProtocol::WebSocket,
+            status: StreamStatus::Open,
+            at_millis: 1000,
+            reason: None,
+        });
+        let unknown = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!((unknown.stream_sent, unknown.stream_received), (None, None));
+        assert!(
+            !exact_group(
+                TrafficColumn::StreamSent,
+                vec![TrafficFilterValue::Number("0".into())]
+            )
+            .matches(&unknown)
+        );
+        assert!(
+            exact_group(
+                TrafficColumn::StreamSent,
+                vec![TrafficFilterValue::Unavailable]
+            )
+            .matches(&unknown)
+        );
+        snapshot.stream_history.client_bytes_known = true;
+        snapshot.stream_history.server_bytes_known = true;
+        snapshot.stream_history.client_bytes = 17;
+        snapshot.stream_history.server_bytes = 31;
+        let row = summarize(&snapshot, SystemTime::now(), false);
+        assert_eq!((row.stream_sent, row.stream_received), (Some(17), Some(31)));
+        assert_eq!(
+            (row.request_bytes, row.response_bytes),
+            (http.request_bytes, http.response_bytes)
+        );
+        snapshot.imported = true;
+        assert_eq!(
+            summarize(&snapshot, SystemTime::now(), false).stream_sent,
+            Some(17)
+        );
+        let mut zero = row.clone();
+        zero.stream_sent = Some(0);
+        zero.started_at = 0;
+        assert_eq!(numeric_value(&zero, TrafficColumn::StartedAt), None);
+        assert!(
+            exact_group(
+                TrafficColumn::StreamSent,
+                vec![TrafficFilterValue::Number("0".into())]
+            )
+            .matches(&zero)
+        );
+        assert!(
+            !exact_group(
+                TrafficColumn::StreamSent,
+                vec![TrafficFilterValue::Unavailable]
+            )
+            .matches(&zero)
+        );
+        assert!(
+            exact_group(
+                TrafficColumn::StreamSent,
+                vec![TrafficFilterValue::Unavailable]
+            )
+            .matches(&http)
+        );
+        let mut rows = vec![http, row, zero];
+        sort_rows(
+            &mut rows,
+            &SessionSort {
+                column: TrafficColumn::StreamSent,
+                direction: SortDirection::Descending,
+            },
+        );
+        assert_eq!(
+            rows.iter().map(|row| row.stream_sent).collect::<Vec<_>>(),
+            vec![Some(17), Some(0), None]
         );
     }
 }

@@ -8,7 +8,7 @@ export async function checkTrafficNavigation(page) {
       const t=document.querySelector('app-shell').traffic,s=globalThis.__workspaceFixture;
       await t.clearContentSearch(false);t.clearTrafficSelection();t.inspectionGeneration++;t.selectedSessionId=null;t.selectedDetail=null;
       t.selectedMethodText='—';t.selectedUrlText='Select a request';t.selectedStatusText='No response';t.$emit('selection-changed',null);
-      const seed=s.sessions[0];s.sessions=Array.from({length:1000},(_,index)=>({...seed,id:'navigation-'+index,method:'GET',path:'/navigation-'+index,url:'http://example.test/navigation-'+index,startedAt:index,contentType:'text/plain',topLevelNavigation:false}));
+      const seed=s.sessions[0];s.sessions=Array.from({length:1000},(_,index)=>({...seed,id:'navigation-'+index,method:'GET',path:'/navigation-'+index,url:'http://example.test/navigation-'+index,startedAt:index+1,contentType:'text/plain',topLevelNavigation:false}));
       s.dismissedIds=[];s.evictedIds=[];t.preferences={...t.preferences,wrapCells:false,compactRows:true,listSplit:45};
       t.sort={column:'started-at',direction:'ascending'};t.sortLabel='Oldest first';t.followLatest=true;t.queryRevision++;t.selectSearchMatches=false;
       await t.refreshSessions(undefined,true);

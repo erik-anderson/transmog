@@ -1185,3 +1185,340 @@ fn imported_persistent_sse_ids_share_storage_and_index_charge() {
     assert_eq!(loaded, message);
     assert!(Arc::ptr_eq(first, loaded.event_id.as_ref().unwrap()));
 }
+
+#[tokio::test]
+async fn stream_lifetime_boundaries_survive_native_save_and_reimport() {
+    use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    for (index, (protocol, status)) in [StreamProtocol::WebSocket, StreamProtocol::Sse]
+        .into_iter()
+        .flat_map(|protocol| {
+            [
+                StreamStatus::Open,
+                StreamStatus::Closed,
+                StreamStatus::Failed,
+                StreamStatus::Interrupted,
+            ]
+            .map(|status| (protocol, status))
+        })
+        .enumerate()
+    {
+        let input = root.path().join(format!("lifetime-{index}.tmcap"));
+        let mut records = vec![head("https://example.invalid/socket".into())];
+        for (status, at_millis) in [
+            (StreamStatus::Connecting, 1000),
+            (StreamStatus::Open, 2000),
+            (status, 8000),
+        ] {
+            records.push(record(CaptureRecordKind::StreamState(StreamState {
+                protocol,
+                status,
+                at_millis,
+                reason: None,
+            })));
+        }
+        records.push(record(CaptureRecordKind::Unknown {kind:"stream-summary".into(),payload:serde_json::json!({"openedAt":1000,"establishedAt":2000,"endedAt":if status.is_active() {None} else {Some(8000)},"observedUntil":8000,"elapsedMillis":6000})}));
+        for (index, record) in records.iter_mut().enumerate() {
+            record.sequence = index as u64 + 1;
+        }
+        write_records(&input, records);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(&input), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let row = workspace
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions
+            .remove(0);
+        assert_eq!(row.duration_ms, Some(6000));
+        let detail = workspace.session_detail(&row.id).unwrap();
+        let stream = detail.stream.unwrap();
+        assert_eq!(stream.lifetime.established_at, Some(2000));
+        assert_eq!(stream.opened_at, Some(1000));
+        assert_eq!(stream.lifetime.observed_until, Some(8000));
+        assert!(!stream.lifetime.live);
+        let saved = root.path().join(format!("saved-lifetime-{index}.tmcap"));
+        workspace
+            .save_traffic_trace(
+                saved.clone(),
+                crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let saved_data = read(&saved).unwrap();
+        let snapshot = &saved_data.sessions[0];
+        assert_eq!(snapshot.stream_history.established_at, Some(2000));
+        assert_eq!(snapshot.stream_history.opened_at, Some(1000));
+        assert_eq!(snapshot.stream_history.elapsed_millis, Some(6000));
+        assert_eq!(snapshot.stream_history.observed_until, Some(8000));
+        assert_eq!(
+            snapshot.stream_history.ended_at,
+            if status.is_active() { None } else { Some(8000) }
+        );
+    }
+}
+
+#[test]
+fn old_stream_summary_first_observation_is_not_relabelled_as_establishment() {
+    use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("old-summary.tmcap");
+    let mut records = vec![
+        head("https://example.invalid/socket".into()),
+        record(CaptureRecordKind::StreamState(StreamState {
+            protocol: StreamProtocol::WebSocket,
+            status: StreamStatus::Closed,
+            at_millis: 8000,
+            reason: None,
+        })),
+        record(CaptureRecordKind::Unknown {
+            kind: "stream-summary".into(),
+            payload: serde_json::json!({"openedAt":1000,"lastActivity":7000}),
+        }),
+    ];
+    for (index, record) in records.iter_mut().enumerate() {
+        record.sequence = index as u64 + 1;
+    }
+    write_records(&path, records);
+    let data = read(&path).unwrap();
+    let snapshot = &data.sessions[0];
+    assert_eq!(snapshot.stream_history.opened_at, Some(1000));
+    assert_eq!(snapshot.stream_history.established_at, None);
+    assert_eq!(snapshot.stream_history.lifetime_millis(), None);
+}
+
+#[tokio::test]
+async fn sse_http_terminals_use_recorded_end_time_and_survive_save_reimport() {
+    use transmog_core::performance::{Milestone, PerformanceEvidence, TimingPoint};
+    use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    for (index, (category, expected)) in [
+        (None, StreamStatus::Closed),
+        (Some("Upstream"), StreamStatus::Failed),
+        (Some("Cancelled"), StreamStatus::Interrupted),
+        (Some("Shutdown"), StreamStatus::Interrupted),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let path = root.path().join(format!("sse-terminal-{index}.tmcap"));
+        let mut message = StreamMessage::new("server", "event", b"quiet".to_vec().into());
+        message.at_millis = 4000;
+        let mut records = vec![
+            head("https://example.invalid/events".into()),
+            record(CaptureRecordKind::ResponseHead {
+                boundary: ExchangeBoundary::ClientResponse,
+                status: 200,
+                headers: vec![header("Content-Type", "text/event-stream")],
+            }),
+            record(CaptureRecordKind::StreamState(StreamState {
+                protocol: StreamProtocol::Sse,
+                status: StreamStatus::Open,
+                at_millis: 2000,
+                reason: None,
+            })),
+            record(CaptureRecordKind::StreamMessage(message)),
+            record(CaptureRecordKind::Performance(PerformanceEvidence {
+                points: vec![
+                    TimingPoint {
+                        milestone: Milestone::RequestHeaders,
+                        unix_millis: 1000,
+                        offset_micros: 0,
+                    },
+                    TimingPoint {
+                        milestone: Milestone::ExchangeDone,
+                        unix_millis: 8000,
+                        offset_micros: 7_000_000,
+                    },
+                ],
+                ..Default::default()
+            })),
+            record(category.map_or(CaptureRecordKind::Completed, |category| {
+                CaptureRecordKind::Failed {
+                    category: category.into(),
+                    message: "source terminal".into(),
+                }
+            })),
+        ];
+        for (index, record) in records.iter_mut().enumerate() {
+            record.sequence = index as u64 + 1;
+        }
+        write_records(&path, records);
+        let workspace = app(root.path());
+        workspace
+            .import_trace(request(&path), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let row = workspace
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions
+            .remove(0);
+        let stream = workspace.session_detail(&row.id).unwrap().stream.unwrap();
+        assert_eq!(stream.state.status, expected);
+        assert_eq!(stream.state.at_millis, 8000);
+        assert_eq!(stream.lifetime.ended_at, Some(8000));
+        assert_eq!(stream.lifetime.duration_ms, Some(6000));
+        assert_eq!(stream.last_activity, Some(4000));
+        assert_eq!(stream.lifetime.boundary, "final");
+        let saved = root.path().join(format!("sse-resaved-{index}.tmcap"));
+        workspace
+            .save_traffic_trace(
+                saved.clone(),
+                crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let data = read(&saved).unwrap();
+        let snapshot = &data.sessions[0];
+        assert_eq!(snapshot.stream.as_ref().unwrap().status, expected);
+        assert_eq!(snapshot.stream_history.ended_at, Some(8000));
+        assert_eq!(snapshot.stream_history.elapsed_millis, Some(6000));
+    }
+}
+
+#[test]
+fn native_sse_incomplete_capture_is_open_and_missing_terminal_time_is_not_invented() {
+    use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    for (name, terminal) in [
+        ("missing-end", CaptureRecordKind::Completed),
+        (
+            "open-at-capture",
+            CaptureRecordKind::Failed {
+                category: "incomplete".into(),
+                message: "saved while open".into(),
+            },
+        ),
+    ] {
+        let path = root.path().join(format!("{name}.tmcap"));
+        let mut records = vec![
+            head("https://example.invalid/events".into()),
+            record(CaptureRecordKind::StreamState(StreamState {
+                protocol: StreamProtocol::Sse,
+                status: StreamStatus::Open,
+                at_millis: 2000,
+                reason: None,
+            })),
+            record(terminal),
+        ];
+        for (index, record) in records.iter_mut().enumerate() {
+            record.sequence = index as u64 + 1;
+        }
+        write_records(&path, records);
+        let data = read(&path).unwrap();
+        let snapshot = &data.sessions[0];
+        assert_eq!(snapshot.stream_history.ended_at, None);
+        assert_eq!(snapshot.stream_history.elapsed_millis, None);
+        if name == "missing-end" {
+            assert_eq!(
+                snapshot.stream.as_ref().unwrap().status,
+                StreamStatus::Closed
+            );
+            assert_eq!(snapshot.stream.as_ref().unwrap().at_millis, 0);
+        } else {
+            assert_eq!(snapshot.state(), "open-at-capture");
+            assert_eq!(snapshot.stream.as_ref().unwrap().at_millis, 2000);
+        }
+    }
+}
+
+#[tokio::test]
+async fn stream_counter_availability_survives_save_and_reimport() {
+    use transmog_core::stream::{StreamMessage, StreamProtocol, StreamState, StreamStatus};
+    let root = tempfile::tempdir().unwrap();
+    for (index, (summary, message, expected)) in [
+        (None, None, (None, None)),
+        (Some(serde_json::json!({"observed": 1})), None, (None, None)),
+        (
+            Some(serde_json::json!({"clientBytes": 0, "serverBytes": null})),
+            None,
+            (Some(0), None),
+        ),
+        (
+            Some(serde_json::json!({"serverBytes": 7})),
+            None,
+            (None, Some(7)),
+        ),
+        (
+            None,
+            Some(StreamMessage::new("client", "text", bytes::Bytes::new())),
+            (Some(0), None),
+        ),
+        (
+            None,
+            Some(StreamMessage::new("server", "text", b"hi".to_vec().into())),
+            (None, Some(2)),
+        ),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let input = root.path().join(format!("counter-{index}.tmcap"));
+        let mut records = vec![
+            head("https://example.invalid/socket".into()),
+            record(CaptureRecordKind::StreamState(StreamState {
+                protocol: StreamProtocol::WebSocket,
+                status: StreamStatus::Closed,
+                at_millis: 8000,
+                reason: None,
+            })),
+        ];
+        if let Some(payload) = summary {
+            records.push(record(CaptureRecordKind::Unknown {
+                kind: "stream-summary".into(),
+                payload,
+            }));
+        }
+        if let Some(message) = message {
+            records.push(record(CaptureRecordKind::StreamMessage(message)));
+        }
+        for (sequence, record) in records.iter_mut().enumerate() {
+            record.sequence = sequence as u64 + 1;
+        }
+        write_records(&input, records);
+        let case = root.path().join(format!("case-{index}"));
+        std::fs::create_dir(&case).unwrap();
+        let workspace = app(&case);
+        workspace
+            .import_trace(request(&input), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let row = workspace
+            .query_sessions(crate::SessionQueryInput::default())
+            .unwrap()
+            .sessions
+            .remove(0);
+        assert_eq!((row.stream_sent, row.stream_received), expected);
+        let detail = workspace.session_detail(&row.id).unwrap().stream.unwrap();
+        assert_eq!((detail.client_bytes, detail.server_bytes), expected);
+        let saved = root.path().join(format!("saved-counter-{index}.tmcap"));
+        workspace
+            .save_traffic_trace(
+                saved.clone(),
+                crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let data = read(&saved).unwrap();
+        let history = &data.sessions[0].stream_history;
+        assert_eq!(
+            (
+                history.client_bytes_known.then_some(history.client_bytes),
+                history.server_bytes_known.then_some(history.server_bytes)
+            ),
+            expected
+        );
+    }
+}

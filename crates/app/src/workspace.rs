@@ -26,6 +26,12 @@ pub enum TrafficColumn {
     Protocol,
     /// Exchange duration in milliseconds.
     Duration,
+    /// Original HTTP exchange duration, independent of stream lifetime.
+    HttpDuration,
+    /// Decoded client stream-message bytes, unavailable for ordinary HTTP.
+    StreamSent,
+    /// Decoded server stream-message bytes, unavailable for ordinary HTTP.
+    StreamReceived,
     /// Client-visible response bytes.
     ResponseBytes,
     /// Client request bytes.
@@ -92,8 +98,9 @@ pub struct WorkspacePreferences {
 impl Default for WorkspacePreferences {
     fn default() -> Self {
         use TrafficColumn::{
-            ContentType, Duration, Host, Method, Path, Pid, Process, Protocol, RequestBytes,
-            RequestNumber, ResponseBytes, StartedAt, State, Status, Url,
+            ContentType, Duration, Host, HttpDuration, Method, Path, Pid, Process, Protocol,
+            RequestBytes, RequestNumber, ResponseBytes, StartedAt, State, Status, StreamReceived,
+            StreamSent, Url,
         };
         Self {
             sidebar_collapsed: false,
@@ -121,6 +128,9 @@ impl Default for WorkspacePreferences {
                 (StartedAt, 126),
                 (Pid, 84),
                 (Url, 340),
+                (HttpDuration, 112),
+                (StreamSent, 120),
+                (StreamReceived, 132),
             ]
             .into_iter()
             .enumerate()
@@ -136,23 +146,42 @@ impl Default for WorkspacePreferences {
 }
 
 impl WorkspacePreferences {
-    /// Supported upgrade from the complete fourteen-column layout.
+    /// Adds only known new columns to otherwise complete supported older layouts.
     pub(crate) fn migrate_columns(&mut self) {
         let ids: std::collections::BTreeSet<_> =
             self.columns.iter().map(|column| column.id).collect();
-        if self.columns.len() == 14
-            && ids.len() == 14
-            && !ids.contains(&TrafficColumn::RequestNumber)
-            && self.columns.iter().any(|column| column.visible)
-        {
-            self.columns.insert(0, Self::default().columns.remove(0));
+        if ids.len() != self.columns.len() || !self.columns.iter().any(|column| column.visible) {
+            return;
+        }
+        let missing: Vec<_> = Self::default()
+            .columns
+            .into_iter()
+            .filter(|column| !ids.contains(&column.id))
+            .collect();
+        if missing.iter().any(|column| {
+            !matches!(
+                column.id,
+                TrafficColumn::RequestNumber
+                    | TrafficColumn::HttpDuration
+                    | TrafficColumn::StreamSent
+                    | TrafficColumn::StreamReceived
+            )
+        }) {
+            return;
+        }
+        for column in missing {
+            if column.id == TrafficColumn::RequestNumber {
+                self.columns.insert(0, column);
+            } else {
+                self.columns.push(column);
+            }
         }
     }
     pub(crate) fn is_valid(&self) -> bool {
         let ids: std::collections::BTreeSet<_> =
             self.columns.iter().map(|column| column.id).collect();
-        self.columns.len() == 15
-            && ids.len() == 15
+        self.columns.len() == 18
+            && ids.len() == 18
             && self.columns.iter().any(|column| column.visible)
             && self
                 .columns

@@ -7,7 +7,7 @@ export async function checkTrafficPresentation(page,root) {
   const saved=await page.evaluate(()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;return {rows:s.sessions,preferences:t.preferences,directCommand:s.directCommand};});
   try {
     await traffic.getByLabel('Traffic search mode',{exact:true}).selectOption('filter');
-    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions=Array.from({length:240},(_,i)=>({...s.sessions[1],id:'presentation-'+i,path:'/api/catalog/'+i,url:'https://example.test/api/catalog/'+i,startedAt:i}));t.preferences={...t.preferences,layout:'stacked',listSplit:45};t.followLatest=true;await t.refreshSessions(undefined,true);});
+    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions=Array.from({length:240},(_,i)=>({...s.sessions[1],id:'presentation-'+i,path:'/api/catalog/'+i,url:'https://example.test/api/catalog/'+i,startedAt:i+1}));t.preferences={...t.preferences,layout:'stacked',listSplit:45};t.followLatest=true;await t.refreshSessions(undefined,true);});
     await traffic.locator('.session-link').first().click();
     await page.waitForFunction(()=>!!document.querySelector('app-shell').traffic.selectedDetail);
     const selected=await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId);
