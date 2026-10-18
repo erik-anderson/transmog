@@ -1,3 +1,4 @@
+import {automationActivity} from '../automation-state.js';
 import initialState from '../initial-state.json';
 import '../comparison-workspace/comparison-workspace.js';
 import type {ComparisonWorkspace} from '../comparison-workspace/comparison-workspace.js';
@@ -47,12 +48,12 @@ export class AppShell extends WebUIElement {
   certificatePanelClosed():void {this.workspaceContent.focus();}
   @observable automationEnabledCount=0;
   @observable automationEnabledLabel='';
-  private enabledScriptCount=0;
+  @observable enabledScriptCount=0;
   private scriptGeneration=0;
   private updateAutomationBadge():void {
-    const count=(this.autoresponseState?.rules??[]).filter(rule=>rule.enabled!==false&&!rule.request.responseAsset&&(rule.request.userAgent||rule.request.headers.length||rule.request.replaceBody!=null||rule.request.discardBody||rule.request.abortReason||rule.response.textTransform||rule.response.headers.length||rule.response.replaceBody!=null||rule.response.discardBody||rule.response.abortReason)).length;
-    this.automationEnabledCount=count+this.enabledScriptCount;
-    this.automationEnabledLabel=`${count} enabled rule${count===1?'':'s'} · ${this.enabledScriptCount} enabled script${this.enabledScriptCount===1?'':'s'}. Saved responses have their own switch.`;
+    const activity=automationActivity(this.autoresponseState,this.enabledScriptCount);
+    this.automationEnabledCount=activity.total;
+    this.automationEnabledLabel=activity.label;
   }
   onScriptActivity(event:CustomEvent<{generation:number;activeCount:number}>):void {
     if(event.detail.generation<this.scriptGeneration)return;this.scriptGeneration=event.detail.generation;this.enabledScriptCount=event.detail.activeCount;this.updateAutomationBadge();

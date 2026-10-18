@@ -33,6 +33,13 @@ when changing the experience.
   save-and-activate action is appropriate when its label explains the effect and
   validation and persistence succeed before activation. Keep saving a draft
   available separately; saved, enabled, active and paused are different states.
+- Saved-item activation controls act immediately on saved configuration and
+  preserve property drafts. Give editors a direct Discard changes action and
+  persistent save state; unchanged saved content disables Save. Keep activation,
+  draft persistence and unapplied revisions separate, including in expanded editors.
+- Navigation counts share a definition across levels and identify their units.
+  Count owned content once, expose pause reasons and distinguish configured
+  participation from observed matches.
 - Show recovery and risk acknowledgements when relevant. Name counts for what
   they count, with human-readable units and outcomes. Keep opaque identifiers
   available as technical detail.

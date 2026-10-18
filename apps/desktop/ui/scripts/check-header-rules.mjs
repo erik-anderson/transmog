@@ -52,18 +52,18 @@ export async function checkHeaderRules(page,root){
  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.automation.rules[0].revision++;s.automation.generation++;await document.querySelector('app-shell').automation.refreshAutomation();});
  assert.equal(await ops.nth(1).getByLabel('Operation header value',{exact:true}).inputValue(),'private');
  await editor.getByRole('button',{name:'Save rule',exact:true}).click();await settle();assert.match(await pane.textContent(),/changed while you were editing/);
- await editor.getByRole('button',{name:'Discard edits',exact:true}).click();
+ await editor.getByRole('button',{name:'Discard changes',exact:true}).click();
  // Save in another workspace must not steal focus when it completes.
- await page.evaluate(()=>globalThis.__workspaceFixture.holdHeaderSave=true);await editor.getByRole('button',{name:'Save rule',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.finishHeaderSave);
+ await editor.getByLabel('Rule name',{exact:true}).fill('Changed before delayed save');await page.evaluate(()=>globalThis.__workspaceFixture.holdHeaderSave=true);await editor.getByRole('button',{name:'Save rule',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.finishHeaderSave);
  await page.evaluate(()=>document.querySelector('app-shell').activateView('traffic'));const search=page.locator('traffic-workspace input[name="search"]');await search.focus();await page.evaluate(()=>globalThis.__workspaceFixture.finishHeaderSave());await settle();assert.equal(await search.evaluate(e=>e===e.getRootNode().activeElement),true);
  await page.evaluate(()=>document.querySelector('app-shell').activateView('automation'));
  // Keyboard unsaved protection and ordinary workspace changes keep the draft.
  await editor.getByLabel('Rule name',{exact:true}).fill('Pending name');await newTrafficRule(page,'Change response headers…');const unsaved=pane.locator('.header-unsaved');await unsaved.waitFor();await page.keyboard.press('Escape');assert.equal(await editor.getByLabel('Rule name',{exact:true}).inputValue(),'Pending name');
- await editor.getByRole('button',{name:'Discard edits',exact:true}).click();
+ await editor.getByRole('button',{name:'Discard changes',exact:true}).click();
  await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settle();assert.equal((await current()).rules.length,0);
  await newTrafficRule(page,'Change response headers…');await editor.getByLabel('Rule name',{exact:true}).fill('Preserve this draft during Undo');
  await pane.getByRole('button',{name:'Undo remove',exact:true}).click();await unsaved.waitFor();await page.keyboard.press('Escape');assert.equal((await current()).rules.length,0);assert.equal(await editor.getByLabel('Rule name',{exact:true}).inputValue(),'Preserve this draft during Undo');
- await editor.getByRole('button',{name:'Discard edits',exact:true}).click();
+ await editor.getByRole('button',{name:'Discard changes',exact:true}).click();
  await pane.getByRole('button',{name:'Undo remove',exact:true}).click();await settle();assert.equal((await current()).rules[0].id,ruleId);
  for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await editor.getByRole('button',{name:'Save rule',exact:true}).scrollIntoViewIfNeeded();const b=await editor.getByRole('button',{name:'Save rule',exact:true}).boundingBox();assert.ok(b.y>=0&&b.y+b.height<=height);await page.screenshot({path:resolve(root,`../../../target/ui-check/header-rules-${width}.png`)});}
  await page.evaluate(()=>document.documentElement.style.zoom='1.5');await page.emulateMedia({forcedColors:'active'});await editor.getByRole('button',{name:'Save rule',exact:true}).scrollIntoViewIfNeeded();await page.screenshot({path:resolve(root,'../../../target/ui-check/header-rules-zoom-contrast.png')});await page.evaluate(()=>document.documentElement.style.zoom='');await page.emulateMedia({forcedColors:'none'});await page.setViewportSize({width:1440,height:900});

@@ -35,7 +35,7 @@ captured response…**, and **Create saved response from scratch…**. Traffic's
 **Actions → Create rule** menu prefills the selected request and action. These
 operations change future matching traffic; they do not edit historical captures.
 Header, text and browser-header drafts start disabled. **Save rule** retains the
-authored Enabled choice; **Save and enable** explicitly enables a saved rule.
+authored Enabled choice; **Save and enable** explicitly saves and enables a disabled rule.
 Saved-response creation retains its visible Enabled choice and existing batch
 creation behavior.
 
@@ -52,6 +52,39 @@ Paused**. Header and text edits, browser-header rules and scripts keep their own
 state. Experiments manage saved-response alternatives and revisions; Scripts is
 the advanced editor for custom logic. Neither changes activation just by opening
 or selecting content.
+
+### Activation and editing state
+
+The sidebar and Rules, Experiments and Scripts tabs share one activity count.
+Active means enabled and unpaused for future matching traffic; it is independent
+of search filters and does not establish that traffic has matched or that the
+proxy is running. Ordinary rules include saved responses. Each participating
+experiment counts once, and its owned rules are excluded from Rules. Baseline,
+archived content and paused items do not contribute to the active total. The
+summary reports paused items separately, including the saved-response pause.
+
+Every saved rule has a direct Enabled/Disabled control in the list and its
+properties. These controls change only saved activation, immediately after
+validation and persistence. They preserve unsaved fields, selection and editor
+position. The selection toolbar exposes Enable selected and Disable selected;
+Undo reverses activation without discarding drafts. Failed changes leave the
+previous configuration intact and show a dismissible error in Rules.
+
+Editors show Saved or Unsaved changes and disable Save when the saved content
+is unchanged. Restoring all authored values clears the unsaved state; test input,
+selection and activation are separate from the draft. A new draft can be saved
+before further edits. Discard changes restores the saved fields and body without
+closing the editor. Replacing unsaved work offers Save and continue, Discard
+changes and Keep editing. Switching workspaces preserves drafts.
+While Save and continue is pending, the dialog keeps its choices locked. A failed
+save leaves the draft and its error visible in the dialog for retry; invalid
+fields return to the editor for correction.
+
+The body dialog's Apply to draft returns its changes to the rule editor. Save
+rule saves all pending rule fields, including the body. Cancel discards only
+the dialog's edits. Scripts keep Save draft separate from Save & enable / Save &
+apply, and Pause script remains a separate action. Discard changes restores the
+saved script source and settings without changing the active script.
 
 ## Choose an editing workflow
 
@@ -206,8 +239,7 @@ Replacements affect existing User-Agent and selected Sec-CH-UA fields only,
 preserving duplicate fields and never adding missing headers. Client hints can
 be preserved, overridden from preset metadata or custom values, or stripped.
 Preserve is the default when no hint overrides are authored. The Automation
-navigation count includes enabled non-auto-response rules and active script
-modules. The Rules list shows each browser-header rule and its enabled state.
+navigation counts follow the shared activation contract above. The Rules list shows each browser-header rule and its enabled state.
 
 ## Saved responses
 
@@ -227,7 +259,7 @@ and encoded body into an immutable response asset, then pre-fills a method and
 exact normalized absolute-URL match.
 
 HTTP port 80 and HTTPS port 443 are implicit in created rules; matching accepts
-either spelling. Nondefault ports remain explicit. Revert restores the captured
+either spelling. Nondefault ports remain explicit. Discard changes restores the captured
 draft and its source. Status, content type, headers and file replacement are
 available before the first save, with protected header bytes retained.
 The primary Automation action opens Traffic to choose responses, or uses the
@@ -340,7 +372,7 @@ retaining its content type; SVG formatting is disabled to preserve XML semantics
 Formatting for supported languages is explicit and undoable. Monaco popups remain
 inside the modal dialog and can extend beyond the editor. Apply to draft updates
 the draft; Cancel retains its previous body. An existing
-rule with only body changes also offers Save rule. Failed saves keep the dialog
+rule also offers Save rule, which saves all pending rule fields. Failed saves keep the dialog
 and edits available, and closing restores focus and releases the editor model. The open Response section groups status, content type,
 ten-line editable headers and neutral original-response context; rule usage is
 shown with the rule properties. A friendly source link opens the original request when
@@ -348,7 +380,7 @@ it is still retained; otherwise the label remains plain text. Match counts and
 last-match times describe only retained Traffic.
 
 Saved-rule enabled switches apply immediately. Property edits remain drafts
-until Save (Ctrl+S); Revert resets them. Changing rule selection with unsaved
+until Save (Ctrl+S); Discard changes resets them. Changing rule selection with unsaved
 edits offers Save and continue, Discard changes or Keep editing. Traffic and
 rule lists share Ctrl+click, Shift ranges, Shift+arrow, Ctrl+Shift+arrow, Ctrl+A
 and Escape. Focus can move independently with Ctrl+arrow. Del removes selected

@@ -1,7 +1,7 @@
 <template>
-  <section class="ua-workspace" aria-label="User-Agent and client hints">
-    <header class="ua-toolbar"><h2>Change browser headers</h2><button type="button" class="secondary compact-button" @click="{undoDelete()}" ?hidden="{{!uaUndoAvailable}}" ?disabled="{{uaBusy}}">Undo deletion</button><button type="button" class="compact-button" @click="{add()}" ?disabled="{{uaBusy}}">New browser header rule</button></header>
-    <p class="field-help">Change the User-Agent and related browser headers sent to the server. This changes request headers; browser features and behavior are unaffected. Only existing headers are replaced. The first enabled match wins.</p>
+  <section class="ua-workspace" aria-label="User-Agent and client hints" @keydown="{keyboard(e)}">
+    <header class="ua-toolbar"><div><h2><if condition="uaSelectedId">{{activationRule.displayName}}</if><if condition="!uaSelectedId">Change browser headers</if></h2><small ?hidden="{{!uaSelectedId}}">Change browser headers</small></div><rule-activation :rule="{{activationRule}}" :busy="{{activationBusy || uaBusy}}" ?hidden="{{!uaSelectedId}}"></rule-activation><button type="button" class="secondary compact-button" @click="{undoDelete()}" ?hidden="{{!uaUndoAvailable}}" ?disabled="{{uaBusy}}">Undo deletion</button><button type="button" class="compact-button" ?hidden="{{embedded}}" @click="{add()}" ?disabled="{{uaBusy}}">New browser header rule</button></header>
+    <p class="field-help">Replace existing browser headers. The first enabled match wins.</p>
     <div class="ua-layout">
       <details class="ua-order" ?open="{{uaOrderOpen}}" @toggle="{orderToggled(e)}"><summary>Execution order</summary><div class="ua-list" aria-label="User-Agent overrides">
         <if condition="!uaRows.length"><p class="ua-empty">No User-Agent overrides. Add one to choose a browser preset or enter your own value.</p></if>
@@ -12,10 +12,10 @@
         </div></for>
       </div>
       </details><div class="ua-properties"><if condition="!uaEditing"><p>Select an override or add one to edit its properties.</p></if>
-        <if condition="uaEditing"><form @submit="{save(e)}" class="ua-form">
+        <if condition="uaEditing"><form w-ref="{uaForm}" @submit="{save(e)}" class="ua-form">
           <fieldset ?disabled="{{uaBusy}}"><legend><if condition="uaSelectedId">Override properties</if><if condition="!uaSelectedId">New override</if></legend>
             <label>Name<input w-ref="{uaNameInput}" name="uaName" value="{{uaName}}" maxlength="256" placeholder="Choose a descriptive name" @input="{edit('uaName',e)}"></label>
-            <label class="checkbox-label"><input type="checkbox" ?checked="{{uaEnabled}}" @change="{setEnabled(e)}"> Enabled for new matching requests</label>
+            <label class="checkbox-label" ?hidden="{{uaSelectedId}}"><input type="checkbox" ?checked="{{uaEnabled}}" @change="{setEnabled(e)}"> Enable when saved</label>
             <div class="ua-filter-fields"><label>Host filter<input name="uaHost" value="{{uaHost}}" maxlength="255" placeholder="All hosts" @input="{edit('uaHost',e)}"></label><label>Path-prefix filter<input name="uaPath" value="{{uaPath}}" maxlength="2048" placeholder="All paths" @input="{edit('uaPath',e)}"></label></div>
             <p class="field-help">Host is exact and case-insensitive, without a scheme or port. Path-prefix matching is case-sensitive.</p>
             <label>Browser preset<select aria-label="User-Agent preset" value="{{uaPreset}}" @change="{choosePreset(e)}"><option value="custom">Custom</option><for each="group in uaPresetGroups"><optgroup key="{{group.name}}" label="{{group.name}}"><for each="preset in group.options"><option key="{{preset.id}}" value="{{preset.id}}">{{preset.title}}</option></for></optgroup></for></select></label>
@@ -25,11 +25,12 @@
             <label>Client hints<select aria-label="Client hint policy" value="{{uaHintMode}}" @change="{chooseHintMode(e)}"><option value="preserve">Preserve existing client hints</option><option value="override">Override existing client hints</option><option value="strip">Strip existing client hints</option></select></label>
             <if condition="uaHintMode == 'override'"><details class="ua-hints" open><summary>Client-hint overrides</summary><p class="field-help">Checked headers are replaced only if present. %major% and %full% use the selected version. Blank values are valid header values.</p><div class="ua-hint-fields"><for each="field in uaHintFields"><label key="{{field.name}}"><span><input type="checkbox" ?checked="{{field.enabled}}" @change="{enableHint(field.name,e)}"> {{field.name}}</span><input aria-label="{{field.name}} value" value="{{field.value}}" maxlength="4096" ?disabled="{{!field.enabled}}" spellcheck="false" @input="{editHint(field.name,e)}"></label></for></div></details></if>
           </fieldset>
-          <footer class="ua-form-actions"><button type="submit" w-ref="{uaSaveButton}" ?disabled="{{uaBusy}}">Save rule</button><button type="button" class="secondary" @click="{saveAndEnable()}" ?disabled="{{uaBusy}}">Save and enable</button><button type="button" class="secondary" ?hidden="{{!uaSelectedId}}" @click="{remove()}" ?disabled="{{uaBusy}}">Remove rule</button><span ?hidden="{{!uaDirty}}">Unsaved changes</span></footer>
+          <footer class="ua-form-actions"><button type="submit" w-ref="{uaSaveButton}" ?disabled="{{uaBusy || activationBusy || !uaCanSave}}">Save rule</button><button type="button" class="secondary" @click="{saveAndEnable()}" ?hidden="{{uaEnabled}}" ?disabled="{{uaBusy || activationBusy}}">Save and enable</button><button type="button" class="secondary" ?hidden="{{!uaSelectedId}}" @click="{remove()}" ?disabled="{{uaBusy}}">Remove rule</button><button type="button" class="secondary" @click="{discard()}" ?disabled="{{uaBusy || !uaDirty}}">Discard changes</button><draft-status :dirty="{{uaDirty}}" :newDraft="{{!uaSelectedId}}" :busy="{{uaBusy}}" :failed="{{uaSaveFailed}}"></draft-status></footer>
         </form></if>
       </div>
     </div>
     <p role="status" class="ua-status">{{uaStatus}}</p>
+    <dialog w-ref="{uaUnsaved}" class="ua-unsaved" aria-label="Unsaved rule changes" aria-busy="{{uaBusy}}" @cancel="{resolveUnsaved('stay',e)}"><h3>Save changes to this rule?</h3><p>Your draft has unsaved changes.</p><p class="field-error" role="alert" ?hidden="{{!uaSaveFailed}}">{{uaStatus}}</p><div class="actions"><button type="button" ?disabled="{{uaBusy || activationBusy}}" @click="{resolveUnsaved('save')}">Save and continue</button><button type="button" class="secondary" ?disabled="{{uaBusy}}" @click="{resolveUnsaved('discard')}">Discard changes</button><button type="button" class="secondary" ?disabled="{{uaBusy}}" autofocus @click="{resolveUnsaved('stay')}">Keep editing</button></div></dialog>
     <dialog w-ref="{uaDuplicateDialog}" class="ua-duplicate-dialog" aria-labelledby="ua-duplicate-heading" @cancel="{finishDuplicate(false,e)}" @close="{duplicateClosed()}"><h2 id="ua-duplicate-heading">Replace existing override?</h2><p>An override named “{{uaDuplicateName}}” already uses these filters.</p><p class="full-value">{{uaDuplicateScope}}</p><p>Replacing it keeps its position in the list.</p><footer class="actions"><button type="button" @click="{finishDuplicate(true)}">Replace override</button><button type="button" class="secondary" @click="{finishDuplicate(false)}">Keep existing override</button></footer></dialog>
   </section>
 </template>

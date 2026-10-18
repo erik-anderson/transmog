@@ -1,0 +1,4 @@
+rule-activation { display:inline-flex; flex-wrap:wrap; align-items:center; gap:.3rem; }
+.rule-activation-button { white-space:nowrap; }
+.rule-activation-button[aria-pressed="true"] { color:var(--accent-strong); border-color:var(--accent-strong); }
+.rule-paused { color:var(--muted); }

@@ -43,3 +43,7 @@ user-agent-overrides[embedded] .ua-toolbar {flex-wrap:wrap;}
 .ua-status {font-size:.8rem;overflow-wrap:anywhere;}
 .ua-duplicate-dialog {width:min(30rem,calc(100vw - 2rem));max-height:calc(100dvh - 2rem);overflow:auto;}
 @media(max-width:850px) {.ua-layout {grid-template-columns:1fr;grid-template-rows:minmax(7rem,28%) minmax(0,1fr);}.ua-filter-fields {grid-template-columns:1fr;}}
+
+.ua-toolbar > div { flex:1; min-width:0; }
+.ua-toolbar h2 { overflow-wrap:anywhere; }
+.ua-form-actions { border-top:1px solid var(--line); z-index:2; }

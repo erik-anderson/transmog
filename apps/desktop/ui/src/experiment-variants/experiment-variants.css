@@ -28,3 +28,7 @@ experiment-variants { display:block; height:100%; min-height:0; }
 }
 
 .variant-pickers{position:sticky;top:0;z-index:1;background:var(--panel);padding:.25rem 0 .5rem}
+
+.variant-state { display:flex; flex-wrap:wrap; gap:.4rem 1.4rem; padding:.5rem 0; }
+.variant-state p { margin:0; }
+.variant-state small { flex-basis:100%; color:var(--muted); }

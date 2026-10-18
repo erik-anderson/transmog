@@ -1,0 +1,6 @@
+<template>
+  <button type="button" class="rule-activation-button secondary compact-button" aria-label="{{activationLabel}}" aria-pressed="{{activationPressed}}" ?disabled="{{busy || !rule}}" @click="{toggle(e)}" @pointerdown="{stop(e)}" @keydown="{stop(e)}">
+    <if condition="activationEnabled">Enabled</if><if condition="!activationEnabled">Disabled</if>
+  </button>
+  <if condition="activationEnabled && activationPaused"><small class="rule-paused">Paused</small></if>
+</template>

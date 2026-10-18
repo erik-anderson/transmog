@@ -16,7 +16,8 @@ export async function smokeBodyEditor(call,evaluate,screenshotPath) {
     await call('Input.dispatchMouseEvent',{type:'mouseReleased',...point,button:'left',buttons:0,clickCount:1});
     // Async color providers can replace the hover between two CDP calls. Read
     // its visible geometry and hit targets atomically once it is rendered.
-    const position=await evaluate(`(async()=>{const w=${widget},root=w.getRootNode(),deadline=Date.now()+15000;while(Date.now()<deadline){const el=w.overflowHost.querySelector('.colorpicker-widget'),r=el?.getBoundingClientRect();if(r?.width&&r.height&&getComputedStyle(el).visibility!=='hidden'&&Number(getComputedStyle(el.closest('.monaco-hover')).opacity)>=1)return {rect:r.toJSON(),viewport:{width:innerWidth,height:innerHeight},insideDialog:el.closest('dialog')===w.surface,hit:[r.top+5,r.bottom-5].every(y=>el.contains(root.elementFromPoint(r.left+r.width/2,y)))};await new Promise(resolve=>setTimeout(resolve,25));}throw new Error('Native pointer click did not open a visible color picker');})()`);
+    const position=await evaluate(`(async()=>{const w=${widget},root=w.getRootNode(),deadline=Date.now()+15000;while(Date.now()<deadline){const el=w.overflowHost.querySelector('.colorpicker-widget'),r=el?.getBoundingClientRect();if(r?.width&&r.height&&getComputedStyle(el).visibility!=='hidden'&&Number(getComputedStyle(el.closest('.monaco-hover')).opacity)>=1){const targets=[r.top+5,r.bottom-5].map(y=>root.elementFromPoint(r.left+r.width/2,y));return {rect:r.toJSON(),viewport:{width:innerWidth,height:innerHeight},insideDialog:el.closest('dialog')===w.surface,hit:targets.every(target=>el.contains(target)),targets:targets.map(target=>({tag:target?.tagName,class:target?.className,rect:target?.getBoundingClientRect().toJSON()}))};}await new Promise(resolve=>setTimeout(resolve,25));}throw new Error('Native pointer click did not open a visible color picker');})()`);
+    if(!position.insideDialog||!position.hit)await screenshot('picker-failure');
     assert.ok(position.insideDialog&&position.hit,`Native picker is clipped or outside the dialog top layer: ${JSON.stringify(position)}`);
     assert.ok(position.rect.top>=0&&position.rect.left>=0&&position.rect.bottom<=position.viewport.height&&position.rect.right<=position.viewport.width,`Native picker leaves viewport: ${JSON.stringify(position)}`);
     return position;
@@ -35,7 +36,7 @@ export async function smokeBodyEditor(call,evaluate,screenshotPath) {
       // The compact layout hides the properties pane when no rule is open.
       // Expose it for this direct dialog probe without resetting any draft.
       w.showAutomationSection('responses');w.editorHidden=false;w.$flushUpdates();
-      editor.open('<svg><style>.shape { fill: #336699; }</style></svg>','svg',false,root.querySelector('a[data-view="automation"]'),{saveUnavailableReason:'Native SVG editing verification.'});
+      editor.open('<svg><style>.shape { fill: #336699; }</style></svg>','svg',false,root.querySelector('a[data-view="automation"]'),{saveUnavailableReason:'Apply to draft, then save the new rule.'});
     })()`);
     await wait(`${widget}.bodyEditorReady`);
     const positions=[];
@@ -59,11 +60,22 @@ export async function smokeBodyEditor(call,evaluate,screenshotPath) {
     positions.push(await clickColor());await screenshot('editor-zoom');await escape();
     await evaluate(`${widget}.editor.trigger('probe','editor.action.fontZoomReset',{})`);
     await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:2,mobile:false});
-    positions.push(await clickColor());await screenshot('200dpi');await escape();
+    positions.push(await clickColor());await screenshot('200dpi');
+    // A high-DPI CDP screenshot can relayout WebView2 and dismiss Monaco's
+    // hover. Reopen it with the pointer before testing Escape from the picker.
+    await clickColor();
+    await escape();
+    assert.equal(await evaluate(`${widget}.surface.open`),true,'Native Escape at 200% DPI dismissed the dialog instead of its color picker');
     await call('Emulation.setDeviceMetricsOverride',{width:400,height:300,deviceScaleFactor:2,mobile:false});
-    assert.ok(await evaluate(`${widget}.editorHost.getBoundingClientRect().height>=60`),'Native body editor has no usable editing area at 200% zoom');
-    assert.equal(await evaluate(`Array.from(${widget}.surface.querySelectorAll('footer button')).every(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.left>=0&&r.bottom<=innerHeight&&r.right<=innerWidth;})`),true,'Native dialog actions are unreachable at 200% zoom in an 800×600 window');
-    await screenshot('200percent');
+    for(const canSave of [false,true]) {
+      await evaluate(`(()=>{const w=${widget};w.bodyCanSave=${canSave};w.$flushUpdates();})()`);
+      // Let the button color transition finish before checking hierarchy and
+      // capturing the saved-rule footer: Save is primary, Apply is secondary.
+      if(canSave)await wait(`getComputedStyle(${widget}.surface.querySelector('.body-apply')).backgroundColor===getComputedStyle(${widget}.surface.querySelector('footer button.secondary')).backgroundColor`);
+      await screenshot(canSave?'200percent-saved':'200percent');
+      assert.ok(await evaluate(`${widget}.editorHost.getBoundingClientRect().height>=60`),'Native body editor has no usable editing area at 200% zoom');
+      assert.equal(await evaluate(`Array.from(${widget}.surface.querySelectorAll('footer button')).every(button=>{const r=button.getBoundingClientRect();return r.top>=0&&r.left>=0&&r.bottom<=innerHeight&&r.right<=innerWidth;})`),true,'Native dialog actions are unreachable at 200% zoom in an 800×600 window');
+    }
     await evaluate(`${widget}.editor.focus()`);await escape();await wait(`!${widget}.surface.open&&${widget}.model===null&&${widget}.editor===null`);
     assert.equal(await evaluate(`document.querySelector('app-shell').shadowRoot.activeElement===document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="automation"]')`),true,'Native editor did not restore focus');
     return {topLayer:true,pointer:true,firstLastLines:true,escapeKeepsDialog:true,disposedOnClose:true,responsive:[1440,960,800],editorZoom:true,dpi:200,dark:true,forcedColors:true,positions};

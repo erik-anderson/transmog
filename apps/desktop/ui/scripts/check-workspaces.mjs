@@ -1,3 +1,4 @@
+import {checkAutomationContracts} from './check-automation-contracts.mjs';
 import {checkUnifiedRules,newTrafficRule} from './check-unified-rules.mjs';
 import {checkActionMenus,openActionGroup} from './check-action-menus.mjs';
 import {checkPortableCases} from './check-portable-cases.mjs';
@@ -117,6 +118,7 @@ await page.addInitScript((configuration) => {
     unregisterCallback(id) { callbacks.delete(id); },
     convertFileSrc(path) { return 'https://workspace.test/' + path; },
     async invoke(command, args) {
+      if(state.holdCommand===command){state.holdCommand=null;await new Promise(resolve=>state.finishHeldCommand=resolve);}
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
         case 'open_product_website': return;
@@ -687,6 +689,8 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--scripts-only')) {await page.goto('https://workspace.test/');await view('automation');await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();await checkScripts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Script draft, activation, discard, async state and responsive layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--automation-ux-only')) {await checkAutomationContracts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Automation draft, activation, failure feedback and responsive contracts verified.\n');process.exit(0);}
   if(process.argv.includes('--shortcuts-only')) {await checkWindowShortcuts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Window and Traffic shortcuts, scopes, dialogs, import and responsive menus verified.\n');process.exit(0);}
   if(process.argv.includes('--browser-headers-only')) {await page.goto('https://workspace.test/');await view('automation');await checkUserAgentOverrides(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Browser header authoring, presets, ordering, drafts and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--rules-only')) {await checkUnifiedRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Unified rule creation, direction/search filters, pause scope, drafts and responsive layouts verified.\n');process.exit(0);}
@@ -737,7 +741,7 @@ try {
   assert.equal(requests.some(path=>path==='/monaco.js'),false,'Response management eagerly loaded the script editor');
   await page.getByRole('button',{name:'New rule…',exact:true}).waitFor({state:'visible'});
   assert.equal(await page.getByRole('button',{name:'Create saved response from scratch…',exact:true}).isVisible(),false,'Scratch authoring is prominent');
-  assert.match(await page.locator('.auto-response-start-hint').textContent(),/Change matching requests and server responses/);
+  assert.match(await page.locator('.automation-activity').textContent(),/Enabled for new traffic|No active automation/);
   await newTrafficRule(page,'Serve a captured response…');
   await page.locator('#traffic').waitFor({state:'visible'});
   // Populated lists must leave bulk actions reachable by an actual mouse click.
@@ -1270,7 +1274,7 @@ try {
   await autoField('name').fill('Changed captured draft');
   await autoField('status').fill('201');
   const capturedPreview=await autoField('body').inputValue();
-  await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
+  await autoEditor.getByRole('button',{name:'Discard changes',exact:true}).click();
   await page.locator('#auto-response-body-help').getByText('Complete body preview. Enable editing or open the dialog to replace it.',{exact:true}).waitFor();
   assert.equal(await autoField('status').inputValue(),'200');
   assert.equal(await autoField('body').inputValue(),capturedPreview);
@@ -1282,7 +1286,7 @@ try {
   assert.equal(await autoEditor.locator('.response-group').getAttribute('open'),'','Invalid hidden status did not reopen Response');
   assert.equal(await autoField('status').evaluate(el=>el.getRootNode().activeElement===el),true);
   await autoField('status').fill('200');
-  await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
+  assert.equal(await autoEditor.getByRole('button',{name:'Discard changes',exact:true}).isDisabled(),true,'Restoring original values must clear dirty state');
   await page.setViewportSize({width:1440,height:900});
   await autoField('responseHeaders').scrollIntoViewIfNeeded();
   await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-response-wide.png')});
@@ -1300,7 +1304,7 @@ try {
     assert.doesNotMatch(await autoField('preserveEncoding').evaluate(input=>input.closest('label').textContent),/x-gzip/i,'Compression control exposed a separate alias label');
     assert.equal(await autoField('preserveEncoding').isEnabled(),true,'Recognized compression aliases were classified as unsupported');
     assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').autoResponseSourceState.contentCodings),codings,'Context label normalization changed the saved compression stack');
-    await autoEditor.getByRole('button',{name:'Revert',exact:true}).click();
+    await autoEditor.getByRole('button',{name:'Discard changes',exact:true}).click();
     await page.waitForFunction(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !w.draftDirty&&!w.loadingSavedResponse&&w.autoResponseSourceState?.bodyEditable;});
   }
 
@@ -1325,12 +1329,13 @@ try {
   await page.evaluate(()=>delete globalThis.__workspaceFixture.rawResponseHeaders);
   const capturedRuleId=await page.locator('.auto-response-rule').getAttribute('data-rule-id');
   const capturedRule=page.locator('#rule-'+capturedRuleId);
-  await autoField('enabled').uncheck();
+  await autoEditor.locator('rule-activation button').click();
   await capturedRule.locator('.rule-state').getByText('Disabled',{exact:true}).waitFor({state:'visible'});
   await capturedRule.click();
   await sourceLink.waitFor({state:'visible'});
   assert.equal(await autoField('status').inputValue(),'200','Saved response metadata was hidden or lost');
   assert.equal(await autoField('body').isVisible(),true,'Saved response body cannot be edited independently of Traffic');
+  await autoField('name').fill('Disabled captured response');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();
   await savedProperties();
   assert.equal(await capturedRule.locator('.rule-state').textContent(),'Disabled','Editing silently enabled a disabled rule');
@@ -1591,10 +1596,10 @@ try {
   await autoField('url').fill('https://api.example.test/users/{:digits}');
   await autoEditor.getByRole('button',{name:'Save rule',exact:true}).click();await savedProperties();
   assert.equal(await copyRule.locator('.rule-warning').textContent(),'Duplicate','Anonymous annotations changed duplicate matching identity');
-  await autoField('enabled').check();
+  await autoEditor.locator('rule-activation button').click();
   await copyRule.locator('.rule-state').getByText('Enabled',{exact:true}).waitFor({state:'visible'});
   assert.match(await page.locator('.rule-diagnostic').textContent(),/always superseded/);
-  await autoField('enabled').uncheck();
+  await autoEditor.locator('rule-activation button').click();
   await copyRule.locator('.rule-state').getByText('Disabled',{exact:true}).waitFor({state:'visible'});
   await copyRule.press('Delete');
   await copyRule.waitFor({state:'detached'});
@@ -1674,7 +1679,7 @@ try {
   assert.equal(await page.locator('tr[aria-selected="true"][data-session-id]').count(),2);
   await view('automation');
 
-  const rowBaselines=await page.locator('.auto-response-rule').first().evaluate(row=>{const bottom=selector=>{const element=row.querySelector(selector);const range=document.createRange();range.selectNodeContents(element);return range.getBoundingClientRect().bottom;};return [bottom('.rule-description strong'),bottom('.rule-state')];});
+  const rowBaselines=await page.locator('.auto-response-rule').first().evaluate(row=>{const bottom=selector=>{const element=row.querySelector(selector);const range=document.createRange();range.selectNodeContents(element);return range.getBoundingClientRect().bottom;};return [bottom('.rule-description strong'),bottom('rule-activation button')];});
   assert.ok(Math.abs(rowBaselines[0]-rowBaselines[1])<=2,'Rule name and state text baselines do not align');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-dense.png')});
   await newScratch();
@@ -2490,7 +2495,7 @@ try {
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndo.length),0);
   assert.match(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('traffic-workspace').trafficUndoText),/1 GB or more/);
   await checkStreams(page,root);
-  await checkUnifiedRules(page,root);
+  await checkAutomationContracts(page,root);
   await checkActionMenus(page,root);
   await checkWindowShortcuts(page,root);
   await checkTrafficPresentation(page,root);

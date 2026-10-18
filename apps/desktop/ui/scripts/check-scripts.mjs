@@ -24,10 +24,21 @@ export async function checkScripts(page, root) {
   // One action validates, saves, and enables; reopening selects the same source and settings.
   await scripts.getByRole('button',{name:'Save & enable',exact:true}).click();await waitIdle();
   assert.equal(await scripts.getByRole('button',{name:'Pause script',exact:true}).count(),1);
-  assert.match(await state().textContent(),/Draft saved/);
+  assert.match(await state().textContent(),/Saved/);
   assert.equal(await scripts.evaluate(editor=>editor.scriptDirty),false);
   const activated=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.savedScript));
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.activeScripts[0].source),activated.source);
+  assert.equal(await scripts.getByRole('button',{name:'Save draft',exact:true}).isDisabled(),true);
+  assert.equal(await scripts.getByRole('button',{name:'Save & apply',exact:true}).isDisabled(),true);
+  await append('\n// discard this edit');
+  await scripts.locator('.script-settings > summary').click();
+  await scripts.getByLabel('Host filter (optional)',{exact:true}).fill('discard.example.test');
+  await scripts.getByRole('button',{name:'Discard changes',exact:true}).click();
+  assert.equal(await scripts.evaluate(editor=>editor.sourceEditor.getValue()),activated.source);
+  assert.equal(await scripts.getByLabel('Host filter (optional)',{exact:true}).inputValue(),activated.prefilter.host??'');
+  assert.equal(await scripts.getByRole('button',{name:'Save draft',exact:true}).isDisabled(),true);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.activeScripts[0].source),activated.source,'Discard changed the live script');
+  await scripts.locator('.script-settings > summary').click();
   await append('\n// edit applied with one click');
   assert.match(await state().textContent(),/Unapplied changes/);
   await scripts.getByRole('button',{name:'Save & apply',exact:true}).click();await waitIdle();

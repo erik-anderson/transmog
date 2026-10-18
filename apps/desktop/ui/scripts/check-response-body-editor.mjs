@@ -73,8 +73,8 @@ export async function checkResponseBodyEditor(page,root) {
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').draftDirty),true);
 
   const name=await field('name').inputValue();await field('name').fill('Another pending property');await open();
-  assert.equal(await dialog.getByRole('button',{name:'Save rule',exact:true}).count(),0,'Modal can save unrelated unsaved properties');
-  await dialog.locator('footer > small').getByText(/other|properties/i).waitFor();
+  assert.equal(await dialog.getByRole('button',{name:'Save rule',exact:true}).count(),1,'Dialog should explicitly save all pending rule changes');
+  await dialog.getByText(/Save rule saves all pending rule changes/).waitFor();
   await dialog.getByRole('button',{name:'Cancel',exact:true}).click();await closed();await field('name').fill(name);
   await open();assert.equal(await dialog.getByRole('button',{name:'Save rule',exact:true}).count(),1,'Restored properties still hide body-only saving');
   await type('save failure draft');
@@ -146,6 +146,11 @@ async function checkSvgAndHexDialog(page,root,{form,field,dialog,open,closed,foc
   await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-svg-picker-bottom.png')});
   await page.keyboard.press('Escape');await picker.waitFor({state:'hidden'});
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('response-body-editor').editor.hasTextFocus()),true,'Escape from the picker did not restore editor focus');
+  await page.setViewportSize({width:400,height:300});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/auto-response-svg-dialog-200percent.png')});
+  assert.ok((await dialog.locator('.body-code-host').boundingBox()).height>=60,'SVG help text leaves no usable editor at 200% zoom');
+  for(const name of ['Apply to draft','Save rule','Cancel']){const box=await dialog.getByRole('button',{name,exact:true}).boundingBox();assert.ok(box&&box.x>=0&&box.y>=0&&box.x+box.width<=400&&box.y+box.height<=300,`SVG dialog ${name} is unreachable at 200% zoom`);}
+  await page.setViewportSize({width:800,height:600});
   await page.keyboard.press('Escape');await closed();
   assert.equal(await form.getByRole('button',{name:'Edit in dialog…',exact:true}).evaluate(el=>el.getRootNode().activeElement===el),true,'Closing the SVG editor did not restore focus');
 

@@ -304,7 +304,11 @@ button:disabled, fieldset:disabled button { cursor: not-allowed; opacity: .5; }
 .rule-diagnostic p { margin: 0 0 .4rem; font-size: .75rem; }
 .auto-response-undo { padding: .4rem .5rem; font-size: .7rem; }.list-help { padding: .4rem .5rem; color: var(--muted); font-size: .7rem; }.list-help p { margin: .4rem 0; }
 .rule-menu, .traffic-entry-menu { inset: auto; top: attr(data-y type(<length>), 80px); left: attr(data-x type(<length>), 12px); min-width: 14rem; max-width: 24rem; max-height: 70vh; overflow: auto; }
-.unsaved-rule-dialog { width: min(28rem, 90vw); padding: 1.25rem; border: 1px solid var(--line); border-radius: .5rem; color: var(--text); background: var(--panel); }.unsaved-rule-dialog::backdrop { background: #0006; }.unsaved-rule-dialog h3 { margin-top: 0; }
+dialog:is(.unsaved-rule-dialog,.header-unsaved,.ua-unsaved) { box-sizing:border-box; width:min(28rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; padding:1.25rem; border:1px solid var(--line); border-radius:.5rem; color:var(--text); background:var(--panel); }
+dialog:is(.unsaved-rule-dialog,.header-unsaved,.ua-unsaved)::backdrop { background:#0006; }
+dialog:is(.unsaved-rule-dialog,.header-unsaved,.ua-unsaved) h3 { margin:0; font-size:1rem; }
+dialog:is(.unsaved-rule-dialog,.header-unsaved,.ua-unsaved) p { margin:.65rem 0; }
+dialog:is(.unsaved-rule-dialog,.header-unsaved,.ua-unsaved) .actions { display:flex; flex-wrap:wrap; gap:.4rem; margin:.75rem 0 0; }
 .batch-review h3 { margin-top: 0; }.batch-review-list { display: grid; gap: .5rem; }.batch-review-list article { padding: .5rem; border: 1px solid var(--line); border-radius: .3rem; }.batch-review-list strong, .batch-review-list small { display: block; overflow-wrap: anywhere; }.batch-review-list strong { font-size: .78rem; }.batch-review-list small { font-size: .7rem; margin: .25rem 0; }.batch-review-list .actions { margin-top: .4rem; }
 .traffic-selection-bar, .traffic-undo { display: flex; flex-wrap: wrap; align-items: center; gap: .6rem; padding: .35rem .5rem; border-bottom: 1px solid var(--line); color: var(--muted); background: var(--panel-subtle); font-size: .75rem; }
 .traffic-selection-bar span { margin-right: auto; }.traffic-undo { border-top: 1px solid var(--line); border-bottom: 0; }

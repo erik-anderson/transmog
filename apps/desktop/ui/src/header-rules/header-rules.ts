@@ -1,3 +1,7 @@
+import {DraftBaseline} from '../draft-state.js';
+import {sameRuleContent} from '../automation-state.js';
+import '../draft-status/draft-status.js';
+import '../rule-activation/rule-activation.js';
 import {attr,observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
 import '../match-editor/match-editor.js';
@@ -62,6 +66,10 @@ export class HeaderRules extends WorkspaceElement {
  @observable hrStatusFilter='';
  @observable hrStatusClass='';
  @observable hrDirty=false;
+ @observable hrCanSave=true;
+ @observable activationRule:AutomationRule|null=null;
+ @observable activationBusy=false;
+ private baseline=new DraftBaseline();
  @observable hrBusy=false;
  @observable hrStale=false;
  @observable hrError='';
@@ -100,6 +108,9 @@ export class HeaderRules extends WorkspaceElement {
  private owned(rule:AutomationRule):boolean{return this.headerState?.experiments?.some(e=>e.variants.some(v=>v.revisions.some(r=>r.rules.some(r=>r.id===rule.id))))??false;}
  private ordered():AutomationRule[]{return (this.headerState?.rules??[]).filter(r=>this.phase(r)&&!this.owned(r)).sort((a,b)=>a.priority-b.priority||(a.id<b.id?-1:a.id>b.id?1:0));}
  headerStateChanged():void {
+  const current=this.headerState?.rules.find(rule=>rule.id===this.hrId);
+  if(this.loaded&&current&&current.enabled!==this.loaded.enabled&&sameRuleContent(this.loaded,current)){this.loaded=structuredClone(current);this.hrEnabled=current.enabled!==false;}
+  this.activationRule=current??null;
   const ordered=this.ordered();this.hrRows=ordered.map((r,i)=>({id:r.id,name:r.displayName??r.id,phase:this.phase(r)==='request'?'Request':'Response',state:r.enabled===false?'Disabled':'Enabled',selected:r.id===this.hrId,first:i===0,last:i===ordered.length-1}));
   const selected=this.hrRows.find(row=>row.id===this.hrId);this.hrCanMoveEarlier=Boolean(selected&&!selected.first);this.hrCanMoveLater=Boolean(selected&&!selected.last);
   this.hrStale=Boolean(this.loaded&&this.headerState?.rules.find(r=>r.id===this.loaded!.id)?.revision!==this.loaded.revision);
@@ -109,9 +120,9 @@ export class HeaderRules extends WorkspaceElement {
  }
  async refresh():Promise<void>{try{this.accept(await invoke<AutomationStatus>('automation_status'));this.hrMessage='Rules refreshed. Your draft is preserved.';}catch(error){this.hrError='Rules could not be refreshed: '+describeError(error);}}
  private accept(status:AutomationStatus):void{if(this.headerState&&status.generation<this.headerState.generation)return;this.headerState=status;this.$emit('header-rules-state',status);this.headerStateChanged();}
- private async leave():Promise<boolean>{if(this.hrBusy)return false;if(!this.hrDirty)return true;return new Promise(resolve=>{this.leaveResolve=resolve;this.hrUnsaved.showModal();});}
+ private async leave():Promise<boolean>{if(this.hrBusy||this.leaveResolve)return false;if(!this.hrDirty)return true;return new Promise(resolve=>{this.leaveResolve=resolve;this.hrUnsaved.showModal();});}
  async canLeaveDraft():Promise<boolean>{return this.leave();}
- async resolveUnsaved(choice:string,event?:Event):Promise<void>{event?.preventDefault();if(choice==='save'){if(!this.hrForm.reportValidity()||!await this.save())return;}if(choice==='discard')this.hrDirty=false;const resolve=this.leaveResolve;this.leaveResolve=null;this.hrUnsaved.close();resolve?.(choice!=='stay');}
+ async resolveUnsaved(choice:string,event?:Event):Promise<void>{event?.preventDefault();if(this.hrBusy)return;if(choice==='save'){if(!this.hrForm.checkValidity()){await this.resolveUnsaved('stay');this.hrForm.reportValidity();return;}if(!await this.save())return;}if(choice==='discard')this.hrDirty=false;const resolve=this.leaveResolve;this.leaveResolve=null;this.hrUnsaved.close();resolve?.(choice!=='stay');}
  async newRule(source?:SelectedResponse,phase?:Phase):Promise<void>{if(!await this.leave())return;if(source)this.selection=source;this.load(null);if(phase)this.hrPhase=phase;}
  async selectRule(ruleId:string):Promise<void>{if(ruleId===this.hrId&&!this.hrStale)return;if(!await this.leave())return;const rule=this.headerState?.rules.find(r=>r.id===ruleId);if(rule)this.load(rule);}
  private load(rule:AutomationRule|null,focus=true):void {
@@ -122,13 +133,25 @@ export class HeaderRules extends WorkspaceElement {
   this.hrOperations=rule?(this.hrPhase==='request'?rule.request.headers:rule.response.headers).map(action=>action.operation==='remove'?{id:id(),operation:'remove',name:action.field,encoding:'text',value:''}:{id:id(),operation:action.operation,name:new TextDecoder().decode(new Uint8Array(action.field.name)),...display(action.field.value)}):this.hrText?[]:[{id:id(),operation:'remove',name:'Content-Security-Policy',encoding:'text',value:''}];
   this.hrPredicates=[...(rule?.matcher.requestHeaders??[]).map(p=>({p,phase:'request' as const})),...(rule?.matcher.responseHeaders??[]).map(p=>({p,phase:'response' as const}))].map(({p,phase})=>({id:id(),phase,name:p.name,kind:p.condition.kind as HeaderPredicate['condition']['kind'],...(Array.isArray(p.condition.value)?display(p.condition.value):{encoding:'text' as const,value:typeof p.condition.value==='string'?p.condition.value:''})}));
   this.hrStatusFilter=rule?.matcher.responseStatus?.toString()??'';this.hrStatusClass=rule?.matcher.responseStatusClass?.toString()??'';this.hrAdditional=rule?[rule.matcher.host?'Host '+rule.matcher.host:'',rule.matcher.scheme?'Scheme '+rule.matcher.scheme:'',rule.matcher.port?'Port '+rule.matcher.port:'',rule.matcher.pathPrefix?'Path prefix '+rule.matcher.pathPrefix:'',rule.matcher.query!==null?'Exact query '+rule.matcher.query:''].filter(Boolean).join(' · '):'';
-  this.hrSampleMethod=this.hrMethod==='ANY'?'GET':this.hrMethod;this.hrSampleUrl=rule?.matcher.url?.kind==='exact'?rule.matcher.url.value:target;this.hrEditor=true;this.hrDirty=false;this.hrError='';this.hrMessage=rule?'Saved revision '+rule.revision+'. Changes take effect only when saved.':'New draft. Saving keeps it disabled unless you explicitly enable it.';this.headerStateChanged();this.$flushUpdates();if(focus&&this.ready&&this.hrActive)this.hrNameInput.focus({preventScroll:true});
+  this.hrSampleMethod=this.hrMethod==='ANY'?'GET':this.hrMethod;this.hrSampleUrl=rule?.matcher.url?.kind==='exact'?rule.matcher.url.value:target;this.hrEditor=true;this.hrDirty=false;this.hrError='';this.hrMessage='';this.headerStateChanged();this.$flushUpdates();this.baseline.capture(this.draftValues());this.updateDirty();if(focus&&this.ready&&this.hrActive)this.hrNameInput.focus({preventScroll:true});
  }
  textEdit(field:'hrFind'|'hrReplacement'|'hrOccurrences'|'hrExpected'|'hrMedia'|'hrMaxBytes'|'hrSampleBody',event:Event):void{this[field]=(event.currentTarget as HTMLInputElement).value;this.dirty();}
  edit(field:'hrName'|'hrMethod'|'hrStatusFilter'|'hrStatusClass'|'hrPlacement',event:Event):void{this[field]=(event.currentTarget as HTMLInputElement).value;this.dirty();}
  setEnabled(event:Event):void{this.hrEnabled=(event.currentTarget as HTMLInputElement).checked;this.dirty();}
  setPhase(event:Event):void{const phase=(event.currentTarget as HTMLSelectElement).value as Phase;if(phase==='request'&&(this.hrStatusFilter||this.hrStatusClass||this.hrPredicates.some(p=>p.phase==='response'))){this.hrError='Remove response-only conditions before switching to Request. Your draft is preserved.';this.$flushUpdates();(event.currentTarget as HTMLSelectElement).value=this.hrPhase;return;}this.hrPhase=phase;this.dirty();this.headerStateChanged();}
- private dirty():void{this.hrDirty=true;this.hrError='';this.invalidateTest();}
+ private draftValues():unknown {
+  const rows=(items:Array<OperationRow|PredicateRow>)=>items.map(({id:_id,encoding,value,...row})=>{
+   try{return {...row,value:bytes(value,encoding)};}catch{return {...row,invalidValue:value,encoding};}
+  });
+  return {name:this.hrName,phase:this.hrPhase,method:this.hrMethod,matcher:this.hrMatcher.value,
+   additional:this.hrAdditional,placement:this.hrPlacement,operations:rows(this.hrOperations),predicates:rows(this.hrPredicates),
+   status:this.hrStatusFilter,statusClass:this.hrStatusClass,find:this.hrFind,replacement:this.hrReplacement,
+   occurrences:this.hrOccurrences,expected:this.hrExpected,media:this.hrMedia,maxBytes:this.hrMaxBytes,
+   enabled:this.hrId?null:this.hrEnabled};
+ }
+ private updateDirty():void {this.hrDirty=this.baseline.differs(this.draftValues());this.hrCanSave=!this.hrId||this.hrDirty;}
+ private dirty():void{this.updateDirty();this.hrError='';this.hrMessage='';this.invalidateTest();}
+
  matcherChanged():void{this.dirty();}
  clearAdditional():void{if(this.baseMatcher){this.baseMatcher={...this.baseMatcher,scheme:null,host:null,port:null,pathPrefix:null,query:null};}this.hrAdditional='';this.dirty();}
  addOperation():void{this.hrOperations=[...this.hrOperations,{id:id(),operation:'set',name:'',encoding:'text',value:''}];this.dirty();}
@@ -148,8 +171,8 @@ export class HeaderRules extends WorkspaceElement {
   const matcher={...(this.baseMatcher??{method:null,url:null,scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null}),method:this.hrMethod.trim().toUpperCase()==='ANY'?null:this.hrMethod.trim().toUpperCase(),url:this.hrMatcher.value,requestHeaders:predicates('request'),responseHeaders:predicates('response'),responseStatus:number(this.hrStatusFilter,100,599),responseStatusClass:number(this.hrStatusClass,1,5)};
   return {id:this.hrId||(this.hrText?'text-':'header-')+id(),displayName:this.hrName.trim(),enabled:this.hrEnabled,revision:this.loaded?.revision??1,priority:this.loaded?.priority??0,matcher,request:{...emptyActions(),headers:this.hrPhase==='request'?operations:[],responseAsset:null,allowNonIdempotentBodyReplacement:false},response:{...emptyActions(),headers:this.hrPhase==='response'?operations:[],...(this.hrText?{textTransform:{find:this.hrFind,replacement:this.hrReplacement,occurrences:this.hrOccurrences as 'first'|'all',expectedMatches:number(this.hrExpected,0,1048576,'required match count'),mediaType:this.hrMedia,encoding:'utf-8' as const,maxBytes:Number(this.hrMaxBytes)}}:{})}};
  }
- async save(event?:Event,enable=false):Promise<boolean>{event?.preventDefault();if(this.hrBusy||!this.headerState)return false;this.hrBusy=true;this.hrError='';const context=this.context;try{const rule=this.draft();if(enable)rule.enabled=true;const status=await invoke<AutomationStatus>(this.hrText?'change_response_transform':'change_header_rule',{generation:this.headerState.generation,change:{action:'save',rule,expectedRevision:this.loaded?.revision??null,placement:this.hrPlacement}});this.accept(status);if(context!==this.context)return true;const saved=status.rules.find(r=>r.id===rule.id)!;this.load(saved,false);this.hrMessage=saved.enabled?'Saved and enabled for new matching live requests.':'Saved disabled. Live participation is unchanged for this rule until explicitly enabled.';return true;}catch(error){if(context===this.context){this.hrError='Header rule was not saved: '+describeError(error);if(typeof error==='object'&&error!==null&&'category' in error&&!['invalid-input','conflict'].includes(String(error.category)))void this.showError('Header rule was not saved',this.hrError);}return false;}finally{this.hrBusy=false;}}
- duplicateDraft():void{this.loaded=null;this.hrId='';this.hrName+=' copy';this.hrEnabled=false;this.hrStale=false;this.hrPlacement='keep';this.dirty();this.hrMessage='Draft copied with a new identity. Saving keeps it disabled.';}
+ async save(event?:Event,enable=false):Promise<boolean>{event?.preventDefault();if(this.hrBusy||this.activationBusy||!this.headerState)return false;if(!enable&&!this.hrCanSave)return true;this.hrBusy=true;this.hrError='';const context=this.context;try{const rule=this.draft();if(enable)rule.enabled=true;const status=await invoke<AutomationStatus>(this.hrText?'change_response_transform':'change_header_rule',{generation:this.headerState.generation,change:{action:'save',rule,expectedRevision:this.loaded?.revision??null,placement:this.hrPlacement}});this.accept(status);if(context!==this.context)return true;const saved=status.rules.find(r=>r.id===rule.id)!;this.load(saved,false);this.hrMessage=saved.enabled?'Saved and enabled for new matching live requests.':'Saved disabled. Live participation is unchanged for this rule until explicitly enabled.';return true;}catch(error){if(context===this.context){this.hrError='Header rule was not saved: '+describeError(error);if(typeof error==='object'&&error!==null&&'category' in error&&!['invalid-input','conflict'].includes(String(error.category)))void this.showError('Header rule was not saved',this.hrError);}return false;}finally{this.hrBusy=false;}}
+ duplicateDraft():void{this.loaded=null;this.hrId='';this.hrName+=' copy';this.hrEnabled=false;this.hrStale=false;this.hrPlacement='keep';this.activationRule=null;this.dirty();this.hrMessage='Draft copied with a new identity. Saving keeps it disabled.';}
  async discard():Promise<void>{if(this.hrBusy)return;const rule=this.headerState?.rules.find(r=>r.id===this.hrId);this.load(rule??null);}
  async remove():Promise<void>{if(this.hrBusy||!this.loaded||!this.headerState||!await this.leave())return;const rule=structuredClone(this.loaded);this.hrBusy=true;try{const status=await invoke<AutomationStatus>(this.hrText?'change_response_transform':'change_header_rule',{generation:this.headerState.generation,change:{action:'remove',id:rule.id,expectedRevision:rule.revision}});this.undo={rule,generation:status.generation};this.accept(status);this.hrEditor=false;this.loaded=null;this.hrId='';this.hrDirty=false;this.hrMessage='Rule removed. Undo is available until another automation change.';this.headerStateChanged();this.$flushUpdates();if(this.hrActive){if(this.embedded)this.$emit('rule-create-focus');else this.hrNewButton.focus();}}catch(error){this.hrError=describeError(error);}finally{this.hrBusy=false;}}
  async undoRemove():Promise<void>{if(!this.undo||!this.headerState||this.hrBusy||!await this.leave())return;if(!this.undo)return;if(this.undo.generation!==this.headerState.generation){this.hrError='Automation changed after removal. Current work was preserved.';return;}this.hrBusy=true;try{const status=await invoke<AutomationStatus>(this.hrText?'change_response_transform':'change_header_rule',{generation:this.undo.generation,change:{action:'restore',rule:this.undo.rule}});const restored=this.undo.rule.id;this.undo=null;this.accept(status);this.load(status.rules.find(r=>r.id===restored)!,false);this.hrMessage='Removed rule restored.';}catch(error){this.hrError=describeError(error);}finally{this.hrBusy=false;}}

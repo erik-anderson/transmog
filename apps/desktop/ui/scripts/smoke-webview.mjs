@@ -251,7 +251,7 @@ try {
       await waitFor(()=>!element.autoresponsePending && element.autoresponseState.autoresponsesEnabled===true,'Traffic resume did not reach the backend');
       const sharedSwitchWorked=pausePreservedRules && JSON.stringify(element.autoresponseState.rules)===savedRules;
       element.shadowRoot.querySelector('a[data-view="automation"]').click();await Promise.resolve();
-      const enabled=autoResponseEditor.elements.namedItem('enabled');enabled.checked=false;enabled.dispatchEvent(new Event('change',{bubbles:true}));
+      autoResponseEditor.querySelector('rule-activation button').click();
       await waitFor(()=>!workspace.changingAutoResponse && workspace.rules[0]?.enabled===false,'Immediate disabled state was not saved');
       const disabledPreserved=workspace.rules[0].matcher.url.value.address==='https://example.test/users/{:digits}';
       let rule=automation.querySelector('.auto-response-rule');rule.dispatchEvent(new KeyboardEvent('keydown',{key:'Delete',bubbles:true,cancelable:true}));
@@ -300,7 +300,7 @@ try {
           hooksV2Branding: /hooks v2/i.test(surfaceText),
           automationTools: Array.from(automation?.querySelectorAll('.workspace-tabs button') ?? [],button=>button.textContent.trim()),
           autoResponseWorkspace: automation?.querySelectorAll('.auto-response-workspace').length ?? 0,
-          captureStartHint: automation?.querySelectorAll('.auto-response-start-hint').length ?? 0,
+          automationActivity: automation?.querySelectorAll('.automation-activity').length ?? 0,
           capturedResponsePrimary,
           scratchSecondary,
           trafficRowDragRemoved:trafficWorkspace.querySelectorAll('tr[data-session-id][draggable]').length===0,
@@ -366,7 +366,7 @@ try {
     `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
   assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
   assert(['Rules','Experiments','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
-    && result.ux.captureStartHint === 1 && result.ux.exactUrlFields === 1
+    && result.ux.automationActivity === 1 && result.ux.exactUrlFields === 1
     && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
     && result.ux.firstMatchExplained && result.ux.scratchEditorOpened
     && result.ux.responseBodyRows === 12 && result.ux.responseBodyResize === 'vertical'

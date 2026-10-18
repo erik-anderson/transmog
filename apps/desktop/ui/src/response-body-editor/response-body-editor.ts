@@ -123,7 +123,7 @@ export class ResponseBodyEditor extends WebUIElement {
   }
   private modelLanguage():string {return this.bodyMode==='hex'?'plaintext':this.bodyLanguage==='svg'?'html':this.bodyLanguage;}
   private updateEditorStatus():void {
-    this.bodyEditorStatus=this.bodyMode==='hex'?'Edit complete byte pairs (00–FF), separated by spaces or new lines.':this.bodyLanguage==='svg'?'SVG uses HTML highlighting and color controls. Automatic formatting is unavailable to preserve SVG markup.':'Language affects highlighting and formatting. Content type is set in Response.';
+    this.bodyEditorStatus=this.bodyMode==='hex'?'Edit complete byte pairs (00–FF), separated by spaces or new lines.':this.bodyLanguage==='svg'?'SVG formatting is unavailable to preserve markup.':'Language affects highlighting and formatting. Content type is set in Response.';
   }
   updateByteStatus():void {
     try{const value=this.model?.getValue()??this.fallbackInput.value,count=this.viewBytes&&value===this.viewValue?this.viewBytes.length:bodyByteLength(value,this.bodyMode,this.textEncoding);this.bodyByteStatus=`${count.toLocaleString()} ${count===1?'byte':'bytes'}`;}

@@ -1,3 +1,4 @@
+import '../draft-status/draft-status.js';
 import initialState from '../initial-state.json';
 import '../editor-surface/editor-surface.js';
 import { attr, observable } from '@microsoft/webui-framework';
@@ -58,6 +59,8 @@ export class ScriptEditor extends WorkspaceElement {
   private editVersion=0;
   private testVersion=0;
   private savedFingerprint='';
+  private savedDraft:ScriptDraft|null=null;
+  private initialDraft:ScriptDraft|null=null;
   private activeFingerprint='';
   private loadedDraft:ScriptDraft|null=null;
   private sourceEditor:Monaco.editor.IStandaloneCodeEditor|null=null;
@@ -101,10 +104,18 @@ export class ScriptEditor extends WorkspaceElement {
     this.scriptBusy=true;this.scriptText=message;this.statusKind='progress';
     try{await operation();}finally{this.scriptBusy=false;}
   }
-  async saveScript():Promise<void>{await this.runScript('Saving draft…',()=>this.saveDraft());}
+  async saveScript():Promise<void>{if(!this.scriptDirty)return;await this.runScript('Saving draft…',()=>this.saveDraft());}
+  discardScript():void {
+    const draft=this.savedDraft??this.initialDraft;
+    if(this.scriptBusy||!this.scriptReady||!draft)return;
+    const set=(name:string,value:string|boolean)=>{const input=this.scriptForm.elements.namedItem(name) as HTMLInputElement;if(typeof value==='boolean')input.checked=value;else input.value=value;};
+    set('scriptHost',draft.prefilter.host??'');set('scriptPath',draft.prefilter.pathPrefix??'');set('scriptHeaders',draft.capabilities.writeHeaders.join(', '));
+    set('readBodies',draft.capabilities.readBodies);set('writeBody',draft.capabilities.writeBody);set('respond',draft.capabilities.respond);set('abort',draft.capabilities.abort);set('sensitive',draft.capabilities.readSensitiveHeaders);
+    this.sourceEditor!.setValue(draft.source);this.markScriptChanged();this.feedback('Changes discarded. The active script is unchanged.');
+  }
   async validateScript(event?:Event):Promise<void>{event?.preventDefault();this.closeMenu();await this.runScript('Validating current source and capabilities…',async()=>{await this.validateDraft();});}
   async testScript():Promise<void>{await this.runScript('Checking source and running the sandbox…',()=>this.testDraft());}
-  async primaryAction():Promise<void>{if(this.scriptActive&&!this.scriptUnapplied)await this.disableScript();else await this.activateScript();}
+  async primaryAction():Promise<void>{if(!this.scriptActive||this.scriptUnapplied)await this.activateScript();}
   async activateScript():Promise<void>{await this.runScript('Validating and saving changes before activation…',()=>this.activateDraft());}
   async disableScript():Promise<void>{await this.runScript('Pausing script…',()=>this.disableActive());}
   async compareActiveScript():Promise<void>{this.closeMenu();await this.runScript('Preparing comparison…',()=>this.compareDraft());}
@@ -175,7 +186,7 @@ export class ScriptEditor extends WorkspaceElement {
       this.savedFingerprint=scriptFingerprint(draft);
     }
     this.sourceEditor.onDidChangeModelContent(()=>this.markScriptChanged());
-    this.scriptReady=true;this.$flushUpdates();this.renderScriptStatus(status);this.updateDraftState();
+    this.scriptReady=true;this.initialDraft=structuredClone(this.scriptDraft());this.savedDraft=draft?structuredClone(draft):null;this.$flushUpdates();this.renderScriptStatus(status);this.updateDraftState();
     this.scriptText=draft?'Ready to edit. Changes apply to new requests when saved and enabled.':'Start with this example, then save and enable it for new requests.';
   }
   private async saveDraft():Promise<void>{
@@ -185,7 +196,7 @@ export class ScriptEditor extends WorkspaceElement {
       if(!this.current(version))return this.changedDuring('saving');
       const status=await invoke<ScriptStatus>('save_script',{draft,expectedGeneration:generation});
       if(!this.isConnected)return;
-      this.savedFingerprint=scriptFingerprint(draft);this.candidate=null;this.renderScriptStatus(status);this.updateDraftState();
+      this.savedDraft=structuredClone(draft);this.savedFingerprint=scriptFingerprint(draft);this.candidate=null;this.renderScriptStatus(status);this.updateDraftState();
       this.feedback(this.current(version)?'Draft saved. The active script is unchanged.':'Earlier edits were saved. Newer edits are still unsaved.');
     }catch(error:unknown){this.scriptFailure('Save failed',error);await this.showError('Script draft could not be saved',this.scriptText);}
   }
@@ -240,7 +251,7 @@ export class ScriptEditor extends WorkspaceElement {
       this.scriptText='Starting the script and saving this version…';this.statusKind='progress';
       const status=await invoke<ScriptStatus>('activate_script',{candidateId:candidate.token.candidateId});
       if(!this.isConnected)return;
-      this.candidate=null;this.savedFingerprint=scriptFingerprint(candidate.draft);this.scriptRevision=candidate.draft.revision+1;
+      this.candidate=null;this.savedDraft=structuredClone(candidate.draft);this.savedFingerprint=scriptFingerprint(candidate.draft);this.scriptRevision=candidate.draft.revision+1;
       this.renderScriptStatus(status);this.updateDraftState();
       this.feedback(this.current(version)?'Saved and enabled for new requests.':'The validated version was saved and enabled. Newer edits are still unsaved and unapplied.');
     }catch(error:unknown){this.scriptFailure('Activation failed',error);}

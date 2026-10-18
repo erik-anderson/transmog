@@ -1,3 +1,7 @@
+import {automationActivity,experimentRuleIds,sameRuleContent,type RuleEnabledRequest} from '../automation-state.js';
+import {DraftBaseline} from '../draft-state.js';
+import '../draft-status/draft-status.js';
+import '../rule-activation/rule-activation.js';
 import initialState from '../initial-state.json';
 import { attr, observable } from '@microsoft/webui-framework';
 import '../script-editor/script-editor.js';
@@ -27,9 +31,38 @@ const MAX_AUTORESPONSE_EDIT_BYTES = 16 * 1024 * 1024;
 type RuleRow=AutomationRule & {order:number;name:string;criteria:string;state:string;toggleLabel:string;first:boolean;last:boolean;selected:boolean;selectionState:string;tabIndex:string;shadowedName:string;shadowedBy:string;diagnostic:string;responseText:string};
 type BatchRow={included:boolean;order:number;id:string;name:string;method:string;url:string;eligible:boolean;reason:string;duplicate:string;startedAt:number};
 type CapturedDraft={sessionId:string;detail:SessionDetail;headers:ResponseAsset['headers'];inspection:BodyInspection|null};
-type NativeRuleRow={id:string;name:string;kind:string;action:string;direction:string;criteria:string;state:string;selected:boolean;selectionState:string;tabIndex:string;};
+type NativeRuleRow={rule:AutomationRule;id:string;name:string;kind:string;action:string;direction:string;criteria:string;state:string;selected:boolean;selectionState:string;tabIndex:string;};
 
 export class AutomationWorkspace extends WorkspaceElement {
+  @observable enabledScriptCount=0;
+  @observable activity=automationActivity(null,0);
+  @observable savedActivationRule:AutomationRule|null=null;
+  @observable responseCanSave=false;
+  private responseBaseline=new DraftBaseline();
+  enabledScriptCountChanged():void {this.updateActivity();}
+  private updateActivity():void {this.activity=automationActivity(this.automationStatus,this.enabledScriptCount);}
+  dismissAutomationStatus():void {this.automationText='';}
+  async onRuleEnabled(event:CustomEvent<RuleEnabledRequest>):Promise<void> {
+    event.stopPropagation();await this.setRulesEnabled([event.detail],event.detail.enabled);
+  }
+  private async setRulesEnabled(requests:Array<{id:string;revision:number}>,enabled:boolean):Promise<void> {
+    if(this.savingAutoResponse||this.changingAutoResponse||!requests.length)return;
+    this.changingAutoResponse=true;this.automationText='Updating rules…';this.automationKind='progress';
+    try {
+      const current=await invoke<AutomationStatus>('automation_status');
+      const ids=new Set(requests.map(request=>request.id));
+      for(const request of requests)if(current.rules.find(rule=>rule.id===request.id)?.revision!==request.revision)
+        throw new Error('A selected rule changed. Refresh the rules and try again. Your draft is preserved.');
+      const rules=current.rules.map(rule=>ids.has(rule.id)&&(rule.enabled!==false)!==enabled?{...rule,enabled,revision:rule.revision+1}:rule);
+      const changed=rules.filter((rule,index)=>rule!==current.rules[index]).length;
+      if(!changed){this.automationText='';return;}
+      const status=await this.activateRuleSet(rules,current.generation);
+      this.rememberRuleChange(current.rules,status.rules,`${enabled?'Enabled':'Disabled'} ${changed} rule${changed===1?'':'s'}.`,true);
+      this.renderAutomation(status);this.automationText='';
+    }catch(error){this.automationText='Rule change failed: '+describeError(error);this.automationKind='error';}
+    finally{this.changingAutoResponse=false;}
+  }
+
   @observable nativeRuleRows:NativeRuleRow[]=[];
   @observable ruleDirection='all';
   @observable catalogSelectedId='';
@@ -38,6 +71,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable hasNativeSelection=false;
   @observable experimentEditorVisible=false;
   @observable advancedRuleText='';
+  @observable catalogActivationRule:AutomationRule|null=null;
   private lastRuleSection='responses';
   ruleKindMenu!:HTMLElement;
   newRuleButton!:HTMLButtonElement;
@@ -54,21 +88,22 @@ export class AutomationWorkspace extends WorkspaceElement {
   filterRuleDirection(event:Event):void {this.finishRuleDrag();this.ruleDirection=(event.target as HTMLSelectElement).value;this.renderRuleSelection();}
   private renderNativeRules():void {
     const status=this.automationStatus;if(!status)return;
-    const owned=new Set(status.experiments?.flatMap(experiment=>experiment.variants.flatMap(variant=>variant.revisions.flatMap(revision=>revision.rules.map(rule=>rule.id))))??[]);
+    this.catalogActivationRule=status.rules.find(rule=>rule.id===this.catalogSelectedId)??null;
+    this.advancedRuleText=this.catalogActivationRule?JSON.stringify(this.catalogActivationRule,null,2):'';
+    const owned=experimentRuleIds(status);
     const search=this.ruleSearch.toLowerCase();
     this.nativeRuleRows=status.rules.filter(rule=>!rule.request.responseAsset&&!owned.has(rule.id)).sort((a,b)=>a.priority-b.priority||a.id.localeCompare(b.id)).map(rule=>{
       const phase=headerRulePhase(rule),kind=rule.request.userAgent?'headers':phase?'header-rules':rule.response.textTransform&&!rule.request.headers.length&&!rule.response.headers.length?'response-text':'advanced';
       const direction=rule.request.userAgent||phase==='request'?'Request':'Response';
       const action=rule.request.userAgent?'Change browser headers':phase?'Change '+direction.toLowerCase()+' headers':rule.response.textTransform?'Find and replace response text':'Advanced rule';
       const url=rule.matcher.url,criteria=`${rule.matcher.method??'ANY'} ${url?.kind==='exact'?url.value:url?.kind==='pattern'?url.value.address:url?.kind==='regex'?url.value.pattern:(rule.matcher.host??'Any host')+(rule.matcher.pathPrefix??'')}`;
-      return {id:rule.id,name:rule.displayName??action,kind,action,direction,criteria,state:rule.enabled===false?'Disabled':'Enabled',selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1'};
+      return {rule,id:rule.id,name:rule.displayName??action,kind,action,direction,criteria,state:rule.enabled===false?'Disabled':'Enabled',selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1'};
     }).filter(row=>(!search||(row.name+' '+row.action+' '+row.criteria).toLowerCase().includes(search))&&(this.ruleDirection==='all'||row.direction.toLowerCase()+'s'===this.ruleDirection)&&(this.ruleFilter==='all'||this.ruleFilter===row.state.toLowerCase()));
   }
   private async selectNativeRule(row:NativeRuleRow):Promise<boolean> {
     const previous=this.automationSection;this.showAutomationSection(row.kind);this.$flushUpdates();
     if(row.kind==='headers'){await this.userAgentOverrides.select(row.id);if(this.userAgentOverrides.uaSelectedId!==row.id){this.showAutomationSection(previous);return false;}}
     else if(row.kind==='header-rules'||row.kind==='response-text'){const editor=row.kind==='header-rules'?this.headerRulesEditor:this.responseTextEditor;await editor.selectRule(row.id);if(editor.hrId!==row.id){this.showAutomationSection(previous);return false;}}
-    else this.advancedRuleText=JSON.stringify(this.automationStatus?.rules.find(rule=>rule.id===row.id),null,2);
     this.catalogSelectedId=row.id;this.nativeDetail=true;this.renderRuleSelection();return true;
   }
   catalogRuleClick(row:NativeRuleRow,event:MouseEvent,checkbox=false):void {const rule=this.automationStatus?.rules.find(rule=>rule.id===row.id);if(rule){if(checkbox)event.stopPropagation();void this.selectRule(rule,event,checkbox);}}
@@ -84,7 +119,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.ruleKindMenu.hidePopover();this.newRuleButton.focus();this.catalogSelectedId='';
     if(kind==='saved'){await this.beginCapturedResponseFlow();return;}
     if(kind==='scratch'){await this.beginScratchAutoResponse();return;}
-    if(kind==='browser-headers'){this.showAutomationSection('headers');this.userAgentOverrides.add();this.nativeDetail=true;return;}
+    if(kind==='browser-headers'){this.showAutomationSection('headers');await this.userAgentOverrides.add();this.nativeDetail=true;return;}
     const section=kind==='response-text'?'response-text':'header-rules';this.showAutomationSection(section);this.nativeDetail=true;
     await (section==='response-text'?this.responseTextEditor:this.headerRulesEditor).newRule(undefined,kind==='request-headers'?'request':'response');
   }
@@ -92,7 +127,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   headerRulesEditor!:HeaderRules;
   async beginRule(request:TrafficRuleRequest):Promise<void> {
     if(request.kind==='response-text'){await this.beginTextEdit(request.source);return;}
-    if(request.kind==='browser-headers'){this.showAutomationSection('headers');this.userAgentOverrides.addFromSource(request.source);return;}
+    if(request.kind==='browser-headers'){this.showAutomationSection('headers');await this.userAgentOverrides.addFromSource(request.source);return;}
     this.showAutomationSection('header-rules');await this.headerRulesEditor.newRule(request.source,request.kind==='request-headers'?'request':'response');
   }
   async beginTextEdit(selected:SelectedResponse):Promise<void>{this.showAutomationSection('response-text');await this.responseTextEditor.newRule(selected);}
@@ -364,19 +399,33 @@ export class AutomationWorkspace extends WorkspaceElement {
     const advanced=this.retainAdvancedMatcher?existing?.matcher:undefined;
     return {...existing?.matcher,method:method==='ANY'?null:method,url:this.matchEditor.value,examples:this.matchExamples,scheme:advanced?.scheme??null,host:advanced?.host??null,port:advanced?.port??null,pathPrefix:advanced?.pathPrefix??null,query:advanced?.query??null,requestHeaders:[...exact,...extra],responseHeaders:advanced?.responseHeaders??[],responseStatus:advanced?.responseStatus??null,responseStatusClass:advanced?.responseStatusClass??null};
   }
-  removeAdvancedConditions():void {this.retainAdvancedMatcher=false;this.advancedMatcherText='';this.draftDirty=true;this.scheduleMatcherTest();}
+  removeAdvancedConditions():void {this.retainAdvancedMatcher=false;this.advancedMatcherText='';this.queueResponseDirty();this.scheduleMatcherTest();}
   private setEditorMethod(method:string|null):void {
     const value=method??'ANY';const known=['GET','POST','PUT','PATCH','DELETE','HEAD','OPTIONS','ANY'].includes(value);
     this.autoResponseMethod.value=known?value:'CUSTOM';this.autoResponseCustomMethod.value=known?'':value;this.customMethodHidden=known;
   }
+  private responseValues():unknown {
+    let bodyChanged=false;
+    try {bodyChanged=!this.bodyReadOnly&&this.bodyOriginalBytes!==null&&!equalBodyBytes(this.currentBodyBytes(),this.bodyOriginalBytes);}
+    catch {bodyChanged=true;}
+    return {fields:this.nonBodySnapshot(),bodyChanged,path:this.responseBodyPath,mode:this.responseBodyPath?this.responseBodyFileMode:null,
+      editBody:this.editingAutoResponseId?null:this.autoResponseEditBody.checked,enabled:this.editingAutoResponseId?null:this.autoResponseEnabled.checked};
+  }
+  private captureResponseBaseline():void {this.responseBaseline.capture(this.responseValues());this.refreshResponseDirty();}
+  private refreshResponseDirty():void {
+    if(!this.autoResponseForm||this.editorHidden)return;
+    this.draftDirty=this.responseBaseline.differs(this.responseValues());
+    this.responseCanSave=!this.existingResponse||this.draftDirty;
+  }
+  private queueResponseDirty():void {queueMicrotask(()=>this.refreshResponseDirty());}
   markDraftDirty(event:Event):void {
     const target=event.target as HTMLElement;
     if(['method','customMethod','requestHeaders'].includes((target as HTMLInputElement).name))this.scheduleMatcherTest();
     if(target.closest('[data-matcher-test],[data-placeholder-editor],[data-body-view]') || (target instanceof HTMLInputElement && target.name==='enabled' && this.editingAutoResponseId))return;
     if(target===this.autoResponseMediaType)this.updateLinkedTextStatus();
-    this.draftDirty=true;
+    this.queueResponseDirty();
   }
-  onMatcherChange():void {this.draftDirty=true;this.scheduleMatcherTest();}
+  onMatcherChange():void {this.queueResponseDirty();this.scheduleMatcherTest();}
   scheduleMatcherTest():void {window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;this.matchTestResult=null;this.renderMatchCases();this.matcherTimer=window.setTimeout(()=>{void this.testMatcher();},300);}
   formKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();this.autoResponseForm.requestSubmit();}}
   previewSavedRule(mode:'captured'|'modified'='modified'):void {
@@ -394,7 +443,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     return this.leaveEditorPromise;
   }
   async resolveUnsaved(choice:string):Promise<void> {
-    if(choice==='save') {if(this.autoResponseForm.reportValidity())await this.saveAutoResponse(new Event('submit',{cancelable:true}));if(this.draftDirty)choice='stay';}
+    if(this.savingAutoResponse)return;
+    if(choice==='save') {if(!this.autoResponseForm.checkValidity()){await this.resolveUnsaved('stay');this.autoResponseForm.reportValidity();return;}if(!await this.saveAutoResponse(new Event('submit',{cancelable:true})))return;}
     if(choice==='discard')this.draftDirty=false;
     this.unsavedDialog.close();const resolve=this.resolveLeave;this.resolveLeave=null;this.leaveEditorPromise=null;resolve?.(choice!=='stay');
   }
@@ -409,8 +459,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(this.savingAutoResponse||this.loadingSavedResponse||this.fileChoiceBusy||this.responseBodyPath||this.editBodyDisabled)return;
     let bytes:number[];try{bytes=this.currentBodyBytes();}catch(error:unknown){this.autoResponseError=describeError(error);return;}
     this.bodyDialogBefore={revision:this.editorRevision,value:this.autoResponseBody.value,mode:this.bodyMode,viewValue:this.bodyViewValue,viewBytes:this.bodyViewBytes,status:this.bodyStatusText,edit:this.autoResponseEditBody.checked,readOnly:this.bodyReadOnly,dirty:this.draftDirty,error:this.autoResponseError};this.bodyDialogCommitted=false;
-    const canSave=Boolean(this.editingAutoResponseId&&this.savedResponse&&this.nonBodySnapshot()===this.savedNonBodySnapshot);
-    this.bodyEditor.open(this.autoResponseBody.value,responseBodyLanguage(this.autoResponseMediaType.value,this.autoResponseBody.value),canSave,this.bodyDialogButton,{mode:this.bodyMode,textEncoding:this.bodyTextEncoding,bytes,saveUnavailableReason:this.editingAutoResponseId?'Other properties have unsaved changes. Apply to draft, then save the rule.':'Apply the body to the draft, then save the new rule.'});
+    const canSave=Boolean(this.editingAutoResponseId&&this.savedResponse);
+    this.bodyEditor.open(this.autoResponseBody.value,responseBodyLanguage(this.autoResponseMediaType.value,this.autoResponseBody.value),canSave,this.bodyDialogButton,{mode:this.bodyMode,textEncoding:this.bodyTextEncoding,bytes,saveUnavailableReason:this.editingAutoResponseId?'Apply to draft, then save the rule.':'Apply to draft, then save the new rule.'});
   }
   async commitBodyDialog(event:CustomEvent<BodyCommit>):Promise<void> {
     const before=this.bodyDialogBefore;
@@ -419,11 +469,12 @@ export class AutomationWorkspace extends WorkspaceElement {
     const bytes=event.detail.bytes??encodeBody(value,mode,this.bodyTextEncoding),bodyChanged=!equalBodyBytes(bytes,this.currentBodyBytes());
     if(value!==this.autoResponseBody.value||mode!==this.bodyMode||bodyChanged){
       this.bodyMode=mode;this.autoResponseBody.value=value;this.bodyViewValue=this.autoResponseBody.value;this.bodyViewBytes=bytes;
-      if(bodyChanged){this.draftDirty=true;if(this.autoResponseSourceState?.kind==='captured'){this.autoResponseEditBody.checked=true;this.updateAutoResponseBodyEditState();}}
+      if(bodyChanged){this.queueResponseDirty();if(this.autoResponseSourceState?.kind==='captured'){this.autoResponseEditBody.checked=true;this.updateAutoResponseBodyEditState();}}
     }
     this.updateBodySummary();
     if(!save){this.bodyDialogCommitted=true;this.bodyEditor.close();return;}
-    if(!this.bodyEditor.bodyCanSave||this.nonBodySnapshot()!==this.savedNonBodySnapshot){this.bodyEditor.bodyError='Other properties have unsaved changes. Apply the body, then save the rule.';return;}
+    if(!this.bodyEditor.bodyCanSave){this.bodyEditor.bodyError='Apply the body, then save the new rule.';return;}
+    this.refreshResponseDirty();
     this.bodyEditor.bodyBusy=true;this.bodyEditor.bodyError='';
     let saved=false;
     try {if(this.autoResponseForm.reportValidity())saved=await this.saveAutoResponse(new Event('submit',{cancelable:true}));}
@@ -467,7 +518,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   async setEditorEnabled():Promise<void> {
     this.scheduleMatcherTest();
-    const id=this.editingAutoResponseId;if(!id){this.draftDirty=true;return;}
+    const id=this.editingAutoResponseId;if(!id){this.queueResponseDirty();return;}
     await this.mutateAutoResponse(id,'toggle');
     this.autoResponseEnabled.checked=this.automationStatus?.rules.find(rule=>rule.id===id)?.enabled??true;
     this.scheduleMatcherTest();
@@ -524,6 +575,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   async selectAllRules(event:Event):Promise<void> {const input=event.target as HTMLInputElement,checked=input.checked;if(!await this.canLeaveEditor()){input.checked=this.allRulesSelected;return;}this.ruleSelection.ids=new Set(checked?this.ruleOrder():[]);this.renderRuleSelection();const selected=this.automationStatus?.rules.find(rule=>this.ruleSelection.ids.has(rule.id));if(this.ruleSelectionCount===1 && selected)await this.openRuleProperties(selected);else this.showRuleSelection();}
   resizeRuleList(event:CustomEvent<{value:number;committed:boolean}>):void {this.ruleListSplit=event.detail.value;this.ruleListShare=event.detail.value+'%';this.$emit('workspace-change',{patch:{autoresponseSplit:event.detail.value},committed:event.detail.committed});}
   private rememberRuleChange(before:AutomationRule[],after:AutomationRule[],label:string,all=false):void {
+    this.automationText='';this.automationKind='success';
     this.ruleHistory.push({before:structuredClone(before),after:structuredClone(after),label,all});if(this.ruleHistory.length>20)this.ruleHistory.shift();this.undoRemoveText=label;
   }
   private async mutateCatalogSelection(mutation:'enable'|'disable'|'remove'|'up'|'down'|'duplicate'):Promise<void> {
@@ -532,7 +584,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       for(const [editor,section] of [[this.headerRulesEditor,'header-rules'],[this.responseTextEditor,'response-text']] as const)if(this.ruleSelection.ids.has(editor.hrId)&&editor.hrDirty){
         const previous=this.automationSection;this.showAutomationSection(section);this.$flushUpdates();const leave=await editor.canLeaveDraft();this.showAutomationSection(previous);if(!leave)return;
       }
-      if(this.ruleSelection.ids.has(this.userAgentOverrides.uaSelectedId)&&!this.userAgentOverrides.canLeaveDraft())return;
+      if(this.ruleSelection.ids.has(this.userAgentOverrides.uaSelectedId)&&!await this.userAgentOverrides.canLeaveDraft())return;
     }
     const selection=this.ruleSelection.clone(),section=this.automationSection,root=this.getRootNode();let restoreFocus=true;
     const moved=(event:Event)=>{const target=event.composedPath()[0];if(target instanceof Node&&!this.autoResponseList.contains(target)&&!this.ruleMenu.contains(target)&&target!==this.ruleMoreButton)restoreFocus=false;};
@@ -554,13 +606,13 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   async mutateSelectedRules(mutation:'enable'|'disable'|'remove'|'up'|'down'|'duplicate'):Promise<void> {
     if(this.savingAutoResponse || this.changingAutoResponse || !this.ruleSelection.ids.size)return;
+    if(mutation==='enable'||mutation==='disable'){if(this.ruleMenu.matches(':popover-open')){this.ruleMenu.hidePopover();this.ruleMoreButton.focus({preventScroll:true});}await this.setRulesEnabled((this.automationStatus?.rules??[]).filter(rule=>this.ruleSelection.ids.has(rule.id)),mutation==='enable');return;}
     if((mutation==='remove' || mutation==='duplicate') && !await this.canLeaveEditor())return;
     if(this.hasNativeSelection){await this.mutateCatalogSelection(mutation);return;}
     this.ruleMenu.hidePopover();this.changingAutoResponse=true;const originalSelection=this.ruleSelection.clone();
     try {
       const current=await invoke<AutomationStatus>('automation_status');const before=this.autoResponseRules(current),selected=this.ruleSelection.ids;let ordered=[...before];
       if(mutation==='remove')ordered=ordered.filter(rule=>!selected.has(rule.id));
-      else if(mutation==='enable' || mutation==='disable')ordered=ordered.map(rule=>selected.has(rule.id)?{...rule,enabled:mutation==='enable',revision:rule.revision+1}:rule);
       else if(mutation==='duplicate') {
         const copies:string[]=[];ordered=ordered.flatMap(rule=>{if(!selected.has(rule.id))return [rule];const id='autoresponse-rule-'+crypto.randomUUID().replaceAll('-','');copies.push(id);return [rule,{...rule,id,displayName:Array.from('Copy of '+(rule.displayName??'Saved response')).slice(0,128).join(''),enabled:false,revision:1}];});this.ruleSelection.ids=new Set(copies);
       } else if(mutation==='up') {
@@ -648,9 +700,9 @@ export class AutomationWorkspace extends WorkspaceElement {
     const identity=(item:MatchExample)=>JSON.stringify([item.method,item.url,(item.headers??[]).map(header=>[header.name.toLowerCase(),header.value])]);
     const index=this.matchExamples.findIndex(item=>identity(item)===identity(example));
     if(index<0 && this.matchExamples.length>=32){this.matcherTestError='This rule has 32 test cases. Remove a case before adding another.';return;}
-    this.draftDirty=true;this.matchExamples=index<0?[...this.matchExamples,example]:this.matchExamples.map((item,position)=>position===index?example:item);void this.testMatcher();
+    this.queueResponseDirty();this.matchExamples=index<0?[...this.matchExamples,example]:this.matchExamples.map((item,position)=>position===index?example:item);void this.testMatcher();
   }
-  removeMatchExample(index:number):void {this.draftDirty=true;this.matchExamples=this.matchExamples.filter((_,position)=>position!==index);void this.testMatcher();}
+  removeMatchExample(index:number):void {this.queueResponseDirty();this.matchExamples=this.matchExamples.filter((_,position)=>position!==index);void this.testMatcher();}
   async chooseResponseBody():Promise<void> {
     if(this.savingAutoResponse || this.fileChoiceBusy)return;
     const revision=this.editorRevision,request=++this.fileInfoRevision;
@@ -660,7 +712,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       if(!path || revision!==this.editorRevision || request!==this.fileInfoRevision || !this.isConnected)return;
       const info=await invoke<ResponseBodyFileInfo>('response_body_file_info',{path,reference:null});
       if(revision!==this.editorRevision || request!==this.fileInfoRevision || !this.isConnected)return;
-      this.draftDirty=true;this.bodyFileTouched=true;this.setResponseFile(info);
+      this.queueResponseDirty();this.bodyFileTouched=true;this.setResponseFile(info);
     }catch(error:unknown){if(revision===this.editorRevision && request===this.fileInfoRevision)this.autoResponseError=describeError(error);}
     finally{if(revision===this.editorRevision && request===this.fileInfoRevision)this.fileChoiceBusy=false;}
   }
@@ -673,7 +725,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   changeResponseBodyFileMode(event:Event):void {
     const mode=(event.currentTarget as HTMLSelectElement).value;
     if(!this.responseBodyPath||(mode!=='copy'&&mode!=='linked'))return;
-    this.responseBodyFileMode=mode;this.bodyFileTouched=true;this.draftDirty=true;this.renderResponseFileDetails();
+    this.responseBodyFileMode=mode;this.bodyFileTouched=true;this.queueResponseDirty();this.renderResponseFileDetails();
   }
   private renderResponseFileDetails():void {
     const size=this.responseBodyFileBytes===null?'':formatBytes(this.responseBodyFileBytes)+' currently available. ';
@@ -690,7 +742,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   clearResponseBodyFile():void {
     this.fileInfoRevision++;this.fileChoiceBusy=false;this.responseBodyFileMode='copy';this.responseBodyFileBytes=null;
-    this.draftDirty=true;this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
+    this.queueResponseDirty();this.bodyFileTouched=Boolean(this.savedResponse?.asset.linkedBody);this.responseBodyPath=null;this.responseBodyFile='';this.responseBodyFileDetails='';this.responseBodyFileError='';
     if(this.savedResponse?.asset.linkedBody){
       this.bodyReadOnly=false;this.editBodyDisabled=false;
       this.setBodyContent([],responseTextEncoding(this.autoResponseMediaType.value));
@@ -762,7 +814,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.draftDirty=false;this.batchReviewHidden=true;this.retainAdvancedMatcher=true;this.advancedMatcherText='';this.ruleDiagnosticText='';this.ruleSupersededBy='';this.customMethodHidden=true;
     this.batchLoading=false;this.loadingSavedResponse=false;
     this.savedResponse=null;this.responseBodyPath=null;this.responseBodyFile='';this.existingResponse=false;this.ruleUsageText='';this.matcherCondition={kind:'exact',value:''};this.matchTestResult=null;this.matcherTestError='';this.matchExamples=[];
-    this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;this.editBodyDisabled=true;this.savedNonBodySnapshot='';
+    this.responseBodyFileDetails='';this.responseBodyFileError='';this.fileChoiceBusy=false;this.bodyFileTouched=false;this.editBodyDisabled=true;this.savedNonBodySnapshot='';this.savedActivationRule=null;this.responseCanSave=true;
     this.compressionType='';
     this.compressionUnavailableText='';
     this.savedHeaderText='';this.originalResponseHeaders=[];
@@ -835,7 +887,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   private renderAutoResponseRules(status: AutomationStatus): void {
     const rules = this.autoResponseRules(status);
-    const owned=new Set(status.experiments?.flatMap(e=>e.variants.flatMap(v=>v.revisions.flatMap(r=>r.rules.map(rule=>rule.id))))??[]);
+    const owned=experimentRuleIds(status);
     const retained=new Set(status.rules.filter(rule=>!owned.has(rule.id)).map(rule=>rule.id));
     this.ruleSelection.ids=new Set([...this.ruleSelection.ids].filter(id=>retained.has(id)));
     if(this.ruleSelection.focused && !retained.has(this.ruleSelection.focused))this.ruleSelection.focused=null;
@@ -1045,6 +1097,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.updateAutoResponseBodyEditState();
     this.openEditor();
     if(experiment)this.draftDirty=true;
+    const capturedIdentity=JSON.parse(this.nonBodySnapshot()) as Record<string,unknown>;
     void this.refreshSourceAvailability();
 
     this.loadingSavedResponse=true;
@@ -1056,6 +1109,9 @@ export class AutomationWorkspace extends WorkspaceElement {
       (elements.namedItem('responseHeaders') as HTMLTextAreaElement).value=this.savedHeaderText;
       this.capturedDraft={sessionId,detail:structuredClone(detail),headers,inspection:restored?.inspection??null};
       this.responseReadOnly=false;
+      const fields=JSON.parse(this.nonBodySnapshot()) as Record<string,unknown>;
+      for(const key of ['name','method','url','requestHeaders','retainAdvanced','examples'])fields[key]=capturedIdentity[key];
+      this.responseBaseline.capture({...this.responseValues() as object,fields:JSON.stringify(fields)});this.refreshResponseDirty();
     }catch(error:unknown){if(revision===this.editorRevision){this.autoResponseError=describeError(error);this.responseReadOnly=true;}}
     finally{if(revision===this.editorRevision)this.loadingSavedResponse=false;}
     if(revision!==this.editorRevision || !this.isConnected)return;
@@ -1064,7 +1120,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       captured.bodyEditable = true;
       this.setBodyContent([],captured.textEncoding);
       this.bodyStatusText = 'Empty response body. Enable editing to replace it.';
-      this.updateAutoResponseBodyEditState();
+      this.updateAutoResponseBodyEditState();this.refreshResponseDirty();
       return;
     }
     if (source.body.retainedBytes > MAX_AUTORESPONSE_EDIT_BYTES) {
@@ -1097,6 +1153,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     } catch(error:unknown) {
       if (revision === this.editorRevision && this.autoResponseSourceState === captured) await this.showCapturedBodyPreview(sessionId,revision,'Decoded body unavailable: '+describeError(error)+'.');
     }
+    if(revision===this.editorRevision)this.refreshResponseDirty();
   }
 
   private async showCapturedBodyPreview(sessionId:string,revision:number,reason:string):Promise<void> {
@@ -1109,6 +1166,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       this.bodyByteSummary=`Hex · First ${formatBytes(preview.displayBytes)} of ${formatBytes(preview.metadata.retainedBytes)} retained bytes · Before decoding compression`;
       this.bodyStatusText=reason+' This bounded preview is read-only. Serve the complete body from a file to replace it.';
     }catch{if(revision===this.editorRevision)this.bodyStatusText=reason+' Original-byte preview is unavailable. Serve the complete body from a file to replace it.';}
+    this.refreshResponseDirty();
   }
 
   async beginScratchAutoResponse(): Promise<void> {
@@ -1124,7 +1182,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.responseHeadersHidden = false;
     this.capturedOptionsHidden = true;
     this.bodyReadOnly = false;this.editBodyDisabled=false;
-    this.setBodyContent([],'utf-8');
+    this.setBodyContent([],'utf-8');this.captureResponseBaseline();
     this.updateAutoResponseHeaderFilterState();
     this.openEditor();
   }
@@ -1179,6 +1237,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(this.variantHistorical){this.autoResponseError='Duplicate an earlier revision in Experiments before editing it.';return false;}
     if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return false;}
     if(this.editingAutoResponseId && !this.savedResponse){this.autoResponseError='Wait for the saved response to load before saving.';return false;}
+    this.refreshResponseDirty();
+    if(this.existingResponse&&!this.draftDirty)return true;
     const data = new FormData(this.autoResponseForm);
     const source = this.autoResponseSourceState;
     if (source === null) return false;
@@ -1315,8 +1375,9 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
 
   private autoResponseRules(status: AutomationStatus): AutomationRule[] {
+    const owned=experimentRuleIds(status);
     return status.rules
-      .filter((rule) => rule.request.responseAsset !== null && !status.experiments?.some(e=>e.variants.some(v=>v.revisions.some(r=>r.rules.some(r=>r.id===rule.id)))))
+      .filter((rule) => rule.request.responseAsset !== null && !owned.has(rule.id))
       .sort((left, right) => left.priority - right.priority || left.id.localeCompare(right.id));
   }
 
@@ -1345,7 +1406,9 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   async undoRemoveAutoResponse(): Promise<void> {
     const action=this.ruleHistory.at(-1);
-    if (!action || this.savingAutoResponse || this.changingAutoResponse || !await this.canLeaveEditor()) return;
+    if (!action || this.savingAutoResponse || this.changingAutoResponse) return;
+    const activationOnly=action.before.length===action.after.length&&action.before.every(rule=>{const after=action.after.find(item=>item.id===rule.id);return after&&sameRuleContent(rule,after);});
+    if(!activationOnly&&!await this.canLeaveEditor())return;
     this.changingAutoResponse = true;
     try {
       const current = await invoke<AutomationStatus>('automation_status');
@@ -1357,8 +1420,8 @@ export class AutomationWorkspace extends WorkspaceElement {
       const restored=ordered.filter(rule=>!action.after.some(item=>item.id===rule.id)).map(rule=>rule.id);
       const selected=restored.length?restored:ordered.filter(rule=>this.ruleSelection.ids.has(rule.id)).map(rule=>rule.id);
       this.ruleSelection.ids=new Set(selected);this.renderRuleSelection();this.changingAutoResponse=false;
-      if(selected.length===1){const rule=status.rules.find(rule=>rule.id===selected[0]);if(rule)await this.openRuleProperties(rule);}
-      if(selected[0])this.focusRule(selected[0]);
+      if(!activationOnly&&selected.length===1){const rule=status.rules.find(rule=>rule.id===selected[0]);if(rule)await this.openRuleProperties(rule);}
+      if(!activationOnly&&selected[0])this.focusRule(selected[0]);
     } catch (error:unknown) {
       this.automationText = 'Rule could not be restored: '+describeError(error); this.automationKind = 'error';
     } finally { this.changingAutoResponse = false; }
@@ -1366,13 +1429,13 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   async editAutoResponse(rule: AutomationRule,force=false,experiment=false,variant?:ExperimentSelection): Promise<void> {
     if (this.savingAutoResponse) return;
-    if(!force && rule.id===this.editingAutoResponseId && !this.editorHidden)return;
+    if(!force && rule.id===this.editingAutoResponseId && !this.editorHidden){this.showAutomationSection(this.responseExperiment?'experiments':'responses');return;}
     if(!force && !await this.canLeaveEditor())return;
     this.prepareEditor(experiment);
     this.editingVariant=variant??null;
     const revision = this.editorRevision;
     const url = rule.matcher.url?.kind === 'exact' ? rule.matcher.url.value : rule.matcher.url?.kind==='pattern'?rule.matcher.url.value.address:'https://'+(rule.matcher.host??'example.test')+(rule.matcher.pathPrefix??'/');
-    this.editingAutoResponseId = rule.id;this.renderExperimentState();
+    this.editingAutoResponseId = rule.id;this.savedActivationRule=experiment?null:rule;this.renderExperimentState();
     this.autoResponseSourceState = { kind: 'existing', assetReference: rule.request.responseAsset ?? '' };
     const elements = this.autoResponseForm.elements;
     (elements.namedItem('name') as HTMLInputElement).value = rule.displayName ?? 'Saved response';
@@ -1426,6 +1489,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       const baseline=JSON.parse(this.nonBodySnapshot()) as Record<string,unknown>;
       for(const key of ['name','method','url','requestHeaders','retainAdvanced','examples'])baseline[key]=initialIdentity[key];
       this.savedNonBodySnapshot=JSON.stringify(baseline);
+      this.responseBaseline.capture({...this.responseValues() as object,fields:this.savedNonBodySnapshot});this.refreshResponseDirty();
       if (asset.provenance.kind === 'session') {
         this.sourceSessionId = asset.provenance.exchange_id;
         this.sourceLabel = 'Original captured request';
@@ -1469,26 +1533,21 @@ export class AutomationWorkspace extends WorkspaceElement {
   private renderAutomation(status: AutomationStatus): void {
     if(this.automationStatus && status.generation<this.automationStatus.generation)return;
     const matcherStateChanged=this.automationStatus!==null&&status.generation!==this.automationStatus.generation;
+    const previousRule=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
+    const currentRule=status.rules.find(rule=>rule.id===this.editingAutoResponseId);
+    // An unrelated completion must not rewrite the currently opened snapshot.
+    if(previousRule?.revision!==currentRule?.revision){
+      this.savedActivationRule=currentRule??null;
+      if(currentRule)this.autoResponseEnabled.checked=currentRule.enabled!==false;
+    }
     this.automationStatus = status;
     this.autoresponseState = status;
+    this.updateActivity();
     if(matcherStateChanged&&!this.editorHidden)this.scheduleMatcherTest();
     this.headerOverrideCount=status.rules.filter(rule=>rule.enabled!==false && rule.request.userAgent).length;
     this.$emit('automation-state-change',status);
     this.renderAutoResponseRules(status);this.renderExperimentState();
-    const actions: string[] = [];
-    const uaCount=status.rules.filter(rule=>rule.request.userAgent && rule.enabled!==false).length;
-    if(uaCount)actions.push(`${uaCount} User-Agent / client-hint override${uaCount===1?'':'s'} enabled`);
-    const autoResponses = this.autoResponseRules(status);
-    const enabled=autoResponses.filter(rule=>rule.enabled!==false).length;
-    if (autoResponses.length > 0) actions.push(status.autoresponsesEnabled===false?`Saved responses paused (${enabled} enabled rules)`:`${enabled} of ${autoResponses.length} saved response rules enabled`);
-    const experiments=(status.experiments??[]).filter(experiment=>experiment.active&&experiment.active.variantId!=='baseline');
-    if(experiments.length)actions.push(`${experiments.length} experiment revision${experiments.length===1?'':'s'} selected for live traffic${status.autoresponsesEnabled===false?' (all saved responses paused)':''}${experiments.some(e=>e.paused)?' · '+experiments.filter(e=>e.paused).length+' experiment(s) paused':''}`);
-    const other = status.rules.filter((rule) => rule.enabled!==false && !rule.request.userAgent && !rule.id.startsWith('desktop-') && rule.request.responseAsset === null).length;
-    if (other > 0) actions.push(`${other} advanced rule${other === 1 ? '' : 's'}`);
-    this.automationText = actions.length === 0
-      ? 'No built-in traffic actions are active.'
-      : `${actions.join(' · ')}.`;
-    this.automationKind = 'success';
+
   }
 
 }

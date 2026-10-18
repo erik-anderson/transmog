@@ -25,7 +25,7 @@ export async function checkUnifiedRules(page,root) {
   await text.getByRole('button',{name:'Save rule',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseTextEditor.hrBusy);
   await newTrafficRule(page,'Change browser headers…');await browser.locator('[name="uaName"]').fill('Browser identity');
   await browser.getByRole('button',{name:'Save rule',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.userAgentOverrides.uaBusy);
-  assert.equal(await browser.getByLabel('Enabled for new matching requests',{exact:true}).isChecked(),false,'A new browser header rule became enabled while saving');
+  assert.equal(await browser.locator('rule-activation button').getAttribute('aria-pressed'),'false','A new browser header rule became enabled while saving');
   await newTrafficRule(page,'Create saved response from scratch…');const saved=workspace.locator('.auto-response-editor');
   await saved.locator('[name="name"]').fill('Offline response');await saved.getByLabel('Matching address',{exact:true}).fill('https://example.test/offline');await saved.getByRole('button',{name:'Save rule',exact:true}).click();
   await page.waitForFunction(()=>{const w=document.querySelector('app-shell').automation;return !w.savingAutoResponse&&w.existingResponse&&!w.draftDirty;});
@@ -33,7 +33,7 @@ export async function checkUnifiedRules(page,root) {
   const grid=workspace.getByRole('grid',{name:'Traffic rules',exact:true});
   assert.equal(await grid.locator('tbody tr[data-rule-id]').count(),5);
   const savedRule=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation.rules.find(rule=>rule.request.responseAsset)));
-  await grid.getByRole('button',{name:/Outbound headers/}).click();await grid.getByRole('checkbox',{name:'Select Replace response wording',exact:true}).check();
+  await grid.getByRole('button',{name:/^Outbound headers/}).click();await grid.getByRole('checkbox',{name:'Select Replace response wording',exact:true}).check();
   const bulk=async label=>{await workspace.locator('.rule-selection-toolbar').getByRole('button',{name:'More',exact:true}).click();await workspace.locator('#rule-actions-menu').getByRole('button',{name:new RegExp('^'+label)}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.changingAutoResponse);};
   await bulk('Enable selected');assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.enabled).length),3);
   await bulk('Remove selected');assert.equal(await grid.locator('tbody tr[data-rule-id]').count(),3);
@@ -45,17 +45,17 @@ export async function checkUnifiedRules(page,root) {
   await workspace.getByLabel('Message direction',{exact:true}).selectOption('all');await workspace.getByLabel('Search rules',{exact:true}).fill('wording');assert.equal(await grid.locator('tbody tr[data-rule-id]').count(),1);await workspace.getByLabel('Search rules',{exact:true}).fill('');
   await workspace.locator('autoresponse-switch button').click();await page.waitForFunction(()=>document.querySelector('app-shell').autoresponseState?.autoresponsesEnabled===false);
   assert.match(await grid.locator('.auto-response-rule .rule-state').textContent(),/Enabled · Paused/);
-  await grid.getByRole('button',{name:/Outbound headers/}).click();await headers.getByLabel('Rule name',{exact:true}).fill('Keep this draft');
-  await grid.getByRole('button',{name:/Replace response wording/}).click();await grid.getByRole('button',{name:/Outbound headers/}).click();
+  await grid.getByRole('button',{name:/^Outbound headers/}).click();await headers.getByLabel('Rule name',{exact:true}).fill('Keep this draft');
+  await grid.getByRole('button',{name:/^Replace response wording/}).click();await grid.getByRole('button',{name:/^Outbound headers/}).click();
   assert.equal(await headers.getByLabel('Rule name',{exact:true}).inputValue(),'Keep this draft','Switching rule types lost a draft');
   // Leave the draft mounted while inspecting another rule type and changing layouts.
-  await grid.getByRole('button',{name:/Replace response wording/}).click();
+  await grid.getByRole('button',{name:/^Replace response wording/}).click();
   for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
     await page.setViewportSize({width,height});
     assert.equal(await text.getByLabel('Rule name',{exact:true}).isVisible(),true);
     assert.equal(await workspace.evaluate(node=>node.getBoundingClientRect().width<=innerWidth),true);
     await page.screenshot({path:resolve(root,'../../../target/ui-check/unified-rules-'+width+'.png')});
-    if(width===800){await workspace.getByRole('button',{name:'← Back to rules',exact:true}).click();assert.equal(await grid.isVisible(),true);await grid.getByRole('button',{name:/Replace response wording/}).click();}
+    if(width===800){await workspace.getByRole('button',{name:'← Back to rules',exact:true}).click();assert.equal(await grid.isVisible(),true);await grid.getByRole('button',{name:/^Replace response wording/}).click();}
   }
   await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/unified-rules-contrast.png')});await page.emulateMedia({forcedColors:'none'});
   await page.setViewportSize({width:1280,height:800});page.setDefaultTimeout(30000);

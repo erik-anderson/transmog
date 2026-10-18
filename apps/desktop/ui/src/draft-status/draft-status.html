@@ -1,0 +1,11 @@
+<template>
+  <span class="draft-status" role="status" aria-live="polite">
+    <if condition="busy">Saving…</if>
+    <if condition="!busy && failed">Couldn’t save · Changes kept</if>
+    <if condition="!busy && !failed">
+      <if condition="dirty">Unsaved changes</if>
+      <if condition="!dirty && newDraft">New draft</if>
+      <if condition="!dirty && !newDraft">Saved</if>
+    </if>
+  </span>
+</template>

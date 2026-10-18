@@ -9,13 +9,15 @@ response-body-editor { display:contents; }
 .body-editor-information { display:flex; gap:.5rem 1rem; justify-content:space-between; align-items:baseline; flex-wrap:wrap; }
 .body-byte-status { color:var(--muted); font-size:.8rem; white-space:nowrap; }
 .body-dialog-content,.body-code-host { min-width:0; min-height:0; height:100%; }
-.body-dialog-content { overflow:hidden; }
+.body-dialog-content { overflow:hidden; isolation:isolate; }
 /* Monaco positions floating widgets in viewport coordinates. Keep their host in
-   the dialog's top layer, outside its clipped editor viewport. */
+   the dialog's top layer, outside its clipped editor viewport. Isolate the
+   viewport's internal layers so sticky lines cannot cover floating controls. */
 .body-editor-overflow { position:fixed; inset:0; width:0; height:0; overflow:visible; z-index:2; }
 .body-dialog-content > label { display:flex; flex-direction:column; height:100%; gap:.3rem; font-size:.8rem; }
 .body-dialog-content textarea { flex:1; min-height:0; resize:none; font:.85rem/1.5 "Cascadia Mono",Consolas,monospace; }
 .response-body-dialog footer { min-width:0; }
+.response-body-dialog footer .field-help { margin:0 0 .25rem; }
 .response-body-dialog footer .field-error { margin:0 0 .4rem; }
 .response-body-dialog footer .actions { justify-content:flex-end; flex-wrap:wrap; }
 @media (forced-colors:active) { .response-body-dialog { background:Canvas; color:CanvasText; border-color:CanvasText; } }

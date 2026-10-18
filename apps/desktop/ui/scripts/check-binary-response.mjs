@@ -19,7 +19,8 @@ export async function checkBinaryResponse(page,root) {
     await view.selectOption('text');assert.equal(await view.inputValue(),'hex');
     await form.getByText(/unsupported text encoding/).waitFor();
     const count=await page.evaluate(()=>globalThis.__workspaceFixture.assets.length);
-    await form.getByRole('button',{name:'Save rule',exact:true}).click();await saved();
+    assert.equal(await form.getByRole('button',{name:'Save rule',exact:true}).isDisabled(),true,'Changing the body view dirtied unchanged bytes');
+    await field('body').focus();await page.keyboard.press('Control+s');await saved();
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.assets.length),count,'Saving unchanged binary bytes created a replacement');
     await field('body').fill('00 ff 81 0d 0a');await form.getByRole('button',{name:'Save rule',exact:true}).click();await saved();
     assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.lastAssetEdit.decodedBody),[0,255,129,13,10]);

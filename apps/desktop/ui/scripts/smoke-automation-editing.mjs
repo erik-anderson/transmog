@@ -23,6 +23,12 @@ export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitFo
     if(!await w.saveAutoResponse(new Event('submit',{cancelable:true})))throw new Error(w.autoResponseError);
     const changed=await invoke('inspect_response_asset',{reference:w.rules.find(item=>item.id===rule.id).request.responseAsset});
     if(JSON.stringify(Array.from(atob(changed.bytesBase64),c=>c.charCodeAt(0)))!==JSON.stringify([0,255,129,13,10,42])||changed.contentCodings.join(',')!=='gzip')throw new Error('Native hex save changed bytes or compression');
+    const nameInput=w.autoResponseForm.elements.namedItem('name'),savedName=nameInput.value;
+    nameInput.value='';nameInput.dispatchEvent(new Event('input',{bubbles:true}));await Promise.resolve();
+    const leave=w.canLeaveEditor();if(!w.unsavedDialog.open)throw new Error('Native invalid draft did not open leave confirmation');
+    await w.resolveUnsaved('save');
+    if(await leave||w.unsavedDialog.open||nameInput.getRootNode().activeElement!==nameInput)throw new Error('Native invalid-field recovery did not return focus to the editor');
+    nameInput.value=savedName;nameInput.dispatchEvent(new Event('input',{bubbles:true}));await Promise.resolve();w.autoResponseForm.reportValidity();
     w.matchTestUrl.value='https://example.test/does-not-match';w.matchTestMethod.value='GET';await w.testMatcher();w.matchExpected='nonmatch';w.addMatchExample();
     while(w.matcherTestBusy)await new Promise(resolve=>setTimeout(resolve,20));w.$flushUpdates();
     if(w.matchCaseRows[0].expected!=='Does not match'||w.matchCaseRows[0].actual!=='Does not match'||w.matchCaseRows[0].result!=='Passed')throw new Error('Native negative expectation is ambiguous');
@@ -61,5 +67,5 @@ export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitFo
     if(!editor?.sourceEditor?.getValue().includes('native edited version')||editor.scriptDirty)throw new Error('Reopened native script lost activated source');
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
   })()`);
-  return {binaryFallback:true,bytePreservation:true,compressedHexEdit:true,explicitExpectations:true,oneClickActivation:true,atomicFailure:true,sandboxEvidence:true,activatedSourceReload:true};
+  return {binaryFallback:true,bytePreservation:true,compressedHexEdit:true,unsavedValidationFocus:true,explicitExpectations:true,oneClickActivation:true,atomicFailure:true,sandboxEvidence:true,activatedSourceReload:true};
 }
