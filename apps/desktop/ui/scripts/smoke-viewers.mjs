@@ -9,6 +9,7 @@ import {spawn} from 'node:child_process';
 import {createServer} from 'node:http';
 import {smokeTrafficList} from './smoke-traffic-list.mjs';
 import {smokeCertificates} from './smoke-certificates.mjs';
+import {hexReachability} from './check-hex-viewer.mjs';
 import {smokeTraceSave} from './smoke-trace-save.mjs';
 import {smokeConnectTunnels} from './smoke-connect-tunnels.mjs';
 
@@ -187,9 +188,12 @@ try{
     const messageSwitch=await viewer.evaluate(`(()=>{const workspace=${traffic},select=workspace.querySelector('.compact-inspector-side');select.value='request';select.dispatchEvent(new Event('change',{bubbles:true}));const request=workspace.inspectorSide==='request';select.value='response';select.dispatchEvent(new Event('change',{bubbles:true}));globalThis.__largeByteProbe.viewer.viewport.focus();return request&&workspace.inspectorSide==='response';})()`);
     assert.ok(messageSwitch,'Compact message selector did not switch request and response');
     await byteKey('End',35,2);
-    const reachability=await viewer.evaluate(`(()=>{const v=globalThis.__largeByteProbe.viewer,b=v.querySelector('.hex-status button').getBoundingClientRect(),viewport=v.viewport.getBoundingClientRect(),tail=v.querySelector('[data-byte="${byteLength-1}"][data-column=hex]')?.getBoundingClientRect();return {visible:b.width>0&&b.bottom<=innerHeight&&b.right<=innerWidth,rows:v.hexRows.length,tailVisible:!!tail&&tail.top>=viewport.top+v.rowHeight&&tail.bottom<=viewport.bottom};})()`);
+    const saveButton=await viewer.evaluate(`(()=>{const b=${responseInspector}.querySelector('.body-toolbar>button');b.focus();const r=b.getBoundingClientRect(),c=b.closest('.message-content').getBoundingClientRect();return {visible:r.top>=c.top&&r.bottom<=c.bottom&&r.bottom<=innerHeight,enabled:!b.disabled};})()`);assert.ok(saveButton.visible&&saveButton.enabled,'Compact response save action became unreachable');
+    await viewer.evaluate('globalThis.__largeByteProbe.viewer.querySelector(".hex-status button").focus()');
+    const reachability=await viewer.evaluate(`(${hexReachability.toString()})(globalThis.__largeByteProbe.viewer,${JSON.stringify(String(byteLength-1))})`);
+    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png',reachability.tailVisible?'-hex-pages-compact.png':'-hex-failure.png'),Buffer.from(image.data,'base64'));}
     assert.ok(reachability.visible&&reachability.rows<100&&reachability.tailVisible,'Compact Hex bytes or actions became unreachable: '+JSON.stringify(reachability));
-    if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-hex-pages-compact.png'),Buffer.from(image.data,'base64'));}
+    await viewer.evaluate('globalThis.__largeByteProbe.viewer.querySelector(".hex-status button").click()');assert.equal(await viewer.evaluate('globalThis.__largeByteProbe.viewer.offsetField.value'),String(byteLength-1));await byteKey('Escape',27);assert.ok(await viewer.evaluate('globalThis.__largeByteProbe.viewer.viewport===globalThis.__largeByteProbe.viewer.getRootNode().activeElement'));
     process.stdout.write('Native paged Hex, full-body end navigation, byte selection, clipboard and compact layout verified.\n');
   } finally {
     await viewer.call('Emulation.clearDeviceMetricsOverride');

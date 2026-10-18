@@ -188,7 +188,9 @@ addresses do not reserve an extra field. See
 ## Body viewers and Composer evidence
 
 Hex reaches every retained byte with exact offsets, paging, keyboard navigation
-and Go to offset. Text-preview limits do not cap Hex. Clipboard selections have
+and Go to offset. In a short inspector, scroll the message area to reach its
+body controls and byte/status region, or give it more room with the list divider.
+Text-preview limits do not cap Hex. Clipboard selections have
 separate bounds; Save as handles larger data. Temporary byte caches are released
 with their readers. Save as leases original bytes; preview formatting never
 replaces the source.

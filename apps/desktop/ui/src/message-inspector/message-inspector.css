@@ -20,6 +20,9 @@ message-inspector { display:block; min-width:0; min-height:0; height:100%; overf
 .headers-table tr { cursor:text; }
 .inspector-empty { padding:.7rem; color:var(--muted); font-size:.75rem; }
 .body-view { display:grid; grid-template-rows:auto auto minmax(3rem,1fr); min-height:0; overflow:hidden; }
+/* Keep byte rows usable; the message pane scrolls when its chrome cannot fit. */
+.body-view:has(hex-viewer) { grid-template-rows:auto auto minmax(6rem,1fr); min-height:min-content; }
+.message-content:has(hex-viewer) { scroll-padding-block:.25rem; }
 .body-view .body-toolbar { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.2rem .5rem; border-block:0; }
 .body-view .body-toolbar select { width:9rem; }
 .preview-options { position:relative; margin-left:auto; font-size:.7rem; }
@@ -30,8 +33,8 @@ message-inspector { display:block; min-width:0; min-height:0; height:100%; overf
 .body-facts summary strong { margin-right:.5rem; font-weight:600; }
 .body-facts p { margin:.3rem 0; font-size:.75rem; overflow-wrap:anywhere; }
 .body-scroll { min-height:0; overflow:auto; background:var(--code); }
-.body-scroll[data-hex] { display:flex; flex-direction:column; overflow:hidden; }
-.body-scroll[data-hex] hex-viewer { flex:1; }
+.body-scroll[data-hex] { display:flex; flex-direction:column; overflow:auto; }
+.body-scroll[data-hex] hex-viewer { flex:1; min-height:6rem; }
 .body-warning { flex:0 0 auto; margin:0; padding:.5rem .65rem; white-space:pre-wrap; color:var(--muted); font-size:.75rem; }
 .body-scroll pre, .exchange-details { height:100%; margin:0; padding:.65rem; font:.75rem/1.55 "Cascadia Mono",Consolas,monospace; white-space:pre-wrap; overflow-wrap:anywhere; background:var(--code); }
 .body-scroll img { width:auto; max-width:100%; max-height:100%; }

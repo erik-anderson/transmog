@@ -1,5 +1,22 @@
 import assert from 'node:assert/strict';
 
+// A displayed byte must fit its viewport and every enclosing scroller.
+export function hexReachability(viewer, offset) {
+  const clipped=[];
+  const visible=element=>{
+    if(!element)return false;const rect=element.getBoundingClientRect();
+    let left=0,top=0,right=innerWidth,bottom=innerHeight;
+    for(let parent=element.parentElement;parent;parent=parent.parentElement??parent.getRootNode().host??null){
+      const style=getComputedStyle(parent),bounds=parent.getBoundingClientRect(),scaleX=bounds.width/(parent.offsetWidth||1),scaleY=bounds.height/(parent.offsetHeight||1);
+      if(/auto|scroll|hidden|clip/.test(style.overflowX)){left=Math.max(left,bounds.left+parent.clientLeft*scaleX);right=Math.min(right,bounds.left+(parent.clientLeft+parent.clientWidth)*scaleX);}
+      if(/auto|scroll|hidden|clip/.test(style.overflowY)){top=Math.max(top,bounds.top+parent.clientTop*scaleY);bottom=Math.min(bottom,bounds.top+(parent.clientTop+parent.clientHeight)*scaleY);}
+    }
+    const result=rect.width>0&&rect.height>0&&rect.left>=left&&rect.right<=right&&rect.top>=top&&rect.bottom<=bottom;if(!result)clipped.push({element:element.className,rect:rect.toJSON(),clip:{left,top,right,bottom}});return result;
+  };
+  const viewport=viewer.viewport.getBoundingClientRect(),tail=viewer.querySelector(`[data-byte="${offset}"][data-column="hex"]`),bounds=tail?.getBoundingClientRect(),rowHeight=viewer.columnHeader.getBoundingClientRect().height;
+  return {visible:visible(viewer.querySelector('.hex-status span'))&&visible(viewer.querySelector('.hex-status button')),rows:viewer.hexRows.length,tailVisible:!!bounds&&bounds.top>=viewport.top+rowHeight&&bounds.bottom<=viewport.bottom&&visible(tail),viewport:viewport.toJSON(),tail:bounds?.toJSON(),rowHeight,clientHeight:viewer.viewport.clientHeight,clipped};
+}
+
 export async function checkHexViewer(page, inspector, screenshotPath) {
   const viewer = inspector.locator('hex-viewer');
   const grid = viewer.getByRole('grid');
@@ -201,6 +218,29 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
     assert.equal(await page.evaluate(()=>globalThis.__hexCopied.length),before,'An oversized selection was copied');
     assert.ok(await page.evaluate(()=>globalThis.__workspaceFixture.rangeRequests.every(request=>request.maxBytes<=65536)),'Scrolling or selecting loaded the whole body');
     await page.screenshot({path:screenshotPath.replace('.png','-huge.png')});
+    // Compact message panes scroll their chrome instead of clipping the byte row.
+    const savedViewport=page.viewportSize(),savedPreferences=await page.evaluate(()=>document.querySelector('app-shell').traffic.preferences),savedSide=await page.evaluate(()=>document.querySelector('app-shell').traffic.inspectorSide);
+    try {
+      await page.setViewportSize({width:640,height:720});
+      await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,layout:'stacked',listSplit:45};});
+      await page.locator('traffic-workspace').getByLabel('Message to inspect',{exact:true}).selectOption('response');
+      for(const zoom of [1,1.5]){
+        await page.setViewportSize({width:640,height:720});
+        await page.evaluate(zoom=>document.documentElement.style.zoom=String(zoom),zoom);
+        // Exercise a genuinely constrained pane, preserving a usable area at each text scale.
+        await inspector.evaluate((element,zoom)=>{
+          const t=document.querySelector('app-shell').traffic,content=element.querySelector('.message-content'),workspace=t.querySelector('.traffic-workspace');
+          t.preferences={...t.preferences,listSplit:Math.max(15,Math.min(85,Math.round(t.preferences.listSplit+(content.getBoundingClientRect().height-110*zoom)/workspace.getBoundingClientRect().height*100)))};
+        },zoom);
+        const save=inspector.getByRole('button',{name:'Save as…',exact:true});await save.focus();
+        assert.equal(await save.evaluate(element=>{const r=element.getBoundingClientRect(),c=element.closest('.message-content').getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom&&r.bottom<=innerHeight;}),true,'Save control became unreachable in the compact pane');
+        await viewer.evaluate(element=>element.scrollIntoView({block:'nearest'}));await grid.focus();await grid.press('Control+End');
+        await viewer.getByRole('button',{name:'Go to offset',exact:true}).focus();
+        let reachable;for(let attempt=0;attempt<40;attempt++){reachable=await viewer.evaluate(hexReachability,end);if(reachable.visible&&reachable.tailVisible)break;await new Promise(resolve=>setTimeout(resolve,25));}assert.ok(reachable.visible&&reachable.rows<100&&reachable.tailVisible,'Compact Hex clipping: '+JSON.stringify(reachable));
+        await viewer.getByRole('button',{name:'Go to offset',exact:true}).click();assert.equal(await offsetField.inputValue(),end);await offsetField.press('Escape');assert.equal(await grid.evaluate(element=>element===element.getRootNode().activeElement),true);
+        await page.screenshot({path:screenshotPath.replace('.png',zoom===1?'-compact.png':'-compact-zoom.png')});
+      }
+    } finally {await page.evaluate(({preferences,side})=>{document.documentElement.style.zoom='';const t=document.querySelector('app-shell').traffic;t.preferences=preferences;t.inspectorSide=side;},{preferences:savedPreferences,side:savedSide});await page.setViewportSize(savedViewport);}
     // Late pages from a previous body snapshot must not restore its old size or bytes.
     await grid.press('Control+Home');
     await page.evaluate(()=>{const f=globalThis.__workspaceFixture;f.deferRangeOffset='50003968';});
