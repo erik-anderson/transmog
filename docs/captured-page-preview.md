@@ -16,7 +16,7 @@ saved rules. Enabled rules are selected initially; disabled rules may also
 participate. This choice is **For this preview only**: it does not enable live
 rules, and the live On/Paused switch does not gate preview participation. Resolve
 an editor draft by saving it or explicitly exclude its unsaved changes. The
-editor's **Preview captured page…** shortcut offers complete HTML responses from
+ordinary rule editor's **Preview captured page…** shortcut offers complete HTML responses from
 the edited resource's original source, retaining the inspected resource in Traffic.
 Recorded referrer and time proximity are advisory. Choose the page explicitly;
 Transmog does not claim to reconstruct a navigation. A matching retained preview
@@ -24,6 +24,29 @@ scene can be reused. Authored responses without a captured source use the last
 retained scene or selected complete HTML response. See [response
 sets](automation.md#response-sets) for the inactive draft and named
 variant workflow.
+
+Named response sets remember an explicitly chosen page. Their overview shows
+**Page:** with URL, request number, source and recorded time, plus **Change…**.
+The first preview offers an unselected chooser; **Use page** remembers the exact
+captured response for every variant and revision, including Baseline. Selecting
+a page does not imply its requests match any saved response. New captures never
+replace that choice. The URL survives restart as metadata; **Capture unavailable**
+keeps it visible when the original capture is gone, requiring explicit replacement.
+No captured content is persisted or retained by this association. Named response
+editor previews use this same page. The warning displays the chosen page; use
+the set's explicit chooser to change it. Its chooser, warning and successful
+launch keep the originating Response sets overview or editor visible. Closing
+restores visible origin focus and preserves drafts, selection and scroll.
+
+Preview shortcuts check for a captured HTML page before opening the warning.
+When none is available, the originating editor or Response sets stays visible
+with capture/import guidance and an explicit **Go to Traffic** action. Named sets
+use their page chooser; ordinary rules use the prerequisite dialog. Close or
+Escape returns focus to Preview. Select a complete HTML response in Traffic and
+retry to recover from expired source traffic; the chosen saved variant and
+revision stay fixed. A matching frozen preview scene can still be reused after
+its source traffic expires. Previewing never starts capture or imports traffic
+automatically.
 
 The first participating rule matching the actual browser method, normalized URL
 and explicit request-header conditions supplies its saved response. It can supply
@@ -139,9 +162,17 @@ links to retained source traffic and current saved rules, served/missing/failed
 counts, script choice and WebView2 version. Frozen rule revisions, asset references
 and SHA-256 hashes identify historical bytes even after their sources change.
 Rule links open the current saved rule; the report retains the historical revision.
+The Response sets overview and named response editor offer it only when the last
+known run belongs to that set. Changing the associated page does not change an
+existing report's frozen page. Opening diagnostics keeps the current workspace;
+explicit source links navigate to Traffic and rule links open Automation. An
+expired source leaves the report available with an explanation. Response comparisons
+open in the shared comparison view and retain their source/report context.
 Reports identify relaxed capture hints and rule condition results without exposing
 header values or request bodies. Refresh
 after navigating the preview. Reports remain readable after the preview closes.
+Opening another run clears the preceding run's rows while its diagnostics load;
+failed loading does not offer actions against evidence from the preceding run.
 Up to eight reports remain, with up to 256 resource decisions and the last 256
 requests each. Truncation counts include omitted observations. At most three
 recent runs retain scene bytes for related previews; older reports explain expired

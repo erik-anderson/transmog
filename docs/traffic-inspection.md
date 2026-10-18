@@ -187,6 +187,11 @@ addresses do not reserve an extra field. See
 
 ## Body viewers and Composer evidence
 
+Live traffic updates preserve the selected body viewer, reading position and
+text or byte selection while its captured evidence is unchanged. Growing bodies,
+retention changes and viewer options refresh the evidence. **Refresh preview**
+also retries a failed text or image preview.
+
 Hex reaches every retained byte with exact offsets, paging, keyboard navigation
 and Go to offset. In a short inspector, scroll the message area to reach its
 body controls and byte/status region, or give it more room with the list divider.

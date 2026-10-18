@@ -25,6 +25,11 @@ when changing the experience.
 - Keep primary actions beside their content. Put occasional actions in menus,
   advanced settings in disclosures and technical evidence behind readable
   summaries. Avoid deep navigation and repeated toolbars.
+- Preview preparation and diagnostics stay on the originating saved-item view.
+  Keep its selection, scroll, drafts and visible return focus through launch or
+  cancellation; navigate to source evidence only through an explicit source action.
+  Place activation Undo with its generation-valid outcome and exact restore target,
+  independently of feedback from unrelated saves or organizational changes.
 - Optional introductory help never opens or moves focus automatically. Offer it
   briefly, keep a permanent replay path, and teach through the current saved
   view without requiring content changes. Preserve per-user dismissal history
@@ -85,6 +90,9 @@ when changing the experience.
 
 - Preserve selection, scroll and drafts across live updates and workspace changes.
   Resolve unsaved work before replacing it. Allocate one editor per visible task.
+  Check a requested destination before offering to discard a draft. If navigation
+  aborts after Discard, still-visible typed fields remain dirty; do not overwrite
+  newer work. A completed Save stays saved even when navigation is superseded.
 - Reject stale asynchronous results. Late validation, previews or responses cannot
   overwrite newer edits, restore obsolete selection or steal focus. Prevent
   duplicate submissions and retain useful input after failure.
@@ -95,6 +103,9 @@ when changing the experience.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.
+- Preserve explicit evidence associations independently of saved content revisions
+  and live activation. Show unavailable evidence with its remembered identity;
+  replacing it requires an explicit choice rather than matching a later URL.
 
 ## Present evidence and failures honestly
 

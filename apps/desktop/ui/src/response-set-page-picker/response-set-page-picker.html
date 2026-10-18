@@ -1,0 +1,15 @@
+<template>
+<dialog w-ref="{pageDialog}" class="response-page-picker" aria-labelledby="response-page-title" @cancel="{cancel(e)}" @close="{closed()}">
+  <h2 id="response-page-title">Choose a page for this response set</h2>
+  <p>Choose the page to preview. Saved responses apply only to page requests that match their conditions. This page is remembered for every variant, including Baseline; new traffic will not replace it.</p>
+  <if condition="rememberedUrl"><p class="remembered-page"><strong>Remembered page</strong><br>{{rememberedUrl}}</p><p ?hidden="{{available}}">Capture unavailable. Choose a replacement to preview this set.</p></if>
+  <p ?hidden="{{pages.length}}">No complete captured HTML pages are available. In Traffic, capture the page through the proxy or import saved traffic containing its HTML response, then return here.</p>
+  <div class="response-page-choices" role="group" aria-label="Captured pages">
+    <for each="page in pages"><label key="{{page.entryId}}"><input type="radio" name="response-set-page" value="{{page.entryId}}" ?checked="{{page.entryId == selectedId}}" @change="{select(page.entryId)}" ?disabled="{{saving || pageSaved}}"><span><strong>{{page.url}}</strong><small>{{page.identity}}</small></span></label></for>
+  </div>
+  <p ?hidden="{{!more}}">Showing up to 100 pages and any selected complete HTML response. Select an older page in Traffic, then return here to choose it.</p>
+  <p role="status" class="field-error" ?hidden="{{!error}}">{{error}}</p><p role="status" ?hidden="{{!saving}}">Saving page association…</p>
+  <p role="status" ?hidden="{{!pageSaved}}">Page association saved. Close this dialog, then preview the saved page.</p>
+  <footer><button type="button" @pointerdown="{usePointerDown(e)}" @click="{usePage()}" ?disabled="{{!selectedId || pageSaved}}" aria-disabled="{{saving || pageSaved}}" aria-busy="{{saving}}">Use page</button><button type="button" class="secondary" @click="{goToTraffic()}" ?disabled="{{saving}}">Go to Traffic</button><button type="button" class="secondary" @click="{cancel()}">Close</button></footer>
+</dialog>
+</template>

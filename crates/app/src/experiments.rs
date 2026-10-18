@@ -66,6 +66,12 @@ pub struct Experiment {
     pub active: Option<ExperimentSelection>,
     /// Named alternatives, including the immutable empty Baseline.
     pub variants: Vec<ExperimentVariant>,
+    /// Chosen exact captured page; metadata only, independent of variant history.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preview_page: Option<crate::ExperimentPreviewPage>,
+    /// Independent compare-and-set revision for page choices.
+    #[serde(default)]
+    pub preview_page_revision: u64,
     undo: Option<ActivationUndo>,
 }
 
@@ -78,6 +84,8 @@ impl Experiment {
             archived: false,
             active: None,
             variants,
+            preview_page: None,
+            preview_page_revision: 0,
             undo: None,
         }
     }
@@ -214,6 +222,7 @@ pub(super) fn validate_owned_rules(
     Ok(())
 }
 
+#[allow(clippy::too_many_lines)] // One pass checks bounded history and live projection consistency.
 pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), AppError> {
     if document.experiments.len() > 32 {
         return Err(invalid("At most 32 response sets can be retained."));
@@ -222,6 +231,13 @@ pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), A
     let mut owners = std::collections::HashMap::new();
     let mut identities = std::collections::HashMap::new();
     for experiment in &document.experiments {
+        if experiment
+            .preview_page
+            .as_ref()
+            .is_some_and(|page| !page.valid())
+        {
+            return Err(invalid("Response set preview page metadata is invalid."));
+        }
         if !id_valid(&experiment.id)
             || !name_valid(&experiment.name)
             || !experiments.insert(&experiment.id)
@@ -316,6 +332,47 @@ pub(super) fn validate_experiments(document: &AutomationRuleSet) -> Result<(), A
 }
 
 impl AutomationRegistry {
+    pub(crate) fn set_experiment_preview_page(
+        &self,
+        id: &str,
+        revision: u64,
+        page: crate::ExperimentPreviewPage,
+    ) -> Result<(), AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        let mut document = current.document.clone();
+        let experiment = find_mut(&mut document, id)?;
+        if experiment.preview_page_revision != revision {
+            return Err(conflict(
+                "The page association changed. Review its current page before choosing again.",
+            ));
+        }
+        experiment.preview_page = Some(page);
+        experiment.preview_page_revision = revision
+            .checked_add(1)
+            .ok_or_else(|| invalid("Page association revision exhausted."))?;
+        super::validate_document(&document)?;
+        super::persistence_bytes(&document)?;
+        if let Some(path) = self.path.as_deref() {
+            super::persist(path, &document)?;
+        }
+        // Preserve the exact compiled graph, candidates, history, generation and Undo.
+        let mut replacement = (*current).clone();
+        replacement.document = document;
+        *self
+            .active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = std::sync::Arc::new(replacement);
+        Ok(())
+    }
+
     /// Reports conservative overlaps before activating an exact saved revision.
     pub fn experiment_overlaps(
         &self,
@@ -363,6 +420,8 @@ impl AutomationRegistry {
                 }
                 check_new_rule_ids(&document, &rules, None)?;
                 document.experiments.push(Experiment {
+                    preview_page: None,
+                    preview_page_revision: 0,
                     id,
                     name,
                     paused: false,
@@ -739,6 +798,82 @@ mod tests {
             variant_id: variant.into(),
             revision,
         }
+    }
+
+    fn page_reference() -> crate::ExperimentPreviewPage {
+        crate::ExperimentPreviewPage {
+            capture: "a".repeat(32),
+            entry_id: format!("{:032x}", 1),
+            request_number: "1".into(),
+            trace_id: None,
+            url: "https://example.test/page".into(),
+            method: "GET".into(),
+            started_at: 1,
+            source: "Live traffic".into(),
+        }
+    }
+
+    #[test]
+    fn page_metadata_is_durable_and_does_not_invalidate_activation_undo_or_candidates() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("automation");
+        let (registry, rule, _assets_root) = setup(Some(path.clone()));
+        create(&registry, rule);
+        let before = activate(&registry, "edited", 1);
+        let document = registry.active.read().unwrap().document.clone();
+        let candidate = registry.validate(document).unwrap();
+        assert_eq!(candidate.rule_count, before.rules.len());
+        let page = page_reference();
+        registry
+            .set_experiment_preview_page("experiment", 0, page.clone())
+            .unwrap();
+        let after = registry.status();
+        assert_eq!(after.generation, before.generation);
+        assert_eq!(after.rules, before.rules);
+        assert_eq!(
+            after.experiments[0].variants,
+            before.experiments[0].variants
+        );
+        assert_eq!(after.experiments[0].undo, before.experiments[0].undo);
+        assert_eq!(after.candidate_count, 1);
+        assert_eq!(after.history_count, before.history_count);
+        assert!(
+            registry
+                .set_experiment_preview_page("experiment", 0, page.clone())
+                .is_err()
+        );
+        // Restart reads metadata from the same generation's atomically replaced slot.
+        let reopened = AutomationRegistry::load(Some(path), registry.assets.clone()).unwrap();
+        assert_eq!(
+            reopened.status().experiments[0].preview_page,
+            Some(page.clone())
+        );
+        assert_eq!(reopened.status().generation, before.generation);
+        registry
+            .change_experiment(
+                after.generation,
+                ExperimentChange::UndoActivation {
+                    id: "experiment".into(),
+                },
+            )
+            .unwrap();
+        assert_eq!(
+            registry.status().experiments[0].preview_page,
+            Some(page.clone())
+        );
+        // Another registry demonstrates an already-validated candidate merging new metadata.
+        let (registry, rule, _root) = setup(None);
+        create(&registry, rule);
+        let candidate = registry
+            .validate(registry.active.read().unwrap().document.clone())
+            .unwrap();
+        registry
+            .set_experiment_preview_page("experiment", 0, page.clone())
+            .unwrap();
+        registry.activate(&candidate.candidate_id).unwrap();
+        assert_eq!(registry.status().experiments[0].preview_page, Some(page));
+        assert_eq!(registry.status().experiments[0].preview_page_revision, 1);
+        let _ = candidate;
     }
     fn activate(registry: &AutomationRegistry, variant: &str, revision: u64) -> AutomationStatus {
         registry

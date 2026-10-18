@@ -2,14 +2,16 @@ import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 
 export async function checkPagePreviewRules(page, root) {
-  const saved=await page.evaluate(()=>({automation:structuredClone(globalThis.__workspaceFixture.automation),viewerMode:document.querySelector('app-shell').traffic.viewerMode}));
-  const traffic=page.locator('traffic-workspace'), dialog=traffic.locator('.captured-page-warning[open]');
+  const saved=await page.evaluate(()=>({automation:structuredClone(globalThis.__workspaceFixture.automation),viewerMode:document.querySelector('app-shell').viewerMode}));
+  const traffic=page.locator('traffic-workspace'), dialog=page.locator('captured-preview .captured-page-warning[open]');
   try {
     await page.evaluate(()=>{
       const state=globalThis.__workspaceFixture;
       const rule=(id,enabled,priority)=>({id,displayName:id==='disabled'?'Disabled CSS experiment with a long descriptive name '.repeat(3):'Saved HTML response',enabled,priority,revision:7,matcher:{method:'GET'},request:{responseAsset:'saved@3'}});
       state.automation={generation:81,autoresponsesEnabled:false,rules:[rule('disabled',false,2),rule('enabled',true,1)],diagnostics:[],usage:[],candidateCount:0,historyCount:0};
-      const traffic=document.querySelector('app-shell').traffic;traffic.viewerMode=false;traffic.showCapturedPage();
+      // Main-window mode belongs to the shell; changing only its bound child
+      // would be overwritten by the shared preview surface's next update.
+      const shell=document.querySelector('app-shell');shell.viewerMode=false;shell.$flushUpdates();shell.traffic.showCapturedPage();
     });
     await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewRulesBusy);
     assert.equal(await dialog.getByLabel('Responses',{exact:true}).inputValue(),'captured');
@@ -65,7 +67,7 @@ export async function checkPagePreviewRules(page, root) {
     await page.keyboard.press('Escape');
     assert.equal(await dialog.count(),0);
   } finally {
-    await page.evaluate(saved=>{globalThis.__workspaceFixture.automation=saved.automation;const t=document.querySelector('app-shell').traffic;t.viewerMode=saved.viewerMode;t.previewDraftDirty=false;if(t.previewPageDialog.open)t.closeCapturedPageWarning();},saved);
+    await page.evaluate(saved=>{globalThis.__workspaceFixture.automation=saved.automation;const shell=document.querySelector('app-shell'),t=shell.traffic;shell.viewerMode=saved.viewerMode;t.previewDraftDirty=false;if(t.previewPageDialog.open)t.closeCapturedPageWarning();},saved);
     await page.emulateMedia({colorScheme:'light',forcedColors:'none'});
     await page.setViewportSize({width:1280,height:800});
   }

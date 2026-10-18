@@ -157,6 +157,64 @@ pub(super) async fn captured_page_choices(
         .map_err(|_| error("Preview document choices are unavailable"))?
 }
 
+#[tauri::command]
+pub(super) async fn experiment_preview_pages(
+    id: String,
+    selected_id: Option<String>,
+    include_pages: Option<bool>,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<transmog_app::ExperimentPreviewPages, AppError> {
+    let application = state.window_application(&window)?;
+    let owner = window.label().to_owned();
+    tokio::task::spawn_blocking(move || {
+        let mut choices = application.experiment_preview_pages(
+            &id,
+            selected_id.as_deref(),
+            include_pages.unwrap_or(true),
+        )?;
+        if !choices.available
+            && let Some(page) = &choices.page
+            && application.experiment_page_capture_current(page)
+        {
+            // Exact identity only, and only existing retained scenes in this window.
+            choices.source_label = reports()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .rev()
+                .find(|run| {
+                    run.owner == owner
+                        && run.page.as_ref().is_some_and(|scene| {
+                            let report = scene.diagnostics().snapshot();
+                            report.selected_entry_id == page.entry_id
+                                && report.scope == transmog_app::CapturedPageScope::OriginalTrace
+                        })
+                })
+                .map(|run| run.label.clone());
+            choices.available |= choices.source_label.is_some();
+        }
+        Ok(choices)
+    })
+    .await
+    .map_err(|_| error("Captured page choices could not be read"))?
+}
+
+#[tauri::command]
+pub(super) async fn set_experiment_preview_page(
+    id: String,
+    revision: u64,
+    page: transmog_app::ExperimentPreviewPage,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<transmog_app::AutomationStatus, AppError> {
+    let application = state.application.clone();
+    tokio::task::spawn_blocking(move || {
+        application.set_experiment_preview_page(&id, revision, page)
+    })
+    .await
+    .map_err(|_| error("The page association could not be saved"))?
+}
+
 const HARDENING: &str = r"(() => {
   const blocked = class { constructor() { throw new DOMException('Unavailable in a captured preview', 'NotSupportedError'); } };
   for (const name of ['RTCPeerConnection', 'webkitRTCPeerConnection', 'WebTransport', 'WebSocket']) {
@@ -345,10 +403,25 @@ async fn prepare_scene(
         let page = reports().lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter()
             .find(|run| run.owner == owner && run.label == label).and_then(|run| run.page.clone())
             .ok_or_else(|| error("These preview bytes have expired; select the captured HTML and open a new preview"))?;
+        if let Some(reference) = &options.page_reference
+            && (!application.experiment_page_capture_current(reference)
+                || reference.entry_id != page.diagnostics().snapshot().selected_entry_id)
+        {
+            return Err(error(
+                "The chosen captured page is unavailable. Choose a replacement in Response sets.",
+            ));
+        }
         application
             .prepare_related_captured_page(page, options, canceled)
             .await
     } else {
+        if let Some(reference) = &options.page_reference
+            && (reference.entry_id != id || !application.experiment_page_available(reference))
+        {
+            return Err(error(
+                "The chosen captured page is unavailable. Choose a replacement in Response sets.",
+            ));
+        }
         application
             .prepare_captured_page_with_options(id, options, canceled)
             .await

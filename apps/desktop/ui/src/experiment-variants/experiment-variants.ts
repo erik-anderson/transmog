@@ -3,8 +3,9 @@ import {invoke} from '@tauri-apps/api/core';
 import {WorkspaceElement} from '../workspace-element.js';
 import '../response-set-tour/response-set-tour.js';
 import type {ResponseSetTour} from '../response-set-tour/response-set-tour.js';
+import {pageIdentity} from '../response-set-page-picker/response-set-page-picker.js';
 import {describeError} from '../utilities.js';
-import type {AutomationStatus,AutomationRule,ResponseExperiment,ExperimentSelection,VariantEdit,ResponseSetGuideHistory,ResponseSetGuideUpdate} from '../models.js';
+import type {AutomationStatus,AutomationRule,ResponseExperiment,ExperimentSelection,VariantEdit,ResponseSetGuideHistory,ResponseSetGuideUpdate,ExperimentPreviewPages} from '../models.js';
 
 const tourSteps=[
   {title:'Organize related responses',copy:'A response set groups related response changes. Variants hold alternatives; revisions are saved versions. Selecting one changes only what you’re viewing.'},
@@ -34,7 +35,7 @@ export class ExperimentVariants extends WorkspaceElement {
   tourPanel!:ResponseSetTour;
   private guideEpoch=0;
   private offerChecked=false;
-  overviewVisibleChanged():void {if(!this.overviewVisible)this.leaveGuide();else void this.offerGuide();}
+  overviewVisibleChanged():void {if(!this.overviewVisible){this.leaveGuide();this.pageEpoch++;if(this.copyDialog?.open)this.closeCopy();}else {void this.offerGuide();void this.refreshPage();}}
   preferencesReadyChanged():void {void this.offerGuide();}
   guideHistoryChanged():void {void this.offerGuide();}
   variantBusyChanged():void {if(this.variantBusy)this.leaveGuide();else void this.offerGuide();}
@@ -62,6 +63,8 @@ export class ExperimentVariants extends WorkspaceElement {
   dismissGuideInvitation():void {this.guideEpoch++;this.invitationVisible=false;this.restoreGuideFocus();}
   async startGuide():Promise<void> {
     if(this.guidePending||!this.guideAvailable())return;
+    // Pending Start stays focusable (aria-disabled in the template): native
+    // disabling blurs it and would invalidate its own focus ownership below.
     const epoch=++this.guideEpoch,selection=this.selectionEpoch,source=this.getRootNode() instanceof ShadowRoot?(this.getRootNode() as ShadowRoot).activeElement:document.activeElement;
     this.guidePending=true;this.guideError='';
     try {
@@ -110,14 +113,48 @@ export class ExperimentVariants extends WorkspaceElement {
   @observable experimentArchived=false;
   @observable variantLatest=false;
   @observable variantUndoAvailable=false;
+  @observable activationOutcome='';
+  @observable activationRestore='';
+  @observable previewReportAvailable=false;
+  @observable previewReportSetId='';
+  @observable copyPending=false;
+  @observable copyCompleted=false;
+  @observable copyError='';
+  @observable copySource='';
+  copyDialog!:HTMLDialogElement;
+  copyName!:HTMLInputElement;
+  copyButton!:HTMLButtonElement;
+  copyCreateButton!:HTMLButtonElement;
+  copyCloseButton!:HTMLButtonElement;
+  activationButton!:HTMLButtonElement;
+  undoButton!:HTMLButtonElement;
+  private copySelection:ExperimentSelection|null=null;
+  private copyEpoch=0;
+  private copySourceKey='';
   @observable variantWarnings:string[]=[];
   @observable variantReviewed=false;
+  @observable pageUrl='';
+  @observable pageIdentity='';
+  @observable pageAvailability='';
+  private pageEpoch=0;
+  async refreshPage():Promise<void> {
+    const id=this.experimentId,page=this.experiment()?.previewPage,epoch=++this.pageEpoch;
+    this.pageUrl=page?.url??'';this.pageIdentity=page?pageIdentity(page):'';this.pageAvailability=page?'Checking capture…':'';
+    if(!page||!this.overviewVisible)return;
+    try {const result=await invoke<ExperimentPreviewPages>('experiment_preview_pages',{id,selectedId:null,includePages:false});
+      if(epoch===this.pageEpoch&&id===this.experimentId)this.pageAvailability=result.available?(result.sourceLabel?'Retained preview capture':'Captured response available'):'Capture unavailable';
+    }catch{if(epoch===this.pageEpoch)this.pageAvailability='Capture availability could not be checked';}
+  }
+  changePage():void {
+    if(this.tourStep||this.variantBusy)return;
+    const id=this.experimentId,current=this.previewContext();
+    this.$emit('page-association-request',{id,isCurrent:()=>id===this.experimentId&&current()});
+  }
   experimentSelect!:HTMLSelectElement;
   newExperimentButton!:HTMLButtonElement;
   variantSelect!:HTMLSelectElement;
   variantName!:HTMLInputElement;
   experimentName!:HTMLInputElement;
-  duplicateName!:HTMLInputElement;
   private reviewGeneration=-1;
   private selectionEpoch=0;
   private renderedExperiment='';
@@ -128,6 +165,10 @@ export class ExperimentVariants extends WorkspaceElement {
   statusChanged():void {if(this.reviewGeneration>=0&&this.reviewGeneration!==this.status?.generation){this.variantWarnings=[];this.variantReviewed=false;this.reviewGeneration=-1;}this.render();}
   private experiment():ResponseExperiment|undefined {return this.status?.experiments?.find(e=>e.id===this.experimentId);}
   private selection():ExperimentSelection {return {experimentId:this.experimentId,variantId:this.variantId,revision:this.variantRevision};}
+  previewContext():()=>boolean {
+    const epoch=this.selectionEpoch,selection=JSON.stringify(this.selection()),generation=this.status?.generation;
+    return ()=>this.overviewVisible&&!this.tourStep&&!this.variantBusy&&epoch===this.selectionEpoch&&selection===JSON.stringify(this.selection())&&generation===this.status?.generation;
+  }
   private rules():AutomationRule[] {return this.experiment()?.variants.find(v=>v.id===this.variantId)?.revisions.find(r=>r.revision===this.variantRevision)?.rules??[];}
   private clearReview():void {this.selectionEpoch++;this.variantWarnings=[];this.variantReviewed=false;this.reviewGeneration=-1;this.variantError='';}
   private render():void {
@@ -146,10 +187,13 @@ export class ExperimentVariants extends WorkspaceElement {
     this.variantLatest=this.variantRevision===this.revisionItems[0];this.variantPaused=experiment?.paused??false;
     this.variantArchived=variant?.archived??false;this.experimentArchived=experiment?.archived??false;
     this.variantUndoAvailable=experiment?.undo?.generation===this.status?.generation;
+    const restore=experiment?.undo?.selection,restoreName=variants.find(v=>v.id===restore?.variantId)?.name??restore?.variantId;
+    this.activationRestore=restore&&restore.variantId!=='baseline'?`Restores ${restoreName} · revision ${restore.revision}.`:'Restores no changes from this set.';
     const active=experiment?.active,activeName=active?variants.find(v=>v.id===active.variantId)?.name??active.variantId:'Baseline';
     this.variantViewingText=`${variant?.name??'Baseline'} · revision ${this.variantRevision}`;
     const live=active&&active.variantId!=='baseline'?`${activeName} · revision ${active.revision}`:'No changes from this set';
     this.variantLiveText=`${live}${experiment?.paused?' · Response set paused':''}${this.status?.autoresponsesEnabled===false?' · Saved responses paused':''}.`;
+    this.activationOutcome=`Last activation: ${live}.`;
     if(!this.experimentId)this.leaveGuide();
     this.updateTourContext();
     this.$flushUpdates();
@@ -158,6 +202,7 @@ export class ExperimentVariants extends WorkspaceElement {
     this.renderedExperiment=this.experimentId;this.renderedVariant=this.variantId;this.renderedExperimentName=experiment?.name??'';this.renderedVariantName=variant?.name??'';
     if(tourHadFocus&&!focused?.isConnected&&this.tourStep&&this.overviewVisible)this.tourPanel.focusNext();
     void this.offerGuide();
+    void this.refreshPage();
   }
   async reveal(selection:ExperimentSelection,focus=true):Promise<void> {this.experimentId=selection.experimentId;this.variantId=selection.variantId;this.variantRevision=selection.revision;this.variantMessage='';this.clearReview();this.render();if(focus)this.experimentSelect.focus();}
   selectExperiment(event:Event):void {this.experimentId=(event.currentTarget as HTMLSelectElement).value;this.variantId='';this.variantRevision=0;this.clearReview();this.render();}
@@ -180,11 +225,50 @@ export class ExperimentVariants extends WorkspaceElement {
     }catch(error:unknown){if(epoch===this.selectionEpoch)this.variantError=describeError(error);}
     finally{this.variantBusy=false;}
   }
-  duplicate():void {const name=this.duplicateName.value.trim();if(!name){this.variantError='Enter a name for the duplicate.';this.duplicateName.focus();return;}const variantId='v-'+crypto.randomUUID().replaceAll('-','');void this.change({action:'duplicate',selection:this.selection(),variantId,name},'Variant duplicated. Live traffic is unchanged.',{experimentId:this.experimentId,variantId,revision:1});}
+  showPreviewDiagnostics():void {this.$emit('preview-report-request',undefined);}
+  duplicate():void {
+    if(this.copyPending||this.variantBusy||this.tourStep||!this.overviewVisible)return;
+    const selection=this.selection(),variant=this.experiment()?.variants.find(v=>v.id===selection.variantId);if(!variant)return;
+    const key=JSON.stringify(selection),keepName=this.copySourceKey===key&&!!this.copyError;
+    this.copySelection=selection;this.copySourceKey=key;this.copySource=`${variant.name} · revision ${selection.revision}`;this.copyEpoch++;this.copyCompleted=false;
+    if(!keepName){let prefix='',bytes=0;const encoder=new TextEncoder();for(const char of variant.name){const size=encoder.encode(char).length;if(bytes+size>123)break;prefix+=char;bytes+=size;}this.copyName.value=prefix+' copy';this.copyError='';}
+    this.$flushUpdates();this.copyDialog.showModal();this.copyName.focus();this.copyName.select();
+  }
+  closeCopy(event?:Event):void {event?.preventDefault();this.copyEpoch++;this.copyDialog.close();if(this.overviewVisible&&this.copyButton?.isConnected)this.copyButton.focus({preventScroll:true});}
+  copyPointerDown(event:PointerEvent):void {if(this.copyCompleted)event.preventDefault();}
+  async createCopy(event:Event):Promise<void> {
+    event.preventDefault();if(this.copyPending||this.copyCompleted||!this.status||!this.copySelection)return;
+    const name=this.copyName.value.trim();if(!name){this.copyError='Enter a name for the new variant.';this.copyName.focus();return;}
+    if(new TextEncoder().encode(name).length>128){this.copyError='The variant name is too long. Shorten it and try again.';this.copyName.focus();return;}
+    const epoch=this.copyEpoch,selection=this.copySelection,selectionEpoch=this.selectionEpoch,variantId='v-'+crypto.randomUUID().replaceAll('-','');
+    const active=(this.getRootNode() as ShadowRoot).activeElement;
+    this.copyPending=true;this.copyError='';
+    try {
+      const status=await invoke<AutomationStatus>('change_experiment',{generation:this.status.generation,change:{action:'duplicate',selection,variantId,name}});
+      this.$emit('variant-status',status);
+      if(status.generation>=(this.status?.generation??0))this.status=status;
+      if(epoch===this.copyEpoch&&this.copyDialog.open){
+        if(active!==this.copyCreateButton&&(this.getRootNode() as ShadowRoot).activeElement===this.copyCreateButton)this.copyCloseButton.focus({preventScroll:true});
+        this.copyCompleted=true;
+      }
+      const current=epoch===this.copyEpoch&&selectionEpoch===this.selectionEpoch&&this.overviewVisible&&this.copyDialog.open;
+      if(current&&(this.getRootNode() as ShadowRoot).activeElement===active){
+        this.experimentId=selection.experimentId;this.variantId=variantId;this.variantRevision=1;this.clearReview();this.render();this.variantMessage='Variant copy created. Live traffic is unchanged.';this.closeCopy();
+      }else if(this.overviewVisible&&this.experimentId===selection.experimentId)this.variantMessage=`Variant copy “${name}” created. Live traffic is unchanged.`;
+      else this.$emit('notice',{title:'Variant copy created',message:`${name}. Live traffic is unchanged.`,actionLabel:null,action:null});
+    }catch(error){this.copyError=describeError(error);if(epoch!==this.copyEpoch||!this.copyDialog.open)this.$emit('notice',{title:'Variant copy failed',message:describeError(error),actionLabel:null,action:null});}
+    finally{this.copyPending=false;}
+  }
   rename(variant:boolean):void {void this.change({action:'rename',id:this.experimentId,variantId:variant?this.variantId:null,name:(variant?this.variantName:this.experimentName).value.trim()},'Name saved.');}
   archive(variant:boolean):void {void this.change({action:'archive',id:this.experimentId,variantId:variant?this.variantId:null,archived:variant?!this.variantArchived:!this.experimentArchived},'Archive state saved. Restore reverses this action.');}
   pause():void {void this.change({action:'pause',id:this.experimentId,paused:!this.variantPaused},this.variantPaused?'Response set resumed.':'Response set paused. Authored rules are unchanged.');}
-  undoActivation():void {void this.change({action:'undo-activation',id:this.experimentId},'Previous activation restored.');}
+  async undoActivation():Promise<void> {
+    if(this.variantBusy)return;
+    const root=this.getRootNode() as ShadowRoot,owned=root.activeElement===this.undoButton,id=this.experimentId;
+    await this.change({action:'undo-activation',id},'Previous activation restored.');
+    this.$flushUpdates();
+    if(owned&&this.overviewVisible&&id===this.experimentId&&!this.variantUndoAvailable&&(!root.activeElement||root.activeElement===this.undoButton))this.activationButton.focus({preventScroll:true});
+  }
   async positionVariant(before:boolean):Promise<void> {
     if(!this.status||!this.variantLatest||!this.rules().length)return;
     const owned=new Set(this.experiment()?.variants.flatMap(v=>v.revisions.flatMap(r=>r.rules.map(r=>r.id)))??[]);
@@ -201,7 +285,7 @@ export class ExperimentVariants extends WorkspaceElement {
       catch(error:unknown){if(epoch===this.selectionEpoch)this.variantError=describeError(error);return;}
       finally{this.variantBusy=false;}
     }
-    await this.change({action:'activate',selection:this.selection(),acknowledgeOverlaps:this.variantWarnings.length>0},'Saved revision activated for new live requests. Pause settings are preserved.');
+    await this.change({action:'activate',selection:this.selection(),acknowledgeOverlaps:this.variantWarnings.length>0},'');
   }
   async changeRule(id:string,action:string):Promise<void> {
     if(!this.variantLatest||this.variantId==='baseline')return;

@@ -66,7 +66,7 @@ export async function checkTrafficPresentation(page,root) {
     try {
       for(const close of ['Escape','Cancel']) {
         await actions.click();await openActionGroup(traffic.locator('#selected-request-actions'),'Preview');await traffic.locator('#selected-request-actions').getByRole('button',{name:'Preview page…',exact:true}).click();
-        if(close==='Escape')await page.keyboard.press('Escape');else await traffic.locator('.captured-page-warning[open]').getByRole('button',{name:close,exact:true}).click();
+        if(close==='Escape')await page.keyboard.press('Escape');else await page.locator('captured-preview .captured-page-warning[open]').getByRole('button',{name:close,exact:true}).click();
         assert.equal(await focused(actions),true,'Closing preview lost focus');
       }
     } finally {await page.evaluate(detail=>document.querySelector('app-shell').traffic.applyDetail(detail),detail);}

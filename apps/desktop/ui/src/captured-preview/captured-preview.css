@@ -1,0 +1,12 @@
+captured-preview { display:contents; }
+.captured-page-warning {box-sizing:border-box;width:min(36rem,calc(100vw - 2rem));max-height:calc(100% - 2rem);overflow:auto;padding:1rem;border:1px solid var(--line);border-radius:.45rem;color:var(--text);background:var(--panel);}.captured-page-warning h2 {font-size:1rem;margin:0 0 .6rem;}.captured-page-warning p,.captured-page-warning label {font-size:.8rem;}.captured-page-warning::backdrop {background:rgb(0 0 0 / .25);}.captured-page-warning details {margin:.7rem 0;}.captured-page-warning summary {cursor:pointer;font-size:.8rem;}
+.captured-preview-report { box-sizing:border-box; width:min(58rem,calc(100vw - 2rem)); max-height:calc(100% - 2rem); padding:1rem; border:1px solid var(--line); border-radius:.45rem; color:var(--text); background:var(--panel); }.captured-preview-report[open] { display:flex; flex-direction:column; gap:.6rem; }.captured-preview-report::backdrop { background:rgb(0 0 0 / .25); }.captured-preview-report h3 { margin:0; font-size:1rem; }.preview-report-scroll { min-height:0; overflow:auto; font-size:.82rem; }.preview-report-scroll .full-value { overflow-wrap:anywhere; }.preview-request-list > div { display:grid; gap:.25rem; padding:.5rem 0; border-bottom:1px solid var(--line); }.preview-request-list small { color:var(--muted); }.captured-preview-report footer { flex-shrink:0; }
+.preview-request-list > div > button { justify-self:start; }
+.preview-rule-picker {max-height:12rem;overflow:auto;display:grid;gap:.4rem;margin:.5rem 0;}
+.preview-rule-picker label {align-items:start;}
+.preview-rule-picker small {display:block;color:var(--muted);}
+.preview-rule-name {overflow-wrap:anywhere;min-width:0;}
+.captured-page-warning .full-value { overflow-wrap:anywhere; user-select:text; }
+.captured-page-warning label { display:flex; flex-direction:column; gap:.3rem; margin:.6rem 0; }
+.captured-page-warning label.checkbox-label { flex-direction:row; align-items:flex-start; }
+.captured-page-warning .actions,.captured-preview-report .actions { display:flex; flex-wrap:wrap; gap:.5rem; }

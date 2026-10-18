@@ -6,6 +6,10 @@ import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
 import {checkResponseExperiments} from './check-response-experiments.mjs';
 import {checkResponseSetGuide} from './check-response-set-guide.mjs';
+import {checkPreviewPrerequisites} from './check-preview-prerequisites.mjs';
+import {checkBodyRefresh} from './check-body-refresh.mjs';
+import {checkResponseSetActions} from './check-response-set-actions.mjs';
+import {checkResponseSetActionFollowup} from './check-response-set-action-followup.mjs';
 import {checkNamedVariants} from './check-named-variants.mjs';
 import {checkTextEdits} from './check-text-edits.mjs';
 import {checkHeaderRules} from './check-header-rules.mjs';
@@ -205,8 +209,28 @@ await page.addInitScript((configuration) => {
           const source=state.sessions.find(row=>row.id===args.sourceId);
           return {pages:state.sessions.filter(row=>row.traceId===source?.traceId&&row.contentType==='text/html').map(row=>({id:row.id,url:row.url,startedAt:row.startedAt,recordedReferrer:false})),more:false};
         }
-        case 'captured_page_report': return {caseOrigin:state.previewArgs?.options?.casePreview?'fixture-case@1 / frozen/blue/7':null,variant:state.previewArgs?.options?.variant??null,url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
-        case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return 'captured-fixture';
+        case 'experiment_preview_pages': {
+          if(state.deferSetPages&&args.includePages!==false){state.deferSetPages=false;await new Promise(resolve=>state.releaseSetPages=resolve);}
+          const set=state.automation.experiments?.find(set=>set.id===args.id);if(!set)throw new Error('Response set unavailable');
+          const pages=state.sessions.filter(row=>row.contentType==='text/html').map((row,index)=>({capture:state.captureNonce??'fixture-capture',entryId:row.id,requestNumber:row.requestNumber??String(index+1),traceId:row.traceId??null,url:row.url,method:row.method??'GET',startedAt:row.startedAt??1800000000000,source:row.traceId??'Live traffic'}));
+          const available=!!set.previewPage&&pages.some(page=>JSON.stringify(page)===JSON.stringify(set.previewPage));
+          const sourceLabel=!available&&state.retainedSetPage&&JSON.stringify(state.retainedSetPage)===JSON.stringify(set.previewPage)?'captured-fixture':null;
+          return {pages:args.includePages===false?[]:pages,page:set.previewPage??null,revision:set.previewPageRevision??0,available:available||!!sourceLabel,sourceLabel,more:false};
+        }
+        case 'set_experiment_preview_page': {
+          if(state.deferSetPageSave){state.deferSetPageSave=false;await new Promise(resolve=>state.releaseSetPageSave=resolve);}
+          const set=state.automation.experiments?.find(set=>set.id===args.id);if(!set)throw new Error('Response set unavailable');
+          if((set.previewPageRevision??0)!==args.revision)throw new Error('The page association changed. Review its current page before choosing again.');
+          set.previewPage=structuredClone(args.page);set.previewPageRevision=args.revision+1;
+          return structuredClone(state.automation);
+        }
+        case 'captured_page_report': {
+          if(state.deferPreviewReportLabel===args.label){state.deferPreviewReportLabel=null;await new Promise(resolve=>state.releasePreviewReport=resolve);}
+          if(state.previewReportFailure===args.label)throw new Error('Fixture preview report unavailable');
+          if(state.previewReports?.[args.label])return structuredClone(state.previewReports[args.label]);
+          return {caseOrigin:state.previewArgs?.options?.casePreview?'fixture-case@1 / frozen/blue/7':null,variant:state.previewArgs?.options?.variant??null,url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
+        }
+        case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return state.previewRunLabel??'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
         case 'case_preview_choices':if(state.deferCaseChoices){state.deferCaseChoices=false;await new Promise(resolve=>state.releaseCaseChoices=resolve);}return {pages:[{id:'first',url:'https://example.test/page'}]};
         case 'resolve_case_comparison':if(state.caseResolveError)throw new Error(state.caseResolveError);return {kind:args.id==='saved-scopes'?'captures':'exchange',left:{kind:'exchange',id:'first'},right:{kind:'exchange',id:'second'},options:{excludedHeaders:['date','x-request-id'],normalizeNewlines:true}};
@@ -460,7 +484,7 @@ await page.addInitScript((configuration) => {
           if(representation==='bytes')for(let start=0;start<bytes.length;start+=8192)chunks.push(String.fromCharCode(...bytes.slice(start,start+8192)));
           return { metadata, representation, decoded:args.request.decodeContent&&metadata.contentCodings.length>0, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':composer?new TextDecoder().decode(Uint8Array.from(bytes)):'body for '+args.request.sessionId, displayBytes:representation==='bytes'||composer?bytes.length:4,bytesBase64:representation==='bytes'?btoa(chunks.join('')):null,byteOffset:0,truncated:composer?false:state.hexTruncated??false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
-        case 'automation_status': return structuredClone(state.automation??{ generation: 0, rules: [], autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount: 0, historyCount: 0 });
+        case 'automation_status': if(state.deferAutomationStatus){state.deferAutomationStatus=false;await new Promise(resolve=>state.releaseAutomationStatus=resolve);}return structuredClone(state.automation??{ generation: 0, rules: [], autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount: 0, historyCount: 0 });
         case 'set_autoresponses_enabled': {
           state.automation??={generation:0,rules:[],diagnostics:[],usage:[],candidateCount:0,historyCount:0};
           if(state.automation.generation!==args.generation)throw new Error('Stale generation');
@@ -501,6 +525,7 @@ await page.addInitScript((configuration) => {
         case 'autoresponse_source_headers': if(state.deferSourceHeaders){state.deferSourceHeaders=false;await new Promise(resolve=>state.finishSourceHeaders=resolve);}return structuredClone(state.rawResponseHeaders??detail(args.id).responses[0].headers.map(header=>({name:Array.from(new TextEncoder().encode(header.name)),value:Array.from(new TextEncoder().encode(header.value))})));
         case 'response_assets': return structuredClone(state.assets??[]);
         case 'inspect_response_asset': {
+          if(state.deferAssetInspection){state.deferAssetInspection=false;await new Promise(resolve=>state.releaseAssetInspection=resolve);}
           const asset=state.assets.find(asset=>asset.id+'@'+asset.revision===args.reference);
           if(!asset)throw new Error('Saved response missing');
           const charset=asset.mediaType?.match(/charset=([^;\s]+)/i)?.[1]??'utf-8';
@@ -605,6 +630,7 @@ await page.addInitScript((configuration) => {
         }
         case 'experiment_overlaps': return structuredClone(state.variantOverlaps??[]);
         case 'change_experiment': {
+          if(state.deferVariantCopy&&args.change.action==='duplicate'){state.deferVariantCopy=false;await new Promise(resolve=>state.releaseVariantCopy=resolve);}
           if(state.uaRejectValidation||state.variantReject)throw new Error('Fixture validation failed; saved and live rules unchanged');
           if(state.deferExperimentSave&&['create','save'].includes(args.change.action)){state.deferExperimentSave=false;await new Promise(resolve=>state.finishExperimentSave=resolve);}
           if(state.deferExperimentActivation&&args.change.action==='activate'){state.deferExperimentActivation=false;await new Promise(resolve=>state.finishExperimentActivation=resolve);}
@@ -720,6 +746,10 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--response-set-action-followup-only')){await checkResponseSetActionFollowup(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set action follow-up verified.\n');process.exit(0);}
+  if(process.argv.includes('--response-set-actions-only')){await checkResponseSetActions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set action clarity verified.\n');process.exit(0);}
+  if(process.argv.includes('--body-refresh-only')||process.argv.includes('--body-refresh-reproduce')) {await checkBodyRefresh(page,root,{reproduce:process.argv.includes('--body-refresh-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Body refresh lifecycle verified.\n');process.exit(0);}
+  if(process.argv.includes('--preview-prerequisites-only')||process.argv.includes('--preview-prerequisites-reproduce')) {await checkPreviewPrerequisites(page,root,{reproduce:process.argv.includes('--preview-prerequisites-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Preview prerequisites verified.\n');process.exit(0);}
   if(process.argv.includes('--hex-only')){await page.goto('https://workspace.test/');await page.locator('tr[data-session-id="first"]').click();const inspector=page.locator('traffic-workspace message-inspector[side="response"]');await inspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');await inspector.locator('hex-viewer').waitFor({state:'visible'});await checkHexViewer(page,inspector,resolve(root,'../../../target/ui-check/hex-selection.png'));assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Hex byte navigation, selection, paging and compact reachability verified.\n');process.exit(0);}
   if(process.argv.includes('--traffic-filters-only')){await page.goto('https://workspace.test/');await checkTrafficFilters(page,root);await checkTrafficAdvanced(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic filtering and stream lifetime checks passed.\n');process.exit(0);}
   if(process.argv.includes('--scripts-only')) {await page.goto('https://workspace.test/');await view('automation');await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();await checkScripts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Script draft, activation, discard, async state and responsive layouts verified.\n');process.exit(0);}
@@ -2529,6 +2559,7 @@ try {
   await checkActionMenus(page,root);
   await checkWindowShortcuts(page,root);
   await checkTrafficPresentation(page,root);
+  await checkBodyRefresh(page,root);
   await checkRequestOrder(page,root);
   await checkTrafficNavigation(page);
   await page.goto('https://workspace.test/');
@@ -2552,8 +2583,11 @@ try {
   await checkIncidents(page,root);
   await checkResponseFiles(page,root);
   await checkResponseSetGuide(page,root);
+  await checkPreviewPrerequisites(page,root);
   await checkResponseExperiments(page,root);
   await checkNamedVariants(page,root);
+  await checkResponseSetActions(page,root);
+  await checkResponseSetActionFollowup(page,root);
   await checkHeaderRules(page,root);
   await checkTextEdits(page,root);
   assert.deepEqual(errors,[]);

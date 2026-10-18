@@ -6,6 +6,10 @@ import type {ComparisonOpen,CaptureOpen} from '../comparison-models.js';
 import '../autoresponse-switch/autoresponse-switch.js';
 import '../app-updates/app-updates.js';
 import '../client-certificate-requests/client-certificate-requests.js';
+import '../captured-preview/captured-preview.js';
+import type {CapturedPreview} from '../captured-preview/captured-preview.js';
+import '../response-set-page-picker/response-set-page-picker.js';
+import type {ResponseSetPagePicker} from '../response-set-page-picker/response-set-page-picker.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import type { TrafficRuleRequest, AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, ResponsePreviewIntent, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
@@ -122,6 +126,13 @@ export class AppShell extends WebUIElement {
   onBreakpointState(event:CustomEvent<{count:number}>):void {this.pausedCount=event.detail.count;}
   @observable navigationExpanded = 'true';
   traffic!: TrafficWorkspace;
+  @observable capturedPreviewController:TrafficWorkspace|null=null;
+  capturedPreviewSurface!:CapturedPreview;
+  onPreviewStateChange():void {
+    // WebUI observes each component's own fields. Re-evaluate direct controller
+    // bindings explicitly rather than copying dialog state between components.
+    this.capturedPreviewSurface?.$update();this.$update();
+  }
   settings!: SettingsWorkspace;
   automation!: AutomationWorkspace;
   composer!: ComposerWorkspace;
@@ -195,6 +206,7 @@ export class AppShell extends WebUIElement {
   }
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
   protected hydratedCallback():void {
+    this.capturedPreviewController=this.traffic;
     document.addEventListener('keydown',this.shortcutListener);
     if(this.viewerMode)void invoke<ProductState>('product_state').then(state=>this.onPreferences(new CustomEvent('preferences-changed',{detail:{theme:state.preferences.theme,workspace:state.workspace}}))).catch(error=>{this.diagnosticText=describeError(error);});
     else void this.refreshAutoresponses();
@@ -349,9 +361,84 @@ export class AppShell extends WebUIElement {
     if (this.activeView === 'automation') {void this.automation.refreshSourceAvailability();this.automation.refreshUsageSoon();}
   }
   onPreviewOptions():void {this.traffic.previewDraftDirty=Boolean(this.automation?.draftDirty);}
-  async onPagePreview(event:CustomEvent<ResponsePreviewIntent>):Promise<void> {if(await this.activateView('traffic'))await this.traffic.showRulePreview(event.detail);}
-  async onMatchedRule(event: CustomEvent<string>): Promise<void> {
-    if (await this.activateView('automation')) { await this.automation.refreshAutomation(); this.automation.showMatchedRule(event.detail); }
+  previewPrerequisiteDialog!:HTMLDialogElement;
+  @observable previewLookupFailed=initialState.previewLookupFailed;
+  private previewRequest=0;
+  private previewReturnFocus:HTMLElement|null=null;
+  private previewOrigin:ViewName='automation';
+  responseSetPagePicker!:ResponseSetPagePicker;
+  onPreviewPageStatus(event:CustomEvent<AutomationStatus>):void {event.stopPropagation();this.automation.onVariantStatus(event);}
+  async onPageAssociation(event:CustomEvent<{id:string;isCurrent:()=>boolean}>):Promise<void> {
+    event.stopPropagation();const navigation=this.navigationGeneration,origin=this.activeView;
+    await this.responseSetPagePicker.request(event.detail.id,this.selection?.sessionId??'',false,()=>this.isConnected&&navigation===this.navigationGeneration&&origin===this.activeView&&event.detail.isCurrent());
+  }
+  private async previewNamedSet(intent:ResponsePreviewIntent):Promise<void> {
+    const request=++this.previewRequest,navigation=this.navigationGeneration,origin=this.activeView;
+    const current=()=>this.isConnected&&request===this.previewRequest&&navigation===this.navigationGeneration&&origin===this.activeView&&(intent.isCurrent?.()??true);
+    const pageTarget=await this.responseSetPagePicker.request(intent.responseSetId!,this.selection?.sessionId??'',true,current);
+    if(!pageTarget||!current())return;
+    const prepared=await this.traffic.prepareRulePreview({...intent,pageTarget},current);
+    if(prepared&&current()) {this.traffic.rememberPreviewFocus();prepared();}
+  }
+  showPreviewDiagnostics():void {void this.traffic.showPreviewReport();}
+  async onPreviewSource(event:CustomEvent<{id:string;isCurrent:()=>boolean}>):Promise<void> {
+    event.stopPropagation();const origin=this.activeView;
+    if(!event.detail.isCurrent()||!await this.activateView('traffic'))return;
+    const focus=this.traffic.trackNavigationFocus();
+    const navigation=this.navigationGeneration,current=()=>event.detail.isCurrent()&&navigation===this.navigationGeneration&&this.activeView==='traffic'&&focus.unchanged();
+    try {
+      const found=await this.traffic.revealSession(event.detail.id,()=>current()&&focus.unchanged(),current);
+      if(!current())return;
+      if(found){const restore=focus.unchanged();this.traffic.closePreviewReport();if(restore)this.traffic.focusTraffic();}
+      else {this.traffic.previewReportError='The source entry is no longer retained. Its resource decision remains in this report.';await this.activateView(origin);}
+    }finally{focus.dispose();}
+  }
+  async onPagePreview(event:CustomEvent<ResponsePreviewIntent>):Promise<void> {
+    event.stopPropagation();
+    if(event.detail.responseSetId){await this.previewNamedSet(event.detail);return;}
+    const intent=event.detail,request=++this.previewRequest,navigation=this.navigationGeneration,origin=this.activeView;
+    const root=this.shadowRoot??this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
+    const focus=this.traffic.trackNavigationFocus();let canceled=false;
+    const cancel=(e:Event)=>{if(e instanceof KeyboardEvent&&e.key!=='Escape')return;canceled=true;};
+    root.addEventListener('keydown',cancel,true);root.addEventListener('input',cancel,true);root.addEventListener('change',cancel,true);
+    const current=()=>this.isConnected&&request===this.previewRequest&&navigation===this.navigationGeneration&&origin===this.activeView&&!canceled&&focus.unchanged()&&(intent.isCurrent?.()??true);
+    try {
+      let prepared:(()=>void)|null|undefined,failed=false;
+      try {prepared=await this.traffic.prepareRulePreview(intent,current);}catch{failed=true;}
+      if(!current())return;
+      if(prepared===undefined&&!failed)return;
+      if(!prepared){
+        this.previewReturnFocus=active instanceof HTMLElement?active:null;this.previewOrigin=origin;this.previewLookupFailed=failed;
+        this.$flushUpdates();this.previewPrerequisiteDialog.showModal();return;
+      }
+      // Preparation is read-only. Navigate only when a warning can be presented.
+      if(await this.activateView('traffic')&&request===this.previewRequest){this.traffic.rememberPreviewFocus();prepared();}
+    }finally{focus.dispose();root.removeEventListener('keydown',cancel,true);root.removeEventListener('input',cancel,true);root.removeEventListener('change',cancel,true);}
+  }
+  closePreviewPrerequisite():void {this.previewPrerequisiteDialog.close();}
+  previewPrerequisiteClosed():void {
+    if(this.previewPrerequisiteDialog.open)return;
+    const target=this.previewReturnFocus;this.previewReturnFocus=null;
+    if(this.activeView===this.previewOrigin&&target?.isConnected&&target.getClientRects().length)target.focus({preventScroll:true});
+  }
+  async previewGoToTraffic():Promise<void> {
+    this.previewReturnFocus=null;this.previewPrerequisiteDialog.close();
+    if(await this.activateView('traffic'))this.traffic.focusTraffic();
+  }
+  async onMatchedRule(event: CustomEvent<string|{id:string;isCurrent:()=>boolean}>): Promise<void> {
+    if(typeof event.detail==='string'){if(await this.activateView('automation')){await this.automation.refreshAutomation();this.automation.showMatchedRule(event.detail);}return;}
+    const request=event.detail;if(!request.isCurrent()||!await this.activateView('automation'))return;
+    const navigation=this.navigationGeneration;let focus=this.traffic.trackNavigationFocus();
+    const current=()=>request.isCurrent()&&navigation===this.navigationGeneration&&this.activeView==='automation'&&focus.unchanged();
+    const confirmLeave=async()=>{
+      if(!current())return false;
+      // The destination is known before asking to leave a draft. Its owned
+      // confirmation may move focus; resume watching for later work afterward.
+      focus.dispose();const allowed=await this.automation.canLeaveEditor();focus=this.traffic.trackNavigationFocus();
+      return allowed&&current();
+    };
+    try{await this.automation.refreshAutomation();if(current())await this.automation.showMatchedRule(request.id,current,confirmLeave);}
+    finally{focus.dispose();}
   }
   async onReplay(event: CustomEvent<SessionDetail>): Promise<void> {
     if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);

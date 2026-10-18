@@ -37,9 +37,25 @@ experiment-variants { display:block; height:100%; min-height:0; }
 .response-set-help p { margin:.25rem 0 .6rem; }
 .response-set-invitation { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.4rem .8rem; padding:.5rem .7rem; background:var(--accent-soft); border:1px solid var(--line); border-radius:.3rem; }
 .response-set-invitation p { margin:0; }
+.variant-workspace button[aria-busy="true"] { cursor:progress; }
 .variant-workspace [data-tour-target] { outline:2px solid var(--accent-strong); outline-offset:2px; border-radius:.2rem; }
 .variant-workspace[data-touring] .variant-pickers { position:static; }
 .variant-preview-actions { padding:.25rem 0; }
+.variant-preview-actions { align-items:center; }
+.variant-preview-actions small { color:var(--muted); font-size:.75rem; }
+.variant-page { display:flex; align-items:flex-start; flex-wrap:wrap; gap:.5rem; margin:.5rem 0; font-size:.8125rem; }
+.variant-page > div { flex:1 1 15rem; min-width:0; }
+.variant-page p { margin:0; }
+.variant-page small { display:block; color:var(--muted); overflow-wrap:anywhere; }
+.variant-page-url { user-select:text; overflow-wrap:anywhere; }
+.activation-feedback { display:flex; flex-wrap:wrap; align-items:center; gap:.4rem .7rem; padding:.5rem 0; font-size:.8125rem; }
+.activation-feedback small { flex-basis:100%; }
+.variant-copy-dialog { box-sizing:border-box; width:min(30rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:.4rem; padding:1rem; }
+.variant-copy-dialog .copy-source { overflow-wrap:anywhere; user-select:text; }
+.variant-copy-dialog form { display:grid; gap:.6rem; }
+.variant-copy-dialog p { margin:.25rem 0; }
+.variant-copy-dialog h2 { margin-bottom:.6rem; }
+.variant-copy-dialog button[aria-disabled="true"] { opacity:.65; cursor:default; }
 .variant-workspace[data-touring] .variant-content { flex:none; overflow:visible; }
 .variant-workspace[data-touring] { display:block; }
 .variant-workspace[data-touring] > * { margin-bottom:.6rem; }

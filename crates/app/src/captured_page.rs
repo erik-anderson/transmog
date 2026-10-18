@@ -450,6 +450,13 @@ pub(crate) async fn build(
     canceled: &std::sync::atomic::AtomicBool,
     allowed: Option<&std::collections::HashSet<String>>,
 ) -> Result<CapturedPage, AppError> {
+    if let Some(reference) = &options.page_reference
+        && (reference.entry_id != id || !application.experiment_page_available(reference))
+    {
+        return Err(error(
+            "The chosen captured page is unavailable. Choose a replacement in Response sets.",
+        ));
+    }
     let numeric = ExchangeId(parse_session_id(id)?);
     let selected = application
         .service
@@ -718,6 +725,82 @@ mod tests {
         io::{Cursor, Write},
         sync::{Arc, atomic::AtomicBool},
     };
+
+    #[tokio::test]
+    async fn remembered_page_requires_its_exact_capture_after_expiry_and_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let capture = root.path().join("page.saz");
+        fixture(&capture, "chosen");
+        let config = || AppConfig {
+            automation_path: Some(root.path().join("automation")),
+            body_store: Some(BodyStoreConfig::product_default(root.path().join("cache"))),
+            ..AppConfig::default()
+        };
+        let app = Application::new(config()).unwrap();
+        app.change_experiment(
+            0,
+            crate::ExperimentChange::Create {
+                id: "set".into(),
+                name: "Saved POST".into(),
+                variant_id: "edited".into(),
+                variant_name: "Edited response".into(),
+                rules: Vec::new(),
+            },
+        )
+        .unwrap();
+        let import = |operation: &str| TraceImportRequest {
+            password: None,
+            path: capture.clone(),
+            operation_id: operation.into(),
+            max_file_bytes: 1024 * 1024,
+        };
+        app.import_trace(import("one"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let choices = app.experiment_preview_pages("set", None, true).unwrap();
+        assert!(choices.page.is_none());
+        assert_eq!(choices.pages.len(), 1);
+        let chosen = choices.pages[0].clone();
+        let before = app.automation_status();
+        app.set_experiment_preview_page("set", 0, chosen.clone())
+            .unwrap();
+        assert_eq!(app.automation_status().generation, before.generation);
+        app.remove_traffic_entries(std::slice::from_ref(&chosen.entry_id), false)
+            .unwrap();
+        assert!(!app.experiment_page_available(&chosen));
+        app.import_trace(import("two"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let again = app.experiment_preview_pages("set", None, true).unwrap();
+        assert_eq!(again.page, Some(chosen.clone()));
+        assert!(!again.available);
+        assert_eq!(again.pages[0].url, chosen.url);
+        assert_ne!(again.pages[0].entry_id, chosen.entry_id);
+        drop(app);
+        let restarted = Application::new(config()).unwrap();
+        assert!(!restarted.experiment_page_capture_current(&chosen));
+        let remembered = restarted
+            .experiment_preview_pages("set", None, false)
+            .unwrap();
+        assert_eq!(remembered.page, Some(chosen.clone()));
+        assert!(!remembered.available);
+        assert!(
+            restarted
+                .set_experiment_preview_page("set", 1, chosen.clone())
+                .is_err()
+        );
+        let result = restarted
+            .prepare_captured_page_with_options(
+                chosen.entry_id.clone(),
+                CapturedPageOptions {
+                    page_reference: Some(chosen),
+                    ..Default::default()
+                },
+                Arc::new(AtomicBool::new(false)),
+            )
+            .await;
+        assert!(result.is_err());
+    }
 
     fn fixture(path: &std::path::Path, caption: &str) {
         let mut zip = zip::ZipWriter::new(Cursor::new(Vec::new()));

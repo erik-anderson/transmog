@@ -2178,6 +2178,8 @@ pub fn run() {
                 workspaces::open_main_window,
                 captured_preview::open_captured_page,
                 captured_preview::captured_page_choices,
+                captured_preview::experiment_preview_pages,
+                captured_preview::set_experiment_preview_page,
                 captured_preview::captured_page_report,
                 captured_preview::cancel_captured_page,
                 incidents::incident_intake,

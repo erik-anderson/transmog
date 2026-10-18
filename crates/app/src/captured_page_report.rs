@@ -16,6 +16,9 @@ pub enum CapturedPageScope {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct CapturedPageOptions {
+    /// Exact organizational page choice, validated before a named-set preview.
+    #[serde(default)]
+    pub page_reference: Option<crate::ExperimentPreviewPage>,
     /// Window-owned package selection; only the native case adapter resolves it.
     #[serde(default)]
     pub case_preview: Option<crate::CasePreviewOptions>,

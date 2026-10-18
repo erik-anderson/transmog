@@ -122,7 +122,7 @@ header rules, response edits, scripts and other response sets keep their own sta
    keeps that run's saved bytes and browser state, including its cache policy.
 6. Choose **Use saved revision for live traffic** only when ready. Review any
    overlap warnings. To remove this response set's live edits, activate its
-   **Baseline**; **Undo activation** is available until another automation change.
+   **Baseline**; **Undo last activation** is available until another automation change.
    The global saved-response pause remains independent of all these actions.
 
 For external CSS/JavaScript editing, choose **Read file on each request** instead
@@ -167,7 +167,7 @@ it available for retry.
 **Save response set** creates a response set with an empty **Baseline** and an
 **Edited response** variant, then returns to **Response sets** with that saved revision
 selected. The first editor uses **Response set name**; editing or adding an individual
-response uses **Response name**. Rename the set under **Names, duplicates and archive**
+response uses **Response name**. Rename the set under **Names and archive**
 with **Response set name → Save name**. Editing a saved response stays in
 **Response sets**; **Save revision** returns to its updated revision. The expanded
 body editor uses the same save label and saves all pending response fields.
@@ -182,10 +182,20 @@ ordinary rules with its established save behavior.
 Open **Automation → Response sets** or **Versions and history…**
 from the shared response editor. Select a response set, variant and revision to
 inspect them without changing live participation. These selector labels remain
-visible while scrolling. Duplicate a saved revision to
-create another approach, rename it, include/exclude or reorder its rules, and use
-**Add selected response** to add another captured response through the same editor.
-Earlier revisions remain inspectable; duplicate an earlier revision to edit it.
+visible while scrolling. Choose **Create variant copy…** to copy the selected
+saved revision. Its dialog identifies the source variant and revision and offers
+**New variant name**, initially the variant name followed by “ copy”. **Create copy**
+selects the new variant at revision 1 without changing live traffic. Cancel before
+submission changes nothing; closing while creation is pending leaves the operation
+monitored without reopening the dialog or replacing a newer selection. Validation
+and save failures preserve the entered name.
+If focus moves within the pending dialog, successful creation leaves a completed
+message and **Close**, preserving focus and selection and preventing a second submission.
+If Create itself gained focus after an Enter submission, completion moves focus to
+Close before disabling Create.
+Then rename, include/exclude or reorder its rules, and use **Add selected response**
+to add another captured response through the same editor.
+Earlier revisions remain inspectable; create a variant copy of an earlier revision to edit it.
 Archive keeps identities and history. **Restore response set** reverses a set archive;
 **Restore variant (Undo archive)** reverses a variant archive.
 Activate Baseline or another variant before archiving active content.
@@ -193,9 +203,41 @@ Activate Baseline or another variant before archiving active content.
 **Preview saved revision…** uses the exact selected definitions and included rules,
 independently of live activation and pause. Individual rule participation is locked
 for that run. **Preview baseline…** uses the captured scene without this response set.
-For a script or stylesheet, choose a retained HTML page from the same source.
-Recorded referrer and timing are hints, not proof of which page used the resource.
-If that source has expired, select a complete HTML response in Traffic first.
+The overview shows **Page:** with the chosen URL, workspace request number,
+source and recorded time, plus **Change…**. The first preview opens an unselected
+chooser. Choose a complete captured HTML response and **Use page**, then review
+the usual preview warning. A listed page does not imply that it used a saved
+response: saved responses apply only when a browser request matches their conditions.
+The chooser, warning and successful preview launch leave **Response sets**, or its
+open response editor, in place. Closing returns focus to the initiating control
+and preserves selection, scroll and drafts. **Last preview diagnostics** is offered
+there only for the selected set's known last run. Explicit source links navigate
+to Traffic; opening a preview does not.
+All variants and revisions, including Baseline, use this set's chosen page.
+Capturing another page, changing Traffic selection or switching variants never
+replaces it. **Change…** explicitly chooses another page; closing the chooser
+without **Use page** preserves the association. Choosing a page changes only
+organizational metadata, preserving saved revisions, drafts, live participation,
+automation generation and activation Undo.
+If focus moves during a pending page save, the chooser confirms the saved association
+and waits for explicit dismissal; it does not open a warning or remove moved focus.
+Closing a pending chooser leaves the submitted save running. If it fails after
+closure, a notification reports the failure without reopening the chooser.
+
+The URL and capture identity survive restart; capture bytes are not copied or
+retained by the association. **Capture unavailable** preserves the remembered
+URL when the exact capture is gone. Choose a replacement explicitly, even if a
+new capture has the same URL. A retained preview scene of that exact response
+can remain available within normal preview retention. New or imported response
+sets start without an association. When no complete HTML is available, the chooser
+stays on the originating view and offers **Go to Traffic**: start the proxy and
+visit the page through it, or import traffic containing its complete HTML response.
+Select an older HTML response in Traffic to include it beyond the chooser's first
+100 candidates. Named response editor previews use the same set association,
+including **Captured baseline…**. Baseline contains no rules from this set;
+the page association belongs to the set separately from its revisions. Switching
+that warning to saved responses uses the editor's exact selected revision. A
+related updated preview retains this variant context and uses its latest saved revision.
 Browser session/reload behavior is documented in [captured-page
 preview](captured-page-preview.md).
 
@@ -211,9 +253,12 @@ This changes only the selected variant; unrelated rule priorities stay unchanged
 Only one revision participates per response set. **Baseline** means no rules from
 this response set; unrelated automation remains active. **Pause response set** gates
 participation without rewriting authored rules, enabled choices or revisions.
-Activation and resume preserve the global saved-response pause. **Undo activation**
-restores the previous owned subset only if no automation generation has changed
-since that activation. On conflict, current work is preserved; inspect saved
+Activation and resume preserve the global saved-response pause. **Pause response set**
+and **Resume response set** remain beside activation. Inline activation feedback
+offers **Undo last activation** and names the variant and exact revision it restores,
+or explains that it restores no changes from this set. It restores the previous
+owned subset only while no automation generation has changed since that activation.
+On conflict, current work is preserved; inspect saved
 history and explicitly activate the desired revision instead.
 
 Definitions and revision history survive restart in the existing automation
@@ -624,10 +669,11 @@ participating match wins. Browser headers may differ from captured headers and
 captured Vary is not an authored rule condition.
 
 Save editor changes or explicitly exclude unsaved changes before opening a modified
-preview. **Preview… → With saved changes…** offers source-local HTML choices for captured
-resources, reusing a matching retained scene when available. Authored responses
-without a captured source use the last retained scene or selected complete HTML
-response. Existing previews and F5 retain their
+preview. **Preview… → With saved changes…** in a named response set uses that set's
+explicit page association. Ordinary rule editors offer source-local HTML choices
+for captured resources, reusing a matching retained scene when available. Ordinary
+authored responses without a captured source use the last retained scene or selected
+complete HTML response. Existing previews and F5 retain their
 original rules and linked-file bytes; **Open updated preview…** freezes the new saved
 versions. Diagnostics retain historical rule/asset revisions and byte hashes even
 when the current saved rule changes or is deleted.

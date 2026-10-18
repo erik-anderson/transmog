@@ -1,0 +1,13 @@
+response-set-page-picker { display:contents; }
+.response-page-picker { box-sizing:border-box; width:min(48rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); padding:1rem; color:var(--text); background:var(--panel); border:1px solid var(--line); border-radius:.4rem; overflow:auto; }
+.response-page-picker h2 { font-size:1rem; margin:0 0 .7rem; }
+.response-page-picker p { font-size:.8125rem; overflow-wrap:anywhere; }
+.response-page-choices { max-height:40dvh; overflow:auto; border-block:1px solid var(--line); }
+.response-page-choices label { display:flex; align-items:flex-start; gap:.6rem; padding:.6rem .2rem; font-size:.8125rem; border-bottom:1px solid var(--line); cursor:pointer; }
+.response-page-choices input { flex:none; margin-top:.2rem; }
+.response-page-choices span { min-width:0; }
+.response-page-choices strong { display:block; font-weight:500; overflow-wrap:anywhere; user-select:text; }
+.response-page-choices small { display:block; color:var(--muted); overflow-wrap:anywhere; }
+.response-page-picker footer { display:flex; flex-wrap:wrap; gap:.5rem; margin-top:.8rem; }
+.response-page-picker button[aria-busy="true"] { cursor:progress; }
+@media (forced-colors:active) { .response-page-picker,.response-page-choices,.response-page-choices label { border-color:CanvasText; } }

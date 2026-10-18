@@ -33,6 +33,7 @@ import {traceMarkers,type MarkerReview,type TraceMarker} from '../markers.js';
 type ContextValue={dimension:TrafficDimension;label:string;value:TrafficFilterValue};
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;markerLabel:string;activeStreamLabel:string;streamLabel:string;streamDisplay:string;streamAccessibleLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
+type PreviewPageChoices={pages:Array<{id:string;url:string;startedAt:number;recordedReferrer:boolean}>;more:boolean};
 
 export class TrafficWorkspace extends WorkspaceElement {
 
@@ -211,8 +212,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     choices.push({value:'none',label:'Rules and notes only',scope:null});
     await this.portableCase.show(mode,choices,returnFocus??this.filesMenuButton,comparisonId);
   }
-  async onCasePreviewReport(event:CustomEvent<string>):Promise<void>{event.stopPropagation();this.previewReportLabel=event.detail;await this.showPreviewReport();}
-  onCasePreview(event:CustomEvent<{label:string;id:string}>):void{event.stopPropagation();this.previewReportLabel=event.detail.label;this.previewReportAvailable=true;this.previewSceneAvailable=false;this.previewSceneDocumentId=event.detail.id;this.diagnostic='Case preview opened in an isolated InPrivate session. Preview diagnostics record the engine, script choice and supplied responses.';}
+  async onCasePreviewReport(event:CustomEvent<string>):Promise<void>{event.stopPropagation();this.previewReportSetId='';this.previewReportLabel=event.detail;await this.showPreviewReport();}
+  onCasePreview(event:CustomEvent<{label:string;id:string}>):void{event.stopPropagation();this.previewReportLabel=event.detail.label;this.previewReportSetId='';this.previewReportAvailable=true;this.previewSceneAvailable=false;this.previewSceneDocumentId=event.detail.id;this.diagnostic='Case preview opened in an isolated InPrivate session. Preview diagnostics record the engine, script choice and supplied responses.';}
   async onCaseReference(event:CustomEvent<string>):Promise<void>{
     event.stopPropagation();const focus=this.trackNavigationFocus();
     try{await this.refreshSessions(undefined,true);await this.revealSession(event.detail,focus.unchanged);}
@@ -253,10 +254,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   async compareCaptureScopes():Promise<void>{this.filesMenu.hidePopover();const sources=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);const choices:ScopeChoice[]=sources.map(s=>({value:s.id,label:`${s.name} · ${s.sessions} imported entries`,scope:{kind:'source',traceId:s.id}}));choices.push({value:'live',label:'Live traffic · retained entries',scope:{kind:'source',traceId:null}});if(this.trafficSelection.ids.size)choices.push({value:'selected',label:`Selected requests · ${this.trafficSelection.ids.size} entries`,scope:{kind:'selected',ids:[...this.trafficSelection.ids]}});choices.push({value:'filtered',label:`Current filter · ${this.totalMatched} entries before virtual windowing`,scope:{kind:'filtered',query:this.trafficQuery()}});this.$emit('capture-comparison-request',{choices});}
   @observable previewComparisonBaselineLabel='';
   private previewComparisonBaseline:ComparisonSubject|null=null;
-  setPreviewResponseBaseline(observation:string):void{this.previewComparisonBaseline={kind:'preview',run:this.previewReportLabel,observation:Number(observation)};this.previewComparisonBaselineLabel=`${this.previewReportLabel} · response ${observation}`;}
+  setPreviewResponseBaseline(observation:string):void{if(this.previewReportRowsLabel!==this.previewReportLabel)return;this.previewComparisonBaseline={kind:'preview',run:this.previewReportLabel,observation:Number(observation)};this.previewComparisonBaselineLabel=`${this.previewReportLabel} · response ${observation}`;}
   clearPreviewResponseBaseline():void{this.previewComparisonBaseline=null;this.previewComparisonBaselineLabel='';}
   comparePreviewResponse(observation:string,sourceId:string,ruleId:string):void{
-    if(!this.previewReportLabel)return;
+    if(!this.previewReportLabel||this.previewReportRowsLabel!==this.previewReportLabel)return;
     const asset=this.previewCaseOrigin?undefined:this.previewRuleRows.find(rule=>rule.id===ruleId)?.asset;
     const left:ComparisonSubject|null=this.previewComparisonBaseline??(sourceId?{kind:'exchange',id:sourceId}:asset?{kind:'asset',reference:asset}:null);
     if(!left){this.previewReportError='Choose a captured source or set a response baseline from another retained preview.';return;}
@@ -346,6 +347,8 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable previewDocumentNote='';
   @observable previewContextBusy=false;
   private previewContextRevision=0;
+  private previewPageSourceSessionId='';
+  private previewSceneSourceSessionId='';
   private previewSceneDocumentId='';
   previewDocumentChanged(event:Event):void {
     const id=(event.currentTarget as HTMLSelectElement).value;
@@ -362,6 +365,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable previewPageScope='original-trace';
   @observable previewCaseOrigin='';
   @observable previewReportAvailable=false;
+  @observable previewReportSetId='';
+  @observable previewReportLoaded=false;
+  private previewRequestSetId='';
   @observable previewReportBusy=false;
   @observable previewReportError='';
   @observable previewReportSummary='';
@@ -390,16 +396,63 @@ export class TrafficWorkspace extends WorkspaceElement {
   private previewSceneUrl='';
   private previewSceneScope='original-trace';
   private previewSourceLabel:string|null=null;
+  private previewPageReference:import('../models.js').ExperimentPreviewPage|undefined;
   private requestedPreviewRule:string|null=null;
   previewReportDialog!:HTMLDialogElement;
   private previewReportLabel='';
+  private previewReportRowsLabel='';
+  private previewReportVariantContext:{label:string;selection:NonNullable<ResponsePreviewIntent['variant']>}|undefined;
   private previewReportGeneration=0;
+  private previewSourceGeneration=0;
   private previewReportFocus:HTMLElement|null=null;
 
   previewPageDialog!:HTMLDialogElement;
   previewPageScripts!:HTMLInputElement;
   private previewPageId='';
   private previewPageOperation='';
+
+  private previewNotificationQueued=false;
+  private notifyPreviewSurface():void {if(this.previewNotificationQueued)return;this.previewNotificationQueued=true;queueMicrotask(()=>{this.previewNotificationQueued=false;if(this.isConnected)this.$emit('preview-state-change',undefined);});}
+  previewCaseOriginChanged():void {this.notifyPreviewSurface();}
+  previewComparisonBaselineLabelChanged():void {this.notifyPreviewSurface();}
+  previewContextBusyChanged():void {this.notifyPreviewSurface();}
+  previewDocumentChoicesChanged():void {this.notifyPreviewSurface();}
+  previewDocumentNoteChanged():void {this.notifyPreviewSurface();}
+  previewDraftDirtyChanged():void {this.notifyPreviewSurface();}
+  previewDraftExcludedChanged():void {this.notifyPreviewSurface();}
+  previewPageAvailableChanged():void {this.notifyPreviewSurface();}
+  previewPageBusyChanged():void {this.notifyPreviewSurface();}
+  previewPageModeChanged():void {this.notifyPreviewSurface();}
+  previewPageScopeChanged():void {this.notifyPreviewSurface();}
+  previewPageStatusChanged():void {this.notifyPreviewSurface();}
+  previewPageUrlChanged():void {this.notifyPreviewSurface();}
+  previewReportAvailableChanged():void {this.notifyPreviewSurface();}
+  previewReportBusyChanged():void {this.notifyPreviewSurface();}
+  previewReportErrorChanged():void {this.notifyPreviewSurface();}
+  previewReportSetIdChanged():void {this.notifyPreviewSurface();}
+  previewReportLoadedChanged():void {this.notifyPreviewSurface();}
+  previewReportSummaryChanged():void {this.notifyPreviewSurface();}
+  previewReportUrlChanged():void {this.notifyPreviewSurface();}
+  previewRequestRowsChanged():void {this.notifyPreviewSurface();}
+  previewResourceRowsChanged():void {this.notifyPreviewSurface();}
+  previewReusesSceneChanged():void {this.notifyPreviewSurface();}
+  previewRuleRowsChanged():void {this.notifyPreviewSurface();}
+  previewRuleSummaryChanged():void {this.notifyPreviewSurface();}
+  previewRulesChanged():void {this.notifyPreviewSurface();}
+  previewRulesBusyChanged():void {this.notifyPreviewSurface();}
+  previewRulesErrorChanged():void {this.notifyPreviewSurface();}
+  previewSceneAvailableChanged():void {this.notifyPreviewSurface();}
+  previewVariantLockedChanged():void {this.notifyPreviewSurface();}
+  previewVariantTextChanged():void {this.notifyPreviewSurface();}
+  private previewReturnFocus:HTMLElement|null=null;
+  rememberPreviewFocus():void {
+    const root=this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
+    this.previewReturnFocus=active instanceof HTMLElement&&active.getClientRects().length&&!this.requestActionsMenu?.contains(active)?active:this.actionsButton;
+  }
+  private restorePreviewFocus():void {
+    const target=this.previewReturnFocus;
+    if(target?.isConnected&&target.getClientRects().length)target.focus({preventScroll:true});
+  }
   @observable savingTrace=false;
   @observable saveTraceStatus='';
   @observable saveTraceOpen=false;
@@ -1657,13 +1710,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.$emit('response-experiment-request',{sessionId:this.selectedSessionId,detail:structuredClone(this.selectedDetail),reusable:true} satisfies SelectedResponse);
   }
   beginAutoResponseFromSelected():void { if (this.selectedDetail && this.selectedSessionId) this.$emit('autoresponse-request',{sessionId:this.selectedSessionId,detail:this.selectedDetail}); }
-  async revealSession(id:string,canFocus:()=>boolean=()=>true):Promise<boolean> {
+  async revealSession(id:string,canFocus:()=>boolean=()=>true,canApply:()=>boolean=()=>true):Promise<boolean> {
     window.clearTimeout(this.searchTimer);
     const focus=this.trackNavigationFocus(),restoreFocus=()=>focus.unchanged()&&canFocus();
     let revision = ++this.queryRevision;
     try {
       const view = await invoke<TrafficView>('query_traffic_view',{query:{sort:this.sort,focusId:id}});
-      if (revision !== this.queryRevision || !this.isConnected) {this.releaseView(view);return false;}
+      if (revision !== this.queryRevision || !this.isConnected || !canApply()) {this.releaseView(view);return false;}
       this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;
     // Discard live queries started with the old filters while the source page was loading.
       revision = ++this.queryRevision;
@@ -1773,8 +1826,11 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   showCapturedPage():void {
     this.trafficMenu.hidePopover();const detail=this.selectedDetail;if(!detail||!this.previewPageAvailable||this.previewPageBusy)return;
+    this.rememberPreviewFocus();
+    this.previewRequestSetId='';
+    this.previewPageReference=undefined;
     this.closePopover(this.requestActionsMenu,this.actionsButton);
-    this.previewContextRevision++;this.previewContextBusy=false;this.previewDocumentChoices=[];this.previewDocumentNote='';
+    this.previewContextRevision++;this.previewContextBusy=false;this.previewDocumentChoices=[];this.previewDocumentNote='';this.previewPageSourceSessionId=detail.id;
     this.previewReusesScene=false;this.previewSourceLabel=null;this.previewPageMode='captured';this.previewDraftExcluded=false;this.$emit('preview-options-request',undefined);void this.loadPreviewRules();this.previewPageId=detail.id;this.previewPageUrl=detail.requests.find(head=>head.boundary==='client-request')?.target??'';this.previewPageGeneration++;this.previewPageStatus='';this.previewPageScope='original-trace';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();
   }
   async loadPreviewRules():Promise<void> {
@@ -1798,63 +1854,105 @@ export class TrafficWorkspace extends WorkspaceElement {
   excludePreviewDraft(event:Event):void {this.previewPageStatus='';this.previewDraftExcluded=(event.currentTarget as HTMLInputElement).checked;}
   private updatePreviewRuleSummary():void {const selected=this.previewRules.filter(row=>row.included);this.previewRuleSummary=selected.length+' selected'+(selected.length?': '+selected.slice(0,3).map(row=>row.name.length>90?row.name.slice(0,89)+'…':row.name).join(', ')+(selected.length>3?' and '+(selected.length-3)+' more':''):'');}
   async showRulePreview(intent:ResponsePreviewIntent):Promise<void> {
+    const current=()=>this.isConnected&&this.view==='traffic';
+    try {const prepared=await this.prepareRulePreview(intent,current);if(current()){if(prepared)prepared();}}
+    catch(error:unknown){if(current())this.showNotice('Choose a captured page',describeError(error),null,null);}
+  }
+  async prepareRulePreview(intent:ResponsePreviewIntent,current:()=>boolean):Promise<(()=>void)|null|undefined> {
     if(this.viewerMode||this.previewPageBusy)return;
+    if(intent.pageTarget){
+      const target=intent.pageTarget;
+      return ()=>{
+        if(!this.isConnected||!current()||this.previewPageBusy)return;
+        this.previewContextRevision++;this.previewContextBusy=false;this.previewDocumentChoices=[];this.previewDocumentNote='';
+        this.previewRequestSetId=intent.responseSetId??'';
+        this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;this.requestedPreviewVariant=intent.variant;
+        this.previewPageReference=target.page;this.previewPageId=target.page.entryId;this.previewPageSourceSessionId=target.page.entryId;
+        this.previewPageUrl=target.page.url;this.previewSourceLabel=target.sourceLabel;this.previewReusesScene=!!target.sourceLabel;
+        this.previewPageScope='original-trace';this.previewPageMode=intent.mode;this.previewPageGeneration++;this.previewPageStatus='';
+        this.previewDraftExcluded=false;this.$emit('preview-options-request',undefined);this.previewPageScripts.checked=false;
+        this.previewPageDialog.showModal();void this.loadPreviewRules();
+      };
+    }
+    this.previewPageReference=undefined;this.previewRequestSetId='';
     const revision=++this.previewContextRevision,selection=this.selectedSessionId;
-    if(intent.sourceSessionId){
-      this.previewContextBusy=true;
-      try {
-        const choices=await invoke<{pages:Array<{id:string;url:string;startedAt:number;recordedReferrer:boolean}>;more:boolean}>('captured_page_choices',{sourceId:intent.sourceSessionId});
-        if(revision!==this.previewContextRevision||!this.isConnected||this.view!=='traffic'||selection!==this.selectedSessionId)return;
-        if(!choices.pages.length)throw new Error('No complete HTML response remains in this source. Import its page or select another captured page in Traffic.');
-        const previous=this.previewSceneAvailable&&choices.pages.find(page=>page.id===this.previewSceneDocumentId);
-        this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;this.requestedPreviewVariant=intent.mode==='modified'?intent.variant:undefined;
-        if(previous)this.showRelatedPreview(intent.mode);
-        else {
-          this.previewReusesScene=false;this.previewSourceLabel=null;this.previewPageScope='original-trace';
-          const page=choices.pages.find(page=>page.id===this.selectedSessionId)??choices.pages[0]!;
-          this.previewPageId=page.id;this.previewPageUrl=page.url;this.previewPageGeneration++;this.previewPageStatus='';
+    const valid=()=>revision===this.previewContextRevision&&this.isConnected&&selection===this.selectedSessionId&&!this.previewPageBusy;
+    let choices:PreviewPageChoices|undefined,lookupError:unknown;
+    this.previewContextBusy=true;
+    try {
+      if(intent.sourceSessionId){
+        try {choices=await invoke<PreviewPageChoices>('captured_page_choices',{sourceId:intent.sourceSessionId});}
+        catch(error:unknown){lookupError=error;}
+      }
+      if(!valid()||!current())return;
+      const matchingScene=this.previewSceneAvailable&&(!intent.sourceSessionId||this.previewSceneSourceSessionId===intent.sourceSessionId||this.previewSceneDocumentId===intent.sourceSessionId||choices?.pages.some(page=>page.id===this.previewSceneDocumentId));
+      const pages=choices?.pages.length?choices:undefined;
+      // An explicitly inspected HTML response is the recovery path for expired
+      // provenance. Never substitute an arbitrary page from another capture.
+      if(!matchingScene&&!pages&&!(this.selectedDetail&&this.previewPageAvailable)){
+        if(lookupError)throw lookupError;
+        return null;
+      }
+      return ()=>{
+        if(!valid()||this.view!=='traffic')return;
+        this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;this.requestedPreviewVariant=intent.variant;
+        if(matchingScene)this.showRelatedPreview(intent.mode,'',false);
+        else if(pages){
+          const page=pages.pages.find(page=>page.id===selection)??pages.pages[0]!;
+          this.previewPageSourceSessionId=intent.sourceSessionId;this.previewReusesScene=false;this.previewSourceLabel=null;this.previewPageScope='original-trace';
+          this.previewPageId=page.id;this.previewPageUrl=page.url;this.previewPageGeneration++;this.previewPageStatus='';this.previewPageMode=intent.mode;
           this.previewDraftExcluded=false;this.$emit('preview-options-request',undefined);this.previewPageScripts.checked=false;
           this.previewPageDialog.showModal();void this.loadPreviewRules();
+        }else {this.showCapturedPage();this.previewPageMode=intent.mode;this.previewPageSourceSessionId=intent.sourceSessionId||this.previewPageSourceSessionId;}
+        if(pages){
+          this.previewDocumentChoices=pages.pages.map(page=>({id:page.id,url:page.url,label:(page.recordedReferrer?'Recorded referrer · ':'')+page.url}));
+          this.previewDocumentNote='Choose the captured HTML page for this resource. Recorded referrer/time proximity are hints, not proof of a navigation.'+(pages.more?' Showing up to 100 pages; select another HTML response directly in Traffic for additional choices.':'');
         }
-        this.previewPageMode=intent.mode;
-        this.previewDocumentChoices=choices.pages.map(page=>({id:page.id,url:page.url,label:(page.recordedReferrer?'Recorded referrer · ':'')+page.url}));
-        this.previewDocumentNote='Choose the captured HTML page for this resource. Recorded referrer/time proximity are hints, not proof of a navigation.'+(choices.more?' Showing up to 100 pages; select another HTML response directly in Traffic for additional choices.':'');
-      }catch(error:unknown){if(revision===this.previewContextRevision&&this.isConnected&&this.view==='traffic'&&selection===this.selectedSessionId)this.showNotice('Choose a captured page',describeError(error),null,null);}
-      finally{if(revision===this.previewContextRevision)this.previewContextBusy=false;}
-      return;
-    }
-    this.requestedPreviewRule=intent.mode==='modified'?intent.ruleId:null;this.requestedPreviewVariant=intent.mode==='modified'?intent.variant:undefined;
-    if(this.previewReportAvailable&&this.previewSceneAvailable)this.showRelatedPreview(intent.mode);
-    else if(this.previewPageAvailable){this.showCapturedPage();this.previewPageMode=intent.mode;}
-    else {this.requestedPreviewRule=null;this.requestedPreviewVariant=undefined;this.showNotice('Select a captured page','Select a complete HTML response in Traffic, then choose Preview page… and include this saved rule.',null,null);return;}
+      };
+    }finally{if(revision===this.previewContextRevision)this.previewContextBusy=false;}
   }
-  showRelatedPreview(mode:string):void {
-    if(this.previewPageBusy||!this.previewSceneAvailable)return;
-    if(mode==='modified'&&!this.requestedPreviewRule&&!this.requestedPreviewVariant&&this.previewSceneVariant){this.requestedPreviewVariant={...this.previewSceneVariant};this.requestedPreviewVariantLatest=true;}
-    this.previewContextRevision++;this.previewContextBusy=false;this.previewDocumentChoices=[];this.previewDocumentNote='';this.previewPageId=this.previewSceneDocumentId;
+  showRelatedPreview(mode:string,responseSetId=this.previewReportSetId,inheritVariant=true):void {
+    if(this.previewPageBusy||!this.previewSceneAvailable||this.previewReportDialog.open&&this.previewReportRowsLabel!==this.previewReportLabel)return;
+    if(this.previewReportDialog.open)this.previewReturnFocus=this.previewReportFocus;
+    else this.rememberPreviewFocus();
+    this.previewRequestSetId=responseSetId;
+    this.previewPageReference=undefined;
+    if(inheritVariant&&!this.requestedPreviewRule&&!this.requestedPreviewVariant&&this.previewSceneVariant){this.requestedPreviewVariant={...this.previewSceneVariant};this.requestedPreviewVariantLatest=mode==='modified';}
+    this.previewContextRevision++;this.previewContextBusy=false;this.previewDocumentChoices=[];this.previewDocumentNote='';this.previewPageId=this.previewSceneDocumentId;this.previewPageSourceSessionId=this.previewSceneSourceSessionId;
     this.closePopover(this.requestActionsMenu,this.actionsButton);this.closePreviewReport();this.previewReusesScene=true;this.previewPageUrl=this.previewSceneUrl;this.previewPageScope=this.previewSceneScope;this.previewSourceLabel=this.previewReportLabel;this.previewPageMode=mode;this.previewDraftExcluded=false;
     this.$emit('preview-options-request',undefined);this.previewPageGeneration++;this.previewPageStatus='';this.previewPageScripts.checked=false;this.previewPageDialog.showModal();void this.loadPreviewRules();
   }
-  showPreviewRule(id:string):void {if(this.previewCaseOrigin){this.previewReportError='This rule belongs to the frozen case. Review its definition in the package inventory.';return;}this.closePreviewReport();this.$emit('matched-rule-request',id);}
+  showPreviewRule(id:string):void {if(this.previewReportRowsLabel!==this.previewReportLabel)return;if(this.previewCaseOrigin){this.previewReportError='This rule belongs to the frozen case. Review its definition in the package inventory.';return;}const label=this.previewReportLabel;this.closePreviewReport();const generation=this.previewReportGeneration;this.$emit('matched-rule-request',{id,isCurrent:()=>generation===this.previewReportGeneration&&label===this.previewReportLabel});}
   setPreviewScope(event:Event):void {this.previewPageScope=(event.currentTarget as HTMLSelectElement).value;}
   async showPreviewReport():Promise<void> {const active=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.previewReportFocus=active&&this.requestActionsMenu.contains(active)?this.actionsButton:active;this.previewReportDialog.showModal();await this.refreshPreviewReport();}
   async refreshPreviewReport():Promise<void> {
     const label=this.previewReportLabel,generation=++this.previewReportGeneration;this.previewReportBusy=true;this.previewReportError='';
+    if(label!==this.previewReportRowsLabel){this.previewReportLoaded=false;this.previewReportUrl='';this.previewReportSummary='Loading preview diagnostics…';this.previewVariantText='';this.previewCaseOrigin='';this.previewRuleRows=[];this.previewRequestRows=[];this.previewResourceRows=[];this.previewSceneAvailable=false;this.previewSceneVariant=undefined;}
     try {const report=await invoke<CapturedPageReport>('captured_page_report',{label});if(generation!==this.previewReportGeneration||!this.isConnected)return;
+      this.previewReportRowsLabel=label;
+      this.previewReportLoaded=true;
       this.previewCaseOrigin=report.caseOrigin??'';this.previewVariantText=report.caseOrigin??(report.variant?`${report.variant.experimentId} / ${report.variant.variantId} / revision ${report.variant.revision}`:'');
-      this.previewSceneVariant=report.variant??undefined;
+      this.previewSceneVariant=report.variant??(this.previewReportVariantContext?.label===label?this.previewReportVariantContext.selection:undefined);
       this.previewSceneUrl=report.url;this.previewSceneScope=report.scope;this.previewRuleRows=report.rules??[];this.previewSceneAvailable=!report.caseOrigin&&report.bytesAvailable!==false;this.previewReportUrl=report.url;this.previewReportSummary=(this.previewRuleRows.length?'Modified':'Baseline')+' · '+(report.runtime??'WebView2')+' · '+(report.bytesAvailable===false?'Related preview bytes expired · ':'')+(report.caseOrigin?report.source:report.scope==='all-loaded'?'All loaded traffic':report.source)+' · '+report.available+' frozen variants · '+report.skipped+' skipped · '+report.hits+' served · '+report.misses+' network failures · '+(report.failures??0)+' failed · '+Math.max(0,report.available+report.skipped-report.resources.length)+' omitted resource decisions · '+Math.max(0,report.hits+report.misses+(report.failures??0)-report.requests.length)+' older requests'+(report.scriptsEnabled==null?'':report.scriptsEnabled?' · Scripts enabled':' · Scripts disabled');
       this.previewResourceRows=report.resources.map((row,index)=>({id:String(index),sourceId:row.entryId,sourceAvailable:row.sourceAvailable!==false,method:row.method,url:row.url,source:row.source,size:row.bytes==null?'Unavailable':row.bytes.toLocaleString()+' bytes',time:row.unixMillis==null||!Number.isFinite(new Date(row.unixMillis).getTime())?'Time unavailable':new Date(row.unixMillis).toISOString(),decision:row.decision+(row.sha256?' · SHA-256 '+row.sha256:'')}));
       this.previewRequestRows=report.requests.map(row=>({id:String(row.id),method:row.method,url:row.url,outcome:row.outcome==='failed/unavailable'?'Failed / unavailable':row.outcome==='auto-response'?'Saved response':row.outcome==='captured'||row.outcome==='served'?'Captured':'Missing · Network failure',reason:row.reason,ruleId:row.ruleId??'',sourceId:row.entryId??'',sha256:row.sha256??'',comparable:row.outcome==='captured'||row.outcome==='auto-response'||row.outcome==='served'}));
-    }catch(error:unknown){if(generation===this.previewReportGeneration)this.previewReportError='Preview diagnostics could not be read: '+describeError(error);}finally{if(generation===this.previewReportGeneration)this.previewReportBusy=false;}
+    }catch(error:unknown){if(generation===this.previewReportGeneration){this.previewReportError='Preview diagnostics could not be read: '+describeError(error);if(label!==this.previewReportRowsLabel)this.previewReportSummary='No diagnostics available for this preview.';}}finally{if(generation===this.previewReportGeneration)this.previewReportBusy=false;}
   }
-  async showPreviewSource(id:string):Promise<void> {try{await invoke('session_detail',{id});this.closePreviewReport();await this.revealSession(id);}catch{this.previewReportError='The source entry is no longer retained. Its resource decision remains in this report.';}}
-  closePreviewReport(event?:Event):void {event?.preventDefault();this.previewReportGeneration++;this.previewReportBusy=false;this.previewReportDialog.close();this.previewReportFocus?.focus();this.previewReportFocus=null;}
-  closeCapturedPageWarning():void {if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});this.previewContextRevision++;this.previewContextBusy=false;this.previewPageGeneration++;this.previewChoicesGeneration++;this.previewRulesBusy=false;this.previewPageDialog.close();this.actionsButton.focus({preventScroll:true});}
+  async showPreviewSource(id:string):Promise<void> {
+    if(this.previewReportRowsLabel!==this.previewReportLabel)return;
+    const generation=this.previewReportGeneration,source=++this.previewSourceGeneration,label=this.previewReportRowsLabel;
+    const current=()=>generation===this.previewReportGeneration&&source===this.previewSourceGeneration&&this.previewReportDialog.open&&label===this.previewReportLabel&&label===this.previewReportRowsLabel;
+    const focus=this.trackNavigationFocus();
+    try{await invoke('session_detail',{id});if(current()&&focus.unchanged())this.$emit('preview-source-request',{id,isCurrent:current});}
+    catch{if(current())this.previewReportError='The source entry is no longer retained. Its resource decision remains in this report.';}
+    finally{focus.dispose();}
+  }
+  closePreviewReport(event?:Event):void {event?.preventDefault();this.previewReportGeneration++;this.previewReportBusy=false;this.previewReportDialog.close();if(this.previewReportFocus?.isConnected&&this.previewReportFocus.getClientRects().length)this.previewReportFocus.focus({preventScroll:true});this.previewReportFocus=null;}
+  closeCapturedPageWarning():void {if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});this.previewContextRevision++;this.previewContextBusy=false;this.previewPageGeneration++;this.previewChoicesGeneration++;this.previewRulesBusy=false;this.previewPageDialog.close();this.restorePreviewFocus();}
   async openCapturedPage():Promise<void> {
     if(this.previewPageBusy)return;const modified=this.previewPageMode==='modified';if(modified&&(this.previewRulesBusy||this.previewRulesError||!this.previewRules.some(row=>row.included)&&!this.previewVariantSelection||this.previewDraftDirty&&!this.previewDraftExcluded)){this.previewPageStatus='Select saved rules and resolve or explicitly exclude unsaved changes before opening.';return;}this.previewPageBusy=true;this.previewPageStatus='Preparing captured responses…';
-    const generation=this.previewPageGeneration,id=this.previewPageId,enableScripts=this.previewPageScripts.checked,operationId=crypto.randomUUID();this.previewPageOperation=operationId;
-    try{const label=await invoke<string>('open_captured_page',{id,enableScripts,operationId,sourceLabel:this.previewSourceLabel,options:modified?{scope:this.previewPageScope,...(this.previewVariantSelection?{variant:this.previewVariantSelection}:{ruleIds:this.previewRules.filter(row=>row.included).map(row=>row.id),generation:this.previewRulesGeneration})}:{scope:this.previewPageScope}});this.previewReportLabel=label;this.previewReportAvailable=true;this.previewSceneAvailable=true;this.previewSceneDocumentId=id;this.previewSceneVariant=modified?this.previewVariantSelection:undefined;this.previewSceneUrl=this.previewPageUrl;this.previewSceneScope=this.previewPageScope;if(this.isConnected&&generation===this.previewPageGeneration&&this.previewPageDialog.open){this.previewPageDialog.close();this.actionsButton.focus({preventScroll:true});this.diagnostic='Captured page preview opened. Preview diagnostics show resource choices and missing requests.';}}
+    const generation=this.previewPageGeneration,id=this.previewPageId,enableScripts=this.previewPageScripts.checked,operationId=crypto.randomUUID(),responseSetId=this.previewRequestSetId;this.previewPageOperation=operationId;
+    try{const label=await invoke<string>('open_captured_page',{id,enableScripts,operationId,sourceLabel:this.previewSourceLabel,options:modified?{...(this.previewPageReference?{pageReference:this.previewPageReference}:{}),scope:this.previewPageScope,...(this.previewVariantSelection?{variant:this.previewVariantSelection}:{ruleIds:this.previewRules.filter(row=>row.included).map(row=>row.id),generation:this.previewRulesGeneration})}:{...(this.previewPageReference?{pageReference:this.previewPageReference}:{}),scope:this.previewPageScope}});this.previewReportLabel=label;this.previewReportVariantContext=this.previewVariantSelection?{label,selection:{...this.previewVariantSelection}}:undefined;this.previewReportSetId=responseSetId;this.previewReportAvailable=true;this.previewSceneAvailable=true;this.previewSceneDocumentId=id;this.previewSceneSourceSessionId=this.previewPageSourceSessionId;this.previewSceneVariant=this.previewVariantSelection;this.previewSceneUrl=this.previewPageUrl;this.previewSceneScope=this.previewPageScope;if(this.isConnected&&generation===this.previewPageGeneration&&this.previewPageDialog.open){this.previewPageDialog.close();this.restorePreviewFocus();this.diagnostic='Captured page preview opened. Preview diagnostics show resource choices and missing requests.';}}
     catch(error:unknown){if(this.isConnected&&generation===this.previewPageGeneration){this.previewPageStatus='Preview could not be opened: '+describeError(error);if(!this.previewPageDialog.open&&!describeError(error).includes('canceled'))this.showNotice('Captured page preview failed',describeError(error),null,null);}}
     finally {this.previewPageBusy=false;this.previewPageOperation='';}
   }

@@ -50,6 +50,7 @@ export class MessageInspector extends WebUIElement {
   bodyLimit!: HTMLInputElement;
   private generation = 0;
   private previousId: string | null = null;
+  private inspectedBodyKey: string | null = null;
 
   sideChanged(): void { this.mode = this.side === 'request' ? 'headers' : 'body'; this.updateMessage(); }
   splitChanged(): void { this.headerShare = this.split+'%'; }
@@ -72,10 +73,13 @@ export class MessageInspector extends WebUIElement {
     this.sourceIp=this.side==='request'?this.detail?.sourceIp??'':'';
     this.sortHeaders();
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss,...(this.detail.composerOrigin?{composerSource:this.detail.composerOrigin}:{})},null,2) : 'No exchange selected.';
-    if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody();
-    else { this.generation++; this.hexPreview = null; this.bodyText = 'Select an exchange to preview its body.'; this.bodyFacts = ''; }
+    if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody(false);
+    else if (!this.detail || this.bodyInspectionKey() !== this.inspectedBodyKey) {
+      this.generation++; this.inspectedBodyKey=null; this.loading=false; this.hexPreview=null; this.imageUrl='';
+      this.bodyText='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
+    }
   }
-  showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(); }
+  showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
   changeBoundary(event:Event): void { this.headerOffset=0; this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
   toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.headerOffset=0;const head=this.heads().find(head=>head.boundary===this.boundary);if((head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);else this.sortHeaders();}
   previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
@@ -104,7 +108,19 @@ export class MessageInspector extends WebUIElement {
     this.headerShare = event.detail.value+'%';
     this.$emit('inspector-resize',{side:this.side,...event.detail});
   }
-  async inspectBody(): Promise<void> {
+  private bodyInspectionKey():string {
+    const body=this.detail?.storedBodies.find(body=>body.boundary===this.boundary);
+    const status=this.heads().find(head=>head.boundary===this.boundary)?.status;
+    // Session detail objects also change for unrelated traffic and timing updates.
+    // Only the selected body evidence and its interpretation invalidate this view.
+    return JSON.stringify([this.detail?.id,this.side,this.boundary,this.viewer,this.decodeContent,Number(this.bodyLimit?.value??262144),
+      status,this.detail?opaqueConnectTransport(this.detail)?.tunnelDestination:null,
+      body?[body.exchangeId,body.boundary,body.observedBytes,body.wireBodyBytes,body.retainedBytes,body.availability,body.mediaType,body.charset,body.contentCodings,body.sha256,body.reason,body.lengthKnown]:null]);
+  }
+  async inspectBody(force=true): Promise<void> {
+    const inspectionKey=this.bodyInspectionKey();
+    if(!force && inspectionKey===this.inspectedBodyKey)return;
+    this.inspectedBodyKey=inspectionKey;
     const generation = ++this.generation;
     const body = this.detail?.storedBodies.find((body) => body.boundary === this.boundary);
     const previewKey = [this.detail?.id, this.boundary, this.viewer, this.decodeContent].join(':');
@@ -196,6 +212,6 @@ export class MessageInspector extends WebUIElement {
     try { await navigator.clipboard.writeText(text); this.$emit('diagnostic',message); }
     catch { this.$emit('diagnostic','Select the text and use Copy.'); }
   }
-  disconnectedCallback(): void { this.headerGeneration++;this.generation++; super.disconnectedCallback(); }
+  disconnectedCallback(): void { this.headerGeneration++;this.generation++;this.inspectedBodyKey=null; super.disconnectedCallback(); }
 }
 MessageInspector.define('message-inspector');

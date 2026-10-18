@@ -12,15 +12,15 @@ export async function checkNamedVariants(page,root){
  const before=await state(),experiment=before.experiments[0];
  await manager.getByLabel('Variant',{exact:true}).selectOption('baseline');
  assert.deepEqual((await state()).rules,before.rules,'Selecting Baseline changed live rules');
- await manager.getByText('Names, duplicates and archive',{exact:true}).click();
+ await manager.getByText('Names and archive',{exact:true}).click();
  await manager.getByLabel('Response set name',{exact:true}).fill('Related checkout responses');
  await manager.getByRole('button',{name:'Save response set name',exact:true}).click();await settle();
  assert.equal((await state()).experiments[0].name,'Related checkout responses');
  assert.equal(await manager.getByRole('button',{name:'Save response set name',exact:true}).textContent(),'Save name');
  assert.deepEqual((await state()).rules,before.rules,'Renaming the response set changed live rules');
  const name='Patched script with a long customer hypothesis and a second response';
- await manager.getByLabel('Duplicate name',{exact:true}).fill(name);
- await manager.getByRole('button',{name:'Duplicate saved revision',exact:true}).click();await settle();
+ await manager.getByRole('button',{name:'Create variant copy…',exact:true}).click();const copy=page.getByRole('dialog',{name:'Create variant copy',exact:true});await copy.getByLabel('New variant name',{exact:true}).fill(name);
+ await copy.getByRole('button',{name:'Create copy',exact:true}).click();await copy.waitFor({state:'hidden'});
  const variantId=await manager.getByLabel('Variant',{exact:true}).inputValue();
  assert.notEqual(variantId,'baseline');assert.deepEqual((await state()).rules,before.rules);
  // Status refreshes must preserve partially typed metadata.
@@ -39,7 +39,7 @@ export async function checkNamedVariants(page,root){
   await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.savingAutoResponse&&!a.loadingSavedResponse&&!a.draftDirty;});
   assert.deepEqual((await state()).rules,before.rules,'Saving variant rules changed live traffic');
   assert.equal(await manager.isVisible(),true,'Saving a response did not return to its experiment');
-  assert.equal(await manager.getByText('Variant duplicated. Live traffic is unchanged.',{exact:true}).count(),0,'Editor save retained feedback from an older overview action');
+  assert.equal(await manager.locator('footer').getByText('Variant copy created. Live traffic is unchanged.',{exact:true}).count(),0,'Editor save retained feedback from an older overview action');
  }
  assert.equal(await manager.locator('.variant-rule-list li').count(),2);
  await manager.getByRole('button',{name:'Move Second script later',exact:true}).click();await settle();
@@ -55,7 +55,7 @@ export async function checkNamedVariants(page,root){
  let active=await state();assert.equal(active.experiments[0].active.variantId,variantId);assert.equal(active.autoresponsesEnabled,before.autoresponsesEnabled);
  assert.deepEqual(active.rules.find(r=>r.id==='unrelated'),before.rules.find(r=>r.id==='unrelated'));
  // Undo restores only this experiment's previous subset.
- await manager.getByRole('button',{name:'Undo activation',exact:true}).click();await settle();assert.deepEqual((await state()).rules,before.rules);
+ await manager.getByRole('button',{name:'Undo last activation',exact:true}).click();await settle();assert.deepEqual((await state()).rules,before.rules);
  await page.evaluate(()=>globalThis.__workspaceFixture.variantOverlaps=[]);
  await manager.getByRole('button',{name:'Use saved revision for live traffic',exact:true}).click();await settle();
  const authored=(await state()).experiments[0].variants;

@@ -165,6 +165,12 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable responseNameLabel=initialState.responseNameLabel;
   @observable variantHistorical=false;
   experimentVariants!:ExperimentVariants;
+  @observable previewReportAvailable=false;
+  @observable previewReportSetId='';
+  @observable editorPreviewReportAvailable=false;
+  previewReportAvailableChanged():void {this.renderExperimentState();}
+  previewReportSetIdChanged():void {this.renderExperimentState();}
+  showPreviewDiagnostics():void {this.$emit('preview-report-request',undefined);}
   private editingVariant:ExperimentSelection|null=null;
   onVariantStatus(event:CustomEvent<AutomationStatus>):void {
     if(event.detail.generation>=(this.automationStatus?.generation??0)&&this.automationKind==='success')this.automationText='';
@@ -198,10 +204,12 @@ export class AutomationWorkspace extends WorkspaceElement {
     const experiment=this.automationStatus?.experiments?.find(e=>e.id===selection.experimentId);
     const sourceRule=revision?.rules.find(r=>r.id===ruleId)??experiment?.variants.flatMap(v=>v.revisions.flatMap(r=>r.rules))[0];
     const asset=[...this.assetsIndex.values()].find(a=>`${a.id}@${a.revision}`===sourceRule?.request.responseAsset);
-    const sourceSessionId=asset?.provenance.kind==='session'?asset.provenance.exchange_id:this.sourceSessionId;
-    this.$emit('page-preview-request',{ruleId,sourceSessionId,mode:'modified',variant:selection} satisfies ResponsePreviewIntent);
+    const sourceSessionId=asset?.provenance.kind==='session'?asset.provenance.exchange_id:'';
+    const current=this.experimentVariants.previewContext();
+    this.$emit('page-preview-request',{ruleId,sourceSessionId,mode:'modified',variant:selection,responseSetId:selection.experimentId,isCurrent:()=>this.view==='automation'&&current()} satisfies ResponsePreviewIntent);
   }
   private renderExperimentState():void {
+    this.editorPreviewReportAvailable=this.previewReportAvailable&&!!this.editingVariant&&this.editingVariant.experimentId===this.previewReportSetId;
     this.responseSaveLabel=this.responseExperiment?(this.editingVariant?'Save revision':'Save response set'):'Save rule';
     this.responseNameLabel=this.responseExperiment?(this.editingVariant?'Response name':'Response set name'):'Rule name';
     if(!this.responseExperiment){this.experimentStateText='';return;}
@@ -442,7 +450,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.closeResponseMenu(this.previewResponseMenu,this.previewResponseButton);
     if(mode==='modified'&&!this.editingAutoResponseId)return;
     if(this.responseExperiment&&this.draftDirty){this.autoResponseError=`${this.responseSaveLabel} before previewing. Your draft is preserved.`;return;}
-    this.$emit('page-preview-request',{ruleId:this.editingAutoResponseId,sourceSessionId:this.sourceSessionId,mode,...(mode==='modified'&&this.editingVariant?{variant:this.editingVariant}:{})} satisfies ResponsePreviewIntent);
+    const revision=this.editorRevision,section=this.automationSection,dirty=this.draftDirty;
+    this.$emit('page-preview-request',{ruleId:this.editingAutoResponseId,sourceSessionId:this.sourceSessionId,mode,...(this.editingVariant?{responseSetId:this.editingVariant.experimentId,variant:this.editingVariant}:{}),isCurrent:()=>this.view==='automation'&&section===this.automationSection&&revision===this.editorRevision&&dirty===this.draftDirty&&!this.editorHidden} satisfies ResponsePreviewIntent);
   }
   async canLeaveEditor():Promise<boolean> {
     if(this.savingAutoResponse)return false;
@@ -1006,18 +1015,31 @@ export class AutomationWorkspace extends WorkspaceElement {
     catch (error: unknown) { this.automationText = `Saved response reorder failed: ${describeError(error)}`; this.automationKind = 'error'; }
     finally { this.changingAutoResponse = false; }
   }
-  async showMatchedRule(id: string): Promise<void> {
-    const owner=this.automationStatus?.experiments?.find(e=>e.variants.some(v=>v.revisions.some(r=>r.rules.some(rule=>rule.id===id))));
+  async showMatchedRule(id: string,isCurrent:()=>boolean=()=>true,confirmLeave:()=>Promise<boolean>=()=>this.canLeaveEditor()): Promise<void> {
+    const originRevision=this.editorRevision,originDirty=this.draftDirty;
+    try {
+    if(!isCurrent())return;
+    const findOwner=()=>this.automationStatus?.experiments?.find(e=>e.variants.some(v=>v.revisions.some(r=>r.rules.some(rule=>rule.id===id))));
+    let owner=findOwner();
     if(owner){
-      if(!await this.canLeaveEditor())return;
+      if(!await confirmLeave()||!isCurrent())return;
+      owner=findOwner();if(!owner){this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null);return;}
       const variant=owner.variants.find(v=>v.revisions.some(r=>r.rules.some(rule=>rule.id===id)))!;
       const selection=owner.active?.variantId===variant.id?owner.active:{experimentId:owner.id,variantId:variant.id,revision:variant.revisions.at(-1)!.revision};
       this.editorHidden=true;this.automationSection='experiments';this.$flushUpdates();await this.experimentVariants.reveal(selection);return;
     }
-    const rule=this.automationStatus?.rules.find(rule=>rule.id===id);
+    let rule=this.automationStatus?.rules.find(rule=>rule.id===id);
     if(!rule){this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null);return;}
-    if(!await this.canLeaveEditor())return;
-    this.ruleSearch='';this.ruleFilter='all';this.ruleSelection.replace(id);this.renderRuleSelection();await this.editAutoResponse(rule);
+    if(!await confirmLeave()||!isCurrent())return;
+    rule=this.automationStatus?.rules.find(rule=>rule.id===id);
+    if(!rule){this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null);return;}
+    this.ruleSearch='';this.ruleFilter='all';this.ruleSelection.replace(id);this.renderRuleSelection();
+    if(!originDirty&&rule.id===this.editingAutoResponseId&&!this.editorHidden)this.showAutomationSection(this.responseExperiment?'experiments':'responses');
+    else {
+      const pending=this.editAutoResponse(rule,true),revision=this.editorRevision;
+      await pending;if(revision!==this.editorRevision)return;
+    }
+    if(!isCurrent()||!this.isConnected||this.view!=='automation'||this.editingAutoResponseId!==id||this.ruleSelection.ids.size!==1||!this.ruleSelection.ids.has(id))return;
     this.highlightedRuleId = id;
     this.$flushUpdates();
     const card = this.getRootNode() as ShadowRoot;
@@ -1025,6 +1047,11 @@ export class AutomationWorkspace extends WorkspaceElement {
     if (!element) { this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null); return; }
     element.scrollIntoView({block:'center'});
     element.focus({preventScroll:true});
+    } finally {
+      // A confirmed discard is consumed only by replacing/leaving that editor.
+      // An aborted reveal must not leave unchanged typed fields marked clean.
+      if(originDirty&&originRevision===this.editorRevision&&!this.draftDirty)this.refreshResponseDirty();
+    }
   }
   async refreshAutomation(): Promise<void> {
     try {
@@ -1543,6 +1570,8 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   private renderAutomation(status: AutomationStatus): void {
     if(this.automationStatus && status.generation<this.automationStatus.generation)return;
+    // Same-generation refreshes may have begun before a page-only metadata save.
+    for(const set of status.experiments??[]){const previous=this.automationStatus?.experiments?.find(old=>old.id===set.id);if((previous?.previewPageRevision??0)>(set.previewPageRevision??0)){set.previewPage=previous!.previewPage??null;set.previewPageRevision=previous!.previewPageRevision??0;}}
     const matcherStateChanged=this.automationStatus!==null&&status.generation!==this.automationStatus.generation;
     const previousRule=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
     const currentRule=status.rules.find(rule=>rule.id===this.editingAutoResponseId);

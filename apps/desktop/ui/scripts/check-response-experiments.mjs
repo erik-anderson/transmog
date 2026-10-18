@@ -134,9 +134,11 @@ export async function checkResponseExperiments(page,root){
   await page.screenshot({path:resolve(root,`../../../target/ui-check/response-experiment-${width}.png`)});
  }
  await editor.getByRole('button',{name:'Preview…',exact:true}).click();await editor.getByRole('button',{name:'With saved changes…',exact:true}).click();
- const warning=page.locator('.captured-page-warning');await warning.getByLabel('Captured page',{exact:true}).waitFor();
+ const chooser=page.getByRole('dialog',{name:'Choose a page for this response set',exact:true});await chooser.waitFor();
+ assert.equal(await chooser.getByRole('radio',{checked:true}).count(),0);await chooser.getByRole('radio',{name:/https:\/\/example.test\/checkout/}).check();await chooser.getByRole('button',{name:'Use page',exact:true}).click();
+ const warning=page.locator('.captured-page-warning');await warning.waitFor();
  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'first','Choosing a page replaced the inspected script');
- assert.equal(await warning.getByLabel('Captured page',{exact:true}).inputValue(),'second');
+ assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.previewPageId),'second');
  assert.match(await warning.textContent(),/fresh InPrivate browser profile/);
  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewRulesBusy);
  assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').traffic.previewRules.filter(r=>r.included).map(r=>r.id)),[id]);
@@ -197,4 +199,29 @@ export async function checkResponseExperiments(page,root){
  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewContextBusy);
  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.previewPageDialog.open),false);
  await page.setViewportSize({width:1440,height:900});
+ // Missing page context from the editor returns to its visible Preview trigger,
+ // including when the command originated in a now-closed popover.
+ await page.evaluate(()=>document.querySelector('app-shell').activateView('automation'));
+ await page.evaluate(id=>document.querySelector('app-shell').automation.showMatchedRule(id),id);await reopen();
+ const retained=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,s=globalThis.__workspaceFixture;const retained={sessions:structuredClone(s.sessions),scene:t.previewSceneAvailable,page:t.previewPageAvailable};s.sessions=[];s.previewContextError='Original source expired';t.previewSceneAvailable=false;t.previewPageAvailable=false;return retained;});
+ const prerequisite=chooser;
+ const editorPreview=editor.getByRole('button',{name:'Preview…',exact:true});
+ const requestPreview=async()=>{await editorPreview.click();await editor.getByRole('button',{name:'With saved changes…',exact:true}).click();};
+ await requestPreview();await prerequisite.waitFor();assert.equal(await editor.isVisible(),true);
+ await page.keyboard.press('Escape');await prerequisite.waitFor({state:'hidden'});
+ assert.equal(await editorPreview.evaluate(b=>b===b.getRootNode().activeElement),true,'Escape restored focus to a hidden preview menu item');
+ await requestPreview();await prerequisite.getByRole('button',{name:'Close',exact:true}).click();
+ assert.equal(await editorPreview.evaluate(b=>b===b.getRootNode().activeElement),true);
+ await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.deferSetPages=true;s.releaseSetPages=null;});
+ await requestPreview();await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseSetPages);
+ await editor.getByLabel('Response name',{exact:true}).fill('Preserved edit during page lookup');
+ await page.evaluate(()=>globalThis.__workspaceFixture.releaseSetPages());await page.waitForTimeout(30);
+ assert.equal(await prerequisite.isVisible(),false);assert.equal(await warning.isVisible(),false);
+ assert.equal(await editor.getByLabel('Response name',{exact:true}).inputValue(),'Preserved edit during page lookup');
+ assert.equal(await page.evaluate(()=>document.querySelector('app-shell').activeView),'automation');
+ await editor.getByRole('button',{name:'Discard changes',exact:true}).click();
+ await page.evaluate(retained=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions=retained.sessions;s.previewContextError=null;t.previewSceneAvailable=retained.scene;t.previewPageAvailable=retained.page;},retained);
+ await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse);
+ await editor.getByRole('button',{name:'Versions and history…',exact:true}).click();
+ await manager.getByLabel('Response set',{exact:true}).waitFor();
 }

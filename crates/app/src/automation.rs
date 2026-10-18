@@ -442,7 +442,7 @@ impl AutomationRegistry {
             .mutation
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let candidate = {
+        let mut candidate = {
             let mut candidates = self
                 .candidates
                 .lock()
@@ -474,6 +474,26 @@ impl AutomationRegistry {
                 true,
             ));
         }
+        // Page choices are organizational metadata. A candidate prepared before
+        // a page-only write must not restore its older association at activation.
+        {
+            let current = self
+                .active
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            for experiment in &mut candidate.document.experiments {
+                if let Some(latest) = current
+                    .document
+                    .experiments
+                    .iter()
+                    .find(|set| set.id == experiment.id)
+                {
+                    experiment.preview_page.clone_from(&latest.preview_page);
+                    experiment.preview_page_revision = latest.preview_page_revision;
+                }
+            }
+        }
+        persistence_bytes(&candidate.document)?;
         if let Some(path) = self.path.as_deref() {
             persist(path, &candidate.document)?;
         }

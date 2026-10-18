@@ -387,9 +387,12 @@ export interface StreamPage { total:number; offset:number; rows:StreamRow[]; sum
 export interface ExperimentSelection {experimentId:string;variantId:string;revision:number;}
 export interface ExperimentRevision {revision:number;rules:AutomationRule[];}
 export interface ExperimentVariant {id:string;name:string;archived:boolean;revisions:ExperimentRevision[];}
-export interface ResponseExperiment {id:string;name:string;archived:boolean;paused:boolean;active:ExperimentSelection|null;variants:ExperimentVariant[];undo?:{generation:number}|null;}
+export interface ExperimentPreviewPage {capture:string;entryId:string;requestNumber:string;traceId:string|null;url:string;method:string;startedAt:number;source:string;}
+export interface PreviewPageTarget {page:ExperimentPreviewPage;sourceLabel:string|null;}
+export interface ExperimentPreviewPages {pages:ExperimentPreviewPage[];page:ExperimentPreviewPage|null;revision:number;available:boolean;more:boolean;sourceLabel:string|null;}
+export interface ResponseExperiment {id:string;name:string;archived:boolean;paused:boolean;active:ExperimentSelection|null;variants:ExperimentVariant[];undo?:{generation:number;selection?:ExperimentSelection|null}|null;previewPage?:ExperimentPreviewPage|null;previewPageRevision?:number;}
 export interface VariantEdit {selection:ExperimentSelection;ruleId:string|null;}
-export interface ResponsePreviewIntent { ruleId:string|null; sourceSessionId:string; mode:'captured'|'modified'; variant?:ExperimentSelection; }
+export interface ResponsePreviewIntent { ruleId:string|null; sourceSessionId:string; mode:'captured'|'modified'; variant?:ExperimentSelection; responseSetId?:string;pageTarget?:PreviewPageTarget; isCurrent?:()=>boolean; }
 
 export interface LiteralTransform {find:string;replacement:string;occurrences:'first'|'all';expectedMatches:number|null;mediaType:string;encoding:'utf-8';maxBytes:number;}
 export interface BodyEditReport {outcome:string;matches:number|null;replacements:number;beforeBytes:number|null;afterBytes:number|null;beforeSha256:string|null;afterSha256:string|null;}

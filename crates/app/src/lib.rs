@@ -22,6 +22,7 @@ pub mod comparison;
 mod composer;
 mod composer_response;
 mod diagnostics;
+mod experiment_pages;
 mod export_privacy;
 pub mod export_review;
 pub mod incidents;
@@ -112,6 +113,7 @@ pub use diagnostics::{
     DiagnosticEvent, DiagnosticLevel, DiagnosticsReport, RuntimeDiagnostics, SupportBundleRequest,
     SupportBundleResult,
 };
+pub use experiment_pages::{ExperimentPreviewPage, ExperimentPreviewPages};
 pub use inspector::{
     AutoResponseMatchView, BodyEditView, BodyInspection, BodyInspectionRequest, BodyRepresentation,
     BodyView, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
@@ -339,6 +341,7 @@ impl std::fmt::Debug for AppConfig {
 /// Cloneable owner of authoritative application state.
 #[derive(Clone)]
 pub struct Application {
+    preview_capture: String,
     upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
     client_certificates: Option<ClientCertificateManager>,
     certificate_policy_operation: Arc<std::sync::Mutex<()>>,
@@ -483,7 +486,17 @@ impl Application {
                 &warning,
             );
         }
+        let mut capture_nonce = [0_u8; 16];
+        getrandom::fill(&mut capture_nonce).map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Capture identity could not be created",
+                true,
+            )
+        })?;
+        let preview_capture = format!("{:032x}", u128::from_le_bytes(capture_nonce));
         Ok(Self {
+            preview_capture,
             upstream_trust: config.upstream_trust,
             client_certificates: config.client_certificates,
             certificate_policy_operation: Arc::new(std::sync::Mutex::new(())),
