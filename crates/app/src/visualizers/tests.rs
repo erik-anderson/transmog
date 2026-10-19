@@ -408,6 +408,8 @@ fn body_sources_are_lazy_and_header_only_inputs_never_open_or_read_bodies() {
     assert_eq!(opened.load(Ordering::Relaxed), 0);
     let body = input.response.unwrap().body.unwrap();
     let resources = Resources {
+        live_available: false,
+        live: Mutex::new(None),
         info: Mutex::new(Vec::new()),
         context: Mutex::new(None),
         stopped: AtomicBool::new(false),
@@ -450,6 +452,8 @@ fn required_missing_counterpart_and_ungranted_source_ranges_fail_closed() {
         .is_err()
     );
     let resources = Resources {
+        live_available: false,
+        live: Mutex::new(None),
         info: Mutex::new(Vec::new()),
         context: Mutex::new(None),
         stopped: AtomicBool::new(false),

@@ -22,7 +22,7 @@ const SCAN_PAGE: usize = 4096;
 // Decimal JSON byte arrays amplify header bytes. Keep context IPC comfortably within the frame ceiling.
 const PAGE_HEADER_BYTES: usize = 512 * 1024;
 #[cfg(test)]
-mod tests;
+pub(super) mod tests;
 
 /// Origins are native constraints, independent of extension selectors and correlation fields.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,7 +94,7 @@ fn scope(
     if expected.is_some_and(|expected| expected.capture != capture) {
         return None;
     }
-    let context = declaration.context.as_ref()?;
+    let context = declaration.context.as_ref();
     let request = &heads
         .request_heads
         .iter()
@@ -135,6 +135,12 @@ fn scope(
             field(&mut hash, &pid.to_le_bytes());
             field(&mut hash, &[u8::from(name.is_some())]);
             field(&mut hash, name.as_deref().unwrap_or("").as_bytes());
+            if context.is_none() {
+                field(
+                    &mut hash,
+                    &heads.metadata.downstream_connection_id.0.to_le_bytes(),
+                );
+            }
         }
         identity => {
             field(
@@ -152,7 +158,7 @@ fn scope(
             );
         }
     }
-    for predicate in &context.headers {
+    for predicate in context.into_iter().flat_map(|context| &context.headers) {
         if !declaration
             .inputs
             .side(predicate.direction)
@@ -186,6 +192,47 @@ pub(super) struct RelatedGuard {
     scope: Scope,
 }
 impl RelatedGuard {
+    pub(super) fn new(
+        app: &Application,
+        snapshot: &SessionSnapshot,
+        selected: Boundaries,
+        declaration: &Visualizer,
+    ) -> Option<Arc<Self>> {
+        let source = app
+            .traces
+            .context_source_id(&format!("{:032x}", snapshot.exchange_id.0));
+        let live_capture = format!("live:{}", app.visualizers.owner);
+        let capture = if snapshot.imported {
+            source.map(|source| format!("saved:{source}"))
+        } else if source.is_none() {
+            Some(live_capture.clone())
+        } else {
+            None
+        };
+        let scope = scope(&snapshot.into(), selected, declaration, capture?, None)?;
+        // Composer evidence has no retained catalog context and cannot enumerate live traffic.
+        app.service
+            .catalog()
+            .with_heads(snapshot.exchange_id, |_| ())?;
+        Some(Arc::new(Self {
+            catalog: app.service.catalog().clone(),
+            traces: app.traces.clone(),
+            live_capture,
+            anchor: snapshot.exchange_id,
+            anchor_order: snapshot.request_number,
+            selected,
+            declaration: declaration.clone(),
+            scope,
+        }))
+    }
+    pub(super) fn index_scope(&self) -> transmog_extensions::Scope {
+        index_key(
+            &self.scope.capture,
+            &self.scope.original_origin,
+            &self.scope.observed_origin,
+            self.selected,
+        )
+    }
     fn capture(&self, imported: bool, source: Option<String>) -> Option<String> {
         if imported {
             source.map(|source| format!("saved:{source}"))
@@ -195,7 +242,7 @@ impl RelatedGuard {
             None
         }
     }
-    fn matches(&self, id: ExchangeId) -> bool {
+    pub(super) fn matches(&self, id: ExchangeId) -> bool {
         self.matches_ordered(id, (id == self.anchor).then_some(self.anchor_order))
     }
     fn matches_ordered(&self, id: ExchangeId, order: Option<u64>) -> bool {
@@ -224,7 +271,7 @@ impl RelatedGuard {
     pub(super) fn allowed(&self, id: ExchangeId, order: u64) -> bool {
         self.matches(self.anchor) && self.matches_ordered(id, Some(order))
     }
-    fn snapshot_matches(&self, snapshot: &SessionSnapshot) -> bool {
+    pub(super) fn snapshot_matches(&self, snapshot: &SessionSnapshot) -> bool {
         let source = self
             .traces
             .context_source_id(&format!("{:032x}", snapshot.exchange_id.0));
@@ -241,7 +288,7 @@ impl RelatedGuard {
             .as_ref()
             == Some(&self.scope)
     }
-    fn projected_bytes(&self, id: ExchangeId) -> Option<usize> {
+    pub(super) fn projected_bytes(&self, id: ExchangeId) -> Option<usize> {
         self.catalog.with_heads(id, |heads| {
             let admission = super::admission::Admission::from_heads(
                 heads.request_heads,
@@ -298,6 +345,45 @@ impl RelatedGuard {
             .unwrap_or(false)
     }
 }
+
+// This coarse index is only a candidate filter. The full guard is mandatory before enqueue and reads.
+fn index_key(
+    capture: &str,
+    original: &Origin,
+    observed: &Origin,
+    selected: Boundaries,
+) -> transmog_extensions::Scope {
+    let mut hash = Sha256::new();
+    for origin in [original, observed] {
+        field(&mut hash, origin.scheme.as_bytes());
+        field(&mut hash, origin.host.as_bytes());
+        field(&mut hash, &origin.port.to_le_bytes());
+    }
+    field(&mut hash, format!("{:?}", selected.request).as_bytes());
+    transmog_extensions::Scope {
+        capture: capture.into(),
+        conversation: format!("{:x}", hash.finalize()),
+    }
+}
+pub(super) fn live_index_scope(
+    heads: &SessionHeads<'_>,
+    selected: Boundaries,
+    owner: &str,
+) -> Option<transmog_extensions::Scope> {
+    if heads.imported {
+        return None;
+    }
+    let request = heads
+        .request_heads
+        .iter()
+        .find(|head| head.boundary == selected.request)?;
+    Some(index_key(
+        &format!("live:{owner}"),
+        &Origin::new(heads.metadata.original_target.as_target())?,
+        &Origin::new(&request.head.target)?,
+        selected,
+    ))
+}
 struct Cursor {
     position: ContextPosition,
     boundary: u64,
@@ -307,7 +393,6 @@ pub(super) struct Broker {
     anchor_order: u64,
     instance: String,
     declaration: Visualizer,
-    selected: Boundaries,
     store: Option<BodyStore>,
     cursors: BTreeMap<String, Cursor>,
     serial: u64,
@@ -322,45 +407,12 @@ impl Broker {
         instance: &str,
         store: Option<BodyStore>,
     ) -> Self {
-        let source = app
-            .traces
-            .context_source_id(&format!("{:032x}", snapshot.exchange_id.0));
-        let live_capture = format!("live:{}", app.visualizers.owner);
-        let capture = if snapshot.imported {
-            source.map(|source| format!("saved:{source}"))
-        } else if source.is_none() {
-            Some(live_capture.clone())
-        } else {
-            None
-        };
-        let expected = capture
-            .and_then(|capture| scope(&snapshot.into(), selected, declaration, capture, None));
-        // Composer evidence has no retained catalog context. Its local response cannot enumerate traffic.
-        let guard = expected
-            .filter(|_| {
-                app.service
-                    .catalog()
-                    .with_heads(snapshot.exchange_id, |_| ())
-                    .is_some()
-            })
-            .map(|scope| {
-                Arc::new(RelatedGuard {
-                    catalog: app.service.catalog().clone(),
-                    traces: app.traces.clone(),
-                    live_capture,
-                    anchor: snapshot.exchange_id,
-                    anchor_order: snapshot.request_number,
-                    selected,
-                    declaration: declaration.clone(),
-                    scope,
-                })
-            });
+        let guard = RelatedGuard::new(app, snapshot, selected, declaration);
         Self {
             guard,
             anchor_order: snapshot.request_number,
             instance: instance.into(),
             declaration: declaration.clone(),
-            selected,
             store,
             cursors: BTreeMap::new(),
             serial: 0,
@@ -382,53 +434,13 @@ impl Broker {
         resources: &Resources,
         remaining: &mut usize,
     ) -> Result<ContextExchange, AppError> {
-        let mut declaration = self.declaration.clone();
-        // Related evidence can be incomplete. Preserve the grant but report absent bodies honestly.
-        for access in [
-            &mut declaration.inputs.request,
-            &mut declaration.inputs.response,
-        ] {
-            if access.body == BodyAccess::Required {
-                access.body = BodyAccess::Optional;
-            }
-        }
-        declaration.limits.input_bytes = *remaining;
-        let mut sources = BTreeMap::new();
-        let input = project_input(
+        guard.project(
             snapshot,
-            self.selected,
-            &declaration,
-            self.store.as_ref(),
+            resources,
             &self.instance,
-            &mut sources,
-        )?;
-        let bytes = [&input.request, &input.response]
-            .into_iter()
-            .flatten()
-            .flat_map(|message| &message.headers)
-            .map(|header| header.name.len() + header.value.as_ref().map_or(0, Vec::len))
-            .sum::<usize>();
-        *remaining = remaining.checked_sub(bytes).ok_or_else(unavailable)?;
-        let infos = source_infos(snapshot, self.selected, &input);
-        let sources = sources
-            .into_iter()
-            .map(|(key, source)| {
-                (
-                    key,
-                    Source::Related {
-                        source: Box::new(source),
-                        guard: Arc::clone(guard),
-                        exchange: snapshot.exchange_id,
-                        order: snapshot.request_number,
-                    },
-                )
-            })
-            .collect();
-        resources.append(sources, infos, self.declaration.limits.input_bytes)?;
-        Ok(ContextExchange {
-            order: snapshot.request_number.to_string(),
-            input,
-        })
+            self.store.as_ref(),
+            remaining,
+        )
     }
     fn boundary(&mut self, request: &ContextRequest) -> Result<u64, AppError> {
         let Some(cursor) = &request.cursor else {
@@ -544,5 +556,64 @@ impl Broker {
             return Err(unavailable());
         }
         Ok(page)
+    }
+}
+
+impl RelatedGuard {
+    pub(super) fn project(
+        self: &Arc<Self>,
+        snapshot: &SessionSnapshot,
+        resources: &Resources,
+        instance: &str,
+        store: Option<&BodyStore>,
+        remaining: &mut usize,
+    ) -> Result<ContextExchange, AppError> {
+        let mut declaration = self.declaration.clone();
+        // Related evidence can be incomplete. Preserve the grant but report absent bodies honestly.
+        for access in [
+            &mut declaration.inputs.request,
+            &mut declaration.inputs.response,
+        ] {
+            if access.body == BodyAccess::Required {
+                access.body = BodyAccess::Optional;
+            }
+        }
+        declaration.limits.input_bytes = *remaining;
+        let mut sources = BTreeMap::new();
+        let input = project_input(
+            snapshot,
+            self.selected,
+            &declaration,
+            store,
+            instance,
+            &mut sources,
+        )?;
+        let bytes = [&input.request, &input.response]
+            .into_iter()
+            .flatten()
+            .flat_map(|message| &message.headers)
+            .map(|header| header.name.len() + header.value.as_ref().map_or(0, Vec::len))
+            .sum::<usize>();
+        *remaining = remaining.checked_sub(bytes).ok_or_else(unavailable)?;
+        let infos = source_infos(snapshot, self.selected, &input);
+        let sources = sources
+            .into_iter()
+            .map(|(key, source)| {
+                (
+                    key,
+                    Source::Related {
+                        source: Box::new(source),
+                        guard: Arc::clone(self),
+                        exchange: snapshot.exchange_id,
+                        order: snapshot.request_number,
+                    },
+                )
+            })
+            .collect();
+        resources.append(sources, infos, self.declaration.limits.input_bytes)?;
+        Ok(ContextExchange {
+            order: snapshot.request_number.to_string(),
+            input,
+        })
     }
 }

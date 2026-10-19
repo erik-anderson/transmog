@@ -217,6 +217,43 @@ pub struct CatalogDelta {
     pub sequence: u64,
     /// Whether the exchange is terminal after this change.
     pub terminal: bool,
+    /// Native interest classification, carrying no header or body values.
+    pub change: CatalogChange,
+}
+
+/// Native message interests let optional consumers skip unrelated metadata and body growth.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum CatalogChange {
+    /// Request/response headers changed at an exact observation boundary.
+    Head(ExchangeBoundary),
+    /// Body bytes or trailers progressed at this boundary.
+    Body(ExchangeBoundary),
+    /// A body reached its terminal retained state, independently of HTTP completion.
+    BodyCompleted(ExchangeBoundary),
+    /// HTTP completion or failure; inspect both message sides that are present.
+    Terminal,
+    /// Retention, visibility, import, stream or performance metadata changed.
+    Metadata,
+}
+impl CatalogChange {
+    fn from_kind(kind: &ObserverEventKind) -> Self {
+        use ObserverEventKind::{
+            BodyChunk, BodyCompleted, BodyTrailers, Completed, Failed, RequestHeadFinalized,
+            RequestHeadObserved, ResponseHeadFinalized, ResponseHeadObserved,
+        };
+        match kind {
+            RequestHeadObserved { boundary, .. } | ResponseHeadObserved { boundary, .. } => {
+                Self::Head(*boundary)
+            }
+            RequestHeadFinalized(_) => Self::Head(ExchangeBoundary::UpstreamRequest),
+            ResponseHeadFinalized(_) => Self::Head(ExchangeBoundary::ClientResponse),
+            BodyChunk(chunk) => Self::Body(chunk.boundary),
+            BodyTrailers(trailers) => Self::Body(trailers.boundary),
+            BodyCompleted { boundary } => Self::BodyCompleted(*boundary),
+            Completed(_) | Failed(_) => Self::Terminal,
+            _ => Self::Metadata,
+        }
+    }
 }
 
 /// Event yielded by a bounded subscription.
@@ -494,6 +531,7 @@ impl SessionCatalog {
             exchange_id: ExchangeId(0),
             sequence: 0,
             terminal: true,
+            change: CatalogChange::Metadata,
         });
     }
 
@@ -651,6 +689,7 @@ impl SessionCatalog {
                 exchange_id: session.metadata.exchange_id,
                 sequence: session.last_sequence,
                 terminal: true,
+                change: CatalogChange::Terminal,
             });
         }
         trim_live_entries(&mut state);
@@ -1031,6 +1070,7 @@ impl SessionCatalog {
                 exchange_id: *id,
                 sequence: 0,
                 terminal: false,
+                change: CatalogChange::Metadata,
             });
         }
     }
@@ -1166,6 +1206,7 @@ impl SessionCatalog {
             exchange_id,
             sequence: session.last_sequence,
             terminal: !session.is_active(),
+            change: CatalogChange::Metadata,
         };
         drop(state);
         let _ = self.inner.deltas.send(delta);
@@ -1287,11 +1328,13 @@ fn update_session(
     retain_stream_content(&mut event.kind, state.retain_stream_content);
     let session = state.by_id.get_mut(&event.exchange_id)?;
     session.last_sequence = event.sequence;
+    let change = CatalogChange::from_kind(&event.kind);
     apply_kind(session, event.kind, limits, &mut detail_dropped);
     let delta = CatalogDelta {
         exchange_id: event.exchange_id,
         sequence: session.last_sequence,
         terminal: !session.is_active(),
+        change,
     };
     state.counters.detail_records_dropped = state
         .counters
@@ -1556,6 +1599,59 @@ fn forget_dismissed(state: &mut CatalogState, ids: &[ExchangeId]) -> Vec<Exchang
 
 #[cfg(test)]
 mod tests {
+    #[tokio::test]
+    async fn catalog_deltas_classify_message_interests_without_carrying_values() {
+        let catalog = SessionCatalog::new(limits(3));
+        let mut subscription = catalog.subscribe().unwrap();
+        start(&catalog, 1, "example.test");
+        let kinds = [
+            (
+                ObserverEventKind::RequestHeadObserved {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    head: head("POST"),
+                },
+                CatalogChange::Head(ExchangeBoundary::ClientRequest),
+            ),
+            (
+                ObserverEventKind::BodyChunk(ObservedBodyChunk {
+                    boundary: ExchangeBoundary::ClientRequest,
+                    byte_count: 1,
+                    sample: None,
+                    truncated: false,
+                }),
+                CatalogChange::Body(ExchangeBoundary::ClientRequest),
+            ),
+            (
+                ObserverEventKind::BodyCompleted {
+                    boundary: ExchangeBoundary::ClientRequest,
+                },
+                CatalogChange::BodyCompleted(ExchangeBoundary::ClientRequest),
+            ),
+            (
+                ObserverEventKind::Performance(
+                    transmog_core::performance::PerformanceEvidence::default(),
+                ),
+                CatalogChange::Metadata,
+            ),
+        ];
+        let SubscriptionEvent::Delta(started) = subscription.recv().await.unwrap() else {
+            panic!("delta expected")
+        };
+        assert_eq!(started.change, CatalogChange::Metadata);
+        for (index, (kind, expected)) in kinds.into_iter().enumerate() {
+            catalog.apply(event(1, index as u64 + 2, kind));
+            let SubscriptionEvent::Delta(delta) = subscription.recv().await.unwrap() else {
+                panic!("delta expected")
+            };
+            assert_eq!(delta.change, expected);
+        }
+        fail(&catalog, 1, 6);
+        let SubscriptionEvent::Delta(terminal) = subscription.recv().await.unwrap() else {
+            panic!("delta expected")
+        };
+        assert_eq!(terminal.change, CatalogChange::Terminal);
+    }
+
     #[test]
     fn request_numbers_survive_completion_undo_and_clear_without_reuse() {
         let catalog = SessionCatalog::new(limits(2));

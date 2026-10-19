@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 /// Same-build worker protocol revision.
-pub const HOST_PROTOCOL_VERSION: u32 = 2;
+pub const HOST_PROTOCOL_VERSION: u32 = 3;
 /// Absolute framing ceiling, checked before allocating any incoming JSON.
 pub const MAX_HOST_FRAME_BYTES: usize = 12 * 1024 * 1024;
 /// Maximum raw payload bytes in one initialization chunk.
@@ -48,6 +48,10 @@ pub struct MessageInput {
 pub struct VisualizationInput {
     /// Exact active UI instance.
     pub instance_id: String,
+    /// Opaque stable exchange identity across revisions, context and live updates.
+    pub exchange_id: String,
+    /// Exact immutable workspace admission order, shared with context-page ordering.
+    pub request_number: String,
     /// Canonical monotonically changed generation.
     pub generation: String,
     /// Selected display side.
@@ -156,6 +160,19 @@ pub struct ContextPage {
     pub status: ContextStatus,
 }
 /// Metadata for one admitted native live update.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum TrafficPhase {
+    /// Newly observed request or response headers.
+    Head,
+    /// Coalesced body growth, only when explicitly requested.
+    Body,
+    /// Body completion, only for a declared body input.
+    BodyCompleted,
+    /// HTTP completion or failure; no body bytes are implied.
+    Ended,
+}
+/// Metadata for one admitted native live update.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrafficEvent {
@@ -165,6 +182,8 @@ pub struct TrafficEvent {
     pub exchange_id: String,
     /// Changed side.
     pub direction: Direction,
+    /// Native lifecycle classification, independent of retained byte availability.
+    pub phase: TrafficPhase,
     /// Exact evidence revision.
     pub revision: String,
     /// Projected scoped input for this update.
@@ -172,7 +191,12 @@ pub struct TrafficEvent {
 }
 /// One synchronous bounded parser operation.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum Invocation {
     /// Parse a selected message snapshot.
     Visualize {
@@ -202,6 +226,8 @@ pub enum Invocation {
     Traffic {
         /// Ordered updates.
         events: Vec<TrafficEvent>,
+        /// Canonical count of lost/coalesced-away capture hints whose matching set is uncertain.
+        missed_hints: String,
     },
 }
 /// Pure parser output or a finite request for declared retained bytes.

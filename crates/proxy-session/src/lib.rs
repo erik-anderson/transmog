@@ -15,10 +15,10 @@ pub use capture::{
     CaptureFailure, CaptureManager, CaptureServiceError, CaptureStart, CaptureStatus, SealedCapture,
 };
 pub use catalog::{
-    BodySnapshot, CatalogApply, CatalogCounters, CatalogCursor, CatalogDelta, CatalogError,
-    CatalogPage, CatalogQuery, CatalogSubscription, ObservedRequestHead, ObservedResponseHead,
-    SessionCatalog, SessionFilter, SessionHeads, SessionLimits, SessionSnapshot, SessionTerminal,
-    SubscriptionEvent,
+    BodySnapshot, CatalogApply, CatalogChange, CatalogCounters, CatalogCursor, CatalogDelta,
+    CatalogError, CatalogPage, CatalogQuery, CatalogSubscription, ObservedRequestHead,
+    ObservedResponseHead, SessionCatalog, SessionFilter, SessionHeads, SessionLimits,
+    SessionSnapshot, SessionTerminal, SubscriptionEvent,
 };
 pub use control::{
     AttachedController, ControlConnectionError, ControlConnector, ControlPhase, ControlPolicy,

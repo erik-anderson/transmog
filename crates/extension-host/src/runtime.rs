@@ -30,7 +30,7 @@ const BOOTSTRAP: &str = r"
     else if (call.kind === 'resume') result = handlers.resume(call.token, call.pages);
     else if (call.kind === 'resumeContext') result = handlers.resumeContext(call.token, call.page);
     else if (call.kind === 'expand') result = handlers.expand(call.token);
-    else if (call.kind === 'traffic') result = handlers.onTraffic(call.events);
+    else if (call.kind === 'traffic') result = handlers.onTraffic(call.events, freeze({missedHints:call.missedHints}));
     else throw new Error('Unknown operation');
     if (result && typeof result.then === 'function') throw new Error('Synchronous output required');
     const output = stringify(result);

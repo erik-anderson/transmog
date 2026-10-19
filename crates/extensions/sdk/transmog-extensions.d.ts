@@ -23,7 +23,7 @@ declare module "transmog:extensions/v1" {
   export interface Header { sourceId?: string; index: number; name: string; value?: readonly number[] | null; redacted: boolean; originalBytes?: string | null; }
   export interface BodyReference { sourceId: string; length: string; availability: string; }
   export interface Message { evidenceId: string; headers: readonly Header[]; body?: BodyReference | null; method?: string | null; path?: string | null; status?: number | null; }
-  export interface Input { instanceId: string; generation: string; direction: Direction; request?: Message | null; response?: Message | null; }
+  export interface Input { instanceId: string; exchangeId: string; requestNumber: string; generation: string; direction: Direction; request?: Message | null; response?: Message | null; }
   export interface ReadRequest { sourceId: string; offset: string; maxBytes: number; }
   /** Related reads cannot select an origin, capture or exchange ID. Cursors are instance-scoped and single-use. */
   export interface ContextRequest {position: "before" | "after"; cursor?: string | null; limit: number;}
@@ -31,11 +31,12 @@ declare module "transmog:extensions/v1" {
   export interface ContextPage {anchorOrder: string; exchanges: readonly ContextExchange[]; nextCursor?: string | null; status: "complete" | "more" | "unavailable" | "limited";}
   export type Step = {kind: "document"; document: VisualizationDocument} | {kind: "needInput"; reads: ReadRequest[]; token: string} | {kind: "needContext"; request: ContextRequest; token: string};
   export interface BytePage { sourceId: string; offset: string; bytes: readonly number[]; }
-  export interface TrafficEvent { sequence: string; exchangeId: string; direction: Direction; revision: string; input: Input; }
+  export interface TrafficEvent { sequence: string; exchangeId: string; direction: Direction; phase: "head" | "body" | "bodyCompleted" | "ended"; revision: string; input: Input; }
+  export interface TrafficBatchInfo {missedHints: string;}
   export function visualize(input: Input): Step;
   export function resume(token: string, pages: readonly BytePage[]): Step;
   /** Required when returning needContext; receives only host-filtered, declared input. */
   export function resumeContext(token: string, page: ContextPage): Step;
   export function expand(token: string): Step;
-  export function onTraffic(batch: readonly TrafficEvent[]): Step;
+  export function onTraffic(batch: readonly TrafficEvent[], info: TrafficBatchInfo): Step;
 }

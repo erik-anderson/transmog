@@ -38,6 +38,8 @@ fn start(snapshot: Snapshot) -> Result<Arc<Runner>, Failure> {
 fn input() -> VisualizationInput {
     VisualizationInput {
         instance_id: "instance-one".into(),
+        exchange_id: "exchange-one".into(),
+        request_number: "1".into(),
         generation: "1".into(),
         direction: Direction::Response,
         request: Some(MessageInput {
@@ -75,6 +77,79 @@ fn input() -> VisualizationInput {
 }
 const DOCUMENT: &str =
     "{kind:'document',document:{title:'View',status:'complete',presentation:'tree',roots:[]}}";
+
+#[tokio::test]
+async fn live_batches_use_frozen_projected_inputs_and_bounded_source_continuations() {
+    let source = r"
+export function visualize() {return {kind:'document',document:{title:'Snapshot',status:'complete',presentation:'tree',roots:[]}};}
+export function onTraffic(events,info) {
+  if (!Object.isFrozen(events) || !Object.isFrozen(events[0].input) || !Object.isFrozen(info) || info.missedHints !== '3') throw new Error('unbounded live input');
+  const event=events[0];
+  if(event.exchangeId !== event.input.exchangeId || event.phase !== 'bodyCompleted' || event.input.request.headers.length || event.input.request.body) throw new Error('invalid live projection');
+  return {kind:'needInput',token:'live-bytes',reads:[{sourceId:event.input.response.body.sourceId,offset:'0',maxBytes:4}]};
+}
+export function resume(token,pages) {return {kind:'document',document:{title:'Live bytes',status:'complete',presentation:'tree',roots:[{id:'live',name:'Live value',value:{kind:'integer',value:String(pages[0].bytes[0])},spans:[{sourceId:pages[0].sourceId,offset:'0',length:'4'}]}]}};}
+";
+    let original = snapshot(source);
+    let mut manifest = original.manifest.clone();
+    manifest.visualizers[0].live_updates = Some(LiveUpdates {
+        events: vec![Direction::Response],
+        body_progress: false,
+    });
+    let runner = start(Snapshot::new(manifest, original.files).unwrap()).unwrap();
+    runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap();
+    let mut update = input();
+    update.exchange_id = "exchange-two".into();
+    update.request_number = "2".into();
+    update.generation = "2".into();
+    update
+        .response
+        .as_mut()
+        .unwrap()
+        .body
+        .as_mut()
+        .unwrap()
+        .source_id = "live-body".into();
+    let event = TrafficEvent {
+        sequence: "1".into(),
+        exchange_id: "exchange-two".into(),
+        direction: Direction::Response,
+        phase: TrafficPhase::BodyCompleted,
+        revision: "2".into(),
+        input: update,
+    };
+    assert!(matches!(
+        runner
+            .invoke(Invocation::Traffic {
+                events: vec![event],
+                missed_hints: "3".into()
+            })
+            .await
+            .unwrap(),
+        VisualizationStep::NeedInput { .. }
+    ));
+    let output = runner
+        .invoke(Invocation::Resume {
+            token: "live-bytes".into(),
+            pages: vec![BytePage {
+                source_id: "live-body".into(),
+                offset: "0".into(),
+                bytes: vec![7, 8, 9, 10],
+            }],
+        })
+        .await
+        .unwrap();
+    let VisualizationStep::Document { document } = output else {
+        panic!("document expected")
+    };
+    assert_eq!(document.roots[0].value, Some(Value::Integer("7".into())));
+    runner.stop();
+}
 
 #[tokio::test]
 async fn declared_context_continuations_receive_only_projected_inputs_and_scoped_sources() {

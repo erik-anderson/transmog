@@ -17,6 +17,7 @@ use transmog_extensions::{
 mod admission;
 mod context;
 mod evidence;
+mod live;
 use admission::Admission;
 use evidence::{Resources, boundaries, project_input, source_infos};
 use transmog_session::SessionSnapshot;
@@ -61,6 +62,19 @@ pub struct VisualizerActivation {
     pub extension_id: String,
     /// Selected contribution, never every package entry.
     pub visualizer_id: String,
+    /// Explicit opt-in for this fresh activation; omitted means snapshot-only.
+    #[serde(default)]
+    pub live: bool,
+}
+impl VisualizerActivation {
+    fn handle(&self, instance: &Instance) -> VisualizerHandle {
+        VisualizerHandle {
+            slot: self.slot.clone(),
+            generation: self.generation.clone(),
+            instance_id: instance.id.clone(),
+            page_id: self.page_id.clone(),
+        }
+    }
 }
 /// Validated host-owned document from one still-active instance.
 #[derive(Clone, Debug, Serialize)]
@@ -74,6 +88,30 @@ pub struct VisualizerView {
     pub document: VisualizationDocument,
     /// Host-owned names and extents for original sources, without reading their bytes.
     pub sources: Vec<VisualizerSourceInfo>,
+    /// Native feed status; the extension cannot enable delivery itself.
+    pub live: VisualizerLiveStatus,
+}
+/// Native opt-in feed state, without traffic content or access history.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualizerLiveStatus {
+    /// Whether the declaration and selected live capture support updates.
+    pub available: bool,
+    /// Whether native admission is currently registered.
+    pub enabled: bool,
+    /// Exact count of lost update hints; their matching set may be uncertain.
+    pub missed_hints: String,
+}
+/// One bounded poll result. Empty queues do not invoke extension code or read bodies.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualizerLiveUpdate {
+    /// A validated replacement document, only when admitted traffic was parsed.
+    pub view: Option<VisualizerView>,
+    /// Current native admission and gap state.
+    pub status: VisualizerLiveStatus,
+    /// Another parser operation is active; no queued updates were consumed.
+    pub busy: bool,
 }
 /// A source/action binding that cannot silently move to a newer worker or page.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -126,6 +164,7 @@ pub(super) struct Service {
     page_id: AtomicU64,
     visible: AtomicBool,
     slots: Mutex<BTreeMap<String, Slot>>,
+    live: Mutex<Option<Arc<live::Hub>>>,
 }
 struct Slot {
     generation: u64,
@@ -184,6 +223,7 @@ impl Service {
             page_id: AtomicU64::new(1),
             visible: AtomicBool::new(true),
             slots: Mutex::new(BTreeMap::new()),
+            live: Mutex::new(None),
         }
     }
     fn begin(&self, slot: &str, generation: &str, page_id: &str) -> Result<Arc<Ticket>, AppError> {
@@ -427,7 +467,7 @@ impl Application {
         .map_err(|_| unavailable())?
         .map_err(worker_failure)?;
         ticket.bind(instance.clone())?;
-        let (snapshot, store) = self.visualizer_evidence(&request.selection.session_id)?;
+        let (mut snapshot, store) = self.visualizer_evidence(&request.selection.session_id)?;
         let selected = boundaries(&request.selection.boundary)?;
         if !Admission::new(&snapshot, selected)
             .applicable(&instance.declaration, request.selection.surface)
@@ -436,6 +476,14 @@ impl Application {
                 "The visualizer declaration changed and no longer matches this message",
             ));
         }
+        let live_available = instance.declaration.live_updates.is_some() && !snapshot.imported;
+        let feed = self.start_visualizer_feed(
+            request,
+            &instance,
+            &mut snapshot,
+            selected,
+            store.as_ref(),
+        )?;
         let mut sources = BTreeMap::new();
         let input = project_input(
             &snapshot,
@@ -446,6 +494,8 @@ impl Application {
             &mut sources,
         )?;
         let resources = Arc::new(Resources {
+            live_available,
+            live: Mutex::new(feed),
             stopped: AtomicBool::new(false),
             sources: Mutex::new(
                 sources
@@ -483,15 +533,11 @@ impl Application {
             .await?;
         ticket.current()?;
         Ok(VisualizerView {
-            handle: VisualizerHandle {
-                slot: request.slot.clone(),
-                generation: request.generation.clone(),
-                instance_id: instance.id.clone(),
-                page_id: request.page_id.clone(),
-            },
+            handle: request.handle(&instance),
             instance,
             document,
             sources: resources.info()?,
+            live: resources.live_status(),
         })
     }
 
@@ -520,6 +566,7 @@ impl Application {
                     instance,
                     document,
                     sources: resources.info()?,
+                    live: resources.live_status(),
                 })
             }
             Err(error) => {
@@ -532,12 +579,19 @@ impl Application {
     async fn run_visualizer(
         &self,
         ticket: &Ticket,
-        mut invocation: Invocation,
+        invocation: Invocation,
     ) -> Result<VisualizationDocument, AppError> {
         let _operation = ticket
             .operation
             .try_lock()
             .map_err(|_| invalid("Another visualizer operation is still running"))?;
+        self.invoke_visualizer(ticket, invocation).await
+    }
+    async fn invoke_visualizer(
+        &self,
+        ticket: &Ticket,
+        mut invocation: Invocation,
+    ) -> Result<VisualizationDocument, AppError> {
         let instance = ticket.current()?;
         let runner = self
             .visualizers

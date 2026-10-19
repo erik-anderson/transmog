@@ -7,7 +7,7 @@ the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-re
 provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector
-offers explicit selection, scoped retained context and host-owned structured rendering. Live feeding,
+offers explicit selection, scoped retained context and host-owned structured rendering. Desktop live controls,
 transactional hot reload and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
@@ -179,8 +179,48 @@ anchor or unloading the visualizer revokes those capabilities and clears cursors
 The same byte, source-count, deadline and cancellation limits apply throughout.
 
 These APIs parse selected retained snapshots, related context and deferred expansions.
-They do not yet subscribe to new traffic or decode HTTP
+They do not yet decode HTTP
 Content-Encoding for an extension. Existing built-in inspection remains available.
+
+## Native live-feed broker
+
+The application API accepts `live: true` only for a fresh explicit activation of
+a contribution declaring `liveUpdates`, against live retained traffic. Ordinary
+activation remains snapshot-only. Installed and inactive contributions have no
+subscription. Active contributions share one native catalog subscription per
+owning application; removing its last feed drops that subscription. Disable,
+uninstall, navigation and hidden-pane cancellation unregister admission, clear
+queued metadata and stop the worker together.
+
+Native change hints distinguish headers, body growth, body completion and HTTP
+termination. Body growth requires `bodyProgress` and body access on that exact
+side; header-only interests skip body hints before looking up retained heads.
+The native index uses capture, origin, boundary, direction and selective matching
+before checking the full conversation guard. Without correlation declarations,
+live scope is restricted to the same connection and endpoint, including query.
+Declared correlation can relate connections from the same known caller. Neither
+case can widen capture or origin scope.
+
+Only admitted exchange IDs and revisions enter a 32-entry queue. Repeated changes
+to one message coalesce into its latest full snapshot. Overflow and subscription
+lag increment a transient lost-hint counter, delivered to `onTraffic` as
+`info.missedHints`; the matching set of lost hints can be uncertain. Host results
+remain partial after such loss until the instance is reopened. Inputs include a
+stable opaque `exchangeId`, exact decimal `requestNumber`, delivery `sequence` and evidence
+`revision`, and a native lifecycle `phase`. Byte capabilities still identify their
+exact frozen extent; capture and body-retention dispatchers can advance separately.
+`sequence` orders delivered snapshots; `requestNumber` permits reconstruction in
+request admission order even when coalesced responses arrive out of order.
+
+`poll_visualizer_live` projects a bounded batch only when admitted work exists.
+Empty polls read no bodies, start no blocking task and invoke no script. Final
+body updates wait for admitted retention metadata within a bounded deadline,
+without flushing unrelated body work. Current scope and input rules are checked
+again before creating capabilities. Script and byte continuations use the same
+sandbox, deadlines and aggregate budgets. `stop_visualizer_live` removes admission
+while preserving the active worker for the visible snapshot and expansions;
+an operation already started may finish. The desktop controls and their polling
+lifecycle remain the next integration step.
 
 ## Desktop visualizers
 

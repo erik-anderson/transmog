@@ -385,6 +385,7 @@ struct Pending {
     reads: Vec<ReadRequest>,
     context: Option<ContextRequest>,
     context_total: usize,
+    traffic_sequence: u64,
 }
 impl Pending {
     fn clear(&mut self) {
@@ -406,18 +407,27 @@ fn prepare(
             grants.clear();
             pending.clear();
             pending.context_total = 0;
+            pending.traffic_sequence = 0;
             *remaining = visualizer.limits.input_bytes;
             *continuations = 0;
             project(input, visualizer, grants, remaining)?;
         }
-        Invocation::Traffic { events } => {
-            if visualizer.live_updates.is_none() || events.is_empty() || events.len() > 32 {
+        Invocation::Traffic {
+            events,
+            missed_hints,
+        } => {
+            if visualizer.live_updates.is_none()
+                || decimal(missed_hints).is_err()
+                || events.is_empty()
+                || events.len() > 32
+            {
                 return Err(fail(FailureKind::Validation, "Invalid live update batch"));
             }
             pending.clear();
             *remaining = visualizer.limits.input_bytes;
             *continuations = 0;
             for event in events {
+                check_traffic(event, visualizer, &mut pending.traffic_sequence)?;
                 project(&mut event.input, visualizer, grants, remaining)?;
             }
         }
@@ -487,13 +497,43 @@ fn prepare(
     }
     Ok(invocation)
 }
+fn check_traffic(
+    event: &transmog_extensions::TrafficEvent,
+    visualizer: &Visualizer,
+    prior: &mut u64,
+) -> Result<(), Failure> {
+    use transmog_extensions::{BodyAccess, TrafficPhase};
+    let live = visualizer.live_updates.as_ref().ok_or_else(protocol)?;
+    let sequence = decimal(&event.sequence).map_err(|_| protocol())?;
+    if sequence <= *prior
+        || decimal(&event.revision).is_err()
+        || event.revision != event.input.generation
+        || !valid_id(&event.exchange_id)
+        || !live.events.contains(&event.direction)
+        || event.input.direction != event.direction
+        || event.input.exchange_id != event.exchange_id
+        || (event.phase == TrafficPhase::Body && !live.body_progress)
+        || (matches!(
+            event.phase,
+            TrafficPhase::Body | TrafficPhase::BodyCompleted
+        ) && visualizer.inputs.side(event.direction).body == BodyAccess::None)
+    {
+        return Err(protocol());
+    }
+    *prior = sequence;
+    Ok(())
+}
 fn project(
     input: &mut VisualizationInput,
     visualizer: &Visualizer,
     grants: &mut BTreeMap<String, u64>,
     remaining: &mut usize,
 ) -> Result<(), Failure> {
-    if !valid_id(&input.instance_id) || decimal(&input.generation).is_err() {
+    if decimal(&input.request_number).is_err()
+        || !valid_id(&input.instance_id)
+        || !valid_id(&input.exchange_id)
+        || decimal(&input.generation).is_err()
+    {
         return Err(protocol());
     }
     for (side, message) in [

@@ -121,6 +121,8 @@ impl Source {
     }
 }
 pub(super) struct Resources {
+    pub(super) live_available: bool,
+    pub(super) live: Mutex<Option<Arc<super::live::Feed>>>,
     pub(super) stopped: AtomicBool,
     pub(super) sources: Mutex<BTreeMap<String, Arc<Source>>>,
     pub(super) info: Mutex<Vec<VisualizerSourceInfo>>,
@@ -129,6 +131,14 @@ pub(super) struct Resources {
 impl InstanceResources for Resources {
     fn stop(&self) {
         self.stopped.store(true, Ordering::Release);
+        if let Some(feed) = self
+            .live
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            feed.stop();
+        }
         self.sources
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -144,6 +154,17 @@ impl InstanceResources for Resources {
     }
 }
 impl Resources {
+    pub(super) fn live_status(&self) -> super::VisualizerLiveStatus {
+        let live = self
+            .live
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        super::VisualizerLiveStatus {
+            available: self.live_available,
+            enabled: live.as_ref().is_some_and(|feed| feed.enabled()),
+            missed_hints: live.as_ref().map_or(0, |feed| feed.missed()).to_string(),
+        }
+    }
     pub(super) fn append(
         &self,
         added: BTreeMap<String, Source>,
@@ -400,6 +421,8 @@ pub(super) fn project_input(
     }
     Ok(VisualizationInput {
         instance_id: instance.into(),
+        exchange_id: format!("{:032x}", snapshot.exchange_id.0),
+        request_number: snapshot.request_number.to_string(),
         generation: snapshot.last_sequence.to_string(),
         direction: selected.direction,
         request,
@@ -501,7 +524,7 @@ fn project_headers(
     }
     Ok(projected)
 }
-fn boundary_name(boundary: ExchangeBoundary) -> &'static str {
+pub(super) fn boundary_name(boundary: ExchangeBoundary) -> &'static str {
     match boundary {
         ExchangeBoundary::ClientRequest => "client-request",
         ExchangeBoundary::UpstreamRequest => "upstream-request",

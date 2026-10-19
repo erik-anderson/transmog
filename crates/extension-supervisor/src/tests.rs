@@ -29,6 +29,8 @@ fn page() -> ContextPage {
             order: "1".into(),
             input: VisualizationInput {
                 instance_id: "worker".into(),
+                exchange_id: "exchange-one".into(),
+                request_number: "1".into(),
                 generation: "1".into(),
                 direction: Direction::Request,
                 response: None,
@@ -148,6 +150,85 @@ fn context_tokens_order_grants_lookahead_and_lifetime_totals_are_enforced() {
             Invocation::ResumeContext {
                 token: "context".into(),
                 page: self::page()
+            },
+            &visualizer,
+            &mut grants,
+            &mut pending,
+            &mut remaining,
+            &mut continuations
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn live_delivery_requires_declared_interests_and_strict_native_sequences() {
+    use transmog_extensions::{LiveUpdates, TrafficEvent, TrafficPhase};
+    let mut visualizer = declaration();
+    visualizer.live_updates = Some(LiveUpdates {
+        events: vec![Direction::Request],
+        body_progress: false,
+    });
+    let event = TrafficEvent {
+        sequence: "1".into(),
+        exchange_id: "exchange-one".into(),
+        direction: Direction::Request,
+        phase: TrafficPhase::Head,
+        revision: "1".into(),
+        input: page().exchanges.remove(0).input,
+    };
+    for change in [
+        (|event: &mut TrafficEvent| event.sequence = "0".into()) as fn(&mut TrafficEvent),
+        |event| event.sequence = "01".into(),
+        |event| event.exchange_id = "another-exchange".into(),
+        |event| event.direction = Direction::Response,
+        |event| event.phase = TrafficPhase::Body,
+        |event| event.phase = TrafficPhase::BodyCompleted,
+        |event| event.revision = "01".into(),
+    ] {
+        let mut forged = event.clone();
+        change(&mut forged);
+        assert!(
+            prepare(
+                Invocation::Traffic {
+                    events: vec![forged],
+                    missed_hints: "0".into()
+                },
+                &visualizer,
+                &mut BTreeMap::new(),
+                &mut Pending::default(),
+                &mut 4096,
+                &mut 0
+            )
+            .is_err()
+        );
+    }
+    let mut pending = Pending::default();
+    let mut grants = BTreeMap::new();
+    let mut remaining = 4096;
+    let mut continuations = 0;
+    let invocation = prepare(
+        Invocation::Traffic {
+            events: vec![event.clone()],
+            missed_hints: "0".into(),
+        },
+        &visualizer,
+        &mut grants,
+        &mut pending,
+        &mut remaining,
+        &mut continuations,
+    )
+    .unwrap();
+    let Invocation::Traffic { events, .. } = invocation else {
+        panic!("traffic expected")
+    };
+    assert!(events[0].input.request.as_ref().unwrap().headers.is_empty());
+    assert!(events[0].input.request.as_ref().unwrap().body.is_none());
+    assert!(
+        prepare(
+            Invocation::Traffic {
+                events: vec![event],
+                missed_hints: "0".into()
             },
             &visualizer,
             &mut grants,

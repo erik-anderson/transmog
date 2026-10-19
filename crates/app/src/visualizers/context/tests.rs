@@ -15,7 +15,7 @@ use transmog_core::{
 use transmog_extension_registry::InstanceResources as _;
 use transmog_extensions::{Context, HeaderPredicate};
 
-fn fixture(app: &Application) -> (SessionSnapshot, Visualizer) {
+pub(in crate::visualizers) fn fixture(app: &Application) -> (SessionSnapshot, Visualizer) {
     let mut snapshot = snapshot(app);
     snapshot.request_heads[0].head.headers = HeaderBlock::from_fields(vec![
         HeaderField::try_new("X-Kind", "conversation").unwrap(),
@@ -34,7 +34,11 @@ fn fixture(app: &Application) -> (SessionSnapshot, Visualizer) {
     });
     (snapshot, declaration)
 }
-fn publish(app: &Application, id: u128, snapshot: &SessionSnapshot) -> SessionSnapshot {
+pub(in crate::visualizers) fn publish(
+    app: &Application,
+    id: u128,
+    snapshot: &SessionSnapshot,
+) -> SessionSnapshot {
     let mut metadata = (*snapshot.metadata).clone();
     metadata.exchange_id = ExchangeId(id);
     let mut kinds = vec![ObserverEventKind::ExchangeStarted {
@@ -63,6 +67,8 @@ fn publish(app: &Application, id: u128, snapshot: &SessionSnapshot) -> SessionSn
 }
 fn resources(broker: Broker) -> Resources {
     Resources {
+        live_available: false,
+        live: Mutex::new(None),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(BTreeMap::new()),
         info: Mutex::new(Vec::new()),
