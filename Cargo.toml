@@ -25,6 +25,8 @@ members = [
     "crates/proxy-saz",
     "crates/proxy-automation",
     "crates/portable",
+    "crates/package-zip",
+    "crates/extensions",
     "crates/proxy-script",
     "crates/script-host",
     "crates/script-supervisor",

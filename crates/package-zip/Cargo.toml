@@ -1,0 +1,19 @@
+[package]
+name = "transmog-package-zip"
+description = "Bounded portable Stored ZIP64 structure reader and streaming writer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+crc32fast.workspace = true
+time.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+zip.workspace = true
+
+[lints]
+workspace = true

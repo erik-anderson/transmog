@@ -7250,6 +7250,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-extensions"
+version = "0.1.7"
+dependencies = [
+ "base64 0.22.1",
+ "crc32fast",
+ "serde",
+ "serde_json",
+ "sha2 0.10.9",
+ "tempfile",
+ "thiserror 2.0.21",
+ "transmog-package-zip",
+]
+
+[[package]]
 name = "transmog-h3"
 version = "0.1.7"
 dependencies = [
@@ -7332,6 +7346,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-package-zip"
+version = "0.1.7"
+dependencies = [
+ "crc32fast",
+ "thiserror 2.0.21",
+ "time",
+ "zip",
+]
+
+[[package]]
 name = "transmog-portable"
 version = "0.1.7"
 dependencies = [
@@ -7348,6 +7372,7 @@ dependencies = [
  "transmog-automation",
  "transmog-capture",
  "transmog-core",
+ "transmog-package-zip",
  "zip",
 ]
 

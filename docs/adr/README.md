@@ -15,6 +15,7 @@ topic guides and roadmap instead of the ADRs.
 | [0007](0007-tauri-webui-delivery.md) | Deliver the Windows Tauri/WebUI shell through a hardened custom protocol. |
 | [0008](0008-traffic-workspace-and-script-isolation.md) | Keep traffic state above core and run scripts in an OS sandbox. |
 | [0009](0009-portable-investigation-boundaries.md) | Separate portable investigations from private state and capture/control formats; preserve exact evidence and explicit activation. |
+| [0010](0010-read-only-visualizer-extensions.md) | Run read-only protocol visualizers in isolated workers with explicit input grants and host-owned rendering. |
 
 Create a new ADR only for a durable cross-cutting decision or to supersede an
 existing decision. Do not add completed task plans, implementation journals, or
