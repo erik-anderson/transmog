@@ -21,6 +21,27 @@ pub struct Header {
     pub original_bytes: Option<String>,
 }
 
+/// Borrowed native matching access; does not authorize delivery to an extension.
+pub trait HeaderMetadata {
+    /// Original ASCII field name.
+    fn name(&self) -> &[u8];
+    /// Exact retained field value, absent if unavailable.
+    fn value(&self) -> Option<&[u8]>;
+    /// Whether capture policy removed the observed value.
+    fn redacted(&self) -> bool;
+}
+impl HeaderMetadata for Header {
+    fn name(&self) -> &[u8] {
+        self.name.as_bytes()
+    }
+    fn value(&self) -> Option<&[u8]> {
+        self.value.as_deref()
+    }
+    fn redacted(&self) -> bool {
+        self.redacted
+    }
+}
+
 /// Stable source identity for one granted occurrence at an exact evidence revision.
 pub fn header_source_id(side: Direction, evidence_id: &str, index: u32) -> String {
     let digest = crate::sha256(format!("{side:?}:{evidence_id}").as_bytes());
@@ -28,12 +49,12 @@ pub fn header_source_id(side: Direction, evidence_id: &str, index: u32) -> Strin
 }
 
 /// Metadata borrowed from retention; constructing a matcher does not read bodies.
-#[derive(Clone, Copy, Debug)]
-pub struct MessageMetadata<'a> {
+#[derive(Debug)]
+pub struct MessageMetadata<'a, H = Header> {
     /// Request or response metadata of this message.
     pub direction: Direction,
     /// Ordered retained headers.
-    pub headers: &'a [Header],
+    pub headers: &'a [H],
     /// Request method, including for matching a paired response.
     pub method: Option<&'a str>,
     /// Endpoint path without query.
@@ -41,18 +62,38 @@ pub struct MessageMetadata<'a> {
     /// Observed response status, when present.
     pub status: Option<u16>,
 }
+impl<H> Copy for MessageMetadata<'_, H> {}
+impl<H> Clone for MessageMetadata<'_, H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
 
 /// Paired message metadata for dependency-aware matching.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct ExchangeMetadata<'a> {
+#[derive(Debug)]
+pub struct ExchangeMetadata<'a, H = Header> {
     /// Retained request head, independently available from its body.
-    pub request: Option<MessageMetadata<'a>>,
+    pub request: Option<MessageMetadata<'a, H>>,
     /// Retained response head, or absent until one arrives.
-    pub response: Option<MessageMetadata<'a>>,
+    pub response: Option<MessageMetadata<'a, H>>,
 }
-impl<'a> ExchangeMetadata<'a> {
+impl<H> Copy for ExchangeMetadata<'_, H> {}
+impl<H> Clone for ExchangeMetadata<'_, H> {
+    fn clone(&self) -> Self {
+        *self
+    }
+}
+impl<H> Default for ExchangeMetadata<'_, H> {
+    fn default() -> Self {
+        Self {
+            request: None,
+            response: None,
+        }
+    }
+}
+impl<'a, H> ExchangeMetadata<'a, H> {
     /// Metadata of one side, without substituting another boundary.
-    pub fn side(&self, side: Direction) -> Option<MessageMetadata<'a>> {
+    pub fn side(&self, side: Direction) -> Option<MessageMetadata<'a, H>> {
         match side {
             Direction::Request => self.request,
             Direction::Response => self.response,
@@ -61,7 +102,11 @@ impl<'a> ExchangeMetadata<'a> {
 }
 
 /// Native matching of one conjunction, with redaction-safe header semantics.
-pub fn matches(rule: &MatchRule, exchange: ExchangeMetadata<'_>, direction: Direction) -> bool {
+pub fn matches<H: HeaderMetadata>(
+    rule: &MatchRule,
+    exchange: ExchangeMetadata<'_, H>,
+    direction: Direction,
+) -> bool {
     if rule.direction != direction {
         return false;
     }
@@ -69,27 +114,21 @@ pub fn matches(rule: &MatchRule, exchange: ExchangeMetadata<'_>, direction: Dire
         return false;
     };
     if !rule.content_types.is_empty() {
-        let mut content_type: Option<String> = None;
+        let mut content_type: Option<&str> = None;
         for field in message
             .headers
             .iter()
-            .filter(|h| h.name.eq_ignore_ascii_case("content-type"))
+            .filter(|h| h.name().eq_ignore_ascii_case(b"content-type"))
         {
             let Some(value) = field
-                .value
-                .as_ref()
-                .filter(|_| !field.redacted)
+                .value()
+                .filter(|_| !field.redacted())
                 .and_then(|v| std::str::from_utf8(v).ok())
             else {
                 return false;
             };
-            let media = value
-                .split(';')
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_ascii_lowercase();
-            if content_type.as_ref().is_some_and(|prior| prior != &media) {
+            let media = value.split(';').next().unwrap_or("").trim();
+            if content_type.is_some_and(|prior| !prior.eq_ignore_ascii_case(media)) {
                 return false;
             }
             content_type = Some(media);
@@ -97,7 +136,7 @@ pub fn matches(rule: &MatchRule, exchange: ExchangeMetadata<'_>, direction: Dire
         if !content_type.is_some_and(|t| {
             rule.content_types
                 .iter()
-                .any(|allowed| allowed.eq_ignore_ascii_case(&t))
+                .any(|allowed| allowed.eq_ignore_ascii_case(t))
         }) {
             return false;
         }
@@ -131,21 +170,20 @@ pub fn matches(rule: &MatchRule, exchange: ExchangeMetadata<'_>, direction: Dire
         let Some(message) = exchange.side(predicate.direction) else {
             return false;
         };
-        let fields: Vec<_> = message
+        let mut fields = message
             .headers
             .iter()
-            .filter(|h| h.name.eq_ignore_ascii_case(&predicate.name))
-            .collect();
+            .filter(|h| h.name().eq_ignore_ascii_case(predicate.name.as_bytes()))
+            .peekable();
         match &predicate.test {
-            HeaderTest::Present => !fields.is_empty(),
-            HeaderTest::Equals { value } => fields
-                .iter()
-                .any(|h| !h.redacted && h.value.as_deref() == Some(value.as_bytes())),
+            HeaderTest::Present => fields.next().is_some(),
+            HeaderTest::Equals { value } => {
+                fields.any(|h| !h.redacted() && h.value() == Some(value.as_bytes()))
+            }
             HeaderTest::NotEquals { value } => {
-                !fields.is_empty()
-                    && fields.iter().all(|h| {
-                        !h.redacted && h.value.as_ref().is_some_and(|v| v != value.as_bytes())
-                    })
+                fields.peek().is_some()
+                    && fields
+                        .all(|h| !h.redacted() && h.value().is_some_and(|v| v != value.as_bytes()))
             }
         }
     })
@@ -281,10 +319,10 @@ impl ActiveSubscriptions {
     }
 
     /// Selects active candidates using native metadata before any IPC or body read.
-    pub fn admitted(
+    pub fn admitted<H: HeaderMetadata>(
         &self,
         scope: &Scope,
-        exchange: ExchangeMetadata<'_>,
+        exchange: ExchangeMetadata<'_, H>,
         direction: Direction,
     ) -> Vec<&str> {
         if self.active.is_empty() {
@@ -294,27 +332,23 @@ impl ActiveSubscriptions {
         for side in [Direction::Request, Direction::Response] {
             if let Some(message) = exchange.side(side) {
                 for field in message.headers {
-                    keys.insert(format!(
-                        "header:{side:?}:{}",
-                        field.name.to_ascii_lowercase()
-                    ));
-                    if side == direction
-                        && field.name.eq_ignore_ascii_case("content-type")
-                        && !field.redacted
-                        && let Some(value) = field
-                            .value
-                            .as_ref()
-                            .and_then(|v| std::str::from_utf8(v).ok())
-                    {
+                    if field.name().len() <= 128 {
                         keys.insert(format!(
-                            "type:{}",
-                            value
-                                .split(';')
-                                .next()
-                                .unwrap_or("")
-                                .trim()
-                                .to_ascii_lowercase()
+                            "header:{side:?}:{}",
+                            String::from_utf8_lossy(field.name()).to_ascii_lowercase()
                         ));
+                    }
+                    if side == direction
+                        && field.name().eq_ignore_ascii_case(b"content-type")
+                        && !field.redacted()
+                        && let Some(value) = field.value().and_then(|v| std::str::from_utf8(v).ok())
+                    {
+                        let media = value.split(';').next().unwrap_or("").trim();
+                        // Manifest media types contain two tokens of at most 128 bytes.
+                        // Unmatchable captured values must not allocate oversized index keys.
+                        if media.len() <= 257 {
+                            keys.insert(format!("type:{}", media.to_ascii_lowercase()));
+                        }
                     }
                 }
             }

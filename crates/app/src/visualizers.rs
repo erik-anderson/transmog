@@ -14,8 +14,10 @@ use transmog_extension_registry::{Instance, Registry};
 use transmog_extensions::{
     Invocation, ReadRequest, Surface, VisualizationDocument, VisualizationStep, decimal, valid_id,
 };
+mod admission;
 mod evidence;
-use evidence::{Resources, applicable, boundaries, project_input, source_infos};
+use admission::Admission;
+use evidence::{Resources, boundaries, project_input, source_infos};
 use transmog_session::SessionSnapshot;
 #[cfg(test)]
 mod tests;
@@ -350,39 +352,26 @@ impl Application {
     /// Offers only enabled contributions whose native selectors match this exact boundary.
     /// # Errors
     /// Rejects unavailable evidence and invalid boundaries without loading extension code.
+    /// An empty enabled registry returns no choices without looking up retained evidence.
     pub fn visualizer_choices(
         &self,
         selection: &VisualizerSelection,
     ) -> Result<Vec<VisualizerChoice>, AppError> {
+        let declarations = self.visualizers.registry.enabled_visualizers();
+        if declarations.is_empty() {
+            return Ok(Vec::new());
+        }
         let (snapshot, _) = self.visualizer_evidence(&selection.session_id)?;
         let selected = boundaries(&selection.boundary)?;
+        let admission = Admission::new(&snapshot, selected);
         let mut choices = Vec::new();
-        for entry in self
-            .visualizers
-            .registry
-            .status()
-            .entries
-            .into_iter()
-            .filter(|e| e.catalog.enabled)
-        {
-            for declaration in entry.catalog.manifest.visualizers {
-                let Ok(input) = project_input(
-                    &snapshot,
-                    selected,
-                    &declaration,
-                    None,
-                    "discovery",
-                    &mut BTreeMap::new(),
-                ) else {
-                    continue;
-                };
-                if applicable(&declaration, selection.surface, &input) {
-                    choices.push(VisualizerChoice {
-                        extension_id: entry.catalog.manifest.id.clone(),
-                        visualizer_id: declaration.id,
-                        name: declaration.name,
-                    });
-                }
+        for (extension_id, declaration) in declarations {
+            if admission.applicable(&declaration, selection.surface) {
+                choices.push(VisualizerChoice {
+                    extension_id,
+                    visualizer_id: declaration.id,
+                    name: declaration.name,
+                });
             }
         }
         Ok(choices)
@@ -439,15 +428,9 @@ impl Application {
         ticket.bind(instance.clone())?;
         let (snapshot, store) = self.visualizer_evidence(&request.selection.session_id)?;
         let selected = boundaries(&request.selection.boundary)?;
-        let metadata = project_input(
-            &snapshot,
-            selected,
-            &instance.declaration,
-            None,
-            "discovery",
-            &mut BTreeMap::new(),
-        )?;
-        if !applicable(&instance.declaration, request.selection.surface, &metadata) {
+        if !Admission::new(&snapshot, selected)
+            .applicable(&instance.declaration, request.selection.surface)
+        {
             return Err(invalid(
                 "The visualizer declaration changed and no longer matches this message",
             ));

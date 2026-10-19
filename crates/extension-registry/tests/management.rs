@@ -45,12 +45,15 @@ fn install_persists_inert_metadata_and_enable_never_requires_a_runtime() {
     let registry = Registry::load(store.clone(), None);
     registry.install(&source).unwrap();
     assert_eq!(registry.status().entries.len(), 1);
+    assert_eq!(registry.enabled_visualizers()[0].0, "example.headers");
     registry.set_enabled("example.headers", false).unwrap();
     assert!(!registry.status().entries[0].catalog.enabled);
+    assert!(registry.enabled_visualizers().is_empty());
     let reopened = Registry::load(store, None);
     assert!(!reopened.status().entries[0].catalog.enabled);
     reopened.set_enabled("example.headers", true).unwrap();
     assert!(reopened.status().entries[0].catalog.enabled);
+    assert_eq!(reopened.enabled_visualizers()[0].1.id, "headers");
     assert!(
         reopened
             .activate("owner", "example.headers", "headers")
@@ -73,6 +76,11 @@ fn developer_registration_and_listing_do_not_read_code_and_uninstall_keeps_sourc
     let registry = Registry::load(root.path().join("registry"), None);
     registry.register_directory(&sources, true).unwrap();
     assert!(registry.status().entries[0].hot_reload);
+    assert_eq!(
+        registry.enabled_visualizers().len(),
+        1,
+        "Discovery must not need the absent source module"
+    );
     assert!(registry.snapshot("example.headers").is_err());
     std::fs::create_dir(sources.join("src")).unwrap();
     std::fs::write(sources.join("src/main.js"), b"first revision").unwrap();

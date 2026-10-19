@@ -135,6 +135,29 @@ impl Registry {
             warning: state.warning.clone(),
         }
     }
+    /// Returns enabled contributions for native discovery, without copying package inventories.
+    /// No sources, developer directories or traffic are read.
+    pub fn enabled_visualizers(&self) -> Vec<(String, Visualizer)> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .entries
+            .iter()
+            .filter(|entry| entry.catalog.enabled)
+            .flat_map(|entry| {
+                entry
+                    .catalog
+                    .manifest
+                    .visualizers
+                    .iter()
+                    .cloned()
+                    .map(|visualizer| (entry.catalog.manifest.id.clone(), visualizer))
+            })
+            .collect()
+    }
     /// Installs a verified local tmext atomically, without executing any module.
     /// # Errors
     /// Rejects invalid packages, conflicting provenance, exhausted capacity and storage failures.

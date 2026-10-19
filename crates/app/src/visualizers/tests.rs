@@ -210,6 +210,97 @@ fn instance_bindings_cannot_follow_a_replacement_or_another_page() {
 }
 
 #[test]
+fn native_admission_borrows_values_and_does_not_confuse_redaction_or_boundaries() {
+    use transmog_extensions::{
+        ActiveSubscriptions, HeaderMetadata, HeaderTest, LiveUpdates, Scope,
+    };
+    let app = Application::new(AppConfig::default()).unwrap();
+    let mut snapshot = snapshot(&app);
+    let selected = boundaries("client-request").unwrap();
+    let mut visualizer = declaration();
+    let admission = Admission::new(&snapshot, selected);
+    let metadata = admission.metadata();
+    let headers = metadata.request.unwrap().headers;
+    assert!(std::ptr::eq(
+        headers[1].value().unwrap().as_ptr(),
+        snapshot.request_heads[0]
+            .head
+            .headers
+            .iter()
+            .nth(1)
+            .unwrap()
+            .value()
+            .as_ptr()
+    ));
+    assert!(admission.applicable(&visualizer, Surface::Headers));
+    assert!(headers[3].redacted() && headers[3].value().is_none());
+    visualizer.matches[0].headers[0].test = HeaderTest::Equals {
+        value: "duplicate".into(),
+    };
+    assert!(admission.applicable(&visualizer, Surface::Headers));
+    visualizer.matches[0].headers[0].name = "cookie".into();
+    visualizer.matches[0].headers[0].test = HeaderTest::NotEquals {
+        value: "other".into(),
+    };
+    assert!(!admission.applicable(&visualizer, Surface::Headers));
+    visualizer.matches[0].headers[0].name = "x-kind".into();
+    visualizer.matches[0].headers[0].test = HeaderTest::Equals {
+        value: "duplicate".into(),
+    };
+    visualizer.live_updates = Some(LiveUpdates {
+        events: vec![Direction::Request],
+        body_progress: false,
+    });
+    let scope = Scope {
+        capture: "capture".into(),
+        conversation: "conversation".into(),
+    };
+    let mut active = ActiveSubscriptions::default();
+    active
+        .subscribe("worker".into(), scope.clone(), visualizer)
+        .unwrap();
+    assert_eq!(
+        active.admitted(&scope, metadata, Direction::Request),
+        ["worker"]
+    );
+    assert!(
+        active
+            .admitted(&scope, metadata, Direction::Response)
+            .is_empty()
+    );
+    snapshot.response_heads[0].head.headers = HeaderBlock::from_fields(vec![
+        HeaderField::try_new("Content-Type", "Application/Example; charset=utf-8").unwrap(),
+        HeaderField::try_new("content-type", "application/example").unwrap(),
+    ]);
+    assert!(
+        Admission::new(&snapshot, boundaries("client-response").unwrap())
+            .applicable(&declaration(), Surface::Body)
+    );
+    snapshot.response_heads[0]
+        .head
+        .headers
+        .push(HeaderField::try_new("Content-Type", "other/type").unwrap());
+    assert!(
+        !Admission::new(&snapshot, boundaries("client-response").unwrap())
+            .applicable(&declaration(), Surface::Body)
+    );
+}
+
+#[test]
+fn no_enabled_extensions_skip_retained_evidence_discovery() {
+    let app = Application::new(AppConfig::default()).unwrap();
+    assert!(
+        app.visualizer_choices(&VisualizerSelection {
+            session_id: "00000000000000000000000000000001".into(),
+            boundary: "client-request".into(),
+            surface: Surface::Body
+        })
+        .unwrap()
+        .is_empty()
+    );
+}
+
+#[test]
 fn headers_are_complete_projected_and_bound_to_the_exact_message_stage() {
     let app = Application::new(AppConfig::default()).unwrap();
     let snapshot = snapshot(&app);
@@ -229,7 +320,10 @@ fn headers_are_complete_projected_and_bound_to_the_exact_message_stage() {
     assert!(info.iter().any(|info| info.name.contains("X-Kind")
         && info.length == "5000"
         && info.boundary == "client-request"));
-    assert!(applicable(&declaration, Surface::Headers, &input));
+    assert!(
+        Admission::new(&snapshot, boundaries("client-request").unwrap())
+            .applicable(&declaration, Surface::Headers)
+    );
     let request = input.request.unwrap();
     assert_eq!(request.path.as_deref(), Some("/protocol"));
     assert_eq!(request.headers.len(), 3);

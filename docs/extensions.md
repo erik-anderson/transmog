@@ -117,7 +117,9 @@ screenshots and memory evidence in the ordinary desktop validation artifacts.
 
 The application facade offers matching enabled contributions for one selected
 header/body surface and exact message boundary. Discovery uses cached declarations
-and retained headers without loading modules or reading body bytes. Actual input
+and borrowed retained headers without loading modules or reading body bytes.
+Discovery does not copy header values per contribution or package file inventories;
+with no enabled contributions it skips the retained-evidence lookup. Actual input
 projection uses complete retained field values, independently of display previews;
 it preserves duplicates, ordinals and redaction. Native admission is checked again
 against the executing declaration before body capabilities are created.

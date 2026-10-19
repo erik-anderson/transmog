@@ -11,9 +11,8 @@ use std::{
 use transmog_core::{HeaderBlock, intercept::ExchangeId, observe::ExchangeBoundary};
 use transmog_extension_registry::InstanceResources;
 use transmog_extensions::{
-    BodyAccess, BodyReference, BytePage, Direction, ExchangeMetadata, Header, InputAccess,
-    MessageInput, MessageMetadata, ReadRequest, Surface, VisualizationInput, Visualizer, decimal,
-    header_source_id, matches, sha256,
+    BodyAccess, BodyReference, BytePage, Direction, Header, InputAccess, MessageInput, ReadRequest,
+    VisualizationInput, Visualizer, decimal, header_source_id, sha256,
 };
 use transmog_session::SessionSnapshot;
 pub(super) enum Source {
@@ -150,9 +149,9 @@ impl Resources {
 
 #[derive(Clone, Copy)]
 pub(super) struct Boundaries {
-    request: ExchangeBoundary,
-    response: ExchangeBoundary,
-    direction: Direction,
+    pub(super) request: ExchangeBoundary,
+    pub(super) response: ExchangeBoundary,
+    pub(super) direction: Direction,
 }
 pub(super) fn boundaries(selected: &str) -> Result<Boundaries, AppError> {
     use ExchangeBoundary::{ClientRequest, ClientResponse, UpstreamRequest, UpstreamResponse};
@@ -177,36 +176,6 @@ pub(super) fn boundaries(selected: &str) -> Result<Boundaries, AppError> {
             },
         },
     })
-}
-pub(super) fn applicable(
-    declaration: &Visualizer,
-    surface: Surface,
-    input: &VisualizationInput,
-) -> bool {
-    fn message(side: Direction, value: &MessageInput) -> MessageMetadata<'_> {
-        MessageMetadata {
-            direction: side,
-            headers: value.headers.as_slice(),
-            method: value.method.as_deref(),
-            path: value.path.as_deref(),
-            status: value.status,
-        }
-    }
-    let metadata = ExchangeMetadata {
-        request: input
-            .request
-            .as_ref()
-            .map(|m| message(Direction::Request, m)),
-        response: input
-            .response
-            .as_ref()
-            .map(|m| message(Direction::Response, m)),
-    };
-    declaration.surfaces.contains(&surface)
-        && declaration
-            .matches
-            .iter()
-            .any(|rule| matches(rule, metadata, input.direction))
 }
 #[allow(clippy::too_many_lines)] // Keep exact boundary, header and body grants in one projection policy.
 pub(super) fn project_input(
