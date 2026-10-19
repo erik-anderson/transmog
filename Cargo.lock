@@ -7257,10 +7257,25 @@ dependencies = [
  "deno_ast",
  "deno_core",
  "serde_json",
+ "tempfile",
  "tokio",
+ "transmog-extension-registry",
  "transmog-extension-supervisor",
  "transmog-extensions",
  "transmog-process-sandbox",
+]
+
+[[package]]
+name = "transmog-extension-registry"
+version = "0.1.7"
+dependencies = [
+ "getrandom 0.4.3",
+ "rustix 1.1.5",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "transmog-extension-supervisor",
+ "transmog-extensions",
 ]
 
 [[package]]

@@ -22,8 +22,9 @@ are checked in.
 ## Request and response visualizer extensions
 
 Implementation in progress. The [contract/package foundation](extensions.md) is
-implemented, along with the isolated JavaScript worker/supervisor. Desktop
-retention/context integration and MAPI parity remain below.
+implemented, along with the isolated JavaScript worker/supervisor and shared
+installation/instance registry. Desktop controls, retained-evidence/context
+integration and MAPI parity remain below.
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
 capture, selection, and built-in inspection must not load extension code.
@@ -706,7 +707,7 @@ intentional differences. Include upstream MIT notices and dependency attribution
 | Stage | Deliverable and exit evidence |
 | --- | --- |
 | 1. Specify and measure | Freeze the parity matrix and sanitized golden captures; settle package/API schemas, context identity, output provenance, and cold/active resource budgets. Inventory upstream parser families and dependencies before estimating the port. |
-| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker and supervisor implemented. Metadata persistence, retained-evidence/context broker and product-owned subscriptions remain. Production sandbox fixtures exercise activation, byte continuations, failures, network denial and unload. |
+| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker/supervisor and persisted metadata registry implemented. Retained-evidence/context broker and product-owned subscriptions remain. Production sandbox fixtures exercise activation, byte continuations, failures, network denial, unload and cross-window management. |
 | 3. Host renderer and development | Deliver concurrent request/response/header contributions, the tree/table/text/hex model, source highlighting, deferred pages, Live updates control, Extensions settings with declaration details and install/disable/enable/uninstall, unpacked registration and transactional hot reload. Prove both packaged and unpacked forms use the same validation/sandbox. |
 | 4. MAPI port | Build shared byte readers/property decoders, transport envelopes, mailbox/NSPI families, ROPs, auxiliary data, compression, FastTransfer and contextual decoding, including incremental request/response handling in live mode. Add differential fixtures as each family lands; no bundled release at partial coverage. |
 | 5. Parity and shipment | Run the full matrix against the pinned reference, qualify hostile inputs, resource/performance behavior, native sandbox and UX, then bundle the ordinary `.tmext` with build-generated metadata and attribution. |

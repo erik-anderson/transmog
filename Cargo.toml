@@ -29,6 +29,7 @@ members = [
     "crates/extensions",
     "crates/extension-host",
     "crates/extension-supervisor",
+    "crates/extension-registry",
     "crates/proxy-script",
     "crates/script-host",
     "crates/script-supervisor",

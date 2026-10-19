@@ -3,7 +3,8 @@
 `transmog-extensions` provides the UI-independent revision-1 visualizer metadata,
 native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
-the isolated JavaScript worker and its bounded lifecycle. Desktop management,
+the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-registry`
+provides shared installation and active-instance ownership. Desktop controls,
 retention/context integration and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
@@ -54,6 +55,32 @@ directories itself. `write_package` always emits ZIP64, even for small packages.
 The shared `transmog-package-zip` crate owns structural ZIP validation and writing.
 Portable investigation packages retain their narrower manifest/object namespace
 through their own adapter. The two formats do not accept each other's manifests.
+
+## Installation and instance ownership
+
+The shared registry persists validated declaration summaries, provenance, enabled
+state and developer hot-reload preference. Listing or enabling reads no code and
+starts no worker. Installation verifies a local package, stages its immutable
+revision and atomically publishes the catalog. Failed publication removes a new
+candidate; successful replacement unloads active instances and removes the old
+managed revision. A different provenance cannot silently take over an existing ID.
+Corrupt catalog metadata leaves capture available and reports a recovery warning.
+
+Registering an unpacked developer directory reads only its manifest. Activation
+uses pinned local directory handles, rejects reparse points and links, bounds
+every file read and collects an immutable snapshot. Source lengths and digests
+are calculated for that snapshot, so authors do not maintain them after each
+edit. The exact executing declaration is published only after worker initialization
+succeeds. Unregistering a developer extension never deletes its sources.
+
+Each instance belongs to one application/window owner. Foreign instance IDs
+cannot retrieve its worker or retained-data resources. Disabling or uninstalling
+is global: it stops all package instances across registry clones. Instance resource
+owners receive an immediate, idempotent stop callback before worker termination
+to cancel subscriptions and clear retained buffers, even when a pending operation
+still holds a temporary reference. Enabling does not resurrect those instances.
+Hot-reload preference is persisted here; file watching and transactional result
+replacement belong to the pending desktop broker integration.
 
 ## Isolated worker
 

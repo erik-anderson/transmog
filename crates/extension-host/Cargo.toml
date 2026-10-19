@@ -23,6 +23,8 @@ transmog-extensions = { version = "=0.1.7", path = "../extensions" }
 transmog-process-sandbox = { version = "=0.1.7", path = "../process-sandbox" }
 
 [dev-dependencies]
+tempfile.workspace = true
+transmog-extension-registry = { version = "=0.1.7", path = "../extension-registry" }
 transmog-extension-supervisor = { version = "=0.1.7", path = "../extension-supervisor" }
 
 [lints]
