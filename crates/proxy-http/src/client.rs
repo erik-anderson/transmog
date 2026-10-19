@@ -864,11 +864,14 @@ async fn stream_incoming(
 ) {
     let mut received = 0_usize;
     loop {
-        let frame = match if event_stream {
-            Ok(body.frame().await)
-        } else {
-            timeout(body_idle_timeout, body.frame()).await
-        } {
+        let next = tokio::select! {
+            () = sender.closed() => return,
+            frame = async {
+                if event_stream { Ok(body.frame().await) }
+                else { timeout(body_idle_timeout, body.frame()).await }
+            } => frame,
+        };
+        let frame = match next {
             Ok(Some(frame)) => frame,
             Ok(None) => {
                 if let Some(performance) = &performance {

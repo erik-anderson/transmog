@@ -1335,7 +1335,7 @@ mod tests {
             view.ids
         );
         service.catalog().apply(started(50_001));
-        service.catalog().dismiss(&[ExchangeId(5_002)]);
+        service.catalog().dismiss(&[ExchangeId(5_002)], &[]);
         let rows = traffic_rows(&service, &views, &view.id, 5_000, 3, &traces).unwrap();
         assert_eq!(
             rows.iter().map(|row| row.id.as_str()).collect::<Vec<_>>(),

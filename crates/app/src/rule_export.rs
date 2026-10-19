@@ -1,7 +1,7 @@
 use super::AutomationRegistry;
 use crate::{
     AppError, ResponseAssetProvenance,
-    rule_interchange::{RuleExportRequest, invalid, portable_error},
+    rule_interchange::{CURRENT_RESPONSE_SET_ID, RuleExportRequest, invalid, portable_error},
 };
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -30,7 +30,7 @@ impl AutomationRegistry {
             if !seen.insert(id) {
                 return Err(invalid("Duplicate selected rule"));
             }
-            if document.experiments.iter().any(|e| e.owns(id)) {
+            if document.response_sets.iter().any(|e| e.owns(id)) {
                 return Err(invalid(
                     "Select the exact named variant instead of its projected live rule",
                 ));
@@ -56,18 +56,29 @@ impl AutomationRegistry {
                 return Err(invalid("Duplicate selected revision"));
             }
             let experiment = document
-                .experiments
+                .response_sets
                 .iter()
                 .find(|e| e.id == selection.experiment_id)
                 .ok_or_else(|| invalid("Selected response set is unavailable"))?;
-            let revision = experiment
-                .revision(selection)
-                .ok_or_else(|| invalid("Selected saved revision is unavailable"))?;
-            let variant = experiment
-                .variants
-                .iter()
-                .find(|v| v.id == selection.variant_id)
-                .ok_or_else(|| invalid("Selected variant is unavailable"))?;
+            let rules = experiment
+                .selected_rules(selection)
+                .ok_or_else(|| invalid("Selected saved collection is unavailable"))?;
+            let (variant_id, name) = if selection.variant_id.is_empty() {
+                (
+                    CURRENT_RESPONSE_SET_ID.to_owned(),
+                    "Current responses".to_owned(),
+                )
+            } else {
+                let version = experiment
+                    .versions
+                    .iter()
+                    .find(|version| version.id == selection.variant_id)
+                    .ok_or_else(|| invalid("Selected named version is unavailable"))?;
+                (
+                    portable_id(&format!("version-{}", version.id)),
+                    version.name.clone(),
+                )
+            };
             let target =
                 experiments
                     .entry(experiment.id.clone())
@@ -77,7 +88,7 @@ impl AutomationRegistry {
                         required_features: vec!["response-assets/1".into()],
                         label: experiment.name.clone(),
                         paused_intent: experiment.paused,
-                        archived_intent: experiment.archived,
+                        archived_intent: false,
                         active_intent: None,
                         variants: vec![wire::Variant {
                             id: "baseline".into(),
@@ -85,43 +96,28 @@ impl AutomationRegistry {
                             archived_intent: false,
                             revisions: vec![wire::Revision {
                                 revision: "1".into(),
-                                rules: vec![],
+                                rules: Vec::new(),
                             }],
                         }],
                     });
-            if experiment.active.as_ref() == Some(selection) {
+            target.variants.push(wire::Variant {
+                id: variant_id.clone(),
+                label: name,
+                archived_intent: false,
+                revisions: vec![wire::Revision {
+                    revision: selection.revision.to_string(),
+                    rules: rules.iter().map(export_rule).collect::<Result<_, _>>()?,
+                }],
+            });
+            if experiment
+                .applied
+                .as_ref()
+                .is_some_and(|snapshot| snapshot.rules == rules)
+            {
                 target.active_intent = Some(wire::ActiveSelection {
-                    variant_id: portable_id(&variant.id),
+                    variant_id,
                     revision: selection.revision.to_string(),
                 });
-            }
-            if variant.id != "baseline" {
-                let existing = target
-                    .variants
-                    .iter_mut()
-                    .find(|v| v.id == portable_id(&variant.id));
-                let rules = revision
-                    .rules
-                    .iter()
-                    .map(export_rule)
-                    .collect::<Result<_, _>>()?;
-                let revision = wire::Revision {
-                    revision: revision.revision.to_string(),
-                    rules,
-                };
-                if let Some(existing) = existing {
-                    existing.revisions.push(revision);
-                    existing
-                        .revisions
-                        .sort_by_key(|r| wire::decimal(&r.revision, false).unwrap_or(0));
-                } else {
-                    target.variants.push(wire::Variant {
-                        id: portable_id(&variant.id),
-                        label: variant.name.clone(),
-                        archived_intent: variant.archived,
-                        revisions: vec![revision],
-                    });
-                }
             }
         }
         let rules = selected
@@ -133,11 +129,11 @@ impl AutomationRegistry {
             .iter()
             .chain(request.selections.iter().flat_map(|s| {
                 document
-                    .experiments
+                    .response_sets
                     .iter()
-                    .find_map(|e| e.revision(s))
+                    .find_map(|set| set.selected_rules(s))
                     .into_iter()
-                    .flat_map(|r| &r.rules)
+                    .flatten()
             }))
         {
             if let Some(reference) = &rule.request.response_asset {
@@ -175,6 +171,20 @@ impl AutomationRegistry {
             snapshots.insert(asset.sha256, body);
         }
         let mut extensions = serde_json::Map::new();
+        let notes = document
+            .response_sets
+            .iter()
+            .filter(|set| experiments.contains_key(&set.id))
+            .map(|set| {
+                (
+                    portable_id(&set.id),
+                    serde_json::Value::String(set.notes.clone()),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        if !notes.is_empty() {
+            extensions.insert("transmog.response-set-notes".into(), notes.into());
+        }
         let selected_ids = rules
             .iter()
             .chain(experiments.values().flat_map(|e| {

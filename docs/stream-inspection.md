@@ -68,6 +68,14 @@ open. Application exit cancels open streams within the shutdown bound. Idle HTTP
 keep-alive, HTTP/2 and HTTP/3 connections are not application streams and cannot
 hold the proxy indefinitely in its draining state.
 
+Open or connecting live WebSockets stay in Traffic when Clear or Remove is used. The default
+keeps active connections inspectable. Enable **Terminate open WebSockets when
+clearing Traffic** in **Settings → Preferences → Retention** to close the affected
+connections before removing their rows. A pending handshake stays visible until
+its connection can be terminated; use Clear again after it opens. **Actions → Cancel request** stops one
+selected connection or active response transfer while retaining its evidence.
+Undo restores removed evidence without reopening connections.
+
 ## Capture and limits
 
 Passive WebSocket inspection preserves forwarded wire bytes, reassembles fragmented

@@ -4366,7 +4366,7 @@ mod tests {
         writer.seal().unwrap();
     }
     #[tokio::test]
-    async fn saved_caller_cancellation_reopens_with_clear_status_details_and_timeline() {
+    async fn saved_cancellation_reopens_with_clear_status_details_and_timeline() {
         let root = tempfile::tempdir().unwrap();
         let source = root.path().join("source.tmcap");
         native(&source, Some(b"abc".to_vec()), 3);
@@ -4374,10 +4374,17 @@ mod tests {
             transmog_capture::recover(File::open(source).unwrap(), CaptureLimits::default())
                 .unwrap()
                 .records;
-        for response_started in [false, true] {
+        for (response_started, manual) in
+            [(false, false), (true, false), (false, true), (true, true)]
+        {
+            let message = if manual {
+                "Request canceled in Transmog."
+            } else {
+                "The caller closed or reset the request before a response was returned."
+            };
             let path = root
                 .path()
-                .join(format!("cancelled-{response_started}.tmcap"));
+                .join(format!("cancelled-{response_started}-{manual}.tmcap"));
             let mut writer =
                 CaptureWriter::new(File::create(&path).unwrap(), CaptureLimits::default()).unwrap();
             let mut sequence = 0;
@@ -4391,9 +4398,7 @@ mod tests {
                 if matches!(record.kind, CaptureRecordKind::Completed) {
                     record.kind = CaptureRecordKind::Failed {
                         category: "Cancelled".into(),
-                        // Existing captures retain the original explanation.
-                        message: "Request handling was cancelled before a response was returned."
-                            .into(),
+                        message: message.into(),
                     };
                 }
                 if record.exchange_id != 0 {
@@ -4404,7 +4409,7 @@ mod tests {
             }
             writer.seal().unwrap();
             drop(writer);
-            let workspace = app(&root.path().join(format!("app-{response_started}")));
+            let workspace = app(&root.path().join(format!("app-{response_started}-{manual}")));
             workspace
                 .import_trace(request(path, "cancelled"), Arc::new(|_| {}))
                 .await
@@ -4426,7 +4431,11 @@ mod tests {
             assert_eq!(rows[0].status, response_started.then_some(204));
             let detail = workspace.session_detail(&rows[0].id).unwrap();
             assert_eq!(detail.terminal_state, "cancelled");
-            assert!(detail.terminal.starts_with("Cancelled by caller."));
+            assert!(detail.terminal.starts_with("Cancelled."));
+            assert!(detail.terminal.contains(message));
+            if manual {
+                assert!(!detail.terminal.contains("caller"));
+            }
             let snapshot = workspace
                 .session_service()
                 .catalog()
@@ -5208,6 +5217,7 @@ mod tests {
         );
         reopened
             .remove_traffic_entries(&[rows[0].id.clone()], false)
+            .await
             .unwrap();
         let empty = reopened
             .save_traffic_trace(

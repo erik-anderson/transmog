@@ -123,6 +123,9 @@ const fn enabled_by_default() -> bool {
 #[serde(rename_all = "camelCase")]
 #[allow(clippy::struct_excessive_bools)]
 pub struct PrivacySettings {
+    /// Terminate open `WebSockets` when removing their Traffic entries; otherwise keep them visible.
+    #[serde(default)]
+    pub terminate_websockets_on_clear: bool,
     /// Aggregate circular buffer limit and memory/disk policy.
     pub buffer_limit: crate::BufferLimit,
     /// Optional maximum live entries; older completed entries drop off first.
@@ -149,6 +152,7 @@ pub struct PrivacySettings {
 impl Default for PrivacySettings {
     fn default() -> Self {
         Self {
+            terminate_websockets_on_clear: false,
             buffer_limit: crate::BufferLimit::Automatic,
             max_live_entries: None,
             retain_request_bodies: true,

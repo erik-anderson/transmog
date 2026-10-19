@@ -175,7 +175,7 @@ impl Application {
             .filter(|rule| {
                 rule.request.response_asset.is_some()
                     && !current
-                        .experiments
+                        .response_sets
                         .iter()
                         .any(|experiment| experiment.owns(&rule.id))
             })
@@ -199,15 +199,15 @@ impl Application {
                 .filter(|rule| {
                     rule.request.response_asset.is_none()
                         || current
-                            .experiments
+                            .response_sets
                             .iter()
                             .any(|experiment| experiment.owns(&rule.id))
                 })
                 .cloned(),
         );
         let candidate = self.validate_automation(AutomationRuleSet {
-            schema_version: 1,
-            experiments: Vec::new(),
+            schema_version: 2,
+            response_sets: Vec::new(),
             portable_imports: Vec::new(),
             generation: current.generation,
             autoresponses_enabled: current.autoresponses_enabled,

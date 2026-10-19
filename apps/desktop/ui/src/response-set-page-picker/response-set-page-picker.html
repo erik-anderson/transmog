@@ -1,7 +1,7 @@
 <template>
 <dialog w-ref="{pageDialog}" class="response-page-picker" aria-labelledby="response-page-title" @cancel="{cancel(e)}" @close="{closed()}">
   <h2 id="response-page-title">Choose a page for this response set</h2>
-  <p>Choose the page to preview. Saved responses apply only to page requests that match their conditions. This page is remembered for every variant, including Baseline; new traffic will not replace it.</p>
+  <p>Choose the page to preview. Saved responses apply only to page requests that match their conditions. This page is remembered for this response set; new traffic will not replace it.</p>
   <if condition="rememberedUrl"><p class="remembered-page"><strong>Remembered page</strong><br>{{rememberedUrl}}</p><p ?hidden="{{available}}">Capture unavailable. Choose a replacement to preview this set.</p></if>
   <p ?hidden="{{pages.length}}">No complete captured HTML pages are available. In Traffic, capture the page through the proxy or import saved traffic containing its HTML response, then return here.</p>
   <div class="response-page-choices" role="group" aria-label="Captured pages">

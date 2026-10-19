@@ -8,10 +8,14 @@ import '../script-editor/script-editor.js';
 import '../match-editor/match-editor.js';
 import '../user-agent-overrides/user-agent-overrides.js';
 import '../response-body-editor/response-body-editor.js';
-import '../experiment-variants/experiment-variants.js';
+import '../response-set-workspace/response-set-workspace.js';
+import '../response-set-demos/response-set-demos.js';
+import type {ResponseSetDemos} from '../response-set-demos/response-set-demos.js';
 import '../header-rules/header-rules.js';
 import {headerRulePhase,type HeaderRules} from '../header-rules/header-rules.js';
-import type {ExperimentVariants} from '../experiment-variants/experiment-variants.js';
+import type {ResponseSetWorkspace} from '../response-set-workspace/response-set-workspace.js';
+import type {ResponseSetRestoreRequest,ResponseSetRestored,ResponseSetDeleted} from '../response-set-lifecycle/response-set-lifecycle.js';
+import type {IntakeDraftResolution} from '../response-set-intake/response-set-intake.js';
 import type {ExperimentSelection,VariantEdit,TrafficRuleRequest} from '../models.js';
 import {responseBodyLanguage, type BodyCommit, type ResponseBodyEditor} from '../response-body-editor/response-body-editor.js';
 import type {UserAgentOverrides} from '../user-agent-overrides/user-agent-overrides.js';
@@ -85,7 +89,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   responseExperimentChanged():void {this.updateRuleDetail();}
   private updateRuleDetail():void {
     this.experimentEditorVisible=this.responseExperiment&&!this.editorHidden&&['responses','experiments'].includes(this.automationSection);
-    this.overviewVisible=this.view==='automation'&&this.automationSection==='experiments'&&!this.experimentEditorVisible;
+    this.overviewVisible=this.view==='automation'&&this.automationSection==='experiments';
     this.ruleDetail=this.automationSection==='responses'&&this.responseExperiment?false:['responses','experiments'].includes(this.automationSection)?!this.editorHidden||!this.batchReviewHidden:this.nativeDetail;
   }
   filterRuleDirection(event:Event):void {this.finishRuleDrag();this.ruleDirection=(event.target as HTMLSelectElement).value;this.renderRuleSelection();}
@@ -164,7 +168,16 @@ export class AutomationWorkspace extends WorkspaceElement {
   @observable responseSaveLabel=initialState.responseSaveLabel;
   @observable responseNameLabel=initialState.responseNameLabel;
   @observable variantHistorical=false;
-  experimentVariants!:ExperimentVariants;
+  responseSets!:ResponseSetWorkspace;
+  responseSetDemos!:ResponseSetDemos;
+  requestSavedDemos(event:CustomEvent<{mode:'save'|'list'}>):void {
+    event.stopPropagation();const owner=this.responseSets.current();if(!owner||this.responseSets.busy||this.fileChoiceBusy)return;
+    if(event.detail.mode==='save'&&this.responseSets.dirty)return;
+    const {id,incarnation,revision}=owner;
+    const current=()=>this.isConnected&&this.collectionOpen&&this.view==='automation'&&this.automationSection==='experiments'&&this.responseSets.setId===id&&this.responseSets.current()?.incarnation===incarnation&&this.responseSets.current()?.revision===revision;
+    this.responseSetDemos.show(owner,event.detail.mode,current,!this.responseSets.dirty,this.selection?.sessionId??'');
+  }
+  savedDemoNotice(event:CustomEvent<{ownerId:string;demo:{name:string}}>):void {event.stopPropagation();if(this.responseSets.setId===event.detail.ownerId)this.responseSets.message=`Saved demo ${event.detail.demo.name}.`;}
   @observable previewReportAvailable=false;
   @observable previewReportSetId='';
   @observable editorPreviewReportAvailable=false;
@@ -176,58 +189,201 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(event.detail.generation>=(this.automationStatus?.generation??0)&&this.automationKind==='success')this.automationText='';
     this.renderAutomation(event.detail);
   }
-  onHeaderRulesState(event:CustomEvent<AutomationStatus>):void {const editor=this.automationSection==='header-rules'?this.headerRulesEditor:this.automationSection==='response-text'?this.responseTextEditor:null;if(editor)this.catalogSelectedId=editor.hrId;this.renderAutomation(event.detail);const section=this.automationSection;queueMicrotask(()=>{if(editor&&this.automationSection===section){this.catalogSelectedId=editor.hrId;if(editor.hrId)this.ruleSelection.replace(editor.hrId);this.renderRuleSelection();}});}
-  async showVariants():Promise<void> {
-    if(!await this.canLeaveEditor())return;
-    this.editorHidden=true;this.automationSection='experiments';this.$flushUpdates();
-    if(this.editingVariant)await this.experimentVariants.reveal(this.editingVariant);
-    else this.experimentVariants.newExperimentButton.focus();
+  dispatchCollectionAdd(event:CustomEvent<{source:string}>):void {
+    if(event.detail.source==='captured'||event.detail.source==='rules'){this.$emit('response-set-intake-request',{source:event.detail.source==='rules'?'rules':'traffic',destinationId:this.responseSets.setId});return;}
+    void this.addCollectionResponse(event);
   }
-  async newNamedExperiment():Promise<void> {
-    if(!this.selection?.reusable){this.showNotice('Select a response','Select a reusable captured response in Traffic, then choose Create response set.',null,null);return;}
-    await this.populateCapturedAutoResponse(this.selection.sessionId,this.selection.detail,undefined,true);
+  collectSelectedRules():void {
+    const ids=[...this.ruleSelection.ids],ordinary=new Set(this.rules.map(rule=>rule.id));
+    this.ruleMenu.hidePopover();this.ruleMoreButton.focus({preventScroll:true});
+    if(!ids.length||ids.some(id=>!ordinary.has(id))){this.automationText='Select only ordinary saved-response rules to add to a response set.';this.automationKind='error';return;}
+    this.$emit('response-set-intake-request',{source:'rules',ids});
   }
-  async editVariant(event:CustomEvent<VariantEdit>):Promise<void> {
-    const {selection,ruleId}=event.detail,status=this.automationStatus;
-    const experiment=status?.experiments?.find(e=>e.id===selection.experimentId),variant=experiment?.variants.find(v=>v.id===selection.variantId),revision=variant?.revisions.find(r=>r.revision===selection.revision);
-    if(!revision)return;
-    if(ruleId){const rule=revision.rules.find(r=>r.id===ruleId);if(rule)await this.editAutoResponse(rule,false,true,selection);}
-    else {
-      if(!this.selection?.reusable){this.showNotice('Select a response','Select a reusable captured response in Traffic before adding it to this variant.',null,null);return;}
-      if(!await this.canLeaveEditor())return;
-      await this.populateCapturedAutoResponse(this.selection.sessionId,this.selection.detail,undefined,true,selection);
+  private intakeDraftSignature():string {
+    this.captureCollectionResponse();return JSON.stringify({selection:this.responseSets.currentSelection(),name:this.responseSets.setName,notes:this.responseSets.setNotes,rules:this.responseSets.draftRules,editor:this.editorRevision,snapshots:[...this.collectionSnapshots.entries()].map(([id,snapshot])=>({id,fields:snapshot.fields,state:snapshot.state,matcher:snapshot.matcher}))});
+  }
+  private intakeSourceDiscardDeferred=false;
+  // Keep the editor's full immutable definition when a completed Move removes
+  // its original identity while newer properties remain in the editor.
+  private responseRuleTemplate:AutomationRule|null=null;
+  private intakeSourceSignature(ids:string[]):string|null {
+    if(this.collectionOpen||this.responseExperiment||this.editorHidden||!this.editingAutoResponseId||!ids.includes(this.editingAutoResponseId))return null;
+    this.refreshResponseDirty();
+    return JSON.stringify({id:this.editingAutoResponseId,editor:this.editorRevision,values:this.responseValues(),body:this.autoResponseBody.value,bodyMode:this.bodyMode,encoding:this.bodyTextEncoding,asset:this.autoResponseSourceState});
+  }
+  private async prepareIntakeSources(ids:string[],current:()=>boolean):Promise<IntakeDraftResolution|null> {
+    if(!ids.length)return {afterCommit:async()=>{}};
+    const affected=!this.collectionOpen&&!this.responseExperiment&&!this.editorHidden&&!!this.editingAutoResponseId&&ids.includes(this.editingAutoResponseId);
+    if(affected&&(this.loadingSavedResponse||this.fileChoiceBusy||this.savingAutoResponse||this.changingAutoResponse||this.resolvingUnsaved||this.bodyEditor?.surface?.open))return null;
+    if(this.intakeSourceSignature(ids)!==null&&this.draftDirty){
+      this.intakeSourceDiscardDeferred=true;
+      try {if(!await this.canLeaveEditor()||!current())return null;}
+      finally {this.intakeSourceDiscardDeferred=false;}
     }
+    if(!current())return null;
+    const signature=this.intakeSourceSignature(ids);
+    return {beforeCommit:()=>signature===this.intakeSourceSignature(ids),afterCommit:async committed=>{
+      if(!this.isConnected||this.collectionOpen||this.responseExperiment||this.editorHidden||!this.editingAutoResponseId||!ids.includes(this.editingAutoResponseId))return;
+      const latest=this.automationStatus&&this.automationStatus.generation>=committed.generation?this.automationStatus:committed;
+      if(latest.rules.some(rule=>rule.id===this.editingAutoResponseId))return;
+      const unchanged=signature===this.intakeSourceSignature(ids);
+      if(!unchanged&&this.draftDirty){
+        // The operation may finish after its dialog closes. Keep newer work as a
+        // new rule draft rather than leaving Save pointed at the removed source.
+        this.editingAutoResponseId=null;this.existingResponse=false;this.savedActivationRule=null;this.editorTitle='New saved-response rule';this.draftDirty=true;this.responseCanSave=true;
+        this.autoResponseError='The original rule was moved. Your newer changes are preserved as a new rule draft.';this.renderExperimentState();return;
+      }
+      this.editorRevision++;this.editorHidden=true;this.editingAutoResponseId=null;this.autoResponseSourceState=null;this.savedActivationRule=null;this.draftDirty=false;this.responseCanSave=false;
+    }};
+  }
+  async prepareResponseSetIntake(id:string,current:()=>boolean,movingRuleIds:string[]=[]):Promise<IntakeDraftResolution|null> {
+    // Check the destination before offering to discard any source work.
+    const status=await invoke<AutomationStatus>('automation_status');
+    if(!current()||id!=='__new'&&!status.responseSets?.some(set=>set.id===id))return null;
+    const source=await this.prepareIntakeSources(movingRuleIds,current);if(!source)return null;
+    const destination=id==='__new'?{afterCommit:async()=>{}}:await this.prepareIntakeDestination(id,current);if(!destination)return null;
+    return {beforeCommit:()=>source.beforeCommit?.()??true,afterCommit:async committed=>{await source.afterCommit(committed);await destination.afterCommit(committed);}};
+  }
+  private async prepareIntakeDestination(id:string,current:()=>boolean):Promise<IntakeDraftResolution|null> {
+    const status=await invoke<AutomationStatus>('automation_status');
+    if(!current()||!status.responseSets?.some(set=>set.id===id))return null;
+    if(!this.collectionOpen||this.responseSets.setId!==id)return {afterCommit:async()=>{}};
+    if(!await this.canLeaveEditor()||!current()||this.responseSets.setId!==id)return null;
+    const discard=this.responseSets.dirty,incarnation=this.responseSets.currentSelection().incarnation,signature=this.intakeDraftSignature();
+    return {afterCommit:async committed=>{
+      if(!this.isConnected||!this.collectionOpen||this.responseSets.setId!==id||signature!==this.intakeDraftSignature())return;
+      const saved=committed.responseSets?.find(set=>set.id===id&&set.incarnation===incarnation);if(!saved)return;
+      const latest=this.automationStatus&&this.automationStatus.generation>=committed.generation?this.automationStatus:committed;
+      const set=latest.responseSets?.find(set=>set.id===id&&set.incarnation===incarnation);if(!set||set.revision!==saved.revision)return;
+      const selected=this.collectionRuleId,rule=set.rules.find(rule=>rule.id===selected),snapshot=this.collectionSnapshots.get(selected),resetEditor=discard&&snapshot?.state.draftDirty===true;
+      // Intake only appends definitions. Clean editor snapshots still describe the
+      // same immutable assets; discarded drafts must not survive the new baseline.
+      this.collectionSnapshots=new Map([...this.collectionSnapshots].filter(([ruleId,snapshot])=>set.rules.some(rule=>rule.id===ruleId)&&(!discard||snapshot.state.draftDirty!==true)));
+      this.responseSets.saved(latest);this.collectionName=set.name;this.editingVariant=this.responseSets.currentSelection();
+      if(this.responseSets.nameInput.value!==set.name)this.responseSets.nameInput.value=set.name;
+      if(this.responseSets.notesInput.value!==set.notes)this.responseSets.notesInput.value=set.notes;
+      this.responseSets.select(rule?selected:'');
+      if(!rule){this.collectionRuleId='';this.editorRevision++;this.editorHidden=true;this.draftDirty=false;return;}
+      if(!resetEditor)return;
+      const root=this.getRootNode(),focus=root instanceof ShadowRoot?root.activeElement:document.activeElement;
+      let restore=focus instanceof HTMLElement&&this.autoResponseForm.contains(focus);
+      const moved=(event:Event)=>{if(event.composedPath()[0]!==focus)restore=false;};
+      root.addEventListener('focusin',moved);root.addEventListener('pointerdown',moved);this.switchingCollection=true;
+      try {await this.editAutoResponse(rule,true,true,this.responseSets.currentSelection());}
+      finally {this.switchingCollection=false;root.removeEventListener('focusin',moved);root.removeEventListener('pointerdown',moved);if(restore&&focus instanceof HTMLElement&&focus.isConnected&&focus.getClientRects().length)focus.focus({preventScroll:true});}
+    }};
+  }
+  onHeaderRulesState(event:CustomEvent<AutomationStatus>):void {const editor=this.automationSection==='header-rules'?this.headerRulesEditor:this.automationSection==='response-text'?this.responseTextEditor:null;if(editor)this.catalogSelectedId=editor.hrId;this.renderAutomation(event.detail);const section=this.automationSection;queueMicrotask(()=>{if(editor&&this.automationSection===section){this.catalogSelectedId=editor.hrId;if(editor.hrId)this.ruleSelection.replace(editor.hrId);this.renderRuleSelection();}});}
+  private collectionSnapshots=new Map<string,{fields:Array<{name:string;value:string;checked:boolean;customError:string}>,state:Record<string,unknown>,baseline:DraftBaseline,matcher:import('../match-editor/match-editor.js').MatchDraft}>();
+  private collectionRuleId='';
+  private switchingCollection=false;
+  private stagingCollection=false;
+  private stagedRule:AutomationRule|null=null;
+  private collectionAddEpoch=0;
+  @observable collectionAdding=false;
+  @observable collectionOpen=false;
+  @observable collectionName='';
+  private readonly collectionStateKeys=['editingAutoResponseId','autoResponseSourceState','responseRuleTemplate','savedResponse','responseBodyPath','responseBodyFileMode','responseBodyFile','responseBodyFileDetails','responseBodyFileError','responseCopiedFrom','responseBodyFileBytes','bodyFileTouched','savedHeaderText','originalResponseHeaders','capturedDraft','capturedOrigin','existingResponse','sourceText','sourceSessionId','sourceLabel','sourceAvailable','sourceAvailabilityText','bodyStatusText','bodyMode','bodyTextEncoding','bodyOriginalBytes','bodyViewBytes','bodyViewValue','bodyByteSummary','bodyHidden','encodingOptionsHidden','preserveEncodingDisabled','responseReadOnly','responseHeadersHidden','capturedOptionsHidden','bodyReadOnly','requestHeadersHidden','editBodyDisabled','responseFieldsHidden','retainAdvancedMatcher','advancedMatcherText','matchExamples','matcherCondition','requestHeadersOpen','customMethodHidden','responseOpen','editorTitle','autoResponseError','requestHeadersError','responseHeadersError','draftDirty','savedNonBodySnapshot'] as const;
+  private captureCollectionResponse():void {
+    if(!this.collectionRuleId||this.editorHidden||this.loadingSavedResponse)return;
+    this.requestHeadersOpen=(this.autoResponseForm.elements.namedItem('requestHeaders') as HTMLTextAreaElement).closest('details')?.open??false;
+    this.refreshResponseDirty();
+    const fields=Array.from(this.autoResponseForm.elements).filter((field):field is HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement=>field instanceof HTMLInputElement||field instanceof HTMLTextAreaElement||field instanceof HTMLSelectElement).filter(field=>!!field.name).map(field=>({name:field.name,value:field.value,checked:field instanceof HTMLInputElement&&field.checked,customError:field.validity.customError?field.validationMessage:''}));
+    this.collectionSnapshots.set(this.collectionRuleId,{fields,state:Object.fromEntries(this.collectionStateKeys.map(key=>[key,Reflect.get(this,key)])),baseline:this.responseBaseline,matcher:this.matchEditor.captureDraft()});
+    this.responseSets.markEditorDirty([...this.collectionSnapshots.values()].some(snapshot=>snapshot.state.draftDirty===true));
+  }
+  private restoreCollectionResponse(id:string):boolean {
+    const snapshot=this.collectionSnapshots.get(id);if(!snapshot)return false;
+    this.editorRevision++;this.fileInfoRevision++;window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;
+    for(const [key,value] of Object.entries(snapshot.state))Reflect.set(this,key,value);
+    this.responseBaseline=snapshot.baseline;this.editingVariant=this.responseSets.currentSelection();this.responseExperiment=true;this.editorHidden=false;this.loadingSavedResponse=false;
+    this.$flushUpdates();for(const field of snapshot.fields){const element=this.autoResponseForm.elements.namedItem(field.name);if(element instanceof HTMLInputElement||element instanceof HTMLTextAreaElement||element instanceof HTMLSelectElement){element.value=field.value;element.setCustomValidity(field.customError);if(element instanceof HTMLInputElement)element.checked=field.checked;}}
+    this.matchEditor.condition=this.matcherCondition;this.matchEditor.$flushUpdates();this.matchEditor.restoreDraft(snapshot.matcher);this.updateBodySummary();this.renderExperimentState();return true;
+  }
+  async openResponseSet(event:CustomEvent<{id:string;source?:SelectedResponse|null}>,confirmed=false,focus=true):Promise<void> {
+    const id=event.detail.id;if(!this.automationStatus?.responseSets?.some(set=>set.id===id))return;
+    if(this.resolvingUnsaved||this.responseSets.busy)return;
+    if(!confirmed&&!await this.canLeaveEditor())return;
+    this.collectionSnapshots.clear();this.collectionRuleId='';this.editorRevision++;this.editorHidden=true;this.draftDirty=false;this.responseSets.open(id);this.collectionOpen=true;this.collectionName=this.responseSets.setName;this.automationSection='experiments';this.$flushUpdates();if(focus)this.responseSets.backButton.focus({preventScroll:true});
+    if(event.detail.source)await this.addCollectionResponse(new CustomEvent('set-add',{detail:{source:'captured',captured:event.detail.source}}));
+  }
+  async leaveResponseSet():Promise<void> {if(!await this.canLeaveEditor())return;this.collectionSnapshots.clear();this.collectionRuleId='';this.editorRevision++;this.editorHidden=true;this.draftDirty=false;this.collectionOpen=false;this.responseSets.close();}
+  async editCollectionResponse(event:CustomEvent<{ruleId:string}>):Promise<void> {
+    if(this.collectionAdding||this.responseSets.busy||this.loadingSavedResponse||this.fileChoiceBusy)return;
+    const id=event.detail.ruleId,rule=this.responseSets.draftRules.find(rule=>rule.id===id);if(!rule||id===this.collectionRuleId&&!this.editorHidden)return;
+    this.captureCollectionResponse();this.collectionRuleId=id;this.responseSets.select(id);this.switchingCollection=true;
+    try{if(!this.restoreCollectionResponse(id))await this.editAutoResponse(rule,true,true,this.responseSets.currentSelection());}
+    finally{this.switchingCollection=false;}
+  }
+  async addCollectionResponse(event:CustomEvent<{source:string;captured?:SelectedResponse}>):Promise<void> {
+    if(this.collectionAdding||this.responseSets.busy||this.loadingSavedResponse||this.fileChoiceBusy)return;
+    if(this.responseSets.draftRules.length>=1000){this.responseSets.error='A response set can contain at most 1,000 responses.';return;}
+    const source=event.detail.source,captured=event.detail.captured??this.selection;
+    if(source==='captured'&&!captured?.reusable){this.responseSets.error='Select a reusable response in Traffic, then return here to add it.';return;}
+    this.captureCollectionResponse();this.collectionRuleId='';this.responseSets.select('');this.switchingCollection=true;this.collectionAdding=true;
+    const epoch=++this.collectionAddEpoch,selection=JSON.stringify(this.responseSets.currentSelection());
+    try {
+      let revision:number;
+      if(source==='captured'&&captured){const pending=this.populateCapturedAutoResponse(captured.sessionId,captured.detail,undefined,true,this.responseSets.currentSelection(),true);revision=this.editorRevision;await pending;}
+      else {const pending=this.beginScratchAutoResponse(true);revision=this.editorRevision;await pending;this.responseExperiment=true;this.automationSection='experiments';this.editingVariant=this.responseSets.currentSelection();this.renderExperimentState();}
+      if(epoch!==this.collectionAddEpoch||revision!==this.editorRevision||!this.isConnected||!this.collectionOpen||selection!==JSON.stringify(this.responseSets.currentSelection()))return;
+      if(source==='captured'&&this.autoResponseSourceState?.kind!=='captured')return;
+      this.collectionRuleId='autoresponse-rule-'+crypto.randomUUID().replaceAll('-','');this.draftDirty=true;
+      const data=new FormData(this.autoResponseForm),rule:AutomationRule={id:this.collectionRuleId,displayName:String(data.get('name')??'New response')||'New response',enabled:true,revision:0,priority:0,matcher:{method:'GET',url:{kind:'exact',value:''},requestHeaders:[],responseHeaders:[],scheme:null,host:null,port:null,pathPrefix:null,query:null,responseStatus:null,responseStatusClass:null},request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:null,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
+      this.responseSets.stageRule(rule);this.responseSets.select(rule.id);this.captureCollectionResponse();
+      if(source==='file')await this.chooseResponseBody();
+    }finally{if(epoch===this.collectionAddEpoch){this.switchingCollection=false;this.collectionAdding=false;}}
+  }
+  removeCollectionResponse(event:CustomEvent<{ruleId:string}>):void {if(this.collectionAdding||this.responseSets.busy||this.loadingSavedResponse||this.fileChoiceBusy)return;const id=event.detail.ruleId;this.collectionSnapshots.delete(id);this.responseSets.removeRule(id);if(id===this.collectionRuleId){this.editorRevision++;this.editorHidden=true;this.collectionRuleId='';this.draftDirty=false;}this.responseSets.markEditorDirty([...this.collectionSnapshots.values()].some(snapshot=>snapshot.state.draftDirty===true));this.$flushUpdates();this.responseSets.addButton.focus({preventScroll:true});}
+  async discardCollection():Promise<void> {
+    if(this.collectionAdding||this.responseSets.busy||this.loadingSavedResponse||this.fileChoiceBusy)return;const id=this.responseSets.setId,selected=this.collectionRuleId;this.collectionSnapshots.clear();this.editorRevision++;this.collectionRuleId='';this.editorHidden=true;this.draftDirty=false;
+    this.responseSets.open(id);if(this.responseSets.draftRules.some(rule=>rule.id===selected))await this.editCollectionResponse(new CustomEvent('set-edit',{detail:{ruleId:selected}}));
+  }
+  async saveCollection():Promise<boolean> {
+    if(this.collectionAdding||this.responseSets.busy||this.responseSets.tourStep>0||this.loadingSavedResponse||this.fileChoiceBusy||!this.collectionOpen)return false;
+    this.captureCollectionResponse();if(!this.responseSets.validate())return false;
+    const selected=this.collectionRuleId,selection=this.responseSets.currentSelection(),name=this.responseSets.setName.trim(),notes=this.responseSets.setNotes,focus=(this.getRootNode() as ShadowRoot).activeElement;
+    if(!Number.isSafeInteger(selection.revision)||!Number.isSafeInteger(this.automationStatus?.generation)){this.responseSets.error='Refresh the response set before saving.';return false;}
+    this.responseSets.busy=true;this.responseSets.error='';this.stagingCollection=true;
+    const staged:AutomationRule[]=[];
+    try {
+      for(const original of this.responseSets.draftRules){
+        const snapshot=this.collectionSnapshots.get(original.id);
+        if(snapshot&&(snapshot.state.draftDirty===true||!original.request.responseAsset)){this.collectionRuleId=original.id;this.restoreCollectionResponse(original.id);this.draftDirty=true;this.stagedRule=null;
+          if(!this.autoResponseForm.checkValidity()){this.autoResponseError='Review the required response fields.';throw new Error(`Review “${original.displayName??'New response'}”.`);}
+          if(!await this.saveAutoResponse(new Event('submit',{cancelable:true}))||!this.stagedRule)throw new Error(this.autoResponseError||'Response changes could not be prepared.');
+          staged.push({...this.stagedRule as AutomationRule,enabled:original.enabled!==false});
+        }else staged.push(original);
+      }
+      const current=await invoke<AutomationStatus>('automation_status'),saved=current.responseSets?.find(set=>set.id===selection.experimentId);
+      if(!saved||saved.incarnation!==selection.incarnation||saved.revision!==selection.revision)throw new Error('This response set changed. Your draft is preserved. Reopen the set after saving your work elsewhere.');
+      const retained=[...saved.rules,...saved.versions.flatMap(version=>version.rules),...(saved.applied?.rules??[]),...(saved.undoApply?.applied?.rules??[])];
+      const rules=staged.map((rule,index)=>{const priority=AUTORESPONSE_PRIORITY_BASE+index,previous=saved.rules.find(item=>item.id===rule.id),maximum=Math.max(0,...retained.filter(item=>item.id===rule.id).map(item=>item.revision));const changed=JSON.stringify({...rule,revision:0,priority})!==JSON.stringify(previous?{...previous,revision:0}:null);return {...rule,priority,revision:changed?Math.max(rule.revision,maximum)+1:previous?.revision??rule.revision};});
+      const status=await invoke<AutomationStatus>('change_response_set',{generation:current.generation,change:{action:'save-current',id:selection.experimentId,expectedRevision:selection.revision,name,notes,rules}});
+      this.renderAutomation(status);this.responseSets.saved(status);this.collectionName=name;this.collectionSnapshots.clear();this.collectionRuleId='';this.editorHidden=true;this.draftDirty=false;
+      this.responseSets.busy=false;this.stagingCollection=false;this.switchingCollection=true;
+      if(selected&&rules.some(rule=>rule.id===selected)){this.collectionRuleId=selected;this.responseSets.select(selected);await this.editAutoResponse(rules.find(rule=>rule.id===selected)!,true,true,this.responseSets.currentSelection());}
+      if(focus instanceof HTMLElement&&focus.isConnected&&((this.getRootNode() as ShadowRoot).activeElement===focus||(this.getRootNode() as ShadowRoot).activeElement===null))focus.focus({preventScroll:true});
+      return true;
+    }catch(error){this.responseSets.error=describeError(error);if(this.collectionRuleId)this.responseSets.select(this.collectionRuleId);return false;}
+    finally{this.stagingCollection=false;this.switchingCollection=false;this.responseSets.busy=false;this.savingAutoResponse=false;}
   }
   previewVariant(event:CustomEvent<VariantEdit>):void {
-    const {selection,ruleId}=event.detail;
-    const revision=this.automationStatus?.experiments?.find(e=>e.id===selection.experimentId)?.variants.find(v=>v.id===selection.variantId)?.revisions.find(r=>r.revision===selection.revision);
-    const experiment=this.automationStatus?.experiments?.find(e=>e.id===selection.experimentId);
-    const sourceRule=revision?.rules.find(r=>r.id===ruleId)??experiment?.variants.flatMap(v=>v.revisions.flatMap(r=>r.rules))[0];
-    const asset=[...this.assetsIndex.values()].find(a=>`${a.id}@${a.revision}`===sourceRule?.request.responseAsset);
-    const sourceSessionId=asset?.provenance.kind==='session'?asset.provenance.exchange_id:'';
-    const current=this.experimentVariants.previewContext();
+    const {selection,ruleId}=event.detail,set=this.automationStatus?.responseSets?.find(set=>set.id===selection.experimentId),sourceRule=set?.rules.find(rule=>rule.id===ruleId)??set?.rules[0];
+    const asset=[...this.assetsIndex.values()].find(asset=>`${asset.id}@${asset.revision}`===sourceRule?.request.responseAsset),sourceSessionId=asset?.provenance.kind==='session'?asset.provenance.exchange_id:'',current=this.responseSets.previewContext();
     this.$emit('page-preview-request',{ruleId,sourceSessionId,mode:'modified',variant:selection,responseSetId:selection.experimentId,isCurrent:()=>this.view==='automation'&&current()} satisfies ResponsePreviewIntent);
   }
-  private renderExperimentState():void {
-    this.editorPreviewReportAvailable=this.previewReportAvailable&&!!this.editingVariant&&this.editingVariant.experimentId===this.previewReportSetId;
-    this.responseSaveLabel=this.responseExperiment?(this.editingVariant?'Save revision':'Save response set'):'Save rule';
-    this.responseNameLabel=this.responseExperiment?(this.editingVariant?'Response name':'Response set name'):'Rule name';
-    if(!this.responseExperiment){this.experimentStateText='';return;}
-    if(this.editingVariant){
-      const selection=this.editingVariant,experiment=this.automationStatus?.experiments?.find(e=>e.id===selection.experimentId),variant=experiment?.variants.find(v=>v.id===selection.variantId);
-      this.variantHistorical=variant?.revisions.at(-1)?.revision!==selection.revision||variant?.archived===true||experiment?.archived===true;
-      this.experimentLive=JSON.stringify(experiment?.active)===JSON.stringify(selection);
-      this.experimentStateText=`${experiment?.name??'Response set'} · ${variant?.name??'Variant'} · revision ${selection.revision}. ${this.variantHistorical?'Read-only revision: restore archived items or duplicate earlier revisions in Response sets to edit.':'Saving creates a new revision; live traffic keeps its explicitly activated revision.'}`;
-      return;
-    }
-    const saved=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
-    this.experimentLive=saved?.enabled===true;
-    this.experimentStateText=!saved?'Unsaved response set. Saving keeps it disabled for live traffic.':!saved.enabled?'Saved response set · Disabled for live traffic. Preview uses the saved response.':this.automationStatus?.autoresponsesEnabled===false?'Enabled response set · Live saved responses are paused.':'Enabled response set · New matching live requests use the saved response.';
+  private responseSetDraftToken():string {this.captureCollectionResponse();return JSON.stringify({selection:this.responseSets.currentSelection(),name:this.responseSets.setName,notes:this.responseSets.setNotes,rules:this.responseSets.draftRules,drafts:[...this.collectionSnapshots.entries()].map(([id,snapshot])=>({id,fields:snapshot.fields,matcher:snapshot.matcher}))});}
+  async requestResponseSetRestore(event:CustomEvent<ResponseSetRestoreRequest>):Promise<void> {
+    event.stopPropagation();const request=event.detail,current=()=>this.collectionOpen&&this.view==='automation'&&this.automationSection==='experiments'&&this.responseSets.setId===request.id&&this.responseSets.currentSelection().incarnation===request.incarnation;
+    const set=this.automationStatus?.responseSets?.find(set=>set.id===request.id&&set.incarnation===request.incarnation);
+    if(!current()||!set?.versions.some(version=>version.id===request.versionId&&version.revision===request.versionRevision)){request.resolve(false);return;}
+    if(!await this.canLeaveEditor()||!current()){request.resolve(false);return;}
+    const token=this.responseSetDraftToken();request.resolve(true,()=>current()&&token===this.responseSetDraftToken());
   }
-  async useExperimentForLive():Promise<void> {
-    if(!this.editingVariant||this.draftDirty||this.savingAutoResponse)return;
-    await this.showVariants();await this.experimentVariants.activate();
-  }
+  restoredResponseSet(event:CustomEvent<ResponseSetRestored>):void {event.stopPropagation();const {id,incarnation}=event.detail;if(!this.collectionOpen||this.responseSets.setId!==id||this.responseSets.currentSelection().incarnation!==incarnation)return;void this.openResponseSet(new CustomEvent('set-open',{detail:{id}}),true,false);}
+  deletedResponseSet(event:CustomEvent<ResponseSetDeleted>):void {event.stopPropagation();const {id,incarnation,focus}=event.detail;if(!this.collectionOpen||this.responseSets.setId!==id||this.responseSets.currentSelection().incarnation!==incarnation)return;this.collectionSnapshots.clear();this.collectionRuleId='';this.editorRevision++;this.editorHidden=true;this.draftDirty=false;this.collectionOpen=false;this.responseSets.close(focus&&this.view==='automation'&&this.automationSection==='experiments');}
+  private renderExperimentState():void {this.editorPreviewReportAvailable=this.previewReportAvailable&&this.responseSets?.setId===this.previewReportSetId;this.responseSaveLabel=this.responseExperiment?'Save changes':'Save rule';this.responseNameLabel=this.responseExperiment?'Response name':'Rule name';this.variantHistorical=false;this.experimentStateText=this.responseExperiment?'Response changes are saved together with this collection.':'';}
   userAgentOverrides!:UserAgentOverrides;
   @observable headerOverrideCount=0;
   scriptEditor!: ScriptEditor;
@@ -235,7 +391,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   @attr theme = 'system';
   @observable automationSection='responses';
   @observable batchActionId='';
-  showAutomationSection(section:string):void {this.finishRuleDrag();this.automationSection=section==='rules'?this.lastRuleSection:section;this.nativeDetail=!['responses','experiments','scripts'].includes(this.automationSection);}
+  async showAutomationSection(section:string):Promise<void> {if(this.collectionOpen&&this.automationSection==='experiments'&&section!=='experiments'){if(!await this.canLeaveEditor())return;this.collectionSnapshots.clear();this.collectionRuleId='';this.collectionOpen=false;this.editorRevision++;this.editorHidden=true;this.responseExperiment=false;this.draftDirty=false;this.responseSets.close(false);}this.finishRuleDrag();this.automationSection=section==='rules'?this.lastRuleSection:section;this.nativeDetail=!['responses','experiments','scripts'].includes(this.automationSection);}
   async backToRules():Promise<void> {if(this.nativeDetail){this.nativeDetail=false;this.$flushUpdates();this.newRuleButton.focus();return;}if(!this.batchReviewHidden){this.cancelBatch();return;}if(!await this.canLeaveEditor())return;const focused=this.ruleSelection.focused;this.editorRevision++;this.editorHidden=true;this.autoResponseSourceState=null;this.editingAutoResponseId=null;this.draftDirty=false;this.$flushUpdates();if(focused)this.focusRule(focused);else this.newRuleButton.focus();}
   openBatchMenu(id:string,event:MouseEvent):void {this.batchActionId=id;this.positionRuleMenu(event);}
   includeBatchRow(id:string,event:Event):void {const included=(event.currentTarget as HTMLInputElement).checked;this.batchRows=this.batchRows.map(row=>row.id===id?{...row,included}:row);this.renderBatchReview();}
@@ -399,6 +555,7 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   protected hydratedCallback(): void { window.addEventListener('blur',this.cancelRuleDrag);void this.refreshAutomation(); }
   disconnectedCallback():void {
+    this.collectionAddEpoch++;
     this.finishRuleDrag();
     window.removeEventListener('blur',this.cancelRuleDrag);
     window.clearTimeout(this.matcherTimer);window.clearTimeout(this.usageTimer);this.matcherTestRevision++;this.editorRevision++;
@@ -433,6 +590,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   private refreshResponseDirty():void {
     if(!this.autoResponseForm||this.editorHidden)return;
     this.draftDirty=this.responseBaseline.differs(this.responseValues());
+    if(this.collectionOpen&&this.responseExperiment){this.responseSets.markEditorDirty(this.draftDirty||[...this.collectionSnapshots.entries()].some(([id,snapshot])=>id!==this.collectionRuleId&&snapshot.state.draftDirty===true));const name=(this.autoResponseForm.elements.namedItem('name') as HTMLInputElement).value;this.responseSets.updateRuleName(this.collectionRuleId,name);}
     this.responseCanSave=!this.existingResponse||this.draftDirty;
   }
   private queueResponseDirty():void {queueMicrotask(()=>this.refreshResponseDirty());}
@@ -445,15 +603,18 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
   onMatcherChange():void {this.queueResponseDirty();this.scheduleMatcherTest();}
   scheduleMatcherTest():void {window.clearTimeout(this.matcherTimer);this.matcherTestRevision++;this.matchTestResult=null;this.renderMatchCases();this.matcherTimer=window.setTimeout(()=>{void this.testMatcher();},300);}
-  formKeyboard(event:KeyboardEvent):void {if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();this.autoResponseForm.requestSubmit();}}
+  formKeyboard(event:KeyboardEvent):void {if(this.collectionOpen&&this.responseSets.tourStep>0){this.responseSets.guideKeyboard(event);if(event.defaultPrevented)return;}if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='s'){event.preventDefault();event.stopPropagation();if(this.collectionOpen)void this.saveCollection();else this.autoResponseForm.requestSubmit();}}
   previewSavedRule(mode:'captured'|'modified'='modified'):void {
     this.closeResponseMenu(this.previewResponseMenu,this.previewResponseButton);
     if(mode==='modified'&&!this.editingAutoResponseId)return;
-    if(this.responseExperiment&&this.draftDirty){this.autoResponseError=`${this.responseSaveLabel} before previewing. Your draft is preserved.`;return;}
+    if(this.responseExperiment&&this.responseSets.dirty){this.autoResponseError=`${this.responseSaveLabel} before previewing. Your draft is preserved.`;return;}
     const revision=this.editorRevision,section=this.automationSection,dirty=this.draftDirty;
     this.$emit('page-preview-request',{ruleId:this.editingAutoResponseId,sourceSessionId:this.sourceSessionId,mode,...(this.editingVariant?{responseSetId:this.editingVariant.experimentId,variant:this.editingVariant}:{}),isCurrent:()=>this.view==='automation'&&section===this.automationSection&&revision===this.editorRevision&&dirty===this.draftDirty&&!this.editorHidden} satisfies ResponsePreviewIntent);
   }
   async canLeaveEditor():Promise<boolean> {
+    if(this.collectionAdding||this.resolvingUnsaved)return false;
+    if(this.bodyEditor?.surface?.open&&!this.bodyEditor.bodyBusy)return false;
+    if(this.collectionOpen){this.responseSets.dismissGuideForNavigation();this.captureCollectionResponse();if(this.responseSets.busy||this.loadingSavedResponse||this.fileChoiceBusy)return false;if(!this.responseSets.dirty)return true;if(this.leaveEditorPromise)return this.leaveEditorPromise;this.leaveEditorPromise=new Promise(resolve=>{this.resolveLeave=resolve;});this.unsavedDialog.showModal();return this.leaveEditorPromise;}
     if(this.savingAutoResponse)return false;
     if(this.bodyEditor?.surface?.open&&!this.bodyEditor.bodyBusy)return false;
     if(!this.draftDirty || this.editorHidden)return true;
@@ -461,10 +622,17 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.leaveEditorPromise=new Promise(resolve=>{this.resolveLeave=resolve;});this.unsavedDialog.showModal();
     return this.leaveEditorPromise;
   }
+  @observable resolvingUnsaved=false;
   async resolveUnsaved(choice:string):Promise<void> {
-    if(this.savingAutoResponse)return;
-    if(choice==='save') {if(!this.autoResponseForm.checkValidity()){await this.resolveUnsaved('stay');this.autoResponseForm.reportValidity();return;}if(!await this.saveAutoResponse(new Event('submit',{cancelable:true})))return;}
-    if(choice==='discard')this.draftDirty=false;
+    if(this.resolvingUnsaved||this.savingAutoResponse||this.responseSets.busy)return;
+    const collection=this.collectionOpen;
+    if(choice==='save') {
+      if(!collection&&!this.autoResponseForm.checkValidity()){await this.resolveUnsaved('stay');this.autoResponseForm.reportValidity();return;}
+      this.resolvingUnsaved=true;
+      try {if(!await (collection?this.saveCollection():this.saveAutoResponse(new Event('submit',{cancelable:true})))){this.$update();return;}}
+      finally{this.resolvingUnsaved=false;}
+    }
+    if(choice==='discard'&&!collection&&!this.intakeSourceDiscardDeferred)this.draftDirty=false;
     this.unsavedDialog.close();const resolve=this.resolveLeave;this.resolveLeave=null;this.leaveEditorPromise=null;resolve?.(choice!=='stay');
   }
   unsavedCancelled(event:Event):void {event.preventDefault();void this.resolveUnsaved('stay');}
@@ -472,7 +640,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const value=(name:string)=>(this.autoResponseForm.elements.namedItem(name) as HTMLInputElement|HTMLTextAreaElement|HTMLSelectElement).value;
     const selected=value('method'),method=(selected==='CUSTOM'?value('customMethod'):selected).toUpperCase();
     const headers=(name:string)=>{try{return parseHeaderLines(value(name)).filter(header=>name!=='responseHeaders'||!['content-length','content-encoding','content-type'].includes(header.name.toLowerCase()));}catch{return value(name);}};
-    return JSON.stringify({name:value('name').trim(),method,url:this.matchEditor.value,requestHeaders:headers('requestHeaders'),retainAdvanced:this.retainAdvancedMatcher,examples:this.matchExamples,status:Number(value('status')),mediaType:optionalText(value('mediaType')),responseHeaders:headers('responseHeaders'),compression:this.autoResponsePreserveEncoding.checked});
+    return JSON.stringify({name:value('name').trim(),method,url:this.matchEditor.captureDraft(),requestHeaders:headers('requestHeaders'),retainAdvanced:this.retainAdvancedMatcher,examples:this.matchExamples,status:Number(value('status')),mediaType:optionalText(value('mediaType')),responseHeaders:headers('responseHeaders'),compression:this.autoResponsePreserveEncoding.checked});
   }
   openBodyDialog():void {
     if(this.savingAutoResponse||this.loadingSavedResponse||this.fileChoiceBusy||this.responseBodyPath||this.editBodyDisabled)return;
@@ -505,7 +673,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const before=this.bodyDialogBefore;
     if(before&&!this.bodyDialogCommitted&&before.revision===this.editorRevision){this.bodyMode=before.mode;this.autoResponseBody.value=before.value;this.bodyViewValue=before.viewValue;this.bodyViewBytes=before.viewBytes;this.bodyStatusText=before.status;this.autoResponseEditBody.checked=before.edit;this.bodyReadOnly=before.readOnly;this.draftDirty=before.dirty;this.autoResponseError=before.error;this.updateCompressionChoice();this.updateBodySummary();}
     this.bodyDialogBefore=null;this.bodyDialogCommitted=false;
-    if(this.responseExperiment&&this.editorHidden&&this.view==='automation'&&this.automationSection==='experiments')this.experimentVariants.experimentSelect.focus();
+    if(this.responseExperiment&&this.editorHidden&&this.view==='automation'&&this.automationSection==='experiments')this.responseSets.addButton.focus();
   }
   private currentBodyBytes():number[] {
     return this.bodyViewBytes!==null&&this.autoResponseBody.value===this.bodyViewValue?this.bodyViewBytes:encodeBody(this.autoResponseBody.value,this.bodyMode,this.bodyTextEncoding);
@@ -526,8 +694,9 @@ export class AutomationWorkspace extends WorkspaceElement {
     catch(error:unknown){this.bodyByteSummary=describeError(error);}
   }
   async revertAutoResponse():Promise<void> {
+    if(this.collectionOpen){await this.discardCollection();return;}
     const selection=this.editingVariant;
-    const rules=selection?this.automationStatus?.experiments?.find(e=>e.id===selection.experimentId)?.variants.find(v=>v.id===selection.variantId)?.revisions.find(r=>r.revision===selection.revision)?.rules:this.automationStatus?.rules;
+    const rules=selection?this.automationStatus?.responseSets?.find(set=>set.id===selection.experimentId)?.rules:this.automationStatus?.rules;
     const rule=rules?.find(rule=>rule.id===this.editingAutoResponseId);this.draftDirty=false;
     const captured=this.capturedDraft,experiment=this.responseExperiment;
     if(rule)await this.editAutoResponse(rule,true,experiment,selection??undefined);
@@ -699,7 +868,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const revision=++this.matcherTestRevision;
     this.matcherTestBusy=true;this.matcherTestError='';
     try {
-      const existing=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
+      const existing=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId)??this.responseRuleTemplate??undefined;
       const matcher=this.currentMatcher(new FormData(this.autoResponseForm),existing);
       let validation:MatchTestResult;
       try {validation=await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:matcher.method??'GET',url:'https://example.test/',headers:[],ruleId:this.editingAutoResponseId,enabled:this.autoResponseEnabled.checked}});}
@@ -733,7 +902,7 @@ export class AutomationWorkspace extends WorkspaceElement {
       if(revision!==this.editorRevision || request!==this.fileInfoRevision || !this.isConnected)return;
       this.queueResponseDirty();this.bodyFileTouched=true;this.setResponseFile(info);
     }catch(error:unknown){if(revision===this.editorRevision && request===this.fileInfoRevision)this.autoResponseError=describeError(error);}
-    finally{if(revision===this.editorRevision && request===this.fileInfoRevision)this.fileChoiceBusy=false;}
+    finally{if(request===this.fileInfoRevision)this.fileChoiceBusy=false;}
   }
   private setResponseFile(info:ResponseBodyFileInfo):void {
     this.responseBodyPath=info.path;this.responseBodyFile=info.path;
@@ -757,7 +926,8 @@ export class AutomationWorkspace extends WorkspaceElement {
       const info=await invoke<ResponseBodyFileInfo>('response_body_file_info',{path,reference:this.bodyFileTouched?null:this.savedResponse?.asset.linkedBody?`${this.savedResponse.asset.id}@${this.savedResponse.asset.revision}`:null});
       if(revision===this.editorRevision && request===this.fileInfoRevision && path===this.responseBodyPath)this.setResponseFile(info);
     }catch(error:unknown){if(revision===this.editorRevision && request===this.fileInfoRevision && path===this.responseBodyPath){this.responseBodyFileBytes=null;this.renderResponseFileDetails();this.responseBodyFileError=describeError(error);}}
-    finally{if(revision===this.editorRevision && request===this.fileInfoRevision)this.fileChoiceBusy=false;}
+    // The request owns busy even after departure invalidates its editor data.
+    finally{if(request===this.fileInfoRevision)this.fileChoiceBusy=false;}
   }
   clearResponseBodyFile():void {
     this.fileInfoRevision++;this.fileChoiceBusy=false;this.responseBodyFileMode='copy';this.responseBodyFileBytes=null;
@@ -820,14 +990,19 @@ export class AutomationWorkspace extends WorkspaceElement {
     return result.flatMap((field,index)=>[...(protectedSlots.get(index)??[]),field]).concat(protectedSlots.get(result.length)??[]);
   }
   private prepareEditor(experiment=false): void {
+    // Callers resolve the draft boundary before replacing its editor. Ordinary
+    // rule reveals must also release collection ownership of Save and navigation.
+    if(!experiment&&this.collectionOpen){this.collectionSnapshots.clear();this.collectionRuleId='';this.collectionOpen=false;this.collectionName='';this.responseSets.close(false);}
+    this.responseRuleTemplate=null;
     this.nativeDetail=false;this.catalogSelectedId='';
     this.automationSection=experiment?'experiments':'responses';
     this.responseExperiment=experiment;this.experimentLive=false;this.experimentStateText='';
     this.editingVariant=null;this.variantHistorical=false;
-    this.responseSaveLabel=experiment?'Save response set':'Save rule';this.responseNameLabel=experiment?'Response set name':'Rule name';
+    this.responseSaveLabel=experiment?'Save changes':'Save rule';this.responseNameLabel=experiment?'Response name':'Rule name';
     this.fileInfoRevision++;this.responseBodyFileMode='copy';this.responseCopiedFrom='';this.responseBodyFileBytes=null;
     this.editorRevision++;
     if (this.editorHidden) {const opener=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;this.editorOpener=opener?.closest('#rule-kind-menu')?this.newRuleButton:opener;}
+    this.responseBaseline=new DraftBaseline();
     this.autoResponseForm.reset();
     this.matchTestMethod.value='GET';
     this.matchExpectationChosen=false;this.matchExpected='match';this.matchCaseRows=[];
@@ -853,7 +1028,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   private openEditor(focusProperties=true): void {
 
     this.editorHidden = false; this.$flushUpdates();
-    this.autoResponseForm.scrollIntoView({block:'start'});
+    if(!this.switchingCollection&&!this.stagingCollection)this.autoResponseForm.scrollIntoView({block:'start'});
     if(focusProperties)(this.autoResponseForm.elements.namedItem('name') as HTMLInputElement).focus({preventScroll:true});
   }
   async refreshSourceAvailability(): Promise<void> {
@@ -1019,15 +1194,8 @@ export class AutomationWorkspace extends WorkspaceElement {
     const originRevision=this.editorRevision,originDirty=this.draftDirty;
     try {
     if(!isCurrent())return;
-    const findOwner=()=>this.automationStatus?.experiments?.find(e=>e.variants.some(v=>v.revisions.some(r=>r.rules.some(rule=>rule.id===id))));
-    let owner=findOwner();
-    if(owner){
-      if(!await confirmLeave()||!isCurrent())return;
-      owner=findOwner();if(!owner){this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null);return;}
-      const variant=owner.variants.find(v=>v.revisions.some(r=>r.rules.some(rule=>rule.id===id)))!;
-      const selection=owner.active?.variantId===variant.id?owner.active:{experimentId:owner.id,variantId:variant.id,revision:variant.revisions.at(-1)!.revision};
-      this.editorHidden=true;this.automationSection='experiments';this.$flushUpdates();await this.experimentVariants.reveal(selection);return;
-    }
+    const owner=this.automationStatus?.responseSets?.find(set=>set.rules.some(rule=>rule.id===id));
+    if(owner){if(!await confirmLeave()||!isCurrent())return;this.editorHidden=true;this.automationSection='experiments';this.$flushUpdates();await this.openResponseSet(new CustomEvent('set-open',{detail:{id:owner.id}}),true);return;}
     let rule=this.automationStatus?.rules.find(rule=>rule.id===id);
     if(!rule){this.showNotice('Historical rule','The response records which rule won, but that rule is no longer in the active list.',null,null);return;}
     if(!await confirmLeave()||!isCurrent())return;
@@ -1077,7 +1245,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     await this.populateCapturedAutoResponse(this.selection.sessionId, this.selection.detail);
   }
 
-  async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail, restored?:CapturedDraft, experiment=false,variant?:ExperimentSelection): Promise<void> {
+  async populateCapturedAutoResponse(sessionId: string, detail: SessionDetail, restored?:CapturedDraft, experiment=false,variant?:ExperimentSelection,collectionOperation=false): Promise<void> {
     if (this.savingAutoResponse) return;
     const source = clientResponseSource(detail);
     if (source === null || source.request.method === null || source.request.target === null || source.response.status === null) {
@@ -1089,7 +1257,8 @@ export class AutomationWorkspace extends WorkspaceElement {
       );
       return;
     }
-    if(!await this.canLeaveEditor() || this.savingAutoResponse)return;
+    if(experiment&&!variant){if(!await this.canLeaveEditor())return;this.automationSection='experiments';this.responseSets.showCreate({sessionId,detail,reusable:true});return;}
+    if(!collectionOperation&&!await this.canLeaveEditor() || this.savingAutoResponse)return;
     this.editingAutoResponseId = null;
     this.prepareEditor(experiment);
     this.editingVariant=variant??null;this.autoResponseEnabled.checked=!experiment;
@@ -1207,10 +1376,10 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.refreshResponseDirty();
   }
 
-  async beginScratchAutoResponse(): Promise<void> {
+  async beginScratchAutoResponse(collectionOperation=false): Promise<void> {
     if (this.savingAutoResponse) return;
-    if(!await this.canLeaveEditor() || this.savingAutoResponse)return;
-    this.prepareEditor();
+    if(!collectionOperation&&!await this.canLeaveEditor() || this.savingAutoResponse)return;
+    this.prepareEditor(collectionOperation);
     this.editingAutoResponseId = null;
     this.autoResponseSourceState = { kind: 'scratch' };
     this.editorTitle = 'New response from scratch';
@@ -1226,6 +1395,8 @@ export class AutomationWorkspace extends WorkspaceElement {
   }
 
   async cancelAutoResponseEdit(): Promise<void> {
+    if(this.collectionAdding||this.loadingSavedResponse||this.fileChoiceBusy||this.savingAutoResponse||this.responseSets.busy||this.resolvingUnsaved)return;
+    if(this.collectionOpen){this.captureCollectionResponse();this.editorRevision++;this.editorHidden=true;this.collectionRuleId='';this.responseSets.select('');this.$flushUpdates();this.responseSets.addButton.focus();return;}
     if (this.savingAutoResponse) return;
     if(!await this.canLeaveEditor())return;
     this.editorRevision++;
@@ -1235,7 +1406,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.ruleSelection.clear();this.renderRuleSelection();this.draftDirty=false;
     this.$flushUpdates();
     if (this.editorOpener?.isConnected && this.editorOpener.getClientRects().length) this.editorOpener.focus();
-    else if(this.responseExperiment)await this.showVariants();
+    else if(this.responseExperiment)this.responseSets.addButton.focus();
     else this.newRuleButton.focus();
   }
 
@@ -1271,6 +1442,8 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   async saveAutoResponse(event: Event): Promise<boolean> {
     event.preventDefault();
+    if(this.collectionOpen&&this.responseSets.tourStep>0)return false;
+    if(this.collectionOpen&&this.responseExperiment&&!this.stagingCollection)return this.saveCollection();
     if (this.savingAutoResponse || this.changingAutoResponse || this.fileChoiceBusy) return false;
     if(this.variantHistorical){this.autoResponseError='Duplicate an earlier revision in Response sets before editing it.';return false;}
     if(this.autoResponseSourceState?.kind==='captured' && !this.capturedDraft){this.autoResponseError='Original response headers could not be loaded. Choose another response in Traffic.';return false;}
@@ -1285,8 +1458,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const preserveEncoding = this.autoResponsePreserveEncoding.checked;
     this.savingAutoResponse = true;
     this.autoResponseError = ''; this.requestHeadersError = ''; this.responseHeadersError = '';
-    this.automationText = 'Validating and saving the saved response…';
-    this.automationKind = 'progress';
+    if(!this.stagingCollection){this.automationText = 'Validating and saving the saved response…';this.automationKind = 'progress';}
     try {
       const displayName = String(data.get('name') ?? '').trim();
       if (!displayName) throw new Error(`Enter a ${this.responseNameLabel.toLowerCase()}.`);
@@ -1295,10 +1467,11 @@ export class AutomationWorkspace extends WorkspaceElement {
       const capturedBytes=source.kind==='captured'&&replaceBody?this.currentBodyBytes():null;
       const editedBody=capturedBytes!==null&&(!preserveEncoding||this.bodyOriginalBytes===null||!equalBodyBytes(capturedBytes,this.bodyOriginalBytes))?capturedBytes:null;
       const current = await invoke<AutomationStatus>('automation_status');
-      const variantRevision=variantSelection?current.experiments?.find(e=>e.id===variantSelection.experimentId)?.variants.find(v=>v.id===variantSelection.variantId)?.revisions.find(r=>r.revision===variantSelection.revision):undefined;
+      const variantRevision=variantSelection?current.responseSets?.find(set=>set.id===variantSelection.experimentId):undefined;
       const existing = editingId === null ? undefined : (variantRevision?.rules??current.rules).find((candidate) => candidate.id === editingId);
       if (editingId !== null && existing === undefined) throw new Error('This rule was removed. Cancel editing and create a new rule.');
-      const matcher=this.currentMatcher(data,existing);
+      const template=existing??this.responseRuleTemplate??undefined;
+      const matcher=this.currentMatcher(data,template);
       await invoke<MatchTestResult>('test_autoresponse_match',{input:{matcher,method:matcher.method??'GET',url:'https://example.test/',headers:[],ruleId:editingId,enabled:this.autoResponseEnabled.checked}});
       let assetReference: string;
       if (source.kind === 'existing') {
@@ -1345,8 +1518,9 @@ export class AutomationWorkspace extends WorkspaceElement {
         assetReference = `${asset.id}@${asset.revision}`;
       }
 
-      const id = existing?.id ?? `autoresponse-rule-${crypto.randomUUID().replaceAll('-', '')}`;
+      const id = existing?.id ?? (this.stagingCollection?this.collectionRuleId:`autoresponse-rule-${crypto.randomUUID().replaceAll('-', '')}`);
       const rule: AutomationRule = {
+        ...template,
         id,
         displayName,
         enabled: experiment?(existing?.enabled??true):this.autoResponseEnabled.checked,
@@ -1354,44 +1528,22 @@ export class AutomationWorkspace extends WorkspaceElement {
         priority: existing?.priority ?? AUTORESPONSE_PRIORITY_BASE,
         matcher,
         request: {
-          headers: [], replaceBody: null, discardBody: false, abortReason: null,
-          responseAsset: assetReference, allowNonIdempotentBodyReplacement: false,
+          ...(template?.request??{headers:[],replaceBody:null,discardBody:false,abortReason:null,allowNonIdempotentBodyReplacement:false}),
+          responseAsset: assetReference,
         },
-        response: existing?.response??{ headers: [], replaceBody: null, discardBody: false, abortReason: null },
+        response: template?.response??{ headers: [], replaceBody: null, discardBody: false, abortReason: null },
       };
       const ordered = this.autoResponseRules(current).filter((candidate) => candidate.id !== id);
       if (existing === undefined) ordered.unshift(rule);
       else ordered.splice(Math.max(0, this.autoResponseRules(current).findIndex((candidate) => candidate.id === id)), 0, rule);
-      let status:AutomationStatus;
-      let savedVariant:ExperimentSelection|null=variantSelection;
-      if(experiment){
-        if(!existing){
-          const first=Math.min(AUTORESPONSE_PRIORITY_BASE,...current.rules.map(rule=>rule.priority),...(variantRevision?.rules.map(r=>r.priority)??[]));
-          if(first<=-2147483648)throw new Error('No earlier rule position is available. Move existing rules before retrying.');
-          rule.priority=first-1;
-        }
-        if(variantSelection){
-          if(!variantRevision)throw new Error('Saved variant revision is unavailable. Your draft is preserved.');
-          const rules=existing?variantRevision.rules.map(r=>r.id===id?rule:r):[rule,...variantRevision.rules];
-          status=await invoke<AutomationStatus>('change_experiment',{generation:current.generation,change:{action:'save',id:variantSelection.experimentId,variantId:variantSelection.variantId,expectedRevision:variantSelection.revision,rules}});
-          savedVariant={...variantSelection,revision:variantSelection.revision+1};
-        }else{
-          savedVariant={experimentId:'e-'+crypto.randomUUID().replaceAll('-',''),variantId:'v-'+crypto.randomUUID().replaceAll('-',''),revision:1};
-          status=await invoke<AutomationStatus>('change_experiment',{generation:current.generation,change:{action:'create',id:savedVariant.experimentId,name:displayName,variantId:savedVariant.variantId,variantName:'Edited response',rules:[rule]}});
-        }
-      } else status=await this.activateAutoResponseOrder(current, ordered);
+      if(this.stagingCollection){this.stagedRule=rule;return true;}
+      const status=await this.activateAutoResponseOrder(current, ordered);
       if(!experiment)this.rememberRuleChange(this.autoResponseRules(current),this.autoResponseRules(status),existing?'Saved rule properties.':'Created a new rule.');
       this.renderAutomation(status);
       this.savingAutoResponse = false;
       this.draftDirty=false;
       this.automationKind = 'success';
-      if(experiment){
-        this.editingAutoResponseId=id;this.editingVariant=savedVariant;this.editorHidden=true;this.renderExperimentState();
-        this.automationText=variantSelection?`Revision ${savedVariant!.revision} saved. Live traffic is unchanged.`:'Response set saved. Live traffic is unchanged.';
-        this.$flushUpdates();
-        if(this.view==='automation'&&this.automationSection==='experiments')await this.showVariants();
-        else if(savedVariant)await this.experimentVariants.reveal(savedVariant,false);
-      }else{
+      {
         await this.cancelAutoResponseEdit();
         this.ruleSelection.replace(id);this.renderRuleSelection();
         this.automationText = `Saved “${rule.displayName}”${existing === undefined ? ' at the top' : ''}. The first enabled matching rule will win.`;
@@ -1470,6 +1622,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     if(!force && rule.id===this.editingAutoResponseId && !this.editorHidden){this.showAutomationSection(this.responseExperiment?'experiments':'responses');return;}
     if(!force && !await this.canLeaveEditor())return;
     this.prepareEditor(experiment);
+    this.responseRuleTemplate=structuredClone(rule);
     this.editingVariant=variant??null;
     const revision = this.editorRevision;
     const url = rule.matcher.url?.kind === 'exact' ? rule.matcher.url.value : rule.matcher.url?.kind==='pattern'?rule.matcher.url.value.address:'https://'+(rule.matcher.host??'example.test')+(rule.matcher.pathPrefix??'/');
@@ -1500,7 +1653,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.bodyReadOnly = true;
     this.loadingSavedResponse=true;
     this.updateAutoResponseHeaderFilterState();
-    this.openEditor(experiment);
+    this.openEditor(experiment&&!this.switchingCollection);
     const initialIdentity=JSON.parse(this.nonBodySnapshot()) as Record<string,unknown>;
     try {
       const inspection = await invoke<ResponseAssetInspection>('inspect_response_asset',{reference:rule.request.responseAsset});
@@ -1563,7 +1716,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     const current=await invoke<AutomationStatus>('automation_status');
     if (current.generation !== generation) throw new Error('Rules changed while you were editing. Refresh before saving.');
     const candidate = await invoke<AutomationCandidate>('validate_automation', {
-      document: { schemaVersion: 1, generation, rules, autoresponsesEnabled:current.autoresponsesEnabled ?? true },
+      document: { schemaVersion: 2, generation, rules, autoresponsesEnabled:current.autoresponsesEnabled ?? true },
     });
     return invoke<AutomationStatus>('activate_automation', { candidateId: candidate.candidateId });
   }
@@ -1571,7 +1724,7 @@ export class AutomationWorkspace extends WorkspaceElement {
   private renderAutomation(status: AutomationStatus): void {
     if(this.automationStatus && status.generation<this.automationStatus.generation)return;
     // Same-generation refreshes may have begun before a page-only metadata save.
-    for(const set of status.experiments??[]){const previous=this.automationStatus?.experiments?.find(old=>old.id===set.id);if((previous?.previewPageRevision??0)>(set.previewPageRevision??0)){set.previewPage=previous!.previewPage??null;set.previewPageRevision=previous!.previewPageRevision??0;}}
+    for(const set of status.responseSets??[]){const previous=this.automationStatus?.responseSets?.find(old=>old.id===set.id);if((previous?.previewPageRevision??0)>(set.previewPageRevision??0)){set.previewPage=previous!.previewPage??null;set.previewPageRevision=previous!.previewPageRevision??0;}}
     const matcherStateChanged=this.automationStatus!==null&&status.generation!==this.automationStatus.generation;
     const previousRule=this.automationStatus?.rules.find(rule=>rule.id===this.editingAutoResponseId);
     const currentRule=status.rules.find(rule=>rule.id===this.editingAutoResponseId);

@@ -116,6 +116,7 @@ impl ComposerResponse {
             ingress_version: response.source_version,
             original_target: OriginalTarget::new(request.target.clone()),
             started_at,
+            websocket_requested: false,
         });
         let snapshot = SessionSnapshot {
             request_number: 0,

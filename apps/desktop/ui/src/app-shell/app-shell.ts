@@ -10,6 +10,10 @@ import '../captured-preview/captured-preview.js';
 import type {CapturedPreview} from '../captured-preview/captured-preview.js';
 import '../response-set-page-picker/response-set-page-picker.js';
 import type {ResponseSetPagePicker} from '../response-set-page-picker/response-set-page-picker.js';
+import '../response-set-intake/response-set-intake.js';
+import type {ResponseSetIntake} from '../response-set-intake/response-set-intake.js';
+import type {ResponseSetIntakeRequest} from '../models.js';
+import type {SavedDemoPreviewIntent} from '../saved-demo-models.js';
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import type { TrafficRuleRequest, AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, ResponsePreviewIntent, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
@@ -227,7 +231,8 @@ export class AppShell extends WebUIElement {
     try {
       const current=this.autoresponseState??await invoke<AutomationStatus>('automation_status');
       const status=await invoke<AutomationStatus>('set_autoresponses_enabled',{enabled:!(current.autoresponsesEnabled??true),generation:current.generation});
-      this.autoresponseState=status;this.diagnosticText=status.autoresponsesEnabled?'Saved responses resumed for new requests.':'Saved responses paused. Individual rule states are preserved.';
+      this.onAutomationState(new CustomEvent('automation-state-change',{detail:status}));
+      if(status.generation===this.autoresponseState?.generation)this.diagnosticText=status.autoresponsesEnabled?'Saved responses resumed for new requests.':'Saved responses paused. Individual rule states are preserved.';
     } catch(error:unknown){this.diagnosticText='Saved response switch failed: '+describeError(error);await this.refreshAutoresponses();}
     finally{this.autoresponsePending=false;}
   }
@@ -342,15 +347,17 @@ export class AppShell extends WebUIElement {
   dismissNotice(): void { this.noticeAction = null; this.noticeVisible = false; }
   async onTrafficRule(event:CustomEvent<TrafficRuleRequest>):Promise<void>{event.stopPropagation();if(!this.viewerMode&&await this.activateView('automation'))await this.automation.beginRule(event.detail);}
   async onResponseText(event:CustomEvent<SelectedResponse>):Promise<void>{if(!this.viewerMode&&await this.activateView('automation'))await this.automation.beginTextEdit(event.detail);}
-  async onResponseExperiment(event:CustomEvent<SelectedResponse>):Promise<void> {
-    const selected=event.detail;
-    if(this.viewerMode||!selected.reusable)return;
-    if(await this.activateView('automation'))await this.automation.populateCapturedAutoResponse(selected.sessionId,selected.detail,undefined,true);
-  }
   async onAutoResponse(event: CustomEvent<SelectedResponse>): Promise<void> {
     if (await this.activateView('automation')) await this.automation.populateCapturedAutoResponse(event.detail.sessionId, event.detail.detail);
   }
   async onAutoResponseBatch(event:CustomEvent<string[]>):Promise<void> {if(await this.activateView('automation'))await this.automation.beginBatch(event.detail);}
+  responseSetIntake!:ResponseSetIntake;
+  async onResponseSetIntake(event:CustomEvent<ResponseSetIntakeRequest>):Promise<void> {
+    event.stopPropagation();if(this.viewerMode)return;
+    await loaders.automation();
+    await this.responseSetIntake.request(event.detail,{prepare:(id,current,movingRuleIds)=>this.automation.prepareResponseSetIntake(id,current,movingRuleIds),complete:status=>this.automation.onVariantStatus(new CustomEvent('set-status',{detail:status}))});
+  }
+  async onResponseSetOpen(event:CustomEvent<{id:string}>):Promise<void> {event.stopPropagation();if(await this.activateView('automation'))await this.automation.openResponseSet(new CustomEvent('set-open',{detail:event.detail}));}
   async onSourceTraffic(event: CustomEvent<string>): Promise<void> {
     if (await this.activateView('traffic')) {
       if(this.traffic.previewReportDialog.open)this.traffic.closePreviewReport();
@@ -381,6 +388,10 @@ export class AppShell extends WebUIElement {
     if(prepared&&current()) {this.traffic.rememberPreviewFocus();prepared();}
   }
   showPreviewDiagnostics():void {void this.traffic.showPreviewReport();}
+  onSavedDemoPreview(event:CustomEvent<SavedDemoPreviewIntent>):void {
+    event.stopPropagation();if(this.viewerMode||this.activeView!=='automation'||!event.detail.isCurrent())return;
+    this.traffic.showSavedDemoPreview(event.detail.demo);
+  }
   async onPreviewSource(event:CustomEvent<{id:string;isCurrent:()=>boolean}>):Promise<void> {
     event.stopPropagation();const origin=this.activeView;
     if(!event.detail.isCurrent()||!await this.activateView('traffic'))return;

@@ -522,6 +522,11 @@ mod websocket_h2_tests {
                 .unwrap()
             );
             let events = fixture.finish().await;
+            assert!(
+                events.iter().any(|event| matches!(&event.kind,
+                ObserverEventKind::ExchangeStarted { metadata } if metadata.websocket_requested)),
+                "WebSocket intent must be present in the initial H1/H2 admission observation"
+            );
             assert!(events.iter().any(|event| matches!(&event.kind, ObserverEventKind::StreamState(state) if state.status == StreamStatus::Closed)));
             for sender in ["client", "server"] {
                 assert!(events.iter().any(|event| matches!(&event.kind, ObserverEventKind::StreamMessage(message) if message.sender == sender && message.payload == "compressed H2" && message.compressed)));

@@ -126,6 +126,11 @@ impl BodyStreamSender {
     pub fn is_closed(&self) -> bool {
         self.sender.is_closed()
     }
+
+    /// Waits for the receiving transport or application consumer to be dropped.
+    pub async fn closed(&self) {
+        self.sender.closed().await;
+    }
 }
 
 /// A body stream receiver was cancelled before accepting a frame.

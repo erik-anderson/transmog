@@ -244,6 +244,7 @@ impl SceneBuilder {
             rules: Vec::new(),
             variant: None,
             case_origin: None,
+            saved_demo: None,
             available: self.resources,
             skipped: self.skipped,
             bytes: self.bytes,

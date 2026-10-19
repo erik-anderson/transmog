@@ -505,6 +505,9 @@ pub(crate) async fn build(
 #[path = "captured_page_build.rs"]
 mod preparation;
 
+#[path = "captured_page_durable.rs"]
+pub(crate) mod durable;
+
 /// Opens a new run from retained immutable capture bytes with independently frozen rules.
 pub(crate) fn fork(page: &CapturedPage) -> CapturedPage {
     let mut report = page.diagnostics.snapshot();
@@ -737,13 +740,12 @@ mod tests {
             ..AppConfig::default()
         };
         let app = Application::new(config()).unwrap();
-        app.change_experiment(
+        app.change_response_set(
             0,
-            crate::ExperimentChange::Create {
+            crate::ResponseSetChange::Create {
                 id: "set".into(),
                 name: "Saved POST".into(),
-                variant_id: "edited".into(),
-                variant_name: "Edited response".into(),
+                notes: String::new(),
                 rules: Vec::new(),
             },
         )
@@ -766,6 +768,7 @@ mod tests {
             .unwrap();
         assert_eq!(app.automation_status().generation, before.generation);
         app.remove_traffic_entries(std::slice::from_ref(&chosen.entry_id), false)
+            .await
             .unwrap();
         assert!(!app.experiment_page_available(&chosen));
         app.import_trace(import("two"), Arc::new(|_| {}))
@@ -976,6 +979,7 @@ mod tests {
             rows.len()
         );
         app.remove_traffic_entries(std::slice::from_ref(&resource.id), false)
+            .await
             .unwrap();
         assert!(app.captured_page_choices(&resource.id).is_err());
     }
@@ -1267,7 +1271,7 @@ mod tests {
     #[allow(clippy::too_many_lines)] // Full frozen case export/recipient/preview lifetime.
     async fn case_preview_uses_package_assets_and_only_case_evidence_without_activation() {
         use crate::{
-            AuthoredResponseAsset, CaseExportRequest, ExperimentChange, ExperimentSelection,
+            AuthoredResponseAsset, CaseExportRequest, ExperimentSelection, ResponseSetChange,
             RuleExportRequest,
         };
         use transmog_automation::{RequestActions, Rule, RuleMatcher, UrlCondition};
@@ -1321,13 +1325,12 @@ mod tests {
             },
             response: transmog_automation::ResponseActions::default(),
         };
-        app.change_experiment(
+        app.change_response_set(
             app.automation_status().generation,
-            ExperimentChange::Create {
+            ResponseSetChange::Create {
                 id: "portable-exp".into(),
                 name: "Frozen preview".into(),
-                variant_id: "blue".into(),
-                variant_name: "Blue CSS".into(),
+                notes: String::new(),
                 rules: vec![rule],
             },
         )
@@ -1342,7 +1345,10 @@ mod tests {
                         rule_ids: vec![],
                         selections: vec![ExperimentSelection {
                             experiment_id: "portable-exp".into(),
-                            variant_id: "blue".into(),
+                            incarnation: app.automation_status().response_sets[0]
+                                .incarnation
+                                .clone(),
+                            variant_id: String::new(),
                             revision: 1,
                         }],
                     },

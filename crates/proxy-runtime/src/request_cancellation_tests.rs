@@ -181,7 +181,13 @@ async fn cancellation_keeps_activity_until_already_started_terminal_hooks_finish
 #[tokio::test]
 #[allow(clippy::too_many_lines)]
 async fn h2_reset_records_cancellation_and_preserves_the_next_navigation() {
-    for (pause_head, stop_proxy) in [(false, false), (true, false), (false, true)] {
+    for (pause_head, stop_proxy, manual_cancel) in [
+        (false, false, false),
+        (true, false, false),
+        (false, true, false),
+        (false, false, true),
+        (true, false, true),
+    ] {
         let blocked = Arc::new(Notify::new());
         let origin_ca = ProxyCa::generate("Cancellation origin", 2).unwrap();
         let leaf = origin_ca
@@ -313,6 +319,24 @@ async fn h2_reset_records_cancellation_and_preserves_the_next_navigation() {
             .expect("speculative request never blocked");
         if stop_proxy {
             shutdown_tx.take().unwrap().send(()).unwrap();
+        } else if manual_cancel {
+            let id = events
+                .0
+                .lock()
+                .unwrap()
+                .iter()
+                .find_map(|event| {
+                    matches!(event.kind, ObserverEventKind::ExchangeStarted { .. })
+                        .then_some(event.exchange_id)
+                })
+                .expect("active request identity");
+            assert_eq!(control.cancel_requests(&[id]).await, vec![id]);
+            let response = timeout(Duration::from_secs(3), &mut pending)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap();
+            assert_eq!(response.status().as_u16(), 499);
         } else {
             pending.abort(); // Hyper sends RST_STREAM while preserving the H2 connection.
             assert!((&mut pending).await.unwrap_err().is_cancelled());
@@ -394,6 +418,364 @@ async fn h2_reset_records_cancellation_and_preserves_the_next_navigation() {
         assert!(request_events.iter().any(|event| matches!(&event.kind, ObserverEventKind::Performance(evidence) if evidence.elapsed_micros().is_some())));
         browser.abort();
         pending.abort();
+        origin_task.abort();
+    }
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)]
+async fn manual_cancel_stops_an_idle_download_after_headers_and_retains_terminal_evidence() {
+    use tokio::io::AsyncReadExt;
+    let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let origin_addr = origin.local_addr().unwrap();
+    let origin_task = tokio::spawn(async move {
+        let (mut socket, _) = origin.accept().await.unwrap();
+        let mut head = Vec::new();
+        while !head.ends_with(b"\r\n\r\n") {
+            head.push(socket.read_u8().await.unwrap());
+        }
+        socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1000000\r\nContent-Type: application/octet-stream\r\n\r\npart").await.unwrap();
+        socket.flush().await.unwrap();
+        // The origin deliberately leaves the download idle. Cancel must not wait
+        // for the body idle timeout or for another origin chunk.
+        let mut byte = [0_u8];
+        let _ = socket.read(&mut byte).await;
+    });
+    let ca = ProxyCa::generate("Manual download cancellation", 2).unwrap();
+    let trust =
+        Arc::new(TrustSnapshot::load(&TestTrust(ca.certificate().to_der().unwrap()), 1).unwrap());
+    let config = ProxyConfig::default();
+    let certificates = Arc::new(
+        CachedMitmCertificateResolver::new(
+            ca,
+            config.limits.leaf_cache_capacity,
+            config.limits.leaf_validity_days,
+        )
+        .unwrap(),
+    );
+    let events = Arc::new(Events::default());
+    let components = ProxyComponents::new(
+        InterceptorChainFactory::new(Vec::new(), config.limits.hooks),
+        certificates,
+    )
+    .with_observer(events.clone(), ObserverConfig::default());
+    let proxy = ProxyServer::bind_with_components(config, trust, components)
+        .await
+        .unwrap();
+    let control = proxy.control();
+    let address = proxy.local_addr().unwrap();
+    let (shutdown_tx, shutdown_rx) = oneshot::channel();
+    let server = tokio::spawn(proxy.serve(async {
+        let _ = shutdown_rx.await;
+    }));
+    let mut client = TcpStream::connect(address).await.unwrap();
+    client
+        .write_all(
+            format!("GET http://{origin_addr}/download HTTP/1.1\r\nHost: {origin_addr}\r\n\r\n")
+                .as_bytes(),
+        )
+        .await
+        .unwrap();
+    let mut head = Vec::new();
+    while !head.ends_with(b"\r\n\r\n") {
+        head.push(
+            timeout(Duration::from_secs(3), client.read_u8())
+                .await
+                .unwrap()
+                .unwrap(),
+        );
+    }
+    assert!(head.starts_with(b"HTTP/1.1 200"));
+    let mut bytes = [0_u8; 4];
+    timeout(Duration::from_secs(3), client.read_exact(&mut bytes))
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(&bytes, b"part");
+    let id = events
+        .0
+        .lock()
+        .unwrap()
+        .iter()
+        .find_map(|event| {
+            matches!(event.kind, ObserverEventKind::ExchangeStarted { .. })
+                .then_some(event.exchange_id)
+        })
+        .unwrap();
+    assert_eq!(control.cancel_requests(&[id]).await, vec![id]);
+    timeout(Duration::from_secs(3), async {
+        loop {
+            if events.0.lock().unwrap().iter().any(|event| event.exchange_id == id && matches!(&event.kind, ObserverEventKind::Failed(failure) if failure.kind == ExchangeFailureKind::Cancelled)) { break; }
+            tokio::task::yield_now().await;
+        }
+    }).await.expect("manual cancellation did not retain terminal evidence");
+    let mut remainder = Vec::new();
+    timeout(Duration::from_secs(3), client.read_to_end(&mut remainder))
+        .await
+        .expect("download did not stop")
+        .unwrap();
+    assert!(remainder.len() < 1_000_000);
+    assert!(control.cancel_requests(&[id]).await.is_empty());
+    shutdown_tx.send(()).unwrap();
+    timeout(Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    timeout(Duration::from_secs(3), origin_task)
+        .await
+        .expect("canceled download kept its origin connection open")
+        .unwrap();
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // Compare admission and relay cancellation with surviving connections.
+async fn manual_cancel_stops_only_the_selected_opaque_connect_and_retains_evidence() {
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use tokio::io::AsyncReadExt;
+
+    struct TunnelEvents {
+        events: Arc<Events>,
+        pause_first: AtomicBool,
+        started: Arc<Notify>,
+        release: Arc<Notify>,
+    }
+    impl Observer for TunnelEvents {
+        fn on_event(&self, event: ObserverEvent) -> BoxObserverFuture<'_> {
+            let pause = matches!(event.kind, ObserverEventKind::ExchangeStarted { .. })
+                && self.pause_first.swap(false, Ordering::Relaxed);
+            self.events.0.lock().unwrap().push(event);
+            Box::pin(async move {
+                if pause {
+                    self.started.notify_one();
+                    self.release.notified().await;
+                }
+                Ok(())
+            })
+        }
+    }
+
+    async fn open_tunnel(address: SocketAddr, destination: SocketAddr) -> TcpStream {
+        let mut client = TcpStream::connect(address).await.unwrap();
+        client
+            .write_all(
+                format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n").as_bytes(),
+            )
+            .await
+            .unwrap();
+        let mut headers = Vec::new();
+        while !headers.ends_with(b"\r\n\r\n") {
+            headers.push(
+                timeout(Duration::from_secs(3), client.read_u8())
+                    .await
+                    .unwrap()
+                    .unwrap(),
+            );
+        }
+        assert!(headers.starts_with(b"HTTP/1.1 200"));
+        client
+    }
+
+    for pending in [true, false] {
+        let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let destination = origin.local_addr().unwrap();
+        let accepted = Arc::new(AtomicUsize::new(0));
+        let origin_closed = Arc::new(Notify::new());
+        let origin_task = {
+            let accepted = accepted.clone();
+            let origin_closed = origin_closed.clone();
+            tokio::spawn(async move {
+                let mut connections = JoinSet::new();
+                loop {
+                    let (mut socket, _) = origin.accept().await.unwrap();
+                    accepted.fetch_add(1, Ordering::Relaxed);
+                    let origin_closed = origin_closed.clone();
+                    connections.spawn(async move {
+                        let mut selected = false;
+                        let mut prefix = Vec::new();
+                        let mut bytes = [0_u8; 4096];
+                        loop {
+                            let count = socket.read(&mut bytes).await.unwrap_or(0);
+                            if count == 0 {
+                                if selected { origin_closed.notify_one(); }
+                                break;
+                            }
+                            if bytes[..count].starts_with(b"GET ") {
+                                let mut headers = bytes[..count].to_vec();
+                                while !headers.ends_with(b"\r\n\r\n") {
+                                    headers.push(socket.read_u8().await.unwrap());
+                                }
+                                socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 4\r\nConnection: close\r\n\r\nlive").await.unwrap();
+                                break;
+                            }
+                            prefix.extend(bytes[..count].iter().take(6_usize.saturating_sub(prefix.len())).copied());
+                            selected |= prefix == b"cancel";
+                            if socket.write_all(&bytes[..count]).await.is_err() { break; }
+                        }
+                    });
+                }
+            })
+        };
+        let ca = ProxyCa::generate("Opaque cancellation", 2).unwrap();
+        let trust = Arc::new(
+            TrustSnapshot::load(&TestTrust(ca.certificate().to_der().unwrap()), 1).unwrap(),
+        );
+        let config = ProxyConfig {
+            decrypt_https: false,
+            ..ProxyConfig::default()
+        };
+        let certificates = Arc::new(
+            CachedMitmCertificateResolver::new(
+                ca,
+                config.limits.leaf_cache_capacity,
+                config.limits.leaf_validity_days,
+            )
+            .unwrap(),
+        );
+        let events = Arc::new(Events::default());
+        let started = Arc::new(Notify::new());
+        let release = Arc::new(Notify::new());
+        let components = ProxyComponents::new(
+            InterceptorChainFactory::new(Vec::new(), config.limits.hooks),
+            certificates,
+        )
+        .with_observer(
+            Arc::new(TunnelEvents {
+                events: events.clone(),
+                pause_first: AtomicBool::new(pending),
+                started: started.clone(),
+                release: release.clone(),
+            }),
+            ObserverConfig {
+                queue_capacity: std::num::NonZeroUsize::new(1).unwrap(),
+                delivery: transmog_core::observe::ObserverDeliveryPolicy::WaitForCapacity,
+                ..ObserverConfig::default()
+            },
+        );
+        let proxy = ProxyServer::bind_with_components(config, trust, components)
+            .await
+            .unwrap();
+        let control = proxy.control();
+        let address = proxy.local_addr().unwrap();
+        let (shutdown_tx, shutdown_rx) = oneshot::channel();
+        let server = tokio::spawn(proxy.serve(async {
+            let _ = shutdown_rx.await;
+        }));
+        let mut selected = if pending {
+            let mut client = TcpStream::connect(address).await.unwrap();
+            client
+                .write_all(
+                    format!("CONNECT {destination} HTTP/1.1\r\nHost: {destination}\r\n\r\n")
+                        .as_bytes(),
+                )
+                .await
+                .unwrap();
+            timeout(Duration::from_secs(3), started.notified())
+                .await
+                .unwrap();
+            client
+        } else {
+            let mut client = open_tunnel(address, destination).await;
+            client.write_all(b"cancel").await.unwrap();
+            let mut echoed = [0_u8; 6];
+            timeout(Duration::from_secs(3), client.read_exact(&mut echoed))
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(&echoed, b"cancel");
+            client
+        };
+        let id = events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|event| {
+                matches!(event.kind, ObserverEventKind::ExchangeStarted { .. })
+                    .then_some(event.exchange_id)
+            })
+            .unwrap();
+        let mut other = if pending {
+            None
+        } else {
+            Some(open_tunnel(address, destination).await)
+        };
+        assert_eq!(control.cancel_requests(&[id]).await, vec![id]);
+        release.notify_one();
+        timeout(Duration::from_secs(3), async {
+            loop {
+                if events.0.lock().unwrap().iter().any(|event| event.exchange_id == id && matches!(&event.kind, ObserverEventKind::Failed(failure) if failure.kind == ExchangeFailureKind::Cancelled && failure.message.contains("Transmog"))) { break; }
+                tokio::task::yield_now().await;
+            }
+        }).await.expect("opaque CONNECT lost cancellation evidence");
+        let failure = events
+            .0
+            .lock()
+            .unwrap()
+            .iter()
+            .find_map(|event| {
+                if event.exchange_id == id
+                    && let ObserverEventKind::Failed(failure) = &event.kind
+                {
+                    Some(failure.clone())
+                } else {
+                    None
+                }
+            })
+            .unwrap();
+        assert_eq!(failure.stage, ExchangeStage::Terminal);
+        assert_eq!(failure.response_committed, !pending);
+        assert_eq!(failure.request_committed, !pending);
+        if pending {
+            let mut response = Vec::new();
+            while !response.ends_with(b"\r\n\r\n") {
+                response.push(
+                    timeout(Duration::from_secs(3), selected.read_u8())
+                        .await
+                        .unwrap()
+                        .unwrap(),
+                );
+            }
+            assert!(response.starts_with(b"HTTP/1.1 499"));
+            assert_eq!(
+                accepted.load(Ordering::Relaxed),
+                0,
+                "cancelled admission still dialed the origin"
+            );
+            other = Some(open_tunnel(address, destination).await);
+        } else {
+            let mut remainder = Vec::new();
+            timeout(Duration::from_secs(3), selected.read_to_end(&mut remainder))
+                .await
+                .expect("selected CONNECT client stayed open")
+                .unwrap();
+            timeout(Duration::from_secs(3), origin_closed.notified())
+                .await
+                .expect("selected CONNECT origin stayed open");
+        }
+        let other = other.as_mut().unwrap();
+        other.write_all(b"other").await.unwrap();
+        let mut echoed = [0_u8; 5];
+        timeout(Duration::from_secs(3), other.read_exact(&mut echoed))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&echoed, b"other");
+        let mut ordinary = TcpStream::connect(address).await.unwrap();
+        ordinary.write_all(format!("GET http://{destination}/after HTTP/1.1\r\nHost: {destination}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        timeout(Duration::from_secs(3), ordinary.read_to_end(&mut response))
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(response.starts_with(b"HTTP/1.1 200"));
+        assert!(response.ends_with(b"live"));
+        shutdown_tx.send(()).unwrap();
+        timeout(Duration::from_secs(3), server)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
         origin_task.abort();
     }
 }

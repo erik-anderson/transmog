@@ -63,6 +63,9 @@ pub struct ExchangeMetadata {
     pub original_target: OriginalTarget,
     /// Wall-clock exchange start for operator evidence.
     pub started_at: SystemTime,
+    /// Live opening-handshake intent, available before stream observations arrive.
+    /// This runtime hint is not serialized into saved capture metadata.
+    pub websocket_requested: bool,
 }
 
 impl ExchangeMetadata {
@@ -87,6 +90,7 @@ impl ExchangeMetadata {
             ingress_version: session.ingress_version,
             original_target: OriginalTarget::new(original_target),
             started_at,
+            websocket_requested: false,
         }
     }
 }

@@ -1,10 +1,13 @@
 //! Terminal evidence for a service future dropped before returning its response.
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashMap,
+    sync::{Arc, Mutex},
+};
 
 use tokio::task::JoinSet;
 use transmog_core::{
     intercept::{
-        ExchangeCancellation, ExchangeChain, ExchangeFailure, ExchangeFailureKind,
+        ExchangeCancellation, ExchangeChain, ExchangeFailure, ExchangeFailureKind, ExchangeId,
         ExchangeMetadata, ExchangeStage,
     },
     observe::{ExchangeObserver, ObserverEventKind},
@@ -13,7 +16,57 @@ use transmog_core::{
 
 use super::{ActivityLease, observe_hook_effects};
 
+#[derive(Default)]
+pub(super) struct RequestControls(Mutex<HashMap<ExchangeId, ExchangeCancellation>>);
+impl RequestControls {
+    pub(super) fn register(
+        self: &Arc<Self>,
+        id: ExchangeId,
+        signal: ExchangeCancellation,
+    ) -> RequestLease {
+        self.0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(id, signal);
+        RequestLease {
+            owner: self.clone(),
+            id,
+        }
+    }
+    pub(super) fn cancel(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+        let controls = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        ids.iter()
+            .filter_map(|id| {
+                controls.get(id).map(|signal| {
+                    signal.cancel();
+                    *id
+                })
+            })
+            .collect()
+    }
+}
+pub(super) struct RequestLease {
+    owner: Arc<RequestControls>,
+    id: ExchangeId,
+}
+impl Drop for RequestLease {
+    fn drop(&mut self) {
+        self.owner
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.id);
+    }
+}
+
+#[derive(Clone)]
+pub(super) struct ManualCancellation(pub(super) ExchangeCancellation);
+
 pub(super) struct RequestCancellation {
+    pub(super) manual: ExchangeCancellation,
     activity: Option<ActivityLease>,
     shutdown: ExchangeCancellation,
     cleanup: Arc<Mutex<JoinSet<()>>>,
@@ -33,6 +86,7 @@ impl RequestCancellation {
         cleanup: Arc<Mutex<JoinSet<()>>>,
     ) -> Self {
         Self {
+            manual: ExchangeCancellation::new(),
             activity: Some(activity),
             shutdown,
             cleanup,
@@ -101,6 +155,8 @@ impl Drop for RequestCancellation {
                 .any(|point| point.milestone == Milestone::ClientResponseBegin),
             message: if shutdown {
                 "Proxy stopped while the request was being handled."
+            } else if self.manual.is_cancelled() {
+                "Request canceled in Transmog."
             } else {
                 "The caller closed or reset the request before a response was returned."
             }

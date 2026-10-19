@@ -3,7 +3,7 @@ import {writeFile} from 'node:fs/promises';
 
 /** Production controls, real WebView2 layout, and native preference persistence. */
 export async function smokeResponseSetGuide({main,waitFor,screenshot,reload=false}) {
-  const shell="document.querySelector('app-shell')",a=shell+'.automation',v=a+'.experimentVariants';
+  const shell="document.querySelector('app-shell')",a=shell+'.automation',v=a+'.responseSets';
   const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
   // Dispatch real input: DOM .click() does not focus the button and concealed
   // the native disabled-button blur that used to cancel the user's own Start.
@@ -13,16 +13,19 @@ export async function smokeResponseSetGuide({main,waitFor,screenshot,reload=fals
     await main.call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',buttons:1,clickCount:1,...point});
     await main.call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',buttons:0,clickCount:1,...point});
   };
-  const key=async(key,code,windowsVirtualKeyCode)=>{
-    await main.call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode,...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});
-    await main.call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode});
+  const key=async(key,code,windowsVirtualKeyCode,modifiers=0)=>{
+    await main.call('Input.dispatchKeyEvent',{type:'keyDown',key,code,windowsVirtualKeyCode,modifiers,...(key==='Enter'?{text:'\r',unmodifiedText:'\r'}:{})});
+    await main.call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode,modifiers});
   };
   const startControl=async keyboard=>{
     if(keyboard){await key('Tab','Tab',9);assert.equal(await main.evaluate(`${v}.getRootNode().activeElement===${v}.guideStartButton`),true,'Native Tab did not reach Start');await key('Enter','Enter',13);}
     else await click(`${v}.guideStartButton`);
   };
+  const openHelp=async()=>{await click(`${v}.guideHelpButton`);await click(`${v}.lifecycle.moreMenu.querySelector('button:nth-child(3)')`);};
+  const guideRule=await main.evaluate(`${v}.draftRules[0]?.id??null`);
+  if(guideRule){await main.evaluate(`${a}.editCollectionResponse(new CustomEvent('set-edit',{detail:{ruleId:${JSON.stringify(guideRule)}}}))`);await waitFor(()=>main.evaluate(`!${a}.loadingSavedResponse&&!${a}.fileChoiceBusy`),'Native guide response editor did not load');}
   const before=await invoke('automation_status');
-  const selection=await main.evaluate(`(()=>{const v=${v};return {experimentId:v.experimentId,variantId:v.variantId,revision:v.variantRevision};})()`);
+  const selection=await main.evaluate(`(()=>{const v=${v};return v.currentSelection();})()`);
   await waitFor(()=>main.evaluate(`${v}.preferencesReady&&!${v}.guidePending`),'Native guide preferences did not load');
   if(!reload){
     assert.equal(await main.evaluate(`${v}.invitationVisible`),true,'First successful native save did not offer the tour');
@@ -33,10 +36,24 @@ export async function smokeResponseSetGuide({main,waitFor,screenshot,reload=fals
     assert.equal((await invoke('product_state')).workspace.responseSetGuide,'started');
   }
   const start=async(keyboard=false)=>{
-    await click(`${v}.guideHelpButton`);
+    await openHelp();
     await startControl(keyboard);
     await waitFor(()=>main.evaluate(`${v}.tourStep===1&&!${v}.guidePending`),'Native guide did not start at step 1');
   };
+  if(!reload){
+    const notes=await main.evaluate(`${v}.notesInput.value`);
+    await click(`${v}.notesInput`);await key('a','KeyA',65,2);await main.call('Input.insertText',{text:'Native tour shortcut draft'});
+    await start();
+    if(guideRule){await key('Tab','Tab',9);assert.equal(await main.evaluate(`${v}.getRootNode().activeElement===${a}.autoResponseForm.elements.namedItem('name')`),true,'Native Tab from first Next did not reach response name');await key('Escape','Escape',27);assert.equal(await main.evaluate(`${v}.tourStep===0&&${v}.dirty&&${v}.notesInput.value==='Native tour shortcut draft'&&${v}.getRootNode().activeElement===${v}.guideHelpButton`),true,'Native editor Escape did not end the tour and preserve its draft');assert.deepEqual(await invoke('automation_status'),before,'Native editor Escape changed saved automation');if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-editor-escape.png'),Buffer.from(image.data,'base64'));}await start();}
+    await key('Tab','Tab',9,8);await key('Tab','Tab',9,8);
+    assert.equal(await main.evaluate(`${v}.getRootNode().activeElement===${v}.backButton`),true,'Native Shift+Tab did not reach collection Back');
+    await key('s','KeyS',83,2);
+    assert.equal(await main.evaluate(`${v}.tourStep===1&&${v}.dirty&&${v}.notesInput.value==='Native tour shortcut draft'&&${v}.getRootNode().activeElement===${v}.backButton`),true,'Native collection shortcut saved or dismissed the tour');
+    assert.deepEqual(await invoke('automation_status'),before,'Native guide Back-focus Ctrl+S changed saved automation');
+    if(screenshot){const image=await main.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-shortcut-guard.png'),Buffer.from(image.data,'base64'));}
+    await click(`${v}.tourPanel.querySelector('.tour-heading button')`);await click(`${v}.querySelector('.set-heading-actions .actions button:last-child')`);
+    await waitFor(()=>main.evaluate(`!${v}.dirty`),'Native tour shortcut draft did not discard');assert.equal(await main.evaluate(`${v}.notesInput.value`),notes);assert.deepEqual(await invoke('automation_status'),before);
+  }
   for(const [width,height] of reload?[[800,600]]:[[1440,900],[960,720],[800,600]]){
     await main.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
     await start(width===960);
@@ -55,7 +72,7 @@ export async function smokeResponseSetGuide({main,waitFor,screenshot,reload=fals
   // Hold real persistence replies across rendered pending state, with natural
   // pointer/Enter focus retention and intentional Tab/Close focus changes.
   for(const mode of ['pointer','keyboard','tab','close']){
-    await click(`${v}.guideHelpButton`);
+    await openHelp();
     await main.evaluate(`(()=>{const callbacks=window.__TAURI_INTERNALS__.callbacks;globalThis.guideNativeSet=callbacks.set;globalThis.nativeGuideReplies=0;const delayed=function(id,callback){return globalThis.guideNativeSet.call(this,id,result=>{if(result?.history==='started'&&typeof result.offered==='boolean'){globalThis.nativeGuideReplies++;globalThis.finishNativeGuide=()=>callback(result);}else callback(result);});};callbacks.set=delayed;if(callbacks.set!==delayed)throw new Error('Native guide callback delay did not install');})()`);
     try {
       await startControl(mode==='keyboard');
@@ -90,17 +107,17 @@ export async function smokeResponseSetGuide({main,waitFor,screenshot,reload=fals
   await start();
   await main.evaluate(`${a}.showAutomationSection('responses')`);
   assert.equal(await main.evaluate(`${v}.tourStep===0&&!${v}.helpOpen`),true,'Hidden native overview kept guide open');
-  await main.evaluate(`${a}.showAutomationSection('experiments')`);
+  await main.evaluate(`(async()=>{await ${a}.showAutomationSection('experiments');await ${a}.openResponseSet(new CustomEvent('set-open',{detail:{id:${JSON.stringify(selection.experimentId)}}}));})()`);
   assert.deepEqual(await invoke('automation_status'),before,'Native guide changed automation generation, Undo or live state');
-  assert.deepEqual(await main.evaluate(`(()=>{const v=${v};return {experimentId:v.experimentId,variantId:v.variantId,revision:v.variantRevision};})()`),selection);
+  assert.deepEqual(await main.evaluate(`(()=>{const v=${v};return v.currentSelection();})()`),selection);
   assert.equal((await invoke('product_state')).workspace.responseSetGuide,'started');
   if(reload){
     await main.call('Page.reload');
     await waitFor(()=>main.evaluate(`${shell}?.workspaceLoaded`),'Native guide state did not hydrate after reload');
-    await main.evaluate(`(async()=>{await ${shell}.activateView('automation');${a}.showAutomationSection('experiments');await ${v}.reveal(${JSON.stringify(selection)},false);})()`);
+    await main.evaluate(`(async()=>{await ${shell}.activateView('automation');await ${a}.showAutomationSection('experiments');await ${a}.openResponseSet(new CustomEvent('set-open',{detail:{id:${JSON.stringify(selection.experimentId)}}}));})()`);
     await waitFor(()=>main.evaluate(`${v}.preferencesReady&&!${v}.guidePending`),'Reloaded native overview did not become ready');
     assert.equal(await main.evaluate(`${v}.invitationVisible`),false,'Native guide invitation repeated after reload');
-    await click(`${v}.guideHelpButton`);
+    await openHelp();
     assert.equal(await main.evaluate(`${v}.guideStartButton.textContent`),'Replay tour');
     await click(`${v}.guideHelpPanel.querySelector('button:last-child')`);
     assert.deepEqual(await invoke('automation_status'),before);

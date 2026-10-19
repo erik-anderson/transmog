@@ -6,20 +6,34 @@ request and response together in a wide pane or use the message selector when sp
 limited; the narrow selector sits beside the URL/status. Incomplete, unavailable, redacted and evicted evidence are distinct
 states; display previews can be shorter than the retained source.
 
-Caller cancellation appears as **Cancelled** in the Status column and
-**Cancelled by caller** in the inspector, State column, Timeline and copied
-request summary. Cancellation uses a neutral badge.
+Cancellation appears as **Cancelled** in the Status column, inspector, State
+column, Timeline and copied request summary. Cancellation uses a neutral badge;
+the retained diagnostics explain whether the caller stopped waiting or the
+request was canceled in Transmog.
 An observed HTTP status remains in the inspector and copied summary when
-cancellation followed response headers. Cancellation means the caller stopped
-waiting; it does not establish whether the server processed the request.
+cancellation followed response headers. Cancellation does not establish whether
+the server processed the request.
 Proxy shutdown remains a separate outcome with a proxy-stop explanation.
 These distinctions also apply when opening a capture that already recorded its
 cancellation category.
 
-For a complete response, **Actions → Create response set** opens a disabled response
-draft in Automation. Edit, compare and preview it before explicitly enabling live
-use. **Actions → Create rule → Serve a saved response…** creates an ordinary
-saved-response rule from the captured response.
+**Actions → Cancel request** stops a selected active request, including a long-running
+download, SSE stream or open WebSocket. Traffic multiselection offers **Cancel
+requests** for active entries in the selection. Completed requests and imported
+evidence cannot be canceled. The row and retained headers, body bytes and messages
+stay available for inspection. Cancellation cannot establish whether the server
+already processed the request.
+
+A response supplied by a saved response rule is highlighted as **Auto-responded**
+in the inspector and Request details, with its recorded rule name and revision.
+This attribution comes from the captured exchange, independently of later rule edits.
+
+For complete responses, **Actions → Add to response set…** collects the selected
+response or multiple selected responses into an existing or new saved debugging
+workspace. Review the source responses and destination, then add them without
+applying the set to live traffic. **Open response set** continues editing
+explicitly. **Actions → Create rule → Serve a saved response…** creates an
+ordinary saved-response rule from a captured response.
 See [response sets](automation.md#response-sets).
 
 Use [choose an editing workflow](automation.md#choose-an-editing-workflow) to
@@ -336,6 +350,14 @@ for copying. **Remove selected entries** / Del and **Remove unselected
 entries** operate across the whole workspace, including hidden rows. Undo / Ctrl+Z
 restores them while their underlying evidence is retained. These actions do not
 delete source capture files or saved responses.
+
+Clear and Remove keep open or connecting live WebSockets visible by default. **Settings →
+Preferences → Retention → Terminate open WebSockets when clearing Traffic**
+changes these actions to terminate the affected connections before removing their
+rows. Connections still opening stay visible until they can be terminated; newly
+opened connections outside that operation remain visible. Undo restores
+retained evidence; it never reconnects a terminated WebSocket. **Cancel request**
+can stop one connection while keeping its row.
 
 ## Edit and replay
 

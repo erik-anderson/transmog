@@ -12,7 +12,7 @@ export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitFo
     const asset=await invoke('create_response_asset',{input:{id:'native-hex-editing',revision:1,status:200,headers:[{name:[67,111,110,116,101,110,116,45,69,110,99,111,100,105,110,103],value:[103,122,105,112]}],body:${JSON.stringify(encoded)},mediaType:'application/octet-stream'}});
     const matcher={method:'GET',url:{kind:'exact',value:'https://example.test/hex'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null,examples:[]};
     const rule={id:'native-hex-rule',displayName:'Native binary response',enabled:true,revision:1,priority:-3000000,matcher,request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@1',allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
-    const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:original.generation,autoresponsesEnabled:true,rules:[rule,...original.rules]}});await invoke('activate_automation',{candidateId:candidate.candidateId});
+    const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:original.generation,autoresponsesEnabled:true,responseSets:original.responseSets,rules:[rule,...original.rules]}});await invoke('activate_automation',{candidateId:candidate.candidateId});
     await w.refreshAutomation();await w.editAutoResponse(rule,true);w.$flushUpdates();
     if(w.bodyMode!=='hex'||w.bodyReadOnly||w.autoResponseBody.value!=='00 ff 80 0d 0a 2a')throw new Error('Native binary body did not open editable Hex');
     const before=asset.sha256;w.autoResponseStatus.value='201';
@@ -51,7 +51,7 @@ export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitFo
     editor.sourceEditor.setValue(good.source);await editor.disableScript();if(editor.scriptActive)throw new Error('Native Pause failed');
     editor.$flushUpdates();
   })()`); } finally {
-    await evaluate(`(async()=>{const probe=globalThis.__automationEditingProbe;if(!probe)return;const invoke=window.__TAURI_INTERNALS__.invoke,current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,rules:probe.original.rules}});await invoke('activate_automation',{candidateId:candidate.candidateId});delete globalThis.__automationEditingProbe;})()`);
+    await evaluate(`(async()=>{const probe=globalThis.__automationEditingProbe;if(!probe)return;const invoke=window.__TAURI_INTERNALS__.invoke,current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,responseSets:probe.original.responseSets,rules:probe.original.rules}});await invoke('activate_automation',{candidateId:candidate.candidateId});delete globalThis.__automationEditingProbe;})()`);
   }
   if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-script-editing.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
   // Reload the real WebView and check persistence without explicitly saving a draft.

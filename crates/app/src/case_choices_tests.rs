@@ -5,6 +5,79 @@ use transmog_automation::{HeaderOperation, RequestActions, ResponseActions, Rule
 use transmog_capture::{CaptureLimits, CaptureRecord, CaptureRecordKind, CaptureWriter};
 use transmog_core::{HeaderField, HttpLegVersion};
 
+#[test]
+fn current_response_sets_offer_exact_choices_and_never_leak_owned_rules_as_ordinary() {
+    let root = tempfile::tempdir().unwrap();
+    let app = Application::new(AppConfig {
+        response_asset_root: Some(root.path().join("assets")),
+        ..Default::default()
+    })
+    .unwrap();
+    let asset = app
+        .create_response_asset(crate::AuthoredResponseAsset {
+            id: "body".into(),
+            revision: 1,
+            status: 200,
+            headers: HeaderBlock::new(),
+            body: b"saved".to_vec(),
+            media_type: None,
+        })
+        .unwrap();
+    let mut owned = rule("owned", "/");
+    owned.enabled = true;
+    owned.request.headers.clear();
+    owned.request.response_asset = Some(asset.asset_ref());
+    app.change_response_set(
+        0,
+        crate::ResponseSetChange::Create {
+            id: "set".into(),
+            name: "Debugging task".into(),
+            notes: "Context".into(),
+            rules: vec![owned],
+        },
+    )
+    .unwrap();
+    app.change_response_set(
+        app.automation_status().generation,
+        crate::ResponseSetChange::SaveVersion {
+            id: "set".into(),
+            expected_revision: 1,
+            version_id: "milestone".into(),
+            name: "Milestone".into(),
+        },
+    )
+    .unwrap();
+    app.change_response_set(
+        app.automation_status().generation,
+        crate::ResponseSetChange::Apply {
+            id: "set".into(),
+            expected_revision: 1,
+            acknowledge_overlaps: true,
+            resume: false,
+        },
+    )
+    .unwrap();
+    let choices = app.case_export_choices(None).unwrap();
+    assert_eq!(choices.choices.len(), 2);
+    assert!(
+        choices
+            .choices
+            .iter()
+            .all(|choice| choice.rule_id.is_none())
+    );
+    let set = app.automation_status().response_sets.remove(0);
+    assert!(
+        choices
+            .choices
+            .iter()
+            .any(|choice| choice.selection.as_ref() == Some(&set.current_selection()))
+    );
+    assert!(choices.choices.iter().all(|choice| {
+        set.selected_rules(choice.selection.as_ref().unwrap())
+            .is_some()
+    }));
+}
+
 fn rule(id: &str, path: &str) -> Rule {
     Rule {
         id: id.into(),

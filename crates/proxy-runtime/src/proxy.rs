@@ -45,8 +45,8 @@ use transmog_core::{
     intercept::{
         BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, ChainExecutionError,
         ChainInitError, CompletedExchange, ExchangeCancellation, ExchangeChain, ExchangeFailure,
-        ExchangeFailureKind, ExchangeMetadata, ExchangeStage, HookAbort, HookExecutionError,
-        InterceptorChainFactory, InterceptorFactory, InterceptorRegistration,
+        ExchangeFailureKind, ExchangeId, ExchangeMetadata, ExchangeStage, HookAbort,
+        HookExecutionError, InterceptorChainFactory, InterceptorFactory, InterceptorRegistration,
         InterceptorRequirement, RequestHeadOutcome, ResponseHeadOutcome,
     },
     observe::{
@@ -98,7 +98,9 @@ use crate::{
 const FAILED_EXCHANGE_BODY: &[u8] = b"Transmog exchange failed\n";
 mod connect_tunnel;
 mod request_cancellation;
-use request_cancellation::RequestCancellation;
+mod websocket_control;
+use request_cancellation::{ManualCancellation, RequestCancellation, RequestControls};
+use websocket_control::WebSocketSessions;
 
 /// Complete configuration for one explicit proxy instance.
 #[derive(Clone, Debug)]
@@ -123,7 +125,7 @@ pub struct ProxyConfig {
     pub h3: H3TransportLimits,
     /// Shared IPv6/IPv4 connection-racing policy for origin transports.
     pub happy_eyeballs: HappyEyeballsConfig,
-    /// WebSocket frame, message, idle, write, and close-handshake bounds.
+    /// `WebSocket` frame, message, idle, write, and close-handshake bounds.
     pub websocket: RelayLimits,
 }
 
@@ -267,7 +269,7 @@ impl ProxyComponents {
         self
     }
 
-    /// Installs optional WebSocket message/control hooks.
+    /// Installs optional `WebSocket` message/control hooks.
     ///
     /// With the default empty factory, accepted upgrades use a byte-transparent
     /// bidirectional copy and perform no frame parsing.
@@ -344,7 +346,7 @@ pub struct ExchangeEvidence {
     pub trust_generation: u64,
 }
 
-/// Terminal outcome of one upgraded WebSocket session.
+/// Terminal outcome of one upgraded `WebSocket` session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum WebSocketSessionOutcome {
     /// Relay ended after a complete close handshake or transparent EOF.
@@ -353,7 +355,7 @@ pub enum WebSocketSessionOutcome {
     Failed(String),
 }
 
-/// Auditable terminal evidence for one upgraded WebSocket session.
+/// Auditable terminal evidence for one upgraded `WebSocket` session.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct WebSocketSessionEvidence {
     /// HTTP exchange/session identifier that established the upgrade.
@@ -409,6 +411,19 @@ impl ProxyControl {
     /// Current requests, negotiations, relays and connected clients.
     pub fn activity(&self) -> crate::ProxyActivity {
         self.state.activity.snapshot()
+    }
+    /// Terminates only the named upgraded connections and waits for relay cleanup.
+    /// Other requests, streams and the proxy listener remain running.
+    pub async fn terminate_websockets(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+        self.state.websockets.terminate(ids).await
+    }
+    /// Cancels selected requests, including response-body transfers, and upgraded `WebSockets`.
+    pub async fn cancel_requests(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+        let mut canceled = self.state.requests.cancel(ids);
+        canceled.extend(self.state.websockets.terminate(ids).await);
+        canceled.sort_by_key(|id| id.0);
+        canceled.dedup();
+        canceled
     }
     /// Pauses admission while existing exchanges and relays remain active.
     pub fn begin_drain(&self) -> u64 {
@@ -624,6 +639,8 @@ impl ProxyServer {
             activity: Arc::new(ActivityTracker::default()),
             final_shutdown: ExchangeCancellation::new(),
             finish_connection_cleanup: ExchangeCancellation::new(),
+            websockets: Arc::default(),
+            requests: Arc::default(),
             request_cleanup: Arc::default(),
             tunnels: Mutex::new(JoinSet::new()),
             hooks: components.hooks,
@@ -667,7 +684,7 @@ impl ProxyServer {
         self.state.evidence.subscribe()
     }
 
-    /// Subscribes to terminal WebSocket relay reports, including attributed
+    /// Subscribes to terminal `WebSocket` relay reports, including attributed
     /// hook decisions for inspected sessions.
     pub fn subscribe_websocket_evidence(&self) -> broadcast::Receiver<WebSocketSessionEvidence> {
         self.state.websocket_evidence.subscribe()
@@ -790,6 +807,8 @@ struct ProxyState {
     activity: Arc<ActivityTracker>,
     final_shutdown: ExchangeCancellation,
     finish_connection_cleanup: ExchangeCancellation,
+    websockets: Arc<WebSocketSessions>,
+    requests: Arc<RequestControls>,
     request_cleanup: Arc<std::sync::Mutex<JoinSet<()>>>,
     tunnels: Mutex<JoinSet<()>>,
     hooks: InterceptorChainFactory,
@@ -1097,16 +1116,19 @@ async fn serve_explicit_connection(
                 state.final_shutdown.clone(),
                 state.request_cleanup.clone(),
             );
-            let mut response =
-                match Box::pin(state.handle_outer_request(request, context, &mut cancellation))
-                    .await
-                {
-                    Ok(response) => response,
-                    Err(error) => {
-                        warn!(%error, "explicit proxy request failed");
-                        failed_exchange_response(&error)
-                    }
-                };
+            let manual = cancellation.manual.clone();
+            let outcome = tokio::select! {
+                result = Box::pin(state.handle_outer_request(request, context, &mut cancellation)) => result,
+                () = manual.cancelled() => return Ok::<_, Infallible>(canceled_request_response()),
+            };
+            let mut response = match outcome {
+                Ok(response) => response,
+                Err(error) => {
+                    warn!(%error, "explicit proxy request failed");
+                    failed_exchange_response(&error)
+                }
+            };
+            response.body_mut().manual = Some(Box::pin(async move { manual.cancelled().await }));
             response.body_mut().activity = Some(cancellation.finish());
             *response.version_mut() = client_version;
             Ok::<_, Infallible>(response)
@@ -1147,7 +1169,7 @@ impl ProxyState {
         let authority = ConnectAuthority::from_str(authority_text)?;
         if !self.decrypt_https.load(Ordering::Acquire) {
             return self
-                .handle_opaque_connect(request, context, authority)
+                .handle_opaque_connect(request, context, authority, cancellation)
                 .await;
         }
         let upgraded = hyper::upgrade::on(&mut request);
@@ -1310,19 +1332,20 @@ impl ProxyState {
                     state.final_shutdown.clone(),
                     state.request_cleanup.clone(),
                 );
-                let mut response = match Box::pin(state.handle_intercepted_request(
-                    request,
-                    context,
-                    &mut cancellation,
-                ))
-                .await
-                {
+                let manual = cancellation.manual.clone();
+                let outcome = tokio::select! {
+                    result = Box::pin(state.handle_intercepted_request(request, context, &mut cancellation)) => result,
+                    () = manual.cancelled() => return Ok::<_, Infallible>(canceled_request_response()),
+                };
+                let mut response = match outcome {
                     Ok(response) => response,
                     Err(error) => {
                         warn!(%error, "intercepted request failed");
                         failed_exchange_response(&error)
                     }
                 };
+                response.body_mut().manual =
+                    Some(Box::pin(async move { manual.cancelled().await }));
                 response.body_mut().activity = Some(cancellation.finish());
                 *response.version_mut() = client_version;
                 Ok::<_, Infallible>(response)
@@ -1416,11 +1439,13 @@ impl ProxyState {
             egress_version: None,
         };
 
-        let metadata = ExchangeMetadata::from_session_at(
+        let mut metadata = ExchangeMetadata::from_session_at(
             &session,
             original_target.clone(),
             self.clock.system_time(),
         );
+        metadata.websocket_requested =
+            extended_websocket || is_websocket_upgrade_candidate(&request_head.headers);
         let observer = Arc::new(self.observers.start_exchange(Arc::new(metadata.clone())));
         observer
             .emit(ObserverEventKind::ExchangeStarted {
@@ -1472,6 +1497,14 @@ impl ProxyState {
             .extensions()
             .insert(RuntimeExchangeObserver(Arc::clone(&observer)));
         chain.context().extensions().insert(performance);
+        chain
+            .context()
+            .extensions()
+            .insert(ManualCancellation(cancellation.manual.clone()));
+        chain.context().extensions().insert(self.requests.register(
+            chain.context().metadata().exchange_id,
+            cancellation.manual.clone(),
+        ));
         if extended_websocket {
             chain.context().extensions().insert(RuntimeExtendedConnect);
         }
@@ -2182,6 +2215,9 @@ impl ProxyState {
         let stream_observer = (!self.observers.is_empty())
             .then(|| runtime_observer(&chain))
             .flatten();
+        let relay_control = self
+            .websockets
+            .register(chain.context().metadata().exchange_id);
         if let Some(observer) = &stream_observer {
             observer
                 .emit(ObserverEventKind::StreamState(StreamState::now(
@@ -2282,6 +2318,7 @@ impl ProxyState {
             let (result, interrupted) = tokio::select! {
                 result = relay => (result, false),
                 () = shutdown.cancelled() => (Err("Application shutdown".to_owned()), true),
+                () = relay_control.cancelled() => (Err("WebSocket canceled in Transmog.".to_owned()), true),
             };
             if let Some(observer) = &stream_observer {
                 let status = if interrupted {
@@ -4442,86 +4479,65 @@ async fn stream_incoming_through_hooks(
     limit: usize,
     body_idle_timeout: Duration,
 ) {
-    let mut input = StreamingBodyTracker::new(limit);
-    let mut output = StreamingBodyTracker::new(limit);
-    let mut client_body_completed = false;
-    loop {
-        let frame = match timeout(body_idle_timeout, body.frame()).await {
-            Ok(Some(frame)) => frame,
-            Ok(None) => break,
-            Err(_) => {
-                fail_hook_stream(
-                    &sender,
-                    &chain,
-                    ExchangeStage::RequestBody,
-                    BodyStreamError::IdleTimeout,
-                )
-                .await;
-                return;
-            }
-        };
-        let canonical = match incoming_frame(frame) {
-            Ok(Some(frame)) => frame,
-            Ok(None) => continue,
-            Err(error) => {
+    let manual = chain
+        .context()
+        .extensions()
+        .get::<ManualCancellation>()
+        .map_or_else(ExchangeCancellation::new, |signal| signal.0.clone());
+    let transfer = async move {
+        let mut input = StreamingBodyTracker::new(limit);
+        let mut output = StreamingBodyTracker::new(limit);
+        let mut client_body_completed = false;
+        loop {
+            let frame = match timeout(body_idle_timeout, body.frame()).await {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(_) => {
+                    fail_hook_stream(
+                        &sender,
+                        &chain,
+                        ExchangeStage::RequestBody,
+                        BodyStreamError::IdleTimeout,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let canonical = match incoming_frame(frame) {
+                Ok(Some(frame)) => frame,
+                Ok(None) => continue,
+                Err(error) => {
+                    fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
+                    return;
+                }
+            };
+            if let Err(error) = input.accept(&canonical) {
                 fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
                 return;
             }
-        };
-        if let Err(error) = input.accept(&canonical) {
-            fail_hook_stream(&sender, &chain, ExchangeStage::RequestBody, error).await;
-            return;
-        }
-        // A final ingress frame completes capture even if forwarding that frame fails.
-        if body.is_end_stream()
-            && let Some(recorder) = performance_recorder(&chain)
-        {
-            recorder.mark(Milestone::ClientRequestDone);
-        }
-        let complete = body.is_end_stream();
-        observe_body(
-            &chain,
-            ExchangeBoundary::ClientRequest,
-            std::slice::from_ref(&canonical),
-            complete,
-        )
-        .await;
-        client_body_completed |= complete;
-        let frames = match pipeline.process(canonical).await {
-            Ok(frames) => frames,
-            Err(error) => {
-                fail_hook_pipeline(&sender, &chain, ExchangeStage::RequestBody, error).await;
-                return;
+            // A final ingress frame completes capture even if forwarding that frame fails.
+            if body.is_end_stream()
+                && let Some(recorder) = performance_recorder(&chain)
+            {
+                recorder.mark(Milestone::ClientRequestDone);
             }
-        };
-        observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
-        if send_streaming_frames(
-            &sender,
-            &mut output,
-            frames,
-            &chain,
-            "Upstream request queue",
-        )
-        .await
-        .is_err()
-        {
-            emit_hook_failure(
+            let complete = body.is_end_stream();
+            observe_body(
                 &chain,
-                ExchangeStage::RequestBody,
-                ExchangeFailureKind::Body,
-                "upstream request-body consumer closed".to_owned(),
+                ExchangeBoundary::ClientRequest,
+                std::slice::from_ref(&canonical),
+                complete,
             )
             .await;
-            return;
-        }
-    }
-    if !client_body_completed {
-        observe_complete_body(&chain, ExchangeBoundary::ClientRequest, &[]).await;
-    }
-    publish_performance(&chain, Some(Milestone::ClientRequestDone)).await;
-    match pipeline.finish().await {
-        Ok(frames) => {
-            observe_complete_body(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
+            client_body_completed |= complete;
+            let frames = match pipeline.process(canonical).await {
+                Ok(frames) => frames,
+                Err(error) => {
+                    fail_hook_pipeline(&sender, &chain, ExchangeStage::RequestBody, error).await;
+                    return;
+                }
+            };
+            observe_body_frames(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
             if send_streaming_frames(
                 &sender,
                 &mut output,
@@ -4539,11 +4555,43 @@ async fn stream_incoming_through_hooks(
                     "upstream request-body consumer closed".to_owned(),
                 )
                 .await;
+                return;
             }
         }
-        Err(error) => {
-            fail_hook_pipeline(&sender, &chain, ExchangeStage::RequestBody, error).await;
+        if !client_body_completed {
+            observe_complete_body(&chain, ExchangeBoundary::ClientRequest, &[]).await;
         }
+        publish_performance(&chain, Some(Milestone::ClientRequestDone)).await;
+        match pipeline.finish().await {
+            Ok(frames) => {
+                observe_complete_body(&chain, ExchangeBoundary::UpstreamRequest, &frames).await;
+                if send_streaming_frames(
+                    &sender,
+                    &mut output,
+                    frames,
+                    &chain,
+                    "Upstream request queue",
+                )
+                .await
+                .is_err()
+                {
+                    emit_hook_failure(
+                        &chain,
+                        ExchangeStage::RequestBody,
+                        ExchangeFailureKind::Body,
+                        "upstream request-body consumer closed".to_owned(),
+                    )
+                    .await;
+                }
+            }
+            Err(error) => {
+                fail_hook_pipeline(&sender, &chain, ExchangeStage::RequestBody, error).await;
+            }
+        }
+    };
+    tokio::select! {
+        () = transfer => {},
+        () = manual.cancelled() => {},
     }
 }
 
@@ -4563,54 +4611,92 @@ async fn stream_response_through_hooks(
     h3: Option<H3Telemetry>,
     trust_generation: u64,
 ) {
-    let event_stream = transmog_core::stream::is_event_stream(&response_head.headers);
-    let limit = if event_stream { usize::MAX } else { limit };
-    let mut input = StreamingBodyTracker::new(limit);
-    let mut output = StreamingBodyTracker::new(limit);
-    loop {
-        let frame = match if event_stream {
-            Ok(body.recv().await)
-        } else {
-            timeout(body_idle_timeout, body.recv()).await
-        } {
-            Ok(Some(frame)) => frame,
-            Ok(None) => break,
-            Err(_) => {
-                fail_hook_stream(
-                    &sender,
+    let manual = chain
+        .context()
+        .extensions()
+        .get::<ManualCancellation>()
+        .map_or_else(ExchangeCancellation::new, |signal| signal.0.clone());
+    let canceled_chain = chain.clone();
+    let canceled_sender = sender.clone();
+    let transfer = async move {
+        let event_stream = transmog_core::stream::is_event_stream(&response_head.headers);
+        let limit = if event_stream { usize::MAX } else { limit };
+        let mut input = StreamingBodyTracker::new(limit);
+        let mut output = StreamingBodyTracker::new(limit);
+        loop {
+            let frame = match if event_stream {
+                Ok(body.recv().await)
+            } else {
+                timeout(body_idle_timeout, body.recv()).await
+            } {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(_) => {
+                    fail_hook_stream(
+                        &sender,
+                        &chain,
+                        ExchangeStage::ResponseBody,
+                        BodyStreamError::IdleTimeout,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let canonical = match frame {
+                Ok(frame) => frame,
+                Err(error) => {
+                    fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                    return;
+                }
+            };
+            if let Err(error) = input.accept(&canonical) {
+                fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                return;
+            }
+            observe_body_frames(
+                &chain,
+                ExchangeBoundary::UpstreamResponse,
+                std::slice::from_ref(&canonical),
+            )
+            .await;
+            let frames = match pipeline.process(canonical).await {
+                Ok(frames) => frames,
+                Err(error) => {
+                    fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                    return;
+                }
+            };
+            observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+            if send_streaming_frames(
+                &sender,
+                &mut output,
+                frames,
+                &chain,
+                "Client response queue",
+            )
+            .await
+            .is_err()
+            {
+                emit_hook_failure(
                     &chain,
                     ExchangeStage::ResponseBody,
-                    BodyStreamError::IdleTimeout,
+                    ExchangeFailureKind::Body,
+                    "downstream response-body consumer closed".to_owned(),
                 )
                 .await;
                 return;
             }
-        };
-        let canonical = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-                fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
-                return;
-            }
-        };
-        if let Err(error) = input.accept(&canonical) {
-            fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
-            return;
         }
-        observe_body_frames(
-            &chain,
-            ExchangeBoundary::UpstreamResponse,
-            std::slice::from_ref(&canonical),
-        )
-        .await;
-        let frames = match pipeline.process(canonical).await {
+        observe_complete_body(&chain, ExchangeBoundary::UpstreamResponse, &[]).await;
+        publish_performance(&chain, Some(Milestone::UpstreamResponseDone)).await;
+        let frames = match pipeline.finish().await {
             Ok(frames) => frames,
             Err(error) => {
                 fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
                 return;
             }
         };
-        observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+        observe_complete_body(&chain, ExchangeBoundary::ClientResponse, &frames).await;
         if send_streaming_frames(
             &sender,
             &mut output,
@@ -4630,47 +4716,27 @@ async fn stream_response_through_hooks(
             .await;
             return;
         }
-    }
-    observe_complete_body(&chain, ExchangeBoundary::UpstreamResponse, &[]).await;
-    publish_performance(&chain, Some(Milestone::UpstreamResponseDone)).await;
-    let frames = match pipeline.finish().await {
-        Ok(frames) => frames,
-        Err(error) => {
-            fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
-            return;
-        }
-    };
-    observe_complete_body(&chain, ExchangeBoundary::ClientResponse, &frames).await;
-    if send_streaming_frames(
-        &sender,
-        &mut output,
-        frames,
-        &chain,
-        "Client response queue",
-    )
-    .await
-    .is_err()
-    {
-        emit_hook_failure(
+        complete_hook_streaming_exchange(
             &chain,
-            ExchangeStage::ResponseBody,
-            ExchangeFailureKind::Body,
-            "downstream response-body consumer closed".to_owned(),
+            &session,
+            &request_head,
+            &response_head,
+            evidence,
+            attempts,
+            h3,
+            trust_generation,
         )
         .await;
-        return;
+    };
+    tokio::select! {
+        () = transfer => {},
+        () = manual.cancelled() => {
+            canceled_chain.context().cancellation().cancel();
+            let _ = canceled_sender.try_send(Err(BodyStreamError::Failed("Request canceled in Transmog.".into())));
+            emit_hook_failure(&canceled_chain, ExchangeStage::ResponseBody,
+                ExchangeFailureKind::Cancelled, "Request canceled in Transmog.".into()).await;
+        }
     }
-    complete_hook_streaming_exchange(
-        &chain,
-        &session,
-        &request_head,
-        &response_head,
-        evidence,
-        attempts,
-        h3,
-        trust_generation,
-    )
-    .await;
 }
 
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
@@ -4684,48 +4750,84 @@ async fn stream_local_response_through_hooks(
     limit: usize,
     body_idle_timeout: Duration,
 ) {
-    let event_stream = transmog_core::stream::is_event_stream(&response_head.headers);
-    let limit = if event_stream { usize::MAX } else { limit };
-    let mut input = StreamingBodyTracker::new(limit);
-    let mut output = StreamingBodyTracker::new(limit);
-    loop {
-        let frame = match if event_stream {
-            Ok(body.recv().await)
-        } else {
-            timeout(body_idle_timeout, body.recv()).await
-        } {
-            Ok(Some(frame)) => frame,
-            Ok(None) => break,
-            Err(_) => {
-                fail_hook_stream(
-                    &sender,
+    let manual = chain
+        .context()
+        .extensions()
+        .get::<ManualCancellation>()
+        .map_or_else(ExchangeCancellation::new, |signal| signal.0.clone());
+    let canceled_chain = chain.clone();
+    let canceled_sender = sender.clone();
+    let transfer = async move {
+        let event_stream = transmog_core::stream::is_event_stream(&response_head.headers);
+        let limit = if event_stream { usize::MAX } else { limit };
+        let mut input = StreamingBodyTracker::new(limit);
+        let mut output = StreamingBodyTracker::new(limit);
+        loop {
+            let frame = match if event_stream {
+                Ok(body.recv().await)
+            } else {
+                timeout(body_idle_timeout, body.recv()).await
+            } {
+                Ok(Some(frame)) => frame,
+                Ok(None) => break,
+                Err(_) => {
+                    fail_hook_stream(
+                        &sender,
+                        &chain,
+                        ExchangeStage::ResponseBody,
+                        BodyStreamError::IdleTimeout,
+                    )
+                    .await;
+                    return;
+                }
+            };
+            let canonical = match frame {
+                Ok(frame) => frame,
+                Err(error) => {
+                    fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                    return;
+                }
+            };
+            if let Err(error) = input.accept(&canonical) {
+                fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                return;
+            }
+            let frames = match pipeline.process(canonical).await {
+                Ok(frames) => frames,
+                Err(error) => {
+                    fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
+                    return;
+                }
+            };
+            observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+            if send_streaming_frames(
+                &sender,
+                &mut output,
+                frames,
+                &chain,
+                "Client response queue",
+            )
+            .await
+            .is_err()
+            {
+                emit_hook_failure(
                     &chain,
                     ExchangeStage::ResponseBody,
-                    BodyStreamError::IdleTimeout,
+                    ExchangeFailureKind::Body,
+                    "downstream local response-body consumer closed".to_owned(),
                 )
                 .await;
                 return;
             }
-        };
-        let canonical = match frame {
-            Ok(frame) => frame,
-            Err(error) => {
-                fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
-                return;
-            }
-        };
-        if let Err(error) = input.accept(&canonical) {
-            fail_hook_stream(&sender, &chain, ExchangeStage::ResponseBody, error).await;
-            return;
         }
-        let frames = match pipeline.process(canonical).await {
+        let frames = match pipeline.finish().await {
             Ok(frames) => frames,
             Err(error) => {
                 fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
                 return;
             }
         };
-        observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
+        observe_complete_body(&chain, ExchangeBoundary::ClientResponse, &frames).await;
         if send_streaming_frames(
             &sender,
             &mut output,
@@ -4745,48 +4847,30 @@ async fn stream_local_response_through_hooks(
             .await;
             return;
         }
-    }
-    let frames = match pipeline.finish().await {
-        Ok(frames) => frames,
-        Err(error) => {
-            fail_hook_pipeline(&sender, &chain, ExchangeStage::ResponseBody, error).await;
-            return;
+        observe_hook_effects(&chain).await;
+        let outcome = CompletedExchange {
+            metadata: Arc::clone(chain.context().metadata()),
+            request_head,
+            response_head,
+        };
+        publish_performance(&chain, Some(Milestone::ClientResponseQueued)).await;
+        publish_performance(&chain, Some(Milestone::ExchangeDone)).await;
+        let report = chain.completed(outcome.clone()).await;
+        for error in report.errors() {
+            warn!(%error, "terminal hook cleanup failed");
+        }
+        if let Some(observer) = runtime_observer(&chain) {
+            observer.completed(outcome).await;
         }
     };
-    observe_complete_body(&chain, ExchangeBoundary::ClientResponse, &frames).await;
-    if send_streaming_frames(
-        &sender,
-        &mut output,
-        frames,
-        &chain,
-        "Client response queue",
-    )
-    .await
-    .is_err()
-    {
-        emit_hook_failure(
-            &chain,
-            ExchangeStage::ResponseBody,
-            ExchangeFailureKind::Body,
-            "downstream local response-body consumer closed".to_owned(),
-        )
-        .await;
-        return;
-    }
-    observe_hook_effects(&chain).await;
-    let outcome = CompletedExchange {
-        metadata: Arc::clone(chain.context().metadata()),
-        request_head,
-        response_head,
-    };
-    publish_performance(&chain, Some(Milestone::ClientResponseQueued)).await;
-    publish_performance(&chain, Some(Milestone::ExchangeDone)).await;
-    let report = chain.completed(outcome.clone()).await;
-    for error in report.errors() {
-        warn!(%error, "terminal hook cleanup failed");
-    }
-    if let Some(observer) = runtime_observer(&chain) {
-        observer.completed(outcome).await;
+    tokio::select! {
+        () = transfer => {},
+        () = manual.cancelled() => {
+            canceled_chain.context().cancellation().cancel();
+            let _ = canceled_sender.try_send(Err(BodyStreamError::Failed("Request canceled in Transmog.".into())));
+            emit_hook_failure(&canceled_chain, ExchangeStage::ResponseBody,
+                ExchangeFailureKind::Cancelled, "Request canceled in Transmog.".into()).await;
+        }
     }
 }
 
@@ -5430,7 +5514,16 @@ fn protocol_version(version: Version) -> Result<HttpLegVersion, ProxyRuntimeErro
     }
 }
 
+fn canceled_request_response() -> Response<DownstreamBody> {
+    let mut response = Response::new(DownstreamBody::from_bytes(Bytes::from_static(
+        b"Request canceled in Transmog.\n",
+    )));
+    *response.status_mut() = StatusCode::from_u16(499).expect("valid cancellation status");
+    response
+}
+
 struct DownstreamBody {
+    manual: Option<Pin<Box<dyn Future<Output = ()> + Send>>>,
     activity: Option<ActivityLease>,
     inner: DownstreamBodyInner,
 }
@@ -5444,6 +5537,7 @@ impl DownstreamBody {
     fn empty() -> Self {
         Self {
             activity: None,
+            manual: None,
             inner: DownstreamBodyInner::Buffered(VecDeque::new()),
         }
     }
@@ -5451,6 +5545,7 @@ impl DownstreamBody {
     fn from_bytes(bytes: Bytes) -> Self {
         Self {
             activity: None,
+            manual: None,
             inner: DownstreamBodyInner::Buffered(VecDeque::from([Frame::data(bytes)])),
         }
     }
@@ -5465,6 +5560,7 @@ impl DownstreamBody {
         }
         Ok(Self {
             activity: None,
+            manual: None,
             inner: DownstreamBodyInner::Buffered(output),
         })
     }
@@ -5472,6 +5568,7 @@ impl DownstreamBody {
     fn streaming(body: BodyStream) -> Self {
         Self {
             activity: None,
+            manual: None,
             inner: DownstreamBodyInner::Streaming(body),
         }
     }
@@ -5485,6 +5582,18 @@ impl Body for DownstreamBody {
         mut self: Pin<&mut Self>,
         context: &mut Context<'_>,
     ) -> Poll<Option<Result<Frame<Self::Data>, Self::Error>>> {
+        if self
+            .manual
+            .as_mut()
+            .is_some_and(|signal| signal.as_mut().poll(context).is_ready())
+        {
+            self.manual = None;
+            self.inner = DownstreamBodyInner::Buffered(VecDeque::new());
+            self.activity.take();
+            return Poll::Ready(Some(Err(BodyStreamError::Failed(
+                "Request canceled in Transmog.".into(),
+            ))));
+        }
         let result = match &mut self.inner {
             DownstreamBodyInner::Buffered(frames) => Poll::Ready(frames.pop_front().map(Ok)),
             DownstreamBodyInner::Streaming(body) => match body.poll_recv(context) {
@@ -5595,22 +5704,22 @@ pub enum ProxyRuntimeError {
     /// HTTP/1.1 or HTTP/2 origin adapter failed.
     #[error(transparent)]
     HyperOrigin(#[from] HyperOriginError),
-    /// WebSocket opening handshake was invalid or unauthenticated.
+    /// `WebSocket` opening handshake was invalid or unauthenticated.
     #[error(transparent)]
     WebSocketHandshake(#[from] WebSocketHandshakeError),
-    /// WebSocket relay configuration or execution failed.
+    /// `WebSocket` relay configuration or execution failed.
     #[error(transparent)]
     WebSocketRelay(#[from] RelayError),
-    /// WebSocket hook initialization or execution failed.
+    /// `WebSocket` hook initialization or execution failed.
     #[error(transparent)]
     WebSocketHook(#[from] WebSocketHookError),
-    /// Negotiated WebSocket compression cannot be inspected safely.
+    /// Negotiated `WebSocket` compression cannot be inspected safely.
     #[error(transparent)]
     WebSocketCompression(#[from] WebSocketCompressionError),
     /// Handshake fields could not be interpreted safely.
     #[error("invalid WebSocket handshake: {0}")]
     InvalidWebSocketHandshake(String),
-    /// WebSocket routing requires HTTP/1.1 or HTTP/2.
+    /// `WebSocket` routing requires HTTP/1.1 or HTTP/2.
     #[error("WebSocket connections require HTTP/1.1 or HTTP/2 origin routing")]
     WebSocketRequiresHttp1Or2,
     /// Application-owned HTTP services cannot provide an upgraded byte stream.
@@ -5640,10 +5749,10 @@ pub enum ProxyRuntimeError {
     /// Browser did not send a TLS or HTTP preface within the configured deadline.
     #[error("CONNECT tunnel preface timed out")]
     TunnelPrefaceTimeout,
-    /// CONNECT carried neither intercepted TLS nor an HTTP/1 WebSocket request.
+    /// CONNECT carried neither intercepted TLS nor an HTTP/1 `WebSocket` request.
     #[error("unsupported CONNECT tunnel preface byte 0x{0:02x}")]
     UnsupportedTunnelPreface(u8),
-    /// Plaintext CONNECT is supported only for browser-style WebSocket upgrades.
+    /// Plaintext CONNECT is supported only for browser-style `WebSocket` upgrades.
     #[error("plaintext CONNECT payload must be an HTTP/1 WebSocket upgrade")]
     PlaintextConnectRequiresWebSocket,
     /// Browser-facing TLS handshake failed.

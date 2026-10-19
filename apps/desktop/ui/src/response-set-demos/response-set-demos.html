@@ -1,0 +1,35 @@
+<template>
+<dialog w-ref="{listDialog}" class="response-demos-dialog" aria-labelledby="response-demos-title" @cancel="{closeList(e)}" @close="{listClosed()}">
+  <header><h2 id="response-demos-title">Saved demos · {{ownerName}}</h2><button type="button" @click="{startSave()}" ?disabled="{{!savingAllowed}}">Save demo…</button></header>
+  <p>Keep a captured page and exact saved response changes for later playback. Each demo retains its own bytes across restarts and Traffic expiry.</p>
+  <p ?hidden="{{savingAllowed}}">Save or discard changes before saving or replacing a demo.</p>
+  <p role="status" ?hidden="{{!loading}}">Loading saved demos…</p>
+  <p ?hidden="{{loading || listError || rows.length}}">No saved demos. Save a captured page and this set’s response changes to demonstrate them later.</p>
+  <div class="response-demos-scroll"><for each="demo in rows"><article key="{{demo.id}}"><h3>{{demo.name}}</h3><p class="full-value">{{demo.url}}</p><p class="field-error" ?hidden="{{!demo.availabilityError}}">{{demo.availabilityError}}</p><p class="field-help">{{demo.summary}}<br>Saved {{demo.modified}}</p><div class="actions"><button type="button" @click="{openDemo(demo.id)}" ?disabled="{{loading || listError || demo.availabilityError}}">Open demo…</button><button type="button" class="secondary" @click="{startSave(demo.id)}" ?disabled="{{loading || listError || !savingAllowed}}">Replace…</button><button type="button" class="secondary" @click="{askDelete(demo.id)}" ?disabled="{{loading || listError}}">Delete…</button></div></article></for></div>
+  <p role="status" class="field-error" ?hidden="{{!listError}}">{{listError}}</p><p role="status" ?hidden="{{!message}}">{{message}}</p>
+  <footer class="actions"><button type="button" class="secondary" @click="{loadList()}" ?disabled="{{loading}}">Refresh</button><button type="button" class="secondary" @click="{closeList()}" w-ref="{listCloseButton}">Close</button></footer>
+</dialog>
+<dialog w-ref="{saveDialog}" class="response-demos-dialog" aria-labelledby="response-demo-save-title" @cancel="{cancelSave(e)}" @close="{saveClosed()}">
+  <h2 id="response-demo-save-title"><if condition="!replacingName">Save demo</if><if condition="replacingName">Replace saved demo</if></h2>
+  <p>Save a captured page and these saved response changes for later playback. This preserves available response bytes, including copies of linked files.</p>
+  <p ?hidden="{{!replacingName}}">Saving replaces <strong>{{replacingName}}</strong>. Already-open playback keeps its existing snapshot.</p>
+  <form @submit="{prepare(e)}"><div class="response-demo-content">
+    <if condition="!review">
+      <label>Demo name <input w-ref="{nameInput}" type="text" value="{{name}}" maxlength="320" required @input="{nameChangedByUser(e)}" ?disabled="{{busy}}"></label>
+      <h3>Captured page</h3><p role="status" ?hidden="{{!pagesLoading}}">Loading complete captured HTML pages…</p>
+      <p ?hidden="{{pagesLoading || pages.length}}">No complete captured HTML pages are available. Capture the page through Transmog or import saved traffic containing its HTML response, then return here.</p>
+      <div class="response-demo-pages" role="group" aria-label="Captured page"><for each="page in pages"><label key="{{page.entryId}}"><input type="radio" name="demo-captured-page" ?checked="{{page.entryId == selectedId}}" @change="{selectPage(page.entryId)}" ?disabled="{{busy}}"><span><strong>{{page.url}}</strong><small>{{page.identity}}</small></span></label></for></div>
+      <p class="field-help" ?hidden="{{!pagesMore}}">Showing up to 100 complete pages. Select an older HTML response in Traffic, then reopen Save demo to include it.</p>
+      <label>Resource source <select aria-label="Demo resource source" @change="{changeScope(e)}" ?disabled="{{busy}}"><option value="original-trace" ?selected="{{scope == 'original-trace'}}">Selected trace / current capture</option><option value="all-loaded" ?selected="{{scope == 'all-loaded'}}">All loaded traffic in this window</option></select></label>
+      <p class="field-help" ?hidden="{{scope != 'all-loaded'}}">This may mix content from different captures or users. The selected HTML stays fixed.</p>
+      <p class="field-help">A demo recreates captured evidence. It does not retain a complete authenticated browser session. Other uncaptured requests remain unavailable.</p>
+    </if>
+    <if condition="review"><h3>{{review.name}}</h3><p class="full-value">{{review.report.url}}</p><p>{{reviewSummary}}</p><p ?hidden="{{!review.report.skipped}}">Some resources were not captured. Review what will be unavailable in this demo.</p><div class="response-demo-missing"><for each="row in missingRows"><article key="{{row.id}}"><strong>{{row.method}} · {{row.url}}</strong><p>{{row.reason}}</p></article></for></div><p ?hidden="{{!omittedMissing}}">{{omittedMissing}} additional unavailable resources are included in the total.</p><p class="field-help">Saving uses this exact reviewed snapshot. Uncaptured requests return a network failure during playback.</p></if>
+    <p role="status" class="field-error" ?hidden="{{!saveError}}">{{saveError}}</p><p role="status" ?hidden="{{!busy}}">Preparing or saving frozen demo bytes…</p>
+    </div><footer class="actions"><if condition="!review"><button w-ref="{prepareButton}" type="submit" ?disabled="{{pagesLoading || !selectedId}}" aria-disabled="{{busy}}" aria-busy="{{busy}}">Review demo</button></if><if condition="review"><button w-ref="{commitButton}" type="button" @click="{commit()}" ?disabled="{{busy}}"><if condition="replacingName">Replace demo</if><if condition="!replacingName">Save demo</if></button><button type="button" class="secondary" @click="{changeChoices()}" ?disabled="{{busy}}">Change choices</button></if><button type="button" class="secondary" @click="{cancelSave()}">Cancel</button></footer>
+  </form>
+</dialog>
+<dialog w-ref="{deleteDialog}" class="response-demos-dialog response-demo-delete" aria-labelledby="response-demo-delete-title" @cancel="{cancelDelete(e)}">
+  <h2 id="response-demo-delete-title">Delete {{deleteName}}?</h2><p>This permanently deletes this saved demo. Captured Traffic and the response set’s current responses remain available.</p><p role="status" class="field-error" ?hidden="{{!deleteError}}">{{deleteError}}</p><p role="status" ?hidden="{{!deleteCompleted}}">Deleted this demo.</p><footer class="actions"><button type="button" @click="{confirmDelete()}" ?hidden="{{deleteCompleted}}" aria-disabled="{{deletePending}}" aria-busy="{{deletePending}}">Delete demo</button><button type="button" class="secondary" @click="{cancelDelete()}"><if condition="deleteCompleted">Close</if><if condition="!deleteCompleted">Cancel</if></button></footer>
+</dialog>
+</template>

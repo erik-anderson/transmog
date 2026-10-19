@@ -1,6 +1,7 @@
 import { observable } from '@microsoft/webui-framework';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { AutomationStatus } from '../models.js';
+import { activeSavedResponseCount } from '../automation-state.js';
 
 export class AutoresponseSwitch extends WorkspaceElement {
   @observable state:AutomationStatus|null=null;
@@ -11,8 +12,8 @@ export class AutoresponseSwitch extends WorkspaceElement {
   stateChanged():void {
     this.autoresponsesOn=this.state?.autoresponsesEnabled??true;
     this.autoresponsesPressed=String(this.autoresponsesOn);
-    const count=this.state?.rules.filter(rule=>rule.enabled!==false && rule.request.responseAsset!==null).length??0;
-    this.autoresponsesLabel=this.state?`Saved responses · ${this.autoresponsesOn?'On':'Paused'} (${count} enabled)`:'Saved responses · Loading…';
+    const count=activeSavedResponseCount(this.state);
+    this.autoresponsesLabel=this.state?`Saved responses · ${this.autoresponsesOn?'On':'Paused'} (${count} active)`:'Saved responses · Loading…';
   }
   toggle():void {if(!this.busy && this.state)this.$emit('toggle-autoresponses');}
 }

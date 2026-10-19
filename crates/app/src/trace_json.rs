@@ -772,7 +772,9 @@ mod tests {
         assert_eq!(cleared.ids, vec![id.clone()]);
         assert!(cleared.undoable);
         assert_eq!(
-            app.remove_traffic_entries(&cleared.ids, true).unwrap(),
+            app.remove_traffic_entries(&cleared.ids, true)
+                .await
+                .unwrap(),
             vec![id.clone()]
         );
         app.discard_traffic().unwrap();

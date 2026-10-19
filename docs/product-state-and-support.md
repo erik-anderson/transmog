@@ -15,21 +15,29 @@ Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.
 
-Response sets use the existing persisted automation rules and response
-assets, including named variants and immutable revision history. Saving a
-response set revision does not change the explicitly activated live revision;
-activation and response set pause are separate actions. The editor draft remains in
-the mounted workspace for the current session. See [response sets](automation.md#response-sets).
+Response sets persist one current response collection, notes, explicitly named
+versions, and an independent applied live snapshot. Saving current content does
+not alter applied live traffic. Named versions, live pause and the global
+saved-response pause are separate choices. The whole-collection editor draft
+remains in the mounted workspace for the current session.
+
+Saved demos retain exact reviewed available captured page/resource bytes and
+saved response modifications, including copied linked-file bytes. They survive
+Traffic clearing, retention and restart; current edits or deleting a named
+version never mutate them. Replace/delete is explicit, and deleting the owning
+set removes its saved demos. A remembered captured-page association alone keeps
+only identity and URL, without retaining capture bytes. See [response
+sets](automation.md#response-sets) and [captured previews](captured-page-preview.md).
 
 Saving a trace preserves retained network evidence; it does not package these
-response set definitions, script sources, linked files or temporary preview scenes.
+response set definitions, script sources, linked files, saved demos or temporary preview scenes.
 Copying the application state directory is not a portable investigation format.
 For sharing boundaries and unavailable bytes, see [trace saving](trace-saving.md#response-set-sharing).
 The [portable investigation APIs](portable-investigations.md#implemented-rule-interchange-apis-k1)
 provide selected rule/asset interchange for library callers. Imported source
 definitions, identity mappings and asset metadata share one automation commit;
 their immutable body blobs use the existing asset store. Imported named
-response sets start paused with no active selection, and ordinary rules start
+response sets start paused with no applied snapshot, and ordinary rules start
 disabled. A saved state directory is still not a portable case.
 [Working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
 now keep selected evidence, source-associated notes/context, frozen response sets

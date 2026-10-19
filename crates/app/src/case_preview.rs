@@ -135,9 +135,9 @@ async fn attach_package(
             .filter(|r| r.enabled_intent)
             .collect()
     };
-    if selected.len() > 64 {
+    if selected.len() > crate::automation::MAX_RESPONSES {
         return Err(invalid(
-            "Case preview supports up to 64 participating auto-responses",
+            "Case preview supports up to 1,000 participating auto-responses",
         ));
     }
     let mut rules = vec![];

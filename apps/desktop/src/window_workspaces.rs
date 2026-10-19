@@ -500,6 +500,7 @@ mod tests {
     fn viewer_permissions_exclude_every_proxy_and_certificate_mutation() {
         for command in [
             "start_proxy",
+            "cancel_requests",
             "stop_application",
             "retry_host_restore",
             "recover_windows_proxy",
@@ -514,8 +515,8 @@ mod tests {
             "change_response_transform",
             "test_response_transform",
             "test_header_rule",
-            "change_experiment",
-            "experiment_overlaps",
+            "change_response_set",
+            "response_set_overlaps",
             "enable_breakpoints",
             "save_product_state",
             "save_client_certificate_policy",

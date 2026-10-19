@@ -2,7 +2,11 @@ import { observable } from '@microsoft/webui-framework';
 import { WorkspaceElement } from '../workspace-element.js';
 import type { QueryCondition, UrlCondition } from '../models.js';
 
+export interface MatchDraft {mode:string;queryMode:string;scope:string;address:string;query:string;caseSensitive:boolean;whole:boolean;}
+
 export class MatchEditor extends WorkspaceElement {
+  captureDraft():MatchDraft {return {mode:this.matchMode,queryMode:this.queryMode,scope:this.regexScope,address:this.addressInput.value,query:this.queryInput.value,caseSensitive:this.caseInput.checked,whole:this.wholeInput.checked};}
+  restoreDraft(draft:MatchDraft):void {this.matchMode=draft.mode;this.queryMode=draft.queryMode;this.regexScope=draft.scope;this.$flushUpdates();this.addressInput.value=draft.address;this.queryInput.value=draft.query;this.caseInput.checked=draft.caseSensitive;this.wholeInput.checked=draft.whole;this.renderContext();}
   @observable condition:UrlCondition|null=null;
   @observable matchMode='exact';
   @observable queryMode='none';

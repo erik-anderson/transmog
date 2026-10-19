@@ -13,7 +13,14 @@ use transmog_automation::{CompiledRequestMatcher, Rule, request_for_test, same_m
 #[derive(Default)]
 pub(super) struct Overlay {
     rules: Vec<FrozenRule>,
-    root: Option<tempfile::TempDir>,
+    root: Option<Arc<tempfile::TempDir>>,
+}
+
+#[derive(serde::Deserialize, serde::Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub(crate) struct DurableRule {
+    pub(crate) rule: Rule,
+    pub(crate) resource: crate::captured_page::durable::DurableResource,
 }
 struct FrozenRule {
     rule: Rule,
@@ -25,6 +32,54 @@ pub(super) enum Resolution {
     Fallback(String),
 }
 impl Overlay {
+    pub(crate) fn freeze(
+        &self,
+        store: &mut impl FnMut(
+            &CapturedResource,
+        )
+            -> Result<crate::captured_page::durable::DurableResource, AppError>,
+    ) -> Result<Vec<DurableRule>, AppError> {
+        self.rules
+            .iter()
+            .map(|frozen| {
+                Ok(DurableRule {
+                    rule: frozen.rule.clone(),
+                    resource: store(&frozen.resource)?,
+                })
+            })
+            .collect()
+    }
+
+    pub(crate) fn hydrate(
+        frozen: Vec<DurableRule>,
+        root: Arc<tempfile::TempDir>,
+        load: &mut impl FnMut(
+            &crate::captured_page::durable::DurableResource,
+        ) -> Result<CapturedResource, AppError>,
+    ) -> Result<Self, AppError> {
+        if frozen.len() > crate::automation::MAX_RESPONSES {
+            return Err(error("Saved demo exceeds the 1,000-response limit"));
+        }
+        std::fs::write(root.path().join("empty"), [])
+            .map_err(|_| error("Saved demo playback storage is unavailable"))?;
+        let rules = frozen
+            .into_iter()
+            .map(|frozen| {
+                let matcher = CompiledRequestMatcher::new(&frozen.rule.matcher)
+                    .map_err(|_| error("Saved demo contains invalid frozen rule conditions"))?;
+                Ok(FrozenRule {
+                    rule: frozen.rule,
+                    matcher,
+                    resource: load(&frozen.resource)?,
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        Ok(Self {
+            rules,
+            root: Some(root),
+        })
+    }
+
     pub(super) fn resolve(
         &self,
         method: &str,
@@ -112,18 +167,20 @@ fn selected_rules(
         }
         let status = application.automation.status();
         return status
-            .experiments
+            .response_sets
             .iter()
             .find(|e| e.id == selection.experiment_id)
-            .and_then(|e| e.revision(selection))
-            .map(|r| r.rules.iter().filter(|r| r.enabled).cloned().collect())
+            .and_then(|set| set.selected_rules(selection))
+            .map(|rules| rules.iter().filter(|rule| rule.enabled).cloned().collect())
             .ok_or_else(|| error("Saved variant revision is unavailable; reopen preview choices"));
     }
     let Some(ids) = &options.rule_ids else {
         return Ok(Vec::new());
     };
-    if ids.is_empty() || ids.len() > 64 {
-        return Err(error("Select 1–64 saved auto-responses for this preview"));
+    if ids.is_empty() || ids.len() > crate::automation::MAX_RESPONSES {
+        return Err(error(
+            "Select 1–1,000 saved auto-responses for this preview",
+        ));
     }
     let status = application.automation.status();
     if options
@@ -265,7 +322,7 @@ pub(crate) async fn attach_selected(
     }
     page.overlay = Overlay {
         rules,
-        root: Some(root),
+        root: Some(Arc::new(root)),
     };
     page.diagnostics = CapturedPageDiagnostics::new(report);
     Ok(page)

@@ -129,7 +129,7 @@ impl Application {
     ) -> Result<ExperimentPreviewPages, AppError> {
         let status = self.automation.status();
         let set = status
-            .experiments
+            .response_sets
             .iter()
             .find(|set| set.id == id)
             .ok_or_else(|| invalid("This response set is unavailable"))?;

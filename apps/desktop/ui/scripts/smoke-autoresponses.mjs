@@ -20,7 +20,7 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       if(!asset.linkedBody||asset.linkedBody.path!==${JSON.stringify(path)})throw new Error('Native file import did not preserve its linked path');
       const matcher={method:'GET',url:{kind:'exact',value:'https://example.test/native-file'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null};
       const rule={id:'native-linked-rule',displayName:'Native linked file',enabled:true,revision:1,priority:-2000000,matcher,request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@'+asset.revision,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
-      const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:original.generation,autoresponsesEnabled:original.autoresponsesEnabled,rules:[rule,...original.rules]}});
+      const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:original.generation,autoresponsesEnabled:original.autoresponsesEnabled,responseSets:original.responseSets,rules:[rule,...original.rules]}});
       await invoke('activate_automation',{candidateId:candidate.candidateId});
       shell.shadowRoot.querySelector('a[data-view="automation"]').click();
       await new Promise(resolve=>setTimeout(resolve,100));
@@ -76,7 +76,7 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
       const probe=globalThis.__responseFileProbe;if(!probe)return;
       const shell=document.querySelector('app-shell'),w=shell.shadowRoot.querySelector('automation-workspace'),invoke=window.__TAURI_INTERNALS__.invoke;
       w.draftDirty=false;await w.cancelAutoResponseEdit();
-      const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,rules:probe.original.rules}});
+      const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,responseSets:probe.original.responseSets,rules:probe.original.rules}});
       await invoke('activate_automation',{candidateId:candidate.candidateId});await w.refreshAutomation();
       shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__responseFileProbe;
     })()`);
@@ -105,7 +105,7 @@ export async function smokeAutoResponseDragging(call,evaluate,screenshotPath) {
       const matcher={method:'GET',url:{kind:'exact',value:''},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null};
       const request={headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@1',allowNonIdempotentBodyReplacement:false},response={headers:[],replaceBody:null,discardBody:false,abortReason:null};
       const rules=Array.from({length:55},(_,index)=>({id:'native-drag-'+index,displayName:'Native drag rule '+index,enabled:true,revision:1,priority:-3000000+index,matcher:{...matcher,url:{kind:'exact',value:'https://example.test/native-drag/'+index}},request,response}));
-      const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:original.generation,autoresponsesEnabled:original.autoresponsesEnabled,rules:[...rules,...original.rules]}});await invoke('activate_automation',{candidateId:candidate.candidateId});
+      const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:original.generation,autoresponsesEnabled:original.autoresponsesEnabled,responseSets:original.responseSets,rules:[...rules,...original.rules]}});await invoke('activate_automation',{candidateId:candidate.candidateId});
       shell.shadowRoot.querySelector('a[data-view="automation"]').click();await new Promise(resolve=>setTimeout(resolve,100));const w=shell.shadowRoot.querySelector('automation-workspace');w.draftDirty=false;await w.cancelAutoResponseEdit();await w.refreshAutomation();await w.editAutoResponse(rules[0],true);w.$flushUpdates();
     })()`);
     await start('native-drag-0');const bottom=await edge(true);
@@ -119,6 +119,6 @@ export async function smokeAutoResponseDragging(call,evaluate,screenshotPath) {
     await evaluate(`(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');if(w.ruleDragging||w.dragScrollTimer!==undefined||w.ruleSelection.focused!=='native-drag-0'||!w.ruleSelection.ids.has('native-drag-0'))throw new Error('Native Escape did not restore the selection and release scrolling');})()`);
     return {pointerDrag:true,stationaryBottomScroll:true,stationaryTopScroll:true,firstLastDrop:true,escapeRestoresSelection:true};
   }finally {
-    await evaluate(`(async()=>{const probe=globalThis.__responseDragProbe;if(!probe)return;const shell=document.querySelector('app-shell'),w=shell.shadowRoot.querySelector('automation-workspace'),invoke=window.__TAURI_INTERNALS__.invoke;w.finishRuleDrag();w.draftDirty=false;await w.cancelAutoResponseEdit();const current=await invoke('automation_status'),candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,rules:probe.original.rules}});await invoke('activate_automation',{candidateId:candidate.candidateId});await w.refreshAutomation();shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__responseDragProbe;})()`);
+    await evaluate(`(async()=>{const probe=globalThis.__responseDragProbe;if(!probe)return;const shell=document.querySelector('app-shell'),w=shell.shadowRoot.querySelector('automation-workspace'),invoke=window.__TAURI_INTERNALS__.invoke;w.finishRuleDrag();w.draftDirty=false;await w.cancelAutoResponseEdit();const current=await invoke('automation_status'),candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,responseSets:probe.original.responseSets,rules:probe.original.rules}});await invoke('activate_automation',{candidateId:candidate.candidateId});await w.refreshAutomation();shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__responseDragProbe;})()`);
   }
 }

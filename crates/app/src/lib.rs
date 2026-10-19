@@ -70,16 +70,24 @@ pub use transmog_automation::{HeaderRuleTest, TextTransformTest};
 pub use transmog_portable as portable;
 mod investigations;
 mod rule_interchange;
+mod saved_demo_application;
+mod saved_demos;
 pub use investigations::{
     CaseEvidenceLink, CaseExportChoice, CaseExportChoices, CaseExportRequest, CaseNoteInput,
     CasePreviewOptions, OpenedCaseEvidence,
 };
+pub use saved_demos::{
+    SaveDemoInput, SavedDemo, SavedDemoPreparation, SavedDemoRevision, SavedDemoSource,
+};
 
 pub use automation::{
     AutoResponseTestInput, AutoResponseTestResult, AutomationCandidate, AutomationRuleSet,
-    AutomationStatus, ExampleResult, Experiment, ExperimentChange, ExperimentRevision,
-    ExperimentSelection, ExperimentVariant, HeaderRuleChange, HeaderRulePlacement,
-    HeaderRuleTestInput, RuleDiagnostic, RuleUsage, TextTransformTestInput,
+    AutomationStatus, ExampleResult, ExperimentSelection, HeaderRuleChange, HeaderRulePlacement,
+    HeaderRuleTestInput, ResponseSet, ResponseSetApplyUndo, ResponseSetChange,
+    ResponseSetIntakeDestination, ResponseSetIntakeInput, ResponseSetIntakeMode,
+    ResponseSetIntakeResult, ResponseSetIntakeReview, ResponseSetIntakeRow,
+    ResponseSetIntakeSource, ResponseSetSnapshot, ResponseSetVersion, RuleDiagnostic, RuleUsage,
+    TextTransformTestInput,
 };
 pub use autoresponse_batch::{AutoResponseBatchInput, AutoResponseBatchResult};
 pub use body_ranges::{BodyBytePage, BodyRangeRequest};
@@ -307,6 +315,8 @@ pub struct AppConfig {
     pub automation_path: Option<PathBuf>,
     /// Optional durable content-addressed response asset directory.
     pub response_asset_root: Option<PathBuf>,
+    /// Optional durable captured-demo storage, independent of Traffic retention.
+    pub saved_demo_root: Option<PathBuf>,
     /// Optional crash-safe script workspace prefix.
     pub script_workspace_path: Option<PathBuf>,
     /// Exact packaged isolated script-host executable.
@@ -331,6 +341,7 @@ impl std::fmt::Debug for AppConfig {
             .field("body_store", &self.body_store)
             .field("automation_path", &self.automation_path)
             .field("response_asset_root", &self.response_asset_root)
+            .field("saved_demo_root", &self.saved_demo_root)
             .field("script_workspace_path", &self.script_workspace_path)
             .field("script_host_executable", &self.script_host_executable)
             .field("preview_worker_executable", &self.preview_worker_executable)
@@ -346,6 +357,7 @@ pub struct Application {
     client_certificates: Option<ClientCertificateManager>,
     certificate_policy_operation: Arc<std::sync::Mutex<()>>,
     network_profile_operation: Arc<tokio::sync::Mutex<()>>,
+    response_set_operation: Arc<std::sync::Mutex<()>>,
     service: ApplicationSessionService,
     runtime_ids: Arc<transmog_runtime::AtomicRuntimeIdGenerator>,
     cursors: Arc<std::sync::Mutex<sessions::CursorRegistry>>,
@@ -358,6 +370,7 @@ pub struct Application {
     entry_preferences: bool,
     automation: automation::AutomationRegistry,
     response_assets: response_assets::ResponseAssetStore,
+    saved_demos: saved_demos::SavedDemoRegistry,
     scripts: scripts::ScriptRegistry,
     previews: preview::PreviewService,
     traces: traces::TraceRegistry,
@@ -426,6 +439,17 @@ impl Application {
             config.automation_path,
             Arc::new(response_assets.clone()),
         )?;
+        let saved_demos = saved_demos::SavedDemoRegistry::load_available(config.saved_demo_root);
+        let saved_demo_warning = saved_demos
+            .reconcile_owners(
+                &automation
+                    .status()
+                    .response_sets
+                    .iter()
+                    .map(|set| (set.id.clone(), set.incarnation.clone()))
+                    .collect(),
+            )
+            .err();
         let scripts = scripts::ScriptRegistry::load(
             config.script_workspace_path,
             config.script_host_executable,
@@ -436,6 +460,14 @@ impl Application {
         let entry_preferences = config.service.sessions.max_sessions.is_none();
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
         let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
+        if let Some(failure) = saved_demo_warning {
+            diagnostics.record(
+                diagnostics::DiagnosticLevel::Warning,
+                "saved-demos",
+                "storage-unavailable",
+                &failure.message,
+            );
+        }
         diagnostics.record(
             diagnostics::DiagnosticLevel::Info,
             "application",
@@ -501,6 +533,7 @@ impl Application {
             client_certificates: config.client_certificates,
             certificate_policy_operation: Arc::new(std::sync::Mutex::new(())),
             network_profile_operation: Arc::new(tokio::sync::Mutex::new(())),
+            response_set_operation: Arc::new(std::sync::Mutex::new(())),
             service: service.clone(),
             runtime_ids: Arc::new(transmog_runtime::AtomicRuntimeIdGenerator::new()),
             cursors: Arc::new(std::sync::Mutex::new(sessions::CursorRegistry::default())),
@@ -517,6 +550,7 @@ impl Application {
             entry_preferences,
             automation,
             response_assets,
+            saved_demos,
             scripts,
             previews,
             traces: traces::TraceRegistry::default(),
@@ -926,28 +960,37 @@ impl Application {
         automation::test_header_rule(input)
     }
 
-    /// Saves or activates an experiment atomically without replacing unrelated rules.
+    /// Saves current content, manages named versions or changes live participation atomically.
     ///
     /// # Errors
-    /// Rejects stale generations, invalid definitions, overlaps or failed persistence.
-    pub fn change_experiment(
+    /// Rejects stale generations/revisions, invalid definitions, overlaps or persistence failures.
+    pub fn change_response_set(
         &self,
         generation: u64,
-        change: ExperimentChange,
+        change: ResponseSetChange,
     ) -> Result<AutomationStatus, AppError> {
-        self.automation.change_experiment(generation, change)?;
+        let _operation = self
+            .response_set_operation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let deleted_owner = if let ResponseSetChange::Delete { id } = &change {
+            Some(id.clone())
+        } else {
+            None
+        };
+        self.automation.change_response_set(generation, change)?;
+        if let Some(id) = deleted_owner {
+            self.saved_demos.invalidate_owner(&id);
+        }
         Ok(self.automation_status())
     }
 
-    /// Describes possible overlap with other live rules before explicit activation.
+    /// Reviews overlaps for an exact current collection before applying it.
     ///
     /// # Errors
-    /// Rejects unknown experiment or revision identities.
-    pub fn experiment_overlaps(
-        &self,
-        selection: &ExperimentSelection,
-    ) -> Result<Vec<String>, AppError> {
-        self.automation.experiment_overlaps(selection)
+    /// Rejects an unavailable set or stale current revision.
+    pub fn response_set_overlaps(&self, id: &str, revision: u64) -> Result<Vec<String>, AppError> {
+        self.automation.response_set_overlaps(id, revision)
     }
 
     /// Changes the global autoresponse hook gate, preserving all rule properties.
@@ -1553,7 +1596,7 @@ impl Application {
     ///
     /// # Errors
     /// Rejects oversized selections or malformed identifiers before changing the view.
-    pub fn remove_traffic_entries(
+    pub async fn remove_traffic_entries(
         &self,
         ids: &[String],
         restore: bool,
@@ -1572,7 +1615,8 @@ impl Application {
         let changed = if restore {
             self.service.catalog().restore_dismissed(&ids)
         } else {
-            self.service.catalog().dismiss(&ids)
+            let terminated = self.terminate_websockets_for_removal(&ids).await;
+            self.service.catalog().dismiss(&ids, &terminated)
         };
         Ok(changed.iter().map(|id| format!("{:032x}", id.0)).collect())
     }
@@ -1582,8 +1626,11 @@ impl Application {
     /// # Errors
     /// Returns a body-store failure while releasing discarded data.
     pub async fn clear_traffic(&self) -> Result<TrafficClearResult, AppError> {
+        let terminated = self
+            .terminate_websockets_for_removal(&self.service.catalog().retained_ids())
+            .await;
         let application = self.clone();
-        tokio::task::spawn_blocking(move || traffic_clear::clear(&application))
+        tokio::task::spawn_blocking(move || traffic_clear::clear(&application, &terminated))
             .await
             .map_err(|_| {
                 AppError::new(ErrorCategory::Internal, "Traffic clear worker failed", true)
@@ -1617,7 +1664,7 @@ impl Application {
     ///
     /// # Errors
     /// Rejects oversized or malformed selections before changing the catalog.
-    pub fn remove_unselected_traffic_entries(
+    pub async fn remove_unselected_traffic_entries(
         &self,
         ids: &[String],
     ) -> Result<Vec<String>, AppError> {
@@ -1632,11 +1679,68 @@ impl Application {
             .iter()
             .map(|id| response_assets::parse_exchange_id(id))
             .collect::<Result<std::collections::HashSet<_>, _>>()?;
+        let ids = self
+            .service
+            .catalog()
+            .retained_ids()
+            .into_iter()
+            .filter(|id| !selected.contains(id))
+            .collect::<Vec<_>>();
+        let terminated = self.terminate_websockets_for_removal(&ids).await;
         Ok(self
             .service
             .catalog()
-            .dismiss_unselected(&selected)
+            .dismiss(&ids, &terminated)
             .iter()
+            .map(|id| format!("{:032x}", id.0))
+            .collect())
+    }
+
+    async fn terminate_websockets_for_removal(
+        &self,
+        ids: &[transmog_core::intercept::ExchangeId],
+    ) -> Vec<transmog_core::intercept::ExchangeId> {
+        if !self.product_state().privacy.terminate_websockets_on_clear {
+            return Vec::new();
+        }
+        let Some(control) = self.service.proxy_control() else {
+            return Vec::new();
+        };
+        control.terminate_websockets(ids).await
+    }
+
+    /// Cancels live requests or streams without removing their inspection evidence.
+    /// # Errors
+    /// Rejects invalid identities or selections larger than the Traffic limit.
+    pub async fn cancel_requests(&self, ids: &[String]) -> Result<Vec<String>, AppError> {
+        if ids.is_empty() || ids.len() > 200_000 {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "Select 1–200,000 active requests to cancel.",
+                false,
+            ));
+        }
+        let ids = ids
+            .iter()
+            .map(|id| response_assets::parse_exchange_id(id))
+            .collect::<Result<Vec<_>, _>>()?;
+        let Some(control) = self.service.proxy_control() else {
+            return Ok(Vec::new());
+        };
+        // Imported and terminal evidence never controls a current connection.
+        let active = ids
+            .into_iter()
+            .filter(|id| {
+                self.service
+                    .catalog()
+                    .get(*id)
+                    .is_some_and(|entry| !entry.imported && entry.state() == "active")
+            })
+            .collect::<Vec<_>>();
+        Ok(control
+            .cancel_requests(&active)
+            .await
+            .into_iter()
             .map(|id| format!("{:032x}", id.0))
             .collect())
     }

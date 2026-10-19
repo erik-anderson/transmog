@@ -1,9 +1,15 @@
 import type {AutomationRule, AutomationStatus} from './models.js';
 
-/** Experiment-owned rules belong to Experiments, including inactive revisions. */
+/** Owned content stays in Response sets, including applied and named snapshots. */
 export function experimentRuleIds(status: AutomationStatus | null): Set<string> {
-  return new Set(status?.experiments?.flatMap(experiment => experiment.variants.flatMap(variant =>
-    variant.revisions.flatMap(revision => revision.rules.map(rule => rule.id)))) ?? []);
+  return new Set(status?.responseSets?.flatMap(set => [...set.rules,...(set.applied?.rules??[]),...set.versions.flatMap(version=>version.rules)].map(rule=>rule.id)) ?? []);
+}
+
+/** Saved responses that can participate in new traffic under the current gates. */
+export function activeSavedResponseCount(status: AutomationStatus | null): number {
+  if (!status?.autoresponsesEnabled) return 0;
+  const paused = new Set(status.responseSets?.filter(set=>set.paused).flatMap(set=>set.applied?.rules.map(rule=>rule.id)??[])??[]);
+  return status.rules.filter(rule=>rule.enabled!==false && rule.request.responseAsset && !paused.has(rule.id)).length;
 }
 
 /** Counts configured participation, independent of filters, matches and proxy lifecycle. */
@@ -13,12 +19,9 @@ export function automationActivity(status: AutomationStatus | null, scripts: num
   const pausedRules = enabled.filter(rule => rule.request.responseAsset && status?.autoresponsesEnabled === false).length;
   const rules = enabled.length - pausedRules;
   let experiments = 0, pausedExperiments = 0;
-  for (const experiment of status?.experiments ?? []) {
-    if (experiment.archived || !experiment.active || experiment.active.variantId === 'baseline') continue;
-    const variant = experiment.variants.find(item => item.id === experiment.active!.variantId);
-    const revision = variant?.revisions.find(item => item.revision === experiment.active!.revision);
-    if (!revision?.rules.some(rule => rule.enabled !== false)) continue;
-    if (experiment.paused || status?.autoresponsesEnabled === false) pausedExperiments++;
+  for (const set of status?.responseSets ?? []) {
+    if (!set.applied?.rules.some(rule => rule.enabled !== false)) continue;
+    if (set.paused || status?.autoresponsesEnabled === false) pausedExperiments++;
     else experiments++;
   }
   const total = rules + experiments + scripts;

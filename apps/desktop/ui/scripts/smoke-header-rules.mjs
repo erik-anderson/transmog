@@ -28,7 +28,7 @@ export async function smokeHeaderRules({main,viewer,waitFor,screenshot}) {
   await main.evaluate(`${editor}.undoRemove()`);assert.equal((await invoke('automation_status')).rules.some(r=>r.id===saved.id),true);
   process.stdout.write('Native header rules: production editor, byte-preserving ordered draft test, duplicate fields, disabled save, explicit enable, protected-field rejection, viewer denial and remove/Undo verified.\n');
  } finally {
-  const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules:before.rules,experiments:before.experiments,autoresponsesEnabled:before.autoresponsesEnabled}});const status=await invoke('activate_automation',{candidateId:candidate.candidateId});
+  const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,rules:before.rules,responseSets:before.responseSets,autoresponsesEnabled:before.autoresponsesEnabled}});const status=await invoke('activate_automation',{candidateId:candidate.candidateId});
   await main.evaluate(`${shell}.automation.renderAutomation(${JSON.stringify(status)})`);
  }
 }

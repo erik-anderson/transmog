@@ -1076,6 +1076,7 @@ mod tests {
             .sessions;
         let removed = app
             .remove_unselected_traffic_entries(&[rows[0].id.clone()])
+            .await
             .unwrap();
         assert_eq!(removed.len(), 2);
         assert_eq!(
@@ -1085,7 +1086,13 @@ mod tests {
                 .len(),
             1
         );
-        assert_eq!(app.remove_traffic_entries(&removed, true).unwrap().len(), 2);
+        assert_eq!(
+            app.remove_traffic_entries(&removed, true)
+                .await
+                .unwrap()
+                .len(),
+            2
+        );
         assert_eq!(
             app.query_sessions(SessionQueryInput::default())
                 .unwrap()

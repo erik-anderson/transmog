@@ -46,10 +46,14 @@ responses; **Execution order** disclosures expose each other editor's own orderi
 and conflict controls. A shared list does not make first-match policies and
 composing edits interchangeable.
 
+The **Saved responses** switch counts active response rules: enabled rules whose
+response set is unpaused and whose global saved-response gate is on. Paused sets
+do not contribute; the active count is zero while the global gate is paused.
+
 **Saved responses · On / Paused** gates only saved responses, including those
 used by live response sets. Enabled rules affected by this switch show **Enabled ·
 Paused**. Header and text edits, browser-header rules and scripts keep their own
-state. Response sets manage saved-response alternatives and revisions; Scripts is
+state. Response sets keep the saved response changes and context for a debugging task; Scripts is
 the advanced editor for custom logic. Neither changes activation just by opening
 or selecting content.
 
@@ -59,8 +63,8 @@ The sidebar and Rules, Response sets and Scripts tabs share one activity count.
 Active means enabled and unpaused for future matching traffic; it is independent
 of search filters and does not establish that traffic has matched or that the
 proxy is running. Ordinary rules include saved responses. Each participating
-response set counts once, and its owned rules are excluded from Rules. Baseline,
-archived content and paused items do not contribute to the active total. The
+response set counts once, and its owned rules are excluded from Rules. Unapplied
+sets, excluded responses and paused items do not contribute to the active total. The
 summary reports paused items separately, including the saved-response pause.
 
 Every saved rule has a direct Enabled/Disabled control in the list and its
@@ -90,196 +94,180 @@ saved script source and settings without changing the active script.
 
 | Task | Start here | Preview and activation |
 | --- | --- | --- |
-| Replace a captured response, compare alternatives or edit a local file | **Actions → Create response set**, then the response editor and **Response sets** | Saved response assets participate in captured-page previews. Saving a named revision is passive; live activation is explicit. |
-| Change request/response headers while retaining fresh traffic | **Automation → Rules → New rule… → Change request headers… / Change response headers…** | Standalone live rules. Test the draft without traffic; explicitly enable it for new requests. |
-| Find and replace text in server responses | **Actions → Create rule → Find and replace response text…** or the same action under **Automation → Rules → New rule…** | Standalone live rules with bounded UTF-8 input. Test the draft, then explicitly enable it. |
+| Keep response changes and context for a debugging task | **Actions → Add to response set…**, **Rules → More → Add to response set…**, or **Automation → Response sets → New response set…** | Save the current collection, keep named milestones when useful, then explicitly use live traffic or a captured preview/demo. |
+| Change request/response headers while retaining fresh traffic | **Automation → Rules → New rule… → Change request headers… / Change response headers…** | Test the draft without traffic; explicitly enable it for new requests. |
+| Find and replace text in server responses | **Actions → Create rule → Find and replace response text…** or **Automation → Rules → New rule…** | Test the draft, then explicitly enable it. |
 
-Header rules, fresh-response edits and scripts are not members of the named
-response-asset variants and do not execute in captured-page previews. To compare
-policy headers in a preview, edit the saved response asset's headers. Activating
-a response set's **Baseline** removes only that response set's live rules; unrelated
-header rules, response edits, scripts and other response sets keep their own state.
+Header rules, fresh-response edits and scripts are independent of response sets
+and do not execute in captured-page previews. To compare policy headers in a
+preview, edit the saved response asset's headers.
 
 ### Try a captured script change
 
-1. Select a complete captured JavaScript response in Traffic and choose **Actions
-   → Create response set**. Name the response set and edit the body. The script stays
-   inert in the workbench. **Test match** checks targeting; **Compare with captured
-   source** compares the proposed response without saving or sending traffic.
-2. Choose **Save response set**. This saves an **Edited response** revision and an
-   empty **Baseline** without changing live traffic. Failed saves preserve the
-   draft. Saving further revisions also leaves an active revision unchanged.
-3. Choose **Preview captured page…**, select a retained HTML page from the same
-   source, review the warning and explicitly allow scripts if execution is needed.
-   The page uses the saved script plus captured CSS, images and API responses.
-   Missing dependencies fail as network requests; they do not contact the origin.
-4. Inspect **Last preview diagnostics** for the exact variant, winning rule,
-   captured source and supplied-byte hash. **Compare response** compares a retained
-   supplied response; **Set response baseline** lets you compare two preview
-   observations. This evidence does not establish browser acceptance or delivery.
-5. Save the next edit, then choose **Open updated preview…**. It starts a new
-   frozen snapshot and fresh InPrivate browser session. F5 in the earlier window
-   keeps that run's saved bytes and browser state, including its cache policy.
-6. Choose **Use saved revision for live traffic** only when ready. Review any
-   overlap warnings. To remove this response set's live edits, activate its
-   **Baseline**; **Undo last activation** is available until another automation change.
-   The global saved-response pause remains independent of all these actions.
+1. Select one or more complete responses in Traffic and choose **Add to response
+   set…**. Choose an existing destination or **Create new response set…**. Review
+   the responses and overlaps, then **Add responses**. Live traffic is unchanged.
+2. Choose **Open response set**, select the script response and edit its body.
+   Captured markup and scripts stay inert in the workbench. **Test match** checks
+   targeting; **Compare… → With captured source** compares the unsaved response.
+3. **Save changes** saves the whole collection and stays in the workspace.
+   **More… → Versions…** can keep a named milestone. Saving leaves the applied
+   live snapshot unchanged.
+4. Choose **Try changes… → Preview captured page…**, explicitly choose complete
+   captured HTML, and review the warning. Scripts start disabled. Missing
+   dependencies fail locally and never contact the origin. **Last preview
+   diagnostics** identifies frozen response bytes and capture choices.
+5. Choose **Try changes… → Save demo…** to retain the page, available resources
+   and saved response changes for later playback, independently of Traffic.
+6. Choose **Use on live traffic** when ready and review overlaps. After later
+   saves, **Apply changes** updates the live snapshot. **Pause** and **Resume**
+   control this set independently of the global saved-response pause.
 
-For external CSS/JavaScript editing, choose **Read file on each request** instead
-of Copy. A future live request or newly opened preview acquires current file
-bytes; an existing preview and historical Traffic comparison keep their frozen
-evidence. See [file choices](#saved-responses), [snapshot
-evidence](#linked-file-snapshots-and-historical-evidence) and [preview
-isolation](captured-page-preview.md#isolation-and-implementation).
+For external CSS/JavaScript editing, **Read file on each request** acquires fresh
+bytes for a future live request or new captured preview. Existing previews,
+saved demos and historical Traffic evidence keep their frozen bytes. See [file
+choices](#saved-responses), [snapshot evidence](#linked-file-snapshots-and-historical-evidence)
+and [preview isolation](captured-page-preview.md#isolation-and-implementation).
 
 <a id="response-experiments"></a>
 
 ## Response sets
 
-**How response sets work** opens concise help on the saved-set overview. Before
-the first save, help explains how to unlock the optional tour. The overview
-offers **Take a quick tour** once after the first successful save, or when an
-existing user first opens a saved set after this update. The invitation never
-opens the tour or moves focus automatically; **Not now** dismisses it.
+Response sets are saved workspaces for a debugging or validation task. The
+library shows each set's name, notes, response count, live state and last
+modified time. Search names and notes, or choose **New response set…** and enter
+**Response set name** and optional **Notes**. An empty set is valid; no capture
+or initial response is required.
 
-The four-step tour explains organization, editing and saving, saved previews,
-and deliberate live use. It highlights one region at a time without a scrim.
-Viewing selectors remain passive; saved-content and preview actions are
-unavailable during the tour. Baseline and unavailable editing targets can still
-be explained without changing the selection or saved content. **Back**, **Next**,
-**End tour**, **Done**, and Escape require no edits, saves, previews or activation.
-Leaving the overview closes help and the tour while preserving drafts and
-selection. Explicit closing restores visible help focus.
+### Collect and edit work
+
+Traffic's **Add to response set…** collects one or multiple selected responses.
+Rules offers the same action for ordinary saved-response rules. The destination
+picker shows its source responses explicitly and offers an existing set or
+**Create new response set…**. Intake preserves names, matching conditions, body
+choices, inclusion and relative order. Overlaps appear before completion; they
+never silently replace existing responses.
+
+For Rules, **Copy rules** is the default and keeps the originals and their live
+effects. **Move rules** removes originals only after the destination is saved,
+in the same transaction. The dialog explains when selected active rules will
+stop affecting live traffic until the response set is applied. Neither choice
+applies the destination automatically. Successful intake reports **Added {count}
+responses to {set name}. Live traffic is unchanged.** and offers **Open response
+set**; opening is explicit.
+
+Within a set, **Add responses…** offers **From captured traffic…**, **From existing
+rules…**, **Create from scratch…**, and **From file…**. The capture and rule
+pickers show available sources instead of silently using a Traffic selection.
+Edit one current collection: name, notes and response order/inclusion are part
+of the same draft as the individual response fields and body. Switching between
+responses preserves unfinished or invalid fields. **Save changes** and Ctrl+S
+save every pending response and stay in the workspace. **Discard changes**
+restores the saved collection. Saved, Unsaved changes and Saving… remain visible.
+A failed save preserves the draft for correction or retry.
+
+Leaving a dirty collection offers **Save changes**, **Discard changes** and
+**Keep editing**. Escape keeps editing. A pending save locks those decisions;
+its failure stays in the dialog. Ordinary Rules keep their independent captured
+response editor and activation behavior.
+
+### Named versions and live traffic
+
+Ordinary saves replace the current saved collection. They do not create an
+endless revision list. **More… → Versions… → Save named version…** keeps an
+explicitly named milestone or alternative from saved content, excluding drafts.
+**View version** inspects read-only response status, headers and body. **Restore
+to current set…** resolves unfinished work, then replaces current saved content;
+it leaves the applied live snapshot and saved demos unchanged. **Delete version…**
+deletes only that named copy.
+
+Live state is separate from saving and version selection:
+
+| State | Action |
+| --- | --- |
+| Not applied to live traffic | **Use on live traffic** |
+| Active on live traffic | **Pause** |
+| Active · Saved changes not applied | **Apply changes**, **Pause** |
+| Paused | **Resume** |
+| Paused · Saved changes not applied | **Apply and resume** |
+
+Live controls use saved content and preserve property drafts. Apply requires
+saved current content. Review reported overlaps before applying; conservative
+warnings are not proof that two rules match the same real request. Validation or
+persistence failure preserves the previous configuration. Only this set's
+applied snapshot changes; unrelated rules keep their configuration.
+**Saved responses are paused globally.** explains the independent global gate;
+applying or resuming a set never turns that gate on.
+
+**Undo live change** names the previous saved snapshot and pause state. It is
+available only while its automation generation remains current. Unrelated
+organizational feedback does not obscure a still-valid Undo. Viewing a version,
+previewing or taking the guide does not activate it.
+
+**More… → Delete response set…** confirms deletion of responses, notes, named
+versions and saved demos. Deleting an applied set also stops its live effects
+atomically. Other sets, ordinary copied rules, source Traffic and shared assets
+remain available.
+
+### Try changes and save a demo
+
+**Try changes…** offers **Open live page…**, **Preview captured page…**, **Save
+demo…**, and **Open saved demo**. Opening a live page uses the normal browser;
+response changes apply only when its requests pass through Transmog.
+
+A set's **Captured page:** shows its explicitly chosen URL, request identity,
+source, time and availability. The first preview offers an unselected complete
+HTML chooser. **Use page** remembers that exact capture; **Change…** explicitly
+chooses a replacement. Traffic selection, new captures and equal URLs never
+rebind the association. The URL and identity survive restart; the association
+does not retain bytes. **Capture unavailable** keeps its remembered identity
+until replacement. When no HTML is available, **Go to Traffic** offers the next
+capture/import step without changing the current workspace automatically.
+
+Chooser, warning, launch and diagnostics stay on the originating set or editor.
+Closing restores visible origin focus and preserves drafts, selection and
+scroll. Delayed work cannot reopen closed UI or move focus after it has moved.
+**Last preview diagnostics** appears only for this set's known last run; explicit
+source links navigate to Traffic. See [captured-page preview](captured-page-preview.md).
+
+**Save demo…** asks for **Demo name** and an explicit **Captured page**, then
+prepares a review of available and unavailable resources. A saved demo retains
+exact available page/resource bytes and the saved response modifications shown
+in that review. Linked files are copied at preparation. Missing resources remain
+unavailable; this is not a whole authenticated browser session. Saving commits
+that reviewed snapshot even if Traffic or a linked file changes afterward.
+
+**Saved demos…** lists durable demos. Opening uses the existing isolated preview
+and explicit script choice, initially disabled. Playback survives Traffic
+retention, clearing and restart without the source files. Current edits, named
+version deletion and later live changes do not mutate it. Explicit replace and
+delete actions affect only the selected demo; deleting its owner removes its
+saved demos. Already-open previews retain their frozen run. Saving a trace does
+not package response sets or demos.
+
+### Optional guide
+
+**More… → How response sets work** opens help with permanent **Replay tour**.
+Opening a saved set can offer **Take a quick tour** once; it never opens help or
+moves focus automatically. **Not now** dismisses the invitation. The four steps
+teach naming/context, collection, saving/named milestones, and live/preview/demo
+choices. Each highlights one current-workspace region without a scrim.
+**Back**, **Next**, **End tour**, **Done** and Escape require no content changes.
+An empty set can finish the tour. Leaving the view closes it safely; explicit
+closing returns to the visible **More…** control.
 
 Invitation and replay history are non-sensitive per-user native preferences,
-shared across response sets and retained across sessions. Ending early and
-finishing both leave **Replay tour** available in help, always from step one.
-Layout resets and independent settings/window saves preserve this history. The
-guide never changes automation generation, live participation or activation Undo.
+shared across sets and sessions. Layout resets and independent settings/window
+saves preserve that history. Ending early and completing both keep replay
+available from step one. The guide never changes automation generation, live
+participation or activation Undo.
 
-Select one complete captured response in the main window, then choose **Actions →
-Create response set**. Name the response set and edit its status, headers or body in
-the shared response editor within **Response sets**. **Test match** checks the request
-conditions without sending traffic; **Compare with captured source** shows the
-unsaved difference. Switching workspaces preserves the draft. Failed saves keep
-it available for retry.
-
-**Save response set** creates a response set with an empty **Baseline** and an
-**Edited response** variant, then returns to **Response sets** with that saved revision
-selected. The first editor uses **Response set name**; editing or adding an individual
-response uses **Response name**. Rename the set under **Names and archive**
-with **Response set name → Save name**. Editing a saved response stays in
-**Response sets**; **Save revision** returns to its updated revision. The expanded
-body editor uses the same save label and saves all pending response fields.
-First-save feedback is **Response set saved. Live traffic is unchanged.** Later
-saves report **Revision {number} saved. Live traffic is unchanged.**
-Each saved variant revision contains complete ordered
-rules and exact response-asset revisions. Saving never changes live traffic, even
-when an earlier revision is active. Unrelated rules and the global On/Paused
-setting are preserved. The original **Create rule → Serve a saved response…** flow still creates
-ordinary rules with its established save behavior.
-
-Open **Automation → Response sets** or **Versions and history…**
-from the shared response editor. Select a response set, variant and revision to
-inspect them without changing live participation. These selector labels remain
-visible while scrolling. Choose **Create variant copy…** to copy the selected
-saved revision. Its dialog identifies the source variant and revision and offers
-**New variant name**, initially the variant name followed by “ copy”. **Create copy**
-selects the new variant at revision 1 without changing live traffic. Cancel before
-submission changes nothing; closing while creation is pending leaves the operation
-monitored without reopening the dialog or replacing a newer selection. Validation
-and save failures preserve the entered name.
-If focus moves within the pending dialog, successful creation leaves a completed
-message and **Close**, preserving focus and selection and preventing a second submission.
-If Create itself gained focus after an Enter submission, completion moves focus to
-Close before disabling Create.
-Then rename, include/exclude or reorder its rules, and use **Add selected response**
-to add another captured response through the same editor.
-Earlier revisions remain inspectable; create a variant copy of an earlier revision to edit it.
-Archive keeps identities and history. **Restore response set** reverses a set archive;
-**Restore variant (Undo archive)** reverses a variant archive.
-Activate Baseline or another variant before archiving active content.
-
-**Preview saved revision…** uses the exact selected definitions and included rules,
-independently of live activation and pause. Individual rule participation is locked
-for that run. **Preview baseline…** uses the captured scene without this response set.
-The overview shows **Page:** with the chosen URL, workspace request number,
-source and recorded time, plus **Change…**. The first preview opens an unselected
-chooser. Choose a complete captured HTML response and **Use page**, then review
-the usual preview warning. A listed page does not imply that it used a saved
-response: saved responses apply only when a browser request matches their conditions.
-The chooser, warning and successful preview launch leave **Response sets**, or its
-open response editor, in place. Closing returns focus to the initiating control
-and preserves selection, scroll and drafts. **Last preview diagnostics** is offered
-there only for the selected set's known last run. Explicit source links navigate
-to Traffic; opening a preview does not.
-All variants and revisions, including Baseline, use this set's chosen page.
-Capturing another page, changing Traffic selection or switching variants never
-replaces it. **Change…** explicitly chooses another page; closing the chooser
-without **Use page** preserves the association. Choosing a page changes only
-organizational metadata, preserving saved revisions, drafts, live participation,
-automation generation and activation Undo.
-If focus moves during a pending page save, the chooser confirms the saved association
-and waits for explicit dismissal; it does not open a warning or remove moved focus.
-Closing a pending chooser leaves the submitted save running. If it fails after
-closure, a notification reports the failure without reopening the chooser.
-
-The URL and capture identity survive restart; capture bytes are not copied or
-retained by the association. **Capture unavailable** preserves the remembered
-URL when the exact capture is gone. Choose a replacement explicitly, even if a
-new capture has the same URL. A retained preview scene of that exact response
-can remain available within normal preview retention. New or imported response
-sets start without an association. When no complete HTML is available, the chooser
-stays on the originating view and offers **Go to Traffic**: start the proxy and
-visit the page through it, or import traffic containing its complete HTML response.
-Select an older HTML response in Traffic to include it beyond the chooser's first
-100 candidates. Named response editor previews use the same set association,
-including **Captured baseline…**. Baseline contains no rules from this set;
-the page association belongs to the set separately from its revisions. Switching
-that warning to saved responses uses the editor's exact selected revision. A
-related updated preview retains this variant context and uses its latest saved revision.
-Browser session/reload behavior is documented in [captured-page
-preview](captured-page-preview.md).
-
-**Use saved revision for live traffic** explicitly replaces only this response set's
-live subset, in one validated persisted transaction. Possible overlaps with other
-native rules are shown first; **Activate despite overlaps** acknowledges those
-warnings. Conservative overlap warnings are not proof that two rules match the
-same real request. A validation or persistence failure leaves the previous live
-configuration intact. For an equal-priority conflict, expand **Activation order**
-and save a revision before or after other live rules, then activate that revision.
-This changes only the selected variant; unrelated rule priorities stay unchanged.
-
-Only one revision participates per response set. **Baseline** means no rules from
-this response set; unrelated automation remains active. **Pause response set** gates
-participation without rewriting authored rules, enabled choices or revisions.
-Activation and resume preserve the global saved-response pause. **Pause response set**
-and **Resume response set** remain beside activation. Inline activation feedback
-offers **Undo last activation** and names the variant and exact revision it restores,
-or explains that it restores no changes from this set. It restores the previous
-owned subset only while no automation generation has changed since that activation.
-On conflict, current work is preserved; inspect saved
-history and explicitly activate the desired revision instead.
-
-Definitions and revision history survive restart in the existing automation
-workspace. Limits are 32 response sets, 16 variants per response set (including
-Baseline), 32 revisions per variant, 64 rules per revision, and the existing 4 MiB
-workspace limit. Reaching a limit rejects the save and preserves the draft;
-history is never silently discarded. Display names are separate from stable IDs.
-Captured source links remain on the saved assets after source Traffic is evicted.
-The persisted schema, commands and internal model identifiers retain their
-`experiment` names for compatibility; the desktop calls these objects response sets.
-
-An immutable linked-file asset reference identifies configuration, not historical
-file bytes. A new preview or live request reads a fresh coherent file snapshot;
-F5 retains the current preview's frozen bytes. Earlier actual results remain
-inspectable under the existing Traffic body-retention policy and response file evidence.
-Selecting an old configuration does not recover missing, truncated or expired
-response bytes. The [portable investigation APIs](portable-investigations.md#implemented-rule-interchange-apis-k1)
-now export selected saved rules/assets and review/import fresh disabled copies
-through the UI-neutral Application facade. They preserve authored intent and
-source mappings without changing live activation. Desktop file actions, archive
-packaging and CLI commands remain later increments.
+Definitions, current content, named versions, applied snapshots and saved demos
+survive restart. Editor drafts stay in the mounted workspace for the current
+session. Limits are 32 sets, 1,000 responses in a collection or named version, 64
+named versions per set, and the existing 4 MiB automation workspace limit.
+Reaching a limit rejects the save and preserves the draft. Display names remain
+separate from stable identities.
 
 ## General rule ordering
 
@@ -541,7 +529,7 @@ New rules start disabled. **Save rule** respects the Enabled choice; **Save and
 enable** explicitly applies the saved rule to new matching live requests. The
 Saved responses On/Paused switch does not pause header rules. Existing exchanges
 retain their captured configuration. Header rules are standalone live automation;
-named response variants and captured-page previews currently use response assets.
+response sets and captured-page previews use saved response assets.
 
 Operations run in their displayed order. **Set** replaces every matching field
 with one field at the first existing position (or appends when absent).
@@ -623,7 +611,7 @@ All response-head hooks finish before body planning. Conditions see final
 effective request/response heads. Response body scripts run first in reverse
 registration order, followed by native body rules in saved order. Later edits
 see earlier body output. Local responses and captured-page previews are excluded;
-named variants remain saved response-asset selections.
+response sets remain saved response-asset collections.
 
 The shared content pipeline decodes supported codings once and restores the
 original coding stack after hooks. It repairs framing and removes stale ETag,

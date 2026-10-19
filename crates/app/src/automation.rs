@@ -22,13 +22,24 @@ mod experiments;
 mod header_rules;
 #[path = "rule_import_registry.rs"]
 mod portable;
-pub use experiments::{
-    Experiment, ExperimentChange, ExperimentRevision, ExperimentSelection, ExperimentVariant,
-};
+#[path = "response_set_intake.rs"]
+mod response_set_intake;
+#[path = "response_sets.rs"]
+mod response_sets;
+pub use experiments::ExperimentSelection;
 pub use header_rules::{
     HeaderRuleChange, HeaderRulePlacement, HeaderRuleTestInput, TextTransformTestInput,
 };
 pub(crate) use header_rules::{test as test_header_rule, test_transform};
+pub use response_set_intake::{
+    ResponseSetIntakeDestination, ResponseSetIntakeInput, ResponseSetIntakeMode,
+    ResponseSetIntakeResult, ResponseSetIntakeReview, ResponseSetIntakeRow,
+    ResponseSetIntakeSource,
+};
+pub(crate) use response_sets::MAX_RESPONSES;
+pub use response_sets::{
+    ResponseSet, ResponseSetApplyUndo, ResponseSetChange, ResponseSetSnapshot, ResponseSetVersion,
+};
 
 /// A network-free draft matcher evaluation.
 #[derive(Clone, Debug, Deserialize)]
@@ -85,7 +96,7 @@ pub struct AutoResponseTestResult {
     pub examples: Vec<ExampleResult>,
 }
 
-const AUTOMATION_SCHEMA_VERSION: u32 = 1;
+const AUTOMATION_SCHEMA_VERSION: u32 = 2;
 const MAX_AUTOMATION_FILE_BYTES: u64 = 4 * 1024 * 1024;
 const MAX_CANDIDATES: usize = 16;
 const MAX_HISTORY: usize = 32;
@@ -100,9 +111,9 @@ pub struct AutomationRuleSet {
     pub generation: u64,
     /// Ordered native automation sources.
     pub rules: Vec<Rule>,
-    /// Saved experiments and immutable variant revisions, independent of live rules.
+    /// Saved response workspaces, independent of live applied rules.
     #[serde(default)]
-    pub experiments: Vec<Experiment>,
+    pub response_sets: Vec<ResponseSet>,
     /// Portable origin and imported asset catalog, committed with the rules.
     #[serde(default)]
     pub portable_imports: Vec<crate::rule_interchange::ImportedCollection>,
@@ -119,7 +130,7 @@ impl Default for AutomationRuleSet {
     fn default() -> Self {
         Self {
             schema_version: AUTOMATION_SCHEMA_VERSION,
-            experiments: Vec::new(),
+            response_sets: Vec::new(),
             portable_imports: Vec::new(),
             generation: 0,
             rules: Vec::new(),
@@ -154,8 +165,8 @@ pub struct AutomationStatus {
     pub generation: u64,
     /// Active rules, including stable IDs and revisions.
     pub rules: Vec<Rule>,
-    /// Saved named variants; only the explicitly active revision participates live.
-    pub experiments: Vec<Experiment>,
+    /// Current editable collections, named versions and independent applied snapshots.
+    pub response_sets: Vec<ResponseSet>,
     /// Whether autoresponse hook registrations are active for new requests.
     pub autoresponses_enabled: bool,
     /// Guaranteed identical-match shadowing in priority order.
@@ -247,15 +258,15 @@ impl AutomationRegistry {
         let winner = ordered[..position].iter().find(|rule| {
             rule.enabled
                 && !status
-                    .experiments
+                    .response_sets
                     .iter()
                     .any(|experiment| experiment.paused && experiment.owns(&rule.id))
                 && transmog_automation::test_matcher(&rule.matcher, &request)
                     .is_ok_and(|test| test.matched)
         });
-        let experiment_block = input.rule_id.as_ref().and_then(|id| status.experiments.iter().find(|experiment| experiment.owns(id))).and_then(|experiment| {
+        let experiment_block = input.rule_id.as_ref().and_then(|id| status.response_sets.iter().find(|experiment| experiment.owns(id))).and_then(|experiment| {
             if experiment.paused { Some("The request matches, but this response set is paused.") }
-            else if !status.rules.iter().any(|rule| Some(&rule.id) == input.rule_id.as_ref()) { Some("The request matches this saved variant. Activate its revision explicitly to use it for live traffic.") }
+            else if !status.rules.iter().any(|rule| Some(&rule.id) == input.rule_id.as_ref()) { Some("The request matches this saved response set. Apply its changes explicitly to use them for live traffic.") }
             else { None }
         });
         let would_serve = test.matched
@@ -363,7 +374,7 @@ impl AutomationRegistry {
             .document
             .clone();
         experiments::validate_owned_rules(&current, &document.rules)?;
-        document.experiments = current.experiments;
+        document.response_sets = current.response_sets;
         document.portable_imports = current.portable_imports;
         self.validate_candidate(document)
     }
@@ -481,10 +492,10 @@ impl AutomationRegistry {
                 .active
                 .read()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            for experiment in &mut candidate.document.experiments {
+            for experiment in &mut candidate.document.response_sets {
                 if let Some(latest) = current
                     .document
-                    .experiments
+                    .response_sets
                     .iter()
                     .find(|set| set.id == experiment.id)
                 {
@@ -541,7 +552,7 @@ impl AutomationRegistry {
             active_scripts: None,
             generation: active.document.generation,
             rules: active.document.rules.clone(),
-            experiments: active.document.experiments.clone(),
+            response_sets: response_sets::views(&active.document),
             autoresponses_enabled: active.document.autoresponses_enabled,
             diagnostics: rule_diagnostics(
                 &active
@@ -552,7 +563,7 @@ impl AutomationRegistry {
                         let mut effective = rule.clone();
                         if active
                             .document
-                            .experiments
+                            .response_sets
                             .iter()
                             .any(|experiment| experiment.paused && experiment.owns(&rule.id))
                         {
@@ -616,7 +627,7 @@ fn compile_document(
         .map_err(compile_error)?;
     if document.autoresponses_enabled
         && !document
-            .experiments
+            .response_sets
             .iter()
             .any(|experiment| experiment.paused)
     {
@@ -629,7 +640,7 @@ fn compile_document(
             .filter(|rule| {
                 (document.autoresponses_enabled || rule.request.response_asset.is_none())
                     && !document
-                        .experiments
+                        .response_sets
                         .iter()
                         .any(|experiment| experiment.paused && experiment.owns(&rule.id))
             })
@@ -718,7 +729,7 @@ fn validate_document(document: &AutomationRuleSet) -> Result<(), AppError> {
         ));
     }
     crate::rule_interchange::validate_imported(document)?;
-    experiments::validate_experiments(document)
+    response_sets::validate(document)
 }
 
 #[allow(clippy::needless_pass_by_value)]
@@ -845,8 +856,8 @@ mod tests {
 
     fn document(value: &str) -> AutomationRuleSet {
         AutomationRuleSet {
-            schema_version: 1,
-            experiments: Vec::new(),
+            schema_version: 2,
+            response_sets: Vec::new(),
             portable_imports: Vec::new(),
             generation: 0,
             rules: vec![Rule {
@@ -1107,7 +1118,7 @@ mod tests {
             .unwrap();
         assert_eq!(resumed.rules, initial.rules);
         let old: AutomationRuleSet =
-            serde_json::from_str(r#"{"schemaVersion":1,"generation":0,"rules":[]}"#).unwrap();
+            serde_json::from_str(r#"{"schemaVersion":2,"generation":0,"rules":[]}"#).unwrap();
         assert!(old.autoresponses_enabled);
     }
 }

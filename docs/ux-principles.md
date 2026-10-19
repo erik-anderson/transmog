@@ -42,6 +42,17 @@ when changing the experience.
   save-and-activate action is appropriate when its label explains the effect and
   validation and persistence succeed before activation. Keep saving a draft
   available separately; saved, enabled, active and paused are different states.
+- Saved debugging workspaces keep one editable current collection and explicit
+  named milestones. Save the whole draft without navigation or per-item save
+  prerequisites. Keep the applied live snapshot independent of current saves,
+  named versions and durable demos; activation is always explicit.
+- Collect existing work through visible source and destination choices. Default
+  to copies; moving removes originals atomically only after destination storage
+  succeeds, with active-effect consequences explained before submission.
+- Durable demonstrations retain the exact reviewed available evidence and
+  modifications. Later edits, external files, retention and restart cannot change
+  playback; replacement and deletion are explicit. A page association alone
+  remembers identity and does not retain or silently replace evidence.
 - Saved-item activation controls act immediately on saved configuration and
   preserve property drafts. Give editors a direct Discard changes action and
   persistent save state; unchanged saved content disables Save. Keep activation,
@@ -80,6 +91,9 @@ when changing the experience.
 - Application chrome and selectable lists do not select text during pointer or
   range selection. Editors and inspection evidence, including headers, bodies,
   full URLs and reports, retain ordinary text selection and copying.
+- Removing Traffic keeps open live WebSockets inspectable unless the user has
+  explicitly enabled termination on clear. Cancellation stops selected live work
+  while preserving its evidence; Undo never reconnects a terminated connection.
 - Dragging shows its destination, preserves selected groups, supports edge
   scrolling and restores selection on cancellation. Provide keyboard/menu
   alternatives and Undo.

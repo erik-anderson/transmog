@@ -1,11 +1,11 @@
 //! Review/publish shares the registry's lock and one persisted document boundary.
 use super::{ActiveAutomation, AutomationRegistry};
 use crate::rule_interchange::{
-    ImportedCollection, PreparedRuleImport, RuleImportItem, RuleImportReview, fresh_id,
-    imported_assets, invalid, portable_error,
+    CURRENT_RESPONSE_SET_ID, ImportedCollection, PreparedRuleImport, RuleImportItem,
+    RuleImportReview, fresh_id, imported_assets, invalid, portable_error,
 };
 use crate::{
-    AppError, AutomationStatus, Experiment, ExperimentRevision, ExperimentVariant,
+    AppError, AutomationStatus, ResponseSet, ResponseSetVersion,
     response_assets::ResponseAssetStore,
 };
 use std::{
@@ -35,7 +35,6 @@ impl AutomationRegistry {
             asset_refs: BTreeMap::new(),
             rule_ids: BTreeMap::new(),
             experiment_ids: BTreeMap::new(),
-            variant_ids: BTreeMap::new(),
         };
         let mut items = Vec::new();
         for asset in &source.assets {
@@ -99,16 +98,6 @@ impl AutomationRegistry {
             mapping.rule_ids.insert(rule.id.clone(), local);
         }
         for experiment in &source.experiments {
-            for variant in &experiment.variants {
-                mapping.variant_ids.insert(
-                    format!("{}/{}", experiment.id, variant.id),
-                    if variant.id == "baseline" {
-                        "baseline".into()
-                    } else {
-                        fresh_id("variant")?
-                    },
-                );
-            }
             let local = fresh_id("experiment")?;
             let prior = current
                 .portable_imports
@@ -122,7 +111,8 @@ impl AutomationRegistry {
                 "1",
                 classify(
                     prior.contains(&experiment),
-                    !prior.is_empty() || current.experiments.iter().any(|e| e.id == experiment.id),
+                    !prior.is_empty()
+                        || current.response_sets.iter().any(|e| e.id == experiment.id),
                 ),
                 &local,
             ));
@@ -209,8 +199,23 @@ impl AutomationRegistry {
         }
         for experiment in &source.experiments {
             document
-                .experiments
+                .response_sets
                 .push(import_experiment(experiment, &prepared.mapping)?);
+        }
+        for set in &mut document.response_sets {
+            if let Some((original, _)) = prepared
+                .mapping
+                .experiment_ids
+                .iter()
+                .find(|(_, local)| *local == &set.id)
+                && let Some(notes) = source
+                    .extensions
+                    .get("transmog.response-set-notes")
+                    .and_then(|value| value.get(original))
+                    .and_then(serde_json::Value::as_str)
+            {
+                set.notes = notes.into();
+            }
         }
         document.portable_imports.push(prepared.mapping);
         document.generation = document
@@ -224,10 +229,10 @@ impl AutomationRegistry {
         }
         let resolver = Arc::new(self.assets.with_imports(&assets));
         super::compile_document(&document, self.limits, resolver.clone())?;
-        for experiment in &document.experiments {
-            for revision in experiment.variants.iter().flat_map(|v| &v.revisions) {
+        for set in &document.response_sets {
+            for rules in set.snapshots() {
                 transmog_automation::compile_with_assets(
-                    revision.rules.clone(),
+                    rules.to_vec(),
                     self.limits,
                     Some(resolver.clone()),
                 )
@@ -299,37 +304,65 @@ fn mapped_rule(
 fn import_experiment(
     source: &transmog_portable::Experiment,
     mapping: &ImportedCollection,
-) -> Result<Experiment, AppError> {
-    let mut variants = Vec::new();
-    for variant in &source.variants {
-        let revisions = variant
-            .revisions
-            .iter()
-            .enumerate()
-            .map(|(index, revision)| {
-                Ok(ExperimentRevision {
-                    revision: u64::try_from(index).map_err(|_| invalid("Revision overflow"))? + 1,
-                    rules: revision
-                        .rules
-                        .iter()
-                        .enumerate()
-                        .map(|(position, r)| mapped_rule(r, position, mapping))
-                        .collect::<Result<_, _>>()?,
-                })
-            })
-            .collect::<Result<_, AppError>>()?;
-        variants.push(ExperimentVariant {
-            id: mapping.variant_ids[&format!("{}/{}", source.id, variant.id)].clone(),
-            name: variant.label.clone(),
-            archived: false,
-            revisions,
-        });
-    }
-    Ok(Experiment::imported(
+) -> Result<ResponseSet, AppError> {
+    // The established interchange envelope represents selected current/named snapshots.
+    // Import creates a fresh inactive workspace, never an alternative runtime model.
+    let current = source
+        .variants
+        .iter()
+        .find(|variant| variant.id == CURRENT_RESPONSE_SET_ID);
+    let rules = current
+        .map(|variant| {
+            let [snapshot] = variant.revisions.as_slice() else {
+                return Err(invalid(
+                    "Current response collection must have one revision",
+                ));
+            };
+            snapshot
+                .rules
+                .iter()
+                .enumerate()
+                .map(|(position, rule)| mapped_rule(rule, position, mapping))
+                .collect::<Result<Vec<_>, _>>()
+        })
+        .transpose()?
+        .unwrap_or_default();
+    let mut set = ResponseSet::new(
         mapping.experiment_ids[&source.id].clone(),
         source.label.clone(),
-        variants,
-    ))
+        String::new(),
+        rules,
+    )?;
+    set.paused = true;
+    // A named-only export keeps its named content and starts with an empty current collection.
+    let named = source
+        .variants
+        .iter()
+        .filter(|variant| variant.id != "baseline" && variant.id != CURRENT_RESPONSE_SET_ID)
+        .flat_map(|variant| {
+            variant
+                .revisions
+                .iter()
+                .map(move |revision| (variant, revision))
+        });
+    for (variant, snapshot) in named {
+        set.revision = set
+            .revision
+            .checked_add(1)
+            .ok_or_else(|| invalid("Response set revision exhausted"))?;
+        set.versions.push(ResponseSetVersion {
+            id: fresh_id("version")?,
+            name: variant.label.clone(),
+            revision: set.revision,
+            rules: snapshot
+                .rules
+                .iter()
+                .enumerate()
+                .map(|(position, rule)| mapped_rule(rule, position, mapping))
+                .collect::<Result<_, _>>()?,
+        });
+    }
+    Ok(set)
 }
 
 #[path = "rule_export.rs"]

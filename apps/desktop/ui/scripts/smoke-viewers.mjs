@@ -3,6 +3,7 @@ import {smokeIncidentRecording,smokeIncidentIntake,smokeMarkerReview} from './sm
 import {smokeComparison,smokePreviewComparison} from './smoke-comparison.mjs';
 import assert from 'node:assert/strict';
 import {smokePreviewRules} from './smoke-preview-rules.mjs';
+import {smokeResponseSetPages} from './smoke-response-set-pages.mjs';
 import {writeFile, readFile, glob} from 'node:fs/promises';
 import {join,dirname} from 'node:path';
 import {spawn} from 'node:child_process';
@@ -403,6 +404,7 @@ try{
   const reopened=await connect(reopenedTarget);
   await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===0`),'Reopened main window retained ephemeral traffic');
   assert.equal(await reopened.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped');
+  if(pageSource)await smokeResponseSetPages({main:reopened,waitFor,directory:join(dirname(screenshot??pageSource),'response-set-native'),restart:true});
   process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,nativeCapture:!!nativeSource,traceSave})+'\n');
   }
 }finally{for(const socket of sockets)socket.close();}

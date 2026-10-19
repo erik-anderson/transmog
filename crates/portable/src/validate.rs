@@ -137,8 +137,13 @@ fn groups(value: &Collection, resolver: &Arc<DeclaredAssets>) -> Result<(), Erro
             let mut previous = 0;
             for revision in &variant.revisions {
                 let number = decimal(&revision.revision, false)?;
-                if number <= previous || revision.rules.len() > 64 {
-                    return Err(invalid("Variant revision order or rule limit"));
+                if number <= previous {
+                    return Err(invalid("Variant revision order is invalid"));
+                }
+                if revision.rules.len() > 1_000 {
+                    return Err(invalid(
+                        "A saved response revision can contain at most 1,000 responses",
+                    ));
                 }
                 previous = number;
                 if variant.id == "baseline"

@@ -36,7 +36,7 @@ pub struct CapturedPageOptions {
     pub generation: Option<u64>,
 }
 /// Immutable rule and byte identity; authored header values are never reported.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PreviewRuleSnapshot {
     /// Stable saved rule identity.
@@ -55,7 +55,7 @@ pub struct PreviewRuleSnapshot {
     pub shadowed_by: Option<String>,
 }
 /// A retained response variant and why it is available or omitted.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapturedResourceDecision {
     /// Workspace entry from which these bytes came.
@@ -78,7 +78,7 @@ pub struct CapturedResourceDecision {
     pub decision: String,
 }
 /// One actual intercepted browser request; header values and bodies are absent.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapturedPreviewRequest {
     /// Local monotonically increasing observation identity.
@@ -99,7 +99,7 @@ pub struct CapturedPreviewRequest {
     pub reason: String,
 }
 /// Current resource decisions and local browser hit/miss counters.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct CapturedPageReport {
     /// Selected HTML URL.
@@ -124,6 +124,9 @@ pub struct CapturedPageReport {
     pub variant: Option<crate::ExperimentSelection>,
     /// Portable case/revision provenance; never interpreted as a local saved selection.
     pub case_origin: Option<String>,
+    /// Frozen durable demo source; playback must not reapply current rules.
+    #[serde(default)]
+    pub saved_demo: Option<crate::saved_demos::SavedDemoSource>,
     /// Response variants successfully frozen.
     pub available: usize,
     /// Captured variants omitted during preparation.

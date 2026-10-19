@@ -4,10 +4,10 @@ use super::{
     DownstreamBody, ExchangeBoundary, ExchangeFailure, ExchangeFailureKind, ExchangeMetadata,
     ExchangeObserver, ExchangeStage, HappyEyeballsConfig, HeaderBlock, HttpLegVersion, Incoming,
     Instant, MeteredIo, Milestone, ObserverEventKind, PerformanceRecorder, ProtocolObservation,
-    ProxyRuntimeError, ProxyState, Request, RequestHead, Response, ResponseHead, RuntimeIdKind,
-    SessionId, SessionMetadata, StatusCode, StreamId, Target, TcpStream, TokioIo,
-    TransportObservation, TransportOutcome, block_from_headers, draining_response, timeout,
-    websocket_request_has_body,
+    ProxyRuntimeError, ProxyState, Request, RequestCancellation, RequestHead, Response,
+    ResponseHead, RuntimeIdKind, SessionId, SessionMetadata, StatusCode, StreamId, Target,
+    TcpStream, TokioIo, TransportObservation, TransportOutcome, block_from_headers,
+    draining_response, timeout, websocket_request_has_body,
 };
 
 impl ProxyState {
@@ -17,6 +17,7 @@ impl ProxyState {
         mut request: Request<Incoming>,
         context: ConnectionContext,
         authority: ConnectAuthority,
+        cancellation: &mut RequestCancellation,
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         let Some(activity) = self.activity.acquire(ActivityKind::Transport) else {
             return Ok(draining_response());
@@ -59,11 +60,18 @@ impl ProxyState {
             version: format!("{:?}", request.version()),
             reason: None,
         });
+        let manual = cancellation.manual.clone();
+        let request_control = self.requests.register(metadata.exchange_id, manual.clone());
         observer
             .emit(ObserverEventKind::ExchangeStarted {
                 metadata: Arc::clone(&metadata),
             })
             .await;
+        cancellation.start(
+            Arc::clone(&observer),
+            Arc::clone(&metadata),
+            performance.clone(),
+        );
         observer
             .emit(ObserverEventKind::RequestHeadObserved {
                 boundary: ExchangeBoundary::ClientRequest,
@@ -82,6 +90,7 @@ impl ProxyState {
                 error.to_string(),
                 false,
                 false,
+                ExchangeFailureKind::Upstream,
             )
             .await;
             return Err(error);
@@ -128,6 +137,7 @@ impl ProxyState {
                     error.to_string(),
                     false,
                     false,
+                    ExchangeFailureKind::Upstream,
                 )
                 .await;
                 return Err(error.into());
@@ -176,16 +186,19 @@ impl ProxyState {
         while tunnels.try_join_next().is_some() {}
         tunnels.spawn(async move {
             let _activity = activity;
-            let result = match upgraded.await {
-                Ok(client) => {
-                    let mut client = TokioIo::new(client);
-                    tokio::select! {
-                        result = tokio::io::copy_bidirectional(&mut client, &mut origin) => result,
-                        () = state.final_shutdown.cancelled() => Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "CONNECT tunnel stopped")),
-                    }
-                }
-                Err(error) => Err(std::io::Error::other(error)),
+            let _request_control = request_control;
+            let transfer = async {
+                let client = upgraded.await.map_err(std::io::Error::other)?;
+                let mut client = TokioIo::new(client);
+                tokio::io::copy_bidirectional(&mut client, &mut origin).await
             };
+            let (result, failure_kind) = tokio::select! {
+                result = transfer => (result, ExchangeFailureKind::Upstream),
+                () = manual.cancelled() => (Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "CONNECT tunnel canceled in Transmog.")), ExchangeFailureKind::Cancelled),
+                () = state.final_shutdown.cancelled() => (Err(std::io::Error::new(std::io::ErrorKind::Interrupted, "CONNECT tunnel stopped")), ExchangeFailureKind::Shutdown),
+            };
+            // Release the origin before observer backpressure can delay terminal evidence.
+            drop(origin);
             facts.bytes_written = Some(metrics.bytes_written());
             facts.bytes_read = Some(metrics.bytes_read());
             metrics.observe(&mut facts, &performance);
@@ -213,6 +226,7 @@ impl ProxyState {
                         error.to_string(),
                         metrics.bytes_written() > 0,
                         true,
+                        failure_kind,
                     )
                     .await;
                 }
@@ -250,6 +264,7 @@ async fn finish_failed_tunnel(
     message: String,
     request_committed: bool,
     response_committed: bool,
+    kind: ExchangeFailureKind,
 ) {
     performance.mark(Milestone::ExchangeDone);
     observer
@@ -258,8 +273,15 @@ async fn finish_failed_tunnel(
     observer
         .emit(ObserverEventKind::Failed(ExchangeFailure {
             metadata,
-            stage: ExchangeStage::Upstream,
-            kind: ExchangeFailureKind::Upstream,
+            stage: if matches!(
+                kind,
+                ExchangeFailureKind::Cancelled | ExchangeFailureKind::Shutdown
+            ) {
+                ExchangeStage::Terminal
+            } else {
+                ExchangeStage::Upstream
+            },
+            kind,
             request_committed,
             response_committed,
             message,

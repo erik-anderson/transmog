@@ -1,21 +1,28 @@
 import assert from 'node:assert/strict';
 import {createServer} from 'node:http';
-import {writeFile} from 'node:fs/promises';
-import {smokeResponseExperiments} from './smoke-response-experiments.mjs';
-import {smokeScriptExperiment} from './smoke-script-experiment.mjs';
+import {mkdir,writeFile} from 'node:fs/promises';
+import {dirname,join} from 'node:path';
+import {smokePreviewPrerequisites} from './smoke-preview-prerequisites.mjs';
+import {smokeResponseSetPages} from './smoke-response-set-pages.mjs';
+import {smokeResponseSetActionFollowup} from './smoke-response-set-action-followup.mjs';
+import {smokeResponseSetCapture} from './smoke-response-set-capture.mjs';
 import {smokeResponseFiles} from './smoke-response-files.mjs';
 import {smokeTextEdits} from './smoke-text-edits.mjs';
 import {smokeHeaderRules} from './smoke-header-rules.mjs';
 
 export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,connect,waitFor,closeNative,screenshot}) {
   const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
+  const directory=join(dirname(screenshot??pageSource),'response-set-native');await mkdir(directory,{recursive:true});
+  const nativeOptions={main,traffic,targets,connect,waitFor,closeNative,screenshot,directory};
+  await smokePreviewPrerequisites(nativeOptions);
   await main.evaluate(`${traffic}.importTrace(${JSON.stringify(pageSource)})`);
   await waitFor(()=>main.evaluate(`${traffic}.sessions.some(row=>row.path==='/captured-page')&&!${traffic}.importingTrace`),'Main preview fixture did not import');
   const id=await main.evaluate(`${traffic}.sessions.find(row=>row.path==='/captured-page').id`);
+  await smokeResponseSetPages(nativeOptions);
+  await smokeResponseSetActionFollowup({...nativeOptions,documentId:id});
   await smokeHeaderRules({main,viewer,waitFor,screenshot});
   await smokeTextEdits({main,viewer,waitFor,screenshot});
-  await smokeResponseExperiments({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
-  await smokeScriptExperiment({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
+  await smokeResponseSetCapture({main,traffic,documentId:id,targets,connect,waitFor,closeNative,screenshot});
   await smokeResponseFiles({main,traffic,documentId:id,pageSource,targets,connect,waitFor,closeNative,screenshot});
   const open=async(ruleIds,sourceLabel,scripts=true,selectedId=id)=>{
     const before=(await targets()).map(row=>row.id);
@@ -33,7 +40,7 @@ export async function smokePreviewRules({main,viewer,traffic,pageSource,targets,
   const headers=fields=>fields.map(([name,value])=>({name:bytes(name),value:bytes(value)}));
   const asset=async(id,body,type,extra=[],status=200,revision=1)=>invoke('create_response_asset',{input:{id,revision,status,headers:headers([['content-type',type],...extra]),body:bytes(body),mediaType:type}});
   const rule=(id,path,asset,priority,extra={})=>({id,displayName:'Preview '+id,revision:1,priority,enabled:false,matcher:{method:'GET',url:{kind:'exact',value:'https://example.invalid'+path},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null,...extra},request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@'+asset.revision,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}});
-  const save=async rules=>{const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules,autoresponsesEnabled:false}});return invoke('activate_automation',{candidateId:candidate.candidateId});};
+  const save=async rules=>{const current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,responseSets:current.responseSets,rules,autoresponsesEnabled:false}});return invoke('activate_automation',{candidateId:candidate.candidateId});};
   try {
     const html=await asset('preview-html',`<h1 id="captured-heading">Modified fixture</h1><link rel="stylesheet" href="/page.css"><iframe src="/captured-frame"></iframe><img src="/missing-image.png" onerror="globalThis.missingImageError=true"><script src="/missing-script.js" onerror="globalThis.missingScriptError=true"></script><script src="/override.js"></script><script>Promise.all([fetch('/absent').then(async r=>({body:await r.text(),header:r.headers.get('x-preview')})),fetch('/redirect').then(r=>r.text()),fetch('/conditional',{headers:{'X-Preview':'dark'}}).then(r=>r.text()),fetch('/conditional').then(r=>r.status,()=> 'network failure'),fetch('/authored404').then(async r=>({status:r.status,body:await r.text()})),fetch('https://cors.invalid/allowed').then(r=>r.text()),fetch('https://cors.invalid/denied').then(()=> 'unexpected success',()=> 'cors denied')]).then(r=>globalThis.ruleResults=r);fetch(${JSON.stringify(sinkUrl)},{mode:'no-cors'}).catch(()=>{});</script>`,'text/html',[['content-security-policy',"default-src * 'unsafe-inline';"],['cache-control','no-store']]);
     const css=await asset('preview-css','h1 { color: rgb(255, 0, 0); }','text/css',[['cache-control','max-age=3600']]);

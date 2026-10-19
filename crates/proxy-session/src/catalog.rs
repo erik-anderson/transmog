@@ -137,7 +137,7 @@ pub struct SessionSnapshot {
     pub terminal: Option<SessionTerminal>,
     /// Wall-clock time at which a terminal event reached the catalog.
     pub terminal_at: Option<SystemTime>,
-    /// Terminal relay evidence when the exchange upgraded to WebSocket.
+    /// Terminal relay evidence when the exchange upgraded to `WebSocket`.
     pub websocket: Option<WebSocketSessionEvidence>,
     /// Latest application stream state, independent of HTTP completion.
     pub stream: Option<transmog_core::stream::StreamState>,
@@ -164,7 +164,7 @@ pub struct CatalogCounters {
     pub detail_records_dropped: u64,
     /// Delta messages skipped by slow subscribers.
     pub subscriber_lag: u64,
-    /// WebSocket terminal reports skipped by a lagged runtime receiver.
+    /// `WebSocket` terminal reports skipped by a lagged runtime receiver.
     pub websocket_evidence_lag: u64,
 }
 
@@ -335,6 +335,13 @@ impl SessionSnapshot {
 }
 
 impl MutableSession {
+    fn live_websocket(&self) -> bool {
+        !self.imported
+            && (self.stream.as_ref().is_some_and(|stream| {
+                stream.protocol == transmog_core::stream::StreamProtocol::WebSocket
+                    && stream.status.is_active()
+            }) || self.metadata.websocket_requested && self.terminal.is_none())
+    }
     fn is_active(&self) -> bool {
         self.stream
             .as_ref()
@@ -753,14 +760,42 @@ impl SessionCatalog {
         Ok(())
     }
 
-    /// Removes entries from the managed view without interrupting active exchanges.
+    /// Retained identities, including dismissed evidence available for Undo.
+    pub fn retained_ids(&self) -> Vec<ExchangeId> {
+        self.lock_state().by_id.keys().copied().collect()
+    }
+
+    /// Open or connecting live `WebSockets` that remain visible in Traffic.
+    pub fn live_websocket_count(&self) -> usize {
+        let state = self.lock_state();
+        state
+            .by_id
+            .iter()
+            .filter(|(id, session)| !state.dismissed.contains(id) && session.live_websocket())
+            .count()
+    }
+
+    /// Removes entries from the managed view, preserving open live `WebSockets` unless explicitly terminated.
     /// The bounded catalog retains them for Undo until ordinary eviction.
-    pub fn dismiss(&self, ids: &[ExchangeId]) -> Vec<ExchangeId> {
+    pub fn dismiss(
+        &self,
+        ids: &[ExchangeId],
+        terminated_websockets: &[ExchangeId],
+    ) -> Vec<ExchangeId> {
         let mut state = self.lock_state();
+        let terminated = terminated_websockets
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
         let changed = ids
             .iter()
             .copied()
-            .filter(|id| state.by_id.contains_key(id))
+            .filter(|id| {
+                state
+                    .by_id
+                    .get(id)
+                    .is_some_and(|session| !session.live_websocket() || terminated.contains(id))
+            })
             .collect::<Vec<_>>();
         let changed = changed
             .into_iter()
@@ -775,12 +810,21 @@ impl SessionCatalog {
     /// Removes every currently visible entry outside a selected ID set. This
     /// operates across the catalog, independent of filters and page size, and
     /// retains evidence for Undo without stopping requests or deleting files.
-    pub fn dismiss_unselected(&self, selected: &HashSet<ExchangeId>) -> Vec<ExchangeId> {
+    pub fn dismiss_unselected(
+        &self,
+        selected: &HashSet<ExchangeId>,
+        terminated_websockets: &[ExchangeId],
+    ) -> Vec<ExchangeId> {
         let mut state = self.lock_state();
+        let terminated = terminated_websockets
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
         let changed = state
             .by_id
-            .keys()
-            .copied()
+            .iter()
+            .filter(|(id, session)| !session.live_websocket() || terminated.contains(id))
+            .map(|(id, _)| *id)
             .filter(|id| !selected.contains(id) && !state.dismissed.contains(id))
             .collect::<Vec<_>>();
         state.dismissed.extend(changed.iter().copied());
@@ -792,9 +836,18 @@ impl SessionCatalog {
 
     /// Clears every retained entry, including evidence from earlier removals.
     /// Renew dismissal identities so earlier expiry tasks cannot delete this Undo.
-    pub fn dismiss_all(&self) -> Vec<ExchangeId> {
+    pub fn dismiss_all(&self, terminated_websockets: &[ExchangeId]) -> Vec<ExchangeId> {
         let mut state = self.lock_state();
-        let ids = state.by_id.keys().copied().collect::<Vec<_>>();
+        let terminated = terminated_websockets
+            .iter()
+            .copied()
+            .collect::<HashSet<_>>();
+        let ids = state
+            .by_id
+            .iter()
+            .filter(|(id, session)| !session.live_websocket() || terminated.contains(id))
+            .map(|(id, _)| *id)
+            .collect::<Vec<_>>();
         state.dismissed.extend(ids.iter().copied());
         track_dismissal(&mut state, &ids);
         drop(state);
@@ -1006,7 +1059,7 @@ impl SessionCatalog {
         self.inner.limits.max_page_size.get()
     }
 
-    /// Attaches terminal WebSocket relay evidence to its originating exchange.
+    /// Attaches terminal `WebSocket` relay evidence to its originating exchange.
     pub fn apply_websocket(&self, evidence: WebSocketSessionEvidence) -> CatalogApply {
         let exchange_id = ExchangeId(evidence.session_id.0);
         let mut state = self.lock_state();
@@ -1419,10 +1472,10 @@ mod tests {
         fail(&catalog, 90, 2);
         assert_eq!(catalog.get(ExchangeId(90)).unwrap().request_number, 1);
         assert_eq!(catalog.get(ExchangeId(2)).unwrap().request_number, 2);
-        catalog.dismiss_all();
+        catalog.dismiss_all(&[]);
         catalog.restore_dismissed(&[ExchangeId(90)]);
         assert_eq!(catalog.get(ExchangeId(90)).unwrap().request_number, 1);
-        catalog.dismiss_all();
+        catalog.dismiss_all(&[]);
         catalog.forget_dismissed(&[ExchangeId(90), ExchangeId(2)]);
         assert_eq!(
             catalog.apply(event(
@@ -1504,13 +1557,13 @@ mod tests {
         let catalog = SessionCatalog::new(limits(3));
         start(&catalog, 1, "placeholder.invalid");
         start(&catalog, 2, "placeholder.invalid");
-        catalog.dismiss(&[ExchangeId(1)]);
+        catalog.dismiss(&[ExchangeId(1)], &[]);
         let old = catalog.dismissal_versions(&[ExchangeId(1)]);
-        assert_eq!(catalog.dismiss_all().len(), 2);
+        assert_eq!(catalog.dismiss_all(&[]).len(), 2);
         assert!(catalog.forget_dismissed_versions(&old).is_empty());
         let clear = catalog.dismissal_versions(&[ExchangeId(1), ExchangeId(2)]);
         catalog.restore_dismissed(&[ExchangeId(1)]);
-        catalog.dismiss(&[ExchangeId(1)]);
+        catalog.dismiss(&[ExchangeId(1)], &[]);
         assert_eq!(
             catalog.forget_dismissed_versions(&clear),
             vec![ExchangeId(2)]
@@ -1571,11 +1624,139 @@ mod tests {
     }
 
     #[test]
+    fn pending_websockets_survive_clear_forget_expiry_and_live_retention() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let catalog = SessionCatalog::new(limits(1));
+        let mut opening = (*metadata(1, "opening.test")).clone();
+        opening.websocket_requested = true;
+        catalog.apply(event(
+            1,
+            1,
+            ObserverEventKind::ExchangeStarted {
+                metadata: Arc::new(opening),
+            },
+        ));
+        start(&catalog, 2, "ordinary.test");
+        assert!(catalog.dismiss(&[ExchangeId(1)], &[]).is_empty());
+        assert!(
+            catalog
+                .dismiss_unselected(&HashSet::from([ExchangeId(2)]), &[])
+                .is_empty()
+        );
+        let removed = catalog.dismiss_all(&[]);
+        assert_eq!(removed, vec![ExchangeId(2)]);
+        let expiry = catalog.dismissal_versions(&removed);
+        // Non-undoable Clear and expired Undo use these same permanent release paths.
+        assert_eq!(catalog.forget_dismissed(&removed), vec![ExchangeId(2)]);
+        assert!(catalog.forget_dismissed_versions(&expiry).is_empty());
+        assert!(catalog.get(ExchangeId(1)).is_some());
+        assert_eq!(catalog.live_websocket_count(), 1);
+        start(&catalog, 3, "later.test");
+        fail(&catalog, 3, 2);
+        assert!(catalog.get(ExchangeId(3)).is_none());
+        for (sequence, status) in [(2, StreamStatus::Connecting), (3, StreamStatus::Open)] {
+            assert_eq!(
+                catalog.apply(event(
+                    1,
+                    sequence,
+                    ObserverEventKind::StreamState(StreamState::now(
+                        StreamProtocol::WebSocket,
+                        status,
+                        None
+                    ))
+                )),
+                CatalogApply::Applied
+            );
+            assert!(catalog.get(ExchangeId(1)).is_some());
+        }
+        // Imported open-at-capture evidence never protects or controls a live connection.
+        let imported = SessionCatalog::new(limits(1));
+        imported
+            .import_sessions(catalog.project_retained(Clone::clone))
+            .unwrap();
+        assert_eq!(imported.live_websocket_count(), 0);
+        assert_eq!(imported.dismiss_all(&[]), vec![ExchangeId(1)]);
+        assert_eq!(
+            imported.forget_dismissed(&[ExchangeId(1)]),
+            vec![ExchangeId(1)]
+        );
+        // Explicit runtime-confirmed termination still permits removal while observations lag.
+        assert_eq!(catalog.dismiss_all(&[ExchangeId(1)]), vec![ExchangeId(1)]);
+        assert_eq!(
+            catalog.forget_dismissed(&[ExchangeId(1)]),
+            vec![ExchangeId(1)]
+        );
+    }
+
+    #[test]
+    fn failed_websocket_opening_is_removable_without_termination() {
+        let catalog = SessionCatalog::new(limits(1));
+        let mut opening = (*metadata(1, "opening.test")).clone();
+        opening.websocket_requested = true;
+        catalog.apply(event(
+            1,
+            1,
+            ObserverEventKind::ExchangeStarted {
+                metadata: Arc::new(opening),
+            },
+        ));
+        fail(&catalog, 1, 2);
+        assert_eq!(catalog.live_websocket_count(), 0);
+        assert_eq!(catalog.dismiss_all(&[]), vec![ExchangeId(1)]);
+    }
+
+    #[test]
+    fn removal_preserves_open_websockets_and_only_allows_explicitly_terminated_ones() {
+        use transmog_core::stream::{StreamProtocol, StreamState, StreamStatus};
+        let catalog = SessionCatalog::new(limits(10));
+        for id in 1..=3 {
+            start(&catalog, id, "live.test");
+        }
+        for id in 1..=2 {
+            catalog.apply(event(
+                id,
+                2,
+                ObserverEventKind::StreamState(StreamState::now(
+                    StreamProtocol::WebSocket,
+                    StreamStatus::Open,
+                    None,
+                )),
+            ));
+        }
+        assert_eq!(
+            catalog.dismiss(&[ExchangeId(1), ExchangeId(3)], &[]),
+            vec![ExchangeId(3)]
+        );
+        assert_eq!(catalog.live_websocket_count(), 2);
+        catalog.restore_dismissed(&[ExchangeId(3)]);
+        assert_eq!(
+            catalog.dismiss_unselected(&HashSet::new(), &[]),
+            vec![ExchangeId(3)]
+        );
+        assert_eq!(catalog.dismiss_all(&[]), vec![ExchangeId(3)]);
+        // A connection that opened after termination selection stays visible.
+        let removed = catalog.dismiss_all(&[ExchangeId(1)]);
+        assert!(removed.contains(&ExchangeId(1)));
+        assert!(!removed.contains(&ExchangeId(2)));
+        assert_eq!(catalog.live_websocket_count(), 1);
+        catalog.apply(event(
+            2,
+            3,
+            ObserverEventKind::StreamState(StreamState::now(
+                StreamProtocol::WebSocket,
+                StreamStatus::Closed,
+                None,
+            )),
+        ));
+        assert!(catalog.dismiss_all(&[]).contains(&ExchangeId(2)));
+    }
+
+    #[test]
     fn dismissed_active_entries_stay_hidden_until_undo_or_eviction() {
         let catalog = SessionCatalog::new(limits(2));
         start(&catalog, 1, "one.test");
         start(&catalog, 2, "two.test");
-        assert_eq!(catalog.dismiss(&[ExchangeId(1)]), [ExchangeId(1)]);
+        assert_eq!(catalog.dismiss(&[ExchangeId(1)], &[]), [ExchangeId(1)]);
         fail(&catalog, 1, 2);
         assert!(catalog.get(ExchangeId(1)).is_none());
         assert_eq!(
@@ -1584,7 +1765,7 @@ mod tests {
         );
         assert_eq!(catalog.restore_dismissed(&[ExchangeId(1)]), [ExchangeId(1)]);
         assert!(catalog.get(ExchangeId(1)).unwrap().terminal.is_some());
-        catalog.dismiss(&[ExchangeId(1)]);
+        catalog.dismiss(&[ExchangeId(1)], &[]);
         start(&catalog, 3, "three.test");
         assert_eq!(catalog.get(ExchangeId(3)).unwrap().request_number, 3);
         assert!(catalog.restore_dismissed(&[ExchangeId(1)]).is_empty());
@@ -1871,7 +2052,10 @@ mod tests {
         start(&catalog, 2, "new.test");
         assert!(catalog.get(ExchangeId(1)).is_none());
         assert!(catalog.get(ExchangeId(77)).is_some());
-        assert_eq!(catalog.dismiss(&[ExchangeId(77)]), vec![ExchangeId(77)]);
+        assert_eq!(
+            catalog.dismiss(&[ExchangeId(77)], &[]),
+            vec![ExchangeId(77)]
+        );
         assert_eq!(catalog.query(&CatalogQuery::default()).sessions.len(), 1);
         catalog.restore_dismissed(&[ExchangeId(77)]);
         assert_eq!(
@@ -2420,7 +2604,7 @@ mod tests {
                 None,
             )),
         ));
-        catalog.dismiss(&[ExchangeId(2)]);
+        catalog.dismiss(&[ExchangeId(2)], &[ExchangeId(2)]);
         assert!(snapshot.iter().all(|row| row.state() == "active"));
         assert_eq!(catalog.retained_metadata().len(), 1);
         assert_eq!(

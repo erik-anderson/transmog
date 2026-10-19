@@ -614,7 +614,7 @@ export function onResponseHead() {
 #[ignore = "run through the interoperability driver with packaged helpers"]
 #[allow(clippy::too_many_lines)] // One complete scoped activation and restart workflow.
 async fn named_variants_switch_live_atomically_and_keep_saved_history() {
-    use transmog_app::{ExperimentChange, ExperimentSelection};
+    use transmog_app::ResponseSetChange;
     let environment = Environment::from_process();
     let workspace = TestWorkspace::new();
     let application = Application::new(workspace.config(&environment)).unwrap();
@@ -651,24 +651,26 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     let original = autoresponse_rule("variant-rule", "/echo/variant/", &first.asset_ref());
     let change = |change| {
         application
-            .change_experiment(application.automation_status().generation, change)
+            .change_response_set(application.automation_status().generation, change)
             .unwrap()
     };
-    change(ExperimentChange::Create {
+    change(ResponseSetChange::Create {
         id: "experiment".into(),
         name: "Response hypothesis".into(),
-        variant_id: "edited".into(),
-        variant_name: "Patched script".into(),
+        notes: "Response debugging context".into(),
         rules: vec![original.clone()],
     });
-    let selection = |revision| ExperimentSelection {
-        experiment_id: "experiment".into(),
-        variant_id: "edited".into(),
-        revision,
-    };
-    change(ExperimentChange::Activate {
-        selection: selection(1),
+    change(ResponseSetChange::SaveVersion {
+        id: "experiment".into(),
+        expected_revision: 1,
+        version_id: "first".into(),
+        name: "First response".into(),
+    });
+    change(ResponseSetChange::Apply {
+        id: "experiment".into(),
+        expected_revision: 1,
         acknowledge_overlaps: false,
+        resume: false,
     });
     let listener = start(&application, &environment).await;
     let response = curl(
@@ -684,9 +686,10 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     let mut edited = original.clone();
     edited.revision = 2;
     edited.request.response_asset = Some(second.asset_ref());
-    change(ExperimentChange::Save {
+    change(ResponseSetChange::SaveCurrent {
         id: "experiment".into(),
-        variant_id: "edited".into(),
+        name: "Response hypothesis".into(),
+        notes: "Response debugging context".into(),
         expected_revision: 1,
         rules: vec![edited.clone()],
     });
@@ -699,9 +702,17 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     )
     .await;
     assert_eq!(response.body, b"first variant");
-    change(ExperimentChange::Activate {
-        selection: selection(2),
+    change(ResponseSetChange::SaveVersion {
+        id: "experiment".into(),
+        expected_revision: 2,
+        version_id: "second".into(),
+        name: "Second response".into(),
+    });
+    change(ResponseSetChange::Apply {
+        id: "experiment".into(),
+        expected_revision: 2,
         acknowledge_overlaps: false,
+        resume: false,
     });
     let response = curl(
         &environment,
@@ -736,7 +747,7 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
             .any(|effect| effect.contains("variant-rule@2"))
     );
     let before_pause = application.automation_status();
-    change(ExperimentChange::Pause {
+    change(ResponseSetChange::Pause {
         id: "experiment".into(),
         paused: true,
     });
@@ -760,24 +771,18 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     )
     .await;
     assert_eq!(response.body, b"first variant");
-    change(ExperimentChange::Pause {
+    change(ResponseSetChange::Pause {
         id: "experiment".into(),
         paused: false,
     });
-    let baseline = ExperimentSelection {
-        experiment_id: "experiment".into(),
-        variant_id: "baseline".into(),
-        revision: 1,
-    };
-    change(ExperimentChange::Activate {
-        selection: baseline.clone(),
-        acknowledge_overlaps: false,
+    change(ResponseSetChange::Stop {
+        id: "experiment".into(),
     });
     assert_eq!(
         application.automation_status().rules,
         vec![unrelated.clone()]
     );
-    change(ExperimentChange::UndoActivation {
+    change(ResponseSetChange::UndoApply {
         id: "experiment".into(),
     });
     assert_eq!(
@@ -787,9 +792,16 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     application
         .set_autoresponses_enabled(false, application.automation_status().generation)
         .unwrap();
-    change(ExperimentChange::Activate {
-        selection: selection(1),
+    change(ResponseSetChange::RestoreVersion {
+        id: "experiment".into(),
+        expected_revision: 2,
+        version_id: "first".into(),
+    });
+    change(ResponseSetChange::Apply {
+        id: "experiment".into(),
+        expected_revision: 3,
         acknowledge_overlaps: false,
+        resume: false,
     });
     assert!(!application.automation_status().autoresponses_enabled);
     application
@@ -804,9 +816,8 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     )
     .await;
     assert_eq!(response.body, b"first variant");
-    change(ExperimentChange::Activate {
-        selection: baseline,
-        acknowledge_overlaps: false,
+    change(ResponseSetChange::Stop {
+        id: "experiment".into(),
     });
     let response = curl(
         &environment,
@@ -817,18 +828,30 @@ async fn named_variants_switch_live_atomically_and_keep_saved_history() {
     )
     .await;
     assert_eq!(response.body, b"Baseline-Agent\n");
-    let saved = application.automation_status().experiments;
+    let saved = application.automation_status().response_sets;
     application.shutdown().await.unwrap();
     drop(application);
     let restarted = Application::new(workspace.config(&environment)).unwrap();
-    assert_eq!(restarted.automation_status().experiments, saved);
+    assert_eq!(restarted.automation_status().response_sets, saved);
     assert_eq!(restarted.automation_status().rules, vec![unrelated]);
     restarted
-        .change_experiment(
+        .change_response_set(
             restarted.automation_status().generation,
-            ExperimentChange::Activate {
-                selection: selection(2),
+            ResponseSetChange::RestoreVersion {
+                id: "experiment".into(),
+                expected_revision: 3,
+                version_id: "second".into(),
+            },
+        )
+        .unwrap();
+    restarted
+        .change_response_set(
+            restarted.automation_status().generation,
+            ResponseSetChange::Apply {
+                id: "experiment".into(),
+                expected_revision: 4,
                 acknowledge_overlaps: false,
+                resume: false,
             },
         )
         .unwrap();

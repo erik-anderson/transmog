@@ -246,7 +246,7 @@ async fn clear_delete_undo_and_marker_only_exports_keep_the_review_available() {
     let ids = app
         .matching_traffic_ids(&crate::SessionQueryInput::default())
         .unwrap();
-    app.remove_traffic_entries(&ids, false).unwrap();
+    app.remove_traffic_entries(&ids, false).await.unwrap();
     let review = app
         .review_traffic_export(Some(crate::comparison::ComparisonScope::Source {
             trace_id: Some(source.clone()),
@@ -656,7 +656,7 @@ async fn removed_review_entries_fail_before_overwriting_and_invalid_context_is_a
             ids: vec![id.clone()],
         }))
         .unwrap();
-    app.remove_traffic_entries(&[id], false).unwrap();
+    app.remove_traffic_entries(&[id], false).await.unwrap();
     let output = root.path().join("keep.tmcap");
     std::fs::write(&output, b"existing user file").unwrap();
     assert!(

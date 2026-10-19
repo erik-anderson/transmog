@@ -8,6 +8,8 @@ mod comparison;
 mod incidents;
 #[path = "portable_cases.rs"]
 mod portable_cases;
+#[path = "saved_demos.rs"]
+mod saved_demos;
 #[path = "window_workspaces.rs"]
 mod workspaces;
 
@@ -97,15 +99,46 @@ struct DesktopState {
 
 #[tauri::command]
 fn open_product_website() -> Result<(), String> {
+    open_default_browser("https://transmog.net")
+}
+
+fn open_default_browser(url: &str) -> Result<(), String> {
     use std::os::windows::process::CommandExt as _;
     let system =
         std::env::var_os("SystemRoot").map_or_else(|| PathBuf::from(r"C:\Windows"), PathBuf::from);
     std::process::Command::new(system.join("System32/rundll32.exe"))
-        .args(["url.dll,FileProtocolHandler", "https://transmog.net"])
+        .args(["url.dll,FileProtocolHandler", url])
         .creation_flags(0x0800_0000)
         .spawn()
         .map(|_| ())
         .map_err(|_| "Windows could not open the default browser.".to_owned())
+}
+
+#[tauri::command]
+fn open_response_set_live_page(
+    id: String,
+    incarnation: String,
+    url: String,
+    state: State<'_, DesktopState>,
+) -> Result<(), String> {
+    let status = state.application.automation_status();
+    let set = status
+        .response_sets
+        .iter()
+        .find(|set| set.id == id && set.incarnation == incarnation)
+        .ok_or("This response set is no longer available.")?;
+    let page = set
+        .preview_page
+        .as_ref()
+        .ok_or("Choose a captured page first.")?;
+    if page.url != url {
+        return Err("The selected page changed. Review the current page before opening it.".into());
+    }
+    let target = tauri::Url::parse(&page.url).map_err(|_| "The saved page URL is invalid.")?;
+    if !matches!(target.scheme(), "http" | "https") || target.host_str().is_none() {
+        return Err("Only HTTP or HTTPS pages can open in the default browser.".into());
+    }
+    open_default_browser(target.as_str())
 }
 
 #[tauri::command]
@@ -582,20 +615,21 @@ fn test_header_rule(
 }
 
 #[tauri::command]
-fn change_experiment(
+fn change_response_set(
     generation: u64,
-    change: transmog_app::ExperimentChange,
+    change: transmog_app::ResponseSetChange,
     state: State<'_, DesktopState>,
 ) -> Result<AutomationStatus, AppError> {
-    state.application.change_experiment(generation, change)
+    state.application.change_response_set(generation, change)
 }
 
 #[tauri::command]
-fn experiment_overlaps(
-    selection: transmog_app::ExperimentSelection,
+fn response_set_overlaps(
+    id: String,
+    revision: u64,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<String>, AppError> {
-    state.application.experiment_overlaps(&selection)
+    state.application.response_set_overlaps(&id, revision)
 }
 
 #[tauri::command]
@@ -607,18 +641,18 @@ async fn clear_traffic(
 }
 
 #[tauri::command]
-fn remove_traffic_entries(
+async fn remove_traffic_entries(
     ids: Vec<String>,
     restore: bool,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<Vec<String>, AppError> {
     let application = state.window_application(&window)?;
-    application.remove_traffic_entries(&ids, restore)
+    application.remove_traffic_entries(&ids, restore).await
 }
 
 #[tauri::command]
-fn remove_unselected_traffic_entries(
+async fn remove_unselected_traffic_entries(
     ids: Vec<String>,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
@@ -626,6 +660,19 @@ fn remove_unselected_traffic_entries(
     state
         .window_application(&window)?
         .remove_unselected_traffic_entries(&ids)
+        .await
+}
+
+#[tauri::command]
+async fn cancel_requests(
+    ids: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    state
+        .window_application(&window)?
+        .cancel_requests(&ids)
+        .await
 }
 
 #[tauri::command]
@@ -824,6 +871,22 @@ async fn create_autoresponse_batch(
     state: State<'_, DesktopState>,
 ) -> Result<AutoResponseBatchResult, AppError> {
     state.application.create_autoresponse_batch(input).await
+}
+
+#[tauri::command]
+fn review_response_set_intake(
+    input: transmog_app::ResponseSetIntakeInput,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ResponseSetIntakeReview, AppError> {
+    state.application.review_response_set_intake(&input)
+}
+
+#[tauri::command]
+async fn collect_response_set(
+    input: transmog_app::ResponseSetIntakeInput,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ResponseSetIntakeResult, AppError> {
+    state.application.collect_response_set(input).await
 }
 
 #[tauri::command]
@@ -2061,6 +2124,7 @@ pub fn run() {
         script_host_executable: packaged_script_host(),
         preview_worker_executable: packaged_preview_worker(),
         response_asset_root: Some(state_root.join("response-assets-v1")),
+        saved_demo_root: Some(state_root.join("saved-demos-v1")),
         diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
         body_store: Some(BodyStoreConfig::product_default(
             state_root.join("body-cache-v1"),
@@ -2177,6 +2241,13 @@ pub fn run() {
                 workspaces::open_trace_viewer,
                 workspaces::open_main_window,
                 captured_preview::open_captured_page,
+                captured_preview::open_saved_demo,
+                saved_demos::saved_demos,
+                saved_demos::prepare_demo_save,
+                saved_demos::commit_demo_save,
+                saved_demos::cancel_demo_save,
+                saved_demos::cancel_demo_operation,
+                saved_demos::delete_saved_demo,
                 captured_preview::captured_page_choices,
                 captured_preview::experiment_preview_pages,
                 captured_preview::set_experiment_preview_page,
@@ -2243,10 +2314,11 @@ pub fn run() {
                 change_response_transform,
                 test_response_transform,
                 test_header_rule,
-                change_experiment,
-                experiment_overlaps,
+                change_response_set,
+                response_set_overlaps,
                 remove_traffic_entries,
                 clear_traffic,
+                cancel_requests,
                 remove_unselected_traffic_entries,
                 search_traffic,
                 traffic_search_entry,
@@ -2268,6 +2340,8 @@ pub fn run() {
                 autoresponse_source_headers,
                 edit_response_asset,
                 create_autoresponse_batch,
+                review_response_set_intake,
+                collect_response_set,
                 pick_response_body,
                 response_body_file_info,
                 crate::file_dialogs::pick_capture_path,
@@ -2280,6 +2354,7 @@ pub fn run() {
                 prepare_update_handoff,
                 update_status,
                 open_product_website,
+                open_response_set_live_page,
                 check_updates,
                 set_automatic_update_checks,
                 app_containers,

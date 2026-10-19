@@ -22,20 +22,20 @@ Recorded referrer and time proximity are advisory. Choose the page explicitly;
 Transmog does not claim to reconstruct a navigation. A matching retained preview
 scene can be reused. Authored responses without a captured source use the last
 retained scene or selected complete HTML response. See [response
-sets](automation.md#response-sets) for the inactive draft and named
-variant workflow.
+sets](automation.md#response-sets) for whole-collection drafts, named milestones,
+independent live snapshots and durable demos.
 
-Named response sets remember an explicitly chosen page. Their overview shows
-**Page:** with URL, request number, source and recorded time, plus **Change…**.
+Response sets remember an explicitly chosen page. Their current workspace shows
+**Captured page:** with URL, request number, source and recorded time, plus **Change…**.
 The first preview offers an unselected chooser; **Use page** remembers the exact
-captured response for every variant and revision, including Baseline. Selecting
+captured response independently of current edits and named versions. Selecting
 a page does not imply its requests match any saved response. New captures never
 replace that choice. The URL survives restart as metadata; **Capture unavailable**
 keeps it visible when the original capture is gone, requiring explicit replacement.
-No captured content is persisted or retained by this association. Named response
+No captured content is persisted or retained by this association. Response-set
 editor previews use this same page. The warning displays the chosen page; use
 the set's explicit chooser to change it. Its chooser, warning and successful
-launch keep the originating Response sets overview or editor visible. Closing
+launch keep the originating Response sets workspace or editor visible. Closing
 restores visible origin focus and preserves drafts, selection and scroll.
 
 Preview shortcuts check for a captured HTML page before opening the warning.
@@ -43,8 +43,8 @@ When none is available, the originating editor or Response sets stays visible
 with capture/import guidance and an explicit **Go to Traffic** action. Named sets
 use their page chooser; ordinary rules use the prerequisite dialog. Close or
 Escape returns focus to Preview. Select a complete HTML response in Traffic and
-retry to recover from expired source traffic; the chosen saved variant and
-revision stay fixed. A matching frozen preview scene can still be reused after
+retry to recover from expired source traffic; the chosen saved collection stays
+fixed. A matching frozen preview scene can still be reused after
 its source traffic expires. Previewing never starts capture or imports traffic
 automatically.
 
@@ -139,14 +139,32 @@ a failed top-level navigation closes the preview.
 The preview is Windows-only; other platforms require their own
 resource-interception boundary.
 
-Named response set previews use an exact saved response set/variant/revision
-selection, including its ordered included rules. Switching live variants, saving
-another revision, or pausing automation cannot alter an already-open run. The
-preview report retains that selection alongside the frozen rule and byte
-identities. From a named variant run, **Open updated preview** selects the latest
-saved revision of that same variant and freezes new bytes; an explicit revision
-selection in Response sets continues to use that exact revision. A new preview of
-an old linked-file configuration reads the current file; it does not claim to reconstruct earlier served bytes.
+Response set previews use an exact saved current collection identity and revision,
+including its ordered included rules. Applying live changes, saving current
+content, restoring a named version or pausing automation cannot alter an opened
+run. The report retains its exact saved selection and frozen byte identities.
+**Open updated preview…** takes a new snapshot of that set's saved current
+collection. A new preview of a linked-file configuration reads the current file;
+it does not claim to reconstruct earlier served bytes.
+
+## Saved demos
+
+From the current set choose **Try changes… → Save demo…**. Enter **Demo name**,
+explicitly choose **Captured page**, and prepare the review. Available page and
+resource bytes and the set's saved response changes are frozen at preparation,
+including linked-file contents. The review explains uncaptured, incomplete,
+evicted, oversized and cache-dependent resources; unavailable resources stay
+unavailable in playback. Saving commits that reviewed snapshot rather than
+rereading a later file or capture. Canceling preparation does not create a demo.
+
+**Saved demos…** lists the set's durable snapshots, independent of Traffic
+retention, clearing and restart. Opening a demo uses the same isolated native
+preview, warning and script consent; scripts start disabled for each opening.
+Current collection edits, live changes and named-version deletion do not mutate
+a demo. Replace and delete are explicit actions with stale-update protection.
+Deleting a response set removes its saved demos, while an already-open preview
+retains that run's bytes. A demo is captured evidence with modifications, not a
+complete authenticated browser session or portable trace export.
 
 Preview participation covers saved response assets. Standalone header changes,
 response text replacements and script modules do not execute here. Edit the selected
@@ -181,7 +199,7 @@ reports and closes its previews. Counters include requests that no longer fit in
 the displayed list. Headers and request bodies are excluded.
 
 Preparation allows 2,048 captured variants, 32 MiB per decoded resource and
-256 MiB of decoded capture plus rule bytes per run, with at most 64 selected rules.
+256 MiB of decoded capture plus rule bytes per run, with at most 1,000 selected responses.
 It also bounds request-body hashing.
 Oversized or unavailable resources remain missing; these processing budgets do
 not constrain capture or file-based Composer replay. The

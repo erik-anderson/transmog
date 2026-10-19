@@ -1,6 +1,6 @@
 use crate::{
     AppConfig, Application, AuthoredResponseAsset, AutomationRuleSet, ErrorCategory,
-    ExperimentChange, ExperimentSelection, ImportResponseAsset, ResponseBodyFileMode,
+    ExperimentSelection, ImportResponseAsset, ResponseBodyFileMode, ResponseSetChange,
     RuleExportRequest,
 };
 use std::{
@@ -108,6 +108,284 @@ fn bytes(app: &Application, reference: &str) -> Vec<u8> {
         .collect()
 }
 
+fn workspace_with_milestone(app: &Application) -> crate::ResponseSet {
+    let mut rule = ordinary();
+    rule.request.headers.clear();
+    let mut status = app.automation_status();
+    for (revision, body) in [(1, b"milestone".as_slice()), (2, b"current".as_slice())] {
+        let asset = app
+            .create_response_asset(AuthoredResponseAsset {
+                id: "set-body".into(),
+                revision,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body: body.to_vec(),
+                media_type: None,
+            })
+            .unwrap();
+        rule.revision = revision;
+        rule.request.response_asset = Some(asset.asset_ref());
+        let change = if revision == 1 {
+            ResponseSetChange::Create {
+                id: "workspace".into(),
+                name: "Workspace".into(),
+                notes: "Investigation notes".into(),
+                rules: vec![rule.clone()],
+            }
+        } else {
+            ResponseSetChange::SaveCurrent {
+                id: "workspace".into(),
+                expected_revision: status.response_sets[0].revision,
+                name: "Workspace".into(),
+                notes: "Investigation notes".into(),
+                rules: vec![rule.clone()],
+            }
+        };
+        status = app.change_response_set(status.generation, change).unwrap();
+        if revision == 1 {
+            status = app
+                .change_response_set(
+                    status.generation,
+                    ResponseSetChange::SaveVersion {
+                        id: "workspace".into(),
+                        expected_revision: status.response_sets[0].revision,
+                        version_id: "milestone".into(),
+                        name: "Milestone".into(),
+                    },
+                )
+                .unwrap();
+        }
+    }
+    status.response_sets.remove(0)
+}
+
+#[test]
+fn response_set_round_trip_preserves_current_identity_in_both_orders_and_named_only() {
+    let root = tempfile::tempdir().unwrap();
+    let stage = tempfile::tempdir().unwrap();
+    let app = Application::new(config(root.path())).unwrap();
+    let set = workspace_with_milestone(&app);
+    let current = set.current_selection();
+    let named = ExperimentSelection {
+        experiment_id: set.id.clone(),
+        incarnation: set.incarnation.clone(),
+        variant_id: set.versions[0].id.clone(),
+        revision: set.versions[0].revision,
+    };
+    for selections in [
+        vec![named.clone(), current.clone()],
+        vec![current, named.clone()],
+        vec![named],
+    ] {
+        let includes_current = selections
+            .iter()
+            .any(|selection| selection.variant_id.is_empty());
+        let exported = app
+            .export_rule_collection(
+                &RuleExportRequest {
+                    id: "round-trip".into(),
+                    revision: "1".into(),
+                    title: "Workspace round trip".into(),
+                    rule_ids: Vec::new(),
+                    selections,
+                },
+                stage.path(),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let recipient_root = tempfile::tempdir().unwrap();
+        let recipient = Application::new(config(recipient_root.path())).unwrap();
+        let review = recipient
+            .prepare_rule_import(
+                &exported.manifest().encode().unwrap(),
+                stage.path(),
+                |sha| Ok(Box::new(exported.open_object(sha)?)),
+                &AtomicBool::new(false),
+            )
+            .unwrap();
+        let status = recipient
+            .import_rule_collection(review, &AtomicBool::new(false))
+            .unwrap();
+        assert!(status.rules.is_empty());
+        let imported = &status.response_sets[0];
+        assert_eq!(imported.notes, set.notes);
+        assert!(imported.paused);
+        assert!(imported.applied.is_none());
+        if includes_current {
+            assert_eq!(imported.rules.len(), 1);
+            assert_eq!(
+                bytes(
+                    &recipient,
+                    imported.rules[0].request.response_asset.as_deref().unwrap()
+                ),
+                b"current"
+            );
+        } else {
+            assert!(imported.rules.is_empty());
+        }
+        assert_eq!(imported.versions.len(), 1);
+        assert_eq!(imported.versions[0].name, "Milestone");
+        assert_eq!(imported.versions[0].rules.len(), 1);
+        assert_eq!(
+            bytes(
+                &recipient,
+                imported.versions[0].rules[0]
+                    .request
+                    .response_asset
+                    .as_deref()
+                    .unwrap()
+            ),
+            b"milestone"
+        );
+        drop(recipient);
+        let reopened = Application::new(config(recipient_root.path())).unwrap();
+        assert_eq!(
+            reopened.automation_status().response_sets,
+            status.response_sets
+        );
+    }
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One round trip qualifies export, packaging, import and restart together.
+fn large_response_sets_export_package_and_import_current_and_named_content() {
+    for count in [65, 1_000] {
+        let root = tempfile::tempdir().unwrap();
+        let stage = tempfile::tempdir().unwrap();
+        let app = Application::new(config(root.path())).unwrap();
+        let asset = app
+            .create_response_asset(AuthoredResponseAsset {
+                id: "shared-body".into(),
+                revision: 1,
+                status: 200,
+                headers: HeaderBlock::new(),
+                body: b"portable response".to_vec(),
+                media_type: None,
+            })
+            .unwrap();
+        let rules = (0..count)
+            .map(|index| Rule {
+                id: format!("response-{index}"),
+                display_name: Some(format!("Response {index}")),
+                enabled: index % 2 == 0,
+                revision: 1,
+                priority: i32::try_from(index).unwrap(),
+                matcher: RuleMatcher {
+                    path_prefix: Some(format!("/response/{index}")),
+                    ..Default::default()
+                },
+                request: RequestActions {
+                    response_asset: Some(asset.asset_ref()),
+                    ..Default::default()
+                },
+                response: ResponseActions::default(),
+            })
+            .collect::<Vec<_>>();
+        let status = app
+            .change_response_set(
+                0,
+                ResponseSetChange::Create {
+                    id: "large-set".into(),
+                    name: "Large response set".into(),
+                    notes: String::new(),
+                    rules: rules.clone(),
+                },
+            )
+            .unwrap();
+        let set = app
+            .change_response_set(
+                status.generation,
+                ResponseSetChange::SaveVersion {
+                    id: "large-set".into(),
+                    expected_revision: 1,
+                    version_id: "milestone".into(),
+                    name: "Milestone".into(),
+                },
+            )
+            .unwrap()
+            .response_sets
+            .remove(0);
+        let named = ExperimentSelection {
+            variant_id: "milestone".into(),
+            ..set.current_selection()
+        };
+        for selection in [set.current_selection(), named] {
+            let current = selection.variant_id.is_empty();
+            let canceled = AtomicBool::new(false);
+            let exported = app
+                .export_rule_collection(
+                    &RuleExportRequest {
+                        id: "large-round-trip".into(),
+                        revision: "1".into(),
+                        title: "Large response set round trip".into(),
+                        rule_ids: Vec::new(),
+                        selections: vec![selection],
+                    },
+                    stage.path(),
+                    &canceled,
+                )
+                .unwrap();
+            let path = stage.path().join(format!("responses-{current}.tmcase"));
+            transmog_portable::write_rules_package(&exported, &path, None, false, &canceled)
+                .unwrap();
+            let package = transmog_portable::Package::open(&path, None, &canceled).unwrap();
+            let transmog_portable::PackageManifest::Rules(manifest) = package.manifest() else {
+                panic!("Expected a response-set rule package");
+            };
+            assert_eq!(manifest, exported.manifest());
+            let recipient_root = tempfile::tempdir().unwrap();
+            let recipient = Application::new(config(recipient_root.path())).unwrap();
+            let review = recipient
+                .prepare_rule_import(
+                    &manifest.encode().unwrap(),
+                    stage.path(),
+                    |sha| Ok(Box::new(package.open_object(sha)?)),
+                    &canceled,
+                )
+                .unwrap();
+            let status = recipient.import_rule_collection(review, &canceled).unwrap();
+            assert!(status.rules.is_empty());
+            let imported = &status.response_sets[0];
+            assert!(imported.paused);
+            assert!(imported.applied.is_none());
+            let restored = if current {
+                assert!(imported.versions.is_empty());
+                &imported.rules
+            } else {
+                assert!(imported.rules.is_empty());
+                &imported.versions[0].rules
+            };
+            assert_eq!(restored.len(), count);
+            for (actual, expected) in restored.iter().zip(&rules) {
+                assert_eq!(actual.display_name, expected.display_name);
+                assert_eq!(actual.enabled, expected.enabled);
+                assert_eq!(actual.matcher, expected.matcher);
+            }
+            assert_eq!(
+                bytes(
+                    &recipient,
+                    restored
+                        .last()
+                        .unwrap()
+                        .request
+                        .response_asset
+                        .as_deref()
+                        .unwrap()
+                ),
+                b"portable response"
+            );
+            drop(recipient);
+            assert_eq!(
+                Application::new(config(recipient_root.path()))
+                    .unwrap()
+                    .automation_status()
+                    .response_sets,
+                status.response_sets
+            );
+        }
+    }
+}
+
 #[test]
 fn reviewed_import_is_disabled_atomic_and_survives_restart_with_exact_asset_bytes() {
     let root = tempfile::tempdir().unwrap();
@@ -137,9 +415,9 @@ fn reviewed_import_is_disabled_atomic_and_survives_restart_with_exact_asset_byte
     assert_eq!(status.candidate_count, 1);
     assert!(!candidate.candidate_id.is_empty());
     assert_eq!(registrations(&app), hooks);
-    assert_eq!(status.experiments.len(), 1);
-    assert!(status.experiments[0].paused);
-    assert!(status.experiments[0].active.is_none());
+    assert_eq!(status.response_sets.len(), 1);
+    assert!(status.response_sets[0].paused);
+    assert!(status.response_sets[0].applied.is_none());
     let reference = app.response_assets()[0].asset_ref();
     assert_eq!(bytes(&app, &reference), b"h1 { color: blue; }\n");
     assert_eq!(
@@ -160,7 +438,11 @@ fn reviewed_import_is_disabled_atomic_and_survives_restart_with_exact_asset_byte
     drop(app);
     let reopened = Application::new(config(root.path())).unwrap();
     assert_eq!(reopened.automation_status().rules, before.rules);
-    assert!(reopened.automation_status().experiments[0].active.is_none());
+    assert!(
+        reopened.automation_status().response_sets[0]
+            .applied
+            .is_none()
+    );
     assert_eq!(bytes(&reopened, &reference), b"h1 { color: blue; }\n");
     assert_eq!(registrations(&reopened), hooks);
 }
@@ -209,9 +491,9 @@ fn identical_and_conflicting_source_definitions_get_reviewed_fresh_mappings() {
     assert_eq!(bytes(&app, &old), b"h1 { color: blue; }\n");
     assert!(
         app.automation_status()
-            .experiments
+            .response_sets
             .iter()
-            .all(|e| e.active.is_none())
+            .all(|e| e.applied.is_none())
     );
 }
 
@@ -288,7 +570,7 @@ fn source_changes_after_review_do_not_change_imported_bytes_and_dot_ids_remap() 
         bytes(&app, &app.response_assets()[0].asset_ref()),
         b"h1 { color: blue; }\n"
     );
-    assert_ne!(status.experiments[0].variants[1].id, "with.dot");
+    assert_ne!(status.response_sets[0].id, "with.dot");
 }
 
 #[test]
@@ -346,6 +628,7 @@ fn import_flat_header_and_literal_rules_keeps_authored_intent_but_never_installs
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One passive export, frozen linked-body and recipient round trip.
 fn selected_export_is_passive_preserves_bytes_and_freezes_linked_files_without_paths() {
     let root = tempfile::tempdir().unwrap();
     let stage = tempfile::tempdir().unwrap();
@@ -367,13 +650,12 @@ fn selected_export_is_passive_preserves_bytes_and_freezes_linked_files_without_p
     rule.id = "linked-rule".into();
     rule.request.headers.clear();
     rule.request.response_asset = Some(asset.asset_ref());
-    app.change_experiment(
+    app.change_response_set(
         0,
-        ExperimentChange::Create {
+        ResponseSetChange::Create {
             id: "named".into(),
             name: "Named".into(),
-            variant_id: "edited".into(),
-            variant_name: "Edited".into(),
+            notes: "Useful context".into(),
             rules: vec![rule],
         },
     )
@@ -388,7 +670,8 @@ fn selected_export_is_passive_preserves_bytes_and_freezes_linked_files_without_p
                 rule_ids: vec![],
                 selections: vec![ExperimentSelection {
                     experiment_id: "named".into(),
-                    variant_id: "edited".into(),
+                    incarnation: app.automation_status().response_sets[0].incarnation.clone(),
+                    variant_id: String::new(),
                     revision: 1,
                 }],
             },
@@ -398,6 +681,26 @@ fn selected_export_is_passive_preserves_bytes_and_freezes_linked_files_without_p
         .unwrap();
     std::fs::write(&path, b"changed later").unwrap();
     let metadata = export.manifest();
+    assert_eq!(
+        metadata.extensions["transmog.response-set-notes"]["named"],
+        "Useful context"
+    );
+    let recipient_root = tempfile::tempdir().unwrap();
+    let recipient = Application::new(config(recipient_root.path())).unwrap();
+    let review = recipient
+        .prepare_rule_import(
+            &metadata.encode().unwrap(),
+            stage.path(),
+            |sha| Ok(Box::new(export.open_object(sha)?)),
+            &AtomicBool::new(false),
+        )
+        .unwrap();
+    let imported = recipient
+        .import_rule_collection(review, &AtomicBool::new(false))
+        .unwrap();
+    assert_eq!(imported.response_sets[0].notes, "Useful context");
+    assert_eq!(imported.response_sets[0].rules.len(), 1);
+    assert!(imported.response_sets[0].applied.is_none());
     let mut body = Vec::new();
     export
         .open_object(&metadata.objects[0].sha256)
@@ -423,7 +726,8 @@ fn selected_export_is_passive_preserves_bytes_and_freezes_linked_files_without_p
                 rule_ids: vec![],
                 selections: vec![ExperimentSelection {
                     experiment_id: "named".into(),
-                    variant_id: "edited".into(),
+                    incarnation: app.automation_status().response_sets[0].incarnation.clone(),
+                    variant_id: String::new(),
                     revision: 1
                 }]
             },
@@ -493,12 +797,14 @@ fn authored_active_archived_and_large_revision_intent_is_retained_without_activa
     let active_document = app.automation.active.read().unwrap();
     let source = &active_document.document.portable_imports[0].source;
     assert_eq!(source, &value);
-    let imported = &active_document.document.experiments[0];
+    let imported = &active_document.document.response_sets[0];
     assert!(imported.paused);
-    assert!(imported.active.is_none());
-    assert_eq!(imported.variants[1].revisions[0].revision, 1);
+    assert!(imported.applied.is_none());
+    assert!(imported.rules.is_empty());
+    assert_eq!(imported.versions.len(), 1);
+    assert_eq!(imported.versions[0].name, "Blue");
     assert_eq!(
-        imported.variants[1].revisions[0].rules[0].revision,
+        imported.versions[0].rules[0].revision,
         9_007_199_254_740_993
     );
     assert!(registrations(&app).is_empty());
@@ -655,7 +961,7 @@ fn in_memory_workspaces_enforce_the_same_import_capacity_before_publication() {
     );
     assert_eq!(app.automation_status().generation, 0);
     assert!(app.response_assets().is_empty());
-    assert!(app.automation_status().experiments.is_empty());
+    assert!(app.automation_status().response_sets.is_empty());
     assert_eq!(std::fs::read_dir(stage.path()).unwrap().count(), 0);
 }
 
@@ -683,7 +989,7 @@ fn corrupted_import_catalog_falls_back_as_a_whole_to_the_previous_commit() {
     assert_eq!(reopened.automation_status().generation, generation - 1);
     assert_eq!(reopened.automation_status().rules, vec![ordinary()]);
     assert!(reopened.response_assets().is_empty());
-    assert!(reopened.automation_status().experiments.is_empty());
+    assert!(reopened.automation_status().response_sets.is_empty());
 }
 
 #[cfg(windows)]
@@ -743,12 +1049,7 @@ fn imported_selected_revision_reexports_a_verified_closure_with_scoped_origins()
     )
     .unwrap();
     let status = app.automation_status();
-    let experiment = &status.experiments[0];
-    let variant = experiment
-        .variants
-        .iter()
-        .find(|v| v.id != "baseline")
-        .unwrap();
+    let experiment = &status.response_sets[0];
     let export = app
         .export_rule_collection(
             &RuleExportRequest {
@@ -758,8 +1059,9 @@ fn imported_selected_revision_reexports_a_verified_closure_with_scoped_origins()
                 rule_ids: vec![],
                 selections: vec![ExperimentSelection {
                     experiment_id: experiment.id.clone(),
-                    variant_id: variant.id.clone(),
-                    revision: 1,
+                    incarnation: experiment.incarnation.clone(),
+                    variant_id: experiment.versions[0].id.clone(),
+                    revision: experiment.versions[0].revision,
                 }],
             },
             stage.path(),

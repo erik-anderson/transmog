@@ -30,31 +30,32 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
   const asset=await invoke('create_response_asset',{input:{id:'native-case-css',revision:1,status:200,headers:[],body:bytes('h1 {color: blue;}'),mediaType:'text/css'}});
   const rule={id:'native-case-rule',displayName:'Frozen case CSS',revision:1,priority:0,enabled:true,matcher:{method:'GET',url:{kind:'exact',value:'https://case.invalid/case.css'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null},request:{headers:[],replaceBody:null,discardBody:false,abortReason:null,responseAsset:asset.id+'@'+asset.revision,allowNonIdempotentBodyReplacement:false},response:{headers:[],replaceBody:null,discardBody:false,abortReason:null}};
   const sibling={...rule,id:'native-case-sibling',priority:1,matcher:{...rule.matcher,url:{kind:'exact',value:'https://case.invalid/uncaptured-sibling'}}};
-  let status=await invoke('automation_status');status=await invoke('change_experiment',{generation:status.generation,change:{action:'create',id:'native-case-experiment',name:'Native case experiment',variantId:'blue',variantName:'Blue',rules:[rule,sibling]}});
+  let status=await invoke('automation_status');status=await invoke('change_response_set',{generation:status.generation,change:{action:'create',id:'native-case-experiment',name:'Native case responses',notes:'Portable current response snapshot',rules:[rule,sibling]}});
   for(const [id,label,path] of [['offscreen-rule','Matches request beyond visible rows','/assets/item-95'],['absent-rule','Missing resource override','/not-captured']]){
     const draft={...rule,id,displayName:label,enabled:false,matcher:{...rule.matcher,url:{kind:'exact',value:'https://case.invalid'+path}},request:{...rule.request,responseAsset:null,headers:[{operation:'remove',field:'X-Picker-Only'}]}};
     status=await invoke('change_header_rule',{generation:status.generation,change:{action:'save',rule:draft,expectedRevision:null,placement:'after'}});
   }
+  const owner=status.responseSets.find(set=>set.id==='native-case-experiment'),selection={experimentId:owner.id,incarnation:owner.incarnation,variantId:'',revision:owner.revision};
   const original=JSON.stringify(status);
   const traffic=page.locator('traffic-workspace'),dialog=page.locator('portable-case dialog');
   await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
   await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
   await dialog.getByText('Rules and response sets · 0 selected',{exact:true}).click();await dialog.getByLabel('Matches request beyond visible rows',{exact:false}).check();
-  await dialog.getByLabel('Native case experiment / Blue / revision 1',{exact:false}).check();
+  await dialog.getByLabel('Native case responses / Current responses',{exact:false}).check();
   assert.equal(await dialog.getByLabel('Missing resource override',{exact:false}).count(),0);
   assert.equal(await dialog.getByLabel('Frozen case CSS',{exact:false}).count(),0,'Owned rules must not need a separate selection');
   await dialog.getByLabel('Show all',{exact:true}).check();await dialog.getByLabel('Missing resource override',{exact:false}).check();await dialog.getByLabel('Show all',{exact:true}).uncheck();
   for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.locator('.case-scroll').evaluate(el=>el.scrollTop=0);await page.screenshot({path:resolve(output,`case-picker-native-${width}.png`)});}
   await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.portableCase.caseStage==='export');
   const selected=await dialog.locator('pre').first().textContent();const selectedManifest=JSON.parse(selected);
-  assert.equal(selectedManifest.experiments[0].variants.find(v=>v.id==='blue').revisions[0].rules.length,2);
+  assert.equal(selectedManifest.experiments[0].variants.find(v=>v.id==='current').revisions[0].rules.length,2);
   assert.equal(selectedManifest.rules.length,2);assert.equal(JSON.stringify(await invoke('automation_status')),original);
   await dialog.getByRole('button',{name:'Close',exact:true}).click();
   const comparison=await invoke('compare_evidence',{input:{operationId:'native-case-compare',left:{kind:'exchange',id:css[0].id},right:{kind:'exchange',id:css[1].id},options:{excludedHeaders:['date'],normalizeNewlines:true}}});
   const captures=await invoke('compare_captures',{operationId:'native-case-scopes',left:{kind:'selected',ids:[css[0].id]},right:{kind:'selected',ids:[css[1].id]},options:{excludedQueryNames:['nonce'],requestHeaders:[],requestBodyDigest:false}});
   await invoke('capture_comparison_page',{id:captures.id,offset:0,options:null,left:css[0].id,right:css[1].id,action:'pair'});
   assert.ok(rows[0].traceId);
-  const review=await invoke('prepare_case_export',{input:{title:'Native frozen case',scope:{kind:'source',traceId:rows[0].traceId},ruleIds:[],selections:[{experimentId:'native-case-experiment',variantId:'blue',revision:1}],notes:'Portable frozen responses and saved comparisons',includeContext:true,comparisonIds:[comparison.id,captures.id]}});
+  const review=await invoke('prepare_case_export',{input:{title:'Native frozen case',scope:{kind:'source',traceId:rows[0].traceId},ruleIds:[],selections:[selection],notes:'Portable frozen responses and saved comparisons',includeContext:true,comparisonIds:[comparison.id,captures.id]}});
   assert.equal(review.manifest.comparisons.length,2);assert.equal(review.traffic.entries,99);assert.equal(review.manifest.sources[0].requestCount,'99');const packagePath=await invoke('save_case_export',{password:null});
   assert.equal(await invoke('saved_file_is_case',{path:input}),false);
   assert.equal(await invoke('saved_file_is_case',{path:packagePath}),true);
@@ -63,7 +64,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
   await dialog.getByRole('heading',{name:'Native frozen case',exact:true}).waitFor();
   assert.match(await dialog.locator('.case-summary').textContent(),/99 requests/);
   for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.locator('.case-scroll').evaluate(el=>el.scrollTop=0);const action=await dialog.getByRole('button',{name:'Open in Traffic',exact:true}).boundingBox();assert.ok(action.y>=0&&action.y+action.height<=height);await page.screenshot({path:resolve(output,`case-inventory-native-${width}.png`)});}
-  await dialog.getByRole('button',{name:'Preview…',exact:true}).click();await dialog.getByLabel('Responses',{exact:true}).selectOption({label:'Native case experiment / Blue / revision 1'});
+  await dialog.getByRole('button',{name:'Preview…',exact:true}).click();await dialog.getByLabel('Responses',{exact:true}).selectOption({label:'Native case responses / Current responses / revision 1'});
   assert.equal(await dialog.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);
   await dialog.getByRole('button',{name:'Open preview',exact:true}).click();await dialog.getByText(/^Case preview opened/).waitFor();
   let previewBrowser;
@@ -79,7 +80,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
     const preview=await findPreview();await preview.waitForFunction(()=>getComputedStyle(document.getElementById('case-heading')).color==='rgb(0, 0, 255)');
     assert.equal(await preview.evaluate(()=>globalThis.caseScript),undefined);await preview.screenshot({path:resolve(output,'case-frozen-preview-native.png')});
     const label=await page.evaluate(()=>document.querySelector('app-shell').traffic.previewReportLabel);
-    const report=await invoke('captured_page_report',{label});assert.match(report.caseOrigin,/native-case-experiment\/blue\/1/);assert.match(report.runtime,/WebView2/);assert.equal(report.scriptsEnabled,false);assert.equal(report.rules.length,2);assert.ok(report.requests.some(r=>r.outcome==='auto-response'));
+    const report=await invoke('captured_page_report',{label});assert.match(report.caseOrigin,/native-case-experiment\/current\/1/);assert.match(report.runtime,/WebView2/);assert.equal(report.scriptsEnabled,false);assert.equal(report.rules.length,2);assert.ok(report.requests.some(r=>r.outcome==='auto-response'));
     await dialog.getByRole('button',{name:'More',exact:true}).click();await dialog.getByRole('button',{name:'Preview diagnostics…',exact:true}).click();const diagnostics=page.getByRole('dialog',{name:'Captured preview diagnostics',exact:true});await diagnostics.getByText(/These rules belong to the frozen case/).waitFor();assert.equal(await diagnostics.getByRole('button',{name:'Show saved rule',exact:true}).evaluateAll(buttons=>buttons.length===2&&buttons.every(button=>button.disabled)),true);await diagnostics.getByRole('button',{name:'Close',exact:true}).click();
     const count=await page.evaluate(()=>document.querySelector('app-shell').traffic.totalMatched);
     await dialog.getByRole('button',{name:'Open in Traffic',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseDialog.open);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.totalMatched),count,'Repeated source inspection duplicated Traffic');
@@ -100,7 +101,7 @@ export async function smokeCaseIntegration({page,output,chromium,processId,close
     await traffic.locator('trace-drop-target').evaluate((element,path)=>{const b=element.dropRegion.getBoundingClientRect();element.handleNativeDrag({type:'drop',paths:[path],position:{x:(b.left+10)*devicePixelRatio,y:(b.top+10)*devicePixelRatio}});},copy);
     await dialog.getByRole('heading',{name:'Native frozen case',exact:true}).waitFor();
     await dialog.getByText('Import rules and response sets',{exact:true}).click();
-    await dialog.getByLabel('Native case experiment · Ready to import',{exact:true}).check();
+    await dialog.getByLabel('Native case responses · Ready to import',{exact:true}).check();
     await dialog.getByRole('button',{name:'Review rule import',exact:true}).click();
     await dialog.getByRole('heading',{name:'Rules to import',exact:true}).waitFor();
     await dialog.getByText('Frozen case CSS',{exact:true}).first().waitFor();

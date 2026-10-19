@@ -373,6 +373,7 @@ mod tests {
                 ingress_version: HttpLegVersion::Http2,
                 original_target: OriginalTarget::new(original.clone()),
                 started_at: std::time::SystemTime::now(),
+                websocket_requested: false,
             }),
             original_target: OriginalTarget::new(original.clone()),
             effective_request: RequestHead {

@@ -189,6 +189,7 @@ pub(super) async fn experiment_preview_pages(
                             let report = scene.diagnostics().snapshot();
                             report.selected_entry_id == page.entry_id
                                 && report.scope == transmog_app::CapturedPageScope::OriginalTrace
+                                && report.saved_demo.is_none()
                         })
                 })
                 .map(|run| run.label.clone());
@@ -312,6 +313,41 @@ pub(super) async fn open_captured_page(
         canceled.clone(),
     )
     .await?;
+    open_scene_window(page, enable_scripts, window, label, canceled).await
+}
+
+/// Opens a saved demo through the same native isolation and script-consent boundary.
+#[tauri::command]
+pub(super) async fn open_saved_demo(
+    owner_id: String,
+    demo: transmog_app::SavedDemoRevision,
+    enable_scripts: bool,
+    operation_id: String,
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    if window.label() != "main" {
+        return Err(error("Open saved demos from the main window"));
+    }
+    let label = format!(
+        "captured-page-{}",
+        ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let (_operation, canceled) = register_operation(&window, &operation_id, &label)?;
+    let page = state
+        .application
+        .prepare_saved_demo(owner_id, demo, canceled.clone())
+        .await?;
+    open_scene_window(page, enable_scripts, window, label, canceled).await
+}
+
+async fn open_scene_window(
+    page: CapturedPage,
+    enable_scripts: bool,
+    window: tauri::WebviewWindow,
+    label: String,
+    canceled: Arc<AtomicBool>,
+) -> Result<String, AppError> {
     if canceled.load(Ordering::Acquire)
         || window
             .app_handle()
@@ -403,6 +439,11 @@ async fn prepare_scene(
         let page = reports().lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter()
             .find(|run| run.owner == owner && run.label == label).and_then(|run| run.page.clone())
             .ok_or_else(|| error("These preview bytes have expired; select the captured HTML and open a new preview"))?;
+        if page.diagnostics().snapshot().saved_demo.is_some() {
+            return Err(error(
+                "Open this frozen demo from Saved demos. Its saved response changes cannot be replaced by current rules.",
+            ));
+        }
         if let Some(reference) = &options.page_reference
             && (!application.experiment_page_capture_current(reference)
                 || reference.entry_id != page.diagnostics().snapshot().selected_entry_id)
@@ -430,6 +471,13 @@ async fn prepare_scene(
 
 fn preview_title(page: &CapturedPage, enable_scripts: bool) -> String {
     let report = page.diagnostics().snapshot();
+    if let Some(demo) = &report.saved_demo {
+        return format!(
+            "{} · Saved demo · Scripts {} — Transmog",
+            demo.name,
+            if enable_scripts { "on" } else { "off" }
+        );
+    }
     format!(
         "{} preview · Scripts {} — Transmog",
         if report.rules.is_empty() {

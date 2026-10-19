@@ -13,18 +13,16 @@ automation-workspace { display:contents; }
 /* This workspace owns pane layout, including the shell's legacy breakpoints. */
 .auto-response-workspace > .auto-response-manager { grid-row:3; height:100%; min-height:0; margin:0; grid-template-columns:minmax(0,var(--rule-list-share)) .5rem minmax(0,1fr); }
 .auto-response-workspace > .auto-response-manager > pane-divider { display:block; }
-.auto-response-workspace > experiment-variants { grid-row:1; min-height:0; }
-.auto-response-workspace:not([data-experiments]) > experiment-variants,
-.auto-response-workspace[data-experiment-editor] > experiment-variants,
-.auto-response-workspace[data-experiments]:not([data-experiment-editor]) > .auto-response-manager { display:none; }
-.auto-response-workspace[data-experiments] { grid-template-rows:minmax(0,1fr); }
-.auto-response-workspace[data-experiments] > .auto-response-manager { grid-row:1; grid-template-columns:minmax(0,1fr); }
+ .auto-response-workspace:not([data-experiments]) > response-set-workspace { display:none; }
+.auto-response-workspace[data-experiments] { grid-template-rows:auto minmax(0,1fr); grid-template-columns:minmax(16rem,40%) minmax(0,1fr); overflow:auto; }
+.auto-response-workspace[data-experiments]:not([data-set-open]) { display:block; }
+.auto-response-workspace[data-experiments]:not([data-set-open]) > .auto-response-manager { display:none; }
+.auto-response-workspace[data-experiments] > .auto-response-manager { grid-row:2; grid-column:2; grid-template-columns:minmax(0,1fr); }
 .auto-response-workspace[data-experiments] .rule-list-pane,
 .auto-response-workspace[data-experiments] .auto-response-manager > pane-divider { display:none; }
-.auto-response-workspace:not([data-experiments])[data-experiment-editor] > .auto-response-manager { grid-template-columns:minmax(0,1fr); }
-.auto-response-workspace:not([data-experiments])[data-experiment-editor] .rule-properties-pane,
-.auto-response-workspace:not([data-experiments])[data-experiment-editor] .auto-response-manager > pane-divider { display:none; }
-.auto-response-workspace:not([data-experiments])[data-experiment-editor] .rule-list-pane { display:grid; }
+.auto-response-workspace[data-experiments] .rule-properties-pane { min-width:0; }
+.auto-response-workspace[data-experiments] .auto-response-fields { grid-template-columns:minmax(0,1fr); }
+@container(max-width:650px) { .auto-response-workspace[data-experiments] { grid-template-columns:minmax(12rem,34%) minmax(0,1fr); } }
 .auto-response-manager > .rule-list-pane { max-height:none; min-height:0; }
 .rule-list-tools { align-items:baseline; padding:.35rem .5rem; }
 .rule-list-tools { display:flex; flex-wrap:wrap; gap:.3rem; }
@@ -152,3 +150,4 @@ automation-workspace { display:contents; }
 .rule-selection-toolbar .actions { flex-wrap:wrap; gap:.3rem; }
 .rule-table th:nth-child(2) { width:3.5rem; }
 .rule-table th:nth-child(4) { width:6.5rem; }
+.auto-response-workspace[data-experiments] > .auto-response-manager > .rule-properties-pane { display:block; }

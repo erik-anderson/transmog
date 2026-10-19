@@ -221,12 +221,11 @@ impl Application {
         }
         let status = self.automation.status();
         let owned = status
-            .experiments
+            .response_sets
             .iter()
-            .flat_map(|e| &e.variants)
-            .flat_map(|v| &v.revisions)
-            .flat_map(|r| &r.rules)
-            .map(|r| &r.id)
+            .flat_map(crate::ResponseSet::snapshots)
+            .flatten()
+            .map(|rule| &rule.id)
             .collect::<HashSet<_>>();
         let mut result = CaseExportChoices {
             choices: vec![],
@@ -249,39 +248,42 @@ impl Application {
                 },
             });
         }
-        for experiment in &status.experiments {
-            for variant in &experiment.variants {
-                for revision in &variant.revisions {
-                    if revision.rules.is_empty() {
-                        continue;
-                    }
-                    result.choices.push(CaseExportChoice {
-                        id: format!(
-                            "version:{}",
-                            serde_json::to_string(&(
-                                &experiment.id,
-                                &variant.id,
-                                revision.revision
-                            ))
+        for set in &status.response_sets {
+            let selections = std::iter::once((
+                String::new(),
+                set.revision,
+                "Current responses".to_owned(),
+                set.rules.as_slice(),
+            ))
+            .chain(set.versions.iter().map(|version| {
+                (
+                    version.id.clone(),
+                    version.revision,
+                    version.name.clone(),
+                    version.rules.as_slice(),
+                )
+            }));
+            for (variant_id, revision, name, rules) in selections {
+                result.choices.push(CaseExportChoice {
+                    id: format!(
+                        "version:{}",
+                        serde_json::to_string(&(&set.id, &variant_id, revision))
                             .map_err(|_| invalid("Invalid response set identity"))?
-                        ),
-                        label: format!(
-                            "{} / {} / revision {}",
-                            experiment.name, variant.name, revision.revision
-                        ),
-                        rule_id: None,
-                        selection: Some(ExperimentSelection {
-                            experiment_id: experiment.id.clone(),
-                            variant_id: variant.id.clone(),
-                            revision: revision.revision,
-                        }),
-                        relevance: if scope.is_some() {
-                            samples.relevance(&revision.rules)
-                        } else {
-                            "not-assessed"
-                        },
-                    });
-                }
+                    ),
+                    label: format!("{} / {}", set.name, name),
+                    rule_id: None,
+                    selection: Some(ExperimentSelection {
+                        experiment_id: set.id.clone(),
+                        incarnation: set.incarnation.clone(),
+                        variant_id,
+                        revision,
+                    }),
+                    relevance: if scope.is_some() {
+                        samples.relevance(rules)
+                    } else {
+                        "not-assessed"
+                    },
+                });
             }
         }
         Ok(result)

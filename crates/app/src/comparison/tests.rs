@@ -434,6 +434,7 @@ async fn imported_pairs_freeze_bytes_and_keep_repeated_occurrences_uncertain() {
     let bytes = app.comparison_bytes(&result.id, "Response", 0).unwrap();
     assert!(bytes.left.contains("before"));
     app.remove_traffic_entries(std::slice::from_ref(&a), false)
+        .await
         .unwrap();
     assert!(app.comparison_stale(&result.id).unwrap());
     assert_eq!(

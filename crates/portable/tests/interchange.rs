@@ -79,6 +79,63 @@ fn checked_in_rules_fixture_has_exact_revisions_order_headers_and_owned_objects(
 }
 
 #[test]
+fn saved_response_revision_accepts_one_thousand_rules_and_rejects_one_more() {
+    let mut value = fixture();
+    let template = value.experiments[0].variants[1].revisions[0].rules[0].clone();
+    value.experiments[0].variants[1].revisions[0].rules = (0..1_000)
+        .map(|index| wire::Rule {
+            id: format!("response-{index}"),
+            ..template.clone()
+        })
+        .collect();
+    let encoded = value.encode().unwrap();
+    assert_eq!(wire::Collection::parse(&encoded).unwrap(), value);
+    let mut case = wire::CaseManifest::parse(include_bytes!(
+        "../../../verification/fixtures/portable/manifests/simple-css.json"
+    ))
+    .unwrap();
+    case.experiments = vec![serde_json::to_value(&value.experiments[0]).unwrap()];
+    let stage = tempfile::tempdir().unwrap();
+    let canceled = AtomicBool::new(false);
+    let prepared = wire::PreparedCase::prepare(
+        &case.encode().unwrap(),
+        stage.path(),
+        |sha| {
+            Ok(Box::new(File::open(
+                corpus().join("objects/sha256").join(sha),
+            )?))
+        },
+        &canceled,
+    )
+    .unwrap();
+    let path = stage.path().join("thousand-response-case.tmcase");
+    wire::write_case_package(&prepared, &path, None, false, &canceled).unwrap();
+    let package = wire::Package::open(&path, None, &canceled).unwrap();
+    let wire::PackageManifest::Case(restored) = package.manifest() else {
+        panic!("Expected an investigation case");
+    };
+    assert_eq!(restored, &case);
+    let import = restored
+        .rules_for_import(std::slice::from_ref(&value.experiments[0].id), false)
+        .unwrap();
+    assert_eq!(
+        import.experiments[0].variants[1].revisions[0].rules.len(),
+        1_000
+    );
+    value.experiments[0].variants[1].revisions[0]
+        .rules
+        .push(wire::Rule {
+            id: "one-too-many".into(),
+            ..template
+        });
+    let error = value.encode().unwrap_err();
+    assert!(error.to_string().contains("1,000"));
+    assert!(wire::Collection::parse(&serde_json::to_vec(&value).unwrap()).is_err());
+    case.experiments = vec![serde_json::to_value(&value.experiments[0]).unwrap()];
+    assert!(case.encode().unwrap_err().to_string().contains("1,000"));
+}
+
+#[test]
 fn strict_json_rejects_duplicate_unknown_future_fields_and_excessive_depth() {
     let value = String::from_utf8(fixture().encode().unwrap()).unwrap();
     assert!(

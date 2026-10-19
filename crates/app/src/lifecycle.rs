@@ -955,6 +955,7 @@ mod tests {
         application.shutdown().await.unwrap();
         application
             .remove_traffic_entries(std::slice::from_ref(&source_id), false)
+            .await
             .unwrap();
         assert!(application.session_detail(&source_id).is_err());
         let preview = application

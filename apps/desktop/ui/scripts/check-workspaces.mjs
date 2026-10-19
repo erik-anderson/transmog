@@ -1,16 +1,22 @@
+import {checkResponseSetFollowups} from './check-response-set-followups.mjs';
+import {checkRequestControls} from './check-request-controls.mjs';
+import {checkResponseSetWorkspaces,checkResponseSetDraftRegressions,checkResponseSetPendingDialogs} from './check-response-set-workspaces.mjs';
+import {checkSavedDemos} from './check-saved-demos.mjs';
+import {checkResponseSetLifecycle} from './check-response-set-lifecycle.mjs';
+import {checkResponseSetIntake} from './check-response-set-intake.mjs';
+import {checkResponseSetIntakeRefresh} from './check-response-set-intake-refresh.mjs';
+import {checkResponseSetIntakeMove} from './check-response-set-intake-move.mjs';
+import {checkResponseSetCollectionAdds} from './check-response-set-collection-adds.mjs';
 import {checkAutomationContracts} from './check-automation-contracts.mjs';
 import {checkUnifiedRules,newTrafficRule} from './check-unified-rules.mjs';
 import {checkActionMenus,openActionGroup} from './check-action-menus.mjs';
 import {checkPortableCases} from './check-portable-cases.mjs';
 import { checkResponseSnapshots } from './check-response-snapshots.mjs';
 import {checkResponseFiles} from './check-response-files.mjs';
-import {checkResponseExperiments} from './check-response-experiments.mjs';
 import {checkResponseSetGuide} from './check-response-set-guide.mjs';
 import {checkPreviewPrerequisites} from './check-preview-prerequisites.mjs';
 import {checkBodyRefresh} from './check-body-refresh.mjs';
-import {checkResponseSetActions} from './check-response-set-actions.mjs';
-import {checkResponseSetActionFollowup} from './check-response-set-action-followup.mjs';
-import {checkNamedVariants} from './check-named-variants.mjs';
+import {checkResponseSetPreview} from './check-response-set-preview.mjs';
 import {checkTextEdits} from './check-text-edits.mjs';
 import {checkHeaderRules} from './check-header-rules.mjs';
 import {checkIncidents} from './check-incidents.mjs';
@@ -135,6 +141,26 @@ await page.addInitScript((configuration) => {
     }
     if(state.automation)state.automation.diagnostics=diagnostics;
   };
+  const intakeCandidate=input=>{
+    const document=structuredClone(state.automation??{generation:0,rules:[],responseSets:[],autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount:0,historyCount:0});document.responseSets??=[];
+    if(document.generation!==input.generation)throw new Error('Automation changed. Refresh the collection review.');
+    const ids=input.source.ids;if(!ids.length||ids.length>1000||new Set(ids).size!==ids.length)throw new Error('Select 1–1,000 unique responses.');
+    const owner=input.destination.kind==='existing'?document.responseSets.find(set=>set.id===input.destination.id):null;
+    if(input.destination.kind==='existing'&&(!owner||owner.incarnation!==input.destination.incarnation||owner.revision!==input.destination.revision))throw new Error('The destination changed. Refresh the collection review.');
+    if(input.destination.kind==='new'&&(!input.destination.name||new TextEncoder().encode(input.destination.name).length>128||new TextEncoder().encode(input.destination.notes).length>16384))throw new Error('Enter a bounded response set name and notes.');
+    if((owner?.rules.length??0)+ids.length>1000)throw new Error('A response set can contain at most 1,000 responses.');
+    const owned=new Set(document.responseSets.flatMap(set=>[...set.rules,...set.versions.flatMap(version=>version.rules),...(set.applied?.rules??[]),...(set.undoApply?.applied?.rules??[])].map(rule=>rule.id)));
+    let sources;
+    if(input.source.kind==='rules'){
+      sources=ids.map(id=>{const rule=document.rules.find(rule=>rule.id===id&&rule.request.responseAsset&&!owned.has(id));if(!rule)throw new Error('Select only ordinary saved-response rules.');return {sourceId:id,rule};}).sort((a,b)=>a.rule.priority-b.rule.priority||a.rule.id.localeCompare(b.rule.id));
+    }else{
+      if(input.mode==='move')throw new Error('Captured Traffic is copied.');
+      sources=ids.map(id=>{const captured=detail(id),head=captured.requests[0],body=captured.storedBodies.find(body=>body.boundary==='client-response');if(state.evictedIds?.includes(id)||body?.availability!=='complete')throw new Error('Captured response unavailable.');const action={headers:[],replaceBody:null,discardBody:false,abortReason:null};return {sourceId:id,rule:{id,displayName:head.method+' '+head.target,enabled:true,revision:1,priority:0,matcher:{method:head.method,url:{kind:'exact',value:head.target},requestHeaders:[],responseHeaders:[],scheme:null,host:null,port:null,pathPrefix:null,query:null,responseStatus:null,responseStatusClass:null},request:{...action,responseAsset:null,allowNonIdempotentBodyReplacement:false},response:{...action}}};});
+    }
+    const rows=sources.map(({sourceId,rule})=>{const asset=state.assets?.find(asset=>asset.id+'@'+asset.revision===rule.request.responseAsset);return {id:sourceId,name:rule.displayName,method:rule.matcher.method??'ANY',url:rule.matcher.url?.value??rule.matcher.host??'Any URL',response:asset?asset.status+' · '+asset.bodyBytes+' bytes':'Complete captured response',bodySource:asset?.linkedBody?'Linked file: '+asset.linkedBody.path:asset?.copiedFrom?'Copied file: '+asset.copiedFrom:input.source.kind==='traffic'?'Copied from retained Traffic':'Saved response bytes',included:rule.enabled};});
+    const warnings=[];for(let index=0;index<sources.length;index++){const rule=sources[index].rule;for(const other of [...(owner?.rules??[]),...sources.slice(0,index).map(source=>source.rule)])if(JSON.stringify(rule.matcher.url)===JSON.stringify(other.matcher.url)&&rule.matcher.method===other.matcher.method)warnings.push(rule.displayName+' may overlap '+other.displayName+'. Both responses will be kept.');}
+    return {document,owner,sources,review:{rows,warnings,activeCount:input.source.kind==='rules'&&document.autoresponsesEnabled!==false?sources.filter(source=>source.rule.enabled).length:0,destinationCount:owner?.rules.length??0}};
+  };
   const callbacks = new Map();
   state.callbackCount=()=>callbacks.size;
   let callbackId = 0;
@@ -147,6 +173,7 @@ await page.addInitScript((configuration) => {
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
         case 'open_product_website': return;
+        case 'open_response_set_live_page': state.livePageArgs=structuredClone(args);if(state.livePageError)throw new Error(state.livePageError);return;
         case 'app_containers': {
           if(state.loopbackReadError)throw new Error('Fixture Windows Firewall unavailable');
           if(state.deferLoopbackRead){state.loopbackReadPending=true;await new Promise(resolve=>state.finishLoopbackRead=resolve);state.deferLoopbackRead=false;}
@@ -211,15 +238,16 @@ await page.addInitScript((configuration) => {
         }
         case 'experiment_preview_pages': {
           if(state.deferSetPages&&args.includePages!==false){state.deferSetPages=false;await new Promise(resolve=>state.releaseSetPages=resolve);}
-          const set=state.automation.experiments?.find(set=>set.id===args.id);if(!set)throw new Error('Response set unavailable');
+          const set=state.automation.responseSets?.find(set=>set.id===args.id);if(!set)throw new Error('Response set unavailable');
           const pages=state.sessions.filter(row=>row.contentType==='text/html').map((row,index)=>({capture:state.captureNonce??'fixture-capture',entryId:row.id,requestNumber:row.requestNumber??String(index+1),traceId:row.traceId??null,url:row.url,method:row.method??'GET',startedAt:row.startedAt??1800000000000,source:row.traceId??'Live traffic'}));
           const available=!!set.previewPage&&pages.some(page=>JSON.stringify(page)===JSON.stringify(set.previewPage));
           const sourceLabel=!available&&state.retainedSetPage&&JSON.stringify(state.retainedSetPage)===JSON.stringify(set.previewPage)?'captured-fixture':null;
-          return {pages:args.includePages===false?[]:pages,page:set.previewPage??null,revision:set.previewPageRevision??0,available:available||!!sourceLabel,sourceLabel,more:false};
+          const included=pages.slice(0,100),explicit=pages.find(page=>page.entryId===args.selectedId);if(explicit&&!included.some(page=>page.entryId===explicit.entryId))included.push(explicit);
+          return {pages:args.includePages===false?[]:included,page:set.previewPage??null,revision:set.previewPageRevision??0,available:available||!!sourceLabel,sourceLabel,more:pages.length>100};
         }
         case 'set_experiment_preview_page': {
           if(state.deferSetPageSave){state.deferSetPageSave=false;await new Promise(resolve=>state.releaseSetPageSave=resolve);}
-          const set=state.automation.experiments?.find(set=>set.id===args.id);if(!set)throw new Error('Response set unavailable');
+          const set=state.automation.responseSets?.find(set=>set.id===args.id);if(!set)throw new Error('Response set unavailable');
           if((set.previewPageRevision??0)!==args.revision)throw new Error('The page association changed. Review its current page before choosing again.');
           set.previewPage=structuredClone(args.page);set.previewPageRevision=args.revision+1;
           return structuredClone(state.automation);
@@ -230,6 +258,27 @@ await page.addInitScript((configuration) => {
           if(state.previewReports?.[args.label])return structuredClone(state.previewReports[args.label]);
           return {caseOrigin:state.previewArgs?.options?.casePreview?'fixture-case@1 / frozen/blue/7':null,variant:state.previewArgs?.options?.variant??null,url:'http://example.test/page',scope:'all-loaded',source:'fixture.saz',scriptsEnabled:true,available:3,skipped:1,bytes:1000,hits:4,misses:2,resources:[{entryId:'second',source:'fixture.saz',sourceAvailable:true,method:'POST',url:'http://example.test/api',unixMillis:1800000000000,bytes:20,decision:'Nearest matching body and Vary variant'}],requests:[{id:1,method:'GET',url:'http://example.test/missing',outcome:'missing',entryId:null,reason:'No captured response for this method and URL'}]};
         }
+        case 'saved_demos': {const rows=structuredClone((state.savedDemos??[]).filter(demo=>demo.ownerId===args.ownerId)),error=state.demoListError;if(state.deferDemoList){state.deferDemoList=false;await new Promise(resolve=>state.finishDemoList=resolve);}if(error)throw new Error(error);return rows;}
+        case 'prepare_demo_save': {
+          state.demoPrepareCount=(state.demoPrepareCount??0)+1;state.demoSaveInput=structuredClone(args.input);
+          const row=state.sessions.find(row=>row.id===args.input.entryId);if(!row)throw new Error('Captured page is unavailable');
+          const report={url:row.url,scope:args.input.options.scope,source:'fixture.saz',sourceTraceId:null,scriptsEnabled:null,selectedEntryId:row.id,runtime:'WebView2',bytesAvailable:true,rules:[],variant:args.input.options.variant,caseOrigin:null,savedDemo:null,available:2,skipped:3,bytes:512,hits:0,misses:0,failures:0,requests:[],resources:['304 has no representation body','Response bytes were evicted','Resource exceeds the 32 MiB preview limit'].map((decision,index)=>({entryId:'missing-'+index,source:'fixture.saz',sourceAvailable:false,method:'GET',url:'https://example.test/unavailable/'+index,unixMillis:null,bytes:null,sha256:null,decision}))};
+          const prepared={token:'demo-token-'+state.demoPrepareCount,name:args.input.name,replace:args.input.replace??null,report};
+          (state.demoPrepared??={})[prepared.token]={prepared:structuredClone(prepared),input:structuredClone(args.input),byteVersion:state.demoByteVersion??'original'};
+          if(state.deferDemoPrepare){state.deferDemoPrepare=false;await new Promise(resolve=>state.finishDemoPrepare=resolve);}return prepared;
+        }
+        case 'commit_demo_save': {
+          state.demoCommitArgs=structuredClone(args);if(state.demoCommitError)throw new Error(state.demoCommitError);
+          const staged=state.demoPrepared?.[args.token];if(!staged)throw new Error('Prepared demo expired');
+          const old=staged.input.replace?(state.savedDemos??[]).find(demo=>demo.id===staged.input.replace.id):null;
+          if(staged.input.replace&&old?.revision!==staged.input.replace.revision)throw new Error('This saved demo changed or was deleted; reopen Saved demos');
+          const demo={id:old?.id??'saved-demo-'+state.demoPrepareCount,revision:(old?.revision??0)+1,ownerId:staged.input.ownerId,ownerIncarnation:staged.input.options.variant.incarnation,name:staged.prepared.name,createdAt:old?.createdAt??Date.now(),modifiedAt:Date.now(),selection:staged.input.options.variant,entryId:staged.input.entryId,url:staged.prepared.report.url,scope:staged.prepared.report.scope,available:2,skipped:3,bytes:512};
+          state.savedDemos=[...(state.savedDemos??[]).filter(item=>item.id!==demo.id),demo];(state.savedDemoReports??={})[demo.id]=staged.prepared.report;state.demoSavedByteVersion=staged.byteVersion;delete state.demoPrepared[args.token];return structuredClone(demo);
+        }
+        case 'cancel_demo_save': (state.demoCanceledTokens??=[]).push(args.token);delete (state.demoPrepared??{})[args.token];return;
+        case 'cancel_demo_operation': state.demoOperationCanceled=args.operationId;return;
+        case 'delete_saved_demo': {state.demoDeleteArgs=structuredClone(args);if(state.deferDemoDelete){state.deferDemoDelete=false;await new Promise(resolve=>state.finishDemoDelete=resolve);}const old=state.savedDemos?.find(item=>item.id===args.demo.id);if(old?.revision!==args.demo.revision)throw new Error('This saved demo changed or was deleted; reopen Saved demos');state.savedDemos=state.savedDemos.filter(item=>item.id!==args.demo.id);return;}
+        case 'open_saved_demo': {state.openSavedDemoArgs=structuredClone(args);const demo=state.savedDemos?.find(item=>item.id===args.demo.id&&item.ownerId===args.ownerId&&item.revision===args.demo.revision);if(!demo)throw new Error('Saved demo unavailable');const label='saved-demo-run-'+(state.demoRunCount=(state.demoRunCount??0)+1);(state.previewReports??={})[label]={...structuredClone(state.savedDemoReports[demo.id]),savedDemo:{id:demo.id,name:demo.name,revision:demo.revision,ownerId:demo.ownerId},scriptsEnabled:args.enableScripts};return label;}
         case 'open_captured_page': state.previewArgs=structuredClone(args);if(state.deferPagePreview)await new Promise(resolve=>state.releasePagePreview=resolve);if(state.pagePreviewCanceled&&!state.ignorePreviewCancellation)throw new Error('Captured page preview canceled');return state.previewRunLabel??'captured-fixture';
         case 'cancel_captured_page': state.pagePreviewCanceled=true;if(!state.ignorePreviewCancellation)state.releasePagePreview?.();return;
         case 'case_preview_choices':if(state.deferCaseChoices){state.deferCaseChoices=false;await new Promise(resolve=>state.releaseCaseChoices=resolve);}return {pages:[{id:'first',url:'https://example.test/page'}]};
@@ -336,7 +385,7 @@ await page.addInitScript((configuration) => {
         case 'decide_client_certificate': {if(!state.certificatePending?.some(row=>row.id===args.id))throw new Error('This connection is no longer waiting.');state.certificateDecision=structuredClone(args);state.certificatePending=state.certificatePending.filter(row=>row.id!==args.id);return {supported:true,pending:structuredClone(state.certificatePending)};}
         case 'save_client_certificate_policy': {if(state.certificateSaveError)throw {category:'unavailable',message:'Fixture certificate policy persistence failed',retryable:true};state.certificatePolicy=structuredClone(args.policy);localStorage.setItem('certificatePolicy',JSON.stringify(state.certificatePolicy));return structuredClone(state.certificatePolicy);}
         case 'buffer_status': return {installedRam:34359738368,maxBytes:17179869184,storage:'memory',retainedBytes:0};
-        case 'product_state': {const product=state.savedProduct?{...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)}:{ schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };product.preferences.networkProfiles=structuredClone(state.networkProfiles??networkProfiles);product.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??JSON.parse(localStorage.getItem('certificatePolicy')??'{"default":"noCertificate","rules":[]}'));return product;}
+        case 'product_state': {const product=state.savedProduct?{...structuredClone(state.savedProduct),workspace:structuredClone(state.workspace)}:{ schemaVersion: 6, workspace:structuredClone(state.workspace), preferences: { theme: 'system', sessionPageSize: 100, configureSystemProxy: state.configureSystemProxy??true }, privacy: { terminateWebsocketsOnClear:false,maxLiveEntries:null,bufferLimit:{mode:"automatic"},retainRequestBodies:true,requestBodyLimit:25000000,redactSensitiveHeaders:false,retainResponseBodies: true, retainBodySamples: state.recordingDefaultBodies??false, rememberRecentArtifacts: false, includePathsInSupportBundles: false }, window: {}, recentArtifacts: [] };product.preferences.networkProfiles=structuredClone(state.networkProfiles??networkProfiles);product.preferences.clientCertificatePolicy=structuredClone(state.certificatePolicy??JSON.parse(localStorage.getItem('certificatePolicy')??'{"default":"noCertificate","rules":[]}'));return product;}
         case 'save_workspace_preferences': state.workspace = {...structuredClone(args.preferences),responseSetGuide:state.workspace.responseSetGuide??'not-offered'}; localStorage.setItem('workspace',JSON.stringify(state.workspace)); return state.workspace;
         case 'update_response_set_guide': {
           if(state.deferGuide)await new Promise(resolve=>state.finishGuide=resolve);
@@ -485,6 +534,23 @@ await page.addInitScript((configuration) => {
           return { metadata, representation, decoded:args.request.decodeContent&&metadata.contentCodings.length>0, textEncoding:'utf-8', display:representation==='formatted-json'?'{\n  "fixture": true\n}':composer?new TextDecoder().decode(Uint8Array.from(bytes)):'body for '+args.request.sessionId, displayBytes:representation==='bytes'||composer?bytes.length:4,bytesBase64:representation==='bytes'?btoa(chunks.join('')):null,byteOffset:0,truncated:composer?false:state.hexTruncated??false,nextOffset:null,warning:null,previewHandle:representation==='image'?'pixel.png':null,previewMimeType:representation==='image'?'image/png':null };
         }
         case 'automation_status': if(state.deferAutomationStatus){state.deferAutomationStatus=false;await new Promise(resolve=>state.releaseAutomationStatus=resolve);}return structuredClone(state.automation??{ generation: 0, rules: [], autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount: 0, historyCount: 0 });
+        case 'review_response_set_intake': return structuredClone(intakeCandidate(args.input).review);
+        case 'collect_response_set': {
+          const input=args.input,{document,owner,sources,review}=intakeCandidate(input);
+          if(state.intakeReject)throw new Error('Destination save failed. Originals were preserved.');
+          if(review.warnings.length&&!input.acknowledgeOverlaps)throw new Error('Review overlapping matches before adding responses.');
+          const set=owner??{id:input.destination.id,incarnation:crypto.randomUUID(),name:input.destination.name,notes:input.destination.notes,revision:1,modifiedAt:Date.now(),rules:[],versions:[],applied:null,undoApply:null,paused:false,previewPage:null,previewPageRevision:0};
+          const additions=sources.map(({sourceId,rule},index)=>{
+            const next={...structuredClone(rule),id:'intake-'+crypto.randomUUID(),revision:1,priority:-1000000+set.rules.length+index};
+            if(input.source.kind==='traffic'){const captured=detail(sourceId),body=new TextEncoder().encode('body for '+sourceId),asset={id:'intake-asset-'+crypto.randomUUID(),revision:1,status:captured.responses[0].status,bodyBytes:body.length,sha256:'a'.repeat(64),mediaType:captured.storedBodies[0].mediaType,provenance:{kind:'session',exchange_id:sourceId,boundary:'client-response'},headers:[],display:new TextDecoder().decode(body),rawBody:[...body],linkedBody:null,copiedFrom:null};state.assets??=[];state.assets.push(asset);next.request.responseAsset=asset.id+'@1';}
+            return next;
+          });
+          set.rules.push(...additions);set.modifiedAt=Date.now();if(owner)set.revision++;else document.responseSets.push(set);
+          if(input.mode==='move')document.rules=document.rules.filter(rule=>!input.source.ids.includes(rule.id));
+          for(const owner of document.responseSets)owner.undoApply=null;
+          document.generation++;state.automation=document;
+          return {status:structuredClone(document),setId:set.id,setName:set.name,addedCount:additions.length};
+        }
         case 'set_autoresponses_enabled': {
           state.automation??={generation:0,rules:[],diagnostics:[],usage:[],candidateCount:0,historyCount:0};
           if(state.automation.generation!==args.generation)throw new Error('Stale generation');
@@ -545,11 +611,22 @@ await page.addInitScript((configuration) => {
           state.assets.push(asset);state.lastAssetEdit=structuredClone(args.input);return structuredClone(asset);
         }
         case 'pick_response_body': return state.bodyFile??null;
-        case 'response_body_file_info': if(state.deferFileInfo){state.deferFileInfo=false;await new Promise(resolve=>state.finishFileInfo=resolve);}if(state.bodyFileError)throw new Error('Response file is missing or unreadable. Restore access or choose another file.');return {path:args.path,bytes:state.bodyFileBytes??100,error:state.lastFileFailure??null};
-        case 'clear_traffic': {const ids=state.sessions.map(row=>row.id);state.dismissedIds=[...ids];return {ids,bytes:state.clearBytes??0,undoable:(state.clearBytes??0)<1000000000,undoSeconds:(state.clearBytes??0)>=100000000&&(state.clearBytes??0)<1000000000?300:null};}
+        case 'response_body_file_info': if(state.deferFileInfo||(state.deferFileInfoAfterSetSave&&state.calls.change_response_set>=state.deferFileInfoAfterSetSave)){state.deferFileInfo=false;state.deferFileInfoAfterSetSave=null;await new Promise(resolve=>state.finishFileInfo=resolve);}if(state.bodyFileError)throw new Error('Response file is missing or unreadable. Restore access or choose another file.');return {path:args.path,bytes:state.bodyFileBytes??100,error:state.lastFileFailure??null};
+        case 'cancel_requests': {
+          state.lastCanceledIds=structuredClone(args.ids);
+          if(state.cancelRequestError)throw new Error('Fixture cancellation failed');
+          const canceled=state.sessions.filter(row=>args.ids.includes(row.id)&&row.terminal==='active'&&!row.traceId);
+          for(const row of canceled){row.terminal=row.streamProtocol?'interrupted':'cancelled';if(state.streams?.[row.id])state.streams[row.id].state.status='interrupted';}
+          return canceled.map(row=>row.id);
+        }
+        case 'clear_traffic': {
+          const keep=row=>row.terminal==='active'&&row.streamProtocol==='web-socket'&&!row.traceId&&!state.savedProduct?.privacy.terminateWebsocketsOnClear;
+          const ids=state.sessions.filter(row=>!keep(row)).map(row=>row.id);state.dismissedIds=[...ids];
+          return {ids,preservedWebSockets:state.sessions.filter(keep).length,bytes:state.clearBytes??0,undoable:(state.clearBytes??0)<1000000000,undoSeconds:(state.clearBytes??0)>=100000000&&(state.clearBytes??0)<1000000000?300:null};
+        }
         case 'remove_traffic_entries': {
           const dismissed=new Set(state.dismissedIds??[]);const changed=[];
-          const retained=new Set(state.sessions.map(row=>row.id));
+          const retained=new Set(state.sessions.filter(row=>args.restore||!(row.terminal==='active'&&row.streamProtocol==='web-socket'&&!row.traceId&&!state.savedProduct?.privacy.terminateWebsocketsOnClear)).map(row=>row.id));
           for(const id of args.ids)if(retained.has(id) && (args.restore?dismissed.has(id):!dismissed.has(id))) {if(args.restore)dismissed.delete(id);else dismissed.add(id);changed.push(id);}
           state.dismissedIds=[...dismissed];return changed;
         }
@@ -628,32 +705,29 @@ await page.addInitScript((configuration) => {
           }else if(c.action==='move'){const ordered=status.rules.filter(r=>r.id.startsWith('header-')).sort((a,b)=>a.priority-b.priority),index=ordered.findIndex(r=>r.id===c.id),other=ordered[index+(c.earlier?-1:1)];if(other){[ordered[index].priority,other.priority]=[other.priority,ordered[index].priority];ordered[index].revision++;other.revision++;}}
           status.generation++;state.automation=status;return structuredClone(status);
         }
-        case 'experiment_overlaps': return structuredClone(state.variantOverlaps??[]);
-        case 'change_experiment': {
-          if(state.deferVariantCopy&&args.change.action==='duplicate'){state.deferVariantCopy=false;await new Promise(resolve=>state.releaseVariantCopy=resolve);}
-          if(state.uaRejectValidation||state.variantReject)throw new Error('Fixture validation failed; saved and live rules unchanged');
-          if(state.deferExperimentSave&&['create','save'].includes(args.change.action)){state.deferExperimentSave=false;await new Promise(resolve=>state.finishExperimentSave=resolve);}
-          if(state.deferExperimentActivation&&args.change.action==='activate'){state.deferExperimentActivation=false;await new Promise(resolve=>state.finishExperimentActivation=resolve);}
-          if(args.generation!==state.automation.generation)throw new Error('Automation changed. Refresh before retrying; your draft has been preserved.');
-          const next=structuredClone(state.automation),c=args.change;next.experiments??=[];
-          const experiment=()=>{const e=next.experiments.find(e=>e.id===(c.id??c.selection?.experimentId));if(!e)throw new Error('Experiment unavailable');return e;};
-          const project=(e,s)=>{const owned=new Set(e.variants.flatMap(v=>v.revisions.flatMap(r=>r.rules.map(r=>r.id))));next.rules=next.rules.filter(r=>!owned.has(r.id));if(s)next.rules.push(...structuredClone(e.variants.find(v=>v.id===s.variantId).revisions.find(r=>r.revision===s.revision).rules));e.active=structuredClone(s);};
-          switch(c.action){
-            case 'create': next.experiments.push({id:c.id,name:c.name,archived:false,paused:false,active:null,undo:null,variants:[{id:'baseline',name:'Baseline',archived:false,revisions:[{revision:1,rules:[]}]},{id:c.variantId,name:c.variantName,archived:false,revisions:[{revision:1,rules:structuredClone(c.rules)}]}]});break;
-            case 'save':{const v=experiment().variants.find(v=>v.id===c.variantId);if(v.revisions.at(-1).revision!==c.expectedRevision)throw new Error('Variant changed. Reopen its latest revision before saving.');v.revisions.push({revision:c.expectedRevision+1,rules:structuredClone(c.rules)});break;}
-            case 'duplicate':{const e=experiment(),rules=structuredClone(e.variants.find(v=>v.id===c.selection.variantId).revisions.find(r=>r.revision===c.selection.revision).rules);rules.forEach((r,i)=>{r.id='variant-'+c.variantId+'-'+i;r.revision=1;});e.variants.push({id:c.variantId,name:c.name,archived:false,revisions:[{revision:1,rules}]});break;}
-            case 'rename':{const e=experiment();(c.variantId?e.variants.find(v=>v.id===c.variantId):e).name=c.name;break;}
-            case 'archive':{const e=experiment();if(c.archived&&e.active?.variantId!=='baseline'&&e.active&&(!c.variantId||c.variantId===e.active.variantId))throw new Error('Activate Baseline before archiving active content.');(c.variantId?e.variants.find(v=>v.id===c.variantId):e).archived=c.archived;break;}
-            case 'pause':experiment().paused=c.paused;break;
-            case 'activate':{const e=experiment();e.undo={selection:structuredClone(e.active),generation:next.generation+1};project(e,c.selection);break;}
-            case 'undo-activation':{const e=experiment();if(e.undo?.generation!==next.generation)throw new Error('Automation changed after activation.');project(e,e.undo.selection);e.undo=null;break;}
-            default:throw new Error('Unknown experiment action');
-          }
-          next.generation++;state.automation=next;ruleDiagnostics();return structuredClone(state.automation);
+        case 'response_set_overlaps': return structuredClone(state.variantOverlaps??[]);
+        case 'change_response_set': {
+          if(state.setReject)throw new Error('Fixture response set save failed');
+          if(state.deferSetSave&&args.change.action==='save-current'){state.deferSetSave=false;state.setSavePending=true;await new Promise(resolve=>state.finishSetSave=resolve);}
+          if(args.generation!==state.automation.generation)throw new Error('Automation changed. Your draft has been preserved.');
+          const next=structuredClone(state.automation),c=args.change;next.responseSets??=[];
+          const set=next.responseSets.find(set=>set.id===c.id);
+          if(c.action==='create')next.responseSets.push({id:c.id,incarnation:crypto.randomUUID(),name:c.name,notes:c.notes,revision:1,modifiedAt:Date.now(),rules:structuredClone(c.rules),versions:[],applied:null,undoApply:null,paused:false,previewPage:null,previewPageRevision:0});
+          else if(c.action==='save-current'){if(!set||set.revision!==c.expectedRevision)throw new Error('Response set changed.');Object.assign(set,{name:c.name,notes:c.notes,rules:structuredClone(c.rules),revision:set.revision+1,modifiedAt:Date.now()});}
+          else if(c.action==='save-version'){if(!set||set.revision!==c.expectedRevision)throw new Error('Response set changed.');set.versions.push({id:c.versionId,name:c.name,revision:set.revision,rules:structuredClone(set.rules)});}
+          else if(c.action==='restore-version'){if(!set||set.revision!==c.expectedRevision)throw new Error('Response set changed.');const version=set.versions.find(version=>version.id===c.versionId);if(!version)throw new Error('Version unavailable');set.rules=structuredClone(version.rules);set.revision++;set.modifiedAt=Date.now();}
+          else if(c.action==='delete-version'){if(!set?.versions.some(version=>version.id===c.versionId))throw new Error('Version unavailable');set.versions=set.versions.filter(version=>version.id!==c.versionId);}
+          else if(c.action==='apply'){if(!set||set.revision!==c.expectedRevision)throw new Error('Response set changed.');if(state.variantOverlaps?.length&&!c.acknowledgeOverlaps)throw new Error('Review overlapping rules');set.undoApply={generation:next.generation+1,applied:structuredClone(set.applied),paused:set.paused};const owned=new Set(set.applied?.rules.map(rule=>rule.id)??[]);next.rules=next.rules.filter(rule=>!owned.has(rule.id));set.applied={revision:set.revision,rules:structuredClone(set.rules)};next.rules.push(...structuredClone(set.rules));if(c.resume)set.paused=false;}
+          else if(c.action==='pause'){if(!set)throw new Error('Set unavailable');set.paused=c.paused;}
+          else if(c.action==='undo-apply'){if(!set?.undoApply||set.undoApply.generation!==next.generation)throw new Error('Undo is no longer available');const undo=set.undoApply,owned=new Set(set.applied?.rules.map(rule=>rule.id)??[]);next.rules=next.rules.filter(rule=>!owned.has(rule.id));set.applied=structuredClone(undo.applied);set.paused=undo.paused;next.rules.push(...structuredClone(set.applied?.rules??[]));set.undoApply=null;}
+          else if(c.action==='delete'){if(!set)throw new Error('Set unavailable');const owned=new Set(set.applied?.rules.map(rule=>rule.id)??[]);next.rules=next.rules.filter(rule=>!owned.has(rule.id));next.responseSets=next.responseSets.filter(item=>item.id!==set.id);state.savedDemos=(state.savedDemos??[]).filter(demo=>demo.ownerId!==set.id);}
+          else throw new Error('Unknown response set action');
+          for(const item of next.responseSets)if(item.undoApply?.generation!==next.generation+1)item.undoApply=null;
+          next.generation++;state.automation=next;state.lastSetChange=structuredClone(c);ruleDiagnostics();return structuredClone(next);
         }
         case 'activate_automation':
           if(state.deferExperimentActivation){state.deferExperimentActivation=false;await new Promise(resolve=>state.finishExperimentActivation=resolve);}
-          state.automation={...structuredClone(state.candidate),experiments:state.automation?.experiments??[],generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
+          state.automation={...structuredClone(state.candidate),responseSets:state.automation?.responseSets??[],generation:(state.automation?.generation??0)+1,candidateCount:0,historyCount:0};
           ruleDiagnostics();
           return structuredClone(state.automation);
         case 'save_network_profiles': {
@@ -746,8 +820,15 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
-  if(process.argv.includes('--response-set-action-followup-only')){await checkResponseSetActionFollowup(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set action follow-up verified.\n');process.exit(0);}
-  if(process.argv.includes('--response-set-actions-only')){await checkResponseSetActions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set action clarity verified.\n');process.exit(0);}
+  if(process.argv.includes('--request-controls-only')){await checkRequestControls(page);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Request cancellation, uncached selections and delayed removal focus verified.\n');process.exit(0);}
+  if(process.argv.includes('--response-followups-only')){await checkResponseSetFollowups(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response collection, active state, cancellation and Clear regressions verified.\n');process.exit(0);}
+  if(process.argv.includes('--saved-demos-only')){await checkSavedDemos(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Durable demo save/review/playback/replace/delete and layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--lifecycle-only')){await checkResponseSetLifecycle(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set lifecycle verified.\n');process.exit(0);}
+  if(process.argv.includes('--set-intake-move-only')){await checkResponseSetIntakeMove(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set Move source drafts, native checkbox Space, failures and newer edits verified.\n');process.exit(0);}
+  if(process.argv.includes('--set-intake-refresh-only')){await checkResponseSetIntakeRefresh(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set intake current baseline refresh verified for clean, Save, Discard and newer drafts.\n');process.exit(0);}
+  if(process.argv.includes('--set-intake-only')){await checkResponseSetIntake(page,root);await checkResponseSetIntakeRefresh(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set bulk intake, Copy/Move, drafts, failures and layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--set-collection-adds-only')){await checkResponseSetCollectionAdds(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Scratch/file additions retain dirty collection ownership, snapshots and saved bodies.\n');process.exit(0);}
+  if(process.argv.includes('--sets-only')){await checkResponseSetWorkspaces(page,root);await checkResponseSetDraftRegressions(page);await checkResponseSetPendingDialogs(page,root);await checkResponseSetCollectionAdds(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set collection workspaces verified.\n');process.exit(0);}
   if(process.argv.includes('--body-refresh-only')||process.argv.includes('--body-refresh-reproduce')) {await checkBodyRefresh(page,root,{reproduce:process.argv.includes('--body-refresh-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Body refresh lifecycle verified.\n');process.exit(0);}
   if(process.argv.includes('--preview-prerequisites-only')||process.argv.includes('--preview-prerequisites-reproduce')) {await checkPreviewPrerequisites(page,root,{reproduce:process.argv.includes('--preview-prerequisites-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Preview prerequisites verified.\n');process.exit(0);}
   if(process.argv.includes('--hex-only')){await page.goto('https://workspace.test/');await page.locator('tr[data-session-id="first"]').click();const inspector=page.locator('traffic-workspace message-inspector[side="response"]');await inspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');await inspector.locator('hex-viewer').waitFor({state:'visible'});await checkHexViewer(page,inspector,resolve(root,'../../../target/ui-check/hex-selection.png'));assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Hex byte navigation, selection, paging and compact reachability verified.\n');process.exit(0);}
@@ -763,12 +844,11 @@ try {
   if(process.argv.includes('--selection-only')) {await page.goto('https://workspace.test/');await checkAppSelection(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('App selection and selectable evidence verified.\n');process.exit(0);}
   if(process.argv.includes('--text-edits-only')) {await checkTextEdits(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Literal response edit flows, async drafts, comparison evidence and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--header-rules-only')) {await checkHeaderRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Header rule authoring, raw bytes, ordered tests, activation, stale updates, Undo, evidence and responsive layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--set-preview-only')){await checkResponseSetPreview(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Current-set preview origin, frozen context and historical report/reveal guards verified.\n');process.exit(0);}
   if(process.argv.includes('--guide-only')) {await checkResponseSetGuide(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set guide lifecycle, native preference contract, focus and compact layouts verified.\n');process.exit(0);}
-  if(process.argv.includes('--variants-only')) {await checkResponseExperiments(page,root);await checkNamedVariants(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Named variants, scoped activation, history, preview, pause, archive, Undo and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--file-snapshots-only')) {await checkResponseSnapshots(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response snapshot identities, changed output, incomplete retention and responsive evidence verified.\n');process.exit(0);}
   await checkResponseSnapshots(page,root);
   if(process.argv.includes('--file-modes-only')) {await checkResponseFiles(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Explicit file copy/link, repair, drafts and size-independent modes verified.\n');process.exit(0);}
-  if(process.argv.includes('--experiments-only')) {await checkResponseExperiments(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response experiment authoring, frozen comparison, preview context and separate live activation verified.\n');process.exit(0);}
   if(process.argv.includes('--portable-cases-only')) {await checkPortableCases(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Portable case review, password retry, inert inspection, disabled import, cancellation and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')) {await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident intake, markers, reviewed export and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--comparison-only')) {await checkComparison(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Comparison interactions, races, pairing and responsive layouts verified.\n');process.exit(0);}
@@ -2584,10 +2664,18 @@ try {
   await checkResponseFiles(page,root);
   await checkResponseSetGuide(page,root);
   await checkPreviewPrerequisites(page,root);
-  await checkResponseExperiments(page,root);
-  await checkNamedVariants(page,root);
-  await checkResponseSetActions(page,root);
-  await checkResponseSetActionFollowup(page,root);
+  await checkResponseSetFollowups(page,root);
+  await checkRequestControls(page);
+  await checkResponseSetWorkspaces(page,root);
+  await checkResponseSetDraftRegressions(page);
+  await checkResponseSetPendingDialogs(page,root);
+  await checkResponseSetCollectionAdds(page,root);
+  await checkResponseSetIntake(page,root);
+  await checkResponseSetIntakeRefresh(page,root);
+  await checkResponseSetIntakeMove(page,root);
+  await checkResponseSetLifecycle(page,root);
+  await checkSavedDemos(page,root);
+  await checkResponseSetPreview(page,root);
   await checkHeaderRules(page,root);
   await checkTextEdits(page,root);
   assert.deepEqual(errors,[]);

@@ -7,6 +7,8 @@ use transmog_core::intercept::ExchangeId;
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TrafficClearResult {
+    /// Open or connecting live `WebSockets` kept visible rather than removed.
+    pub preserved_web_sockets: usize,
     /// Removed entry identifiers.
     pub ids: Vec<String>,
     /// Retained body, header and source-index bytes associated with the removed entries.
@@ -25,7 +27,10 @@ fn policy(bytes: u64) -> (bool, Option<u64>) {
         (true, None)
     }
 }
-pub(crate) fn clear(application: &Application) -> Result<TrafficClearResult, AppError> {
+pub(crate) fn clear(
+    application: &Application,
+    terminated: &[ExchangeId],
+) -> Result<TrafficClearResult, AppError> {
     if let Some(store) = &application.body_store {
         store.flush().map_err(|_| {
             AppError::new(
@@ -35,7 +40,7 @@ pub(crate) fn clear(application: &Application) -> Result<TrafficClearResult, App
             )
         })?;
     }
-    let ids = application.service.catalog().dismiss_all();
+    let ids = application.service.catalog().dismiss_all(terminated);
     let bytes = ids.iter().fold(
         application
             .service
@@ -77,6 +82,7 @@ pub(crate) fn clear(application: &Application) -> Result<TrafficClearResult, App
         });
     }
     Ok(TrafficClearResult {
+        preserved_web_sockets: application.service.catalog().live_websocket_count(),
         ids: ids.iter().map(|id| format!("{:032x}", id.0)).collect(),
         bytes,
         undoable,

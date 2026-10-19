@@ -129,7 +129,7 @@ fn validate_header_rule(rule: &Rule) -> Result<(), AppError> {
     Ok(())
 }
 fn owned(document: &AutomationRuleSet, id: &str) -> bool {
-    document.experiments.iter().any(|e| e.owns(id))
+    document.response_sets.iter().any(|set| set.owns(id))
 }
 fn eligible(rule: &Rule, text: bool) -> bool {
     if text {

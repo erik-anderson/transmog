@@ -60,7 +60,7 @@ export function formatBytes(value: number): string {
 type ResponseStatus = Pick<SessionSummary, 'status' | 'terminal'>;
 
 export function statusText(row: ResponseStatus): string {
-  if (row.terminal === 'cancelled') return (row.status === null ? '' : row.status+' · ')+'Cancelled by caller';
+  if (row.terminal === 'cancelled') return (row.status === null ? '' : row.status+' · ')+'Cancelled';
   if (row.status === null) return row.terminal === 'active' ? 'Pending' : row.terminal === 'failed' ? 'Failed' : 'Unavailable';
   return row.status === 304 ? '304 Not Modified' : String(row.status);
 }
@@ -77,7 +77,7 @@ export function statusTone(row: ResponseStatus): string {
 }
 
 export function stateText(state: SessionSummary['terminal']): string {
-  return {active:'In progress',completed:'Completed',failed:'Failed',cancelled:'Cancelled by caller',interrupted:'Interrupted','open-at-capture':'Open at capture',incomplete:'Incomplete'}[state];
+  return {active:'In progress',completed:'Completed',failed:'Failed',cancelled:'Cancelled',interrupted:'Interrupted','open-at-capture':'Open at capture',incomplete:'Incomplete'}[state];
 }
 
 export function formatDuration(value:number|null|undefined):string {

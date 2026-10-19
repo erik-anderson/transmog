@@ -152,10 +152,10 @@ async fn merged_sources_and_saved_subsets_keep_source_numbers_and_relative_order
         ]
     );
     assert_ne!(rows[0].trace_id, rows[3].trace_id);
-    workspace
-        .session_service()
-        .catalog()
-        .dismiss(&[ExchangeId(u128::from_str_radix(&rows[0].id, 16).unwrap())]);
+    workspace.session_service().catalog().dismiss(
+        &[ExchangeId(u128::from_str_radix(&rows[0].id, 16).unwrap())],
+        &[],
+    );
     for (format, extension) in [
         (crate::TraceSaveFormat::Native, "tmcap"),
         (crate::TraceSaveFormat::SazExtended, "saz"),

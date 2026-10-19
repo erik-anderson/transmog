@@ -188,7 +188,7 @@ export interface TraceImportIntent {paths:string[];}
 export interface TraceInspection {path:string;format:string;sessions:number;bytes:number;context:unknown;sources:TraceMetadata[];notes:string[];}
 export interface TraceImportProgress {operationId:string;completed:number;total:number;}
 export interface PreviewRuleSnapshot {id:string;name:string;revision:number;asset:string;sha256:string;bytes:number;shadowedBy:string|null;}
-export interface CapturedPageReport {caseOrigin?:string|null;variant?:ExperimentSelection|null;url:string;scope:string;source:string;selectedEntryId:string;runtime:string;bytesAvailable:boolean;rules:PreviewRuleSnapshot[];scriptsEnabled?:boolean|null;available:number;skipped:number;bytes:number;hits:number;misses:number;failures:number;resources:Array<{entryId:string;source:string;sourceAvailable?:boolean;method:string;url:string;unixMillis:number|null;bytes:number|null;sha256:string|null;decision:string}>;requests:Array<{id:number;method:string;url:string;outcome:string;entryId:string|null;ruleId:string|null;sha256:string|null;reason:string}>;}
+export interface CapturedPageReport {savedDemo?:{id:string;name:string;revision:number;ownerId:string}|null;caseOrigin?:string|null;variant?:ExperimentSelection|null;url:string;scope:string;source:string;selectedEntryId:string;runtime:string;bytesAvailable:boolean;rules:PreviewRuleSnapshot[];scriptsEnabled?:boolean|null;available:number;skipped:number;bytes:number;hits:number;misses:number;failures:number;resources:Array<{entryId:string;source:string;sourceAvailable?:boolean;method:string;url:string;unixMillis:number|null;bytes:number|null;sha256:string|null;decision:string}>;requests:Array<{id:number;method:string;url:string;outcome:string;entryId:string|null;ruleId:string|null;sha256:string|null;reason:string}>;}
 export interface TrafficSearchMatch {boundary:string;field:string;startUtf16:number;endUtf16:number;before:string;matched:string;after:string;shortened:boolean;}
 export interface TrafficSearchEntry {entryId:string;matches:TrafficSearchMatch[];moreMatches:boolean;}
 export interface TrafficSearchResult {id:string;operationId:string;ids:string[];examined:number;binaryBodies:number;unavailableBodies:number;}
@@ -196,7 +196,7 @@ export interface TrafficSearchProgress {operationId:string;completed:number;tota
 export interface ProductState {
   schemaVersion: number;
   preferences: { networkProfiles:NetworkProfiles; clientCertificatePolicy?:ClientCertificatePolicy; theme: 'system' | 'light' | 'dark'; sessionPageSize: number; configureSystemProxy: boolean; decryptHttps:boolean; allowRemoteClients:boolean; proxyPort:number|null; reuseServerConnections:boolean; isolateOutboundConnections: boolean; allowedOutboundProtocols: {http1:boolean;http2:boolean;http3:boolean} };
-  privacy: { maxLiveEntries: number | null; bufferLimit: {mode: 'automatic'} | {mode: 'custom'; bytes: number} | {mode: 'unlimited'}; retainRequestBodies: boolean; requestBodyLimit: number | null; customRequestBodyLimit?: boolean; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
+  privacy: { terminateWebsocketsOnClear: boolean; maxLiveEntries: number | null; bufferLimit: {mode: 'automatic'} | {mode: 'custom'; bytes: number} | {mode: 'unlimited'}; retainRequestBodies: boolean; requestBodyLimit: number | null; customRequestBodyLimit?: boolean; redactSensitiveHeaders: boolean; retainResponseBodies: boolean; retainBodySamples: boolean; rememberRecentArtifacts: boolean; includePathsInSupportBundles: boolean };
   window: { width: number; height: number; x: number | null; y: number | null; maximized: boolean };
   recentArtifacts: Array<{path: string; kind: string}>;
   workspace: WorkspacePreferences;
@@ -298,7 +298,7 @@ export interface AutomationRule {
 }
 export interface UserAgentOverride { template:string|null; versionOverride:string|null; clientHints:Record<string,string>; stripClientHints:boolean; }
 export interface AutomationStatus {
-  experiments?:ResponseExperiment[];
+  responseSets?:ResponseSet[];
   scriptGeneration?:number;
   activeScripts?:number;
   generation: number;
@@ -384,13 +384,22 @@ export interface StreamSummary { lifetime?:StreamLifetime; httpDurationMs?:numbe
 export interface StreamRow { sequence:number; message:StreamMessage; }
 export interface StreamPage { total:number; offset:number; rows:StreamRow[]; summary:StreamSummary|null; }
 
-export interface ExperimentSelection {experimentId:string;variantId:string;revision:number;}
-export interface ExperimentRevision {revision:number;rules:AutomationRule[];}
-export interface ExperimentVariant {id:string;name:string;archived:boolean;revisions:ExperimentRevision[];}
+export interface ExperimentSelection {experimentId:string;incarnation:string;variantId:string;revision:number;}
 export interface ExperimentPreviewPage {capture:string;entryId:string;requestNumber:string;traceId:string|null;url:string;method:string;startedAt:number;source:string;}
 export interface PreviewPageTarget {page:ExperimentPreviewPage;sourceLabel:string|null;}
 export interface ExperimentPreviewPages {pages:ExperimentPreviewPage[];page:ExperimentPreviewPage|null;revision:number;available:boolean;more:boolean;sourceLabel:string|null;}
-export interface ResponseExperiment {id:string;name:string;archived:boolean;paused:boolean;active:ExperimentSelection|null;variants:ExperimentVariant[];undo?:{generation:number;selection?:ExperimentSelection|null}|null;previewPage?:ExperimentPreviewPage|null;previewPageRevision?:number;}
+export interface ResponseSetSnapshot {revision:number;rules:AutomationRule[];}
+export interface ResponseSetVersion extends ResponseSetSnapshot {id:string;name:string;}
+export interface ResponseSet {id:string;incarnation:string;name:string;notes:string;revision:number;modifiedAt:number;rules:AutomationRule[];versions:ResponseSetVersion[];applied:ResponseSetSnapshot|null;undoApply:{generation:number;applied:ResponseSetSnapshot|null;paused:boolean}|null;paused:boolean;previewPage:ExperimentPreviewPage|null;previewPageRevision:number;}
+export interface ResponseSetOpen {id:string;}
+export interface ResponseSetEdit {ruleId:string;}
+export interface ResponseSetAdd {source:'scratch'|'file'|'captured'|'rules';}
+export interface ResponseSetIntakeRequest {source:'traffic'|'rules';ids?:string[];destinationId?:string;}
+export type ResponseSetIntakeDestination={kind:'existing';id:string;incarnation:string;revision:number}|{kind:'new';id:string;name:string;notes:string};
+export interface ResponseSetIntakeInput {generation:number;source:{kind:'traffic'|'rules';ids:string[]};destination:ResponseSetIntakeDestination;mode:'copy'|'move';acknowledgeOverlaps:boolean;}
+export interface ResponseSetIntakeRow {id:string;name:string;method:string;url:string;response:string;bodySource:string;included:boolean;}
+export interface ResponseSetIntakeReview {rows:ResponseSetIntakeRow[];warnings:string[];activeCount:number;destinationCount:number;}
+export interface ResponseSetIntakeResult {status:AutomationStatus;setId:string;setName:string;addedCount:number;}
 export interface VariantEdit {selection:ExperimentSelection;ruleId:string|null;}
 export interface ResponsePreviewIntent { ruleId:string|null; sourceSessionId:string; mode:'captured'|'modified'; variant?:ExperimentSelection; responseSetId?:string;pageTarget?:PreviewPageTarget; isCurrent?:()=>boolean; }
 

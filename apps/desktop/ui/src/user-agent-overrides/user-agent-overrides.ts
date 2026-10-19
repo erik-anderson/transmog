@@ -139,7 +139,7 @@ export class UserAgentOverrides extends WorkspaceElement {
     return JSON.stringify({method:matcher.method?.toUpperCase()??null,url:matcher.url??null,scheme:matcher.scheme?.toLowerCase()??null,host:matcher.host?.toLowerCase()??null,port:matcher.port,pathPrefix:matcher.pathPrefix,query:matcher.query,requestHeaders:matcher.requestHeaders,responseHeaders:matcher.responseHeaders,responseStatus:matcher.responseStatus,responseStatusClass:matcher.responseStatusClass});
   }
   private async activate(current:AutomationStatus,rules:AutomationRule[]):Promise<AutomationStatus> {
-    const candidate=await invoke<AutomationCandidate>('validate_automation',{document:{schemaVersion:1,generation:current.generation,rules,autoresponsesEnabled:current.autoresponsesEnabled!==false}});
+    const candidate=await invoke<AutomationCandidate>('validate_automation',{document:{schemaVersion:2,generation:current.generation,rules,autoresponsesEnabled:current.autoresponsesEnabled!==false}});
     return invoke<AutomationStatus>('activate_automation',{candidateId:candidate.candidateId});
   }
   private accept(status:AutomationStatus):void {this.uaState=status;this.$emit('automation-state-change',status);}

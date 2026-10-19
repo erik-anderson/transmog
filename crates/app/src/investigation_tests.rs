@@ -783,7 +783,7 @@ async fn repeated_original_entry_occurrences_survive_clear_and_selected_derivati
         ["0", "1"]
     );
     let first = ExchangeId(u128::from_str_radix(&opened.links[0].exchange_id, 16).unwrap());
-    app.service.catalog().dismiss(&[first]);
+    app.service.catalog().dismiss(&[first], &[]);
     app.traces.forget_entries(&[first]);
     let review = app
         .review_traffic_export(Some(crate::comparison::ComparisonScope::Selected {

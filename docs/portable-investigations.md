@@ -29,7 +29,7 @@ Revalidate these boundaries when implementing a consumer:
 
 | Area | Reuse and portability boundary |
 | --- | --- |
-| Automation | [Private workspace](../crates/app/src/automation.rs) schema 1, 4 MiB, validated generations and atomic activation; [named variants](../crates/app/src/experiments.rs) retain exact ordered revisions. Export intent and selected revisions, not generations, Undo state or active hook registrations. |
+| Automation | [Private workspace](../crates/app/src/automation.rs) schema 2, 4 MiB, validated generations and atomic activation; [response sets](../crates/app/src/response_sets.rs) keep current collections, explicit named versions and independent applied snapshots. Export intent and exact selected current/named content, not generations, Undo state or active hook registrations. |
 | Response assets | [Asset storage](../crates/app/src/response_assets.rs) schema 1; explicit copy/link up to 1 GiB. Stored hashes identify encoded entities; linked configuration does not identify historical bytes. Omit absolute paths and copied-from paths. |
 | Match and action semantics | [Native compiler](../crates/proxy-automation/src/lib.rs), [URL matcher](../crates/proxy-automation/src/matching.rs) and [literal operation](../crates/proxy-automation/src/text_transform.rs) remain authoritative. Translate explicit portable fields; do not deserialize private rule enums as the interchange contract. |
 | Capture provenance | [Save trace](../crates/app/src/trace_save.rs) carries original source/entry associations, body boundaries, availability, actual hook outcomes and streams. [TMCap](tmcap-format.md) remains an independently versioned, experimental evidence format. No migration code is added. |
@@ -320,11 +320,19 @@ The [Application facade](../crates/app/src/rule_interchange.rs) exposes:
 | `export_rule_collection(request, staging_parent, canceled)` | Returns a `PreparedCollection` containing only selected saved rules/revisions and their verified asset closure; writes no transfer package. |
 
 `RuleExportRequest` supplies a collection ID/revision/title, ordinary rule IDs
-and exact `ExperimentSelection` values. Selection order does not change saved
-rule precedence. Named rules must be selected through their saved variant,
-including archived history; projected live rules, drafts and candidate handles
-are not export selections. Empty Baseline is included automatically. Unsupported
+and exact `ExperimentSelection` values. A response-set selection identifies its
+owner ID and incarnation plus an exact saved revision: an empty `variantId`
+selects current content; a named version ID selects that explicit snapshot.
+Selection order does not change saved rule precedence. Owned rules must be
+selected through their current collection or named version; projected live
+rules, drafts and candidate handles are not export selections. Unsupported
 advanced/mixed rules fail the whole selection instead of disappearing.
+
+The portable `experiments` / `variants` envelope remains the serialization
+contract. Export represents selected current content with the `current` identity,
+represents named versions as separate portable variants, and includes empty
+Baseline automatically. These wire objects do not introduce runtime variant
+histories or archived local collections.
 
 Export retains complete encoded entities, ordered duplicate/raw header values
 and exact asset revisions. Linked assets become coherent export-time snapshots,
@@ -340,11 +348,15 @@ Review classifies entries as `new`, `identical-source-definition` or
 fresh local identities, including identical definitions; immutable body blobs
 deduplicate by digest. Existing content is never overwritten by label or ID.
 Original definitions, exact revision strings and mappings persist as provenance.
-Ordinary imported rules are disabled; imported named response sets are paused,
-unselected and inspectable. Source enabled/paused/archived/active intent remains
-metadata. Local variant histories start at revision 1 while exact original
-revision numbers remain in the retained source definition. Named saved rule
-intent remains usable only after a separate explicit activation.
+Ordinary imported rules are disabled. Each imported portable response set creates
+a fresh local `ResponseSet` with a new owner identity and incarnation, paused and
+without an applied live snapshot. The portable `current` identity initializes its
+current collection independently of selection order. Other non-Baseline portable
+snapshots become explicit named versions with fresh local identities and revision
+tokens; a named-only import starts with an empty current collection. Exact original
+revision strings and enabled/paused/archived/active intent remain in retained source
+metadata. Imported content affects live traffic only after separate explicit
+activation.
 
 Imported asset metadata belongs to the automation document, with one persisted
 transaction and one in-memory generation shared with the rules. A complete
@@ -387,7 +399,7 @@ Namespaced extension keys use the portable ID alphabet, contain a dot and are at
 most 128 bytes. All nested JSON shares depth 32 and the 8 MiB manifest bound.
 Assets/objects are bounded to 16,384 each, bodies to 1 GiB, headers to 256 fields
 and 64 KiB, examples to 64 per rule, response sets to 32, variants to 16 per
-response set, saved revisions to 32 per variant, and rules to 64 per saved revision.
+response set, saved revisions to 32 per variant, and responses to 1,000 per saved revision.
 Ordinary compilation units retain the native 1,024-rule and action/regex limits.
 
 The private application workspace still has its 4 MiB persistence limit and
@@ -710,7 +722,7 @@ even if their saved enabled intent is false. Named variants retain each rule’s
 participation and recorded precedence. A variant containing participating live
 header/body transformations cannot run in this captured-response preview.
 Unavailable assets or an unsupported selection fail visibly; there is no fallback
-to a current workbench definition. Existing 64-rule, 32 MiB/resource and 256 MiB
+to a current workbench definition. Existing 1,000-response, 32 MiB/resource and 256 MiB
 scene bounds apply. See [page previews](captured-page-preview.md) for isolation,
 network failures and browser limitations.
 

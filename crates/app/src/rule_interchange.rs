@@ -6,6 +6,9 @@ use serde::{Deserialize, Serialize};
 use std::{collections::BTreeMap, io::Read, path::Path, sync::atomic::AtomicBool};
 use transmog_portable::{Collection, PreparedCollection};
 
+/// Portable identity of the editable current collection, independent of selection order.
+pub(crate) const CURRENT_RESPONSE_SET_ID: &str = "current";
+
 /// Original portable definitions and the local identity mapping, persisted atomically.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -20,8 +23,6 @@ pub struct ImportedCollection {
     pub rule_ids: BTreeMap<String, String>,
     /// Original experiment identity to local identity.
     pub experiment_ids: BTreeMap<String, String>,
-    /// Original experiment/variant pair to its local variant identity.
-    pub variant_ids: BTreeMap<String, String>,
 }
 /// One reviewed identity; all entries receive fresh local identities by default.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -148,14 +149,6 @@ pub(crate) fn validate_imported(document: &crate::AutomationRuleSet) -> Result<(
         validate_mapping(
             imported.source.experiments.iter().map(|e| e.id.clone()),
             &imported.experiment_ids,
-        )?;
-        validate_mapping(
-            imported
-                .source
-                .experiments
-                .iter()
-                .flat_map(|e| e.variants.iter().map(|v| format!("{}/{}", e.id, v.id))),
-            &imported.variant_ids,
         )?;
     }
     Ok(())
