@@ -13,7 +13,7 @@ import {describeError,parseHeaderLines,encodeHeaders} from '../utilities.js';
 
 type Phase='request'|'response';
 type ValueEncoding='text'|'hex';
-type OperationRow={id:string;operation:'set'|'append'|'remove';name:string;encoding:ValueEncoding;value:string};
+type OperationRow={id:string;operation:HeaderOperation['operation'];name:string;encoding:ValueEncoding;value:string};
 type PredicateRow={id:string;phase:Phase;name:string;kind:HeaderPredicate['condition']['kind'];encoding:ValueEncoding;value:string};
 type RuleRow={id:string;name:string;phase:string;state:string;selected:boolean;first:boolean;last:boolean;};
 const emptyActions=()=>({headers:[],replaceBody:null,discardBody:false,abortReason:null});

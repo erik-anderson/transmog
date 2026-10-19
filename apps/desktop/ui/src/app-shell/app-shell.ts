@@ -158,7 +158,7 @@ export class AppShell extends WebUIElement {
     if (this.installPending) return;
     this.installPending = true;
     try {
-      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.settings?.clientCertificates?.certificateSettingsDirty ? 'Client certificates' : '', this.automation?.draftDirty ? 'Saved responses' : '', this.automation?.headerRulesEditor?.hrDirty ? 'Header changes' : '', this.automation?.responseTextEditor?.hrDirty ? 'Response text replacements' : '', this.automation?.userAgentOverrides?.uaDirty ? 'Browser headers' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
+      const dirty = [this.composer?.composerDirty ? 'Composer' : '', this.settings?.settingsDirty ? 'Settings' : '', this.settings?.clientCertificates?.certificateSettingsDirty ? 'Client certificates' : '', this.automation?.draftDirty ? 'Saved responses' : '', this.automation?.headerRulesEditor?.hrDirty ? 'Header changes' : '', this.automation?.responseTextEditor?.hrDirty ? 'Response text replacements' : '', this.automation?.userAgentOverrides?.uaDirty ? 'UA headers' : '', this.automation?.scriptEditor?.editorLoaded && this.automation.scriptEditor.scriptDirty ? 'Scripts' : ''].filter(Boolean);
       if (dirty.length) {
         this.updateDraftSummary = `There are unsaved changes in ${dirty.join(', ')}. Installing will close Transmog and discard those drafts. Keep working to save them first.`;
         const proceed = await new Promise<boolean>(resolve => { this.resolveUpdateDrafts = resolve; this.updateDraftDialog.showModal(); });

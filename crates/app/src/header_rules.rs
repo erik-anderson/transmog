@@ -102,6 +102,7 @@ fn validate_header_rule(rule: &Rule) -> Result<(), AppError> {
     for field in rule.request.headers.iter().chain(&rule.response.headers) {
         let length = match field {
             transmog_automation::HeaderOperation::Set(field)
+            | transmog_automation::HeaderOperation::OverrideIfPresent(field)
             | transmog_automation::HeaderOperation::Append(field) => field.value().len(),
             transmog_automation::HeaderOperation::Remove(_) => 0,
         };

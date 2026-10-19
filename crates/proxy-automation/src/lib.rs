@@ -242,6 +242,8 @@ impl HeaderPredicate {
 pub enum HeaderOperation {
     /// Replace all occurrences while preserving the first position.
     Set(HeaderField),
+    /// Replace all occurrences at the first position only when the field exists.
+    OverrideIfPresent(HeaderField),
     /// Append a field after all existing fields.
     Append(HeaderField),
     /// Remove all occurrences case-insensitively.
@@ -256,6 +258,18 @@ impl HeaderOperation {
     /// Returns [`HeaderError`] when name or value is invalid HTTP syntax.
     pub fn set(name: impl Into<Vec<u8>>, value: impl Into<Vec<u8>>) -> Result<Self, HeaderError> {
         Ok(Self::Set(HeaderField::try_new(name, value)?))
+    }
+
+    /// Creates a validated replacement that leaves absent fields unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`HeaderError`] when name or value is invalid HTTP syntax.
+    pub fn override_if_present(
+        name: impl Into<Vec<u8>>,
+        value: impl Into<Vec<u8>>,
+    ) -> Result<Self, HeaderError> {
+        Ok(Self::OverrideIfPresent(HeaderField::try_new(name, value)?))
     }
 
     /// Creates a validated removal operation.
@@ -283,7 +297,7 @@ impl HeaderOperation {
 
     fn target(&self) -> String {
         match self {
-            Self::Set(field) | Self::Append(field) => {
+            Self::Set(field) | Self::OverrideIfPresent(field) | Self::Append(field) => {
                 String::from_utf8_lossy(field.name()).to_ascii_lowercase()
             }
             Self::Remove(name) => name.to_ascii_lowercase(),
@@ -565,7 +579,9 @@ fn validate_rule(rule: &Rule, limits: AutomationLimits) -> Result<(), CompileErr
                 ));
             }
             match operation {
-                HeaderOperation::Set(field) | HeaderOperation::Append(field) => {
+                HeaderOperation::Set(field)
+                | HeaderOperation::OverrideIfPresent(field)
+                | HeaderOperation::Append(field) => {
                     HeaderField::try_new(field.name().to_vec(), field.value().to_vec())
                         .map_err(|_| CompileError::InvalidHeaderOperation(rule.id.clone()))?;
                 }
@@ -1095,6 +1111,14 @@ fn apply_headers(headers: &mut transmog_core::HeaderBlock, actions: &[HeaderOper
     for action in actions {
         match action {
             HeaderOperation::Set(field) => headers.replace_all(field.clone()),
+            HeaderOperation::OverrideIfPresent(field) => {
+                if headers
+                    .iter()
+                    .any(|existing| existing.name().eq_ignore_ascii_case(field.name()))
+                {
+                    headers.replace_all(field.clone());
+                }
+            }
             HeaderOperation::Append(field) => headers.push(field.clone()),
             HeaderOperation::Remove(name) => headers.remove_all(name),
         }

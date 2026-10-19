@@ -223,7 +223,7 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
     try {
       await page.setViewportSize({width:640,height:720});
       await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,layout:'stacked',listSplit:45};});
-      await page.locator('traffic-workspace').getByLabel('Message to inspect',{exact:true}).selectOption('response');
+      await page.locator('traffic-workspace').getByRole('group',{name:'Message to inspect',exact:true}).getByRole('radio',{name:'Response',exact:true}).check();
       for(const zoom of [1,1.5]){
         await page.setViewportSize({width:640,height:720});
         await page.evaluate(zoom=>document.documentElement.style.zoom=String(zoom),zoom);

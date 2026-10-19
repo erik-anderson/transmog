@@ -186,8 +186,14 @@ try{
     if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-hex-pages.png'),Buffer.from(image.data,'base64'));}
     await viewer.call('Emulation.setDeviceMetricsOverride',{width:640,height:720,deviceScaleFactor:1,mobile:false});
     await waitFor(()=>viewer.evaluate('innerWidth===640'),'Compact byte inspection did not resize');
-    const messageSwitch=await viewer.evaluate(`(()=>{const workspace=${traffic},select=workspace.querySelector('.compact-inspector-side');select.value='request';select.dispatchEvent(new Event('change',{bubbles:true}));const request=workspace.inspectorSide==='request';select.value='response';select.dispatchEvent(new Event('change',{bubbles:true}));globalThis.__largeByteProbe.viewer.viewport.focus();return request&&workspace.inspectorSide==='response';})()`);
-    assert.ok(messageSwitch,'Compact message selector did not switch request and response');
+    const messageSwitch=await viewer.evaluate(`(()=>{const workspace=${traffic},toggle=workspace.querySelector('.compact-inspector-side');toggle.querySelector('[value=request]').click();const request=workspace.inspectorSide==='request';toggle.querySelector('[value=response]').click();globalThis.__largeByteProbe.viewer.viewport.focus();return request&&workspace.inspectorSide==='response';})()`);
+    assert.ok(messageSwitch,'Compact message pill did not switch request and response');
+    await viewer.evaluate(`${traffic}.querySelector('.compact-inspector-side [value=response]').focus()`);
+    await byteKey('ArrowLeft',37);
+    assert.ok(await viewer.evaluate(`(()=>{const t=${traffic};return t.querySelector('.compact-inspector-side [value=request]').checked&&getComputedStyle(t.querySelector('message-inspector[side=request]')).display!=='none'&&getComputedStyle(t.querySelector('message-inspector[side=response]')).display==='none';})()`),'Native arrow key did not select and reveal Request');
+    await byteKey('ArrowRight',39);
+    assert.ok(await viewer.evaluate(`${traffic}.querySelector('.compact-inspector-side [value=response]').checked`),'Native arrow key did not select Response');
+    await viewer.evaluate('globalThis.__largeByteProbe.viewer.viewport.focus()');
     await byteKey('End',35,2);
     const saveButton=await viewer.evaluate(`(()=>{const b=${responseInspector}.querySelector('.body-toolbar>button');b.focus();const r=b.getBoundingClientRect(),c=b.closest('.message-content').getBoundingClientRect();return {visible:r.top>=c.top&&r.bottom<=c.bottom&&r.bottom<=innerHeight,enabled:!b.disabled};})()`);assert.ok(saveButton.visible&&saveButton.enabled,'Compact response save action became unreachable');
     await viewer.evaluate('globalThis.__largeByteProbe.viewer.querySelector(".hex-status button").focus()');
@@ -195,6 +201,21 @@ try{
     if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png',reachability.tailVisible?'-hex-pages-compact.png':'-hex-failure.png'),Buffer.from(image.data,'base64'));}
     assert.ok(reachability.visible&&reachability.rows<100&&reachability.tailVisible,'Compact Hex bytes or actions became unreachable: '+JSON.stringify(reachability));
     await viewer.evaluate('globalThis.__largeByteProbe.viewer.querySelector(".hex-status button").click()');assert.equal(await viewer.evaluate('globalThis.__largeByteProbe.viewer.offsetField.value'),String(byteLength-1));await byteKey('Escape',27);assert.ok(await viewer.evaluate('globalThis.__largeByteProbe.viewer.viewport===globalThis.__largeByteProbe.viewer.getRootNode().activeElement'));
+    const inspectorLayout=await viewer.evaluate(`(()=>{const t=${traffic};return {preferences:structuredClone(t.preferences),method:t.selectedMethodText,status:t.selectedStatusText};})()`);
+    try {
+      await viewer.call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+      await viewer.evaluate(`(()=>{const t=${traffic};t.preferences={...t.preferences,layout:'side-by-side',listSplit:75};t.selectedMethodText='PROPPATCH';t.selectedStatusText='No response';})()`);
+      const layout=await viewer.evaluate(`(()=>{const t=${traffic},pane=t.querySelector('.details-pane').getBoundingClientRect(),url=t.querySelector('.selected-url').getBoundingClientRect(),pill=t.querySelector('.compact-inspector-side').getBoundingClientRect();return {urlWidth:url.width,pillVisible:pill.left>=pane.left&&pill.right<=pane.right};})()`);
+      assert.ok(layout.urlWidth>=48&&layout.pillVisible,'Native minimum-width inspector hid its URL or message pill: '+JSON.stringify(layout));
+      await viewer.evaluate(`${traffic}.querySelector('.selected-url').click()`);
+      assert.ok(await viewer.evaluate(`${traffic}.querySelector('#selected-url-full').matches(':popover-open')`),'Native minimum-width URL did not open');
+      await byteKey('Escape',27);
+      if(screenshot){const image=await viewer.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-minimum-inspector.png'),Buffer.from(image.data,'base64'));}
+    } finally {
+      await viewer.evaluate(`(()=>{const t=${traffic},saved=${JSON.stringify(inspectorLayout)};t.preferences=saved.preferences;t.selectedMethodText=saved.method;t.selectedStatusText=saved.status;})()`);
+      await viewer.call('Emulation.setDeviceMetricsOverride',{width:640,height:720,deviceScaleFactor:1,mobile:false});
+      await viewer.evaluate('globalThis.__largeByteProbe.viewer.viewport.focus()');
+    }
     process.stdout.write('Native paged Hex, full-body end navigation, byte selection, clipboard and compact layout verified.\n');
   } finally {
     await viewer.call('Emulation.clearDeviceMetricsOverride');

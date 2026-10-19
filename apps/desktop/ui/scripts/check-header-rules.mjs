@@ -9,6 +9,32 @@ export async function checkHeaderRules(page,root){
  const pane=page.locator('header-rules[editor-kind="headers"]'),editor=pane.locator('form'),ops=pane.locator('.header-operations li');
  const settle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').automation.querySelector('header-rules').hrBusy);
  const current=()=>page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation));
+ // Author, test, save and reopen conditional overrides for both directions.
+ for(const phase of ['request','response']) {
+  await newTrafficRule(page,`Change ${phase} headers…`);
+  await editor.getByLabel('Rule name',{exact:true}).fill(`Conditional ${phase} header override`);
+  await ops.first().getByLabel('Header operation',{exact:true}).selectOption({label:'Override if present'});
+  await ops.first().getByLabel('Operation header name',{exact:true}).fill('X-Existing');
+  await ops.first().getByLabel('Operation header value',{exact:true}).fill('replacement');
+  await editor.getByRole('button',{name:'Add operation',exact:true}).click();
+  await ops.nth(1).getByLabel('Header operation',{exact:true}).selectOption({label:'Override if present'});
+  await ops.nth(1).getByLabel('Operation header name',{exact:true}).fill('X-Missing');
+  await ops.nth(1).getByLabel('Operation header value',{exact:true}).fill('absent');
+  const tester=pane.locator('.header-draft-test');await tester.locator('summary').click();
+  await tester.getByLabel(`Sample ${phase} headers`,{exact:true}).fill('X-Existing: first\nx-existing: second\nX-Keep: untouched');
+  await tester.getByRole('button',{name:'Test draft',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.headerRulesEditor.hrTestBusy);
+  const after=tester.locator('.header-sample-results > div').last();
+  assert.deepEqual(await after.locator('dt').allTextContents(),['X-Existing','X-Keep']);
+  assert.deepEqual(await after.locator('dd').allTextContents(),['replacement','untouched']);
+  assert.match(await tester.textContent(),/Override if present X-Missing · No change/);
+  await tester.locator('summary').click();
+  await editor.getByRole('button',{name:'Save rule',exact:true}).click();await settle();
+  assert.deepEqual((await current()).rules.at(-1)[phase].headers.map(op=>op.operation),['override-if-present','override-if-present']);
+  await newTrafficRule(page,`Change ${phase} headers…`);
+  await page.locator('automation-workspace').getByRole('button',{name:new RegExp(`^Conditional ${phase} header override`)}).click();
+  assert.equal(await ops.first().getByLabel('Header operation',{exact:true}).inputValue(),'override-if-present');
+  await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settle();
+ }
  await newTrafficRule(page,'Change response headers…');
  await editor.getByLabel('Rule name',{exact:true}).fill('Remove CSP and patch policy with duplicate fields and preserved byte values');
  await editor.getByLabel('Matching address',{exact:true}).fill('https://example.test/policy');

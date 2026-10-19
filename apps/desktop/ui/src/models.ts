@@ -253,7 +253,7 @@ export interface TrafficQuery {incidentWindow:unknown;search:string;searchResult
 export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equals' | 'minimum' | 'maximum'; value: string; label: string; }
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
 export interface RawHeaderField {name:number[];value:number[];}
-export type HeaderOperation = {operation:'set'|'append';field:RawHeaderField}|{operation:'remove';field:string};
+export type HeaderOperation = {operation:'set'|'override-if-present'|'append';field:RawHeaderField}|{operation:'remove';field:string};
 export interface HeaderPredicate {name:string;condition:{kind:'exists'|'exact'|'prefix'|'suffix'|'regex';value?:number[]|string};}
 export interface HeaderRuleTest {test:MatchTestResult['test'];before:RawHeaderField[];after:RawHeaderField[];operations:Array<{index:number;operation:string;name:string;changed:boolean}>;}
 export interface HeaderEffect {sequence:number;hookId:string;name:string;phase:string;changed:boolean;headers:{added:string[];removed:string[];changed:string[]};}

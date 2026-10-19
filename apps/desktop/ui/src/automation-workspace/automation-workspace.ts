@@ -102,7 +102,7 @@ export class AutomationWorkspace extends WorkspaceElement {
     this.nativeRuleRows=status.rules.filter(rule=>!rule.request.responseAsset&&!owned.has(rule.id)).sort((a,b)=>a.priority-b.priority||a.id.localeCompare(b.id)).map(rule=>{
       const phase=headerRulePhase(rule),kind=rule.request.userAgent?'headers':phase?'header-rules':rule.response.textTransform&&!rule.request.headers.length&&!rule.response.headers.length?'response-text':'advanced';
       const direction=rule.request.userAgent||phase==='request'?'Request':'Response';
-      const action=rule.request.userAgent?'Change browser headers':phase?'Change '+direction.toLowerCase()+' headers':rule.response.textTransform?'Find and replace response text':'Advanced rule';
+      const action=rule.request.userAgent?'Change UA headers':phase?'Change '+direction.toLowerCase()+' headers':rule.response.textTransform?'Find and replace response text':'Advanced rule';
       const url=rule.matcher.url,criteria=`${rule.matcher.method??'ANY'} ${url?.kind==='exact'?url.value:url?.kind==='pattern'?url.value.address:url?.kind==='regex'?url.value.pattern:(rule.matcher.host??'Any host')+(rule.matcher.pathPrefix??'')}`;
       return {rule,id:rule.id,name:rule.displayName??action,kind,action,direction,criteria,state:rule.enabled===false?'Disabled':'Enabled',selected:this.ruleSelection.ids.has(rule.id),selectionState:String(this.ruleSelection.ids.has(rule.id)),tabIndex:this.ruleSelection.focused===rule.id?'0':'-1'};
     }).filter(row=>(!search||(row.name+' '+row.action+' '+row.criteria).toLowerCase().includes(search))&&(this.ruleDirection==='all'||row.direction.toLowerCase()+'s'===this.ruleDirection)&&(this.ruleFilter==='all'||this.ruleFilter===row.state.toLowerCase()));

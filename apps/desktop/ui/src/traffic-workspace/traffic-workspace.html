@@ -80,7 +80,10 @@
         <p class="inspector-empty" ?hidden="{{selectedSessionId}}">Select a request to inspect its headers and body.</p>
         <header class="selection-bar" ?hidden="{{!selectedSessionId}}" ?data-auto-response="{{selectedDetail.autoResponse}}">
           <span class="method-badge">{{selectedMethodText}}</span><button id="inspector-heading" class="selected-url" type="button" title="Show full URL" popovertarget="selected-url-full" ?disabled="{{!selectedSessionId}}">{{selectedUrlText}}</button><span class="status-badge" data-tone="{{selectedTone}}">{{selectedStatusText}}</span>
-          <select class="compact-inspector-side" ?hidden="{{streamPanel}}" aria-label="Message to inspect" @change="{changeInspectorSide(e)}"><option value="request" ?selected="{{inspectorSide == 'request'}}">Request</option><option value="response" ?selected="{{inspectorSide == 'response'}}">Response</option></select>
+          <div class="compact-inspector-side" ?hidden="{{streamPanel}}" role="group" aria-label="Message to inspect">
+            <label><input type="radio" name="inspector-side" value="request" ?checked="{{inspectorSide == 'request'}}" @change="{showInspectorSide('request')}">Request</label>
+            <label><input type="radio" name="inspector-side" value="response" ?checked="{{inspectorSide == 'response'}}" @change="{showInspectorSide('response')}">Response</label>
+          </div>
           <div class="selection-actions"><button type="button" w-ref="{detailsButton}" class="secondary compact-button" @click="{showTimings()}" ?disabled="{{!selectedDetail}}">Details…</button><button type="button" class="secondary compact-button" w-ref="{actionsButton}" @click="{prepareInspectorContext()}" popovertarget="selected-request-actions" ?disabled="{{!selectedDetail}}">Actions</button><button type="button" class="secondary compact-button" @click="{showMatchedAutoResponse()}" ?hidden="{{!matchedRuleId}}">{{matchedRuleLabel}}</button></div>
           <span class="auto-response-notice" ?hidden="{{!selectedDetail.autoResponse}}"><strong>Auto-responded</strong> · {{selectedDetail.autoResponse.ruleName}}</span>
         </header>
@@ -104,7 +107,7 @@
       </action-submenu>
       <action-submenu label="Create rule" ?hidden="{{viewerMode}}">
         <button type="button" @click="{beginRuleFromSelected('request-headers',true)}" ?disabled="{{!selectedDetail}}">Change request headers…</button>
-        <button type="button" @click="{beginRuleFromSelected('browser-headers',true)}" ?disabled="{{!selectedDetail}}">Change browser headers…</button>
+        <button type="button" @click="{beginRuleFromSelected('browser-headers',true)}" ?disabled="{{!selectedDetail}}">Change UA headers…</button>
         <button type="button" @click="{beginRuleFromSelected('response-headers',true)}" ?disabled="{{!selectedDetail}}">Change response headers…</button>
         <button type="button" @click="{beginRuleFromSelected('response-text',true)}" ?disabled="{{!selectedDetail}}">Find and replace response text…</button>
         <button type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled}}" title="{{reuseTitle}}">Serve a saved response…</button><p ?hidden="{{!reuseDisabled}}">{{reuseTitle}}</p>
@@ -135,7 +138,7 @@
       </action-submenu>
       <action-submenu label="Create rule" ?hidden="{{viewerMode}}">
         <button type="button" @click="{beginRuleFromSelected('request-headers',false)}" ?disabled="{{selectedTrafficCount != 1}}">Change request headers…</button>
-        <button type="button" @click="{beginRuleFromSelected('browser-headers',false)}" ?disabled="{{selectedTrafficCount != 1}}">Change browser headers…</button>
+        <button type="button" @click="{beginRuleFromSelected('browser-headers',false)}" ?disabled="{{selectedTrafficCount != 1}}">Change UA headers…</button>
         <button type="button" @click="{beginRuleFromSelected('response-headers',false)}" ?disabled="{{selectedTrafficCount != 1}}">Change response headers…</button>
         <button type="button" @click="{beginRuleFromSelected('response-text',false)}" ?disabled="{{selectedTrafficCount != 1}}">Find and replace response text…</button>
         <button type="button" @click="{beginAutoResponseFromSelected()}" ?disabled="{{reuseDisabled || selectedTrafficCount != 1}}" title="{{reuseTitle}}">Serve a saved response…</button><p ?hidden="{{!reuseDisabled}}">{{reuseTitle}}</p>

@@ -681,8 +681,8 @@ await page.addInitScript((configuration) => {
           const before=structuredClone(phase==='request'?requestHeaders:responseHeaders);let after=structuredClone(before);const operations=[];
           if(matched)for(const [index,op] of (phase==='request'?rule.request.headers:rule.response.headers).entries()){
             const name=op.operation==='remove'?op.field:new TextDecoder().decode(new Uint8Array(op.field.name)),same=f=>new TextDecoder().decode(new Uint8Array(f.name)).toLowerCase()===name.toLowerCase(),previous=JSON.stringify(after);
-            if(op.operation==='append')after.push(structuredClone(op.field));else {const first=after.findIndex(same);after=after.filter(f=>!same(f));if(op.operation==='set')after.splice(first<0?after.length:first,0,structuredClone(op.field));}
-            operations.push({index:index+1,operation:op.operation[0].toUpperCase()+op.operation.slice(1),name,changed:JSON.stringify(after)!==previous});
+            if(op.operation==='append')after.push(structuredClone(op.field));else {const first=after.findIndex(same);after=after.filter(f=>!same(f));if(op.operation==='set'||op.operation==='override-if-present'&&first>=0)after.splice(first<0?after.length:first,0,structuredClone(op.field));}
+            operations.push({index:index+1,operation:op.operation==='override-if-present'?'Override if present':op.operation[0].toUpperCase()+op.operation.slice(1),name,changed:JSON.stringify(after)!==previous});
           }
           return {test:{matched,normalizedUrl:url,checks:[{label:'Draft conditions',matched,detail:'Fixture sample'}],captures:[]},before,after,operations};
         }
@@ -820,6 +820,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--traffic-presentation-only')){await page.goto('https://workspace.test/');await checkTrafficPresentation(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic presentation and one-click inspector switching verified.\n');process.exit(0);}
   if(process.argv.includes('--request-controls-only')){await checkRequestControls(page);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Request cancellation, uncached selections and delayed removal focus verified.\n');process.exit(0);}
   if(process.argv.includes('--response-followups-only')){await checkResponseSetFollowups(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response collection, active state, cancellation and Clear regressions verified.\n');process.exit(0);}
   if(process.argv.includes('--saved-demos-only')){await checkSavedDemos(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Durable demo save/review/playback/replace/delete and layouts verified.\n');process.exit(0);}
@@ -1122,7 +1123,7 @@ try {
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).getAttribute('aria-pressed'),'true');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-wide.png')});
   await page.setViewportSize({width:760,height:520});
-  await page.getByRole('combobox',{name:'Message to inspect',exact:true}).selectOption('request');
+  await page.getByRole('group',{name:'Message to inspect',exact:true}).getByRole('radio',{name:'Request',exact:true}).check();
   assert.equal(await requestHeaders.getByRole('button',{name:'Largest first',exact:true}).isVisible(),true);
   await page.screenshot({path:resolve(root,'../../../target/ui-check/header-sizes-small.png')});
   await page.setViewportSize({width:1280,height:800});

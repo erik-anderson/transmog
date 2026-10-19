@@ -239,7 +239,7 @@ the original rule ID as provenance while allocating/remapping local import IDs.
 | Rule kind | Evaluation and action |
 | --- | --- |
 | `auto-response` | Original client method/URL/headers; `original-client-request`; exact asset ID/revision. |
-| `header-edit` | Request or response head at its native position; `effective-request-head` or `effective-response-head`; ordered set/append/remove operations. |
+| `header-edit` | Request or response head at its native position; `effective-request-head` or `effective-response-head`; ordered set/override-if-present/append/remove operations. |
 | `literal-response` | `final-effective-response-heads`, fresh-origin response body; UTF-8 literal Find/Replacement, First/All, optional required total count, exact media type and decoded input/output bound. |
 
 This distinction is essential: a captured original request cannot establish
@@ -389,7 +389,7 @@ are separate from private Rust rule serialization:
 | Example | `method`, `url`, ordered `headers` and `expected` (`match`/`no-match`). Native sample headers currently require UTF-8; binary sample values fail as unsupported. Binary predicates and asset fields remain supported. |
 | Rule | `id`, decimal `revision`, `label`, `kind`, `evaluation`, `enabledIntent`, `match`, typed `action`; general mutations require signed numeric `priority`. Auto-response priorities, if supplied, must agree with array order. |
 | Auto-response action | `assetId`, decimal `revision`. |
-| Header action | `operations:[{operation,name,valueBase64}]`; `operation` is `set`/`append`/`remove`; remove has no value. |
+| Header action | `operations:[{operation,name,valueBase64}]`; `operation` is `set`/`override-if-present`/`append`/`remove`; remove has no value. |
 | Literal action | `find`, `replacement`, `occurrences` (`first`/`all`), nullable decimal `expectedMatches`, `mediaType`, `encoding`, decimal `maxBytes`; current native UTF-8 and media/body bounds apply. |
 | Response set | `id`, `kind:"response-variants"`, `requiredFeatures`, `label`, `pausedIntent`, optional `archivedIntent` (false), optional `activeIntent:{variantId,revision}`, `variants`. Active intent must reference an included revision. |
 | Variant/revision | Variant `id`, `label`, optional `archivedIntent` (false), ordered `revisions:[{revision,rules}]`. An empty `baseline` variant is mandatory. |

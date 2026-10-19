@@ -249,7 +249,7 @@ fn operation(value: &wire::Operation) -> Result<native::HeaderOperation, Error> 
         "remove" if value.value_base64.is_none() => {
             native::HeaderOperation::remove(value.name.as_bytes()).map_err(fail)
         }
-        "set" | "append" => {
+        "set" | "override-if-present" | "append" => {
             let content = bytes(
                 value
                     .value_base64
@@ -258,6 +258,9 @@ fn operation(value: &wire::Operation) -> Result<native::HeaderOperation, Error> 
             )?;
             if value.operation == "set" {
                 native::HeaderOperation::set(value.name.as_bytes(), content).map_err(fail)
+            } else if value.operation == "override-if-present" {
+                native::HeaderOperation::override_if_present(value.name.as_bytes(), content)
+                    .map_err(fail)
             } else {
                 native::HeaderOperation::append(value.name.as_bytes(), content).map_err(fail)
             }

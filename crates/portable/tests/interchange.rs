@@ -299,6 +299,27 @@ fn header_and_literal_actions_preserve_native_semantics_and_reject_mixed_actions
         [b"\x80\xff".as_slice(), b"duplicate".as_slice()]
     );
     native::compile(vec![copy], native::AutomationLimits::default()).unwrap();
+    original.request.headers.extend([
+        native::HeaderOperation::override_if_present("X-Bytes", [0xfe, 0x80]).unwrap(),
+        native::HeaderOperation::override_if_present("X-Missing", "absent").unwrap(),
+    ]);
+    let saved = serde_json::to_value(&original).unwrap();
+    assert_eq!(
+        saved["request"]["headers"][2]["operation"],
+        "override-if-present"
+    );
+    let restored: native::Rule = serde_json::from_value(saved).unwrap();
+    assert_eq!(restored, original);
+    let portable = wire::from_native(&restored).unwrap();
+    let copy = wire::to_native(&portable, 0).unwrap();
+    assert_eq!(copy, original);
+    let output = native::test_header_rule(&copy, &request, None).unwrap();
+    assert_eq!(
+        output.after.values("x-bytes").collect::<Vec<_>>(),
+        [b"\xfe\x80".as_slice()]
+    );
+    assert_eq!(output.after.values("x-missing").count(), 0);
+    native::compile(vec![copy], native::AutomationLimits::default()).unwrap();
     original.request.headers.clear();
     original.response.text_transform = Some(native::LiteralTransform {
         find: "seed".into(),

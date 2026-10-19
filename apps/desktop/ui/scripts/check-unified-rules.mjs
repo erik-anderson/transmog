@@ -23,7 +23,7 @@ export async function checkUnifiedRules(page,root) {
   }
   await newTrafficRule(page,'Find and replace response text…');await text.getByLabel('Rule name',{exact:true}).fill('Replace response wording');
   await text.getByRole('button',{name:'Save rule',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseTextEditor.hrBusy);
-  await newTrafficRule(page,'Change browser headers…');await browser.locator('[name="uaName"]').fill('Browser identity');
+  await newTrafficRule(page,'Change UA headers…');await browser.locator('[name="uaName"]').fill('Browser identity');
   await browser.getByRole('button',{name:'Save rule',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.userAgentOverrides.uaBusy);
   assert.equal(await browser.locator('rule-activation button').getAttribute('aria-pressed'),'false','A new browser header rule became enabled while saving');
   await newTrafficRule(page,'Create saved response from scratch…');const saved=workspace.locator('.auto-response-editor');

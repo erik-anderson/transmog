@@ -29,7 +29,7 @@ editor's draft; replacing a draft within the same editor requires resolving its
 unsaved changes. Compact windows switch between the list and properties with
 **Back to rules**. New rule creation stays available above both views.
 
-**New rule…** offers **Change request headers…**, **Change browser headers…**,
+**New rule…** offers **Change request headers…**, **Change UA headers…**,
 **Change response headers…**, **Find and replace response text…**, **Serve a
 captured response…**, and **Create saved response from scratch…**. Traffic's
 **Actions → Create rule** menu prefills the selected request and action. These
@@ -284,7 +284,7 @@ stale-update detection, and audit evidence.
 
 ## User-Agent and client hints
 
-Choose **Automation → Rules → New rule… → Change browser headers…** for User-Agent and client hints. Browser-header rules are part of the shared Rules list; their **Execution order** disclosure contains the ordered browser policies. The first enabled
+Choose **Automation → Rules → New rule… → Change UA headers…** for User-Agent and client hints. Browser-header rules are part of the shared Rules list; their **Execution order** disclosure contains the ordered browser policies. The first enabled
 matching rule wins, even if the request has no headers to replace. Host filters
 are exact and case-insensitive; path prefixes are case-sensitive. Drag the
 handle or use Move up and Move down to change precedence. Saving filters already
@@ -533,8 +533,9 @@ response sets and captured-page previews use saved response assets.
 
 Operations run in their displayed order. **Set** replaces every matching field
 with one field at the first existing position (or appends when absent).
-**Append** adds a separate field at the end. **Remove** removes every matching
-field. Names match case-insensitively; untouched field order, duplicate values
+**Override if present** uses the same replacement behavior only when the field
+exists; an absent field stays absent. **Append** adds a separate field at the
+end. **Remove** removes every matching field. Names match case-insensitively; untouched field order, duplicate values
 and bytes are preserved. UTF-8 text and Hex bytes allow non-ASCII field values
 without lossy conversion. Invalid names, line breaks and incomplete hex pairs
 are rejected while preserving the draft.

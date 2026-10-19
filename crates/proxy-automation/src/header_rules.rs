@@ -21,7 +21,7 @@ pub enum HeaderRulePhase {
 pub struct HeaderOperationResult {
     /// One-based position in the authored operation list.
     pub index: usize,
-    /// Set, append or remove.
+    /// Set, override if present, append or remove.
     pub operation: &'static str,
     /// Case-preserving target header name.
     pub name: String,
@@ -146,6 +146,10 @@ pub fn test_header_rule(
                 HeaderOperation::Set(field) => {
                     ("Set", String::from_utf8_lossy(field.name()).into_owned())
                 }
+                HeaderOperation::OverrideIfPresent(field) => (
+                    "Override if present",
+                    String::from_utf8_lossy(field.name()).into_owned(),
+                ),
                 HeaderOperation::Append(field) => {
                     ("Append", String::from_utf8_lossy(field.name()).into_owned())
                 }
@@ -205,6 +209,54 @@ mod tests {
             source_version: HttpLegVersion::Http1,
         }
     }
+    #[test]
+    fn override_if_present_preserves_missing_fields_and_composes_in_order() {
+        for phase in [HeaderRulePhase::Request, HeaderRulePhase::Response] {
+            let original = HeaderBlock::from_fields(vec![
+                HeaderField::try_new("X-Keep", vec![0x80, 0xff]).unwrap(),
+                HeaderField::try_new("X-Existing", "first").unwrap(),
+                HeaderField::try_new("Set-Cookie", "one=1").unwrap(),
+                HeaderField::try_new("x-existing", "second").unwrap(),
+                HeaderField::try_new("set-cookie", "two=2").unwrap(),
+            ]);
+            let draft = rule(
+                phase,
+                vec![
+                    HeaderOperation::override_if_present("X-Missing", "never added").unwrap(),
+                    HeaderOperation::override_if_present("x-EXISTING", vec![0xfe, 0x80]).unwrap(),
+                    HeaderOperation::override_if_present("x-EXISTING", vec![0xfe, 0x80]).unwrap(),
+                    HeaderOperation::append("X-Later", "added").unwrap(),
+                    HeaderOperation::override_if_present("x-later", "replaced").unwrap(),
+                    HeaderOperation::remove("X-Later").unwrap(),
+                    HeaderOperation::override_if_present("X-Later", "still absent").unwrap(),
+                ],
+            );
+            let mut request = crate::request_for_test("GET", "https://example.test/", &[]).unwrap();
+            request.headers = original.clone();
+            let result =
+                test_header_rule(&draft, &request, Some(&response(original.clone()))).unwrap();
+            assert_eq!(result.before, original);
+            assert_eq!(
+                result.after,
+                HeaderBlock::from_fields(vec![
+                    original.fields()[0].clone(),
+                    HeaderField::try_new("x-EXISTING", vec![0xfe, 0x80]).unwrap(),
+                    original.fields()[2].clone(),
+                    original.fields()[4].clone(),
+                ])
+            );
+            assert_eq!(
+                result
+                    .operations
+                    .iter()
+                    .map(|op| op.changed)
+                    .collect::<Vec<_>>(),
+                [false, true, false, true, true, true, false]
+            );
+            assert_eq!(result.operations[0].operation, "Override if present");
+        }
+    }
+
     #[test]
     fn ordered_operations_preserve_untouched_duplicates_and_non_ascii_bytes() {
         let headers = HeaderBlock::from_fields(vec![
@@ -322,6 +374,7 @@ mod tests {
         ] {
             for action in [
                 HeaderOperation::set(name, "x").unwrap(),
+                HeaderOperation::override_if_present(name, "x").unwrap(),
                 HeaderOperation::append(name, "x").unwrap(),
                 HeaderOperation::remove(name).unwrap(),
             ] {

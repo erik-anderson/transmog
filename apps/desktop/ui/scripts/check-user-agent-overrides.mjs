@@ -12,7 +12,7 @@ export async function checkUserAgentOverrides(page,root) {
   const sorted=()=>page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.request.userAgent).sort((a,b)=>a.priority-b.priority||a.id.localeCompare(b.id)).map(rule=>({id:rule.id,name:rule.displayName,priority:rule.priority,enabled:rule.enabled,policy:rule.request.userAgent})));
   const named=name=>rows().filter({has:page.getByText(name,{exact:true})});
   await editor.getByText('No User-Agent overrides. Add one to choose a browser preset or enter your own value.',{exact:true}).waitFor();
-  await newTrafficRule(page,'Change browser headers…');
+  await newTrafficRule(page,'Change UA headers…');
   assert.equal(await editor.getByLabel('User-Agent preset',{exact:true}).locator('option').count(),49);
   const edge=await editor.getByLabel('User-Agent preset',{exact:true}).locator('option').evaluateAll(options=>options.find(option=>/Edge.*Windows/.test(option.textContent))?.value);
   assert.ok(edge,'The supplied Edge Windows preset is absent');
@@ -24,12 +24,12 @@ export async function checkUserAgentOverrides(page,root) {
   assert.equal((await sorted()).length,1);assert.match((await sorted())[0].policy.clientHints['Sec-CH-UA'],/Microsoft Edge/);
   assert.equal((await sorted())[0].policy.versionOverride,null);
   const originalId=(await sorted())[0].id;
-  await newTrafficRule(page,'Change browser headers…');
+  await newTrafficRule(page,'Change UA headers…');
   await field('uaName').fill('Scoped custom');await field('uaHost').fill('other.test');await field('uaPath').fill('/private');await field('uaValue').fill('Custom/5.0');await field('uaVersion').fill('155');
   await editor.getByLabel('Client hint policy',{exact:true}).selectOption('strip');
   await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();assert.equal((await sorted()).length,2);
   assert.equal((await sorted())[1].policy.stripClientHints,true);
-  await newTrafficRule(page,'Change browser headers…');
+  await newTrafficRule(page,'Change UA headers…');
   await field('uaName').fill('Replacement');await field('uaHost').fill('EXAMPLE.TEST');await field('uaPath').fill('/api');await field('uaValue').fill('Replacement/1.0');
   await editor.getByRole('button',{name:'Save and enable',exact:true}).click();
   const duplicate=editor.locator('.ua-duplicate-dialog[open]');await duplicate.getByText('Edge desktop',{exact:false}).waitFor();
@@ -52,7 +52,7 @@ export async function checkUserAgentOverrides(page,root) {
   await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settled();assert.equal((await sorted()).length,1);
   await editor.getByRole('button',{name:'Undo deletion',exact:true}).click();await settled();assert.equal((await sorted()).length,2);
   assert.equal((await sorted()).find(rule=>rule.name==='Scoped custom').policy.stripClientHints,true);
-  const addRule=async(name,path)=>{await newTrafficRule(page,'Change browser headers…');await field('uaName').fill(name);await field('uaHost').fill('example.test');await field('uaPath').fill(path);await field('uaValue').fill(name+'/1.0');await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();};
+  const addRule=async(name,path)=>{await newTrafficRule(page,'Change UA headers…');await field('uaName').fill(name);await field('uaHost').fill('example.test');await field('uaPath').fill(path);await field('uaValue').fill(name+'/1.0');await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();};
   await addRule('Broad fallback','/');
   await named('Replacement').locator('.ua-select').click();await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settled();
   await addRule('New scoped','/new');
@@ -63,7 +63,7 @@ export async function checkUserAgentOverrides(page,root) {
   await field('uaPath').fill('/');await editor.getByRole('button',{name:'Save rule',exact:true}).click();
   await duplicate.getByRole('button',{name:'Replace override',exact:true}).click();await settled();
   assert.deepEqual((await sorted()).map(rule=>rule.name),['Scoped custom','New scoped'],'Replacing an earlier duplicate moved its position');
-  await newTrafficRule(page,'Change browser headers…');
+  await newTrafficRule(page,'Change UA headers…');
   await field('uaName').fill('Googlebook');await field('uaHost').fill('googlebook.test');
   const googlebook=await editor.getByLabel('User-Agent preset',{exact:true}).locator('option').evaluateAll(options=>options.find(option=>option.textContent==='Chrome — Googlebook')?.value);
   assert.ok(googlebook);await editor.getByLabel('User-Agent preset',{exact:true}).selectOption(googlebook);

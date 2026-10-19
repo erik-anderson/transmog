@@ -557,7 +557,6 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable selectedTone = 'pending';
   @observable inspectorSide = 'response';
   showInspectorSide(side:string):void {this.inspectorSide=side;}
-  changeInspectorSide(event:Event):void {this.showInspectorSide((event.currentTarget as HTMLSelectElement).value);}
   @observable reuseDisabled = true;
   @observable reuseTitle = '';
   @observable matchedRuleId = '';

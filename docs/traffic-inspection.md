@@ -2,9 +2,11 @@
 
 Traffic uses one selected-item inspector for live requests and imported captures.
 Selection and scroll position remain stable while new traffic arrives. Inspect
-request and response together in a wide pane or use the message selector when space is
-limited; the narrow selector sits beside the URL/status. Incomplete, unavailable, redacted and evicted evidence are distinct
-states; display previews can be shorter than the retained source.
+request and response together in a wide pane or use the Request/Response pill
+when space is limited. The pill switches in one click. In very narrow inspectors,
+the controls wrap together to keep the full URL accessible. Incomplete,
+unavailable, redacted and evicted evidence are distinct states; display previews
+can be shorter than the retained source.
 
 Cancellation appears as **Cancelled** in the Status column, inspector, State
 column, Timeline and copied request summary. Cancellation uses a neutral badge;
@@ -389,7 +391,8 @@ headers and bodies. Content searches remain snapshots; filtering never decodes
 bodies on each keystroke.
 
 **Inspector below** is the default layout, with the traffic view above request
-and response inspectors. Narrow panes show one message and a request/response selector.
+and response inspectors. Narrow panes show one message and a Request/Response
+pill. Its filled half identifies the active message; click either half or use the arrow keys to switch.
 Headers show Name and Value by default; **Header options** reveals byte sizes
 and ordering. **Body options** groups decoding and preview limits.
 

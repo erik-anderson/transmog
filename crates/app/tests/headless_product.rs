@@ -366,7 +366,10 @@ async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence(
     let request = rule(
         "native-request",
         0,
-        vec![HeaderOperation::Set(field("User-Agent", "native-agent"))],
+        vec![
+            HeaderOperation::OverrideIfPresent(field("User-Agent", "native-agent")),
+            HeaderOperation::OverrideIfPresent(field("X-Override-Missing", "never added")),
+        ],
         vec![],
     );
     let mut response = rule(
@@ -374,7 +377,8 @@ async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence(
         1,
         vec![],
         vec![
-            HeaderOperation::Set(field("X-Order", "native-last")),
+            HeaderOperation::OverrideIfPresent(field("X-Order", "native-last")),
+            HeaderOperation::OverrideIfPresent(field("X-Override-Missing", "never added")),
             HeaderOperation::Set(field("Cache-Control", "max-age=123")),
             HeaderOperation::Append(field("Set-Cookie", "one=1")),
             HeaderOperation::Append(field("Set-Cookie", "two=2")),
@@ -484,6 +488,15 @@ export function onResponseHead() {
             5,
             "{:#?}",
             detail.header_effects
+        );
+        assert!(
+            detail
+                .requests
+                .iter()
+                .chain(&detail.responses)
+                .flat_map(|head| &head.headers)
+                .all(|header| !header.name.eq_ignore_ascii_case("X-Override-Missing")),
+            "conditional header overrides added an absent request or response field"
         );
         assert_eq!(detail.header_effects[0].name, "native-request");
         assert!(detail.header_effects[1].hook_id.contains("header-script"));

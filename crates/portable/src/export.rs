@@ -91,24 +91,22 @@ fn matcher(value: &native::RuleMatcher) -> wire::Matcher {
     }
 }
 fn operation(value: &native::HeaderOperation) -> wire::Operation {
-    match value {
-        native::HeaderOperation::Remove(name) => wire::Operation {
-            operation: "remove".into(),
-            name: name.clone(),
-            value_base64: None,
-        },
-        native::HeaderOperation::Set(field) | native::HeaderOperation::Append(field) => {
-            wire::Operation {
-                operation: if matches!(value, native::HeaderOperation::Set(_)) {
-                    "set"
-                } else {
-                    "append"
-                }
-                .into(),
-                name: String::from_utf8_lossy(field.name()).into_owned(),
-                value_base64: Some(STANDARD.encode(field.value())),
-            }
+    let (operation, field) = match value {
+        native::HeaderOperation::Remove(name) => {
+            return wire::Operation {
+                operation: "remove".into(),
+                name: name.clone(),
+                value_base64: None,
+            };
         }
+        native::HeaderOperation::Set(field) => ("set", field),
+        native::HeaderOperation::OverrideIfPresent(field) => ("override-if-present", field),
+        native::HeaderOperation::Append(field) => ("append", field),
+    };
+    wire::Operation {
+        operation: operation.into(),
+        name: String::from_utf8_lossy(field.name()).into_owned(),
+        value_base64: Some(STANDARD.encode(field.value())),
     }
 }
 /// Exports exactly a supported rule; advanced mixed actions fail rather than disappear.
