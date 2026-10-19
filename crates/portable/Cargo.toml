@@ -16,9 +16,9 @@ sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 time.workspace = true
-transmog-automation = { version = "=0.1.6", path = "../proxy-automation" }
-transmog-core = { version = "=0.1.6", path = "../proxy-core" }
-transmog-capture = { version = "=0.1.6", path = "../proxy-capture" }
+transmog-automation = { version = "=0.1.7", path = "../proxy-automation" }
+transmog-core = { version = "=0.1.7", path = "../proxy-core" }
+transmog-capture = { version = "=0.1.7", path = "../proxy-capture" }
 
 [dev-dependencies]
 zip.workspace = true
