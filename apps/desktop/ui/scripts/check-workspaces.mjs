@@ -1,4 +1,5 @@
 import {checkResponseSetFollowups} from './check-response-set-followups.mjs';
+import {checkFormatConverter} from './check-format-converter.mjs';
 import {checkRequestControls} from './check-request-controls.mjs';
 import {checkResponseSetWorkspaces,checkResponseSetDraftRegressions,checkResponseSetPendingDialogs} from './check-response-set-workspaces.mjs';
 import {checkSavedDemos} from './check-saved-demos.mjs';
@@ -173,6 +174,21 @@ await page.addInitScript((configuration) => {
       if(state.holdCommand===command){state.holdCommand=null;await new Promise(resolve=>state.finishHeldCommand=resolve);}
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
+        case 'cancel_format_conversion': return;
+        case 'convert_format': {
+          const input=structuredClone(args.input);
+          if(state.deferConversion){state.deferConversion=false;state.conversionPending=true;await new Promise(resolve=>state.finishConversion=resolve);}
+          if(input.input==='invalid')throw new Error('Invalid conversion input.');
+          let bytes=input.representation==='hex'?Uint8Array.from(input.input.match(/../g)??[],pair=>parseInt(pair,16)):new TextEncoder().encode(input.input);
+          if(input.operation==='base64-encode')bytes=new TextEncoder().encode(btoa(String.fromCharCode(...bytes)));
+          if(input.operation==='base64-decode')bytes=Uint8Array.from(atob(input.input),character=>character.charCodeAt(0));
+          let text=null;try{text=new TextDecoder('utf-8',{fatal:true}).decode(bytes);}catch{}
+          const representation=input.outputRepresentation==='hex'||text===null?'hex':'text';
+          return {display:representation==='hex'?Array.from(bytes,byte=>byte.toString(16).padStart(2,'0')).join(''):text,representation,textAvailable:text!==null,byteLength:bytes.length,encoding:'utf8'};
+        }
+        case 'open_converter_window': state.converterDraft=structuredClone(args.draft);if(state.converterWindowError)throw new Error('Converter window could not be opened.');return;
+        case 'save_converter_output': state.converterSaved=structuredClone(args.input);if(state.converterSaveError)throw new Error('Output could not be saved.');return false;
+        case 'converter_header_value': {const header=(state.fullHeaders??[{name:'Accept',value:'*/*'},{name:'Authorization',value:'[redacted]',sensitive:true}])[args.index];if(header?.sensitive)throw new Error('This header value was redacted.');return header?.value??'';}
         case 'open_product_website': return;
         case 'open_response_set_live_page': state.livePageArgs=structuredClone(args);if(state.livePageError)throw new Error(state.livePageError);return;
         case 'app_containers': {
@@ -821,6 +837,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')){await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident review, export dialog lifecycle, stale reviews and capture markers verified.\n');process.exit(0);}
   if(process.argv.includes('--traffic-presentation-only')){await page.goto('https://workspace.test/');await checkTrafficPresentation(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic presentation and one-click inspector switching verified.\n');process.exit(0);}
   if(process.argv.includes('--request-controls-only')){await checkRequestControls(page);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Request cancellation, uncached selections and delayed removal focus verified.\n');process.exit(0);}
@@ -2662,6 +2679,7 @@ try {
   assert.equal(await emptyDrop.getByRole('button',{name:/Drop traces here/}).count(),0,'Clear all restored the initial import helper');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/traffic-cleared-empty.png')});
   await checkComparison(page,root);
+  await checkFormatConverter(page,root);
   await checkPortableCases(page,root);
   await checkIncidents(page,root);
   await checkResponseFiles(page,root);

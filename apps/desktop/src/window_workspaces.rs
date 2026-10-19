@@ -71,6 +71,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
     matches!(
         command,
         "app_status"
+            | "converter_header_value"
             | "client_certificate_status"
             | "product_state"
             | "save_workspace_preferences"

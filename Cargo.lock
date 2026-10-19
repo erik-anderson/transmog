@@ -7079,6 +7079,7 @@ dependencies = [
  "transmog-tls",
  "unicode-normalization",
  "url",
+ "web_atoms",
  "zeroize",
  "zip",
 ]

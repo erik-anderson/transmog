@@ -106,7 +106,10 @@ input, textarea, [contenteditable="true"], pre, code, .full-value,
 .status[data-lifecycle="running"] .status-dot { background: #1cbf73; box-shadow: 0 0 0 .18rem color-mix(in srgb, #1cbf73 18%, transparent); }
 .status[data-lifecycle="failed"] .status-dot { background: var(--danger); }
 .top-actions { display: flex; gap: .4rem; }
-.connection-status {display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:.45rem;min-width:0;}
+.connection-status {display:flex;align-items:center;justify-content:flex-end;gap:.45rem;min-width:0;}
+.connection-status converter-host { flex:0 0 auto; }
+.connection-status .listener-status { flex:1 1 auto; }
+.connection-status .listener-status strong,.connection-status .status-tools { flex-shrink:0; }
 .update-drafts-dialog { width: min(30rem, calc(100vw - 2rem)); max-height: calc(100vh - 2rem); overflow: auto; color: var(--text); background: var(--panel); border: 1px solid var(--line-strong); border-radius: .5rem; padding: 1rem; }
 .update-drafts-dialog h2 { margin: 0; font-size: 1rem; }
 .update-drafts-dialog p { font-size: .85rem; line-height: 1.5; }

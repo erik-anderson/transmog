@@ -1,4 +1,5 @@
 import './stream-inspector/stream-inspector.js';
+import './converter-host/converter-host.js';
 import './certificate-inspector/certificate-inspector.js';
 import '@microsoft/webui-framework/lazy-hydration.js';
 import './proxy-toggle/proxy-toggle.js';

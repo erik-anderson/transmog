@@ -7,6 +7,7 @@ param(
     [switch]$SkipReleaseBuild,
     [string]$ExecutablePath,
     [switch]$StartupOnly,
+    [switch]$FormatConverterChecks,
     [switch]$WindowGeometryChecks,
     [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
@@ -27,6 +28,7 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($FormatConverterChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'FormatConverterChecks is an isolated converter-window flow.' }
 if ($WindowGeometryChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'WindowGeometryChecks is an isolated close/reopen flow.' }
 if ($PortableCaseChecks -and ($StartupOnly -or $ViewerChecks -or $SoakMinutes)) { throw 'PortableCaseChecks is an isolated main-window flow.' }
 if ($PortableCaseChecks -and -not $ExecutablePath) { throw 'PortableCaseChecks requires an explicit desktop-test-fixtures build via ExecutablePath and SkipReleaseBuild.' }
@@ -247,6 +249,14 @@ try {
             if ($LASTEXITCODE -ne 0) { throw 'Native portable case checks failed.' }
         } finally { Pop-Location }
         return [pscustomobject]@{ PortableCasesVerified = $true; EvidenceRoot = $probeRoot }
+    }
+    if ($FormatConverterChecks) {
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-format-converter.mjs --port "$DevToolsPort" --output $probeRoot --process-id "$($process.Id)" --executable $executable --close-helper (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1')
+            if ($LASTEXITCODE -ne 0) { throw 'Native format converter checks failed.' }
+        } finally { Pop-Location }
+        return [pscustomobject]@{ FormatConverterVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($StartupOnly) {
         $result = [pscustomobject]@{ StartupVerified = $true; HostedPolicy = [bool]$HostedRunnerDevToolsPolicy; Runtime = (Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/version").Browser }

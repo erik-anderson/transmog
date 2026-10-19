@@ -112,6 +112,12 @@ with fixture SIDs and only reads the real system inventory.
 
 ## Live traffic and saved viewers
 
+The top bar's [Format converter](format-converter.md) opens an anchored scratch
+utility for encodings and hashes. It can detach into independent native windows;
+selected text and header-value context actions supply input without changing
+the inspected traffic. Converter drafts are temporary and independent of proxy
+state and capture-viewer lifetime.
+
 Traffic follows new exchanges until the user selects an entry or scrolls back.
 Capture continues while the view is pinned. Filtering and sorting operate on all
 retained metadata before viewport windowing. Column visibility, inspector arrangement

@@ -8,6 +8,7 @@
       </div>
       <span class="top-spacer"></span>
       <div class="connection-status">
+      <converter-host></converter-host>
       <client-certificate-requests ?viewer-mode="{{viewerMode}}" @client-certificate-settings-request="{openClientCertificateSettings()}" @client-certificate-panel-closed="{certificatePanelClosed()}"></client-certificate-requests>
       <if condition="!viewerMode"><div class="listener-status status" data-lifecycle="{{lifecycleKind}}" aria-live="polite">
         <span class="status-dot" aria-hidden="true"></span>

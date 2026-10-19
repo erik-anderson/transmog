@@ -1,0 +1,33 @@
+<template shadowrootmode="open">
+  <button class="converter-trigger" type="button" w-ref="{trigger}" ?hidden="{{standalone}}" aria-label="Format converter" title="Format converter" aria-haspopup="dialog" @click="{toggle()}">
+    <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m3 10 3-7 3 7M4.3 7h3.4"></path><path d="M12 6h9m-3-3 3 3-3 3"></path><path d="M12 18H3m3-3-3 3 3 3"></path><path d="m17 14-1 7m5-7-1 7m-5.5-4.5h7m-7.5 3h7"></path></svg><span>Format converter</span>
+  </button>
+  <section class="converter-panel" w-ref="{panel}" ?popover="{{!standalone}}" ?data-standalone="{{standalone}}" role="dialog" aria-modal="false" aria-label="Format converter" @keydown="{panelKey(e)}">
+    <header><strong>Format converter</strong><div class="actions"><button type="button" @click="{detach()}" ?disabled="{{converterHandoff}}">Open in new window</button><button type="button" @click="{close()}" aria-label="Close converter">×</button></div></header>
+    <label class="input-label">Input <select aria-label="Input representation" @change="{changeRepresentation(e)}" ?disabled="{{converterHandoff}}"><option value="text" ?selected="{{converterRepresentation == 'text'}}">Text</option><option value="hex" ?selected="{{converterRepresentation == 'hex'}}">Hex bytes</option></select></label>
+    <textarea w-ref="{inputEditor}" aria-label="Converter input" spellcheck="false" ?disabled="{{converterHandoff}}" @input="{inputChanged(e)}" @keydown="{inputKey(e)}"></textarea>
+    <div class="conversion-options"><label>Conversion<select w-ref="{operationSelect}" aria-label="Conversion" @change="{changeOperation(e)}" ?disabled="{{converterHandoff}}">
+      <option value="">Choose a conversion</option>
+      <optgroup label="Base64"><option value="base64-encode">To Base64</option><option value="base64-decode">From Base64</option><option value="base64url-encode">To Base64url</option><option value="base64url-decode">From Base64url</option></optgroup>
+      <optgroup label="URLs"><option value="url-encode">Encode URL component</option><option value="url-decode">Decode URL component</option><option value="form-encode">Encode form value</option><option value="form-decode">Decode form value (+ as space)</option></optgroup>
+      <optgroup label="Hex"><option value="hex-encode">To hexadecimal</option><option value="hex-decode">From hexadecimal</option></optgroup>
+      <optgroup label="HTML"><option value="html-encode">Encode HTML characters</option><option value="html-decode">Decode HTML character references</option></optgroup>
+      <optgroup label="Strings"><option value="json-quote">Quote JSON string</option><option value="json-unquote">Unquote JSON string</option></optgroup>
+      <optgroup label="Hashes"><option value="md5">MD5</option><option value="sha1">SHA-1</option><option value="sha256">SHA-256</option><option value="sha384">SHA-384</option><option value="sha512">SHA-512</option></optgroup>
+    </select></label><button type="button" @click="{run()}" ?disabled="{{!converterOperation || converterHandoff}}">Convert</button><button type="button" @click="{cancel()}" ?hidden="{{!converterBusy}}">Cancel</button></div>
+    <details><summary>Text encoding</summary><label>Encoding for text ↔ bytes<select aria-label="Text encoding" @change="{changeEncoding(e)}" ?disabled="{{converterHandoff}}"><option value="utf8" ?selected="{{converterEncoding == 'utf8'}}">UTF-8</option><option value="utf16le" ?selected="{{converterEncoding == 'utf16le'}}">UTF-16LE</option><option value="utf16be" ?selected="{{converterEncoding == 'utf16be'}}">UTF-16BE</option><option value="windows1252" ?selected="{{converterEncoding == 'windows1252'}}">Windows-1252</option></select></label><p>BOMs are preserved as content. URL, HTML and JSON escaping use Unicode text. Invalid text stays available as Hex bytes.</p></details>
+    <p class="error" role="alert" ?hidden="{{!converterError}}">{{converterError}}</p>
+    <label class="output-label">Output<select aria-label="Output representation" @change="{changeOutputMode(e)}" ?disabled="{{converterHandoff}}"><option value="text" ?selected="{{converterOutputMode == 'text'}}">Text (Hex if unavailable)</option><option value="hex" ?selected="{{converterOutputMode == 'hex'}}">Hex bytes</option></select></label>
+    <textarea w-ref="{outputEditor}" aria-label="Converter output" spellcheck="false" readonly></textarea>
+    <footer><div class="actions"><button type="button" @click="{copyOutput()}" ?disabled="{{!converterReady}}">Copy output</button><button type="button" @click="{chain()}" ?disabled="{{!converterReady || converterHandoff}}">Use output as input</button><button type="button" @click="{save()}" ?disabled="{{!converterReady || converterSaving}}">Save output…</button></div><span role="status">{{converterStatus}}</span></footer>
+  </section>
+  <div class="selection-menu" w-ref="{selectionMenu}" popover="auto" data-x="{{converterMenuX}}" data-y="{{converterMenuY}}" aria-label="Text actions" @keydown="{menuKey(e)}">
+    <button type="button" @click="{openSelection()}" ?disabled="{{converterMenuError}}">Open in Format converter</button>
+    <p role="status" ?hidden="{{!converterMenuError}}">{{converterMenuError}}</p>
+    <button type="button" @click="{copySelection()}" ?disabled="{{!converterSelection}}">Copy</button>
+    <button type="button" @click="{editSelection('cut')}" ?hidden="{{!converterEditable}}" ?disabled="{{!converterSelection}}">Cut</button>
+    <button type="button" @click="{editSelection('paste')}" ?hidden="{{!converterEditable}}">Paste</button>
+  </div>
+  <dialog w-ref="{replaceDialog}" aria-labelledby="replace-title" @cancel="{cancelReplacement(e)}"><h2 id="replace-title">Keep the current conversion?</h2><p>The converter already contains input. Choose where to open the selected text.</p><div class="actions"><button type="button" @click="{replaceInput()}">Replace input</button><button type="button" @click="{selectionInWindow()}">Open in new window</button><button type="button" @click="{cancelReplacement(e)}">Cancel</button></div></dialog>
+  <dialog w-ref="{saveErrorDialog}" aria-labelledby="save-error-title" @cancel="{closeSaveError(e)}"><h2 id="save-error-title">Output could not be saved</h2><p>{{converterSaveError}}</p><button type="button" @click="{closeSaveError(e)}">Close</button></dialog>
+</template>

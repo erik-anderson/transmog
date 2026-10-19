@@ -25,6 +25,7 @@ mod diagnostics;
 mod experiment_pages;
 mod export_privacy;
 pub mod export_review;
+pub mod format_converter;
 pub mod incidents;
 mod inspector;
 mod lifecycle;
@@ -1837,6 +1838,35 @@ impl Application {
             );
         }
         inspector::header_page(&self.service, id, boundary, offset, largest_first)
+    }
+
+    /// Reads one complete original header value for a converter context action.
+    ///
+    /// # Errors
+    /// Returns unavailable, redacted, non-text, or oversized header evidence.
+    pub fn converter_header_value(
+        &self,
+        id: &str,
+        boundary: &str,
+        index: usize,
+    ) -> Result<String, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return inspector::converter_header_from_snapshot(&response.snapshot, boundary, index);
+        }
+        let snapshot = self
+            .service
+            .catalog()
+            .get(transmog_core::intercept::ExchangeId(
+                inspector::parse_session_id(id)?,
+            ))
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Request is no longer retained",
+                    false,
+                )
+            })?;
+        inspector::converter_header_from_snapshot(&snapshot, boundary, index)
     }
 
     /// Copies the complete corresponding request URL without display truncation.

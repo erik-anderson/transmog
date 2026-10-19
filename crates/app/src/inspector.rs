@@ -181,6 +181,49 @@ pub(crate) fn header_page_from_snapshot(
     })
 }
 
+pub(crate) fn converter_header_from_snapshot(
+    snapshot: &SessionSnapshot,
+    stage: &str,
+    index: usize,
+) -> Result<String, AppError> {
+    let unavailable = || {
+        AppError::new(
+            ErrorCategory::Unavailable,
+            "The complete header value is unavailable.",
+            false,
+        )
+    };
+    let block = snapshot
+        .request_heads
+        .iter()
+        .find(|head| boundary(head.boundary) == stage)
+        .map(|head| &head.head.headers)
+        .or_else(|| {
+            snapshot
+                .response_heads
+                .iter()
+                .find(|head| boundary(head.boundary) == stage)
+                .map(|head| &head.head.headers)
+        })
+        .ok_or_else(unavailable)?;
+    let field = block.iter().nth(index).ok_or_else(unavailable)?;
+    if field.is_redacted() {
+        return Err(AppError::new(
+            ErrorCategory::Unavailable,
+            "This header value was redacted.",
+            false,
+        ));
+    }
+    if field.value().len() > crate::format_converter::MAX_INPUT {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "Header value exceeds the converter's 8 MiB input limit.",
+            false,
+        ));
+    }
+    std::str::from_utf8(field.value()).map(str::to_owned).map_err(|_| AppError::new(ErrorCategory::Unavailable,"This header contains binary bytes. Select an explicit byte representation instead.",false))
+}
+
 pub(crate) fn copy_message_url(
     service: &ApplicationSessionService,
     id: &str,
@@ -1551,6 +1594,15 @@ mod tests {
         assert_eq!(view[0].field_bytes, Some(13 + 13 + 4));
     }
 
+    fn assert_converter_headers(snapshot: &SessionSnapshot) {
+        assert_eq!(
+            converter_header_from_snapshot(snapshot, "client-request", 700).unwrap(),
+            "a".repeat(5000)
+        );
+        assert!(converter_header_from_snapshot(snapshot, "client-response", 700).is_err());
+        assert!(converter_header_from_snapshot(snapshot, "client-request", 999).is_err());
+    }
+
     #[tokio::test]
     async fn full_header_measurements_paging_sort_and_copy_cover_fields_after_the_preview() {
         use std::sync::Arc;
@@ -1614,6 +1666,7 @@ mod tests {
             },
         });
         let id = "00000000000000000000000000000001";
+        assert_converter_headers(&service.catalog().get(ExchangeId(1)).unwrap());
         let full_url = copy_message_url(&service, id, "client-request").unwrap();
         assert_eq!(
             full_url,

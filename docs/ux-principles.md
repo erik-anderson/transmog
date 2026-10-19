@@ -99,6 +99,9 @@ when changing the experience.
   alternatives and Undo.
 - Long-form editors keep resize/expand controls and reachable actions. Formatting
   is explicit and undoable; closing releases editor resources and restores focus.
+- Scratch utilities preserve their draft when dismissed. Detaching transfers
+  work only after its destination is ready; independent utility windows retain
+  their own drafts and do not depend on the originating workspace's lifetime.
 
 ## Preserve work across changes
 
@@ -156,6 +159,7 @@ other guides rather than repeated inventories.
 | Certificate evidence and CA lifecycle | [Certificate model](certificate-model.md) |
 | Client-certificate authorization and prompts | [Client certificates](client-certificates.md) |
 | Proxy/window lifecycle and update interaction | [Desktop](product-shell.md) |
+| Scratch conversions and converter-window lifetime | [Format converter](format-converter.md) |
 | Persistence, retention defaults and privacy | [Product state](product-state-and-support.md) |
 | Rule editing and activation | [Automation](automation.md) |
 | Preview isolation | [Safe previews](safe-previews.md) and [page preview](captured-page-preview.md) |

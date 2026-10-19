@@ -1,0 +1,97 @@
+# Format converter
+
+Use **Format converter** in the desktop top bar to encode, decode or hash text
+without leaving the current workspace. It is available in the main window and
+capture viewers regardless of proxy state. The flyout opens beside its button;
+compact windows show the icon with an accessible name and tooltip.
+
+Enter Input, choose a Conversion, and inspect the read-only Output. Choosing a
+conversion and subsequent input edits update the output after a short delay.
+**Convert** also runs it explicitly; **Cancel** stops the current work while
+preserving input. A pending or invalid conversion disables copying, saving and
+chaining the previous result. Late results cannot replace newer input.
+
+**Copy output** copies the displayed representation. **Use output as input**
+preserves the result's bytes and encoding, using Hex input for binary results.
+This edit, input replacement and ordinary typing support Ctrl+Z/Ctrl+Y in the
+input editor. **Save output…** saves complete output bytes through a native file
+dialog, independently of the selected output presentation.
+
+## Opening from evidence
+
+Right-click selected text and choose **Open in Format converter**. The same
+action is available through Shift+F10/the Menu key and in Monaco editor context
+menus. Selection is copied explicitly; the tool does not read the clipboard
+when it opens or change source evidence.
+
+Right-click either column of a request/response header row to use that specific
+occurrence's complete original value. A selection at the clicked location takes
+precedence. Header order, duplicate fields, whitespace and empty values remain
+distinct; display truncation does not truncate the converter input. Unavailable,
+redacted and binary header values explain why they cannot be supplied as text.
+
+If the flyout already contains input, choose **Replace input**, **Open in new
+window**, or **Cancel**. Replacing input is undoable. Captured-page browser
+previews remain isolated from application context actions.
+
+## Independent windows and temporary work
+
+**Open in new window** transfers a flyout draft to an independent resizable
+native window. The source clears only after the destination receives it. A
+failure leaves the source draft usable. The destination keeps its operation,
+input, encoding and undo history; output is recomputed from that snapshot.
+Each window owns its work and remains usable after its origin closes. There is
+no fixed limit on converter-window count. In a standalone converter, **Open in
+new window** copies its draft into another independent window.
+
+Escape, Close and outside clicks dismiss the flyout while preserving its draft.
+Escape/Close return focus to its invoker; outside clicks retain their destination
+focus. Escape does not close standalone windows. Closing a standalone window
+ends that scratch session. Contents are temporary and are not restored on
+restart, saved in captures/preferences, placed in URLs/titles or recorded in
+diagnostics. Normal app shutdown and software updates end converter sessions.
+
+## Conversions and byte semantics
+
+| Group | Operations |
+| --- | --- |
+| Base64 | Standard and URL-safe encode/decode |
+| URL | Component encode/decode; separate form-value encode/decode |
+| Hex | Bytes to/from hexadecimal |
+| HTML | Encode/decode character references as inert text |
+| Strings | Quote/unquote complete JSON strings |
+| Hashes | MD5, SHA-1, SHA-256, SHA-384, SHA-512 |
+
+UTF-8 is the default encoding for text/byte boundaries. **Text encoding** exposes
+UTF-16LE, UTF-16BE and Windows-1252. Encoding is strict: malformed sequences and
+unrepresentable characters are not replaced silently. BOMs are preserved as
+ordinary content and are never added automatically. Text and Hex input/output
+representations are explicit; undecodable output and nonprinting control bytes
+are displayed as Hex. Tab and line endings remain available as text.
+URL/HTML/JSON escaping works on Unicode text independently of byte-encoding
+choices. Hashes are one-way digests, displayed as lowercase hexadecimal text.
+
+- Standard Base64 encoding includes padding; Base64url encoding omits it.
+  Decoding accepts canonical padded or unpadded input with the matching alphabet,
+  checks unused bits, and rejects whitespace and malformed padding.
+- URL components use UTF-8 percent escapes and preserve literal `+` on decode.
+  Form values encode spaces as `+` and decode `+` as space. Malformed percent
+  escapes and non-UTF-8 decoded bytes are errors.
+- Hex uses complete byte pairs. ASCII whitespace is accepted between pairs,
+  including at the ends; whitespace within a pair and incomplete pairs fail.
+- HTML decoding recognizes semicolon-terminated named and numeric references,
+  including named references containing two code points. Unknown or unterminated
+  references remain literal text. Invalid numeric Unicode values fail.
+- JSON unquoting requires a complete quoted JSON string with valid escapes and
+  paired surrogates. Empty input is valid for encodings and hashes; an empty JSON
+  string is written as `""` when unquoting.
+
+Each conversion is limited to 8 MiB of input bytes and 32 MiB of output bytes.
+Hex editor text is additionally bounded to 24 MiB. Work runs off the UI thread;
+two workers are available across windows, without an unbounded queue. If they
+are occupied, **Convert** offers an explicit retry. Limits reject excess instead
+of truncating output. Undo retains up to twenty edits within a bounded history.
+
+Custom TypeScript formats, compression, format detection, file inputs and saving
+output as traffic are outside v1. Conversion uses internal desktop commands;
+it does not extend network protocols or the external control protocol.

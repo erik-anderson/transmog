@@ -13,6 +13,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 ## Traffic and automation
 
 - [Traffic inspection](traffic-inspection.md): headers, bodies, search, selection and replay.
+- [Format converter](format-converter.md): temporary text/byte conversions and independent scratch windows.
 - [Request timings](request-timings.md): waterfalls and shared transport evidence.
 - [Streams](stream-inspection.md): WebSocket/SSE inspection and retained messages.
 - [Automation](automation.md): auto-responses, header overrides and scripts.

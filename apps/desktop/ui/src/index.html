@@ -9,6 +9,7 @@
     <script type="module" src="/app.js"></script>
   </head>
   <body>
-    <app-shell></app-shell>
+    <if condition="converterMode"><converter-host standalone></converter-host></if>
+    <if condition="!converterMode"><app-shell></app-shell></if>
   </body>
 </html>

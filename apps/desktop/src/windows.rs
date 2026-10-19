@@ -4,6 +4,8 @@
 mod captured_preview;
 #[path = "comparison.rs"]
 mod comparison;
+#[path = "format_converter.rs"]
+mod format_converter;
 #[path = "incidents.rs"]
 mod incidents;
 #[path = "portable_cases.rs"]
@@ -1497,6 +1499,20 @@ async fn inspect_headers(
 }
 
 #[tauri::command]
+async fn converter_header_value(
+    id: String,
+    boundary: String,
+    index: usize,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || application.converter_header_value(&id, &boundary, index))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
 fn copy_message_url(
     id: String,
     boundary: String,
@@ -2184,6 +2200,7 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates)
+        .manage(format_converter::ConverterWindows::new())
         .manage(DesktopState {
             #[cfg(feature = "desktop-test-fixtures")]
             certificate_test_fixture,
@@ -2203,9 +2220,11 @@ pub fn run() {
         })
         .register_uri_scheme_protocol("transmog-ui", move |context, request: Request<Vec<u8>>| {
             let state = context.app_handle().state::<DesktopState>();
+            let converter_mode = context.app_handle().state::<format_converter::ConverterWindows>().contains(context.webview_label());
             let application = state
                 .workspaces
                 .application(&state.application, context.webview_label());
+            let application = if converter_mode { Ok(state.application.clone()) } else { application };
             let Ok(application) = application else {
                 return Response::builder()
                     .status(404)
@@ -2213,6 +2232,8 @@ pub fn run() {
                     .expect("fixed response");
             };
             let mut view = ShellView::from(&application.status());
+            view.converter_mode = converter_mode;
+            if converter_mode { view.page_title = "Format converter — Transmog"; }
             view.viewer_mode = context.webview_label() != "main";
             into_tauri_response(renderer.respond(
                 request.method().as_str(),
@@ -2238,6 +2259,13 @@ pub fn run() {
         )
         .invoke_handler({
             let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                format_converter::convert_format,
+                format_converter::cancel_format_conversion,
+                format_converter::open_converter_window,
+                format_converter::take_converter_draft,
+                format_converter::acknowledge_converter_window,
+                format_converter::close_converter_window,
+                format_converter::save_converter_output,
                 workspaces::open_trace_viewer,
                 workspaces::open_main_window,
                 captured_preview::open_captured_page,
@@ -2386,6 +2414,7 @@ pub fn run() {
                 save_stream_message,
                 inspect_certificates,
                 inspect_headers,
+                converter_header_value,
                 copy_message_headers,
                 copy_message_url,
                 request_command,
@@ -2415,12 +2444,14 @@ pub fn run() {
                 let window = invoke.message.webview_ref();
                 let state = window.state::<DesktopState>();
                 let label = window.label();
-                let allowed = state
+                let converters = window.state::<format_converter::ConverterWindows>();
+                let allowed = if converters.contains(label) { format_converter::command_allowed(invoke.message.command()) } else { state
                     .workspaces
                     .application(&state.application, label)
                     .is_ok()
                     && (label == "main"
-                        || workspaces::viewer_command_allowed(invoke.message.command()));
+                        || workspaces::viewer_command_allowed(invoke.message.command())
+                        || format_converter::command_allowed(invoke.message.command())) };
                 if allowed {
                     #[cfg(feature = "desktop-test-fixtures")]
                     if matches!(invoke.message.command(), "certificate_test_info" | "delete_certificate_test_key" | "close_certificate_test_viewer" | "close_certificate_test_main") {
@@ -2453,6 +2484,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<format_converter::ConverterWindows>().release(window.label());
                 portable_cases::release(window.label());
                 if window.label() == "main" {
                     close_guard.store(false, Ordering::Release);

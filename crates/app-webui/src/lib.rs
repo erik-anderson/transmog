@@ -19,6 +19,8 @@ const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsaf
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellView {
+    /// Independent scratch converter without traffic or proxy capabilities.
+    pub converter_mode: bool,
     /// Saved-capture window without live proxy controls.
     pub viewer_mode: bool,
     /// HTML document language.
@@ -47,6 +49,7 @@ impl From<&AppStatus> for ShellView {
             AppLifecycle::Failed => ("Needs attention", "failed"),
         };
         Self {
+            converter_mode: false,
             viewer_mode: false,
             language: "en",
             page_title: "Transmog",
@@ -268,6 +271,25 @@ mod tests {
                 200
             );
         }
+    }
+
+    #[test]
+    fn converter_windows_render_without_traffic_or_proxy_controls() {
+        let mut view = ShellView::from(&status());
+        view.converter_mode = true;
+        let response = AppRenderer::new()
+            .unwrap()
+            .respond("GET", "/", &view)
+            .unwrap();
+        let html = String::from_utf8(response.body).unwrap();
+        let start = html.find("<converter-host standalone").unwrap();
+        let end = start + html[start..].find("</converter-host>").unwrap();
+        let markup = &html[start..end];
+        assert!(markup.contains("<converter-host"));
+        assert!(markup.contains("Converter input"));
+        assert!(!markup.contains("<app-shell"));
+        assert!(!markup.contains("<proxy-toggle"));
+        assert!(!markup.contains("traffic-heading"));
     }
 
     #[test]

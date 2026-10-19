@@ -4,12 +4,22 @@ import type { BodyBytePage, BodyInspection, HeaderPage, HeaderSummary, HeadView,
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 import { opaqueConnectTransport } from '../connection-evidence.js';
+import { selectedConverterText } from '../converter-selection.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
 const exactHeaderBytes=(value:number|null|undefined):string=>value==null?'Size unavailable':value.toLocaleString()+(value===1?' byte':' bytes');
 export class MessageInspector extends WebUIElement {
+  headerContext(header:{id:string},event:MouseEvent|KeyboardEvent):void {
+    if(event instanceof KeyboardEvent){if(event.key==='Escape')this.headerContextGeneration++;if(event.repeat||!(event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey))return;}
+    if(selectedConverterText(event))return;
+    event.preventDefault();event.stopPropagation();
+    const source=event.currentTarget as HTMLElement,id=this.detail?.id,boundary=this.boundary,generation=++this.headerContextGeneration,headers=this.headerGeneration;source.focus({preventScroll:true});
+    if(!id)return;
+    const send=(text:string,error:string):void=>{if(this.isConnected&&generation===this.headerContextGeneration&&headers===this.headerGeneration&&this.detail?.id===id&&this.boundary===boundary&&source.getRootNode() instanceof ShadowRoot&&(source.getRootNode() as ShadowRoot).activeElement===source)this.$emit('format-converter-header',{event,text,error,source});};
+    void invoke<string>('converter_header_value',{id,boundary,index:Number(header.id)}).then(value=>send(value,'')).catch(error=>send('',describeError(error)));
+  }
   @attr side = 'response';
   @attr split = '35';
   @observable detail: SessionDetail | null = null;
@@ -31,6 +41,7 @@ export class MessageInspector extends WebUIElement {
   @observable headerNextOffset:number|null=null;
   @observable headersBusy=false;
   private headerGeneration=0;
+  private headerContextGeneration=0;
   @observable sourceIp = '';
   @observable headSummary = 'Select an exchange';
   @observable bodyText = 'Select an exchange to preview its body.';

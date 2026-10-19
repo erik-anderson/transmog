@@ -385,6 +385,12 @@ inspect saved evidence see [trace saving](trace-saving.md).
 
 ## Traffic workspace organization
 
+Use **Open in Format converter** from selected text or a request/response header
+row to decode, encode or hash the value while preserving the source. Header rows
+supply the complete value of that occurrence, including values longer than their
+display preview. See [Format converter](format-converter.md) for supported
+operations, temporary drafts and independent windows.
+
 The main field defaults to a live URL and process filter across all retained
 metadata. Switch to **Search contents**, then press Search or Enter to inspect
 headers and bodies. Content searches remain snapshots; filtering never decodes
