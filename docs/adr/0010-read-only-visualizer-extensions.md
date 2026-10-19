@@ -17,7 +17,11 @@ Installed extension count must not determine per-request work.
 - Discovery and native matching use metadata. Code loads only for an explicitly
   selected visible visualizer. Optional live feeding is declared by the extension,
   enabled by the user and scoped to related retained traffic in the same capture.
-- TypeScript runs in an OS-isolated worker under the process boundary established
+- Packages declare a stable JavaScript ES2022 module target, independent of the
+  visualizer API. TypeScript is optional authoring tooling that emits JavaScript
+  before packaging; the app never transpiles extension code. This keeps compiler
+  language changes out of the runtime compatibility contract.
+- JavaScript runs in an OS-isolated worker under the process boundary established
   by ADR 0008, with no direct or brokered network access. Visualization has a
   separate read-only protocol and cannot produce interception actions.
 - Extensions return validated typed structures, source spans and derived-byte

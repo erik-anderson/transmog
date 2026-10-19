@@ -21,7 +21,7 @@ pub enum Error {
     #[error("The visualizer did not declare this data access")]
     AccessDenied,
     /// Unsupported contract version.
-    #[error("This extension requires an unsupported format or API version")]
+    #[error("This extension requires an unsupported format, API or JavaScript runtime")]
     Unsupported,
     /// A finite operation budget was exhausted.
     #[error("The extension operation exceeded its resource limit")]

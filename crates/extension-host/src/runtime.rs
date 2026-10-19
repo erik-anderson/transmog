@@ -1,5 +1,5 @@
 use deno_ast::{
-    MediaType, ParseParams, SourceMapOption, parse_module,
+    MediaType, ParseParams, parse_module,
     swc::{
         ast::{CallExpr, Callee, Decl, Expr, ModuleDecl, ModuleItem, NewExpr},
         ecma_visit::{Visit, VisitWith},
@@ -56,7 +56,7 @@ impl Runtime {
             .find(|v| v.id == visualizer_id)
             .ok_or_else(|| fail(FailureKind::Validation, "Unknown visualizer contribution"))?
             .clone();
-        let (entry, modules) = compile(snapshot, &visualizer)?;
+        let (entry, modules) = load_modules(snapshot, &visualizer)?;
         let mut runtime = JsRuntime::try_new(RuntimeOptions {
             create_params: Some(
                 v8::CreateParams::default()
@@ -160,7 +160,7 @@ impl Runtime {
 
 type Modules = BTreeMap<ModuleSpecifier, String>;
 #[allow(clippy::too_many_lines)] // Keep the static module policy next to every dependency/export check.
-fn compile(
+fn load_modules(
     snapshot: &Snapshot,
     visualizer: &Visualizer,
 ) -> Result<(ModuleSpecifier, Modules), Failure> {
@@ -178,6 +178,15 @@ fn compile(
             .path()
             .strip_prefix(root.path())
             .ok_or_else(|| fail(FailureKind::Validation, "Module escaped package root"))?;
+        if !std::path::Path::new(path)
+            .extension()
+            .is_some_and(|ext| ext == "js" || ext == "mjs")
+        {
+            return Err(fail(
+                FailureKind::Validation,
+                "Executable modules must be JavaScript .js or .mjs files",
+            ));
+        }
         let source = snapshot
             .files
             .get(path)
@@ -191,12 +200,12 @@ fn compile(
         let parsed = parse_module(ParseParams {
             specifier: specifier.clone(),
             text: Arc::<str>::from(source),
-            media_type: MediaType::TypeScript,
+            media_type: MediaType::JavaScript,
             capture_tokens: false,
             scope_analysis: false,
             maybe_syntax: None,
         })
-        .map_err(|_| fail(FailureKind::Validation, "TypeScript parsing failed"))?;
+        .map_err(|_| fail(FailureKind::Validation, "JavaScript parsing failed"))?;
         let mut exports = BTreeMap::new();
         for item in &parsed.program_ref().unwrap_module().body {
             let dependency = match item {
@@ -254,19 +263,7 @@ fn compile(
                 "Dynamic imports and string code generation are forbidden",
             ));
         }
-        let mut javascript = parsed
-            .transpile(
-                &deno_ast::TranspileOptions::default(),
-                &deno_ast::TranspileModuleOptions { module_kind: None },
-                &deno_ast::EmitOptions {
-                    source_map: SourceMapOption::Separate,
-                    inline_sources: false,
-                    ..Default::default()
-                },
-            )
-            .map_err(|_| fail(FailureKind::Validation, "TypeScript transpilation failed"))?
-            .into_source()
-            .text;
+        let mut javascript = source.to_string();
         if specifier == entry {
             if exports.get("visualize") != Some(&false)
                 || (visualizer.live_updates.is_some() && exports.get("onTraffic") != Some(&false))

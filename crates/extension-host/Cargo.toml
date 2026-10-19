@@ -1,6 +1,6 @@
 [package]
 name = "transmog-extension-host"
-description = "Capability-free isolated TypeScript visualizer worker"
+description = "Capability-free isolated JavaScript visualizer worker"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

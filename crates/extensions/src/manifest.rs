@@ -6,6 +6,8 @@ use std::collections::{BTreeMap, BTreeSet};
 pub const PACKAGE_FORMAT_VERSION: u32 = 1;
 /// Current visualizer API revision; independent of worker IPC.
 pub const VISUALIZER_API_VERSION: u32 = 1;
+/// Executable module contract, independent of authors' source language/toolchain.
+pub const JAVASCRIPT_RUNTIME: &str = "javascript-es2022";
 /// Maximum manifest JSON bytes read during discovery.
 pub const MAX_MANIFEST_BYTES: usize = 256 * 1024;
 /// Maximum exact source/data bytes in one extension revision.
@@ -220,7 +222,7 @@ pub struct Visualizer {
     pub id: String,
     /// Human-readable selector label.
     pub name: String,
-    /// Package-relative TypeScript module; its dependencies remain package-local.
+    /// Package-relative JavaScript ES module (.js or .mjs); dependencies remain local.
     pub entry: String,
     /// Host surfaces where it is offered.
     pub surfaces: Vec<Surface>,
@@ -248,7 +250,7 @@ impl Visualizer {
             || !label(&self.name)
             || !std::path::Path::new(&self.entry)
                 .extension()
-                .is_some_and(|ext| ext.eq_ignore_ascii_case("ts"))
+                .is_some_and(|ext| ext == "js" || ext == "mjs")
             || self.surfaces.is_empty()
             || self.surfaces.len() > 2
             || self.surfaces.iter().collect::<BTreeSet<_>>().len() != self.surfaces.len()
@@ -364,6 +366,8 @@ pub struct Manifest {
     pub format_version: u32,
     /// Visualizer contract revision.
     pub api_version: u32,
+    /// Stable JavaScript baseline; TypeScript is an optional authoring tool only.
+    pub runtime: String,
     /// Stable extension identity.
     pub id: String,
     /// Extension release version, independently managed from the app.
@@ -393,6 +397,7 @@ impl Manifest {
     pub fn validate(&self, development: bool) -> Result<(), Error> {
         if self.format_version != PACKAGE_FORMAT_VERSION
             || self.api_version != VISUALIZER_API_VERSION
+            || self.runtime != JAVASCRIPT_RUNTIME
         {
             return Err(Error::Unsupported);
         }

@@ -1,4 +1,4 @@
-//! Isolated TypeScript parsing, closed module loading and synchronous pure invocation.
+//! Isolated JavaScript modules and synchronous pure invocation, without transpilation.
 mod runtime;
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::{

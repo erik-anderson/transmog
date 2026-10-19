@@ -5,20 +5,23 @@ use transmog_extension_supervisor::{HostConfig, Runner};
 use transmog_extensions::*;
 
 fn snapshot(source: &str) -> Snapshot {
-    let helper = "export const title: string = 'Structured view';";
+    let helper = "class Target { static title; static { this.title = 'Structured view'; } } export const title = Target.title;";
     let manifest:Manifest=serde_json::from_value(serde_json::json!({
-        "formatVersion":1,"apiVersion":1,"id":"example.worker","version":"1.0.0","name":"Example worker",
-        "visualizers":[{"id":"view","name":"View","entry":"src/main.ts","surfaces":["body"],
+        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.worker","version":"1.0.0","name":"Example worker",
+        "visualizers":[{"id":"view","name":"View","entry":"src/main.js","surfaces":["body"],
             "inputs":{"request":{"headers":["x-kind"],"body":"none"},"response":{"headers":["content-type"],"body":"optional"}},
             "matches":[{"direction":"response","contentTypes":["application/example"]}],
             "limits":{"inputBytes":1_048_576,"outputBytes":1_048_576,"heapBytes":67_108_864,"durationMs":1000,"nodes":1000}}],
-        "files":[{"path":"src/main.ts","bytes":source.len()},{"path":"src/helper.ts","bytes":helper.len()}]
+        "files":[{"path":"src/main.js","bytes":source.len()},{"path":"src/helper.mjs","bytes":helper.len()}]
     })).unwrap();
     Snapshot::new(
         manifest,
         BTreeMap::from([
-            ("src/main.ts".into(), Arc::<[u8]>::from(source.as_bytes())),
-            ("src/helper.ts".into(), Arc::<[u8]>::from(helper.as_bytes())),
+            ("src/main.js".into(), Arc::<[u8]>::from(source.as_bytes())),
+            (
+                "src/helper.mjs".into(),
+                Arc::<[u8]>::from(helper.as_bytes()),
+            ),
         ]),
     )
     .unwrap()
@@ -74,12 +77,12 @@ const DOCUMENT: &str =
     "{kind:'document',document:{title:'View',status:'complete',presentation:'tree',roots:[]}}";
 
 #[tokio::test]
-async fn relative_typescript_modules_execute_after_capability_restrictions_and_projection() {
+async fn relative_javascript_modules_execute_after_capability_restrictions_and_projection() {
     let source = r"
-import {title} from './helper.ts';
+import {title} from './helper.mjs';
 if (typeof Deno !== 'undefined' || typeof fetch !== 'undefined' || typeof WebSocket !== 'undefined' || typeof WebAssembly !== 'undefined' || typeof setTimeout !== 'undefined') throw new Error('ambient authority');
-export function visualize(input: unknown) {
-  const value = input as {request:{headers: unknown[];body: unknown}};
+export function visualize(input) {
+  const value = input;
   if (value.request.headers.length || value.request.body != null) throw new Error('undeclared input');
   let denied = false;
   try { (()=>0).constructor('return 1')(); } catch { denied = true; }
@@ -104,8 +107,8 @@ export function visualize(input: unknown) {
 #[tokio::test]
 async fn byte_continuations_are_authorized_and_their_results_are_host_validated() {
     let source = r"
-export function visualize(input: unknown) {return {kind:'needInput',token:'body',reads:[{sourceId:'response-body',offset:'0',maxBytes:4}]};}
-export function resume(token:string,pages:{bytes:number[]}[]) { return {kind:'document',document:{title:'Bytes',status:'complete',presentation:'tree',roots:[{id:'sum',name:'Sum',value:{kind:'integer',value:String(pages[0].bytes.reduce((a,b)=>a+b,0))},spans:[{sourceId:'response-body',offset:'0',length:'4'}]}]}}; }
+export function visualize(input) {return {kind:'needInput',token:'body',reads:[{sourceId:'response-body',offset:'0',maxBytes:4}]};}
+export function resume(token,pages) { return {kind:'document',document:{title:'Bytes',status:'complete',presentation:'tree',roots:[{id:'sum',name:'Sum',value:{kind:'integer',value:String(pages[0].bytes.reduce((a,b)=>a+b,0))},spans:[{sourceId:'response-body',offset:'0',length:'4'}]}]}}; }
 ";
     let runner = start(snapshot(source)).unwrap();
     assert!(matches!(
@@ -163,9 +166,9 @@ async fn undeclared_source_read_and_forged_document_source_are_rejected() {
 #[test]
 fn imports_cannot_resolve_network_filesystem_or_another_package() {
     for dependency in [
-        "https://example.invalid/script.ts",
-        "file:///C:/outside.ts",
-        "../../outside.ts",
+        "https://example.invalid/script.js",
+        "file:///C:/outside.js",
+        "../../outside.js",
         "node:fs",
     ] {
         let source = format!(
@@ -181,6 +184,33 @@ fn imports_cannot_resolve_network_filesystem_or_another_package() {
         panic!("dynamic import accepted");
     };
     assert_eq!(error.kind, FailureKind::Validation);
+}
+
+#[test]
+fn typescript_and_non_javascript_dependencies_are_not_transpiled() {
+    let typed = format!("export function visualize(input: unknown){{return {DOCUMENT};}}");
+    assert_eq!(
+        start(snapshot(&typed)).err().unwrap().kind,
+        FailureKind::Validation
+    );
+    let source = format!(
+        "import {{title}} from './author.ts'; export function visualize(){{return {DOCUMENT};}}"
+    );
+    let mut candidate = snapshot(&source);
+    let bytes = b"export const title = 'This is inert authoring source';";
+    candidate.manifest.files.push(Payload {
+        path: "src/author.ts".into(),
+        bytes: bytes.len() as u64,
+        sha256: None,
+    });
+    candidate
+        .files
+        .insert("src/author.ts".into(), Arc::<[u8]>::from(bytes.as_slice()));
+    let candidate = Snapshot::new(candidate.manifest, candidate.files).unwrap();
+    assert_eq!(
+        start(candidate).err().unwrap().kind,
+        FailureKind::Validation
+    );
 }
 #[tokio::test]
 async fn infinite_loop_times_out_and_unload_is_independent_between_instances() {

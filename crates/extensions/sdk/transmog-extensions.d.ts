@@ -1,4 +1,7 @@
-/** Version 1: read-only, synchronous visualizers executed in an OS-isolated worker. */
+/** Optional authoring types for API 1. Runtime packages contain JavaScript ES2022 modules.
+ * Use import type (or JSDoc import types); this declaration module has no runtime implementation.
+ * Visualizers are read-only, synchronous and executed in an OS-isolated worker.
+ */
 declare module "transmog:extensions/v1" {
   export type Direction = "request" | "response";
   export type BodyAccess = "none" | "optional" | "required";

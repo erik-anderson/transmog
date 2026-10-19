@@ -22,7 +22,7 @@ are checked in.
 ## Request and response visualizer extensions
 
 Implementation in progress. The [contract/package foundation](extensions.md) is
-implemented, along with the isolated TypeScript worker/supervisor. Desktop
+implemented, along with the isolated JavaScript worker/supervisor. Desktop
 retention/context integration and MAPI parity remain below.
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
@@ -30,7 +30,8 @@ capture, selection, and built-in inspection must not load extension code.
 
 ### Requirements agreed for this plan
 
-- Author extensions in TypeScript and execute them in an OS-sandboxed process.
+- Execute JavaScript ES2022 modules in an OS-sandboxed process. TypeScript is an
+  optional authoring tool compiled before packaging, not a runtime dependency.
 - Distribute ZIP64-based `.tmext` packages, with inexpensive metadata discovery.
 - Support explicitly registered unpacked development directories and optional
   hot reload under the same execution restrictions as packaged extensions.
@@ -62,9 +63,9 @@ capture, selection, and built-in inspection must not load extension code.
 ### Architecture and existing seams
 
 Reuse the approach in [ADR 0008](adr/0008-traffic-workspace-and-script-isolation.md):
-`deno_ast` for TypeScript and `deno_core`/V8 in a separate process, authenticated
-bounded IPC, supervisor deadlines, and the Windows AppContainer/Job Object
-boundary in `transmog-process-sandbox`.
+`deno_ast` for JavaScript static analysis and `deno_core`/V8 in a separate process,
+authenticated bounded IPC, supervisor deadlines, and the Windows AppContainer/Job
+Object boundary in `transmog-process-sandbox`.
 
 Introduce a UI-independent extension contract/package layer and a visualization
 supervisor above capture storage. A dedicated `transmog-extension-host` reuses
@@ -74,15 +75,17 @@ and live traffic-script processes are not its execution API. A parser failure
 ends the visualization job without affecting capture or live exchanges.
 
 The current script compiler accepts one module, rejects runtime imports, and
-has traffic-specific source, invocation, and output limits. Reuse its compiler
-and isolation machinery, not those assumptions. For extensions, support a closed
-graph of package-relative static TypeScript imports, declared in the manifest.
+has traffic-specific source, invocation, and output limits. Reuse its isolation
+machinery. Extensions use a closed graph of package-relative static JavaScript
+ES module imports, declared in the manifest.
 Reject external URLs, bare runtime packages, dynamic imports, native modules,
 and code generation. Load modules from verified bytes supplied by the host;
-the worker does not open the package or developer directory itself. Compile
-after activation inside the worker, with source maps and bounded diagnostics.
-Authoring and CI run semantic TypeScript checks; transpilation alone is not a
-type check. Dependencies must be included in the package, with licenses.
+the worker does not open the package or developer directory itself. Parse/load
+after activation inside the worker, without transpilation. Packages declare
+`runtime: "javascript-es2022"`; executable modules use `.js` or `.mjs`. Authors
+may pin TypeScript or another compiler, emitting ES2022 ES modules before
+packaging. Optional author sources/maps are inert. Authoring and CI run semantic
+checks separately. Dependencies must be included in the package, with licenses.
 
 `crates/app/src/inspector.rs`, body retention/range readers, and the existing
 `message-inspector` and `hex-viewer` are the integration points. Keep catalog
@@ -97,20 +100,20 @@ Proposed initial layout:
 ```text
 org.transmog.mapi.tmext
   manifest.json
-  src/main.ts
+  src/main.js
   src/...
   data/...
   LICENSE
   THIRD-PARTY-NOTICES
 ```
 
-The manifest declares package format version, extension ID/version, visualizer
-API major/minor requirements, display name, individual visualizer IDs, entry
+The manifest declares package format version, JavaScript runtime target,
+extension ID/version, visualizer API requirements, display name, visualizer IDs, entry
 modules, display surfaces, directions, declarative media-type/method/endpoint/header
 conditions, header/body input requirements, context needs, optional live-update
 support and event interests, requested budgets,
-and payload file lengths/SHA-256 digests. Package, visualizer API, and private
-worker IPC versions evolve independently. Reject unsupported required features
+and payload file lengths/SHA-256 digests. Package, JavaScript runtime, visualizer
+API, and private worker IPC versions evolve independently. Reject unsupported required features
 before offering an unusable visualizer. Live support is declared per visualizer
 and is discoverable without loading its code.
 
@@ -129,10 +132,11 @@ exclusive mode of the extension. For example, the display registrations may be:
 ```json
 {
   "id": "org.transmog.mapi",
+  "runtime": "javascript-es2022",
   "visualizers": [
     {
       "id": "mapi-request",
-      "entry": "src/request.ts",
+      "entry": "src/request.js",
       "inputs": {
         "request": {
           "headers": ["content-type", "x-requesttype", "x-clientinfo"],
@@ -149,7 +153,7 @@ exclusive mode of the extension. For example, the display registrations may be:
     },
     {
       "id": "mapi-response",
-      "entry": "src/response.ts",
+      "entry": "src/response.js",
       "inputs": {
         "request": {
           "headers": ["content-type", "x-requesttype", "x-clientinfo"],
@@ -248,7 +252,7 @@ them to choose a winner. Keep built-in Auto behavior unchanged.
 At startup, read only the small installed/bundled catalog. Explicit installation
 may copy and validate a package without executing it; registering a development
 folder reads bounded directory/manifest metadata. During ordinary startup and
-viewer discovery, no extension source read, TypeScript compilation, V8 startup,
+viewer discovery, no extension source read, JavaScript module loading, V8 startup,
 package payload extraction, body read, or conversation analysis occurs. Those
 activation costs are deferred until the user selects that visualizer.
 
@@ -294,7 +298,7 @@ Maintain separate indexes for catalog discovery and currently active live
 subscriptions. A shared dispatcher uses capture/scope, direction/media-type and
 header-name indexes to find only candidate active subscriptions, then evaluates
 their bounded metadata predicates. Parse common metadata once per event. Do not scan every
-installed extension for every request, broadcast first and filter in TypeScript,
+installed extension for every request, broadcast first and filter in JavaScript,
 or create a capture observer/queue for each installed package. With no active
 subscriptions, the extension event path exits before extension-specific work.
 Native predicates run before leases, source reads, decoding, serialization, IPC,
@@ -499,7 +503,7 @@ occurrence and value-byte span. Header references never masquerade as body offse
 Pass bytes through bounded binary/chunk frames, not giant JSON number arrays.
 Keep metadata framing and binary framing authenticated and versioned, validating
 lengths before allocation. Expose a typed byte-reader over supplied buffers to
-TypeScript. Use decimal strings for 64-bit offsets/lengths on the JSON boundary
+JavaScript. Use decimal strings for 64-bit offsets/lengths on the JSON boundary
 and `bigint` internally; JSON numeric rounding must never change an offset or
 MAPI integer. Parsing must not use the truncated text preview as its input.
 
@@ -702,7 +706,7 @@ intentional differences. Include upstream MIT notices and dependency attribution
 | Stage | Deliverable and exit evidence |
 | --- | --- |
 | 1. Specify and measure | Freeze the parity matrix and sanitized golden captures; settle package/API schemas, context identity, output provenance, and cold/active resource budgets. Inventory upstream parser families and dependencies before estimating the port. |
-| 2. Package and runtime | Contract/package primitives, native admission index, closed TypeScript modules, isolated worker and supervisor implemented. Metadata persistence, retained-evidence/context broker and product-owned subscriptions remain. Production sandbox fixtures exercise activation, byte continuations, failures, network denial and unload. |
+| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker and supervisor implemented. Metadata persistence, retained-evidence/context broker and product-owned subscriptions remain. Production sandbox fixtures exercise activation, byte continuations, failures, network denial and unload. |
 | 3. Host renderer and development | Deliver concurrent request/response/header contributions, the tree/table/text/hex model, source highlighting, deferred pages, Live updates control, Extensions settings with declaration details and install/disable/enable/uninstall, unpacked registration and transactional hot reload. Prove both packaged and unpacked forms use the same validation/sandbox. |
 | 4. MAPI port | Build shared byte readers/property decoders, transport envelopes, mailbox/NSPI families, ROPs, auxiliary data, compression, FastTransfer and contextual decoding, including incremental request/response handling in live mode. Add differential fixtures as each family lands; no bundled release at partial coverage. |
 | 5. Parity and shipment | Run the full matrix against the pinned reference, qualify hostile inputs, resource/performance behavior, native sandbox and UX, then bundle the ordinary `.tmext` with build-generated metadata and attribution. |

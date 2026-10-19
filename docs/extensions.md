@@ -3,7 +3,7 @@
 `transmog-extensions` provides the UI-independent revision-1 visualizer metadata,
 native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
-the isolated TypeScript worker and its bounded lifecycle. Desktop management,
+the isolated JavaScript worker and its bounded lifecycle. Desktop management,
 retention/context integration and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
@@ -64,9 +64,20 @@ reading code or traffic. Before any extension module initializes, V8 string-code
 generation is disabled and network, filesystem, subprocess, environment, timer,
 WebAssembly and Deno/Node globals are unavailable.
 
+The manifest requires `runtime: "javascript-es2022"`, independently of the package
+and visualizer API versions. Executable entries and dependencies are `.js` or
+`.mjs` ES modules. ES2022 is the supported authoring baseline; newer syntax is not
+a compatibility promise. Transmog executes JavaScript without transpiling it.
+Authors may use TypeScript, JavaScript with JSDoc, or another language that emits
+compatible JavaScript. Pin that compiler in the extension's own build, target
+ES2022 and emit ES modules before packaging. Compiler upgrades do not change
+Transmog's executable contract. The SDK declarations are optional authoring aids,
+not runtime imports. Optional TypeScript sources and source maps are inert payloads;
+source-map diagnostics are not yet implemented.
+
 Source transfer is authenticated and chunked, then checked against the immutable
-manifest inventory. The worker transpiles only the selected contribution's closed
-graph of static package-relative TypeScript modules. External URLs, filesystem
+manifest inventory. The worker validates and loads only the selected contribution's
+closed graph of static package-relative JavaScript modules. External URLs, filesystem
 imports, package imports, traversal and dynamic imports are rejected. Helpers can
 share local parser modules without initializing other contribution entry points.
 

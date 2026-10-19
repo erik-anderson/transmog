@@ -8,12 +8,12 @@ use transmog_extensions::*;
 
 fn manifest() -> Manifest {
     serde_json::from_value(serde_json::json!({
-        "formatVersion":1,"apiVersion":1,"id":"example.protocol","version":"1.0.0","name":"Protocol",
-        "visualizers":[{"id":"response","name":"Protocol response","entry":"src/main.ts","surfaces":["body"],
+        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.protocol","version":"1.0.0","name":"Protocol",
+        "visualizers":[{"id":"response","name":"Protocol response","entry":"src/main.js","surfaces":["body"],
             "inputs":{"request":{"headers":["x-requesttype"],"body":"none"},"response":{"headers":["content-type"],"body":"required"}},
             "matches":[{"direction":"response","contentTypes":["application/example"]}],
             "liveUpdates":{"events":["response"],"bodyProgress":false}}],
-        "files":[{"path":"src/main.ts","bytes":3}]
+        "files":[{"path":"src/main.js","bytes":3}]
     })).unwrap()
 }
 fn header(name: &str, value: &[u8], index: u32) -> Header {
@@ -55,6 +55,42 @@ fn missing_access_is_invalid_and_matching_cannot_read_undeclared_headers() {
     let mut m = manifest();
     m.visualizers[0].inputs.request.headers = vec!["Name".into(), "name".into()];
     assert!(m.validate(true).is_err());
+}
+
+#[test]
+fn executable_contract_is_explicit_javascript_with_optional_inert_authoring_sources() {
+    let m = manifest();
+    let mut value = serde_json::to_value(&m).unwrap();
+    value.as_object_mut().unwrap().remove("runtime");
+    assert!(Manifest::parse(&serde_json::to_vec(&value).unwrap(), true).is_err());
+    for runtime in ["typescript", "javascript-latest", "javascript-es2099"] {
+        let mut other = m.clone();
+        other.runtime = runtime.into();
+        assert!(matches!(other.validate(true), Err(Error::Unsupported)));
+    }
+    for extension in ["js", "mjs"] {
+        let mut other = m.clone();
+        other.visualizers[0].entry = format!("src/main.{extension}");
+        other.files[0].path.clone_from(&other.visualizers[0].entry);
+        // An author can include source/maps for development; they never become entry modules.
+        other.files.push(Payload {
+            path: "source/main.ts".into(),
+            bytes: 0,
+            sha256: None,
+        });
+        other.files.push(Payload {
+            path: "src/main.js.map".into(),
+            bytes: 0,
+            sha256: None,
+        });
+        other.validate(true).unwrap();
+    }
+    for extension in ["ts", "tsx", "jsx", "cjs", "json"] {
+        let mut other = m.clone();
+        other.visualizers[0].entry = format!("src/main.{extension}");
+        other.files[0].path.clone_from(&other.visualizers[0].entry);
+        assert!(other.validate(true).is_err());
+    }
 }
 
 #[test]
@@ -186,14 +222,14 @@ fn document_validation_rejects_forged_spans_duplicate_nodes_and_false_provenance
 
 #[test]
 fn tmext_round_trip_is_zip64_and_payloads_are_integrity_checked_on_activation() {
-    let files = BTreeMap::from([("src/main.ts".into(), Arc::<[u8]>::from(&b"abc"[..]))]);
+    let files = BTreeMap::from([("src/main.js".into(), Arc::<[u8]>::from(&b"abc"[..]))]);
     let snapshot = Snapshot::new(manifest(), files).unwrap();
     let mut bytes = vec![];
     write_package(&mut bytes, &snapshot, &AtomicBool::new(false)).unwrap();
     assert!(bytes.windows(4).any(|w| w == [0x50, 0x4b, 0x06, 0x06]));
     let mut package = Package::open(Cursor::new(bytes.clone())).unwrap();
     assert_eq!(package.manifest().id, "example.protocol");
-    assert_eq!(package.payload("src/main.ts").unwrap(), b"abc");
+    assert_eq!(package.payload("src/main.js").unwrap(), b"abc");
     assert!(matches!(
         package.payload("../secrets"),
         Err(Error::AccessDenied)
@@ -201,7 +237,7 @@ fn tmext_round_trip_is_zip64_and_payloads_are_integrity_checked_on_activation() 
     let pos = bytes.windows(3).position(|w| w == b"abc").unwrap();
     bytes[pos] = b'z';
     let mut changed = Package::open(Cursor::new(bytes)).unwrap();
-    assert!(changed.payload("src/main.ts").is_err());
+    assert!(changed.payload("src/main.js").is_err());
 }
 
 #[test]
