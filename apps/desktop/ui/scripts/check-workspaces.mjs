@@ -111,11 +111,12 @@ await page.addInitScript((configuration) => {
   const numericColumns=new Set(['request-number','status','pid','duration','http-duration','response-bytes','request-bytes','started-at','stream-sent','stream-received']);
   const trafficRows=(query={},exclude=null)=>{
     const snapshot=query.searchResultId?new Set(state.searchResults?.find(result=>result.id===query.searchResultId)?.ids??[]):null;
+    const dismissed=new Set(state.dismissedIds??[]);
     const number=value=>BigInt(value??0);
     let rows=structuredClone(state.sessions).map(row=>{
       if(row.streamLifetime?.live&&row.quietStartedAt!=null){const duration=Date.now()-row.quietStartedAt;row.durationMs=duration;row.streamLifetime.durationMs=duration;}
       return row;
-    }).filter(row=>!state.dismissedIds?.includes(row.id)&&(!snapshot||snapshot.has(row.id))&&(!query.search||(row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(query.search.toLowerCase())));
+    }).filter(row=>!dismissed.has(row.id)&&(!snapshot||snapshot.has(row.id))&&(!query.search||(row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(query.search.toLowerCase())));
     if(query.incidentWindow){const w=query.incidentWindow,intake=state.incidentIntakes?.[w.traceId],marker=intake?.markers.find(m=>m.id===w.markerId);rows=rows.filter(row=>row.traceId===w.traceId&&(!w.markerId||!!marker&&row.startedAt>=marker.unixMillis-w.beforeSeconds*1000&&row.startedAt<=marker.unixMillis+w.afterSeconds*1000)&&(!w.relevantHostsOnly||intake?.profile?.relevantHosts.some(h=>row.host===h.host||h.includeSubdomains&&row.host.endsWith('.'+h.host))));}
     if(exclude!=='fetch-destination'&&query.fetchDestinations?.length)rows=rows.filter(row=>query.fetchDestinations.includes(row.fetchDestination));
     for(const filter of query.filters??[]){if(filter.column===exclude)continue;rows=rows.filter(row=>{const value=trafficKey(row,filter.column);return filter.operator==='minimum'?value!=null&&number(value)>=number(filter.value):filter.operator==='maximum'?value!=null&&number(value)<=number(filter.value):filter.operator==='equals'?String(value).toLowerCase()===filter.value.toLowerCase():String(value).toLowerCase().includes(filter.value.toLowerCase());});}

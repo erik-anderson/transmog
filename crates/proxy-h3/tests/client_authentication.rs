@@ -42,13 +42,12 @@ fn client_with_limits(
     )
 }
 async fn execute(c: &H3OriginClient, logical: u16, peer: u16) -> String {
-    let result = tokio::time::timeout(
-        Duration::from_secs(3),
-        c.execute(request(logical), peer, 1024),
-    )
-    .await
-    .unwrap()
-    .unwrap();
+    tokio::time::timeout(Duration::from_secs(3), execute_request(c, logical, peer))
+        .await
+        .expect("HTTP/3 fixture request did not complete")
+}
+async fn execute_request(c: &H3OriginClient, logical: u16, peer: u16) -> String {
+    let result = c.execute(request(logical), peer, 1024).await.unwrap();
     let mut bytes = Vec::new();
     for frame in result.response.body {
         if let BodyFrame::Data(data) = frame {
@@ -125,7 +124,7 @@ async fn real_h3_uses_logical_origin_and_retires_authorization_and_caller_pools(
 #[tokio::test]
 async fn pending_h3_does_not_lock_out_unrelated_origins_and_unregisters_abandoned_owner() {
     let fixture = Fixture::new();
-    let blocked = origin(&fixture).await;
+    let blocked = quic::origin_with_idle_timeout(&fixture, Duration::from_secs(15)).await;
     let independent = origin(&fixture).await;
     let broker = ClientCertificateBroker::default();
     let resolver = Arc::new(
@@ -139,16 +138,24 @@ async fn pending_h3_does_not_lock_out_unrelated_origins_and_unregisters_abandone
     let client = client(&fixture, resolver);
     let clone = client.clone();
     let port = blocked.port;
-    let waiting = tokio::spawn(async move { execute(&clone, 443, port).await });
+    // An intentional certificate prompt must not consume the completion budget
+    // while the independent origin performs its own real QUIC handshake.
+    let waiting = tokio::spawn(async move { execute_request(&clone, 443, port).await });
     pending(&broker, 1).await;
     assert_eq!(execute(&client, 8443, independent.port).await, "1:false");
     assert!(broker.answer(
         broker.pending()[0].id,
         ClientCertificateAnswer::Identity("test-client".into())
     ));
-    assert_eq!(waiting.await.unwrap(), "1:true");
+    assert_eq!(
+        tokio::time::timeout(Duration::from_secs(3), waiting)
+            .await
+            .expect("Selected HTTP/3 request did not complete")
+            .unwrap(),
+        "1:true"
+    );
     let clone = client.clone();
-    let waiting = tokio::spawn(async move { execute(&clone, 443, port).await });
+    let waiting = tokio::spawn(async move { execute_request(&clone, 443, port).await });
     pending(&broker, 1).await;
     waiting.abort();
     let _ = waiting.await;

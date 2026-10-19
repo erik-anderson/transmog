@@ -59,6 +59,11 @@ fn config(f: &Fixture) -> quiche::Config {
 pub async fn origin(f: &Fixture) -> Origin {
     origin_at(f, "127.0.0.1:0").await
 }
+pub async fn origin_with_idle_timeout(f: &Fixture, timeout: Duration) -> Origin {
+    let mut config = config(f);
+    config.set_max_idle_timeout(timeout.as_millis().try_into().unwrap());
+    origin_configs(vec![config], "127.0.0.1:0", true).await
+}
 pub async fn origin_without_client_authentication(f: &Fixture) -> Origin {
     let mut config = config(f);
     config.verify_peer(false);
