@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
+import {checkFilterCoverage} from './check-filter-coverage.mjs';
 
 export async function checkTrafficFilters(page,root) {
   const traffic=page.locator('traffic-workspace'),picker=traffic.locator('#traffic-filter-picker');
@@ -7,7 +8,7 @@ export async function checkTrafficFilters(page,root) {
   const settle=()=>page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return !t.queryPending&&!t.rowRequests.size&&t.sessions.every(row=>!row.loading);});
   const open=async dimension=>{await traffic.getByRole('button',{name:/^Filters(?: \(\d+\))?$/,exact:false}).click();await picker.getByLabel('Filter field',{exact:true}).selectOption(dimension);await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.pickerLoading);};
   const apply=async()=>{await picker.getByRole('button',{name:'Apply filter',exact:true}).click();await settle();};
-  const optionCount=async label=>picker.getByRole('checkbox',{name:label,exact:true}).locator('..').locator('.filter-option-count').textContent();
+  const optionCount=async label=>picker.getByRole('checkbox',{name:label,exact:true,includeHidden:true}).locator('..').locator('.filter-option-count').textContent();
   try {
     await page.setViewportSize({width:1440,height:900});
     await page.evaluate(async()=>{
@@ -15,6 +16,7 @@ export async function checkTrafficFilters(page,root) {
       s.sessions=Array.from({length:450},(_,i)=>({...seed,id:'filter-'+i,requestNumber:String(i+1),method:i%2?'POST':'GET',status:i%2?404:200,startedAt:i+1,path:'/api/'+i,url:'https://example.test/api/'+i,streamProtocol:null,terminal:'completed',httpDurationMs:7,durationMs:i+1}));
       s.dismissedIds=[];s.streams={};s.streamItems=[];t.filters=[];t.filterGroups=[];t.fetchDestinations=[];t.liveFilter='';t.searchText='';t.searchInput.value='';t.searchResultId=null;t.contentSearchActive=false;t.lifecycle='running';t.followLatest=true;t.sort={column:'started-at',direction:'descending'};t.queryRevision++;await t.refreshSessions(undefined,true);
     });await settle();
+    await checkFilterCoverage(page,root,{traffic,picker,open,apply,optionCount,settle});
     await open('traffic-type');assert.equal(await optionCount('HTTP'),'450');assert.equal(await optionCount('WebSocket'),'0');
     await picker.getByRole('checkbox',{name:'WebSocket',exact:true}).check();
     assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.totalMatched),450,'Draft choices applied before Apply');
@@ -77,12 +79,12 @@ export async function checkTrafficFilters(page,root) {
     // Unchecking a selected zero value must keep the keyboard target visible.
     await open('fetch-destination');const moreValues=picker.locator('.filter-options details');if(await moreValues.evaluate(details=>details.open))await moreValues.locator('summary').click();
     const stylesheet=picker.getByRole('checkbox',{name:'Stylesheet',exact:true});await stylesheet.focus();await page.keyboard.press('Space');
-    assert.equal(await stylesheet.isChecked(),false);assert.equal(await stylesheet.isVisible(),true,'Unchecking a zero value hid the focused checkbox');assert.equal(await stylesheet.evaluate(input=>input===input.getRootNode().activeElement),true,'Unchecking a zero value lost keyboard focus');await apply();
+    assert.equal(await stylesheet.isChecked(),false);assert.equal(await stylesheet.isVisible(),true,'Unchecking a zero value hid the focused checkbox');assert.equal(await stylesheet.evaluate(input=>input===input.getRootNode().activeElement),true,'Unchecking a zero value lost keyboard focus');assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').traffic.pickerValues),[],'Unchecking did not clear the draft');await apply();assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').traffic.filterGroups),[],'Applying an empty draft did not clear the filter');
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.beforeManyStatuses=s.sessions;const seed=s.sessions[0];s.sessions=Array.from({length:600},(_,index)=>({...seed,id:'status-'+index,requestNumber:String(index+1),status:100+index}));t.queryRevision++;await t.refreshSessions(undefined,true);});
-    await open('status');assert.equal(await optionCount('2xx'),'100','A family count was lost after the first facet page');assert.equal(await optionCount('304'),'1');await page.keyboard.press('Escape');await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions=s.beforeManyStatuses;delete s.beforeManyStatuses;t.queryRevision++;await t.refreshSessions(undefined,true);});
+    await open('status');assert.equal(await optionCount('2xx'),'100','A family count was lost after the first facet page');assert.equal(await optionCount('304'),'1');assert.equal(await optionCount('Other'),'100');await page.keyboard.press('Escape');await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions=s.beforeManyStatuses;delete s.beforeManyStatuses;t.queryRevision++;await t.refreshSessions(undefined,true);});
     // Fixed and selected method counts must resolve beyond the first facet page.
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.beforeManyMethods=s.sessions;const seed=s.sessions[0];s.sessions=Array.from({length:600},(_,index)=>({...seed,id:'method-'+index,requestNumber:String(index+1),method:'A'+String(index).padStart(3,'0')}));s.sessions.push({...seed,id:'method-get',requestNumber:'601',method:'GET'});t.filterGroups=[{dimension:'method',values:[{kind:'text',value:'a599'}]}];t.queryRevision++;await t.refreshSessions(undefined,true);});
-    await open('method');assert.equal(await optionCount('GET'),'1','A fixed method count beyond the first facet page appeared as zero');assert.equal(await optionCount('a599'),'1','A selected method count beyond the first facet page appeared as zero');assert.match(await picker.textContent(),/601 entries with this field unrestricted/);await page.keyboard.press('Escape');
+    await open('method');assert.equal(await optionCount('Other'),'600');assert.equal(await optionCount('GET'),'1','A fixed method count beyond the first facet page appeared as zero');assert.equal(await optionCount('A599'),'1','A selected method count beyond the first facet page appeared as zero');assert.match(await picker.textContent(),/601 entries with this field unrestricted/);await page.keyboard.press('Escape');
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.sessions=s.beforeManyMethods;delete s.beforeManyMethods;t.filterGroups=[];t.queryRevision++;await t.refreshSessions(undefined,true);});
     // Content search keeps frozen membership, and static viewers never promise live arrivals.
     await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.searchResults=[{id:'phase2-snapshot',ids:['filter-0','filter-1']}];t.searchResultId='phase2-snapshot';t.contentSearchActive=true;t.queryRevision++;await t.refreshSessions(undefined,true);});

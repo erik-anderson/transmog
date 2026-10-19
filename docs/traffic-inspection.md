@@ -260,6 +260,20 @@ visible when the picker is reopened. Loading or failed counts are shown as
 unavailable rather than zero. Values outside exact filter limits are disclosed;
 use a custom contains condition to narrow long text.
 
+Protocol choices group recorded `HTTP/2.0` with **HTTP/2** and `HTTP/3.0` with
+**HTTP/3**, for both counts and exact matches. Original recorded spellings remain
+visible in traffic and inspection evidence. App-generated fallback names already
+use canonical HTTP labels.
+
+Method, Protocol, State and Fetch destination include searched observed values
+alongside common choices. **Other** appears when entries have present values
+outside the common choices; it includes later arrivals with unfamiliar values,
+and remains visible while selected even when its count becomes zero. Missing
+method, protocol and fetch-destination evidence have separate choices. Status also
+offers all observed codes; its **Other** matches codes outside 100–599, since the usual
+families already cover every code in that range. Other overlaps the individual
+observed values it includes, just as status families overlap individual codes.
+
 Host, Process and normalized Content type offer searched observed choices with
 contextual counts. **Load more** continues the list; after 200 observed values,
 search narrows the remaining set. Selected values remain visible outside the
@@ -311,6 +325,12 @@ not stream messages, and never decode bodies. The API returns bounded options
 in stable order with option search and an offset continuation. Each request is
 a fresh metadata snapshot; callers restart paging after scope or capture changes.
 Fixed presets can merge absent options with zero counts without disabling them.
+The picker and backend share `crates/app/src/sessions/filter-catalog.json` for
+categorical presets and evidenced external protocol spellings. Internal names
+are canonical at their producer; they do not need alias lists. Counts and result
+selection use the same normalization and Other predicate, including values beyond
+the currently displayed option page. Unknown external Fetch destination values
+remain selectable instead of being rejected by a fixed vocabulary.
 
 
 The live **Filter** matches complete URLs, including text spanning the domain

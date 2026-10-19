@@ -102,7 +102,7 @@ export function cellText(row: SessionSummary, column: ColumnId): string {
     case 'host': return row.host;
     case 'path': return row.path;
     case 'url': return row.url ?? row.host+row.path;
-    case 'protocol': return row.protocol === 'Http1' ? 'HTTP/1.1' : row.protocol === 'Http2' ? 'HTTP/2' : row.protocol;
+    case 'protocol': return row.protocol;
     case 'duration': return row.durationMs == null ? '—' : row.streamProtocol ? (row.streamLifetime?.boundary==='open-at-capture'||row.streamLifetime?.boundary==='incomplete'?'≥ ':'')+formatDuration(row.durationMs)+(row.streamLifetime?.live?' · live':'') : row.durationMs+' ms';
     case 'http-duration': return row.httpDurationMs == null ? '—' : row.httpDurationMs+' ms';
     case 'stream-sent': return row.streamSent==null?'—':formatBytes(row.streamSent);

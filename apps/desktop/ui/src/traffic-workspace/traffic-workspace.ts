@@ -19,7 +19,7 @@ import { WorkspaceElement } from '../workspace-element.js';
 import type { TrafficRuleKind,TrafficRuleRequest,SelectedResponse, ResponsePreviewIntent, AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import {rangeKind,rangeUnits,inclusiveRange,localDateTime} from '../traffic-ranges.js';
-import {filterDimensions,fixedFilterChoices,filterValueKey,filterLabel,valueLabel,trafficFilterChips,columnDimension,type FilterChoice,type FilterChip} from '../traffic-filters.js';
+import {filterDimensions,fixedFilterChoices,filterValueKey,filterLabel,valueLabel,trafficFilterChips,columnDimension,canonicalFilterValue,hasFilterPresets,type FilterChoice,type FilterChip} from '../traffic-filters.js';
 import type {TrafficDimension,TrafficFilterGroup,TrafficFilterValue,TrafficFacetPage,TrafficQuery} from '../models.js';
 import {formatDuration,lifetimeDescription, cellText, columnDefinitions, defaultWorkspace, displayColumns, stateText, statusText, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
@@ -672,12 +672,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   private resetPicker(dimension:TrafficDimension):void {
     this.pickerGeneration++;this.pickerDimension=dimension;this.pickerLabel=filterLabel(dimension);
     const field=filterDimensions.find(field=>field.id===dimension)!;
-    this.pickerObserved=['host','process','content-type'].includes(dimension);this.pickerSearch='';this.pickerNextOffset=null;this.pickerObservedShown=0;this.pickerObservedTotal=0;this.pickerCanMore=false;this.pickerSuggestionHint='';this.facetMore=false;window.clearTimeout(this.facetSearchTimer);
+    this.pickerObserved=['host','process','content-type'].includes(dimension)||hasFilterPresets(dimension)&&dimension!=='traffic-type';this.pickerSearch='';this.pickerNextOffset=null;this.pickerObservedShown=0;this.pickerObservedTotal=0;this.pickerCanMore=false;this.pickerSuggestionHint='';this.facetMore=false;window.clearTimeout(this.facetSearchTimer);
     const kind=rangeKind(dimension);this.pickerRangeKind=kind;this.pickerRange=!!kind;this.pickerTime=kind==='time';this.pickerRangeInput=this.pickerTime?'datetime-local':'text';this.pickerRangeUnits=rangeUnits(kind);this.pickerRangeUnit=this.pickerRangeUnits[0]!.value;
     this.pickerPresets=kind==='duration'?[{value:'second',label:'At least 1 second'},{value:'ten-seconds',label:'At least 10 seconds'}]:kind==='bytes'?[{value:'kib',label:'At least 1 KiB'},{value:'mib',label:'At least 1 MiB'}]:kind==='time'?[{value:'five-minutes',label:'Since 5 minutes ago'},{value:'hour',label:'Since 1 hour ago'},{value:'today',label:'Since local midnight'}]:[];
     this.pickerTimeZone='Local time · '+Intl.DateTimeFormat().resolvedOptions().timeZone+'. Repeated daylight-saving times use the first occurrence.';
     this.pickerNumeric=field.numeric;this.pickerCustom=columnDimension(dimension)!==null;this.pickerPlaceholder=field.placeholder;
-    this.pickerValues=structuredClone(this.filterGroups.find(group=>group.dimension===dimension)?.values??[]);
+    this.pickerValues=structuredClone(this.filterGroups.find(group=>group.dimension===dimension)?.values??[]).map(value=>canonicalFilterValue(dimension,value));
     if(dimension==='fetch-destination')for(const value of this.fetchDestinations)if(!this.pickerValues.some(item=>filterValueKey(item)==='text:'+value))this.pickerValues.push({kind:'text',value});
     this.pickerConstraints=this.filters.filter(filter=>filter.column===dimension).map(filter=>({...filter}));
     this.pickerCounts.clear();this.pickerCountOptions=[];this.pickerError='';this.pickerOmission='';this.pickerScope='Counts include other filters.';this.pickerLoading=true;
@@ -693,9 +693,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   private rebuildPickerOptions():void {
     const focused=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;
     const restore=focused?.matches('.filter-options input')?focused.id:'';
-    const choices=fixedFilterChoices(this.pickerDimension);
+    const choices=fixedFilterChoices(this.pickerDimension).filter(choice=>choice.value.kind!=='other'||(this.pickerCounts.get(choice.key)??0)>0||this.pickerValues.some(value=>value.kind==='other'));
     if(this.pickerObserved)for(const option of this.pickerCountOptions)if(!choices.some(item=>item.key===option.key))choices.push({...option,label:valueLabel(this.pickerDimension,option.value)});
-    if(this.pickerDimension==='status')for(const option of this.pickerCountOptions)if(option.value.kind==='number'&&!choices.some(item=>item.key===option.key))choices.push(option);
+    if(this.pickerDimension==='status')for(const option of this.pickerCountOptions)if((option.value.kind==='number'||option.value.kind==='other')&&!choices.some(item=>item.key===option.key))choices.push(option);
     for(const value of this.pickerValues)if(!choices.some(option=>option.key===filterValueKey(value)))choices.push({key:filterValueKey(value),label:valueLabel(this.pickerDimension,value),value});
     const retained=[...this.pickerOptions,...this.pickerMoreOptions].find(option=>'filter-option-'+option.key===restore);
     if(retained&&!choices.some(option=>option.key===retained.key))choices.push(retained);
@@ -722,8 +722,11 @@ export class TrafficWorkspace extends WorkspaceElement {
     if(operator==='maximum'){this.filterTo.value='';delete this.pickerOriginalTimeBounds.to;}
     this.filterFrom.setCustomValidity('');this.filterTo.setCustomValidity('');
   }
-  pickerOptionBlurred():void {
-    if(!this.pickerObserved)return;const generation=this.pickerGeneration;
+  pickerOptionBlurred(event:FocusEvent):void {
+    // Pointer focus happens before click. Reflowing now can move Apply (or the
+    // next checkbox) out from under the pointer and silently swallow that click.
+    if(!this.pickerObserved||(event.relatedTarget as HTMLElement|null)?.matches(':active'))return;
+    const generation=this.pickerGeneration;
     queueMicrotask(()=>{if(this.pickerOpen&&generation===this.pickerGeneration)this.rebuildPickerOptions();});
   }
   closePicker():void {this.filterPicker.hidePopover();this.restorePickerFocus();}
@@ -738,9 +741,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   addObservedValue():void {
     let value=this.pickerSearch.trim().toLowerCase();if(this.pickerDimension==='content-type')value=value.split(';')[0]!.trim();
     if(!value||[...value].length>255||/[\p{Cc}]/u.test(value)){this.pickerError='Enter a value of 1–255 characters without control characters.';return;}
-    const key='text:'+value;if(!this.pickerValues.some(item=>filterValueKey(item)===key)){
+    const alternative=canonicalFilterValue(this.pickerDimension,{kind:'text',value}),key=filterValueKey(alternative);if(!this.pickerValues.some(item=>filterValueKey(item)===key)){
       if(this.pickerValues.length>=128){this.pickerError='Choose at most 128 values in one field.';return;}
-      this.pickerValues=[...this.pickerValues,{kind:'text',value}];
+      this.pickerValues=[...this.pickerValues,alternative];
     }
     this.rebuildPickerOptions();void this.loadFacets();
   }
@@ -779,9 +782,9 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.pickerCountOptions=[...new Map(merged.map(option=>[option.key,option])).values()];
         this.pickerCounts=new Map([...this.pickerCountOptions,...included].map(option=>[option.key,option.count]));
         this.pickerNextOffset=observed?page.nextOffset:null;this.pickerObservedTotal=page.totalOptions;this.pickerObservedShown=this.pickerCountOptions.length;this.pickerCanMore=observed&&page.nextOffset!==null&&this.pickerObservedShown<200;
-        this.pickerSuggestionHint=observed?'Showing '+this.pickerObservedShown+' of '+page.totalOptions+' observed values.'+(this.pickerObservedShown>=200&&page.nextOffset!==null?' Search to narrow the remaining values.':''):'';
+        this.pickerSuggestionHint=observed?'Showing '+this.pickerObservedShown+' of '+page.totalOptions+(hasFilterPresets(dimension)?' matching choices.':' observed values.')+(this.pickerObservedShown>=200&&page.nextOffset!==null?' Search to narrow the remaining values.':''):'';
         this.pickerLoading=false;this.pickerError='';this.pickerOmission=page.omittedEntries?`${page.omittedEntries.toLocaleString()} ${page.omittedEntries===1?'entry has a value':'entries have values'} outside exact filter limits.`+(this.pickerCustom?' Use a custom contains match.':''):'';
-        this.pickerScope=page.matchingEntries.toLocaleString()+' entries with this field unrestricted. Counts include other filters.';this.rebuildPickerOptions();
+        this.pickerScope=page.matchingEntries.toLocaleString()+' entries with this field unrestricted. Counts include other filters.'+((this.pickerCounts.get('other')??0)>0||this.pickerValues.some(value=>value.kind==='other')?(dimension==='status'?' Other includes codes outside 100–599.':' Other includes values outside the common choices; missing evidence is separate.'):'');this.rebuildPickerOptions();
       }catch(error:unknown){if(current()){this.pickerLoading=false;this.pickerError='Counts unavailable: '+describeError(error);this.rebuildPickerOptions();}}
     }})();
     try{await this.facetPending;}finally{this.facetPending=null;}

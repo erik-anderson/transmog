@@ -1549,7 +1549,17 @@ pub(crate) fn message_protocol(
         .protocols
         .iter()
         .find(|item| item.boundary == boundary)
-        .map_or_else(|| format!("{fallback:?}"), |item| item.version.clone())
+        .map_or_else(
+            || {
+                match fallback {
+                    transmog_core::HttpLegVersion::Http1 => "HTTP/1.1",
+                    transmog_core::HttpLegVersion::Http2 => "HTTP/2",
+                    transmog_core::HttpLegVersion::Http3 => "HTTP/3",
+                }
+                .to_owned()
+            },
+            |item| item.version.clone(),
+        )
 }
 
 #[cfg(test)]

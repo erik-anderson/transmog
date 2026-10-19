@@ -71,32 +71,6 @@ pub struct SessionColumnFilter {
 const MAX_CURSOR_TOKENS: usize = 256;
 const DEFAULT_PAGE_SIZE: usize = 100;
 const MAX_FILTER_CHARS: usize = 255;
-const FETCH_DESTINATIONS: [&str; 24] = [
-    "audio",
-    "audioworklet",
-    "document",
-    "embed",
-    "empty",
-    "font",
-    "frame",
-    "iframe",
-    "image",
-    "json",
-    "manifest",
-    "object",
-    "paintworklet",
-    "report",
-    "script",
-    "serviceworker",
-    "sharedworker",
-    "style",
-    "text",
-    "track",
-    "video",
-    "webidentity",
-    "worker",
-    "xslt",
-];
 
 #[derive(Default)]
 pub(crate) struct CursorRegistry {
@@ -731,10 +705,10 @@ fn single_header<'a>(headers: &'a transmog_core::HeaderBlock, name: &str) -> Opt
 }
 
 fn validate_fetch_destinations(values: &[String]) -> Result<(), AppError> {
-    if values.len() > FETCH_DESTINATIONS.len()
+    if values.len() > 24
         || values
             .iter()
-            .any(|value| !FETCH_DESTINATIONS.contains(&value.as_str()))
+            .any(|value| !facets::known_fetch_destination(value))
     {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
@@ -788,11 +762,7 @@ fn text_value(row: &SessionSummary, column: TrafficColumn) -> String {
         TrafficColumn::Host => row.host.clone(),
         TrafficColumn::Path => row.path.clone(),
         TrafficColumn::Url => row.url.clone(),
-        TrafficColumn::Protocol => match row.protocol.as_str() {
-            "Http1" => "HTTP/1.1".to_owned(),
-            "Http2" => "HTTP/2".to_owned(),
-            other => other.to_owned(),
-        },
+        TrafficColumn::Protocol => row.protocol.clone(),
         TrafficColumn::State => row.terminal.to_owned(),
         TrafficColumn::ContentType => row.content_type.clone().unwrap_or_default(),
         numeric => numeric_value(row, numeric).map_or_else(String::new, |value| value.to_string()),
@@ -1172,7 +1142,13 @@ impl PreparedFilter {
         Ok(Self {
             column: filter.column,
             operator: filter.operator,
-            text: filter.value.to_lowercase(),
+            text: if filter.column == TrafficColumn::Protocol
+                && filter.operator == FilterOperator::Equals
+            {
+                facets::canonical_protocol(&filter.value)
+            } else {
+                filter.value.to_lowercase()
+            },
             numeric,
         })
     }
@@ -1184,6 +1160,9 @@ impl PreparedFilter {
                 .contains(&self.text),
             FilterOperator::Equals if numeric_column(self.column) => {
                 numeric_value(row, self.column).is_some_and(|value| Some(value) == self.numeric)
+            }
+            FilterOperator::Equals if self.column == TrafficColumn::Protocol => {
+                facets::canonical_protocol(&row.protocol) == self.text
             }
             FilterOperator::Equals => text_value(row, self.column).to_lowercase() == self.text,
             FilterOperator::Minimum => numeric_value(row, self.column)
@@ -2259,6 +2238,267 @@ mod tests {
         service
     }
 
+    fn protocol_facet_fixture() -> ApplicationSessionService {
+        use transmog_core::performance::{PerformanceEvidence, ProtocolObservation};
+        let service =
+            ApplicationSessionService::new(transmog_session::ServiceConfig::default()).unwrap();
+        for (index, version) in ["HTTP/2", "HTTP/2.0", "HTTP/2.0", "HTTP/3", "HTTP/3.0"]
+            .iter()
+            .enumerate()
+        {
+            let id = index as u128 + 1;
+            service.catalog().apply(started(id));
+            observe_request(
+                &service,
+                id,
+                2,
+                transmog_core::observe::ExchangeBoundary::ClientRequest,
+                "GET",
+                transmog_core::HeaderBlock::default(),
+            );
+            service.catalog().apply(ObserverEvent {
+                exchange_id: ExchangeId(id),
+                sequence: 3,
+                kind: ObserverEventKind::Performance(PerformanceEvidence {
+                    protocols: vec![ProtocolObservation {
+                        boundary: "client-request".into(),
+                        version: (*version).into(),
+                        reason: None,
+                    }],
+                    ..Default::default()
+                }),
+            });
+        }
+        service
+    }
+
+    #[test]
+    fn protocol_facets_and_filters_cover_recorded_versions() {
+        let service = protocol_facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let dimension = TrafficDimension::Column(TrafficColumn::Protocol);
+        let request = TrafficFacetInput {
+            query: SessionQueryInput::default(),
+            dimension,
+            search: None,
+            include_values: vec![TrafficFilterValue::Other],
+            offset: 0,
+            limit: Some(1),
+        };
+        let full = facet_counts(
+            &service,
+            &TrafficFacetInput {
+                limit: Some(512),
+                ..request.clone()
+            },
+            &traces,
+            None,
+        )
+        .unwrap();
+        assert_eq!(full.matching_entries, 5);
+        for (value, count) in [
+            (TrafficFilterValue::Text("http/2".into()), 3),
+            (TrafficFilterValue::Text("http/3".into()), 2),
+        ] {
+            assert_eq!(
+                full.options
+                    .iter()
+                    .find(|option| option.value == value)
+                    .unwrap()
+                    .count,
+                count
+            );
+            let query = SessionQueryInput {
+                filter_groups: vec![TrafficFilterGroup {
+                    dimension,
+                    values: vec![value],
+                }],
+                ..Default::default()
+            };
+            assert_eq!(
+                matching_ids(&service, &query, &traces, None).unwrap().len(),
+                count
+            );
+        }
+        // The residual count is independent of option paging/search and the edited field's filter.
+        let mut searched = request.clone();
+        searched.search = Some("http/2".into());
+        searched.query.filter_groups = vec![exact_group(
+            TrafficColumn::Protocol,
+            vec![TrafficFilterValue::Other],
+        )];
+        let page = facet_counts(&service, &searched, &traces, None).unwrap();
+        assert_eq!(page.included_options[0].count, 0);
+        for value in ["HTTP/2", "HTTP/2.0", "http/2.0"] {
+            let query = SessionQueryInput {
+                filter_groups: vec![exact_group(
+                    TrafficColumn::Protocol,
+                    vec![TrafficFilterValue::Text(value.into())],
+                )],
+                ..Default::default()
+            };
+            assert_eq!(
+                matching_ids(&service, &query, &traces, None).unwrap().len(),
+                3
+            );
+            let query = SessionQueryInput {
+                filters: vec![SessionColumnFilter {
+                    column: TrafficColumn::Protocol,
+                    operator: FilterOperator::Equals,
+                    value: value.into(),
+                }],
+                ..Default::default()
+            };
+            assert_eq!(
+                matching_ids(&service, &query, &traces, None).unwrap().len(),
+                3
+            );
+        }
+        assert_eq!(
+            service
+                .catalog()
+                .get(ExchangeId(2))
+                .unwrap()
+                .performance
+                .protocols[0]
+                .version,
+            "HTTP/2.0",
+            "Filtering must preserve original evidence"
+        );
+    }
+
+    #[test]
+    fn other_counts_include_new_and_oversized_values_despite_option_search_and_paging() {
+        let service = protocol_facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        // Other is a predicate, not a snapshot of the currently observed methods.
+        let searched = TrafficFacetInput {
+            dimension: TrafficDimension::Column(TrafficColumn::Method),
+            search: Some("GET".into()),
+            query: SessionQueryInput {
+                filter_groups: vec![exact_group(
+                    TrafficColumn::Method,
+                    vec![TrafficFilterValue::Other],
+                )],
+                ..Default::default()
+            },
+            include_values: vec![TrafficFilterValue::Other],
+            offset: 0,
+            limit: Some(1),
+        };
+        for (id, method) in [(8, "PROPFIND".to_owned()), (9, "X".repeat(300))] {
+            service.catalog().apply(started(id));
+            observe_request(
+                &service,
+                id,
+                2,
+                transmog_core::observe::ExchangeBoundary::ClientRequest,
+                &method,
+                transmog_core::HeaderBlock::default(),
+            );
+        }
+        assert_eq!(
+            matching_ids(&service, &searched.query, &traces, None)
+                .unwrap()
+                .len(),
+            2
+        );
+        let page = facet_counts(&service, &searched, &traces, None).unwrap();
+        assert_eq!(page.included_options[0].count, 2);
+        assert_eq!(page.omitted_entries, 1);
+    }
+
+    #[test]
+    fn other_covers_extensions_without_conflating_missing_or_measured_values() {
+        let service = facet_fixture();
+        let traces = crate::traces::TraceRegistry::default();
+        let rows = ordered_rows(&service, &SessionQueryInput::default(), &traces, None)
+            .unwrap()
+            .0;
+        let mut row = rows[0].clone();
+        for (dimension, expected) in [
+            (TrafficDimension::Column(TrafficColumn::Method), false),
+            (TrafficDimension::Column(TrafficColumn::Status), false),
+            (TrafficDimension::Column(TrafficColumn::State), false),
+            (TrafficDimension::Facet(TrafficFacet::TrafficType), false),
+            (
+                TrafficDimension::Facet(TrafficFacet::FetchDestination),
+                false,
+            ),
+        ] {
+            assert_eq!(
+                TrafficFilterGroup {
+                    dimension,
+                    values: vec![TrafficFilterValue::Other]
+                }
+                .matches(&row),
+                expected
+            );
+        }
+        row.protocol = "Future/1".into();
+        assert!(
+            exact_group(TrafficColumn::Protocol, vec![TrafficFilterValue::Other]).matches(&row)
+        );
+        row.protocol = "Unavailable".into();
+        assert!(
+            !exact_group(TrafficColumn::Protocol, vec![TrafficFilterValue::Other]).matches(&row)
+        );
+        assert!(
+            exact_group(
+                TrafficColumn::Protocol,
+                vec![TrafficFilterValue::Unavailable]
+            )
+            .matches(&row)
+        );
+        row.method = "—".into();
+        assert!(!exact_group(TrafficColumn::Method, vec![TrafficFilterValue::Other]).matches(&row));
+        assert!(
+            exact_group(TrafficColumn::Method, vec![TrafficFilterValue::Unavailable]).matches(&row)
+        );
+        row.method = "PROPFIND".into();
+        row.status = Some(700);
+        row.fetch_destination = Some("future-destination".into());
+        row.terminal = "future-state";
+        for dimension in [
+            TrafficDimension::Column(TrafficColumn::Method),
+            TrafficDimension::Column(TrafficColumn::Status),
+            TrafficDimension::Column(TrafficColumn::State),
+            TrafficDimension::Facet(TrafficFacet::FetchDestination),
+        ] {
+            assert!(
+                TrafficFilterGroup {
+                    dimension,
+                    values: vec![TrafficFilterValue::Other]
+                }
+                .matches(&row)
+            );
+        }
+        row.status = None;
+        assert!(!exact_group(TrafficColumn::Status, vec![TrafficFilterValue::Other]).matches(&row));
+        assert!(
+            facets::prepare_groups(&[exact_group(
+                TrafficColumn::Duration,
+                vec![TrafficFilterValue::Other]
+            )])
+            .is_err()
+        );
+        // App-owned protocol fallbacks are canonical, with no enum-name alias table.
+        for (version, label) in [
+            (HttpLegVersion::Http1, "HTTP/1.1"),
+            (HttpLegVersion::Http2, "HTTP/2"),
+            (HttpLegVersion::Http3, "HTTP/3"),
+        ] {
+            assert_eq!(
+                crate::inspector::message_protocol(
+                    &transmog_core::performance::PerformanceEvidence::default(),
+                    "client-request",
+                    version
+                ),
+                label
+            );
+        }
+    }
+
     #[test]
     fn typed_alternatives_share_scope_across_pages_ids_views_and_timeline() {
         let service = facet_fixture();
@@ -2689,13 +2929,15 @@ mod tests {
             };
             let page = facet_counts(&service, &request, &traces, None).unwrap();
             assert_eq!(page.matching_entries, 3);
-            assert_eq!(page.omitted_entries, 1);
+            let is_destination =
+                dimension == TrafficDimension::Facet(TrafficFacet::FetchDestination);
+            assert_eq!(page.omitted_entries, usize::from(!is_destination));
             assert_eq!(
                 page.options
                     .iter()
                     .map(|option| option.count)
                     .sum::<usize>(),
-                2
+                if is_destination { 4 } else { 2 }
             );
             for option in page.options {
                 let query = SessionQueryInput {

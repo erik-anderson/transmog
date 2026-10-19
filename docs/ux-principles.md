@@ -129,6 +129,10 @@ when changing the experience.
 - Distinguish observed behavior from configured intent, and original evidence
   from generated summaries or previews. Opening a capture does not reverify its
   historical connections. Preserve original values when display requires escaping.
+- Count and match filter choices with the same definitions. Common choices must
+  not hide unfamiliar observed values; expose a counted Other choice when useful
+  and distinguish it from missing evidence. Use canonical names for app-owned
+  values, normalizing external spellings without changing captured evidence.
 - Keep comparison findings focused on changed content. Reordering identical
   headers does not create a change finding; retain original positions in source
   evidence and in findings for actual header changes.

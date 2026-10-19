@@ -1,0 +1,206 @@
+{
+  "traffic-type": [
+    {
+      "value": "http",
+      "label": "HTTP"
+    },
+    {
+      "value": "websocket",
+      "label": "WebSocket"
+    },
+    {
+      "value": "sse",
+      "label": "SSE"
+    }
+  ],
+  "method": [
+    {
+      "value": "get",
+      "label": "GET"
+    },
+    {
+      "value": "post",
+      "label": "POST"
+    },
+    {
+      "value": "put",
+      "label": "PUT"
+    },
+    {
+      "value": "patch",
+      "label": "PATCH"
+    },
+    {
+      "value": "delete",
+      "label": "DELETE"
+    },
+    {
+      "value": "head",
+      "label": "HEAD"
+    },
+    {
+      "value": "options",
+      "label": "OPTIONS"
+    },
+    {
+      "value": "connect",
+      "label": "CONNECT"
+    },
+    {
+      "value": "trace",
+      "label": "TRACE"
+    }
+  ],
+  "state": [
+    {
+      "value": "active",
+      "label": "In progress"
+    },
+    {
+      "value": "completed",
+      "label": "Completed"
+    },
+    {
+      "value": "cancelled",
+      "label": "Cancelled"
+    },
+    {
+      "value": "failed",
+      "label": "Failed"
+    },
+    {
+      "value": "interrupted",
+      "label": "Interrupted"
+    },
+    {
+      "value": "open-at-capture",
+      "label": "Open at capture"
+    },
+    {
+      "value": "incomplete",
+      "label": "Incomplete"
+    }
+  ],
+  "protocol": [
+    {
+      "value": "http/1.0",
+      "label": "HTTP/1.0"
+    },
+    {
+      "value": "http/1.1",
+      "label": "HTTP/1.1"
+    },
+    {
+      "value": "http/2",
+      "label": "HTTP/2",
+      "aliases": [
+        "http/2.0"
+      ]
+    },
+    {
+      "value": "http/3",
+      "label": "HTTP/3",
+      "aliases": [
+        "http/3.0"
+      ]
+    }
+  ],
+  "fetch-destination": [
+    {
+      "value": "audio",
+      "label": "Audio"
+    },
+    {
+      "value": "audioworklet",
+      "label": "Audio worklet"
+    },
+    {
+      "value": "document",
+      "label": "Document"
+    },
+    {
+      "value": "embed",
+      "label": "Embed"
+    },
+    {
+      "value": "empty",
+      "label": "Fetch / XHR (empty)"
+    },
+    {
+      "value": "font",
+      "label": "Font"
+    },
+    {
+      "value": "frame",
+      "label": "Frame"
+    },
+    {
+      "value": "iframe",
+      "label": "Iframe"
+    },
+    {
+      "value": "image",
+      "label": "Image"
+    },
+    {
+      "value": "json",
+      "label": "JSON"
+    },
+    {
+      "value": "manifest",
+      "label": "Manifest"
+    },
+    {
+      "value": "object",
+      "label": "Object"
+    },
+    {
+      "value": "paintworklet",
+      "label": "Paint worklet"
+    },
+    {
+      "value": "report",
+      "label": "Report"
+    },
+    {
+      "value": "script",
+      "label": "Script"
+    },
+    {
+      "value": "serviceworker",
+      "label": "Service worker"
+    },
+    {
+      "value": "sharedworker",
+      "label": "Shared worker"
+    },
+    {
+      "value": "style",
+      "label": "Stylesheet"
+    },
+    {
+      "value": "text",
+      "label": "Text"
+    },
+    {
+      "value": "track",
+      "label": "Track"
+    },
+    {
+      "value": "video",
+      "label": "Video"
+    },
+    {
+      "value": "webidentity",
+      "label": "Web identity"
+    },
+    {
+      "value": "worker",
+      "label": "Worker"
+    },
+    {
+      "value": "xslt",
+      "label": "XSLT"
+    }
+  ]
+}

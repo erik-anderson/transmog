@@ -6,6 +6,66 @@ use super::{
 };
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::sync::LazyLock;
+
+// Shared with the desktop picker: presets, aliases and Other must not drift.
+#[derive(Deserialize)]
+struct Preset {
+    value: String,
+    #[serde(default)]
+    aliases: Vec<String>,
+}
+
+static CATALOG: LazyLock<BTreeMap<String, Vec<Preset>>> = LazyLock::new(|| {
+    serde_json::from_str(include_str!("filter-catalog.json"))
+        .expect("valid traffic filter catalogue")
+});
+
+fn presets(dimension: TrafficDimension) -> Option<&'static [Preset]> {
+    let key = match dimension {
+        TrafficDimension::Column(TrafficColumn::Method) => "method",
+        TrafficDimension::Column(TrafficColumn::Protocol) => "protocol",
+        TrafficDimension::Column(TrafficColumn::State) => "state",
+        TrafficDimension::Facet(TrafficFacet::TrafficType) => "traffic-type",
+        TrafficDimension::Facet(TrafficFacet::FetchDestination) => "fetch-destination",
+        _ => return None,
+    };
+    Some(&CATALOG[key])
+}
+
+pub(super) fn canonical_protocol(value: &str) -> String {
+    // Only recorded HTTP spellings have aliases; internal enums use canonical labels at source.
+    let value = value.to_lowercase();
+    CATALOG["protocol"]
+        .iter()
+        .find(|preset| preset.value == value || preset.aliases.contains(&value))
+        .map_or(value.clone(), |preset| preset.value.clone())
+}
+
+pub(super) fn known_fetch_destination(value: &str) -> bool {
+    CATALOG["fetch-destination"]
+        .iter()
+        .any(|preset| preset.value == value)
+}
+
+fn supports_other(dimension: TrafficDimension) -> bool {
+    presets(dimension).is_some() || dimension == TrafficDimension::Column(TrafficColumn::Status)
+}
+
+fn is_other(dimension: TrafficDimension, value: &TrafficFilterValue) -> bool {
+    match value {
+        TrafficFilterValue::Text(text) => presets(dimension)
+            .is_some_and(|presets| !presets.iter().any(|preset| preset.value == *text)),
+        TrafficFilterValue::Number(number)
+            if dimension == TrafficDimension::Column(TrafficColumn::Status) =>
+        {
+            number
+                .parse::<u64>()
+                .is_ok_and(|status| !(100..600).contains(&status))
+        }
+        _ => false,
+    }
+}
 
 /// Metadata dimensions which do not require a visible table column.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -44,6 +104,8 @@ pub enum TrafficFilterValue {
     StatusFamily(u16),
     /// Missing evidence, distinct from empty text or measured zero.
     Unavailable,
+    /// Present values outside the shared presets (status: outside 100–599).
+    Other,
 }
 
 /// OR alternatives in one dimension; distinct dimensions are combined with AND.
@@ -158,6 +220,7 @@ fn prepare_value(
 ) -> Result<TrafficFilterValue, AppError> {
     match value {
         TrafficFilterValue::Unavailable => Ok(value.clone()),
+        TrafficFilterValue::Other if supports_other(dimension) => Ok(value.clone()),
         TrafficFilterValue::StatusFamily(family)
             if dimension == TrafficDimension::Column(TrafficColumn::Status)
                 && (1..=5).contains(family) =>
@@ -181,14 +244,15 @@ fn prepare_value(
         }
         TrafficFilterValue::Text(text) if !is_numeric(dimension) => {
             validate_filter(Some(text))?;
-            let text = text.to_lowercase();
+            let text = if dimension == TrafficDimension::Column(TrafficColumn::Protocol) {
+                canonical_protocol(text)
+            } else {
+                text.to_lowercase()
+            };
             if dimension == TrafficDimension::Facet(TrafficFacet::TrafficType)
                 && !matches!(text.as_str(), "http" | "websocket" | "sse")
             {
                 return Err(invalid("Traffic type must be http, websocket or sse"));
-            }
-            if dimension == TrafficDimension::Facet(TrafficFacet::FetchDestination) {
-                validate_fetch_destinations(std::slice::from_ref(&text))?;
             }
             Ok(TrafficFilterValue::Text(text))
         }
@@ -200,6 +264,7 @@ fn prepare_value(
 
 fn value_for(row: &SessionSummary, dimension: TrafficDimension) -> TrafficFilterValue {
     let unavailable = match dimension {
+        TrafficDimension::Column(TrafficColumn::Method) => row.method == "—",
         TrafficDimension::Column(TrafficColumn::ContentType) => row.content_type.is_none(),
         TrafficDimension::Column(TrafficColumn::Process) => row.caller.process_name.is_none(),
         TrafficDimension::Column(TrafficColumn::Protocol) => row.protocol == "Unavailable",
@@ -214,6 +279,9 @@ fn value_for(row: &SessionSummary, dimension: TrafficDimension) -> TrafficFilter
             .map_or(TrafficFilterValue::Unavailable, |value| {
                 TrafficFilterValue::Number(value.to_string())
             }),
+        TrafficDimension::Column(TrafficColumn::Protocol) => {
+            TrafficFilterValue::Text(canonical_protocol(&row.protocol))
+        }
         TrafficDimension::Column(column) => {
             TrafficFilterValue::Text(text_value(row, column).to_lowercase())
         }
@@ -242,6 +310,7 @@ impl TrafficFilterGroup {
                 TrafficFilterValue::StatusFamily(family) => {
                     row.status.is_some_and(|status| status / 100 == *family)
                 }
+                TrafficFilterValue::Other => is_other(self.dimension, &candidate),
                 value => *value == candidate,
             })
     }
@@ -325,7 +394,11 @@ pub(crate) fn facet_counts(
     let mut counts = BTreeMap::<TrafficFilterValue, usize>::new();
     let mut omitted_entries = 0;
     for row in &rows {
-        match prepare_value(request.dimension, &value_for(row, request.dimension)) {
+        let value = value_for(row, request.dimension);
+        if is_other(request.dimension, &value) {
+            *counts.entry(TrafficFilterValue::Other).or_default() += 1;
+        }
+        match prepare_value(request.dimension, &value) {
             Ok(value) => *counts.entry(value).or_default() += 1,
             Err(_) => omitted_entries += 1,
         }
@@ -347,6 +420,7 @@ pub(crate) fn facet_counts(
                 TrafficFilterValue::Text(text) | TrafficFilterValue::Number(text) => text.clone(),
                 TrafficFilterValue::StatusFamily(family) => format!("{family}xx"),
                 TrafficFilterValue::Unavailable => "unavailable".into(),
+                TrafficFilterValue::Other => "other".into(),
             };
             text.contains(&search)
         })
@@ -383,6 +457,7 @@ fn option_presentation(
 ) -> (String, String) {
     match value {
         TrafficFilterValue::Unavailable => ("unavailable".into(), "Unavailable".into()),
+        TrafficFilterValue::Other => ("other".into(), "Other".into()),
         TrafficFilterValue::Number(number) => (format!("number:{number}"), number.clone()),
         TrafficFilterValue::StatusFamily(family) => {
             (format!("status-family:{family}"), format!("{family}xx"))

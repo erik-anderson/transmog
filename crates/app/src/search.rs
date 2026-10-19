@@ -912,6 +912,7 @@ mod tests {
                         counts
                             .options
                             .iter()
+                            .filter(|option| option.value != crate::TrafficFilterValue::Other)
                             .map(|option| option.count)
                             .sum::<usize>(),
                         2

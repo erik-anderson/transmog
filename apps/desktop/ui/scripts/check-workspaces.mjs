@@ -62,6 +62,7 @@ const { chromium } = createRequire(new URL('../../../../e2e/playwright/package.j
 const root = fileURLToPath(new URL('../', import.meta.url));
 await checkUserAgentPresets(root);
 await checkRequestOrderModel(root);
+const filterCatalog = JSON.parse(await readFile(resolve(root, '../../../crates/app/src/sessions/filter-catalog.json'), 'utf8'));
 const initial = JSON.parse(await readFile(resolve(root, 'src/initial-state.json'), 'utf8'));
 const scriptDeclarations = await readFile(resolve(root,'../../../crates/proxy-script/generated/transmog-script.d.ts'),'utf8');
 const metadata = JSON.parse(await readFile(resolve(root, 'dist/client-metafile.json'), 'utf8'));
@@ -108,7 +109,9 @@ await page.addInitScript((configuration) => {
   };
   const state = globalThis.__workspaceFixture = { calls: {}, workspace:JSON.parse(localStorage.getItem('workspace')??JSON.stringify(workspace)), lifecycle:'stopped', sessions: ['first','second','cached','image'].map(summary), paused: [], queryDelay: 0, slowDetail: false, slowBody:false };
 
-  const trafficKey=(row,column)=>({'request-number':row.requestNumber??'0',method:row.method,status:row.status,process:row.caller.processName,pid:row.caller.processId,host:row.host,path:row.path,url:row.url,protocol:row.protocol,duration:row.durationMs,'http-duration':row.httpDurationMs,'response-bytes':row.responseBytes,'request-bytes':row.requestBytes,state:row.terminal,'content-type':row.contentType,'started-at':row.startedAt>0?row.startedAt:null,'stream-sent':row.streamSent,'stream-received':row.streamReceived,'traffic-type':row.streamProtocol==='web-socket'?'websocket':row.streamProtocol==='sse'?'sse':'http','fetch-destination':row.fetchDestination})[column];
+  const canonicalProtocol=value=>{const text=value.toLowerCase();return configuration.filterCatalog.protocol.find(option=>option.value===text||option.aliases?.includes(text))?.value??text;};
+  const otherValue=(dimension,candidate)=>candidate!=null&&candidate!=='Unavailable'&&(dimension==='status'?candidate<100||candidate>=600:!!configuration.filterCatalog[dimension]&&!configuration.filterCatalog[dimension].some(option=>option.value===String(candidate).toLowerCase()));
+  const trafficKey=(row,column)=>({'request-number':row.requestNumber??'0',method:row.method==='—'?null:row.method,status:row.status,process:row.caller.processName,pid:row.caller.processId,host:row.host,path:row.path,url:row.url,protocol:row.protocol==='Unavailable'?row.protocol:canonicalProtocol(row.protocol),duration:row.durationMs,'http-duration':row.httpDurationMs,'response-bytes':row.responseBytes,'request-bytes':row.requestBytes,state:row.terminal,'content-type':row.contentType,'started-at':row.startedAt>0?row.startedAt:null,'stream-sent':row.streamSent,'stream-received':row.streamReceived,'traffic-type':row.streamProtocol==='web-socket'?'websocket':row.streamProtocol==='sse'?'sse':'http','fetch-destination':row.fetchDestination})[column];
   const numericColumns=new Set(['request-number','status','pid','duration','http-duration','response-bytes','request-bytes','started-at','stream-sent','stream-received']);
   const trafficRows=(query={},exclude=null)=>{
     const snapshot=query.searchResultId?new Set(state.searchResults?.find(result=>result.id===query.searchResultId)?.ids??[]):null;
@@ -121,7 +124,7 @@ await page.addInitScript((configuration) => {
     if(query.incidentWindow){const w=query.incidentWindow,intake=state.incidentIntakes?.[w.traceId],marker=intake?.markers.find(m=>m.id===w.markerId);rows=rows.filter(row=>row.traceId===w.traceId&&(!w.markerId||!!marker&&row.startedAt>=marker.unixMillis-w.beforeSeconds*1000&&row.startedAt<=marker.unixMillis+w.afterSeconds*1000)&&(!w.relevantHostsOnly||intake?.profile?.relevantHosts.some(h=>row.host===h.host||h.includeSubdomains&&row.host.endsWith('.'+h.host))));}
     if(exclude!=='fetch-destination'&&query.fetchDestinations?.length)rows=rows.filter(row=>query.fetchDestinations.includes(row.fetchDestination));
     for(const filter of query.filters??[]){if(filter.column===exclude)continue;rows=rows.filter(row=>{const value=trafficKey(row,filter.column);return filter.operator==='minimum'?value!=null&&number(value)>=number(filter.value):filter.operator==='maximum'?value!=null&&number(value)<=number(filter.value):filter.operator==='equals'?String(value).toLowerCase()===filter.value.toLowerCase():String(value).toLowerCase().includes(filter.value.toLowerCase());});}
-    for(const group of query.filterGroups??[]){if(group.dimension===exclude||!group.values.length)continue;rows=rows.filter(row=>group.values.some(value=>{const candidate=trafficKey(row,group.dimension);return value.kind==='unavailable'?candidate==null||candidate==='Unavailable':value.kind==='status-family'?Math.floor(row.status/100)===value.value:value.kind==='number'?candidate!=null&&number(candidate)===number(value.value):String(candidate).toLowerCase()===value.value.toLowerCase();}));}
+    for(const group of query.filterGroups??[]){if(group.dimension===exclude||!group.values.length)continue;rows=rows.filter(row=>group.values.some(value=>{const candidate=trafficKey(row,group.dimension);return value.kind==='other'?otherValue(group.dimension,candidate):value.kind==='unavailable'?candidate==null||candidate==='Unavailable':value.kind==='status-family'?Math.floor(row.status/100)===value.value:value.kind==='number'?candidate!=null&&number(candidate)===number(value.value):String(candidate).toLowerCase()===value.value.toLowerCase();}));}
     if(query.sort){const {column,direction}=query.sort;rows.sort((a,b)=>{const left=trafficKey(a,column),right=trafficKey(b,column);const compared=numericColumns.has(column)?left==null?right==null?0:1:right==null?-1:number(left)<number(right)?-1:number(left)>number(right)?1:0:String(left).localeCompare(String(right));return (direction==='descending'?-compared:compared)||a.id.localeCompare(b.id);});}
     return rows;
   };
@@ -436,11 +439,11 @@ await page.addInitScript((configuration) => {
           const rows=trafficRows(request.query,request.dimension),counts=new Map();
           const add=(key,value,label)=>{const current=counts.get(key);if(current)current.count++;else counts.set(key,{key,value,label,count:1});};
           let omittedEntries=0;
-          for(const row of rows){const candidate=trafficKey(row,request.dimension);if(candidate==null||candidate==='Unavailable')add('unavailable',{kind:'unavailable'},'Unavailable');else if(String(candidate).length>255){omittedEntries++;}else if(numericColumns.has(request.dimension))add('number:'+candidate,{kind:'number',value:String(candidate)},String(candidate));else{const value=String(candidate).toLowerCase();add('text:'+value,{kind:'text',value},request.dimension==='method'||request.dimension==='protocol'?value.toUpperCase():value);}
+          for(const row of rows){const candidate=trafficKey(row,request.dimension);if(otherValue(request.dimension,candidate))add('other',{kind:'other'},'Other');if(candidate==null||candidate==='Unavailable')add('unavailable',{kind:'unavailable'},'Unavailable');else if(String(candidate).length>255){omittedEntries++;}else if(numericColumns.has(request.dimension))add('number:'+candidate,{kind:'number',value:String(candidate)},String(candidate));else{const value=String(candidate).toLowerCase();add('text:'+value,{kind:'text',value},request.dimension==='method'||request.dimension==='protocol'?value.toUpperCase():value);}
             if(request.dimension==='status'&&row.status>=100&&row.status<600){const family=Math.floor(row.status/100);add('status-family:'+family,{kind:'status-family',value:family},family+'xx');}}
           state.facetRequests??=[];state.facetRequests.push(request);
           const options=[...counts.values()].filter(option=>!request.search||option.label.toLowerCase().includes(request.search.toLowerCase())).sort((a,b)=>a.key.localeCompare(b.key)),offset=request.offset??0,limit=request.limit??100;
-          const includedOptions=(request.includeValues??[]).map(value=>{const key=value.kind==='unavailable'?'unavailable':value.kind+':'+String(value.value).toLowerCase();return counts.get(key)??{key,label:value.kind==='unavailable'?'Unavailable':String(value.value),value,count:0};});
+          const includedOptions=(request.includeValues??[]).map(value=>{const key=value.kind==='unavailable'||value.kind==='other'?value.kind:value.kind+':'+String(value.value).toLowerCase();return counts.get(key)??{key,label:value.kind==='unavailable'?'Unavailable':String(value.value),value,count:0};});
           return {dimension:request.dimension,includedOptions,options:options.slice(offset,offset+limit),matchingEntries:rows.length,omittedEntries,totalOptions:options.length,nextOffset:offset+limit<options.length?offset+limit:null};
         }
         case 'remove_unselected_traffic_entries': {
@@ -826,7 +829,7 @@ await page.addInitScript((configuration) => {
   };
   globalThis.__cspViolations = [];
   addEventListener('securitypolicyviolation', (event) => globalThis.__cspViolations.push(event.effectiveDirective));
-}, {workspace:initial.workspace,networkProfiles:initial.networkProfiles,scriptDeclarations});
+}, {workspace:initial.workspace,networkProfiles:initial.networkProfiles,scriptDeclarations,filterCatalog});
 
 const view = async (name) => {
   await page.locator('app-shell a[data-view="' + name + '"]').click();
