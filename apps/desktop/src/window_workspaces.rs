@@ -229,6 +229,7 @@ pub(super) fn create_viewer(
         replay_executor: Some(Arc::new(replay)),
         body_store: Some(BodyStoreConfig::product_default(root.path().join("bodies"))),
         preview_worker_executable: super::packaged_preview_worker(),
+        extensions: Some(state.application.extensions()),
         ..AppConfig::default()
     })?;
     application.save_product_state(state.application.product_state())?;

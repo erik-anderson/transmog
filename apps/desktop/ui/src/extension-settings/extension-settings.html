@@ -1,0 +1,23 @@
+<template>
+<section aria-labelledby="extensions-heading" class="extension-panel">
+ <h2 id="extensions-heading">Extensions</h2>
+ <p class="field-help">Install read-only visualizers for request and response content. They run only when you choose one, with no network access.</p>
+ <div class="actions extension-actions"><button type="button" @click="{install()}" ?disabled="{{extensionsBusy || extensionsWarning}}">Install extension…</button><button type="button" class="secondary" @click="{unpacked()}" ?disabled="{{extensionsBusy || extensionsWarning}}">Load unpacked…</button><button type="button" class="secondary" @click="{refresh()}" ?disabled="{{extensionsBusy}}">Refresh</button></div>
+ <div class="extension-feedback"><output role="status" aria-live="polite">{{extensionsText}}</output><button type="button" class="secondary compact-button" ?hidden="{{!extensionsText && !extensionsError}}" @click="{dismiss()}" ?disabled="{{extensionsBusy}}">Dismiss</button></div>
+ <p role="status" class="field-error" ?hidden="{{!extensionsError}}">{{extensionsError}}</p>
+ <p role="status" class="field-error" ?hidden="{{!extensionsWarning}}">{{extensionsWarning}}</p>
+ <p ?hidden="{{!extensionsLoaded || extensionsEntries.length || extensionsWarning}}" class="field-help">No extensions installed. Install a .tmext package or load an unpacked development folder.</p>
+ <div class="extension-list" aria-busy="{{extensionsBusy}}">
+  <for each="extension in extensionsEntries"><article key="{{extension.id}}" class="extension-entry" aria-label="{{extension.name}}">
+   <div class="extension-heading"><div><h3>{{extension.name}}</h3><p class="extension-origin">{{extension.version}} · {{extension.origin}}</p></div><label class="extension-enable"><input type="checkbox" ?checked="{{extension.enabled}}" aria-label="Enable {{extension.name}}" @change="{enabled(extension.id,e)}" ?disabled="{{extensionsBusy || extensionsWarning}}"> Enabled</label><button type="button" class="secondary" aria-label="Uninstall {{extension.name}}" ?hidden="{{extension.bundled}}" @click="{uninstall(extension.id)}" ?disabled="{{extensionsBusy || extensionsWarning}}">Uninstall</button></div>
+   <if condition="extension.development"><label class="extension-reload"><input type="checkbox" ?checked="{{extension.hotReload}}" aria-label="Hot reload {{extension.name}}" @change="{hotReload(extension.id,e)}" ?disabled="{{extensionsBusy || extensionsWarning}}"> Hot reload when a visualizer is open</label><p class="extension-folder"><code>{{extension.directory}}</code></p></if>
+   <details class="extension-declarations"><summary>Visualizers and declared inputs</summary>
+    <p class="extension-id"><code>{{extension.id}}</code> · {{extension.runtime}}</p>
+    <for each="visualizer in extension.visualizers"><section key="{{visualizer.id}}" class="extension-contribution"><h4>{{visualizer.name}} <span>{{visualizer.surfaces}}</span></h4><dl><dt>Request headers</dt><dd><code>{{visualizer.requestHeaders}}</code></dd><dt>Request body</dt><dd>{{visualizer.requestBody}}</dd><dt>Response headers</dt><dd><code>{{visualizer.responseHeaders}}</code></dd><dt>Response body</dt><dd>{{visualizer.responseBody}}</dd><dt>Matching messages</dt><dd><for each="match in visualizer.matches"><p>{{match}}</p></for></dd><dt>Live updates</dt><dd>{{visualizer.live}}</dd><dt>Related context</dt><dd>{{visualizer.context}}</dd></dl></section></for>
+    <p class="extension-id">Revision <code>{{extension.revision}}</code></p>
+   </details>
+  </article></for>
+ </div>
+ <p class="field-help extension-help">Disabling stops active visualizers in every window. Uninstalling an unpacked extension leaves its source files in place.</p>
+</section>
+</template>

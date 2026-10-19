@@ -88,6 +88,20 @@ $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
 $probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
 $env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
+$extensionSource = $null
+if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly) {
+    $extensionSource = Join-Path $probeRoot 'extension-source'
+    $extensionRegistry = Join-Path $env:LOCALAPPDATA 'Transmog/extensions-v1'
+    New-Item -ItemType Directory -Force -Path $extensionSource, $extensionRegistry | Out-Null
+    $extensionScript = "throw new Error('Management must not evaluate extension code'); export function visualize() {}"
+    [IO.File]::WriteAllText((Join-Path $extensionSource 'main.js'), $extensionScript)
+    $extensionManifest = @{formatVersion=1;apiVersion=1;runtime='javascript-es2022';id='test.development';version='1.0.0';name='Development visualizer fixture';files=@(@{path='main.js';bytes=0});visualizers=@(@{id='headers';name='Example headers';entry='main.js';surfaces=@('headers');inputs=@{request=@{headers=@('x-example');body='none'};response=@{headers=@();body='none'}};matches=@(@{direction='request';headers=@(@{direction='request';name='x-example';test=@{op='present'}})})})}
+    $extensionManifestJson = $extensionManifest | ConvertTo-Json -Depth 16 -Compress
+    [IO.File]::WriteAllText((Join-Path $extensionSource 'manifest.json'), $extensionManifestJson)
+    $extensionDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($extensionManifestJson))).ToLowerInvariant()
+    $extensionEntry = @{catalog=@{manifest=$extensionManifest;digest=$extensionDigest;enabled=$true;origin='development'};directory=$extensionSource;hotReload=$false}
+    [IO.File]::WriteAllText((Join-Path $extensionRegistry 'catalog.json'), (ConvertTo-Json -InputObject @($extensionEntry) -Depth 20 -Compress))
+}
 if ($ViewerChecks -or $PortableCaseChecks) {
     $probeTemp = Join-Path $probeRoot 'temp'
     New-Item -ItemType Directory -Force -Path $probeTemp | Out-Null
@@ -309,6 +323,7 @@ try {
         Pop-Location
     }
     $endingMemory = Save-DesktopMemorySample 'Functional checks end'
+    if ($extensionSource -and -not (Test-Path -LiteralPath (Join-Path $extensionSource 'main.js') -PathType Leaf)) { throw 'Unregistering the development extension deleted its source file.' }
     $endingWorkingSet = $endingMemory.WorkingSetBytes
     if ($KeyRecoveryChecks -and [Convert]::ToHexString([IO.File]::ReadAllBytes($fixturePath)) -ne [Convert]::ToHexString($fixtureBytes)) {
         throw 'Inspecting or canceling DPAPI recovery changed the existing private key.'

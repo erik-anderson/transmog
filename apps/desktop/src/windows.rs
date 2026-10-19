@@ -4,6 +4,8 @@
 mod captured_preview;
 #[path = "comparison.rs"]
 mod comparison;
+#[path = "extension_management.rs"]
+mod extension_management;
 #[path = "format_converter.rs"]
 mod format_converter;
 #[path = "incidents.rs"]
@@ -2139,6 +2141,11 @@ pub fn run() {
         script_workspace_path: Some(state_root.join("scripts-v1")),
         script_host_executable: packaged_script_host(),
         preview_worker_executable: packaged_preview_worker(),
+        extensions: Some(transmog_app::extensions::Registry::load(
+            state_root.join("extensions-v1"),
+            packaged_extension_host()
+                .map(|executable| transmog_app::extensions::HostConfig { executable }),
+        )),
         response_asset_root: Some(state_root.join("response-assets-v1")),
         saved_demo_root: Some(state_root.join("saved-demos-v1")),
         diagnostics_log_path: Some(state_root.join("diagnostics.jsonl")),
@@ -2422,6 +2429,12 @@ pub fn run() {
                 composer_source,
                 save_request_body,
                 inspect_body,
+                extension_management::extension_status,
+                extension_management::install_extension,
+                extension_management::load_unpacked_extension,
+                extension_management::enable_extension,
+                extension_management::extension_hot_reload,
+                extension_management::uninstall_extension,
                 read_body_range,
                 save_response_body,
                 save_traffic_trace,
@@ -2487,6 +2500,7 @@ pub fn run() {
                 window.state::<format_converter::ConverterWindows>().release(window.label());
                 portable_cases::release(window.label());
                 if window.label() == "main" {
+                    window.state::<DesktopState>().application.deactivate_visualizers();
                     close_guard.store(false, Ordering::Release);
                 } else {
                     let removed = window
@@ -2496,7 +2510,7 @@ pub fn run() {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .remove(window.label());
-                    if let Some(viewer) = removed { viewer.application.cancel_composer_requests(); }
+                    if let Some(viewer) = removed { viewer.application.deactivate_visualizers(); viewer.application.cancel_composer_requests(); }
                 }
             }
             if window.label() == "main"
@@ -2564,6 +2578,11 @@ fn packaged_preview_worker() -> Option<PathBuf> {
     let executable = std::env::current_exe().ok()?;
     let worker = executable.with_file_name("transmog-preview-worker.exe");
     worker.is_file().then_some(worker)
+}
+fn packaged_extension_host() -> Option<PathBuf> {
+    let executable = std::env::current_exe().ok()?;
+    let host = executable.with_file_name("transmog-extension-host.exe");
+    host.is_file().then_some(host)
 }
 
 fn preview_response(application: &Application, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {

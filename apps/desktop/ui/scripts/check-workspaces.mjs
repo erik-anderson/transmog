@@ -51,6 +51,7 @@ import {checkPagePreviewRules} from './check-page-preview-rules.mjs';
 import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
+import {checkExtensions} from './check-extensions.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
@@ -167,6 +168,10 @@ await page.addInitScript((configuration) => {
     return {document,owner,sources,review:{rows,warnings,activeCount:input.source.kind==='rules'&&document.autoresponsesEnabled!==false?sources.filter(source=>source.rule.enabled).length:0,destinationCount:owner?.rules.length??0}};
   };
   const callbacks = new Map();
+  const nativeEvents=new Map();let nativeEventId=0;
+  state.extensionListenerCount=()=>Array.from(nativeEvents.values()).filter(entry=>entry.event==='extensions-changed').length;
+  state.emitNative=(event)=>{for(const [id,entry] of nativeEvents)if(entry.event===event)callbacks.get(entry.handler)?.({event,id,payload:null});};
+  window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener(_event,id){const entry=nativeEvents.get(id);if(entry)callbacks.delete(entry.handler);nativeEvents.delete(id);}};
   state.callbackCount=()=>callbacks.size;
   let callbackId = 0;
   window.__TAURI_INTERNALS__ = {
@@ -177,6 +182,13 @@ await page.addInitScript((configuration) => {
       if(state.holdCommand===command){state.holdCommand=null;await new Promise(resolve=>state.finishHeldCommand=resolve);}
       state.calls[command] = (state.calls[command] ?? 0) + 1;
       switch (command) {
+        case 'plugin:event|listen': {const id=++nativeEventId;nativeEvents.set(id,{event:args.event,handler:args.handler});return id;}
+        case 'plugin:event|unlisten': nativeEvents.delete(args.eventId);return;
+        case 'extension_status': {const status=structuredClone(state.extensionStatus??{entries:[],warning:null});if(state.deferExtensionStatus){state.deferExtensionStatus=false;await new Promise(resolve=>state.finishExtensionStatus=resolve);}return status;}
+        case 'install_extension': case 'load_unpacked_extension': {if(state.cancelExtensionPicker){state.cancelExtensionPicker=false;return null;}const status=state.extensionStatus??={entries:[],warning:null};status.entries.push(structuredClone(state.nextExtension));return structuredClone(status);}
+        case 'enable_extension': {if(state.extensionSaveError)throw new Error('Extension settings could not be saved.');state.extensionStatus.entries.find(entry=>entry.catalog.manifest.id===args.id).catalog.enabled=args.enabled;return structuredClone(state.extensionStatus);}
+        case 'extension_hot_reload': {state.extensionStatus.entries.find(entry=>entry.catalog.manifest.id===args.id).hotReload=args.enabled;return structuredClone(state.extensionStatus);}
+        case 'uninstall_extension': {state.extensionStatus.entries=state.extensionStatus.entries.filter(entry=>entry.catalog.manifest.id!==args.id);if(state.extensionCleanupError)throw new Error('The extension was removed but its old package file could not be deleted.');return structuredClone(state.extensionStatus);}
         case 'cancel_format_conversion': return;
         case 'convert_format': {
           const input=structuredClone(args.input);
@@ -840,6 +852,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--extensions-only')){await page.goto('https://workspace.test/');await checkExtensions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Extension management, declared inputs, inert metadata and async lifetimes verified.\n');process.exit(0);}
   if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')){await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident review, export dialog lifecycle, stale reviews and capture markers verified.\n');process.exit(0);}
   if(process.argv.includes('--traffic-presentation-only')){await page.goto('https://workspace.test/');await checkTrafficPresentation(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic presentation and one-click inspector switching verified.\n');process.exit(0);}
@@ -2455,6 +2468,7 @@ try {
   assert.equal(await page.locator('.operation-error-dialog[open]').count(),0);
   await checkLoopback(page,root);
   await checkClientCertificates(page,root);
+  await checkExtensions(page,root);
   await page.goto('https://workspace.test/?viewer');
   await page.getByText('Capture viewer',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);

@@ -5,7 +5,8 @@ native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
 the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-registry`
 provides shared installation and active-instance ownership. `transmog-app`
-connects explicit activation to retained headers and body ranges. Desktop controls,
+connects explicit activation to retained headers and body ranges. Desktop Extensions
+settings provides installation and declaration management. Visualizer selection/rendering,
 context/live feeding, transactional hot reload and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
@@ -21,7 +22,7 @@ overrides capture redaction or grants network access.
 names and indices; redacted values remain unavailable. `check_body_access` denies
 body access for a `none` declaration. These are enforcement primitives for the
 host broker, not an auditing system. Declaration details are inert metadata for
-the planned Extensions settings experience.
+the Extensions settings experience.
 
 Native matching handles exact media types separately from parameters, rejects
 conflicting Content-Type evidence and supports bounded method, endpoint, status
@@ -82,6 +83,34 @@ to cancel subscriptions and clear retained buffers, even when a pending operatio
 still holds a temporary reference. Enabling does not resurrect those instances.
 Hot-reload preference is persisted here; file watching and transactional result
 replacement belong to the pending desktop broker integration.
+
+## Extensions settings
+
+Open **Settings → Extensions** to install a local `.tmext`, load an unpacked
+folder, enable/disable an entry or uninstall it. Each entry exposes its visualizer
+surfaces, native matching declarations, exact request/response header names, body
+access and live/context capabilities under **Visualizers and declared inputs**.
+Names and all extension-provided metadata remain inert text. This is declaration
+management, without access histories or an auditing subsystem.
+
+Changes use the shared registry across main and capture-viewer windows. Disabling
+stops ready and starting workers; enabling does not resume them. Bundled entries
+can be disabled, while their files remain owned by the app. Removing an unpacked
+entry leaves its source folder intact. Its hot-reload preference is saved here;
+the active-view watcher remains pending with visualization controls below.
+
+Inventory reads and enable changes never evaluate source modules. Failed writes
+restore the saved checkbox state. A cleanup failure after a catalog change reads
+back the authoritative inventory, preserving the actual installation result.
+Leaving and returning to a pending inventory refresh requests fresh metadata and
+rejects the earlier response. The management view releases its event listener
+when hidden.
+
+Production-template browser checks cover keyboard changes, inert markup,
+failed writes, removal cleanup, stale refreshes, compact layouts and forced
+colors. Native WebView checks exercise the real command boundary and persisted
+enable/hot-reload settings, verify unpacked sources survive removal, and retain
+screenshots and memory evidence in the ordinary desktop validation artifacts.
 
 ## Retained-evidence broker
 

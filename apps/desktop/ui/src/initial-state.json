@@ -1,4 +1,10 @@
 {
+  "extensionsEntries": [],
+  "extensionsBusy": false,
+  "extensionsLoaded": false,
+  "extensionsText": "",
+  "extensionsError": "",
+  "extensionsWarning": "",
   "converterMode": false,
   "converterTheme": "system",
   "converterInput": "",

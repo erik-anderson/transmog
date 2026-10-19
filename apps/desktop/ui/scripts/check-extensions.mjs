@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import {resolve} from 'node:path';
+
+function extension(id,name,development=false) {
+  const contribution={id:'headers',name:'Request metadata',entry:'main.js',surfaces:['headers'],inputs:{request:{headers:['content-type','x-requesttype'],body:'none'},response:{headers:[],body:'optional'}},matches:[{direction:'request',contentTypes:['application/example'],methods:['POST'],pathPrefixes:['/protocol'],statuses:[],headers:[]}],inputMatches:[],liveUpdates:{events:['request','response'],bodyProgress:false},context:{headers:[{direction:'request',name:'x-requesttype'}],maxExchanges:32},limits:{inputBytes:1048576,outputBytes:1048576,heapBytes:67108864,durationMs:2000,nodes:2000}};
+  return {catalog:{manifest:{id,name,version:'1.0.0',runtime:'javascript-es2022',apiVersion:1,visualizers:[contribution,{...structuredClone(contribution),id:'response',name:'Response body',surfaces:['body'],inputs:{request:{headers:['x-requesttype'],body:'none'},response:{headers:['content-type'],body:'required'}}}]},digest:'a'.repeat(64),enabled:true,origin:development?'development':'installed'},directory:development?'C:/development/a-long-project-folder/experimental-protocol-visualizer':null,hotReload:false};
+}
+export async function checkExtensions(page,root) {
+  await page.locator('a[data-view="settings"]').click();
+  const settings=page.locator('settings-workspace');
+  const dirtyBefore=await page.evaluate(()=>document.querySelector('app-shell').settings.settingsDirty);
+  const savesBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0);
+  await settings.getByRole('button',{name:'Extensions',exact:true}).click();
+  const panel=page.locator('extension-settings');
+  await panel.getByText('No extensions installed.',{exact:false}).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.cancelExtensionPicker=true;});
+  await panel.getByRole('button',{name:'Install extension…',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await panel.locator('article').count(),0);
+  const name='Protocol <img src=x onerror="alert(1)"> — long extension name for retained request and response evidence';
+  await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},extension('example.protocol',name));
+  await panel.getByRole('button',{name:'Install extension…',exact:true}).click();
+  const installed=panel.getByRole('article',{name,exact:true});
+  await installed.getByRole('heading',{name,exact:true}).waitFor();
+  assert.equal(await panel.locator('img,script').count(),0,'Extension metadata produced executable UI');
+  await installed.locator('summary').click();
+  await installed.getByText('content-type, x-requesttype',{exact:true}).waitFor();
+  assert.equal(await installed.getByText('No headers',{exact:true}).count(),1);
+  assert.equal(await installed.getByText('Required',{exact:true}).count(),1);
+  const enabled=installed.getByRole('checkbox',{name:'Enable '+name,exact:true});
+  await enabled.focus();await page.keyboard.press('Space');
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await enabled.isChecked(),false);
+  assert.equal(await installed.locator('details').evaluate(element=>element.open),true,'Updating enable state collapsed declarations');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=true;});
+  await enabled.click();
+  const errorDialog=page.locator('.operation-error-dialog[open]');await errorDialog.waitFor();
+  await errorDialog.getByRole('button',{name:'Close',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await enabled.isChecked(),false,'A failed write left an enabled-looking checkbox');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=false;});
+  await panel.getByRole('button',{name:'Dismiss',exact:true}).click();
+  await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},extension('example.development','Development protocol',true));
+  await panel.getByRole('button',{name:'Load unpacked…',exact:true}).click();
+  const developer=panel.getByRole('article',{name:'Development protocol',exact:true});
+  await developer.getByRole('checkbox',{name:'Hot reload Development protocol',exact:true}).check();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);
+  await developer.locator('summary').click();
+  for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
+    await page.setViewportSize({width,height});
+    assert.equal(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true,'Extensions overflowed the settings pane');
+    await page.screenshot({path:resolve(root,`../../../target/ui-check/extensions-${width}.png`)});
+  }
+  await page.emulateMedia({forcedColors:'active'});
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/extensions-forced-colors.png')});
+  await page.emulateMedia({forcedColors:'none'});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionCleanupError=true;});
+  await developer.getByRole('button',{name:'Uninstall Development protocol',exact:true}).click();
+  await errorDialog.waitFor();await errorDialog.getByRole('button',{name:'Close',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await developer.count(),0,'Cleanup failure resurrected an already removed extension');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionCleanupError=false;globalThis.__workspaceFixture.deferExtensionStatus=true;});
+  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishExtensionStatus);
+  await settings.getByRole('button',{name:'Preferences',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.entries[0].catalog.manifest.name='Updated elsewhere';});
+  await settings.getByRole('button',{name:'Extensions',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.finishExtensionStatus();});
+  await panel.getByRole('heading',{name:'Updated elsewhere',exact:true}).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.entries[0].catalog.enabled=true;globalThis.__workspaceFixture.emitNative('extensions-changed');});
+  await page.waitForFunction(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsEntries[0]?.enabled===true);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer??0),0,'Managing metadata activated extension code');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.settingsDirty),dirtyBefore);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0),savesBefore);
+  await settings.getByRole('button',{name:'Preferences',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.extensionListenerCount()===0);
+  await page.setViewportSize({width:1280,height:800});
+}

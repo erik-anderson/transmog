@@ -1,5 +1,7 @@
 import initialState from '../initial-state.json';
 import '../network-profile-settings/network-profile-settings.js';
+import '../extension-settings/extension-settings.js';
+import type {ExtensionSettings} from '../extension-settings/extension-settings.js';
 import '../client-certificate-settings/client-certificate-settings.js';
 import '../loopback-exemptions/loopback-exemptions.js';
 import type {LoopbackExemptions} from '../loopback-exemptions/loopback-exemptions.js';
@@ -12,6 +14,7 @@ import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState, WorkspacePr
 import { describeError } from '../utilities.js';
 
 export class SettingsWorkspace extends WorkspaceElement {
+  extensionsEditor!:ExtensionSettings;
   clientCertificates!:ClientCertificateSettings;
   aboutUpdates!:AppUpdates;
   loopbackManager!:LoopbackExemptions;

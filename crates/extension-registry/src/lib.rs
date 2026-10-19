@@ -9,7 +9,8 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
 };
-use transmog_extension_supervisor::{HostConfig, Runner};
+pub use transmog_extension_supervisor::HostConfig;
+use transmog_extension_supervisor::Runner;
 use transmog_extensions::{
     CatalogEntry, Error, Failure, Origin, Package, Snapshot, Visualizer, sha256, valid_id,
     write_package,
