@@ -53,14 +53,16 @@ public static class TransmogGeometryProbe {
         }, IntPtr.Zero);
         return found;
     }
-    public static Rect[] WorkAreas() {
+    public static Rect[] WorkAreas() { return Areas(true); }
+    public static Rect[] DisplayAreas() { return Areas(false); }
+    private static Rect[] Areas(bool work) {
         var prior = SetThreadDpiAwarenessContext(new IntPtr(-4));
         try {
             var areas = new List<Rect>();
             EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (IntPtr monitor, IntPtr dc, ref Rect rect, IntPtr data) => {
                 var info = new MonitorInfo { Size = Marshal.SizeOf<MonitorInfo>() };
                 if (!GetMonitorInfo(monitor, ref info)) throw new InvalidOperationException("Monitor bounds unavailable.");
-                areas.Add(info.Work);
+                areas.Add(work ? info.Work : info.Monitor);
                 return true;
             }, IntPtr.Zero);
             return areas.ToArray();
@@ -139,6 +141,30 @@ function Assert-Bounds($Expected, $Actual, [string]$Context) {
     }
 }
 
+function Assert-Visible($Bounds, [string]$Context) {
+    foreach ($area in $displays) {
+        if ([long]$Bounds.X -lt $area.Right -and [long]$Bounds.X + $Bounds.Width -gt $area.Left -and
+            [long]$Bounds.Y -lt $area.Bottom -and [long]$Bounds.Y + $Bounds.Height -gt $area.Top) {
+            return
+        }
+    }
+    throw "$Context left the window entirely off screen. Evidence: $probeRoot"
+}
+
+function Set-FixtureWindow([int]$X, [int]$Y, [int]$Width, [int]$Height, [bool]$Maximized) {
+    # Only edit the owned, closed test profile; never the user's preferences.
+    $latest = Get-ChildItem -LiteralPath (Join-Path $probeRoot 'Transmog') -Filter 'preferences.*.json' |
+        Sort-Object Name -Descending | Select-Object -First 1
+    if (-not $latest) { throw 'The isolated desktop did not save fixture preferences.' }
+    $fixture = Get-Content -LiteralPath $latest.FullName -Raw | ConvertFrom-Json
+    $fixture.window.x = $X
+    $fixture.window.y = $Y
+    $fixture.window.width = $Width
+    $fixture.window.height = $Height
+    $fixture.window.maximized = $Maximized
+    $fixture | ConvertTo-Json -Depth 100 | Set-Content -LiteralPath $latest.FullName -Encoding utf8NoBOM
+}
+
 $priorLocalAppData = $env:LOCALAPPDATA
 $priorArguments = $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS
 $probeProcess = $null
@@ -147,6 +173,7 @@ try {
     $env:LOCALAPPDATA = $probeRoot
     $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $null
     $areas = [TransmogGeometryProbe]::WorkAreas()
+    $displays = [TransmogGeometryProbe]::DisplayAreas()
     if ($areas.Count -eq 0) { throw 'Window geometry validation needs a connected display.' }
     $handle = Open-ProbeWindow
     foreach ($area in $areas) {
@@ -176,11 +203,56 @@ try {
         $restored = Wait-ProbeMaximized $handle $false $normal
         $evidence.Add(@{ Stage = 'unmaximize'; Bounds = $restored })
         Assert-Bounds $normal $restored 'Restoring from maximized'
+
+        # A partially visible window is deliberate placement, including on
+        # negative-coordinate displays. Startup must preserve its exact bounds.
+        [TransmogGeometryProbe]::Place($handle, $area.Left - $normal.Width + 200, $area.Top + 50, $normal.Width, $normal.Height)
+        Start-Sleep -Milliseconds 500
+        $partial = [TransmogGeometryProbe]::Measure($handle)
+        Assert-Visible $partial 'Partially visible fixture'
+        Close-ProbeWindow $handle
+        $handle = Open-ProbeWindow
+        $reopenedPartial = [TransmogGeometryProbe]::Measure($handle)
+        $evidence.Add(@{ Stage = 'reopen-partially-visible'; Bounds = $reopenedPartial })
+        Assert-Bounds $partial $reopenedPartial 'Reopening a partially visible window'
     }
     Close-ProbeWindow $handle
+
+    # Seed coordinates beyond every connected display to model unplugging a
+    # monitor. Verify normal startup and the restored bounds of maximized startup.
+    $offscreenX = [int](($displays | Measure-Object -Property Right -Maximum).Maximum + 2000)
+    $offscreenY = [int](($displays | Measure-Object -Property Bottom -Maximum).Maximum + 2000)
+    $normalRecovery = $null
+    foreach ($maximizedIntent in @($false, $true)) {
+        Set-FixtureWindow $offscreenX $offscreenY $normal.InnerWidth $normal.InnerHeight $maximizedIntent
+        $handle = Open-ProbeWindow
+        $recovered = Wait-ProbeMaximized $handle $maximizedIntent
+        $evidence.Add(@{ Stage = "offscreen-startup-maximized-$maximizedIntent"; Bounds = $recovered })
+        Assert-Visible $recovered 'Recovering off-screen startup'
+        if ($maximizedIntent) {
+            $null = [TransmogGeometryProbe]::ShowWindowAsync($handle, 9)
+            # IsZoomed clears before the restore animation has finished. Wait
+            # for the same normal bounds as the identical non-maximized seed.
+            $recovered = Wait-ProbeMaximized $handle $false $normalRecovery
+            $evidence.Add(@{ Stage = 'offscreen-unmaximize'; Bounds = $recovered })
+            Assert-Visible $recovered 'Restoring a recovered maximized window'
+        } else {
+            $normalRecovery = $recovered
+        }
+        $recoveredNormal = $recovered
+        Close-ProbeWindow $handle
+        $handle = Open-ProbeWindow
+        $reopenedRecovery = [TransmogGeometryProbe]::Measure($handle)
+        $evidence.Add(@{ Stage = 'reopen-recovered'; Bounds = $reopenedRecovery })
+        Assert-Bounds $recoveredNormal $reopenedRecovery 'Reopening the recovered window'
+        Close-ProbeWindow $handle
+    }
     $testedDpi = @($evidence | ForEach-Object { $_.Bounds.Dpi } | Sort-Object -Unique)
     [pscustomobject]@{
         WindowGeometryVerified = $true
+        OffscreenStartupRecoveryVerified = $true
+        PartiallyVisiblePlacementPreserved = $true
+        MaximizedRecoveryRestoreVerified = $true
         TestedDpi = $testedDpi
         ScaledDisplayVerified = @($testedDpi | Where-Object { $_ -gt 96 }).Count -gt 0
         EvidenceRoot = $probeRoot

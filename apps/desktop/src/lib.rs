@@ -9,6 +9,9 @@ mod certificate_test_fixture;
 mod windows;
 
 #[cfg(any(windows, test))]
+mod window_geometry;
+
+#[cfg(any(windows, test))]
 mod update_policy;
 
 #[cfg(windows)]

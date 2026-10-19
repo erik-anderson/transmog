@@ -2719,10 +2719,66 @@ fn create_main_window(
         window.set_position(tauri::PhysicalPosition::new(x, y))?;
     }
     window.set_size(tauri::PhysicalSize::new(initial.width, initial.height))?;
+    recover_offscreen_main_window(&window, &initial)?;
     if initial.maximized {
         window.maximize()?;
     }
     window.show()?;
+    Ok(())
+}
+
+fn recover_offscreen_main_window(
+    window: &tauri::WebviewWindow,
+    initial: &WindowState,
+) -> tauri::Result<()> {
+    use crate::window_geometry::{PhysicalBounds, recovery_monitor};
+
+    // Missing geometry is not evidence that the restored window is off screen.
+    let (Ok(position), Ok(size), Ok(monitors)) = (
+        window.outer_position(),
+        window.outer_size(),
+        window.available_monitors(),
+    ) else {
+        return Ok(());
+    };
+    let bounds: Vec<_> = monitors
+        .iter()
+        .map(|monitor| PhysicalBounds {
+            x: monitor.position().x,
+            y: monitor.position().y,
+            width: monitor.size().width,
+            height: monitor.size().height,
+        })
+        .collect();
+    let primary = window.primary_monitor().ok().flatten().and_then(|primary| {
+        monitors.iter().position(|monitor| {
+            monitor.position() == primary.position() && monitor.size() == primary.size()
+        })
+    });
+    let Some(index) = recovery_monitor(
+        PhysicalBounds {
+            x: position.x,
+            y: position.y,
+            width: size.width,
+            height: size.height,
+        },
+        &bounds,
+        primary,
+    ) else {
+        return Ok(());
+    };
+    let monitor = &monitors[index];
+    let work_area = monitor.work_area();
+    let position = if work_area.size.width > 0 && work_area.size.height > 0 {
+        work_area.position
+    } else {
+        *monitor.position()
+    };
+    // Anchor the title bar inside the work area even if the saved size is larger
+    // than this display. Moving can change DPI, so restore the physical inner
+    // size again on the destination before maximizing or showing the window.
+    window.set_position(position)?;
+    window.set_size(tauri::PhysicalSize::new(initial.width, initial.height))?;
     Ok(())
 }
 
