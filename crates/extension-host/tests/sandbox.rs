@@ -77,6 +77,95 @@ const DOCUMENT: &str =
     "{kind:'document',document:{title:'View',status:'complete',presentation:'tree',roots:[]}}";
 
 #[tokio::test]
+async fn declared_context_continuations_receive_only_projected_inputs_and_scoped_sources() {
+    let source = r"
+export function visualize() {return {kind:'needContext',token:'history',request:{position:'before',cursor:null,limit:1}};}
+export function resumeContext(token,page) {
+  if (token !== 'history' || page.anchorOrder !== '2' || page.exchanges.length !== 1 || !Object.isFrozen(page.exchanges[0].input)) throw new Error('bad context');
+  const input = page.exchanges[0].input;
+  if (input.request.headers.length || input.request.body != null) throw new Error('undeclared related input');
+  return {kind:'needInput',token:'related-bytes',reads:[{sourceId:input.response.body.sourceId,offset:'0',maxBytes:4}]};
+}
+export function resume(token,pages) { return {kind:'document',document:{title:'Related bytes',status:'complete',presentation:'tree',roots:[{id:'value',name:'Value',value:{kind:'integer',value:String(pages[0].bytes[0])},spans:[{sourceId:pages[0].sourceId,offset:'0',length:'4'}]}]}}; }
+";
+    let original = snapshot(source);
+    let mut manifest = original.manifest.clone();
+    manifest.visualizers[0].context = Some(Context {
+        headers: vec![HeaderPredicate {
+            direction: Direction::Request,
+            name: "x-kind".into(),
+            test: HeaderTest::Present,
+        }],
+        max_exchanges: 2,
+        look_ahead: false,
+    });
+    let runner = start(Snapshot::new(manifest, original.files).unwrap()).unwrap();
+    assert!(matches!(
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input())
+            })
+            .await
+            .unwrap(),
+        VisualizationStep::NeedContext { .. }
+    ));
+    let mut related = input();
+    related
+        .response
+        .as_mut()
+        .unwrap()
+        .body
+        .as_mut()
+        .unwrap()
+        .source_id = "related-body".into();
+    assert!(matches!(
+        runner
+            .invoke(Invocation::ResumeContext {
+                token: "history".into(),
+                page: ContextPage {
+                    anchor_order: "2".into(),
+                    exchanges: vec![ContextExchange {
+                        order: "1".into(),
+                        input: related
+                    }],
+                    next_cursor: None,
+                    status: ContextStatus::Complete
+                }
+            })
+            .await
+            .unwrap(),
+        VisualizationStep::NeedInput { .. }
+    ));
+    let step = runner
+        .invoke(Invocation::Resume {
+            token: "related-bytes".into(),
+            pages: vec![BytePage {
+                source_id: "related-body".into(),
+                offset: "0".into(),
+                bytes: vec![7, 8, 9, 10],
+            }],
+        })
+        .await
+        .unwrap();
+    let VisualizationStep::Document { document } = step else {
+        panic!("document required")
+    };
+    assert_eq!(document.roots[0].value, Some(Value::Integer("7".into())));
+    runner.stop();
+    assert_eq!(
+        start(snapshot(source))
+            .unwrap()
+            .invoke(Invocation::Visualize {
+                input: Box::new(input())
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        FailureKind::Validation
+    );
+}
+
+#[tokio::test]
 async fn relative_javascript_modules_execute_after_capability_restrictions_and_projection() {
     let source = r"
 import {title} from './helper.mjs';

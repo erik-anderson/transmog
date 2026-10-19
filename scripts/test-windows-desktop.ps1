@@ -97,22 +97,39 @@ if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly) {
     $extensionScript = "throw new Error('Management must not evaluate extension code'); export function visualize() {}"
     [IO.File]::WriteAllText((Join-Path $extensionSource 'main.js'), $extensionScript)
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/visualizer.js') -Destination (Join-Path $extensionSource 'parser.js')
+    Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/visualizer-context.js') -Destination (Join-Path $extensionSource 'context.js')
     $extensionManifest = @{formatVersion=1;apiVersion=1;runtime='javascript-es2022';id='test.development';version='1.0.0';name='Development visualizer fixture';files=@(@{path='main.js';bytes=0});visualizers=@(@{id='headers';name='Example headers';entry='main.js';surfaces=@('headers');inputs=@{request=@{headers=@('x-example');body='none'};response=@{headers=@();body='none'}};matches=@(@{direction='request';headers=@(@{direction='request';name='x-example';test=@{op='present'}})})})}
     $extensionManifest.files += @{path='parser.js';bytes=0}
+    $extensionManifest.files += @{path='context.js';bytes=0}
     $nativeInputs = @{request=@{headers=@('x-example');body='none'};response=@{headers=@('content-type');body='none'}}
     $nativeMatches = @(@{direction='request';headers=@(@{direction='request';name='x-example';test=@{op='present'}})},@{direction='response';contentTypes=@('text/plain')})
     $extensionManifest.visualizers += @{id='native-headers';name='Native fields';entry='parser.js';surfaces=@('headers');inputs=$nativeInputs;matches=$nativeMatches}
     $extensionManifest.visualizers += @{id='native-body';name='Native protocol';entry='parser.js';surfaces=@('body');inputs=@{request=@{headers=@();body='none'};response=@{headers=@('content-type');body='required'}};matches=@(@{direction='response';contentTypes=@('text/plain')})}
+    $extensionManifest.visualizers += @{id='native-context';name='Native context';entry='context.js';surfaces=@('body');inputs=@{request=@{headers=@('x-example');body='none'};response=@{headers=@('content-type');body='optional'}};matches=$nativeMatches;context=@{headers=@(@{direction='request';name='x-example';test=@{op='present'}});maxExchanges=8;lookAhead=$true}}
     $visualizerTrace = Join-Path $probeRoot 'visualizer-fixture.saz'
     $fixtureBody = 'Synthetic body evidence'
     $fixtureMembers = [ordered]@{'raw/1_c.txt'="GET https://extension.invalid/extension-fixture HTTP/1.1`r`nX-Example: Native header evidence`r`n`r`n";'raw/1_s.txt'="HTTP/1.1 200 OK`r`nContent-Type: text/plain`r`nContent-Length: $($fixtureBody.Length)`r`n`r`n$fixtureBody"}
-    $fixtureZip = [IO.Compression.ZipFile]::Open($visualizerTrace, [IO.Compression.ZipArchiveMode]::Create)
-    try {
-        foreach ($member in $fixtureMembers.GetEnumerator()) {
-            $writer = [IO.StreamWriter]::new($fixtureZip.CreateEntry($member.Key).Open(), [Text.UTF8Encoding]::new($false))
-            try { $writer.Write($member.Value) } finally { $writer.Dispose() }
-        }
-    } finally { $fixtureZip.Dispose() }
+    $fixtureTargets = @('https://extension.invalid/extension-fixture','https://other.invalid/extension-fixture','https://extension.invalid:8443/extension-fixture','http://extension.invalid:443/extension-fixture')
+    for ($fixtureIndex = 0; $fixtureIndex -lt $fixtureTargets.Length; $fixtureIndex++) {
+        $fixtureNumber = $fixtureIndex + 2
+        $fixtureByte = if ($fixtureIndex -eq 0) { 'A' } else { 'B' }
+        $fixtureMembers["raw/${fixtureNumber}_c.txt"] = "GET $($fixtureTargets[$fixtureIndex]) HTTP/1.1`r`nX-Example: Native header evidence`r`n`r`n"
+        $fixtureMembers["raw/${fixtureNumber}_s.txt"] = "HTTP/1.1 200 OK`r`nContent-Type: text/plain`r`nContent-Length: 1`r`n`r`n$fixtureByte"
+    }
+    for ($fixtureNumber = 1; $fixtureNumber -le 5; $fixtureNumber++) {
+        $fixtureMembers["raw/${fixtureNumber}_m.xml"] = "<Session SID=`"$fixtureNumber`"><SessionFlags><SessionFlag N=`"x-processinfo`" V=`"synthetic.exe:42`" /></SessionFlags></Session>"
+    }
+    $otherMembers = [ordered]@{'raw/1_c.txt'=$fixtureMembers['raw/1_c.txt'];'raw/1_s.txt'="HTTP/1.1 200 OK`r`nContent-Type: text/plain`r`nContent-Length: 1`r`n`r`nB";'raw/1_m.xml'=$fixtureMembers['raw/1_m.xml']}
+    $fixtureArchives = @(@{path=$visualizerTrace;members=$fixtureMembers},@{path=($visualizerTrace -replace '\.saz$','-other.saz');members=$otherMembers})
+    foreach ($fixtureArchive in $fixtureArchives) {
+        $fixtureZip = [IO.Compression.ZipFile]::Open($fixtureArchive.path, [IO.Compression.ZipArchiveMode]::Create)
+        try {
+            foreach ($member in $fixtureArchive.members.GetEnumerator()) {
+                $writer = [IO.StreamWriter]::new($fixtureZip.CreateEntry($member.Key).Open(), [Text.UTF8Encoding]::new($false))
+                try { $writer.Write($member.Value) } finally { $writer.Dispose() }
+            }
+        } finally { $fixtureZip.Dispose() }
+    }
     $extensionManifestJson = $extensionManifest | ConvertTo-Json -Depth 16 -Compress
     [IO.File]::WriteAllText((Join-Path $extensionSource 'manifest.json'), $extensionManifestJson)
     $extensionDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($extensionManifestJson))).ToLowerInvariant()

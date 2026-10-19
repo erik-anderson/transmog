@@ -8,7 +8,8 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     globalThis.__visualizerProbe={preferences:traffic.preferences};
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     await traffic.importTrace(${JSON.stringify(tracePath)});
-    const row=traffic.sessions.find(row=>row.path==='/extension-fixture');if(!row)throw new Error('Native visualizer fixture did not import: '+traffic.importStatus);
+    await traffic.importTrace(${JSON.stringify(tracePath.replace(/\.saz$/i,'-other.saz'))});
+    const row=traffic.sessions.find(row=>row.path==='/extension-fixture'&&row.responseBytes===23);if(!row)throw new Error('Native visualizer fixture did not import: '+traffic.importStatus);
     traffic.preferences={...traffic.preferences,layout:'stacked',listSplit:30};
     await traffic.selectTraffic(row,new MouseEvent('click'));
     const wait=async(condition)=>{const deadline=Date.now()+20000;while(!condition()){if(Date.now()>deadline)throw new Error('Native visualizer did not settle');await new Promise(resolve=>setTimeout(resolve,25));}};
@@ -21,6 +22,9 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     const viewer=child(response);if(viewer.visualizerError)throw new Error(viewer.visualizerError);
     if(viewer.view.document.roots[0]?.value?.value!=='Synthetic body evidence')throw new Error('The native byte continuation did not reach the parser');
     const handle=viewer.view.handle;viewer.clickNode('body-text');
+    const contextView=await window.__TAURI_INTERNALS__.invoke('activate_visualizer',{request:{slot:'native-context-probe',generation:'1',pageId:handle.pageId,selection:{sessionId:row.id,boundary:'client-response',surface:'body'},extensionId:'test.development',visualizerId:'native-context'}});
+    if(contextView.document.roots[0]?.value?.value!=='1')throw new Error('Native same-origin context did not reach the sandbox parser');
+    await window.__TAURI_INTERNALS__.invoke('deactivate_visualizer',{slot:'native-context-probe',generation:'1',pageId:handle.pageId});
     await viewer.toggleNode('body-text');
     if(viewer.view.document.roots[0].children[0]?.value?.value!=='9007199254740993')throw new Error('Native deferred expansion lost integer precision');
     viewer.selectNode('body-text');viewer.showSpan(viewer.view.document.roots[0].spans[0]);
@@ -35,7 +39,7 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     const viewers=children();
     for(const view of viewers.filter(view=>view.view?.instance.visualizerId==='native-headers'))if(view.view.sources.some(source=>source.name.endsWith(' · body')))throw new Error('Header-only native visualizer acquired a body source');
     globalThis.__visualizerProbe.handles=viewers.map(view=>view.view.handle);
-    return {workers:viewers.length,byteContinuation:true,expansion:true,sourceDenied:denied};
+    return {workers:viewers.length,byteContinuation:true,sameOriginContext:true,sameCaptureContext:true,expansion:true,sourceDenied:denied};
   })()`);
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
   if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-visualizer-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));

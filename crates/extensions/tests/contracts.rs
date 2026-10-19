@@ -58,6 +58,51 @@ fn missing_access_is_invalid_and_matching_cannot_read_undeclared_headers() {
 }
 
 #[test]
+fn context_requires_declared_correlation_and_finite_opt_in_lookahead() {
+    let mut m = manifest();
+    m.visualizers[0].context = Some(Context {
+        headers: vec![HeaderPredicate {
+            direction: Direction::Request,
+            name: "x-requesttype".into(),
+            test: HeaderTest::Present,
+        }],
+        max_exchanges: 64,
+        look_ahead: false,
+    });
+    m.validate(true).unwrap();
+    assert!(
+        serde_json::to_value(&m.visualizers[0]).unwrap()["context"]
+            .get("lookAhead")
+            .is_none(),
+        "Default lookahead must preserve existing canonical package digests"
+    );
+    let mut request = ContextRequest {
+        position: ContextPosition::Before,
+        cursor: None,
+        limit: 32,
+    };
+    let context = m.visualizers[0].context.as_ref().unwrap();
+    request.validate(context).unwrap();
+    for limit in [0, 33, 257] {
+        request.limit = limit;
+        assert!(request.validate(context).is_err());
+    }
+    request.limit = 1;
+    request.position = ContextPosition::After;
+    assert!(matches!(
+        request.validate(context),
+        Err(Error::AccessDenied)
+    ));
+    let context = m.visualizers[0].context.as_mut().unwrap();
+    context.look_ahead = true;
+    request.validate(context).unwrap();
+    request.cursor = Some("../../another-capture".into());
+    assert!(request.validate(context).is_err());
+    context.headers[0].name = "undeclared".into();
+    assert!(matches!(m.validate(true), Err(Error::AccessDenied)));
+}
+
+#[test]
 fn executable_contract_is_explicit_javascript_with_optional_inert_authoring_sources() {
     let m = manifest();
     let mut value = serde_json::to_value(&m).unwrap();

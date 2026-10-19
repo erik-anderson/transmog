@@ -14,7 +14,7 @@ use transmog_core::{
 use transmog_extension_registry::InstanceResources;
 use transmog_extensions::{BodyAccess, Direction, Manifest};
 
-fn declaration() -> transmog_extensions::Visualizer {
+pub(super) fn declaration() -> transmog_extensions::Visualizer {
     serde_json::from_value::<Manifest>(serde_json::json!({
         "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.evidence","version":"1.0.0","name":"Evidence",
         "visualizers":[{"id":"view","name":"View","entry":"main.js","surfaces":["headers","body"],
@@ -24,7 +24,7 @@ fn declaration() -> transmog_extensions::Visualizer {
     })).unwrap().visualizers.remove(0)
 }
 #[allow(clippy::too_many_lines)] // One deterministic client/upstream observation fixture.
-fn snapshot(app: &Application) -> SessionSnapshot {
+pub(super) fn snapshot(app: &Application) -> SessionSnapshot {
     let target = Target {
         scheme: "https".into(),
         authority: "example.invalid".into(),
@@ -409,6 +409,7 @@ fn body_sources_are_lazy_and_header_only_inputs_never_open_or_read_bodies() {
     let body = input.response.unwrap().body.unwrap();
     let resources = Resources {
         info: Mutex::new(Vec::new()),
+        context: Mutex::new(None),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(
             sources
@@ -450,6 +451,7 @@ fn required_missing_counterpart_and_ungranted_source_ranges_fail_closed() {
     );
     let resources = Resources {
         info: Mutex::new(Vec::new()),
+        context: Mutex::new(None),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(BTreeMap::from([(
             "header-one".into(),

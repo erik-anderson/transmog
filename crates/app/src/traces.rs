@@ -290,6 +290,14 @@ impl TraceRegistry {
             .filter(|entry| entry.trace_id != "live")
             .map(|entry| entry.trace_id.clone())
     }
+    /// Origin-scoped context cannot use an inferred placeholder for an unknown client target.
+    pub(crate) fn context_source_id(&self, id: &str) -> Option<String> {
+        self.lock()
+            .entries
+            .get(id)
+            .filter(|entry| entry.trace_id != "live" && entry.target_known)
+            .map(|entry| entry.trace_id.clone())
+    }
     pub(crate) fn entry(&self, id: &str) -> Option<TraceEntry> {
         self.lock().entries.get(id).cloned()
     }
@@ -3079,6 +3087,40 @@ mod tests {
     use crate::{AppConfig, Application, BodyStoreConfig, RequestCommandFormat, SessionQueryInput};
     use std::io::{Cursor, Write};
     use transmog_capture::{CaptureRecord, CaptureWriter};
+
+    #[test]
+    fn related_context_requires_known_original_target_provenance() {
+        let registry = TraceRegistry::default();
+        registry.lock().entries.insert(
+            "entry".into(),
+            TraceEntry {
+                marker_anchor: None,
+                trace_id: "capture-a".into(),
+                original_id: "source-entry".into(),
+                original_number: None,
+                raw_headers: None,
+                timings: BTreeMap::new(),
+                protocol_known: true,
+                target_known: false,
+                diagnostics: Vec::new(),
+            },
+        );
+        assert_eq!(registry.source_id("entry").as_deref(), Some("capture-a"));
+        assert!(registry.context_source_id("entry").is_none());
+        registry
+            .lock()
+            .entries
+            .get_mut("entry")
+            .unwrap()
+            .target_known = true;
+        assert_eq!(
+            registry.context_source_id("entry").as_deref(),
+            Some("capture-a")
+        );
+        registry.lock().entries.get_mut("entry").unwrap().trace_id = "live".into();
+        assert!(registry.context_source_id("entry").is_none());
+        assert!(registry.context_source_id("absent").is_none());
+    }
 
     fn app(root: &std::path::Path) -> Application {
         Application::new(AppConfig {

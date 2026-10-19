@@ -17,6 +17,12 @@ use transmog_extensions::{
 use transmog_session::SessionSnapshot;
 pub(super) enum Source {
     Header(Arc<[u8]>),
+    Related {
+        source: Box<Source>,
+        guard: Arc<super::context::RelatedGuard>,
+        exchange: ExchangeId,
+        order: u64,
+    },
     Body {
         store: BodyStore,
         exchange: ExchangeId,
@@ -28,6 +34,7 @@ impl Source {
     fn length(&self) -> u64 {
         match self {
             Self::Header(bytes) => bytes.len() as u64,
+            Self::Related { source, .. } => source.length(),
             Self::Body { metadata, .. } => metadata.retained_bytes,
         }
     }
@@ -41,6 +48,21 @@ impl Source {
             return Err(invalid("Visualizer source range is invalid"));
         }
         match self {
+            Self::Related {
+                source,
+                guard,
+                exchange,
+                order,
+            } => {
+                if !guard.allowed(*exchange, *order) {
+                    return Err(unavailable());
+                }
+                let bytes = source.read(offset, count, canceled)?;
+                if !guard.allowed(*exchange, *order) {
+                    return Err(unavailable());
+                }
+                Ok(bytes)
+            }
             Self::Header(bytes) => {
                 let start =
                     usize::try_from(offset).map_err(|_| invalid("Invalid header source offset"))?;
@@ -90,11 +112,19 @@ impl Source {
             }
         }
     }
+    fn retained_bytes(&self) -> usize {
+        match self {
+            Self::Header(bytes) => bytes.len(),
+            Self::Related { source, .. } => source.retained_bytes(),
+            Self::Body { .. } => 0,
+        }
+    }
 }
 pub(super) struct Resources {
     pub(super) stopped: AtomicBool,
     pub(super) sources: Mutex<BTreeMap<String, Arc<Source>>>,
     pub(super) info: Mutex<Vec<VisualizerSourceInfo>>,
+    pub(super) context: Mutex<Option<super::context::Broker>>,
 }
 impl InstanceResources for Resources {
     fn stop(&self) {
@@ -107,9 +137,57 @@ impl InstanceResources for Resources {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        self.context
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
     }
 }
 impl Resources {
+    pub(super) fn append(
+        &self,
+        added: BTreeMap<String, Source>,
+        info: Vec<VisualizerSourceInfo>,
+        budget: usize,
+    ) -> Result<(), AppError> {
+        let mut sources = self.sources.lock().map_err(|_| unavailable())?;
+        let mut infos = self.info.lock().map_err(|_| unavailable())?;
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
+        let new = added.iter().filter(|(id, _)| !sources.contains_key(*id));
+        let count = new.clone().count();
+        let bytes = sources
+            .values()
+            .map(|source| source.retained_bytes())
+            .chain(new.map(|(_, source)| source.retained_bytes()))
+            .fold(0usize, usize::saturating_add);
+        if sources.len().saturating_add(count) > 4096 || bytes > budget {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "Related source input exceeds the visualizer budget",
+                false,
+            ));
+        }
+        for entry in info {
+            if !sources.contains_key(&entry.id) {
+                infos.push(entry);
+            }
+        }
+        sources.extend(added.into_iter().map(|(id, source)| (id, Arc::new(source))));
+        Ok(())
+    }
+    pub(super) fn context(
+        &self,
+        request: &transmog_extensions::ContextRequest,
+    ) -> Result<transmog_extensions::ContextPage, AppError> {
+        self.context
+            .lock()
+            .map_err(|_| unavailable())?
+            .as_mut()
+            .ok_or_else(unavailable)?
+            .page(request, self)
+    }
     pub(super) fn info(&self) -> Result<Vec<VisualizerSourceInfo>, AppError> {
         if self.stopped.load(Ordering::Acquire) {
             return Err(unavailable());

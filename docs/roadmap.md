@@ -517,11 +517,13 @@ already been removed by capture. MAPI framing, compression, and obfuscation are
 the extension's responsibility. Keep both representations inspectable; failed
 decoding must not make encoded bytes look like decoded bytes.
 
-Provide a narrow context broker for paired messages and related earlier exchanges.
-It exposes only opaque handles scoped to the activated capture and conversation,
+Provide a narrow context broker for paired messages and related retained exchanges.
+Later evidence requires an explicit `lookAhead` declaration. The broker exposes
+only opaque handles scoped to the activated capture, origin and conversation,
 ordered metadata pages, and bounded reads of explicitly requested retained
 sources. The manifest declares the required non-secret correlation fields; the
-host computes scope from capture provenance, endpoint, client/session identity,
+host computes scope from capture provenance, origin (scheme, hostname and effective
+port at both the original and selected boundaries), endpoint, client/session identity,
 and those fields. If a secret is needed only for identity, the host can supply a
 scoped opaque correlation token instead of revealing its value. Missing or
 ambiguous identity produces a diagnostic, not a wider search. Never merge
@@ -709,7 +711,7 @@ intentional differences. Include upstream MIT notices and dependency attribution
 | Stage | Deliverable and exit evidence |
 | --- | --- |
 | 1. Specify and measure | Freeze the parity matrix and synthetic protocol/differential fixtures; settle package/API schemas, context identity, output provenance, and cold/active resource budgets. Inventory upstream parser families and dependencies before estimating the port. |
-| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker/supervisor, persisted metadata registry and selected retained-evidence broker implemented. Related-context reads, HTTP decoding and product-owned subscriptions remain. Fixtures exercise activation, exact header/body projection, byte continuations, failures, network denial, startup cancellation, unload and cross-window management. |
+| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker/supervisor, persisted metadata registry and selected retained-evidence broker implemented. Bounded related-context reads enforce capture, origin, conversation and exact field/body grants with instance-owned pagination. HTTP decoding and product-owned subscriptions remain. Fixtures exercise activation, projection, byte/context continuations, failures, network denial, startup cancellation, unload and cross-window management. |
 | 3. Host renderer and development | Explicit concurrent request/response/header selection, host tree/table/text/hex rendering, exact source highlighting, deferred expansion and Extensions settings are implemented. Browser/native synthetic flows cover inert output, wide offsets, active lifetimes and shared management. Live updates and transactional hot reload remain. Prove packaged and unpacked forms use the same validation/sandbox. |
 | 4. MAPI port | Build shared byte readers/property decoders, transport envelopes, mailbox/NSPI families, ROPs, auxiliary data, compression, FastTransfer and contextual decoding, including incremental request/response handling in live mode. Add differential fixtures as each family lands; no bundled release at partial coverage. |
 | 5. Parity and shipment | Run the full matrix against the pinned reference, qualify hostile inputs, resource/performance behavior, native sandbox and UX, then bundle the ordinary `.tmext` with build-generated metadata and attribution. |

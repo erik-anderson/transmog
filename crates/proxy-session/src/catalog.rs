@@ -145,6 +145,31 @@ pub struct SessionSnapshot {
     pub stream_history: transmog_core::stream::StreamHistory,
 }
 
+/// Borrowed retained heads for bounded native metadata admission without cloning bodies or history.
+pub struct SessionHeads<'a> {
+    /// Immutable exchange identity and caller/target evidence.
+    pub metadata: &'a ExchangeMetadata,
+    /// Stable workspace admission order.
+    pub request_number: u64,
+    /// Whether the entry came from saved evidence.
+    pub imported: bool,
+    /// Request heads at their exact observation boundaries.
+    pub request_heads: &'a [ObservedRequestHead],
+    /// Response heads at their exact observation boundaries.
+    pub response_heads: &'a [ObservedResponseHead],
+}
+impl<'a> From<&'a SessionSnapshot> for SessionHeads<'a> {
+    fn from(snapshot: &'a SessionSnapshot) -> Self {
+        Self {
+            metadata: &snapshot.metadata,
+            request_number: snapshot.request_number,
+            imported: snapshot.imported,
+            request_heads: &snapshot.request_heads,
+            response_heads: &snapshot.response_heads,
+        }
+    }
+}
+
 /// Monotonic catalog loss and pressure counters.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct CatalogCounters {
@@ -643,6 +668,74 @@ impl SessionCatalog {
             return None;
         }
         state.by_id.get(&exchange_id).map(MutableSession::snapshot)
+    }
+
+    /// Projects only borrowed retained heads while holding the catalog lock.
+    /// The callback must be bounded native code and must not perform I/O or re-enter this catalog.
+    pub fn with_heads<T>(
+        &self,
+        exchange_id: ExchangeId,
+        project: impl FnOnce(SessionHeads<'_>) -> T,
+    ) -> Option<T> {
+        let state = self.lock_state();
+        if state.dismissed.contains(&exchange_id) {
+            return None;
+        }
+        state.by_id.get(&exchange_id).map(|entry| {
+            project(SessionHeads {
+                metadata: &entry.metadata,
+                request_number: entry.request_number,
+                imported: entry.imported,
+                request_heads: &entry.request_heads,
+                response_heads: &entry.response_heads,
+            })
+        })
+    }
+
+    /// Up to 4,096 visible retained identities in admission order, between exclusive bounds.
+    /// Reverse traversal supports nearest-earlier lookup without cloning unrelated evidence.
+    pub fn ordered_ids(
+        &self,
+        after: Option<u64>,
+        before: Option<u64>,
+        reverse: bool,
+        limit: usize,
+    ) -> Vec<(u64, ExchangeId)> {
+        use std::ops::Bound::{Excluded, Unbounded};
+        if after
+            .zip(before)
+            .is_some_and(|(after, before)| after >= before)
+        {
+            return Vec::new();
+        }
+        let state = self.lock_state();
+        let range = state.order.range((
+            after.map_or(Unbounded, Excluded),
+            before.map_or(Unbounded, Excluded),
+        ));
+        let mut result = Vec::new();
+        let mut push = |(&number, &id)| {
+            if !state.dismissed.contains(&id) {
+                result.push((number, id));
+            }
+            result.len() < limit.min(4096)
+        };
+        if limit != 0 {
+            if reverse {
+                for entry in range.rev() {
+                    if !push(entry) {
+                        break;
+                    }
+                }
+            } else {
+                for entry in range {
+                    if !push(entry) {
+                        break;
+                    }
+                }
+            }
+        }
+        result
     }
 
     /// Reads a retained entry's revision without cloning headers or stream history.
@@ -1492,6 +1585,41 @@ mod tests {
         assert!(catalog.get(ExchangeId(90)).is_none());
         start(&catalog, 3, "three.test");
         assert_eq!(catalog.get(ExchangeId(3)).unwrap().request_number, 3);
+    }
+
+    #[test]
+    fn borrowed_head_projection_and_ordered_identity_pages_exclude_dismissed_evidence() {
+        let catalog = SessionCatalog::new(limits(8));
+        for id in [90, 2, 50] {
+            start(&catalog, id, "one.test");
+        }
+        assert_eq!(
+            catalog.ordered_ids(None, None, false, 2),
+            [(1, ExchangeId(90)), (2, ExchangeId(2))]
+        );
+        assert_eq!(
+            catalog.ordered_ids(None, Some(3), true, 2),
+            [(2, ExchangeId(2)), (1, ExchangeId(90))]
+        );
+        assert_eq!(
+            catalog.ordered_ids(Some(1), Some(3), false, 2),
+            [(2, ExchangeId(2))]
+        );
+        assert!(catalog.ordered_ids(Some(3), Some(3), false, 2).is_empty());
+        assert!(catalog.ordered_ids(None, None, false, 0).is_empty());
+        assert_eq!(
+            catalog.with_heads(ExchangeId(90), |heads| (
+                heads.request_number,
+                heads.imported
+            )),
+            Some((1, false))
+        );
+        catalog.dismiss(&[ExchangeId(2)], &[]);
+        assert!(catalog.with_heads(ExchangeId(2), |_| ()).is_none());
+        assert_eq!(
+            catalog.ordered_ids(None, None, false, 4),
+            [(1, ExchangeId(90)), (3, ExchangeId(50))]
+        );
     }
 
     #[test]

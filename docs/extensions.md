@@ -7,7 +7,7 @@ the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-re
 provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector
-offers explicit selection and host-owned structured rendering. Context/live feeding,
+offers explicit selection, scoped retained context and host-owned structured rendering. Live feeding,
 transactional hot reload and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
@@ -151,8 +151,35 @@ instances and rejects new starts while hidden; losing focus alone keeps a visibl
 visualizer active. Original source names and exact extents are supplied by the
 host without reading their bytes.
 
-These APIs currently parse selected retained snapshots and deferred expansions.
-They do not yet subscribe to new traffic, enumerate related context or decode HTTP
+Related reads use `needContext`/`resumeContext`. The host returns at most 32 exchanges
+per page and the declared maximum (up to 256) over the worker's lifetime. Earlier
+evidence is permitted by a `context` declaration; later retained evidence also
+requires `lookAhead: true`. Cursors are single-use and bound to the active instance
+and traversal direction. Returned exchanges include exact decimal admission order,
+the same header/body grant as the selected input, and explicit complete, more,
+unavailable or limited status. Missing historical bodies remain absent even when
+the selected-message declaration requires a body.
+
+The host enforces the same origin using scheme, canonical hostname and effective
+port, both for the original client target and the selected transport boundary.
+It also requires the same capture/import source, caller, exact endpoint and query,
+and matching values for every declared correlation header. Unknown process identity
+restricts context to the same client connection. Missing, redacted, duplicate or
+oversized correlation values make context unavailable. Queries participate in
+native correlation without being exposed to scripts. These constraints cannot be
+widened by a manifest, selector or cursor. Saved evidence without source provenance
+cannot fall back to the live capture. An unknown original target cannot stand in
+for a verified origin.
+
+Native scope and input predicates run against borrowed retained heads before
+projecting values or creating body capabilities. Context reads page through a
+bounded metadata scan; inactive extensions perform no scans. Related source reads
+recheck the anchor, capture and origin before and after reading. Removing the
+anchor or unloading the visualizer revokes those capabilities and clears cursors.
+The same byte, source-count, deadline and cancellation limits apply throughout.
+
+These APIs parse selected retained snapshots, related context and deferred expansions.
+They do not yet subscribe to new traffic or decode HTTP
 Content-Encoding for an extension. Existing built-in inspection remains available.
 
 ## Desktop visualizers
@@ -216,7 +243,7 @@ closed graph of static package-relative JavaScript modules. External URLs, files
 imports, package imports, traversal and dynamic imports are rejected. Helpers can
 share local parser modules without initializing other contribution entry points.
 
-`visualize`, `resume`, `expand` and declared `onTraffic` calls return synchronously
+`visualize`, `resume`, `resumeContext`, `expand` and declared `onTraffic` calls return synchronously
 through an independently versioned private protocol. Byte access uses bounded
 `needInput` continuations. The supervisor binds replies to exact request IDs and
 continuation tokens, projects headers before IPC, withholds undeclared body

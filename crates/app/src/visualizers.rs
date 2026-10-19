@@ -15,6 +15,7 @@ use transmog_extensions::{
     Invocation, ReadRequest, Surface, VisualizationDocument, VisualizationStep, decimal, valid_id,
 };
 mod admission;
+mod context;
 mod evidence;
 use admission::Admission;
 use evidence::{Resources, boundaries, project_input, source_infos};
@@ -453,6 +454,16 @@ impl Application {
                     .collect(),
             ),
             info: Mutex::new(source_infos(&snapshot, selected, &input)),
+            context: Mutex::new(instance.declaration.context.as_ref().map(|_| {
+                context::Broker::new(
+                    self,
+                    &snapshot,
+                    selected,
+                    &instance.declaration,
+                    &instance.id,
+                    store,
+                )
+            })),
         });
         self.visualizers
             .registry
@@ -564,6 +575,13 @@ impl Application {
                         .await
                         .map_err(|_| unavailable())??;
                         invocation = Invocation::Resume { token, pages };
+                    }
+                    VisualizationStep::NeedContext { request, token } => {
+                        let resources = Arc::clone(&resources);
+                        let page = tokio::task::spawn_blocking(move || resources.context(&request))
+                            .await
+                            .map_err(|_| unavailable())??;
+                        invocation = Invocation::ResumeContext { token, page };
                     }
                 }
             }

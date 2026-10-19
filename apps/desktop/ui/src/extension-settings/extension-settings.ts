@@ -13,7 +13,7 @@ function contribution(value:ExtensionContribution):ContributionRow {
     requestHeaders:headersLabel(value.inputs.request.headers),responseHeaders:headersLabel(value.inputs.response.headers),requestBody:bodyLabel[value.inputs.request.body],responseBody:bodyLabel[value.inputs.response.body],
     matches:value.matches.map(rule=>[rule.direction==='request'?'Request':'Response',...(rule.contentTypes??[]),...(rule.methods??[]),...(rule.pathPrefixes??[]),...(rule.statuses??[]).map(String),...(rule.headers??[]).map(header=>`${header.direction} ${header.name}: ${header.test.op}${header.test.value===undefined?'':` ${header.test.value}`}`)].join(' · ')),
     live:value.liveUpdates?`Optional ${value.liveUpdates.events.join('/')} updates${value.liveUpdates.bodyProgress?', including body progress':''}`:'Not supported',
-    context:value.context?`Up to ${value.context.maxExchanges} earlier related exchanges; ${value.context.headers.map(header=>`${header.direction} ${header.name}`).join(', ')}`:'Selected exchange only'};
+    context:value.context?`Up to ${value.context.maxExchanges} ${value.context.lookAhead?'earlier or later':'earlier'} exchanges from the same capture, origin, and conversation; ${value.context.headers.map(header=>`${header.direction} ${header.name}`).join(', ')}`:'Selected exchange only'};
 }
 function row(entry:ExtensionEntry):ExtensionRow {
   const {manifest,enabled,origin,digest}=entry.catalog;

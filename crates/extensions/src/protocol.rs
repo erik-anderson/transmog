@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 /// Same-build worker protocol revision.
-pub const HOST_PROTOCOL_VERSION: u32 = 1;
+pub const HOST_PROTOCOL_VERSION: u32 = 2;
 /// Absolute framing ceiling, checked before allocating any incoming JSON.
 pub const MAX_HOST_FRAME_BYTES: usize = 12 * 1024 * 1024;
 /// Maximum raw payload bytes in one initialization chunk.
@@ -79,6 +79,82 @@ pub struct BytePage {
     /// Bounded page bytes, never an entire unbounded body.
     pub bytes: Vec<u8>,
 }
+/// Position within the host-verified conversation, never an arbitrary exchange selector.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextPosition {
+    /// Earlier retained exchanges.
+    Before,
+    /// Later retained exchanges, only when explicitly declared.
+    After,
+}
+/// Bounded conversation read requested by an active parser.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextRequest {
+    /// Earlier or declared later evidence.
+    pub position: ContextPosition,
+    /// Opaque continuation issued to this active instance; absent for the first page.
+    pub cursor: Option<String>,
+    /// At most 32 exchanges and no more than the manifest's total context limit.
+    pub limit: usize,
+}
+impl ContextRequest {
+    /// Checks the maximum declaration before the host looks up any related traffic.
+    /// # Errors
+    /// Rejects undeclared lookahead, invalid cursors and excessive page sizes.
+    pub fn validate(&self, context: &crate::Context) -> Result<(), crate::Error> {
+        if self.limit == 0
+            || self.limit > 32
+            || self.limit > context.max_exchanges
+            || self
+                .cursor
+                .as_ref()
+                .is_some_and(|cursor| !crate::valid_id(cursor))
+        {
+            return Err(crate::Error::Limit);
+        }
+        if self.position == ContextPosition::After && !context.look_ahead {
+            return Err(crate::Error::AccessDenied);
+        }
+        Ok(())
+    }
+}
+/// One projected related exchange with a lossless host ordering key.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextExchange {
+    /// Stable workspace admission order within this capture.
+    pub order: String,
+    /// The same exact per-side header/body grant as the selected input.
+    pub input: VisualizationInput,
+}
+/// Availability of a bounded historical context page.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum ContextStatus {
+    /// The retained range was exhausted normally.
+    Complete,
+    /// More retained evidence can be requested through the returned cursor.
+    More,
+    /// Conversation identity or its retained anchor is unavailable.
+    Unavailable,
+    /// A declared or host budget was reached.
+    Limited,
+}
+/// Host-owned result of a conversation read; it never grants networking or arbitrary lookup.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ContextPage {
+    /// Ordering key of the selected exchange.
+    pub anchor_order: String,
+    /// Related exchanges in ascending order within this page.
+    pub exchanges: Vec<ContextExchange>,
+    /// A cursor for the same direction in this instance, if more evidence remains.
+    pub next_cursor: Option<String>,
+    /// Availability independent of the parser's own status.
+    pub status: ContextStatus,
+}
 /// Metadata for one admitted native live update.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -110,6 +186,13 @@ pub enum Invocation {
         /// Bounded broker pages.
         pages: Vec<BytePage>,
     },
+    /// Resume only the pending, declared conversation read.
+    ResumeContext {
+        /// Exact pending parser token.
+        token: String,
+        /// Projected host page within the selected capture/conversation.
+        page: ContextPage,
+    },
     /// Expand a deferred document node.
     Expand {
         /// Worker-local expansion token.
@@ -135,6 +218,13 @@ pub enum VisualizationStep {
         /// Exact authorized read requests.
         reads: Vec<ReadRequest>,
         /// Instance-local continuation identity.
+        token: String,
+    },
+    /// Request related retained traffic through the host's native scope checks.
+    NeedContext {
+        /// Bounded direction and instance-owned cursor.
+        request: ContextRequest,
+        /// Exact parser continuation token.
         token: String,
     },
 }

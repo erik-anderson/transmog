@@ -159,14 +159,21 @@ pub struct LiveUpdates {
     pub body_progress: bool,
 }
 
-/// Bounded nonsecret correlation fields used only within the selected capture.
+/// Bounded correlation fields used only within the selected capture and native origin/caller scope.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Context {
     /// Exact declared headers required to identify a conversation.
     pub headers: Vec<HeaderPredicate>,
-    /// Maximum earlier related exchanges requested by this contribution.
+    /// Maximum related exchanges delivered across this instance's context reads.
     pub max_exchanges: usize,
+    /// Permit bounded reads of later retained exchanges, needed by some fragmented protocols.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub look_ahead: bool,
+}
+#[allow(clippy::trivially_copy_pass_by_ref)] // Serde's skip predicate receives a field reference.
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 /// Host-clamped per-instance processing budgets.

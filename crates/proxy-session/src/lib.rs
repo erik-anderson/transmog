@@ -17,7 +17,7 @@ pub use capture::{
 pub use catalog::{
     BodySnapshot, CatalogApply, CatalogCounters, CatalogCursor, CatalogDelta, CatalogError,
     CatalogPage, CatalogQuery, CatalogSubscription, ObservedRequestHead, ObservedResponseHead,
-    SessionCatalog, SessionFilter, SessionLimits, SessionSnapshot, SessionTerminal,
+    SessionCatalog, SessionFilter, SessionHeads, SessionLimits, SessionSnapshot, SessionTerminal,
     SubscriptionEvent,
 };
 pub use control::{

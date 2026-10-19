@@ -13,12 +13,14 @@ use std::{
     time::Duration,
 };
 use transmog_extensions::{
-    BytePage, Direction, Failure, FailureKind, HOST_PROTOCOL_VERSION, HostReply, HostRequest,
-    HostToken, Invocation, PAYLOAD_CHUNK_BYTES, ReadRequest, Snapshot, VisualizationInput,
-    VisualizationStep, Visualizer, check_body_access, decimal, project_headers, read_frame,
-    valid_id, write_frame,
+    BytePage, ContextPosition, ContextRequest, ContextStatus, Direction, Failure, FailureKind,
+    HOST_PROTOCOL_VERSION, HostReply, HostRequest, HostToken, Invocation, PAYLOAD_CHUNK_BYTES,
+    ReadRequest, Snapshot, VisualizationInput, VisualizationStep, Visualizer, check_body_access,
+    decimal, project_headers, read_frame, valid_id, write_frame,
 };
 const MAX_HOSTS: u64 = 16;
+#[cfg(test)]
+mod tests;
 static ACTIVE_HOSTS: AtomicU64 = AtomicU64::new(0);
 static PACKAGES: Mutex<BTreeMap<String, usize>> = Mutex::new(BTreeMap::new());
 struct Slot {
@@ -381,11 +383,14 @@ impl Worker {
 struct Pending {
     token: Option<String>,
     reads: Vec<ReadRequest>,
+    context: Option<ContextRequest>,
+    context_total: usize,
 }
 impl Pending {
     fn clear(&mut self) {
         self.token = None;
         self.reads.clear();
+        self.context = None;
     }
 }
 fn prepare(
@@ -400,6 +405,7 @@ fn prepare(
         Invocation::Visualize { input } => {
             grants.clear();
             pending.clear();
+            pending.context_total = 0;
             *remaining = visualizer.limits.input_bytes;
             *continuations = 0;
             project(input, visualizer, grants, remaining)?;
@@ -416,7 +422,10 @@ fn prepare(
             }
         }
         Invocation::Resume { token, pages } => {
-            if pending.token.as_ref() != Some(token) || pages.len() != pending.reads.len() {
+            if pending.token.as_ref() != Some(token)
+                || pending.context.is_some()
+                || pages.len() != pending.reads.len()
+            {
                 return Err(protocol());
             }
             *continuations += 1;
@@ -425,6 +434,45 @@ fn prepare(
             }
             for (page, request) in pages.iter().zip(pending.reads.iter()) {
                 check_page(page, request, grants, remaining)?;
+            }
+            pending.clear();
+        }
+        Invocation::ResumeContext { token, page } => {
+            let request = pending.context.as_ref().ok_or_else(protocol)?;
+            let context = visualizer.context.as_ref().ok_or_else(protocol)?;
+            if pending.token.as_ref() != Some(token)
+                || page.exchanges.len() > request.limit
+                || decimal(&page.anchor_order).is_err()
+                || page
+                    .next_cursor
+                    .as_ref()
+                    .is_some_and(|cursor| !valid_id(cursor))
+                || page.next_cursor.is_some() != (page.status == ContextStatus::More)
+            {
+                return Err(protocol());
+            }
+            *continuations += 1;
+            pending.context_total = pending
+                .context_total
+                .checked_add(page.exchanges.len())
+                .ok_or_else(protocol)?;
+            if *continuations > 512 || pending.context_total > context.max_exchanges {
+                return Err(fail(FailureKind::Limit, "Related context budget exhausted"));
+            }
+            let anchor = decimal(&page.anchor_order).map_err(|_| protocol())?;
+            let mut prior = None;
+            for exchange in &mut page.exchanges {
+                let order = decimal(&exchange.order).map_err(|_| protocol())?;
+                if prior.is_some_and(|prior| prior >= order)
+                    || match request.position {
+                        ContextPosition::Before => order >= anchor,
+                        ContextPosition::After => order <= anchor,
+                    }
+                {
+                    return Err(protocol());
+                }
+                prior = Some(order);
+                project(&mut exchange.input, visualizer, grants, remaining)?;
             }
             pending.clear();
         }
@@ -591,6 +639,24 @@ fn validate_step(
                 return Err(fail(FailureKind::Limit, "Retained input budget exhausted"));
             }
             pending.reads.clone_from(reads);
+            pending.token = Some(token.clone());
+            Ok(())
+        }
+        VisualizationStep::NeedContext { request, token } => {
+            let context = visualizer.context.as_ref().ok_or_else(|| {
+                fail(
+                    FailureKind::Validation,
+                    "Related traffic access was not declared",
+                )
+            })?;
+            if !valid_id(token) {
+                return Err(protocol());
+            }
+            request
+                .validate(context)
+                .map_err(|_| fail(FailureKind::Validation, "Invalid related context request"))?;
+            pending.reads.clear();
+            pending.context = Some(request.clone());
             pending.token = Some(token.clone());
             Ok(())
         }

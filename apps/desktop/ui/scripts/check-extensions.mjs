@@ -27,6 +27,7 @@ export async function checkExtensions(page,root) {
   await installed.getByText('content-type, x-requesttype',{exact:true}).waitFor();
   assert.equal(await installed.getByText('No headers',{exact:true}).count(),1);
   assert.equal(await installed.getByText('Required',{exact:true}).count(),1);
+  assert.equal(await installed.getByText('Up to 32 earlier exchanges from the same capture, origin, and conversation; request x-requesttype',{exact:true}).count(),2);
   const enabled=installed.getByRole('checkbox',{name:'Enable '+name,exact:true});
   await enabled.focus();await page.keyboard.press('Space');
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
@@ -40,13 +41,15 @@ export async function checkExtensions(page,root) {
   assert.equal(await enabled.isChecked(),false,'A failed write left an enabled-looking checkbox');
   await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=false;});
   await panel.getByRole('button',{name:'Dismiss',exact:true}).click();
-  await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},extension('example.development','Development protocol',true));
+  const development=extension('example.development','Development protocol',true);development.catalog.manifest.visualizers[0].context.lookAhead=true;
+  await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},development);
   await panel.getByRole('button',{name:'Load unpacked…',exact:true}).click();
   const developer=panel.getByRole('article',{name:'Development protocol',exact:true});
   await developer.getByRole('checkbox',{name:'Hot reload Development protocol',exact:true}).check();
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);
   await developer.locator('summary').click();
+  await developer.getByText('Up to 32 earlier or later exchanges from the same capture, origin, and conversation; request x-requesttype',{exact:true}).waitFor();
   for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
     await page.setViewportSize({width,height});
     assert.equal(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true,'Extensions overflowed the settings pane');

@@ -4,7 +4,7 @@ use transmog_core::HeaderField;
 use transmog_extensions::{
     Direction, ExchangeMetadata, HeaderMetadata, MessageMetadata, Surface, Visualizer, matches,
 };
-use transmog_session::SessionSnapshot;
+use transmog_session::{ObservedRequestHead, ObservedResponseHead, SessionSnapshot};
 
 #[derive(Clone, Copy, Debug)]
 pub(super) struct RetainedHeader<'a>(pub(super) &'a HeaderField);
@@ -28,13 +28,18 @@ pub(super) struct Admission<'a> {
 }
 impl<'a> Admission<'a> {
     pub(super) fn new(snapshot: &'a SessionSnapshot, selected: Boundaries) -> Self {
-        let request = snapshot
-            .request_heads
+        Self::from_heads(&snapshot.request_heads, &snapshot.response_heads, selected)
+    }
+    pub(super) fn from_heads(
+        requests: &'a [ObservedRequestHead],
+        responses: &'a [ObservedResponseHead],
+        selected: Boundaries,
+    ) -> Self {
+        let request = requests
             .iter()
             .find(|head| head.boundary == selected.request)
             .map(|head| &head.head);
-        let response = snapshot
-            .response_heads
+        let response = responses
             .iter()
             .rev()
             .find(|head| {
