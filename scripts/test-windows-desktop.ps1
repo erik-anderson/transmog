@@ -254,12 +254,26 @@ try {
         return $result
     }
 
-    $startingWorkingSet = (Get-Process -Id $process.Id).WorkingSet64
+    function Save-DesktopMemorySample([string]$Phase) {
+        $measuredProcess = Get-Process -Id $process.Id -ErrorAction Stop
+        $sample = [ordered]@{
+            Phase = $Phase
+            TimestampUtc = [DateTimeOffset]::UtcNow.ToString('o')
+            ProcessId = $measuredProcess.Id
+            WorkingSetBytes = $measuredProcess.WorkingSet64
+            PrivateBytes = $measuredProcess.PrivateMemorySize64
+        }
+        $sample | ConvertTo-Json -Compress | Add-Content -LiteralPath (Join-Path $probeRoot 'memory-samples.jsonl') -Encoding utf8NoBOM
+        return [pscustomobject]$sample
+    }
+    $startingMemory = Save-DesktopMemorySample 'Functional checks start'
+    $startingWorkingSet = $startingMemory.WorkingSetBytes
     $invalidTrace = Join-Path $probeRoot 'invalid.tmcap'
     [IO.File]::WriteAllText($invalidTrace, 'Invalid capture fixture')
     Push-Location $desktopUi
     try {
-        $smokeArguments = @('run', 'smoke:webview', '--', '--port', "$DevToolsPort", '--soak-minutes', "$SoakMinutes", '--invalid-trace', $invalidTrace)
+        # The timed soak runs below, after functional loading has settled.
+        $smokeArguments = @('run', 'smoke:webview', '--', '--port', "$DevToolsPort", '--soak-minutes', '0', '--invalid-trace', $invalidTrace)
         if ($ScreenshotPath) {
             $smokeArguments += @('--screenshot', $ScreenshotPath)
         }
@@ -276,17 +290,31 @@ try {
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
             if ($NativeTracePath) { $viewerArguments += @('--native-source', $NativeTracePath) }
             if ($TraceSaveChecks) { $viewerArguments += '--trace-save-only' }
-            & node @viewerArguments
+            & node @viewerArguments | ForEach-Object {
+                Write-Host $_
+                Save-DesktopMemorySample ([string]$_) | Out-Null
+            }
         } else { & npm @smokeArguments }
     } finally {
         Pop-Location
     }
-    $endingWorkingSet = (Get-Process -Id $process.Id).WorkingSet64
+    $endingMemory = Save-DesktopMemorySample 'Functional checks end'
+    $endingWorkingSet = $endingMemory.WorkingSetBytes
     if ($KeyRecoveryChecks -and [Convert]::ToHexString([IO.File]::ReadAllBytes($fixturePath)) -ne [Convert]::ToHexString($fixtureBytes)) {
         throw 'Inspecting or canceling DPAPI recovery changed the existing private key.'
     }
-    if ($endingWorkingSet - $startingWorkingSet -gt 268435456) {
-        throw "Desktop working set grew by more than 256 MiB during soak."
+    # Functional fixtures change the retained catalog (including 20,000 requests).
+    # Bound repeated status work after loading, keeping total growth as diagnostics.
+    $memoryReportPath = Join-Path $probeRoot 'status-memory.json'
+    $memoryWindowRole = if ($ViewerChecks) { 'viewer' } else { 'main' }
+    Push-Location $desktopUi
+    try {
+        & node scripts/smoke-desktop-memory.mjs --port "$DevToolsPort" --profile-root $probeRoot --process-id "$($process.Id)" --memory-report $memoryReportPath --soak-minutes "$SoakMinutes" --window-role $memoryWindowRole
+        if ($LASTEXITCODE -ne 0) { throw "Native status-refresh memory gate failed. Report: $memoryReportPath" }
+    } finally { Pop-Location }
+    $memoryReport = Get-Content -LiteralPath $memoryReportPath -Raw | ConvertFrom-Json
+    if ($memoryReport.schemaVersion -ne 1 -or $memoryReport.processId -ne $process.Id -or $memoryReport.limitBytes -ne 268435456 -or $memoryReport.status -ne 'passed' -or $memoryReport.workload.windowRole -ne $memoryWindowRole -or $memoryReport.workload.minutes -ne $SoakMinutes -or $memoryReport.workload.iterations -lt $(if ($SoakMinutes) { 1 } else { 100 })) {
+        throw "Native status-refresh memory report is missing or invalid: $memoryReportPath"
     }
 
     $second = Start-Process -FilePath $executable -PassThru -WindowStyle Hidden
@@ -309,6 +337,9 @@ try {
         KeyRecoveryVerified = [bool]$KeyRecoveryChecks
         SoakMinutes = $SoakMinutes
         WorkingSetGrowthBytes = $endingWorkingSet - $startingWorkingSet
+        StatusWorkingSetGrowthBytes = $memoryReport.growthBytes
+        MemoryGrowthVerified = $true
+        MemoryReport = $memoryReportPath
         SingleInstanceVerified = $true
     }
 } finally {

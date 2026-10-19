@@ -71,5 +71,7 @@ jobs:
             artifacts/windows-desktop-validation/**/stdout.txt
             artifacts/windows-desktop-validation/**/stderr.txt
             artifacts/windows-desktop-validation/**/startup.json
+            artifacts/windows-desktop-validation/**/memory-samples.jsonl
+            artifacts/windows-desktop-validation/**/status-memory.json
           if-no-files-found: warn
           retention-days: 7

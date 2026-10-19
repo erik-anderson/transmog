@@ -221,7 +221,8 @@ try {
         const end=performance.now()+10_000;
         while(!predicate()){if(performance.now()>=end)throw new Error(message+': '+workspace.automationText);await new Promise(resolve=>setTimeout(resolve,25));}
       };
-      const unsavedDialog=automation.querySelector('.unsaved-rule-dialog');
+      const unsavedDialog=workspace.unsavedDialog;
+      if(!(unsavedDialog instanceof HTMLDialogElement))throw new Error('Automation unsaved-changes dialog was not initialized');
       await waitFor(()=>unsavedDialog.matches(':modal'),'Unsaved rule dialog did not open');
       const unsavedPromptWorked=workspace.draftDirty && !autoResponseEditor.hidden;
       [...unsavedDialog.querySelectorAll('button')].find(button=>button.textContent.trim()==='Keep editing').click();
@@ -281,7 +282,10 @@ try {
           main: element.shadowRoot.querySelectorAll('main').length,
           headings: element.shadowRoot.querySelectorAll('h1, h2, h3').length
         },
+        // Closed dialogs can contain unconfigured confirmation buttons. Their
+        // controls enter the accessibility tree only when the dialog is opened.
         unnamedControls: [...element.shadowRoot.querySelectorAll('button, input, select, textarea, a[href]')]
+          .filter((control) => control.getClientRects().length > 0 && getComputedStyle(control).visibility !== 'hidden')
           .filter((control) => control.getAttribute('aria-hidden') !== 'true')
           .filter((control) => {
             const labelledBy = control.getAttribute('aria-labelledby');

@@ -129,6 +129,16 @@ window roles and captured-page isolation. The release soak adds
 only their owned windows. See [UI guidance](../apps/desktop/ui/AGENTS.md) for
 populated, wide/compact and keyboard review.
 
+The native memory gate warms status refreshes after the functional fixtures load,
+then enforces the existing 256 MiB process working-set growth limit over 100
+refreshes, or the requested soak duration. Viewer checks use the same bounded
+phase against the populated viewer with the largest matching catalog, rather
+than the empty reopened main window. Cold-to-loaded suite growth remains diagnostic because importing a large
+capture changes the retained catalog. Before/after working set, private bytes,
+process identity, window role, row count and iteration counts are retained in `status-memory.json` under
+the isolated validation evidence folder; `memory-samples.jsonl` records fixture
+phases. Sampling, workload and process-identity failures fail the gate.
+
 The window geometry gate repeats native close/reopen and maximize/restore cycles
 on every connected display. It retains physical bounds and actual display DPI in
 `artifacts/window-geometry`; use a scaled display to qualify the DPI regression.
