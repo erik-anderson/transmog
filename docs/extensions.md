@@ -4,8 +4,9 @@
 native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
 the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-registry`
-provides shared installation and active-instance ownership. Desktop controls,
-retention/context integration and the bundled MAPI extension remain in the
+provides shared installation and active-instance ownership. `transmog-app`
+connects explicit activation to retained headers and body ranges. Desktop controls,
+context/live feeding, transactional hot reload and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
 An extension is a versioned package containing independently identified visualizer
@@ -81,6 +82,42 @@ to cancel subscriptions and clear retained buffers, even when a pending operatio
 still holds a temporary reference. Enabling does not resurrect those instances.
 Hot-reload preference is persisted here; file watching and transactional result
 replacement belong to the pending desktop broker integration.
+
+## Retained-evidence broker
+
+The application facade offers matching enabled contributions for one selected
+header/body surface and exact message boundary. Discovery uses cached declarations
+and retained headers without loading modules or reading body bytes. Actual input
+projection uses complete retained field values, independently of display previews;
+it preserves duplicates, ordinals and redaction. Native admission is checked again
+against the executing declaration before body capabilities are created.
+
+Inputs pair the request and response on the same transport leg: client request
+with client response, or upstream request with upstream response. The broker does
+not silently substitute another observation boundary. Missing required bodies
+produce an unavailable prerequisite; optional bodies preserve explicit retention
+states. Header-only declarations acquire no body source or read lease.
+
+Granted body capabilities identify an exact retained prefix/revision. Reads are
+lazy and bounded to 64 KiB per page, use the existing retention range reader and
+hold an eviction lease only during the read. An idle viewer cannot pin an
+arbitrarily large retained body. The supervisor enforces the aggregate byte budget
+across continuations; the application bounds the entire operation by the declared
+duration as well as the worker's individual invocation deadline. Source loss is
+reported rather than replaced with different evidence.
+
+Each owning pane supplies a stable slot and monotonically increasing decimal
+generation. Close events retain only small generation tombstones, so a delayed
+start cannot resurrect a closed generation and a delayed close cannot stop a
+newer one. Cancellation reaches pending initialization as well as ready workers.
+Global disable/uninstall also cancels pending initialization. Closing an owning
+application prevents any subsequent activation. Source bytes for host highlighting
+require the still-active owner, slot, generation and original source capability.
+
+These APIs currently parse selected retained snapshots and deferred expansions.
+They do not yet subscribe to new traffic, enumerate related context, decode HTTP
+Content-Encoding for an extension, or implement the desktop renderer. Existing
+built-in inspection and capture behavior are unchanged.
 
 ## Isolated worker
 

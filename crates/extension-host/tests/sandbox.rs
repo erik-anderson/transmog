@@ -292,3 +292,26 @@ async fn forged_continuation_tokens_cannot_supply_unsolicited_body_pages() {
     assert_eq!(error.kind, FailureKind::Protocol);
     assert!(runner.is_stopped());
 }
+
+#[test]
+fn canceling_initialization_terminates_top_level_code_without_waiting_for_startup_deadline() {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    let canceled = Arc::new(AtomicBool::new(false));
+    let task_canceled = Arc::clone(&canceled);
+    let source = format!("while(true){{}} export function visualize(){{return {DOCUMENT};}}");
+    let started = std::time::Instant::now();
+    let worker = std::thread::spawn(move || {
+        Runner::start_cancellable(
+            &HostConfig {
+                executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            },
+            snapshot(&source),
+            "view",
+            || task_canceled.load(Ordering::Acquire),
+        )
+    });
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    canceled.store(true, Ordering::Release);
+    assert!(worker.join().unwrap().is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+}

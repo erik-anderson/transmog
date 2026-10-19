@@ -138,3 +138,42 @@ fn source_declarations_publish_only_after_successful_worker_initialization() {
     assert!(runner.is_stopped());
     assert!(sources.join("main.js").is_file());
 }
+
+#[test]
+fn disabling_cancels_pending_initialization_as_well_as_ready_instances() {
+    let (_root, registry, sources) = setup();
+    std::fs::write(sources.join("main.js"), format!("while(true){{}} {SOURCE}")).unwrap();
+    let starting = registry.clone();
+    let worker =
+        std::thread::spawn(move || starting.activate("window", "example.registry", "view"));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let stopped = std::time::Instant::now();
+    registry.set_enabled("example.registry", false).unwrap();
+    assert!(worker.join().unwrap().is_err());
+    assert!(stopped.elapsed() < std::time::Duration::from_secs(3));
+}
+
+#[test]
+fn two_contributions_from_the_same_development_revision_can_initialize_concurrently() {
+    let (_root, registry, sources) = setup();
+    let mut manifest = manifest();
+    let mut second = manifest.visualizers[0].clone();
+    second.id = "view-two".into();
+    manifest.visualizers.push(second);
+    write_manifest(&sources, &manifest);
+    registry.register_directory(&sources, false).unwrap();
+    let other = registry.clone();
+    let first =
+        std::thread::spawn(move || other.activate("one", "example.registry", "view").unwrap());
+    let second = registry
+        .activate("two", "example.registry", "view-two")
+        .unwrap();
+    let first = first.join().unwrap();
+    assert_eq!(first.digest, second.digest);
+    assert_ne!(first.id, second.id);
+    let first_worker = registry.runner("one", &first.id).unwrap();
+    let second_worker = registry.runner("two", &second.id).unwrap();
+    registry.deactivate_owner("one");
+    assert!(first_worker.is_stopped());
+    assert!(!second_worker.is_stopped());
+}

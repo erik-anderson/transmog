@@ -31,6 +31,8 @@ time.workspace = true
 tokio.workspace = true
 zip.workspace = true
 transmog-content = { version = "=0.1.7", path = "../proxy-content" }
+transmog-extensions = { version = "=0.1.7", path = "../extensions" }
+transmog-extension-registry = { version = "=0.1.7", path = "../extension-registry" }
 transmog-automation = { version = "=0.1.7", path = "../proxy-automation" }
 transmog-portable = { version = "=0.1.7", path = "../portable" }
 transmog-control-model = { version = "=0.1.7", path = "../proxy-control-model" }

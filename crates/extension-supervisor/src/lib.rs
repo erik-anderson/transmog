@@ -81,6 +81,20 @@ impl Runner {
         snapshot: Snapshot,
         visualizer_id: &str,
     ) -> Result<Arc<Self>, Failure> {
+        Self::start_cancellable(config, snapshot, visualizer_id, || false)
+    }
+    /// Starts a contribution while allowing its owner to cancel pending initialization.
+    /// # Errors
+    /// Returns canceled, containment, validation, capacity or initialization failures.
+    pub fn start_cancellable(
+        config: &HostConfig,
+        snapshot: Snapshot,
+        visualizer_id: &str,
+        canceled: impl Fn() -> bool,
+    ) -> Result<Arc<Self>, Failure> {
+        if canceled() {
+            return Err(unavailable());
+        }
         let expected = snapshot.digest.clone();
         let snapshot = Snapshot::new(snapshot.manifest, snapshot.files)
             .map_err(|_| fail(FailureKind::Validation, "Invalid execution snapshot"))?;
@@ -148,8 +162,9 @@ impl Runner {
                     "Worker supervisor thread unavailable",
                 )
             })?;
-        match ready_rx.recv_timeout(Duration::from_secs(15)) {
-            Ok(Ok(())) => Ok(Arc::new(Self {
+        let ready = wait_ready(&ready_rx, canceled);
+        match ready {
+            Ok(()) => Ok(Arc::new(Self {
                 sender,
                 process,
                 failed,
@@ -157,19 +172,11 @@ impl Runner {
                 visualizer,
                 thread: Mutex::new(Some(thread)),
             })),
-            Ok(Err(e)) => {
-                kill(&process);
-                let _ = thread.join();
-                Err(e)
-            }
-            Err(_) => {
+            Err(e) => {
                 failed.store(true, Ordering::Release);
                 kill(&process);
                 let _ = thread.join();
-                Err(fail(
-                    FailureKind::Timeout,
-                    "Visualizer initialization timed out",
-                ))
+                Err(e)
             }
         }
     }
@@ -222,6 +229,34 @@ impl Runner {
     /// Whether the owning view must create a fresh instance before invoking again.
     pub fn is_stopped(&self) -> bool {
         self.failed.load(Ordering::Acquire)
+    }
+}
+fn wait_ready(
+    receiver: &Receiver<Result<(), Failure>>,
+    canceled: impl Fn() -> bool,
+) -> Result<(), Failure> {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if canceled() {
+            return Err(unavailable());
+        }
+        if std::time::Instant::now() >= deadline {
+            return Err(fail(
+                FailureKind::Timeout,
+                "Visualizer initialization timed out",
+            ));
+        }
+        match receiver.recv_timeout(Duration::from_millis(25)) {
+            Ok(result) => {
+                return if canceled() {
+                    Err(unavailable())
+                } else {
+                    result
+                };
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+            Err(mpsc::RecvTimeoutError::Disconnected) => return Err(unavailable()),
+        }
     }
 }
 impl Drop for Runner {
@@ -436,8 +471,6 @@ fn project(
             if !valid_id(&message.evidence_id) {
                 return Err(protocol());
             }
-            let source_prefix =
-                transmog_extensions::sha256(format!("{side:?}:{}", message.evidence_id).as_bytes());
             for header in &mut message.headers {
                 let bytes = header
                     .name
@@ -454,7 +487,11 @@ fn project(
                     return Err(protocol());
                 }
                 if let Some(value) = &header.value {
-                    let id = format!("header-{}-{}", &source_prefix[..32], header.index);
+                    let id = transmog_extensions::header_source_id(
+                        side,
+                        &message.evidence_id,
+                        header.index,
+                    );
                     grants.insert(id.clone(), value.len() as u64);
                     header.source_id = Some(id);
                 }

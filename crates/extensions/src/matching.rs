@@ -21,6 +21,12 @@ pub struct Header {
     pub original_bytes: Option<String>,
 }
 
+/// Stable source identity for one granted occurrence at an exact evidence revision.
+pub fn header_source_id(side: Direction, evidence_id: &str, index: u32) -> String {
+    let digest = crate::sha256(format!("{side:?}:{evidence_id}").as_bytes());
+    format!("header-{}-{index}", &digest[..32])
+}
+
 /// Metadata borrowed from retention; constructing a matcher does not read bodies.
 #[derive(Clone, Copy, Debug)]
 pub struct MessageMetadata<'a> {

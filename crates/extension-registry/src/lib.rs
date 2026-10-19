@@ -322,6 +322,18 @@ impl Registry {
     /// # Errors
     /// Returns management, source validation, worker initialization or stale activation failures.
     pub fn activate(&self, owner: &str, id: &str, visualizer: &str) -> Result<Instance, Failure> {
+        self.activate_cancellable(owner, id, visualizer, || false)
+    }
+    /// Starts an instance while honoring hidden-pane and global management cancellation.
+    /// # Errors
+    /// Returns canceled, stale, source validation or sandbox initialization failures.
+    pub fn activate_cancellable(
+        &self,
+        owner: &str,
+        id: &str,
+        visualizer: &str,
+        canceled: impl Fn() -> bool,
+    ) -> Result<Instance, Failure> {
         if !valid_id(owner) {
             return Err(Failure::new(
                 transmog_extensions::FailureKind::Validation,
@@ -329,6 +341,9 @@ impl Registry {
             ));
         }
         let entry = self.enabled_entry(id).map_err(management_failure)?;
+        if canceled() {
+            return Err(management_failure(invalid("Activation was canceled")));
+        }
         let snapshot = self.snapshot(id).map_err(management_failure)?;
         let digest = snapshot.digest.clone();
         let manifest = snapshot.manifest.clone();
@@ -344,7 +359,15 @@ impl Registry {
                 "The installed extension helper is unavailable",
             )
         })?;
-        let runner = Runner::start(host, snapshot, visualizer)?;
+        let runner = Runner::start_cancellable(host, snapshot, visualizer, || {
+            canceled()
+                || self.inner.state.lock().map_or(true, |state| {
+                    !state
+                        .entries
+                        .iter()
+                        .any(|e| activation_current(e, &entry, &digest))
+                })
+        })?;
         let mut nonce = [0; 16];
         getrandom::fill(&mut nonce).map_err(|_| {
             Failure::new(
@@ -367,9 +390,12 @@ impl Registry {
             .lock()
             .map_err(|_| management_failure(invalid("Extension management is unavailable")))?;
         let mut entries = self.status().entries;
+        if canceled() {
+            return Err(management_failure(invalid("Activation was canceled")));
+        }
         let Some(current) = entries
             .iter_mut()
-            .find(|e| **e == entry && e.catalog.enabled)
+            .find(|e| activation_current(e, &entry, &info.digest))
         else {
             return Err(Failure::new(
                 transmog_extensions::FailureKind::Unavailable,
@@ -631,4 +657,12 @@ fn management_failure(_: Error) -> Failure {
         transmog_extensions::FailureKind::Validation,
         "Extension metadata or source could not be validated",
     )
+}
+fn activation_current(current: &ExtensionEntry, expected: &ExtensionEntry, digest: &str) -> bool {
+    current.catalog.enabled
+        && current.catalog.manifest.id == expected.catalog.manifest.id
+        && current.catalog.origin == expected.catalog.origin
+        && current.directory == expected.directory
+        && (current.catalog.digest == expected.catalog.digest
+            || (expected.catalog.origin == Origin::Development && current.catalog.digest == digest))
 }

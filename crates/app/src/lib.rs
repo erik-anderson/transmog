@@ -52,6 +52,12 @@ pub use traffic_clear::TrafficClearResult;
 mod trace_save;
 mod traces;
 mod version;
+mod visualizers;
+pub use transmog_extension_registry as extensions;
+pub use visualizers::{
+    VisualizerActivation, VisualizerChoice, VisualizerSelection, VisualizerSourcePage,
+    VisualizerView,
+};
 mod workspace;
 
 pub use network_profiles::{
@@ -324,6 +330,8 @@ pub struct AppConfig {
     pub script_host_executable: Option<PathBuf>,
     /// Exact packaged isolated raster preview worker executable.
     pub preview_worker_executable: Option<PathBuf>,
+    /// Shared extension installations and workers across owning windows.
+    pub extensions: Option<transmog_extension_registry::Registry>,
 }
 
 impl std::fmt::Debug for AppConfig {
@@ -346,6 +354,7 @@ impl std::fmt::Debug for AppConfig {
             .field("script_workspace_path", &self.script_workspace_path)
             .field("script_host_executable", &self.script_host_executable)
             .field("preview_worker_executable", &self.preview_worker_executable)
+            .field("extensions", &self.extensions.is_some())
             .finish()
     }
 }
@@ -379,6 +388,7 @@ pub struct Application {
     traffic_views: Arc<std::sync::Mutex<sessions::TrafficViews>>,
     comparisons: comparison::ComparisonRegistry,
     export_reviews: export_review::ReviewRegistry,
+    visualizers: Arc<visualizers::Service>,
 }
 
 impl std::fmt::Debug for Application {
@@ -528,6 +538,10 @@ impl Application {
             )
         })?;
         let preview_capture = format!("{:032x}", u128::from_le_bytes(capture_nonce));
+        let visualizers = Arc::new(visualizers::Service::new(
+            config.extensions.unwrap_or_default(),
+            preview_capture.clone(),
+        ));
         Ok(Self {
             preview_capture,
             upstream_trust: config.upstream_trust,
@@ -559,6 +573,7 @@ impl Application {
             traffic_views: Arc::new(std::sync::Mutex::new(sessions::TrafficViews::default())),
             comparisons: comparison::ComparisonRegistry::default(),
             export_reviews: export_review::ReviewRegistry::default(),
+            visualizers,
         })
     }
 

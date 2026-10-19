@@ -7065,6 +7065,8 @@ dependencies = [
  "transmog-control-model",
  "transmog-control-transport",
  "transmog-core",
+ "transmog-extension-registry",
+ "transmog-extensions",
  "transmog-h3",
  "transmog-http",
  "transmog-key-protection",
