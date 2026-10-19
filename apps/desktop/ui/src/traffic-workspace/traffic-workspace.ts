@@ -2013,7 +2013,13 @@ export class TrafficWorkspace extends WorkspaceElement {
 
   showSaveTrace(traceId?:string):void {this.closePopover(this.filesMenu,this.filesMenuButton);if(!this.savingTrace){this.saveTraceStatus='';this.exportReviewScope=traceId?'source:'+traceId:'all';void this.reviewTraceExport();}this.saveTraceOpen=true;this.saveTraceDialog.showModal();}
   closeSaveTrace():void {this.saveTraceDialog.close();}
-  saveTraceClosed():void {this.saveTraceOpen=false;if(!this.savingTrace){this.exportReviewRevision++;this.exportReviewBusy=false;this.exportReviewId="";this.exportReviewFacts=[];this.exportReviewNote="";this.exportReviewSummary="";}this.filesMenuButton.focus({preventScroll:true});}
+  saveTraceClosed():void {
+    // A queued close event can belong to an earlier opening of this dialog.
+    if(this.saveTraceDialog.open)return;
+    this.saveTraceOpen=false;
+    if(!this.savingTrace){this.exportReviewRevision++;this.exportReviewBusy=false;this.exportReviewId="";this.exportReviewFacts=[];this.exportReviewNote="";this.exportReviewSummary="";}
+    this.filesMenuButton.focus({preventScroll:true});
+  }
   async saveTrafficTrace(event:Event):Promise<void> {
     event.preventDefault();if(this.savingTrace||this.exportReviewBusy||!this.exportReviewId)return;
 

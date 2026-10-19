@@ -696,6 +696,21 @@ try {
   result.streams=await smokeStreams(call,evaluate,screenshotPath);
   result.automationEditing=await smokeAutomationEditing(call,evaluate,screenshotPath,waitForEvent);
   result.bodyEditor=await smokeBodyEditor(call,evaluate,screenshotPath);
+  result.traceExportDialog=await evaluate(`(async()=>{
+    const workspace=document.querySelector('app-shell').traffic,dialog=workspace.saveTraceDialog;
+    const wait=async(condition)=>{const deadline=Date.now()+10000;while(!condition()){if(Date.now()>deadline)throw new Error('Native export dialog lifecycle timed out');await new Promise(resolve=>setTimeout(resolve,25));}};
+    try {
+      workspace.showSaveTrace();await wait(()=>!workspace.exportReviewBusy);
+      let closed=false;dialog.addEventListener('close',()=>{closed=true;},{once:true});
+      workspace.closeSaveTrace();workspace.showSaveTrace();
+      await wait(()=>closed&&!workspace.exportReviewBusy);
+      if(!dialog.open||!workspace.saveTraceOpen||!workspace.exportReviewId||dialog.querySelector('button[type="submit"]').disabled)throw new Error('A queued native close event disabled the reopened export dialog');
+      if(!dialog.contains(dialog.getRootNode().activeElement))throw new Error('A queued native close event moved focus out of the reopened export dialog');
+      closed=false;dialog.addEventListener('close',()=>{closed=true;},{once:true});workspace.closeSaveTrace();await wait(()=>closed);
+      if(workspace.saveTraceOpen||workspace.exportReviewId)throw new Error('Closing the native export dialog did not clear its review');
+      return {reopenKeepsReview:true,reopenKeepsFocus:true,closeClearsReview:true};
+    } finally {if(dialog.open)workspace.closeSaveTrace();}
+  })()`);
   const metrics = await call('Performance.getMetrics');
   const heap = metrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ?? Number.POSITIVE_INFINITY;
   assert(heap < 64 * 1024 * 1024, `bounded status soak exceeded 64 MiB JS heap: ${heap}`);
