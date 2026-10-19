@@ -3,11 +3,13 @@ mod document;
 mod manifest;
 mod matching;
 mod package;
+mod protocol;
 
 pub use document::*;
 pub use manifest::*;
 pub use matching::*;
 pub use package::*;
+pub use protocol::*;
 
 /// A bounded extension failure, without captured values or source snippets.
 #[derive(Debug, thiserror::Error)]

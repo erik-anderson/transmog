@@ -17,10 +17,10 @@ declare module "transmog:extensions/v1" {
   export interface DerivedSource { id: string; name: string; bytesBase64: string; parents: Span[]; transform: string; exactMapping: boolean; }
   export interface Diagnostic { code: string; message: string; nodeId?: string; }
   export interface VisualizationDocument { title: string; status: ParseStatus; presentation: Presentation; summary?: string; roots: Node[]; sources?: DerivedSource[]; diagnostics?: Diagnostic[]; }
-  export interface Header { index: number; name: string; value?: readonly number[]; redacted: boolean; originalBytes?: string; }
+  export interface Header { sourceId?: string; index: number; name: string; value?: readonly number[] | null; redacted: boolean; originalBytes?: string | null; }
   export interface BodyReference { sourceId: string; length: string; availability: string; }
-  export interface Message { headers: readonly Header[]; body?: BodyReference; method?: string; path?: string; status?: number; }
-  export interface Input { instanceId: string; generation: string; direction: Direction; request?: Message; response?: Message; }
+  export interface Message { evidenceId: string; headers: readonly Header[]; body?: BodyReference | null; method?: string | null; path?: string | null; status?: number | null; }
+  export interface Input { instanceId: string; generation: string; direction: Direction; request?: Message | null; response?: Message | null; }
   export interface ReadRequest { sourceId: string; offset: string; maxBytes: number; }
   export type Step = {kind: "document"; document: VisualizationDocument} | {kind: "needInput"; reads: ReadRequest[]; token: string};
   export interface BytePage { sourceId: string; offset: string; bytes: readonly number[]; }

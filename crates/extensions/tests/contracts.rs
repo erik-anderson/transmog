@@ -18,6 +18,7 @@ fn manifest() -> Manifest {
 }
 fn header(name: &str, value: &[u8], index: u32) -> Header {
     Header {
+        source_id: None,
         index,
         name: name.into(),
         value: Some(value.into()),

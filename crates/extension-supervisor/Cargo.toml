@@ -1,0 +1,18 @@
+[package]
+name = "transmog-extension-supervisor"
+description = "Authenticated bounded lifecycle for isolated read-only visualizers"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+getrandom.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+transmog-extensions = { version = "=0.1.7", path = "../extensions" }
+
+[lints]
+workspace = true

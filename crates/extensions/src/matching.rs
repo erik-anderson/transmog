@@ -6,6 +6,9 @@ use std::collections::{BTreeMap, BTreeSet};
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Header {
+    /// Instance-scoped source for this occurrence, assigned after grant projection.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_id: Option<String>,
     /// Stable occurrence index in the original retained block.
     pub index: u32,
     /// Original field name spelling.
@@ -162,6 +165,7 @@ pub fn project_headers(
             return Err(Error::Limit);
         }
         result.push(Header {
+            source_id: None,
             index: field.index,
             name: field.name.clone(),
             value: if field.redacted {

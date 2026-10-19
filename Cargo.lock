@@ -7250,6 +7250,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-extension-host"
+version = "0.1.7"
+dependencies = [
+ "base64 0.22.1",
+ "deno_ast",
+ "deno_core",
+ "serde_json",
+ "tokio",
+ "transmog-extension-supervisor",
+ "transmog-extensions",
+ "transmog-process-sandbox",
+]
+
+[[package]]
+name = "transmog-extension-supervisor"
+version = "0.1.7"
+dependencies = [
+ "base64 0.22.1",
+ "getrandom 0.4.3",
+ "serde_json",
+ "tokio",
+ "transmog-extensions",
+]
+
+[[package]]
 name = "transmog-extensions"
 version = "0.1.7"
 dependencies = [
