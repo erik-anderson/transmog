@@ -14,6 +14,8 @@ mod incidents;
 mod portable_cases;
 #[path = "saved_demos.rs"]
 mod saved_demos;
+#[path = "visualizers.rs"]
+mod visualizers;
 #[path = "window_workspaces.rs"]
 mod workspaces;
 
@@ -2429,6 +2431,13 @@ pub fn run() {
                 composer_source,
                 save_request_body,
                 inspect_body,
+                visualizers::visualizer_page,
+                visualizers::visualizer_choices,
+                visualizers::activate_visualizer,
+                visualizers::expand_visualizer,
+                visualizers::visualizer_source,
+                visualizers::visualizer_active,
+                visualizers::deactivate_visualizer,
                 extension_management::extension_status,
                 extension_management::install_extension,
                 extension_management::load_unpacked_extension,

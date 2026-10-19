@@ -1,8 +1,9 @@
+import {smokeVisualizers} from './smoke-visualizers.mjs';
 import {writeFile} from 'node:fs/promises';
 
 // The native harness seeds this unpacked fixture in its owned profile. Its code
 // throws if evaluated; managing declarations must never start that code.
-export async function smokeExtensions(call,evaluate,screenshotPath) {
+export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTracePath) {
   try {
     const result=await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),settings=shell.settings;
@@ -34,8 +35,9 @@ export async function smokeExtensions(call,evaluate,screenshotPath) {
     const layout=await evaluate(`(()=>{const editor=document.querySelector('app-shell').settings.extensionsEditor,root=editor.shadowRoot??editor;return {fits:editor.scrollWidth<=editor.clientWidth+1,button:Array.from(root.querySelectorAll('button')).some(button=>button.textContent==='Uninstall'&&!button.hidden&&!button.disabled)};})()`);
     if(!layout.fits||!layout.button)throw new Error('Native Extensions controls are clipped');
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-extensions-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    const native=visualizerTracePath?await smokeVisualizers(call,evaluate,screenshotPath,visualizerTracePath):null;
     await evaluate(`(async()=>{const editor=document.querySelector('app-shell').settings.extensionsEditor,root=editor.shadowRoot??editor;root.querySelector('button[aria-label="Uninstall Development visualizer fixture"]').click();const deadline=Date.now()+10000;while(editor.extensionsBusy){if(Date.now()>deadline)throw new Error('Native extension removal timed out');await new Promise(resolve=>setTimeout(resolve,25));}if(editor.extensionsError||editor.extensionsEntries.length)throw new Error('Native extension removal failed');})()`);
-    return {...result,removed:true};
+    return {...result,native,removed:true};
   } finally {
     await call('Emulation.clearDeviceMetricsOverride');
     await evaluate(`(()=>{const saved=globalThis.__extensionProbe;if(!saved)return;const shell=document.querySelector('app-shell');shell.settings.showSettingsSection(saved.section);shell.shadowRoot.querySelector('a[data-view="'+saved.view+'"]').click();delete globalThis.__extensionProbe;})()`);

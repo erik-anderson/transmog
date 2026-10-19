@@ -126,6 +126,13 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "composer_source"
             | "save_request_body"
             | "inspect_body"
+            | "visualizer_page"
+            | "visualizer_choices"
+            | "activate_visualizer"
+            | "expand_visualizer"
+            | "visualizer_source"
+            | "visualizer_active"
+            | "deactivate_visualizer"
             | "read_body_range"
             | "save_response_body"
             | "save_traffic_trace"
@@ -533,6 +540,13 @@ mod tests {
             "execute_composer",
             "request_command",
             "read_body_range",
+            "visualizer_choices",
+            "activate_visualizer",
+            "expand_visualizer",
+            "visualizer_source",
+            "visualizer_active",
+            "deactivate_visualizer",
+            "visualizer_page",
             "inspect_certificates",
             "copy_message_url",
             "open_main_window",

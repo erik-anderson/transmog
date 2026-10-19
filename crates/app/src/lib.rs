@@ -54,6 +54,7 @@ mod traces;
 mod version;
 mod visualizers;
 pub use transmog_extension_registry as extensions;
+pub use transmog_extensions::ReadRequest as VisualizerReadRequest;
 pub use visualizers::{
     VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerSelection,
     VisualizerSourceInfo, VisualizerSourcePage, VisualizerView,

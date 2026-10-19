@@ -3,6 +3,7 @@ import {decodeBytes} from './hex-formats.js';
 import type {HexPreview} from './hex-viewer.js';
 import type {BodyBytePage} from '../models.js';
 import {describeError} from '../utilities.js';
+import type {SourcePage} from '../extension-visualizer/models.js';
 
 const MAX_PAGES=8;
 export const HEX_COPY_BYTES=16*1024*1024;
@@ -27,7 +28,7 @@ export class HexByteSource {
     this.inline=preview.source?null:bytes;
     this.length=preview.source?BigInt(preview.source.totalBytes):BigInt(bytes.length);
     this.pageBytes=Math.min(65536,preview.source?.readLimit??65536);
-    if(preview.source)this.pages.set('0',bytes.subarray(0,this.pageBytes));
+    if(preview.source&&bytes.length)this.pages.set('0',bytes.subarray(0,this.pageBytes));
   }
   update(preview:HexPreview):void {
     this.revision++;this.error='';
@@ -35,7 +36,7 @@ export class HexByteSource {
     if(!preview.source){this.inline=decodeBytes(preview.bytesBase64);this.length=BigInt(this.inline.length);return;}
     const previous=this.length;this.length=BigInt(preview.source.totalBytes);
     if(this.length>previous)for(const [offset,page]of this.pages)if(page.length<this.pageBytes)this.pages.delete(offset);
-    this.pages.set('0',decodeBytes(preview.bytesBase64).subarray(0,this.pageBytes));
+    const bytes=decodeBytes(preview.bytesBase64);if(bytes.length)this.pages.set('0',bytes.subarray(0,this.pageBytes));
     while(this.pages.size>MAX_PAGES)this.pages.delete(this.pages.keys().next().value!);
   }
   byte(index:bigint):number|undefined {
@@ -85,7 +86,11 @@ export class HexByteSource {
     const operation=this.serial.then(async()=>{
       if(!this.live)throw new Error('Byte view closed');
       if(revision!==this.revision)throw new ObsoleteRange();
-      const page=await invoke<BodyBytePage>('read_body_range',{request:{sessionId:source.sessionId,boundary:source.boundary,offset:offset.toString(),maxBytes:length}});
+      const count=source.kind==='visualizer'?Number(BigInt(length)<this.length-offset?BigInt(length):this.length-offset):length;
+      if(count<=0)throw new Error('Selected bytes are unavailable');
+      const page=source.kind==='visualizer'?
+        await invoke<SourcePage>('visualizer_source',{handle:source.handle,request:{sourceId:source.sourceId,offset:offset.toString(),maxBytes:count}}):
+        await invoke<BodyBytePage>('read_body_range',{request:{sessionId:source.sessionId,boundary:source.boundary,offset:offset.toString(),maxBytes:count}});
       if(!this.live)throw new Error('Byte view closed');
       if(revision!==this.revision)throw new ObsoleteRange();
       if(BigInt(page.offset)!==offset)throw new Error('The byte range did not match its requested offset');

@@ -6,8 +6,9 @@ primitives. `transmog-extension-host` and `transmog-extension-supervisor` provid
 the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-registry`
 provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
-settings provides installation and declaration management. Visualizer selection/rendering,
-context/live feeding, transactional hot reload and the bundled MAPI extension remain in the
+settings provides installation and declaration management. The desktop inspector
+offers explicit selection and host-owned structured rendering. Context/live feeding,
+transactional hot reload and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
 An extension is a versioned package containing independently identified visualizer
@@ -149,9 +150,43 @@ visualizer active. Original source names and exact extents are supplied by the
 host without reading their bytes.
 
 These APIs currently parse selected retained snapshots and deferred expansions.
-They do not yet subscribe to new traffic, enumerate related context, decode HTTP
-Content-Encoding for an extension, or implement the desktop renderer. Existing
-built-in inspection and capture behavior are unchanged.
+They do not yet subscribe to new traffic, enumerate related context or decode HTTP
+Content-Encoding for an extension. Existing built-in inspection remains available.
+
+## Desktop visualizers
+
+Matching contributions appear in the existing Body viewer selector and in a
+Headers viewer selector when one applies. Raw headers and Auto remain the initial
+choices. Selection is explicit and resets when changing exchange or observation
+boundary. Request, response, header and body contributions own independent slots;
+one package may run several at once, including both surfaces in Split mode.
+
+The host renders a virtualized keyboard-navigable structure tree, complete selected
+values, format metadata, paginated tables, text and Hex. Table previews shorten
+cells and bound columns; the structure preserves access to every field. Nested
+presentation hints choose the selected structure's initial view. Captured names,
+values, diagnostics and transform descriptions remain inert text.
+
+Source-range buttons select exact decimal offsets in the existing paged Hex
+viewer. Original sources use the active worker's capability; derived buffers stay
+document-local and show their transform and parent regions. Enclosing provenance
+is labeled separately from exact mapping. Displaying a tree does not read source
+bytes just to populate its source selector.
+
+Hidden/inactive surfaces clear documents and byte caches and cancel pending
+starts as well as ready workers. Returning to a still-selected visible surface
+shows Open visualizer; that explicit action opens a fresh instance. Selection
+changes and late replies cannot restore an old document. Native suspension uses
+the same explicit reopening after the window is restored.
+Losing focus while visible does not suspend it. Extension-management notifications
+check exact activity so an unrelated installation change does not restart a view.
+
+Browser fixtures cover large trees, concurrent surfaces, deferred expansion,
+wide offsets, derived provenance, late activation and narrow/forced-color layouts.
+The isolated native desktop fixture exercises the same renderer through actual
+AppContainer initialization, retained byte continuations, expansion, denied source
+reads and unloading. These are synthetic host acceptance tests, not MAPI parity
+or validation against real Office captures; that end-to-end pass is deferred.
 
 ## Isolated worker
 

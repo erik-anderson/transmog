@@ -52,6 +52,7 @@ import { checkTrafficFailures } from './check-traffic-failures.mjs';
 import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import {checkExtensions} from './check-extensions.mjs';
+import {checkVisualizers} from './check-visualizers.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
@@ -184,6 +185,30 @@ await page.addInitScript((configuration) => {
       switch (command) {
         case 'plugin:event|listen': {const id=++nativeEventId;nativeEvents.set(id,{event:args.event,handler:args.handler});return id;}
         case 'plugin:event|unlisten': nativeEvents.delete(args.eventId);return;
+        case 'visualizer_choices': return structuredClone(state.visualizerChoices?.[args.selection.surface]??[]);
+        case 'visualizer_page': return '1';
+        case 'activate_visualizer': {
+          const request=structuredClone(args.request);state.visualizerStarts??=[];state.visualizerStarts.push(request);
+          if(state.visualizerError)throw new Error('Synthetic parser failed');
+          if(state.holdVisualizer){state.holdVisualizer=false;await new Promise(resolve=>state.finishVisualizer=resolve);}
+          state.visualizerClosed??={};if(BigInt(state.visualizerClosed[request.slot]??0)>=BigInt(request.generation))throw new Error('Visualizer closed');
+          const handle={slot:request.slot,generation:request.generation,pageId:request.pageId,instanceId:'worker-'+state.visualizerStarts.length};
+          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),declaration:{}},document:structuredClone(state.visualizerDocument),sources:structuredClone(state.visualizerSources??[])};
+          state.visualizerActive??={};state.visualizerActive[handle.slot]=view;return structuredClone(view);
+        }
+        case 'deactivate_visualizer': {
+          state.visualizerClosed??={};const previous=BigInt(state.visualizerClosed[args.slot]??0);if(BigInt(args.generation)>previous)state.visualizerClosed[args.slot]=args.generation;
+          if(state.visualizerActive?.[args.slot]?.handle.generation===args.generation)delete state.visualizerActive[args.slot];return;
+        }
+        case 'visualizer_active': return state.visualizerActive?.[args.handle.slot]?.handle.instanceId===args.handle.instanceId;
+        case 'expand_visualizer': {const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');view.document=structuredClone(state.expandedVisualizerDocument);return structuredClone(view);}
+        case 'visualizer_source': {
+          if(state.visualizerActive?.[args.handle.slot]?.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
+          state.visualizerRanges??=[];state.visualizerRanges.push(structuredClone(args));const source=state.visualizerSources.find(source=>source.id===args.request.sourceId);if(!source)throw new Error('Unknown source');
+          const offset=BigInt(args.request.offset),count=args.request.maxBytes;if(offset+BigInt(count)>BigInt(source.length))throw new Error('Read outside source');
+          const bytes=Array.from({length:count},(_,i)=>Number((offset+BigInt(i))%256n)),chunks=[];for(let i=0;i<bytes.length;i+=8192)chunks.push(String.fromCharCode(...bytes.slice(i,i+8192)));
+          return {sourceId:source.id,totalBytes:source.length,offset:args.request.offset,bytesBase64:btoa(chunks.join(''))};
+        }
         case 'extension_status': {const status=structuredClone(state.extensionStatus??{entries:[],warning:null});if(state.deferExtensionStatus){state.deferExtensionStatus=false;await new Promise(resolve=>state.finishExtensionStatus=resolve);}return status;}
         case 'install_extension': case 'load_unpacked_extension': {if(state.cancelExtensionPicker){state.cancelExtensionPicker=false;return null;}const status=state.extensionStatus??={entries:[],warning:null};status.entries.push(structuredClone(state.nextExtension));return structuredClone(status);}
         case 'enable_extension': {if(state.extensionSaveError)throw new Error('Extension settings could not be saved.');state.extensionStatus.entries.find(entry=>entry.catalog.manifest.id===args.id).catalog.enabled=args.enabled;return structuredClone(state.extensionStatus);}
@@ -852,6 +877,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--visualizers-only')){await page.goto('https://workspace.test/');await checkVisualizers(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Host visualizers, bounded structures, exact source spans and inactive cancellation verified.\n');process.exit(0);}
   if(process.argv.includes('--extensions-only')){await page.goto('https://workspace.test/');await checkExtensions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Extension management, declared inputs, inert metadata and async lifetimes verified.\n');process.exit(0);}
   if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')){await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident review, export dialog lifecycle, stale reviews and capture markers verified.\n');process.exit(0);}
@@ -2469,6 +2495,7 @@ try {
   await checkLoopback(page,root);
   await checkClientCertificates(page,root);
   await checkExtensions(page,root);
+  await checkVisualizers(page,root);
   await page.goto('https://workspace.test/?viewer');
   await page.getByText('Capture viewer',{exact:true}).waitFor();
   assert.equal(await page.getByRole('button',{name:'Start proxy',exact:true}).count(),0);

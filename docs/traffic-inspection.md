@@ -203,6 +203,15 @@ addresses do not reserve an extra field. See
 
 ## Body viewers and Composer evidence
 
+Installed extensions can add matching choices to **Body viewer** and **Headers
+viewer**. Choose one explicitly to start its isolated parser. Transmog renders its
+structure, selected values, tables, format metadata and byte ranges. Changing
+exchange or message stage restores Auto and raw headers. Hidden visualizers stop
+and release their data; returning offers **Open visualizer** to start a fresh view.
+Manage packages and their declared inputs in **Settings → Extensions**. See
+[extension visualizers](extensions.md#desktop-visualizers) for source provenance
+and current development limitations.
+
 Live traffic updates preserve the selected body viewer, reading position and
 text or byte selection while its captured evidence is unchanged. Growing bodies,
 retention changes and viewer options refresh the evidence. **Refresh preview**

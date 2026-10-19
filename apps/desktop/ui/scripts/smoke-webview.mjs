@@ -17,6 +17,8 @@ const soakArgument = process.argv.findIndex((value) => value === '--soak-minutes
 const soakMinutes = soakArgument >= 0 ? Number(process.argv[soakArgument + 1]) : 0;
 const screenshotArgument = process.argv.findIndex((value) => value === '--screenshot');
 const screenshotPath = screenshotArgument >= 0 ? process.argv[screenshotArgument + 1] : undefined;
+const visualizerTraceArgument=process.argv.indexOf('--visualizer-trace');
+const visualizerTracePath=visualizerTraceArgument>=0?process.argv[visualizerTraceArgument+1]:undefined;
 const invalidTraceArgument = process.argv.findIndex(value=>value==='--invalid-trace');
 const invalidTracePath = invalidTraceArgument >= 0 ? process.argv[invalidTraceArgument + 1] : undefined;
 const automationScreenshotArgument = process.argv.findIndex((value) => value === '--automation-screenshot');
@@ -689,7 +691,7 @@ try {
     process.stdout.write(`[${new Date().toISOString()}] WebView soak duration complete: ${((performance.now() - soakStartedAt) / 60_000).toFixed(1)} min elapsed.\n`);
   }
   result.networkSettings=await smokeNetworkSettings(call,evaluate,screenshotPath);
-  result.extensions=await smokeExtensions(call,evaluate,screenshotPath);
+  result.extensions=await smokeExtensions(call,evaluate,screenshotPath,visualizerTracePath);
   result.about=await smokeAbout(call,evaluate,screenshotPath);
   result.autoResponseFiles=await smokeAutoResponseFiles(call,evaluate,screenshotPath);
   result.autoResponseDragging=await smokeAutoResponseDragging(call,evaluate,screenshotPath);

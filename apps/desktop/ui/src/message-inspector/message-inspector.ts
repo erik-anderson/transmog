@@ -6,6 +6,8 @@ import { formatBytes } from '../table-model.js';
 import { opaqueConnectTransport } from '../connection-evidence.js';
 import { selectedConverterText } from '../converter-selection.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
+import {listen,type UnlistenFn} from '@tauri-apps/api/event';
+import type {VisualizerChoice,VisualizerSelection} from '../extension-visualizer/models.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
@@ -22,6 +24,23 @@ export class MessageInspector extends WebUIElement {
   }
   @attr side = 'response';
   @attr split = '35';
+  @attr pane = 'message';
+  @observable headerViewer='raw';
+  @observable headerChoices:VisualizerChoice[]=[];
+  @observable bodyChoices:VisualizerChoice[]=[];
+  @observable headerChoice:VisualizerChoice|null=null;
+  @observable bodyChoice:VisualizerChoice|null=null;
+  @observable headerSelection:VisualizerSelection|null=null;
+  @observable bodySelection:VisualizerSelection|null=null;
+  @observable bodyExtension=false;
+  @observable headerSlot='message-headers';
+  @observable bodySlot='message-body';
+  private choiceKey='';
+  private choiceGeneration=0;
+  private choiceListener:UnlistenFn|undefined;
+  private choiceListenerGeneration=0;
+  private choiceVisible=false;
+  private choiceObserver:IntersectionObserver|null=null;
   @observable detail: SessionDetail | null = null;
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
@@ -64,9 +83,35 @@ export class MessageInspector extends WebUIElement {
   private inspectedBodyKey: string | null = null;
 
   sideChanged(): void { this.mode = this.side === 'request' ? 'headers' : 'body'; this.updateMessage(); }
+  paneChanged():void {this.headerSlot=this.pane+'-headers';this.bodySlot=this.pane+'-body';}
+  protected hydratedCallback():void {
+    this.choiceObserver=new IntersectionObserver(entries=>{const visible=entries.some(entry=>entry.isIntersecting);if(this.choiceVisible===visible)return;this.choiceVisible=visible;if(visible){this.watchChoices();void this.refreshChoices();}else {this.choiceGeneration++;this.choiceKey='';this.unwatchChoices();}});this.choiceObserver.observe(this);
+  }
+  private watchChoices():void {
+    const generation=++this.choiceListenerGeneration;
+    void listen('extensions-changed',()=>{if(this.choiceVisible)void this.refreshChoices(true);}).then(unlisten=>{if(this.isConnected&&this.choiceVisible&&generation===this.choiceListenerGeneration)this.choiceListener=unlisten;else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>undefined);
+  }
+  private unwatchChoices():void {this.choiceListenerGeneration++;const unlisten=this.choiceListener;this.choiceListener=undefined;if(unlisten)void Promise.resolve(unlisten()).catch(()=>undefined);}
+  private setChoices():void {this.headerChoice=this.headerChoices.find(choice=>choice.key===this.headerViewer)??null;this.bodyChoice=this.bodyChoices.find(choice=>choice.key===this.viewer)??null;this.bodyExtension=!!this.bodyChoice;}
+  private async refreshChoices(force=false):Promise<void> {
+    if(!this.isConnected||!this.choiceVisible||!this.detail)return;
+    const key=JSON.stringify([this.detail.id,this.boundary,...this.detail.requests.map(head=>[head.boundary,head.method,head.summary?.totalFields,head.summary?.serializedBytes]),...this.detail.responses.map(head=>[head.boundary,head.status,head.summary?.totalFields,head.summary?.serializedBytes])]);
+    if(!force&&this.choiceKey===key)return;this.choiceKey=key;
+    const generation=++this.choiceGeneration,sessionId=this.detail.id,boundary=this.boundary;
+    try {
+      const results=await Promise.all((['headers','body'] as const).map(surface=>invoke<Omit<VisualizerChoice,'key'>[]>('visualizer_choices',{selection:{sessionId,boundary,surface}})));
+      if(generation!==this.choiceGeneration||!this.choiceVisible||!this.isConnected)return;
+      const map=(choices:Omit<VisualizerChoice,'key'>[]):VisualizerChoice[]=>choices.map(choice=>({...choice,key:'extension:'+choice.extensionId+':'+choice.visualizerId}));
+      this.headerChoices=map(results[0]!);this.bodyChoices=map(results[1]!);
+      if(!this.headerChoices.some(choice=>choice.key===this.headerViewer))this.headerViewer='raw';
+      if(this.viewer.startsWith('extension:')&&!this.bodyChoices.some(choice=>choice.key===this.viewer))this.viewer='auto';
+      this.setChoices();
+    } catch {if(generation===this.choiceGeneration)this.choiceKey='';}
+  }
+  changeHeaderViewer(event:Event):void {this.headerViewer=(event.currentTarget as HTMLSelectElement).value;this.setChoices();}
   splitChanged(): void { this.headerShare = this.split+'%'; }
   detailChanged(): void {
-    if (this.detail?.id !== this.previousId) { this.previousId = this.detail?.id ?? null; this.headerOffset=0;this.headersBusy=false;this.headerGeneration++; this.viewer = 'auto'; this.boundary = ''; this.imageUrl = ''; }
+    if (this.detail?.id !== this.previousId) { this.previousId = this.detail?.id ?? null; this.headerOffset=0;this.headersBusy=false;this.headerGeneration++; this.resetViewers(); this.boundary = ''; this.imageUrl = ''; }
     this.updateMessage();
   }
   private heads(): HeadView[] { return this.side === 'request' ? this.detail?.requests ?? [] : this.detail?.responses ?? []; }
@@ -84,6 +129,9 @@ export class MessageInspector extends WebUIElement {
     this.sourceIp=this.side==='request'?this.detail?.sourceIp??'':'';
     this.sortHeaders();
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss,...(this.detail.composerOrigin?{composerSource:this.detail.composerOrigin}:{})},null,2) : 'No exchange selected.';
+    this.headerSelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,surface:'headers'}:null;
+    this.bodySelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,surface:'body'}:null;
+    void this.refreshChoices();
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody(false);
     else if (!this.detail || this.bodyInspectionKey() !== this.inspectedBodyKey) {
       this.generation++; this.inspectedBodyKey=null; this.loading=false; this.hexPreview=null; this.imageUrl='';
@@ -91,7 +139,8 @@ export class MessageInspector extends WebUIElement {
     }
   }
   showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
-  changeBoundary(event:Event): void { this.headerOffset=0; this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
+  private resetViewers():void {this.viewer='auto';this.headerViewer='raw';this.headerChoice=null;this.bodyChoice=null;this.bodyExtension=false;this.headerChoices=[];this.bodyChoices=[];this.choiceKey='';this.choiceGeneration++;}
+  changeBoundary(event:Event): void { this.headerOffset=0; this.resetViewers();this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
   toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.headerOffset=0;const head=this.heads().find(head=>head.boundary===this.boundary);if((head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);else this.sortHeaders();}
   previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
   nextHeaders():void {if(this.headerNextOffset!==null)void this.loadHeaderPage(this.headerNextOffset);}
@@ -113,7 +162,7 @@ export class MessageInspector extends WebUIElement {
     finally {if(generation===this.headerGeneration)this.headersBusy=false;}
   }
   private sortHeaders():void {this.headerRows=[...this.headerRows].sort(this.largestFirst?(a,b)=>b.bytes-a.bytes:(a,b)=>Number(a.id)-Number(b.id));}
-  changeViewer(event:Event): void { this.viewer = (event.currentTarget as HTMLSelectElement).value; void this.inspectBody(); }
+  changeViewer(event:Event): void { this.viewer = (event.currentTarget as HTMLSelectElement).value;this.setChoices(); void this.inspectBody(); }
   changeDecoding(event:Event): void { this.decodeContent = (event.currentTarget as HTMLInputElement).checked; void this.inspectBody(); }
   resizeHeaders(event:CustomEvent<{value:number;committed:boolean}>): void {
     this.headerShare = event.detail.value+'%';
@@ -129,6 +178,7 @@ export class MessageInspector extends WebUIElement {
       body?[body.exchangeId,body.boundary,body.observedBytes,body.wireBodyBytes,body.retainedBytes,body.availability,body.mediaType,body.charset,body.contentCodings,body.sha256,body.reason,body.lengthKnown]:null]);
   }
   async inspectBody(force=true): Promise<void> {
+    if(this.bodyExtension){this.generation++;this.loading=false;this.hexPreview=null;this.imageUrl='';this.bodyText='';this.inspectedBodyKey=null;return;}
     const inspectionKey=this.bodyInspectionKey();
     if(!force && inspectionKey===this.inspectedBodyKey)return;
     this.inspectedBodyKey=inspectionKey;
@@ -223,6 +273,6 @@ export class MessageInspector extends WebUIElement {
     try { await navigator.clipboard.writeText(text); this.$emit('diagnostic',message); }
     catch { this.$emit('diagnostic','Select the text and use Copy.'); }
   }
-  disconnectedCallback(): void { this.headerGeneration++;this.generation++;this.inspectedBodyKey=null; super.disconnectedCallback(); }
+  disconnectedCallback(): void { this.choiceGeneration++;this.choiceVisible=false;this.choiceObserver?.disconnect();this.choiceObserver=null;this.unwatchChoices();this.headerGeneration++;this.generation++;this.inspectedBodyKey=null; super.disconnectedCallback(); }
 }
 MessageInspector.define('message-inspector');

@@ -2,8 +2,10 @@ import { WebUIElement, observable } from '@microsoft/webui-framework';
 import { formatHexSelection, utf8Selection, type HexCopyFormat } from './hex-formats.js';
 import { HexByteSource, HEX_COPY_BYTES } from './hex-byte-source.js';
 import { describeError } from '../utilities.js';
+import type {VisualizerHandle} from '../extension-visualizer/models.js';
 
-export interface HexPreview { key: string; bytesBase64: string; offset: number|string; truncated: boolean; source?:{sessionId:string;boundary:string;totalBytes:string;readLimit:number}; }
+export type HexSource={kind?:'body';sessionId:string;boundary:string;totalBytes:string;readLimit:number}|{kind:'visualizer';handle:VisualizerHandle;sourceId:string;totalBytes:string;readLimit:number};
+export interface HexPreview { key: string; bytesBase64: string; offset: number|string; truncated: boolean; source?:HexSource; selection?:{offset:string;length:string}; }
 interface HexCell { index: string; hex: string; text: string; hexId: string; textId: string; selection: string; selected:boolean; caretHex:boolean; caretText:boolean; }
 interface HexRow { index: string; address: string; top: string; cells: HexCell[]; }
 type Column = 'hex' | 'text';
@@ -71,6 +73,7 @@ export class HexViewer extends WebUIElement {
     this.resizeObserver = new ResizeObserver(() => this.renderRows(true));
     this.resizeObserver.observe(this.viewport);
     this.renderRows(true);
+    if(this.preview?.selection)this.revealCaret();
   }
 
   previewChanged(previous: HexPreview | null | undefined): void {
@@ -92,6 +95,10 @@ export class HexViewer extends WebUIElement {
         this.anchor = min(this.anchor, this.length - 1n);
         this.rangeEnd = min(BigInt(this.rangeEnd), this.length - 1n).toString();
         if (BigInt(this.rangeStart) > BigInt(this.rangeEnd)) this.rangeStart = this.rangeEnd = '-1';
+      }
+      if(this.preview?.selection){
+        const first=BigInt(this.preview.selection.offset),length=BigInt(this.preview.selection.length);
+        if(first>=0n&&length>0n&&first+length<=this.length){this.caret=first.toString();this.anchor=first;this.rangeStart=first.toString();this.rangeEnd=(first+length-1n).toString();if(this.viewport)this.revealCaret();}
       }
       this.renderRows(true);
       this.describeSelection();

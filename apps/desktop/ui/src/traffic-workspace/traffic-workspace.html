@@ -90,9 +90,9 @@
         <div class="stream-tabs" ?hidden="{{!selectedDetail || !selectedDetail.stream}}"><button class="secondary compact-button" type="button" ?data-selected="{{streamPanel}}" @click="{showStream(true)}">Messages / Events</button><button class="secondary compact-button" type="button" ?data-selected="{{!streamPanel}}" @click="{showStream(false)}">HTTP handshake</button></div>
         <stream-inspector ?hidden="{{!selectedSessionId || !streamPanel}}" :detail="{{selectedDetail}}"></stream-inspector>
         <div class="exchange-inspector" ?hidden="{{!selectedSessionId || streamPanel}}" data-side="{{inspectorSide}}" data-request-share="{{requestShare}}" @inspector-resize="{resizeMessage(e)}">
-          <message-inspector side="request" split="{{preferences.requestBodySplit}}" :detail="{{selectedDetail}}"></message-inspector>
+          <message-inspector pane="traffic-request" side="request" split="{{preferences.requestBodySplit}}" :detail="{{selectedDetail}}"></message-inspector>
           <pane-divider orientation="vertical" label="Resize request and response inspectors" value="{{preferences.requestSplit}}" initial="45" @pane-resize="{resizeRequest(e)}"></pane-divider>
-          <message-inspector side="response" split="{{preferences.responseBodySplit}}" :detail="{{selectedDetail}}"></message-inspector>
+          <message-inspector pane="traffic-response" side="response" split="{{preferences.responseBodySplit}}" :detail="{{selectedDetail}}"></message-inspector>
         </div>
       </section>
     </div>
