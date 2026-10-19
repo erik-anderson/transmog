@@ -86,7 +86,9 @@ export async function smokeAutoResponseFiles(call,evaluate,screenshotPath) {
 
 export async function smokeAutoResponseDragging(call,evaluate,screenshotPath) {
   const start=async id=>{
-    const point=await evaluate(`(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace'),grip=w.querySelector('[data-rule-id="${id}"] .rule-drag-grip');grip.scrollIntoView({block:'nearest',behavior:'instant'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=grip.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    // Opening a rule (including after a drop) shows properties instead of the
+    // list at compact native window sizes. Return through the normal Back action.
+    const point=await evaluate(`(async()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');await w.backToRules();w.$flushUpdates();const grip=w.querySelector('[data-rule-id="${id}"] .rule-drag-grip');grip.scrollIntoView({block:'nearest',behavior:'instant'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));const r=grip.getBoundingClientRect();if(!r.width||!r.height)throw new Error('Native drag grip is hidden');return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
     await call('Input.dispatchMouseEvent',{type:'mouseMoved',...point});await call('Input.dispatchMouseEvent',{type:'mousePressed',...point,button:'left',buttons:1,clickCount:1});
     await call('Input.dispatchMouseEvent',{type:'mouseMoved',x:point.x+12,y:point.y,buttons:1});
     await evaluate(`(()=>{const w=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');if(!w.ruleDragging)throw new Error('Native pointer drag did not begin: '+JSON.stringify({pointer:w.rulePointer?{id:w.rulePointer.id,x:w.rulePointer.x,y:w.rulePointer.y}:null,view:w.view,focus:document.hasFocus(),rect:w.autoResponseList.getBoundingClientRect().toJSON()}));})()`);

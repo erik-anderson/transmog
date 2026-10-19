@@ -81,13 +81,18 @@ export async function smokeStreams(call, evaluate, screenshotPath) {
       if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-stream-compact-identity.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
       for(const width of [100,60,32]) {
         await evaluate(`(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,wrapCells:true,columns:t.preferences.columns.map(column=>column.id==='protocol'||column.id==='path'?{...column,width:${width}}:column)};})()`);
-        await wait(()=>evaluate(`(()=>{
+        // Native font metrics can fit WS plus its HTTP version at 100px.
+        // Require clipping at the two narrower sizes, and one line at every size.
+        try { await wait(()=>evaluate(`(()=>{
           const badges=Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity[data-active]'));
           return badges.length===2&&badges.every(badge=>{
             const cell=badge.closest('td'),text=document.createRange();text.selectNodeContents(badge);
-            return cell.dataset.columnId==='protocol'&&Math.abs(cell.getBoundingClientRect().width-${width})<1&&getComputedStyle(cell).whiteSpace==='nowrap'&&new Set([...text.getClientRects()].map(rect=>Math.round(rect.top))).size===1&&Math.abs(cell.closest('tr').getBoundingClientRect().height-${rowHeight})<1&&cell.scrollWidth>cell.clientWidth&&cell.title.includes('In progress');
+            return cell.dataset.columnId==='protocol'&&Math.abs(cell.getBoundingClientRect().width-${width})<1&&getComputedStyle(cell).whiteSpace==='nowrap'&&new Set([...text.getClientRects()].map(rect=>Math.round(rect.top))).size===1&&Math.abs(cell.closest('tr').getBoundingClientRect().height-${rowHeight})<1&&(${width}===100||cell.scrollWidth>cell.clientWidth)&&cell.title.includes('In progress');
           });
-        })()`));
+        })()`)); } catch(error) {
+          const layout=await evaluate(`Array.from(document.querySelector('app-shell').traffic.querySelectorAll('.stream-identity[data-active]'),badge=>{const cell=badge.closest('td'),text=document.createRange();text.selectNodeContents(badge);return {label:badge.textContent,width:cell.getBoundingClientRect().width,whiteSpace:getComputedStyle(cell).whiteSpace,textTops:[...text.getClientRects()].map(rect=>Math.round(rect.top)),rowHeight:cell.closest('tr').getBoundingClientRect().height,scrollWidth:cell.scrollWidth,clientWidth:cell.clientWidth,title:cell.title};})`);
+          throw new Error('Native stream layout mismatch: '+JSON.stringify({width,rowHeight,layout}),{cause:error});
+        }
         if(width===60&&screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-stream-protocol-narrow.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
       }
     } finally {
