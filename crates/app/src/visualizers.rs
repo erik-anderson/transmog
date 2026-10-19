@@ -6,7 +6,7 @@ use std::{
     collections::BTreeMap,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
 };
 use transmog_core::intercept::ExchangeId;
@@ -15,7 +15,7 @@ use transmog_extensions::{
     Invocation, ReadRequest, Surface, VisualizationDocument, VisualizationStep, decimal, valid_id,
 };
 mod evidence;
-use evidence::{Resources, applicable, boundaries, project_input};
+use evidence::{Resources, applicable, boundaries, project_input, source_infos};
 use transmog_session::SessionSnapshot;
 #[cfg(test)]
 mod tests;
@@ -50,6 +50,8 @@ pub struct VisualizerActivation {
     pub slot: String,
     /// Canonical monotonically increasing pane generation, including close events.
     pub generation: String,
+    /// Host-issued document epoch; a previous `WebView` page cannot start new work.
+    pub page_id: String,
     /// Exact retained evidence and surface.
     pub selection: VisualizerSelection,
     /// Enabled package selected by the user.
@@ -61,10 +63,44 @@ pub struct VisualizerActivation {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerView {
+    /// Exact host binding for subsequent source and expansion requests.
+    pub handle: VisualizerHandle,
     /// Exact executing revision and input declaration.
     pub instance: Instance,
     /// Inert tree/table/text/hex presentation data.
     pub document: VisualizationDocument,
+    /// Host-owned names and extents for original sources, without reading their bytes.
+    pub sources: Vec<VisualizerSourceInfo>,
+}
+/// A source/action binding that cannot silently move to a newer worker or page.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VisualizerHandle {
+    /// Owning pane identity.
+    pub slot: String,
+    /// Exact pane activation generation.
+    pub generation: String,
+    /// Exact executing worker, including after development reload.
+    pub instance_id: String,
+    /// Exact host document epoch.
+    pub page_id: String,
+}
+/// Inert host-owned source labels for the renderer's byte/source selector.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct VisualizerSourceInfo {
+    /// Original granted source identity.
+    pub id: String,
+    /// Human-readable boundary/header label.
+    pub name: String,
+    /// Exact frozen retained extent.
+    pub length: String,
+    /// Original availability, independent of parse outcome.
+    pub availability: String,
+    /// Owning retained exchange in this application.
+    pub session_id: String,
+    /// Exact message boundary represented by these bytes.
+    pub boundary: String,
 }
 /// Bounded source bytes for host-owned span highlighting.
 #[derive(Clone, Debug, Serialize)]
@@ -84,6 +120,8 @@ pub(super) struct Service {
     pub(super) registry: Registry,
     owner: String,
     closed: AtomicBool,
+    page_id: AtomicU64,
+    visible: AtomicBool,
     slots: Mutex<BTreeMap<String, Slot>>,
 }
 struct Slot {
@@ -140,10 +178,12 @@ impl Service {
             registry,
             owner,
             closed: AtomicBool::new(false),
+            page_id: AtomicU64::new(1),
+            visible: AtomicBool::new(true),
             slots: Mutex::new(BTreeMap::new()),
         }
     }
-    fn begin(&self, slot: &str, generation: &str) -> Result<Arc<Ticket>, AppError> {
+    fn begin(&self, slot: &str, generation: &str, page_id: &str) -> Result<Arc<Ticket>, AppError> {
         if !valid_id(slot) {
             return Err(invalid("Invalid visualizer activation identity"));
         }
@@ -158,6 +198,8 @@ impl Service {
         });
         let mut slots = self.slots.lock().map_err(|_| unavailable())?;
         if self.closed.load(Ordering::Acquire)
+            || !self.visible.load(Ordering::Acquire)
+            || !self.current_page(page_id)
             || slots.get(slot).is_some_and(|s| s.generation >= generation)
         {
             return Err(unavailable());
@@ -190,18 +232,26 @@ impl Service {
         }
         Ok(ticket)
     }
-    fn ticket_generation(&self, slot: &str, generation: &str) -> Result<Arc<Ticket>, AppError> {
+    fn ticket_binding(&self, handle: &VisualizerHandle) -> Result<Arc<Ticket>, AppError> {
+        let slot = &handle.slot;
+        let generation = &handle.generation;
         let generation =
             decimal(generation).map_err(|_| invalid("Invalid visualizer generation"))?;
-        self.slots
-            .lock()
-            .map_err(|_| unavailable())?
+        let slots = self.slots.lock().map_err(|_| unavailable())?;
+        if !self.current_page(&handle.page_id) || !self.visible.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
+        let ticket = slots
             .get(slot)
             .filter(|s| s.generation == generation)
             .and_then(|s| s.ticket.clone())
-            .ok_or_else(unavailable)
+            .ok_or_else(unavailable)?;
+        if ticket.current()?.id != handle.instance_id {
+            return Err(unavailable());
+        }
+        Ok(ticket)
     }
-    fn cancel(&self, slot: &str, generation: &str) {
+    fn cancel(&self, slot: &str, generation: &str, page_id: &str) {
         if !valid_id(slot) {
             return;
         }
@@ -212,6 +262,9 @@ impl Service {
             .slots
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.current_page(page_id) {
+            return;
+        }
         let ticket = if let Some(state) = slots.get_mut(slot) {
             if state.generation > generation {
                 return;
@@ -244,6 +297,40 @@ impl Service {
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
         for ticket in slots.into_values().filter_map(|s| s.ticket) {
+            ticket.cancel();
+        }
+    }
+    fn current_page(&self, page_id: &str) -> bool {
+        decimal(page_id).is_ok_and(|id| id == self.page_id.load(Ordering::Acquire))
+    }
+    fn reset_document(&self) {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.page_id.fetch_add(1, Ordering::AcqRel);
+        let previous = std::mem::take(&mut *slots);
+        drop(slots);
+        for ticket in previous.into_values().filter_map(|s| s.ticket) {
+            ticket.cancel();
+        }
+    }
+    fn visible(&self, visible: bool) {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        self.visible.store(visible, Ordering::Release);
+        let stopped = if visible {
+            Vec::new()
+        } else {
+            slots
+                .values_mut()
+                .filter_map(|s| s.ticket.take())
+                .collect::<Vec<_>>()
+        };
+        drop(slots);
+        for ticket in stopped {
             ticket.cancel();
         }
     }
@@ -308,10 +395,13 @@ impl Application {
         &self,
         request: VisualizerActivation,
     ) -> Result<VisualizerView, AppError> {
-        let ticket = self.visualizers.begin(&request.slot, &request.generation)?;
+        let ticket =
+            self.visualizers
+                .begin(&request.slot, &request.generation, &request.page_id)?;
         let result = self.activate_visualizer_ticket(&request, &ticket).await;
         if result.is_err() {
-            self.visualizers.cancel(&request.slot, &request.generation);
+            self.visualizers
+                .cancel(&request.slot, &request.generation, &request.page_id);
         }
         result
     }
@@ -379,10 +469,15 @@ impl Application {
                     .map(|(id, source)| (id, Arc::new(source)))
                     .collect(),
             ),
+            info: Mutex::new(source_infos(&snapshot, selected, &input)),
         });
         self.visualizers
             .registry
-            .attach_resources(&self.visualizers.owner, &instance.id, resources)
+            .attach_resources(
+                &self.visualizers.owner,
+                &instance.id,
+                Arc::clone(&resources),
+            )
             .map_err(|_| unavailable())?;
         let document = self
             .run_visualizer(
@@ -392,7 +487,18 @@ impl Application {
                 },
             )
             .await?;
-        Ok(VisualizerView { instance, document })
+        ticket.current()?;
+        Ok(VisualizerView {
+            handle: VisualizerHandle {
+                slot: request.slot.clone(),
+                generation: request.generation.clone(),
+                instance_id: instance.id.clone(),
+                page_id: request.page_id.clone(),
+            },
+            instance,
+            document,
+            sources: resources.info()?,
+        })
     }
 
     /// Expands one deferred node without granting new evidence or broader input access.
@@ -400,21 +506,31 @@ impl Application {
     /// Rejects inactive instances, invalid tokens and bounded parser failures.
     pub async fn expand_visualizer(
         &self,
-        slot: &str,
-        generation: &str,
+        handle: &VisualizerHandle,
         token: String,
     ) -> Result<VisualizerView, AppError> {
-        let ticket = self.visualizers.ticket_generation(slot, generation)?;
+        let ticket = self.visualizers.ticket_binding(handle)?;
         let result = self
             .run_visualizer(&ticket, Invocation::Expand { token })
             .await;
         match result {
-            Ok(document) => Ok(VisualizerView {
-                instance: ticket.current()?,
-                document,
-            }),
+            Ok(document) => {
+                let instance = ticket.current()?;
+                let resources = self
+                    .visualizers
+                    .registry
+                    .resources::<Resources>(&self.visualizers.owner, &instance.id)
+                    .map_err(|_| unavailable())?;
+                Ok(VisualizerView {
+                    handle: handle.clone(),
+                    instance,
+                    document,
+                    sources: resources.info()?,
+                })
+            }
             Err(error) => {
-                self.visualizers.cancel(slot, generation);
+                self.visualizers
+                    .cancel(&handle.slot, &handle.generation, &handle.page_id);
                 Err(error)
             }
         }
@@ -493,11 +609,10 @@ impl Application {
     /// Rejects inactive, unknown or out-of-range sources.
     pub async fn visualizer_source(
         &self,
-        slot: &str,
-        generation: &str,
+        handle: &VisualizerHandle,
         request: ReadRequest,
     ) -> Result<VisualizerSourcePage, AppError> {
-        let ticket = self.visualizers.ticket_generation(slot, generation)?;
+        let ticket = self.visualizers.ticket_binding(handle)?;
         let instance = ticket.current()?;
         let resources = self
             .visualizers
@@ -516,8 +631,34 @@ impl Application {
         })
     }
     /// Immediately cancels startup, pending work and retained resources for one hidden pane.
-    pub fn deactivate_visualizer(&self, slot: &str, generation: &str) {
-        self.visualizers.cancel(slot, generation);
+    pub fn deactivate_visualizer(&self, slot: &str, generation: &str, page_id: &str) {
+        self.visualizers.cancel(slot, generation, page_id);
+    }
+    /// Returns the current host-issued document epoch, without loading any code.
+    pub fn visualizer_page(&self) -> String {
+        self.visualizers.page_id.load(Ordering::Acquire).to_string()
+    }
+    /// Invalidates the prior `WebView` document's workers, queued starts and source capabilities.
+    pub fn reset_visualizer_document(&self) {
+        self.visualizers.reset_document();
+    }
+    /// Native visibility gate. Hiding/minimizing stops all workers; focus changes alone do not.
+    pub fn set_visualizers_visible(&self, visible: bool) {
+        self.visualizers.visible(visible);
+    }
+    /// Whether an exact visible binding still owns a ready worker.
+    pub fn visualizer_active(&self, handle: &VisualizerHandle) -> bool {
+        self.visualizers
+            .ticket_binding(handle)
+            .ok()
+            .and_then(|ticket| ticket.current().ok())
+            .and_then(|instance| {
+                self.visualizers
+                    .registry
+                    .runner(&self.visualizers.owner, &instance.id)
+                    .ok()
+            })
+            .is_some_and(|runner| !runner.is_stopped())
     }
     /// Unloads every visible or starting instance when this application/window closes.
     pub fn deactivate_visualizers(&self) {

@@ -1,5 +1,5 @@
 //! Exact retained-message projection and bounded instance-owned source reads.
-use super::{invalid, unavailable};
+use super::{VisualizerSourceInfo, invalid, unavailable};
 use crate::{AppError, BodyAvailability, BodyStore, ErrorCategory, StoredBodyMetadata, inspector};
 use std::{
     collections::BTreeMap,
@@ -95,6 +95,7 @@ impl Source {
 pub(super) struct Resources {
     pub(super) stopped: AtomicBool,
     pub(super) sources: Mutex<BTreeMap<String, Arc<Source>>>,
+    pub(super) info: Mutex<Vec<VisualizerSourceInfo>>,
 }
 impl InstanceResources for Resources {
     fn stop(&self) {
@@ -103,9 +104,23 @@ impl InstanceResources for Resources {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .clear();
+        self.info
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
     }
 }
 impl Resources {
+    pub(super) fn info(&self) -> Result<Vec<VisualizerSourceInfo>, AppError> {
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
+        let info = self.info.lock().map_err(|_| unavailable())?.clone();
+        if self.stopped.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
+        Ok(info)
+    }
     pub(super) fn read(&self, request: &ReadRequest) -> Result<(u64, BytePage), AppError> {
         if self.stopped.load(Ordering::Acquire) {
             return Err(unavailable());
@@ -343,6 +358,58 @@ pub(super) fn project_input(
         request,
         response,
     })
+}
+pub(super) fn source_infos(
+    snapshot: &SessionSnapshot,
+    selected: Boundaries,
+    input: &VisualizationInput,
+) -> Vec<VisualizerSourceInfo> {
+    let session_id = format!("{:032x}", snapshot.exchange_id.0);
+    let mut info = Vec::new();
+    for (boundary, message) in [
+        (selected.request, &input.request),
+        (selected.response, &input.response),
+    ] {
+        let Some(message) = message else {
+            continue;
+        };
+        let label = match boundary {
+            ExchangeBoundary::ClientRequest => "client request",
+            ExchangeBoundary::UpstreamRequest => "request sent to origin",
+            ExchangeBoundary::UpstreamResponse => "origin response",
+            ExchangeBoundary::ClientResponse => "response sent to client",
+        };
+        let prefix = format!("Request #{} · {label}", snapshot.request_number);
+        for header in &message.headers {
+            if let Some(id) = &header.source_id
+                && let Some(bytes) = &header.value
+            {
+                info.push(VisualizerSourceInfo {
+                    id: id.clone(),
+                    name: format!(
+                        "{prefix} · {} (header {})",
+                        header.name,
+                        u64::from(header.index) + 1
+                    ),
+                    length: bytes.len().to_string(),
+                    availability: "complete".into(),
+                    session_id: session_id.clone(),
+                    boundary: boundary_name(boundary).into(),
+                });
+            }
+        }
+        if let Some(body) = &message.body {
+            info.push(VisualizerSourceInfo {
+                id: body.source_id.clone(),
+                name: format!("{prefix} · body"),
+                length: body.length.clone(),
+                availability: body.availability.clone(),
+                session_id: session_id.clone(),
+                boundary: boundary_name(boundary).into(),
+            });
+        }
+    }
+    info
 }
 fn project_headers(
     block: &HeaderBlock,

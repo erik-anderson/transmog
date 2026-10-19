@@ -55,8 +55,8 @@ mod version;
 mod visualizers;
 pub use transmog_extension_registry as extensions;
 pub use visualizers::{
-    VisualizerActivation, VisualizerChoice, VisualizerSelection, VisualizerSourcePage,
-    VisualizerView,
+    VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerSelection,
+    VisualizerSourceInfo, VisualizerSourcePage, VisualizerView,
 };
 mod workspace;
 

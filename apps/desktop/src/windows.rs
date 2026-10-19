@@ -2489,7 +2489,25 @@ pub fn run() {
             }
             Ok(())
         })
+        .on_page_load(|webview, payload| {
+            if payload.event() == tauri::webview::PageLoadEvent::Started
+                && let Some(state) = webview.try_state::<DesktopState>()
+                && let Ok(application) = state.workspaces.application(&state.application, webview.label())
+            {
+                application.reset_visualizer_document();
+                let window = webview.window();
+                application.set_visualizers_visible(!matches!(window.is_minimized(), Ok(true)) && !matches!(window.is_visible(), Ok(false)));
+            }
+        })
         .on_window_event(move |window, event| {
+            if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
+                let state = window.state::<DesktopState>();
+                if let Ok(application) = state.workspaces.application(&state.application, window.label()) {
+                    let visible = !matches!(window.is_minimized(), Ok(true)) && !matches!(window.is_visible(), Ok(false));
+                    application.set_visualizers_visible(visible);
+                    if !visible { let _ = tauri::Emitter::emit_to(window, window.label(), "visualizers-suspended", ()); }
+                }
+            }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state=window.state::<DesktopState>();
                 if window.get_webview_window(window.label()).and_then(|webview| state.window_application(&webview).ok()).is_some_and(|application| application.has_marker_changes()) {
@@ -2500,7 +2518,9 @@ pub fn run() {
                 window.state::<format_converter::ConverterWindows>().release(window.label());
                 portable_cases::release(window.label());
                 if window.label() == "main" {
-                    window.state::<DesktopState>().application.deactivate_visualizers();
+                    let state = window.state::<DesktopState>();
+                    state.application.reset_visualizer_document();
+                    state.application.set_visualizers_visible(false);
                     close_guard.store(false, Ordering::Release);
                 } else {
                     let removed = window

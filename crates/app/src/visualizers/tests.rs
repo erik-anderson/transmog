@@ -149,18 +149,64 @@ impl SavedBodySource for CountingBody {
 #[test]
 fn close_before_start_and_late_close_cannot_resurrect_or_cancel_newer_generations() {
     let service = Service::new(Registry::default(), "owner".into());
-    service.cancel("pane", "1");
-    assert!(service.begin("pane", "1").is_err());
-    let second = service.begin("pane", "2").unwrap();
-    service.cancel("pane", "1");
+    service.cancel("pane", "1", "1");
+    assert!(service.begin("pane", "1", "1").is_err());
+    let second = service.begin("pane", "2", "1").unwrap();
+    service.cancel("pane", "1", "1");
     assert!(!second.canceled.load(Ordering::Acquire));
-    let third = service.begin("pane", "3").unwrap();
+    let third = service.begin("pane", "3", "1").unwrap();
     assert!(second.canceled.load(Ordering::Acquire));
-    service.cancel("pane", "2");
+    service.cancel("pane", "2", "1");
     assert!(!third.canceled.load(Ordering::Acquire));
     service.cancel_all();
     assert!(third.canceled.load(Ordering::Acquire));
-    assert!(service.begin("new-pane", "1").is_err());
+    assert!(service.begin("new-pane", "1", "1").is_err());
+}
+
+#[test]
+fn navigation_and_native_visibility_invalidate_queued_work_without_affecting_focus() {
+    let service = Service::new(Registry::default(), "owner".into());
+    let first = service.begin("pane", "1", "1").unwrap();
+    service.reset_document();
+    assert!(first.canceled.load(Ordering::Acquire));
+    assert!(service.begin("pane", "99", "1").is_err());
+    let second = service.begin("pane", "1", "2").unwrap();
+    service.cancel("pane", "99", "1");
+    assert!(!second.canceled.load(Ordering::Acquire));
+    service.visible(true);
+    assert!(!second.canceled.load(Ordering::Acquire));
+    service.visible(false);
+    assert!(second.canceled.load(Ordering::Acquire));
+    assert!(service.begin("new-pane", "2", "2").is_err());
+    service.visible(true);
+    assert!(service.begin("pane", "2", "2").is_ok());
+}
+
+#[test]
+fn instance_bindings_cannot_follow_a_replacement_or_another_page() {
+    let service = Service::new(Registry::default(), "owner".into());
+    let ticket = service.begin("pane", "1", "1").unwrap();
+    ticket
+        .bind(Instance {
+            id: "first-worker".into(),
+            extension_id: "example.evidence".into(),
+            visualizer_id: "view".into(),
+            digest: "a".repeat(64),
+            declaration: declaration(),
+        })
+        .unwrap();
+    let mut handle = VisualizerHandle {
+        slot: "pane".into(),
+        generation: "1".into(),
+        page_id: "1".into(),
+        instance_id: "first-worker".into(),
+    };
+    assert!(service.ticket_binding(&handle).is_ok());
+    handle.instance_id = "another-worker".into();
+    assert!(service.ticket_binding(&handle).is_err());
+    handle.instance_id = "first-worker".into();
+    handle.page_id = "2".into();
+    assert!(service.ticket_binding(&handle).is_err());
 }
 
 #[test]
@@ -178,6 +224,11 @@ fn headers_are_complete_projected_and_bound_to_the_exact_message_stage() {
         &mut sources,
     )
     .unwrap();
+    let info = evidence::source_infos(&snapshot, boundaries("client-request").unwrap(), &input);
+    assert_eq!(info.len(), sources.len());
+    assert!(info.iter().any(|info| info.name.contains("X-Kind")
+        && info.length == "5000"
+        && info.boundary == "client-request"));
     assert!(applicable(&declaration, Surface::Headers, &input));
     let request = input.request.unwrap();
     assert_eq!(request.path.as_deref(), Some("/protocol"));
@@ -263,6 +314,7 @@ fn body_sources_are_lazy_and_header_only_inputs_never_open_or_read_bodies() {
     assert_eq!(opened.load(Ordering::Relaxed), 0);
     let body = input.response.unwrap().body.unwrap();
     let resources = Resources {
+        info: Mutex::new(Vec::new()),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(
             sources
@@ -303,6 +355,7 @@ fn required_missing_counterpart_and_ungranted_source_ranges_fail_closed() {
         .is_err()
     );
     let resources = Resources {
+        info: Mutex::new(Vec::new()),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(BTreeMap::from([(
             "header-one".into(),

@@ -141,7 +141,12 @@ start cannot resurrect a closed generation and a delayed close cannot stop a
 newer one. Cancellation reaches pending initialization as well as ready workers.
 Global disable/uninstall also cancels pending initialization. Closing an owning
 application prevents any subsequent activation. Source bytes for host highlighting
-require the still-active owner, slot, generation and original source capability.
+require the still-active owner, slot, generation, exact worker, host-issued page
+epoch and original source capability. Navigation invalidates the prior page,
+including starts still queued in IPC. Native minimize/hide handling cancels
+instances and rejects new starts while hidden; losing focus alone keeps a visible
+visualizer active. Original source names and exact extents are supplied by the
+host without reading their bytes.
 
 These APIs currently parse selected retained snapshots and deferred expansions.
 They do not yet subscribe to new traffic, enumerate related context, decode HTTP
