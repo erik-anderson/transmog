@@ -31,14 +31,53 @@ export async function checkVisualizers(page,root) {
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),before+1);
     assert.equal(await visualizer.locator('img,script').count(),0,'Captured output became markup');
     const tree=visualizer.getByRole('tree',{name:'Visualization structure',exact:true});
+    const details=visualizer.getByRole('region',{name:'Selected structure',exact:true});
+    assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false,'An unselected result reserved an empty details pane');
+    const fullWidth=await visualizer.evaluate(element=>{const root=element.shadowRoot??element,tree=root.querySelector('.visualizer-tree'),layout=root.querySelector('.visualizer-layout');return tree.getBoundingClientRect().width>=layout.getBoundingClientRect().width-2;});
+    assert.equal(fullWidth,true,'The unselected structure did not use the pane width');
     await tree.focus();await page.keyboard.press('ArrowDown');
     await visualizer.getByText('9007199254740993',{exact:true}).last().waitFor();
     await visualizer.getByText('Example protocol · little-endian · Base 16',{exact:true}).waitFor();
+    await details.waitFor();
+    const selected=await tree.getAttribute('aria-activedescendant');
+    const inspected=await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId);
+    await visualizer.getByRole('button',{name:'Close structure details',exact:true}).click();
+    assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false);
+    assert.equal(await tree.evaluate(element=>element===element.getRootNode().activeElement||element===document.activeElement),true,'Closing details lost tree focus');
+    assert.equal(await tree.getAttribute('aria-activedescendant'),selected,'Closing details lost the selected field');
+    await page.keyboard.press('Enter');await details.waitFor();
+    assert.equal(await tree.getAttribute('aria-activedescendant'),selected);
+    await visualizer.locator('.visualizer-value pre').focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false);
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId),inspected,'Escape cleared the inspected request');
+    await page.keyboard.press('Enter');await details.waitFor();
+    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),before+1,'Toggling field details restarted the worker');
+
+    const originalStyle=await visualizer.getAttribute('style');
+    try {
+      await visualizer.evaluate(element=>{element.style.width='360px';element.style.height='160px';});
+      const fits=await visualizer.evaluate(async element=>{
+        await new Promise(resolve=>requestAnimationFrame(resolve));
+        const root=element.shadowRoot??element,layout=root.querySelector('.visualizer-layout').getBoundingClientRect(),details=root.querySelector('.visualizer-node').getBoundingClientRect();
+        return details.top>=layout.top-1&&details.bottom<=layout.bottom+1;
+      });
+      assert.equal(fits,true,'Selected details overflowed a small inspector instead of remaining scrollable');
+      await visualizer.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-narrow-details.png')});
+    } finally {
+      await visualizer.evaluate((element,style)=>{if(style===null)element.removeAttribute('style');else element.setAttribute('style',style);},originalStyle);
+    }
     await visualizer.getByText('Source ranges (1)',{exact:true}).click();
     await visualizer.getByRole('button',{name:'Original response body · offset 9007199254741000 · 8 bytes',exact:true}).click();
     await visualizer.locator('hex-viewer').getByText('8 bytes selected',{exact:false}).waitFor();
     const range=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
     assert.deepEqual(range,{first:'9007199254741000',last:'9007199254741007'});
+    await visualizer.getByRole('button',{name:'Close structure details',exact:true}).click();
+    await page.keyboard.press('Enter');
+    assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'hex','Reopening details lost the chosen representation');
+    const retainedRange=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
+    assert.deepEqual(retainedRange,range,'Reopening details lost the exact byte selection');
+
     await page.waitForFunction(()=>globalThis.__workspaceFixture.visualizerRanges?.length>0);
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.visualizerRanges.every(read=>read.handle.instanceId&&read.request.maxBytes<=65536)),true);
     await tree.focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');

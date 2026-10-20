@@ -4,7 +4,9 @@ extension-settings {display:block;}
 .extension-panel h2 {font-size:1rem;}
 .extension-panel h3 {font-size:.875rem;overflow-wrap:anywhere;}
 .extension-panel .field-help,.extension-origin,.extension-id,.extension-folder {color:var(--muted);font-size:.75rem;line-height:1.45;overflow-wrap:anywhere;}
-.extension-actions {flex-wrap:wrap;}
+.extension-panel-heading {display:flex;align-items:baseline;flex-wrap:wrap;gap:.4rem .8rem;}
+.extension-panel-heading h2 {margin-right:auto;}
+.extension-actions {flex-wrap:wrap;gap:.4rem;}
 .extension-feedback {display:flex;align-items:baseline;gap:.5rem;}
 .extension-feedback:has(output:empty):not(:has(button:not([hidden]))) {display:none;}
 .extension-panel output:empty {display:none;}
@@ -22,9 +24,12 @@ extension-settings {display:block;}
 .extension-contribution {margin:.6rem 0;border-top:1px solid var(--line);padding-top:.5rem;}
 .extension-contribution h4 {font-size:.8125rem;overflow-wrap:anywhere;}
 .extension-contribution h4 span {color:var(--muted);font-weight:400;margin-inline-start:.4rem;}
-.extension-contribution dl {display:grid;grid-template-columns:9rem minmax(0,1fr);gap:.35rem .65rem;margin:.5rem 0;}
+.extension-contribution dl {display:grid;grid-template-columns:9rem minmax(0,1fr);gap:.25rem .65rem;margin:.4rem 0;}
 .extension-contribution dt {color:var(--muted);}
 .extension-contribution dd {margin:0;overflow-wrap:anywhere;}
 .extension-contribution dd p + p {margin-top:.35rem;}
 @media(max-width:600px) {.extension-heading {flex-wrap:wrap;}.extension-heading > div {flex-basis:100%;}.extension-contribution dl {grid-template-columns:minmax(0,1fr);gap:.2rem;}.extension-contribution dd {margin-bottom:.3rem;}}
 @media(forced-colors:active) {.extension-entry,.extension-contribution {border-color:CanvasText;}}
+
+.extension-matches > summary {cursor:pointer;color:var(--muted);}
+.extension-matches[open] > summary {margin-bottom:.3rem;}

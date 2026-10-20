@@ -54,6 +54,7 @@ export async function checkExtensions(page,root) {
   await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=false;});
   await panel.getByRole('button',{name:'Dismiss',exact:true}).click();
   const development=extension('example.development','Development protocol',true);development.catalog.manifest.visualizers[0].context.lookAhead=true;
+  const matching=development.catalog.manifest.visualizers[0].matches;matching.push({...structuredClone(matching[0]),pathPrefixes:['/protocol-2']},{...structuredClone(matching[0]),pathPrefixes:['/protocol-3']});
   const decoded=development.catalog.manifest.visualizers[1].inputs.response;decoded.headers.push('content-encoding');decoded.decodeHttpContent=true;
   development.catalog.manifest.trafficColumns=[{id:'protocol',name:'Protocol classification',inputs:{request:{headers:['soapaction'],body:'none'},response:{headers:['content-type'],body:'none'}},values:[{value:'MS-FSSHTTP',matches:[{direction:'response',contentTypes:['application/soap+xml'],headers:[{direction:'request',name:'soapaction',test:{op:'equals',value:'CellStorageService'}}]}]}]}];
   await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},development);
@@ -89,11 +90,20 @@ export async function checkExtensions(page,root) {
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);
   await developer.getByText('Visualizers and declared inputs',{exact:true}).click();
+  const matchingRules=developer.getByText('3 matching rules',{exact:true});
+  await matchingRules.waitFor();
+  assert.equal(await matchingRules.locator('..').evaluate(element=>element.open),false,'A long matching rule list opened by default');
+  await matchingRules.click();
+  await developer.getByText('Request · application/example · POST · /protocol-3',{exact:true}).waitFor();
+
   await developer.getByText('Up to 32 earlier or later exchanges from the same capture, origin, and conversation; request x-requesttype',{exact:true}).waitFor();
   await developer.getByText('Required · HTTP decoding on demand',{exact:true}).waitFor();
   await developer.getByText('Traffic columns and header rules',{exact:true}).click();
   await developer.getByText('MS-FSSHTTP',{exact:true}).waitFor();
   await developer.getByText('Response · application/soap+xml · request soapaction: equals CellStorageService',{exact:true}).waitFor();
+  await page.screenshot({path:resolve(root,'../../../target/ui-check/extensions-declarations-wide.png')});
+  while(await panel.locator('.extension-declarations[open] > summary').count())await panel.locator('.extension-declarations[open] > summary').first().click();
+  await page.evaluate(()=>{const settings=document.querySelector('app-shell').settings,root=settings.shadowRoot??settings;root.querySelector('.settings-content').scrollTop=0;});
   for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
     await page.setViewportSize({width,height});
     assert.equal(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true,'Extensions overflowed the settings pane');

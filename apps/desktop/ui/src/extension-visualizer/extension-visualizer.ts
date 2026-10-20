@@ -29,6 +29,7 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable visualizerRows:TreeRow[]=[];
   @observable visualizerCanvasHeight='0px';
   @observable visualizerActiveRow='';
+  @observable visualizerDetailsOpen=false;
   @observable visualizerSelectedName='';
   @observable visualizerValue='';
   @observable visualizerFormat='';
@@ -126,6 +127,7 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerReloadNotice='';
     this.visualizerBusy=false;this.visualizerPaused=false;this.visualizerTitle='';this.visualizerStatus='';this.visualizerSummary='';this.visualizerError='';
     this.visualizerLiveSupported=false;this.visualizerLiveAvailable=false;this.visualizerLive=false;this.visualizerLiveWarning='';this.visualizerFrozen=false;
+    this.visualizerDetailsOpen=false;
     this.visualizerSelectedName='';this.visualizerValue='';this.visualizerFormat='';this.visualizerSpans=[];this.visualizerDiagnostics=[];this.visualizerSources=[];this.visualizerSource='';this.visualizerSourceText='';this.visualizerHex=null;this.visualizerCanvasHeight='0px';this.visualizerActiveRow='';
     this.visualizerTable={columns:[],rows:[],text:'',previous:false,next:false,limited:false};
     this.expanded=new Set([DOCUMENT_NODE]);this.selected=DOCUMENT_NODE;this.tableOffset=0;
@@ -215,7 +217,11 @@ export class ExtensionVisualizer extends WebUIElement {
     this.view=view;this.root=documentNode(view.document);this.nodes=nodeIndex(this.root);
     this.expanded=new Set([...this.expanded].filter(id=>{const node=this.nodes.get(id);return node&&(!node.childrenToken||node.children.length>0);}));
     const retained=preserveMode&&this.nodes.has(this.selected);
-    if(!retained){this.selected=DOCUMENT_NODE;this.tableOffset=0;}
+    if(!retained){
+      this.visualizerDetailsOpen=false;
+      this.selected=DOCUMENT_NODE;
+      this.tableOffset=0;
+    }
     this.visualizerFrozen=false;this.visualizerLiveSupported=!!view.instance.declaration.liveUpdates;this.liveStatus(view.live);
     this.visualizerTitle=view.document.title;this.visualizerStatus=view.document.status;this.visualizerSummary=view.document.summary??'';this.visualizerDiagnostics=view.document.diagnostics;
     this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:sourceDescription(source)})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
@@ -231,7 +237,22 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerActiveRow=this.visualizerRows.find(row=>row.id===this.selected)?.domId??'';
   }
   selectNode(id:string):void {
-    if(!this.nodes.has(id))return;this.selected=id;this.tableOffset=0;this.updateRows();this.describeNode();
+    if(!this.nodes.has(id))return;
+    this.visualizerDetailsOpen=true;
+    this.selected=id;
+    this.tableOffset=0;
+    this.updateRows();
+    this.describeNode();
+  }
+  closeDetails():void {
+    this.visualizerDetailsOpen=false;
+    this.treeViewport.focus({preventScroll:true});
+  }
+  detailsKey(event:KeyboardEvent):void {
+    if(event.key!=='Escape'||!this.visualizerDetailsOpen)return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.closeDetails();
   }
   clickNode(id:string):void {this.selectNode(id);this.treeViewport.focus({preventScroll:true});}
   private describeNode(preserveMode=false,retainHex=false):void {
@@ -260,12 +281,17 @@ export class ExtensionVisualizer extends WebUIElement {
     const index=this.allRows.findIndex(row=>row.id===this.selected),row=this.allRows[index];if(!row)return;
     let target=index;
     switch(event.key){
+      case 'Escape':this.detailsKey(event);return;
       case 'ArrowDown':target=Math.min(index+1,this.allRows.length-1);break;
       case 'ArrowUp':target=Math.max(0,index-1);break;
       case 'Home':target=0;break;case 'End':target=this.allRows.length-1;break;
       case 'ArrowRight':if(row.expandable&&!row.expanded){event.preventDefault();void this.toggleNode(row.id);return;}target=Math.min(index+1,this.allRows.length-1);break;
       case 'ArrowLeft':if(row.expanded){event.preventDefault();void this.toggleNode(row.id);return;}target=Math.max(0,this.allRows.findIndex(candidate=>candidate.id===row.parent));break;
-      case 'Enter':case ' ':event.preventDefault();if(row.expandable)void this.toggleNode(row.id);return;
+      case 'Enter':case ' ':
+        event.preventDefault();
+        if(!this.visualizerDetailsOpen)this.visualizerDetailsOpen=true;
+        else if(row.expandable)void this.toggleNode(row.id);
+        return;
       default:return;
     }
     event.preventDefault();this.selectNode(this.allRows[target]!.id);

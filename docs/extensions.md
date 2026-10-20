@@ -474,6 +474,12 @@ failure stops the feed and freezes the last result, revoking byte access until
 an explicit retry succeeds. Hiding the pane clears that result and reaps its
 worker; opening it again returns to snapshot mode.
 
+A result initially gives its structure tree the full pane width. Selecting a
+field opens its value, format and source details; Close or Escape returns that
+space to the tree without losing the field or inspected request. Result metadata
+stays in the compact title row. Extensions settings keeps management actions
+visible and folds long matching-rule lists behind a counted disclosure.
+
 Browser fixtures cover large trees, concurrent surfaces, deferred expansion,
 wide offsets, derived provenance, late activation and narrow/forced-color layouts.
 The isolated native desktop fixture exercises the same renderer through actual

@@ -3,13 +3,16 @@ extension-visualizer { display:block; min-height:0; min-width:0; height:100%; ov
 .visualizer-feedback { margin:.4rem .5rem; white-space:pre-wrap; overflow-wrap:anywhere; }
 .visualizer-heading,.visualizer-node-heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.3rem .5rem; border-bottom:1px solid var(--line); }
 .visualizer-heading > strong,.visualizer-node-heading > strong { min-width:0; overflow-wrap:anywhere; margin-right:auto; }
-.visualizer-heading details { flex-basis:100%; }
+.visualizer-heading { flex:0 0 auto; }
+.visualizer-about > summary { cursor:pointer; color:var(--muted); }
+.visualizer-about[open] { flex-basis:100%; }
 .visualizer-live { display:inline-flex; align-items:center; gap:.3rem; white-space:nowrap; }
 .visualizer-live-warning { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.3rem .5rem; border-bottom:1px solid var(--line); }
 .visualizer-live-warning p { margin:0; min-width:0; flex:1; overflow-wrap:anywhere; }
 .visualizer-heading details p { margin:.3rem 0; white-space:pre-wrap; overflow-wrap:anywhere; }
-.visualizer-layout { flex:1; display:grid; grid-template-columns:minmax(9rem,1fr) minmax(10rem,1.1fr); min-height:0; overflow:hidden; }
-.visualizer-tree { overflow:auto; min-width:0; min-height:5rem; border-right:1px solid var(--line); background:var(--panel-subtle); }
+.visualizer-layout { flex:1; display:grid; grid-template-columns:minmax(0,1fr); min-height:0; overflow:hidden; }
+.visualizer-layout[data-details] { grid-template-columns:minmax(9rem,1fr) minmax(10rem,1.1fr); }
+.visualizer-tree { overflow:auto; min-width:0; min-height:5rem; background:var(--panel-subtle); }
 .visualizer-tree:focus-visible { outline:2px solid var(--accent-strong); outline-offset:-2px; }
 .visualizer-canvas { position:relative; height:attr(data-height type(<length>),260px); }
 .visualizer-row { position:absolute; top:attr(data-top type(<length>),0px); left:0; right:0; height:26px; display:flex; align-items:center; gap:.35rem; padding-inline-start:calc(attr(data-indent type(<length>),0px) + .35rem); padding-inline-end:.4rem; cursor:default; user-select:none; }
@@ -19,7 +22,10 @@ extension-visualizer { display:block; min-height:0; min-width:0; height:100%; ov
 .visualizer-field { flex:1; min-width:4rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .visualizer-field-value { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--muted); font-family:Consolas,monospace; }
 .visualizer-node { min-width:0; min-height:0; overflow:auto; display:flex; flex-direction:column; }
-.visualizer-node-heading { flex:0 0 auto; }
+.visualizer-layout[data-details] .visualizer-tree { border-right:1px solid var(--line); }
+.visualizer-node[hidden] { display:none; }
+.visualizer-node-heading { flex:0 0 auto; position:sticky; top:0; background:var(--panel); z-index:1; }
+.visualizer-node-heading .visualizer-close { min-height:1.5rem; padding:0 .35rem; font-size:1rem; line-height:1; }
 .visualizer-node-heading label { display:flex; align-items:baseline; gap:.3rem; }
 .visualizer-node-heading select { padding:.15rem; min-height:1.5rem; width:5rem; }
 .visualizer-format,.visualizer-value > p,.visualizer-table > p { margin:.35rem .5rem; color:var(--muted); white-space:pre-wrap; overflow-wrap:anywhere; }
@@ -34,5 +40,5 @@ extension-visualizer { display:block; min-height:0; min-width:0; height:100%; ov
 .visualizer-bytes hex-viewer { flex:1; min-height:7rem; }
 .visualizer-ranges { flex:0 0 auto; padding:.35rem .5rem; border-top:1px solid var(--line); }
 .visualizer-ranges button { display:block; max-width:100%; margin-block:.35rem; text-align:left; white-space:normal; overflow-wrap:anywhere; }
-@container (max-width:500px) { .visualizer-layout { grid-template-columns:1fr; grid-template-rows:minmax(5rem,40%) minmax(5rem,1fr); }.visualizer-tree { border-right:0; border-bottom:1px solid var(--line); } }
+@container (max-width:500px) { .visualizer-layout[data-details] { grid-template-columns:1fr; grid-template-rows:minmax(26px,40%) minmax(0,1fr); }.visualizer-layout[data-details] .visualizer-tree { min-height:0; border-right:0; border-bottom:1px solid var(--line); } }
 @media (forced-colors:active) { .visualizer-row[aria-selected="true"] { color:HighlightText; background:Highlight; forced-color-adjust:none; }.visualizer-row[aria-selected="true"] .visualizer-field-value { color:HighlightText; } }

@@ -18,6 +18,11 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       const root=editor.shadowRoot??editor,entry=[...root.querySelectorAll('article')].find(entry=>entry.getAttribute('aria-label')==='Development visualizer fixture');
       const bundledRow=[...root.querySelectorAll('article')].find(entry=>entry.getAttribute('aria-label')==='MAPI/HTTP');
       if(!bundledRow||[...bundledRow.querySelectorAll('button')].some(button=>!button.hidden&&/Uninstall|Package|Reload/.test(button.textContent)))throw new Error('Bundled MAPI exposes development or file-removal controls');
+      const bundledDeclarations=bundledRow.querySelector('.extension-declarations');bundledDeclarations.querySelector('summary').click();
+      const matching=[...bundledDeclarations.querySelectorAll('.extension-matches')];
+      if(!matching.length||matching.some(details=>details.open))throw new Error('MAPI matching rules did not use compact disclosures');
+      bundledDeclarations.querySelector('summary').click();
+
       const packageButton=entry.querySelector('button[aria-label="Package Development visualizer fixture"]');
       if(!packageButton||packageButton.disabled)throw new Error('Unpacked extension has no available packaging action');
       entry.querySelector('button[aria-label="Reload active visualizers for Development visualizer fixture"]').click();
