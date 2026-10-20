@@ -12,6 +12,8 @@ internal static class Oracle
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public static int Main(string[] args)
     {
+        CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
+        CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
         if (args.Length == 1 && args[0] == "--inventory")
         {
             Console.WriteLine(JsonSerializer.Serialize(typeof(Block).Assembly.GetTypes()
@@ -40,6 +42,13 @@ internal static class Oracle
     {
         Partial.ResetPartialParameters();
         Partial.ResetPartialContextInformation();
+        foreach (var side in new[] { "Get", "Put", "PutExtend" })
+        {
+            foreach (var field in new[] { "Session", "ServerUrl", "ProcessName", "ClientInfo" })
+                typeof(Partial).GetProperty("Partial" + side + field).SetValue(null, null);
+            typeof(Partial).GetProperty("IsOneMore" + side + "ByteToRead").SetValue(null, false);
+            typeof(Partial).GetProperty("OneMore" + side + "Byte").SetValue(null, (byte)0);
+        }
         MAPIParser.ResetHandleInformation();
         MAPIParser.TargetHandle.Clear();
         MAPIParser.ContextInformationCollection.Clear();
@@ -65,7 +74,7 @@ internal static class Oracle
         if (fixture.Type != null)
         {
             var type = typeof(Block).Assembly.GetType(fixture.Type, true);
-            result = (Block)Activator.CreateInstance(type, fixture.Arguments?.Select(value => (object)value).ToArray() ?? Array.Empty<object>());
+            result = Construct(type, fixture.Arguments ?? Array.Empty<JsonElement>());
             result.Parse(new BinaryParser(fixture.Message.Direction == "request" ? selected.requestBodyBytes : selected.responseBodyBytes));
         }
         else
@@ -74,6 +83,27 @@ internal static class Oracle
             result = fixture.Message.Direction == "request" ? MAPIParser.ParseRequestMessage(selected, out bytes) : MAPIParser.ParseResponseMessage(selected, out bytes);
         }
         return Project(result);
+    }
+
+    private static Block Construct(Type type, JsonElement[] arguments)
+    {
+        foreach (var constructor in type.GetConstructors().Where(item => item.GetParameters().Length == arguments.Length))
+        {
+            try
+            {
+                var values = constructor.GetParameters().Select((parameter, index) =>
+                {
+                    var value = arguments[index];
+                    if (parameter.ParameterType == typeof(bool)) return (object)value.GetBoolean();
+                    if (parameter.ParameterType.IsEnum) return Enum.ToObject(parameter.ParameterType, value.GetInt64());
+                    return Convert.ChangeType(value.GetInt64(), parameter.ParameterType, CultureInfo.InvariantCulture);
+                }).ToArray();
+                return (Block)constructor.Invoke(values);
+            }
+            catch (InvalidOperationException) { }
+            catch (InvalidCastException) { }
+        }
+        throw new MissingMethodException(type.FullName, "fixture constructor");
     }
 
     private static Session Session(Message message, int id)
@@ -120,7 +150,7 @@ internal static class Oracle
     internal sealed class Case
     {
         public string Type { get; set; }
-        public int[] Arguments { get; set; }
+        public JsonElement[] Arguments { get; set; }
         public Message Message { get; set; }
         public Message[] Context { get; set; }
     }

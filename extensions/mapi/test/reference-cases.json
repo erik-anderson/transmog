@@ -1,0 +1,3163 @@
+[
+  {
+    "fixture": {
+      "name": "connect-request-nonzero",
+      "family": "mailbox",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Connect",
+        "request": "L289RXhhbXBsZS9vdT1TeW50aGV0aWMvY249VXNlcgAEAwIB5AQAAAkEAAARBAAAAAAAAA==",
+        "response": ""
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ConnectRequestBody",
+      "text": "ConnectRequestBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "52",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockStringA",
+          "text": "UserDn: /o=Example/ou=Synthetic/cn=User",
+          "parsed": true,
+          "offset": "0",
+          "size": "32",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Flags: 16909060 = 0x1020304",
+          "parsed": true,
+          "offset": "32",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "16909060",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "DefaultCodePage: 1252 = 0x4E4",
+          "parsed": true,
+          "offset": "36",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "1252",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "LcidSort: 1033 = 0x409",
+          "parsed": true,
+          "offset": "40",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "1033",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "LcidString: 1041 = 0x411",
+          "parsed": true,
+          "offset": "44",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "1041",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "AuxiliaryBufferSize: 0 = 0x0",
+          "parsed": true,
+          "offset": "48",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "connect-response-nonzero",
+      "family": "mailbox",
+      "expected": "complete",
+      "message": {
+        "direction": "response",
+        "requestType": "Connect",
+        "request": "L289RXhhbXBsZS9vdT1TeW50aGV0aWMvY249VXNlcgAEAwIB5AQAAAkEAAARBAAAAAAAAA==",
+        "response": "UFJPQ0VTU0lORw0KWC1TZXJ2ZXJBcHBsaWNhdGlvbjogU3ludGhldGljDQpET05FDQoNCgAAAAAAAAAAPAAAAAMAAAD0AQAAU3ludGhldGljAEUAeABhAG0AcABsAGUAIAB1AHMAZQByAAAAAAAAAA=="
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ConnectResponseBody",
+      "text": "ConnectResponseBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "112",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "MetaTags",
+          "parsed": true,
+          "offset": "0",
+          "size": "18",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"PROCESSING\"",
+              "parsed": true,
+              "offset": "0",
+              "size": "12",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"DONE\"",
+              "parsed": true,
+              "offset": "44",
+              "size": "6",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "AdditionalHeaders",
+          "parsed": true,
+          "offset": "12",
+          "size": "34",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"X-ServerApplication: Synthetic\"",
+              "parsed": true,
+              "offset": "12",
+              "size": "32",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"\"",
+              "parsed": true,
+              "offset": "50",
+              "size": "2",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "StatusCode: 0 = 0x0",
+          "parsed": true,
+          "offset": "52",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "ErrorCode: Success = 0x0",
+          "parsed": true,
+          "offset": "56",
+          "size": "4",
+          "valueType": "MAPIInspector.Parsers.ErrorCodes",
+          "raw": "0",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PollsMax: 60 = 0x3C",
+          "parsed": true,
+          "offset": "60",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "60",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "RetryCount: 3 = 0x3",
+          "parsed": true,
+          "offset": "64",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "RetryDelay: 500 = 0x1F4",
+          "parsed": true,
+          "offset": "68",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "500",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockStringA",
+          "text": "DnPrefix: Synthetic",
+          "parsed": true,
+          "offset": "72",
+          "size": "10",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockStringW",
+          "text": "DisplayName: Example user",
+          "parsed": true,
+          "offset": "82",
+          "size": "26",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "connect-protocol-failure",
+      "family": "mailbox",
+      "expected": "complete",
+      "message": {
+        "direction": "response",
+        "requestType": "Connect",
+        "request": "L289RXhhbXBsZS9vdT1TeW50aGV0aWMvY249VXNlcgAEAwIB5AQAAAkEAAARBAAAAAAAAA==",
+        "response": "UFJPQ0VTU0lORw0KWC1TZXJ2ZXJBcHBsaWNhdGlvbjogU3ludGhldGljDQpET05FDQoNCgVAAIAAAAAA"
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ConnectResponseBody",
+      "text": "ConnectResponseBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "60",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "MetaTags",
+          "parsed": true,
+          "offset": "0",
+          "size": "18",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"PROCESSING\"",
+              "parsed": true,
+              "offset": "0",
+              "size": "12",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"DONE\"",
+              "parsed": true,
+              "offset": "44",
+              "size": "6",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "AdditionalHeaders",
+          "parsed": true,
+          "offset": "12",
+          "size": "34",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"X-ServerApplication: Synthetic\"",
+              "parsed": true,
+              "offset": "12",
+              "size": "32",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"\"",
+              "parsed": true,
+              "offset": "50",
+              "size": "2",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "StatusCode: 2147500037 = 0x80004005",
+          "parsed": true,
+          "offset": "52",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "2147500037",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "disconnect-request",
+      "family": "mailbox",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Disconnect",
+        "request": "AAAAAA==",
+        "response": ""
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.DisconnectRequestBody",
+      "text": "DisconnectRequestBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "AuxiliaryBufferSize: 0 = 0x0",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "disconnect-response",
+      "family": "mailbox",
+      "expected": "complete",
+      "message": {
+        "direction": "response",
+        "requestType": "Disconnect",
+        "request": "AAAAAA==",
+        "response": "UFJPQ0VTU0lORw0KWC1TZXJ2ZXJBcHBsaWNhdGlvbjogU3ludGhldGljDQpET05FDQoNCgAAAAAAAAAAAAAAAA=="
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.DisconnectResponseBody",
+      "text": "DisconnectResponseBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "64",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "MetaTags",
+          "parsed": true,
+          "offset": "0",
+          "size": "18",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"PROCESSING\"",
+              "parsed": true,
+              "offset": "0",
+              "size": "12",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"DONE\"",
+              "parsed": true,
+              "offset": "44",
+              "size": "6",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "AdditionalHeaders",
+          "parsed": true,
+          "offset": "12",
+          "size": "34",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"X-ServerApplication: Synthetic\"",
+              "parsed": true,
+              "offset": "12",
+              "size": "32",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"\"",
+              "parsed": true,
+              "offset": "50",
+              "size": "2",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "StatusCode: 0 = 0x0",
+          "parsed": true,
+          "offset": "52",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "ErrorCode : Success = 0x00000000",
+          "parsed": true,
+          "offset": "56",
+          "size": "4",
+          "valueType": "MAPIInspector.Parsers.ErrorCodes",
+          "raw": "0",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "AuxiliaryBufferSize: 0 = 0x0",
+          "parsed": true,
+          "offset": "60",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "notification-request-flags",
+      "family": "notifications",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "NotificationWait",
+        "request": "AQAAAAAAAAA=",
+        "response": ""
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.NotificationWaitRequestBody",
+      "text": "NotificationWaitRequestBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Flags: 1 = 0x1",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "1",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "AuxiliaryBufferSize: 0 = 0x0",
+          "parsed": true,
+          "offset": "4",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "notification-response-pending",
+      "family": "notifications",
+      "expected": "complete",
+      "message": {
+        "direction": "response",
+        "requestType": "NotificationWait",
+        "request": "AQAAAAAAAAA=",
+        "response": "UFJPQ0VTU0lORw0KWC1TZXJ2ZXJBcHBsaWNhdGlvbjogU3ludGhldGljDQpET05FDQoNCgAAAAAAAAAAAQAAAAAAAAA="
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.NotificationWaitResponseBody",
+      "text": "NotificationWaitResponseBody",
+      "parsed": true,
+      "offset": "0",
+      "size": "68",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "MetaTags",
+          "parsed": true,
+          "offset": "0",
+          "size": "18",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"PROCESSING\"",
+              "parsed": true,
+              "offset": "0",
+              "size": "12",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"DONE\"",
+              "parsed": true,
+              "offset": "44",
+              "size": "6",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "AdditionalHeaders",
+          "parsed": true,
+          "offset": "12",
+          "size": "34",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"X-ServerApplication: Synthetic\"",
+              "parsed": true,
+              "offset": "12",
+              "size": "32",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockStringA",
+              "text": "\"\"",
+              "parsed": true,
+              "offset": "50",
+              "size": "2",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "StatusCode: 0 = 0x0",
+          "parsed": true,
+          "offset": "52",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "ErrorCode : Success = 0x00000000",
+          "parsed": true,
+          "offset": "56",
+          "size": "4",
+          "valueType": "MAPIInspector.Parsers.ErrorCodes",
+          "raw": "0",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "EventPending: 1 = 0x1",
+          "parsed": true,
+          "offset": "60",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "1",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "AuxiliaryBufferSize: 0 = 0x0",
+          "parsed": true,
+          "offset": "64",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger16-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AIA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger16"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger16",
+      "text": "-32768",
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": "System.Int16",
+      "raw": "-32768",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger16-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "7/8=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger16"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger16",
+      "text": "-17",
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": "System.Int16",
+      "raw": "-17",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger16-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "/38=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger16"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger16",
+      "text": "32767",
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": "System.Int16",
+      "raw": "32767",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger32-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAgA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger32",
+      "text": "-2147483648 = 0x80000000",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": "System.Int32",
+      "raw": "-2147483648",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger32-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "6zKk+A==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger32",
+      "text": "-123456789 = 0xF8A432EB",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": "System.Int32",
+      "raw": "-123456789",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger32-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "////fw==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger32",
+      "text": "2147483647 = 0x7FFFFFFF",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": "System.Int32",
+      "raw": "2147483647",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger64-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAAAAAAIA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger64",
+      "text": "-9223372036854775808 = 0x8000000000000000",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Int64",
+      "raw": "-9223372036854775808",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger64-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "////////3/8=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger64",
+      "text": "-9007199254740993 = 0xFFDFFFFFFFFFFFFF",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Int64",
+      "raw": "-9007199254740993",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger64-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AQAAAAAAIAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger64",
+      "text": "9007199254740993 = 0x20000000000001",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Int64",
+      "raw": "9007199254740993",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypInteger64-3",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "/////////38=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypInteger64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypInteger64",
+      "text": "9223372036854775807 = 0x7FFFFFFFFFFFFFFF",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Int64",
+      "raw": "9223372036854775807",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypTime-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAAAAAAAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "timestamp": "1601-01-01T00:00:00.0000000Z"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.UInt64",
+      "raw": "0",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypTime-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AABitz7e1gE=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "timestamp": "2020-12-30T00:00:00.0000000Z"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.UInt64",
+      "raw": "132537600000000000",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypTime-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "//////////8=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "timestamp": null
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.UInt64",
+      "raw": "18446744073709551615",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypBoolean-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBoolean"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBoolean",
+      "text": "False",
+      "parsed": true,
+      "offset": "0",
+      "size": "1",
+      "valueType": "System.Boolean",
+      "raw": "False",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypBoolean-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AQ==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBoolean"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBoolean",
+      "text": "True",
+      "parsed": true,
+      "offset": "0",
+      "size": "1",
+      "valueType": "System.Boolean",
+      "raw": "True",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypBoolean-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "/w==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBoolean"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBoolean",
+      "text": "True",
+      "parsed": true,
+      "offset": "0",
+      "size": "1",
+      "valueType": "System.Boolean",
+      "raw": "True",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypBooleanShort-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBooleanShort"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBooleanShort",
+      "text": "False",
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": "System.Boolean",
+      "raw": "False",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypBooleanShort-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AQA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBooleanShort"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBooleanShort",
+      "text": "True",
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": "System.Boolean",
+      "raw": "True",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypBooleanShort-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAE=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBooleanShort"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBooleanShort",
+      "text": "True",
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": "System.Boolean",
+      "raw": "True",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypFloating32-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAvw==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypFloating32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypFloating32",
+      "text": "-0.5",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": "System.Single",
+      "raw": "-0.5",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypFloating32-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AACgPw==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypFloating32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypFloating32",
+      "text": "1.25",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": "System.Single",
+      "raw": "1.25",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypFloating32-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AFCaRA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypFloating32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypFloating32",
+      "text": "1234.5",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": "System.Single",
+      "raw": "1234.5",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypFloating64-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAAAAAwL8=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypFloating64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypFloating64",
+      "text": "-0.125",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Double",
+      "raw": "-0.125",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypFloating64-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAAAAA9D8=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypFloating64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypFloating64",
+      "text": "1.25",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Double",
+      "raw": "1.25",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypFloating64-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAAABKk0A=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypFloating64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypFloating64",
+      "text": "1234.5",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Double",
+      "raw": "1234.5",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypCurrency-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "hyDyebeP//8=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypCurrency"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypCurrency",
+      "text": "-123456789012345",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Int64",
+      "raw": "-123456789012345",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypCurrency-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AQAAAAAAIAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypCurrency"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypCurrency",
+      "text": "9007199254740993",
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": "System.Int64",
+      "raw": "9007199254740993",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypGuid-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAAAAAAAAAAAAAAAAAAAAA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypGuid"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypGuid",
+      "text": "00000000-0000-0000-0000-000000000000",
+      "parsed": true,
+      "offset": "0",
+      "size": "16",
+      "valueType": "System.Guid",
+      "raw": "00000000-0000-0000-0000-000000000000",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypGuid-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "MyIRAFVEd2aImaq7zN3u/w==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypGuid"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypGuid",
+      "text": "00112233-4455-6677-8899-aabbccddeeff",
+      "parsed": true,
+      "offset": "0",
+      "size": "16",
+      "valueType": "System.Guid",
+      "raw": "00112233-4455-6677-8899-aabbccddeeff",
+      "children": []
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString8-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "U3ludGhldGljIHRleHQA",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "stringValue": "Synthetic text",
+      "charset": "us-ascii"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "text": "\"Synthetic text\"",
+      "parsed": true,
+      "offset": "0",
+      "size": "15",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "cch: 14 = 0xE",
+          "parsed": true,
+          "offset": "0",
+          "size": "0",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString8-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "U3ViamVjdDogZXhhbXBsZQA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "stringValue": "Subject: example",
+      "charset": "us-ascii"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "text": "\"Subject: example\"",
+      "parsed": true,
+      "offset": "0",
+      "size": "17",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "cch: 16 = 0x10",
+          "parsed": true,
+          "offset": "0",
+          "size": "0",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "UwB5AG4AdABoAGUAdABpAGMAIABzAHUAYgBqAGUAYwB0AAAA",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString",
+      "stringValue": "Synthetic subject",
+      "charset": "utf-16le"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString",
+      "text": "\"Synthetic subject\"",
+      "parsed": true,
+      "offset": "0",
+      "size": "36",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "cch: 17 = 0x11",
+          "parsed": true,
+          "offset": "0",
+          "size": "0",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "TQBhAGkAbAA6ACAAYwBhAGYA6QAgAKkDAAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString",
+      "stringValue": "Mail: café Ω",
+      "charset": "utf-16le"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString",
+      "text": "\"Mail: café Ω\"",
+      "parsed": true,
+      "offset": "0",
+      "size": "26",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "cch: 12 = 0xC",
+          "parsed": true,
+          "offset": "0",
+          "size": "0",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PropertyTag-0",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "HwA3AA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PropertyTag"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PropertyTag",
+      "text": "PropertyTag",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PropertyType: PtypString = 0x1F",
+          "parsed": true,
+          "offset": "0",
+          "size": "2",
+          "valueType": "MAPIInspector.Parsers.PropertyDataType",
+          "raw": "31",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PropertyId: PidTagSubject = 0x37",
+          "parsed": true,
+          "offset": "2",
+          "size": "2",
+          "valueType": "MAPIInspector.Parsers.PidTagPropertyEnum",
+          "raw": "55",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PropertyTag-1",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAHDg==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PropertyTag"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PropertyTag",
+      "text": "PropertyTag",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PropertyType: PtypInteger32 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "2",
+          "valueType": "MAPIInspector.Parsers.PropertyDataType",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PropertyId: PidTagMessageFlags = 0xE07",
+          "parsed": true,
+          "offset": "2",
+          "size": "2",
+          "valueType": "MAPIInspector.Parsers.PidTagPropertyEnum",
+          "raw": "3591",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PropertyTag-2",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AgELMA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PropertyTag"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PropertyTag",
+      "text": "PropertyTag",
+      "parsed": true,
+      "offset": "0",
+      "size": "4",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PropertyType: PtypBinary = 0x102",
+          "parsed": true,
+          "offset": "0",
+          "size": "2",
+          "valueType": "MAPIInspector.Parsers.PropertyDataType",
+          "raw": "258",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "PropertyId: PidTagSearchKey = 0x300B",
+          "parsed": true,
+          "offset": "2",
+          "size": "2",
+          "valueType": "MAPIInspector.Parsers.PidTagPropertyEnum",
+          "raw": "12299",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypMultipleInteger16-three",
+      "family": "multivalues",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAAAO//AADSBA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger16"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger16",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "10",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 3 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Value",
+          "parsed": true,
+          "offset": "4",
+          "size": "6",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger16",
+              "text": "-17",
+              "parsed": true,
+              "offset": "4",
+              "size": "2",
+              "valueType": "System.Int16",
+              "raw": "-17",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger16",
+              "text": "0",
+              "parsed": true,
+              "offset": "6",
+              "size": "2",
+              "valueType": "System.Int16",
+              "raw": "0",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger16",
+              "text": "1234",
+              "parsed": true,
+              "offset": "8",
+              "size": "2",
+              "valueType": "System.Int16",
+              "raw": "1234",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypMultipleInteger32-three",
+      "family": "multivalues",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAAAIX////IAQAA////fw==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger32",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "16",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 3 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Value",
+          "parsed": true,
+          "offset": "4",
+          "size": "12",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger32",
+              "text": "-123 = 0xFFFFFF85",
+              "parsed": true,
+              "offset": "4",
+              "size": "4",
+              "valueType": "System.Int32",
+              "raw": "-123",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger32",
+              "text": "456 = 0x1C8",
+              "parsed": true,
+              "offset": "8",
+              "size": "4",
+              "valueType": "System.Int32",
+              "raw": "456",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger32",
+              "text": "2147483647 = 0x7FFFFFFF",
+              "parsed": true,
+              "offset": "12",
+              "size": "4",
+              "valueType": "System.Int32",
+              "raw": "2147483647",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypMultipleInteger64-three",
+      "family": "multivalues",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAAAP///////9//KgAAAAAAAAABAAAAAAAgAA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger64",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "28",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 3 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Value",
+          "parsed": true,
+          "offset": "4",
+          "size": "24",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger64",
+              "text": "-9007199254740993 = 0xFFDFFFFFFFFFFFFF",
+              "parsed": true,
+              "offset": "4",
+              "size": "8",
+              "valueType": "System.Int64",
+              "raw": "-9007199254740993",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger64",
+              "text": "42 = 0x2A",
+              "parsed": true,
+              "offset": "12",
+              "size": "8",
+              "valueType": "System.Int64",
+              "raw": "42",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypInteger64",
+              "text": "9007199254740993 = 0x20000000000001",
+              "parsed": true,
+              "offset": "20",
+              "size": "8",
+              "valueType": "System.Int64",
+              "raw": "9007199254740993",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypMultipleFloating32-three",
+      "family": "multivalues",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAAAAAAAL8AAKA/AFCaRA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypMultipleFloating32"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypMultipleFloating32",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "16",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 3 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Value",
+          "parsed": true,
+          "offset": "4",
+          "size": "12",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.PtypFloating32",
+              "text": "-0.5",
+              "parsed": true,
+              "offset": "4",
+              "size": "4",
+              "valueType": "System.Single",
+              "raw": "-0.5",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypFloating32",
+              "text": "1.25",
+              "parsed": true,
+              "offset": "8",
+              "size": "4",
+              "valueType": "System.Single",
+              "raw": "1.25",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypFloating32",
+              "text": "1234.5",
+              "parsed": true,
+              "offset": "12",
+              "size": "4",
+              "valueType": "System.Single",
+              "raw": "1234.5",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypMultipleFloating64-three",
+      "family": "multivalues",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAAAAAAAAAAAMC/AAAAAAAA9D8AAAAAAEqTQA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypMultipleFloating64"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypMultipleFloating64",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "28",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 3 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Value",
+          "parsed": true,
+          "offset": "4",
+          "size": "24",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.PtypFloating64",
+              "text": "-0.125",
+              "parsed": true,
+              "offset": "4",
+              "size": "8",
+              "valueType": "System.Double",
+              "raw": "-0.125",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypFloating64",
+              "text": "1.25",
+              "parsed": true,
+              "offset": "12",
+              "size": "8",
+              "valueType": "System.Double",
+              "raw": "1.25",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypFloating64",
+              "text": "1234.5",
+              "parsed": true,
+              "offset": "20",
+              "size": "8",
+              "valueType": "System.Double",
+              "raw": "1234.5",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypMultipleGuid-three",
+      "family": "multivalues",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AwAAAAAAAAAAAAAAAAAAAAAAAAAzIhEAVUR3ZoiZqrvM3e7//+7dzLuqmYh3ZlVEMyIRAA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypMultipleGuid"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypMultipleGuid",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "52",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 3 = 0x3",
+          "parsed": true,
+          "offset": "0",
+          "size": "4",
+          "valueType": "System.UInt32",
+          "raw": "3",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Value",
+          "parsed": true,
+          "offset": "4",
+          "size": "48",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.PtypGuid",
+              "text": "00000000-0000-0000-0000-000000000000",
+              "parsed": true,
+              "offset": "4",
+              "size": "16",
+              "valueType": "System.Guid",
+              "raw": "00000000-0000-0000-0000-000000000000",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypGuid",
+              "text": "00112233-4455-6677-8899-aabbccddeeff",
+              "parsed": true,
+              "offset": "20",
+              "size": "16",
+              "valueType": "System.Guid",
+              "raw": "00112233-4455-6677-8899-aabbccddeeff",
+              "children": []
+            },
+            {
+              "type": "MAPIInspector.Parsers.PtypGuid",
+              "text": "ccddeeff-aabb-8899-7766-554433221100",
+              "parsed": true,
+              "offset": "36",
+              "size": "16",
+              "valueType": "System.Guid",
+              "raw": "ccddeeff-aabb-8899-7766-554433221100",
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "binary-0-False",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "arguments": [
+        0,
+        false
+      ]
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "2",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 0 = 0x0",
+          "parsed": true,
+          "offset": "0",
+          "size": "2",
+          "valueType": "System.UInt32",
+          "raw": "0",
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "binary-5-False",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "BQAAAQIDBA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "arguments": [
+        0,
+        false
+      ]
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "7",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 5 = 0x5",
+          "parsed": true,
+          "offset": "0",
+          "size": "2",
+          "valueType": "System.UInt32",
+          "raw": "5",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockBytes",
+          "text": "Value: 0001020304",
+          "parsed": true,
+          "offset": "2",
+          "size": "5",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.ScratchBlock",
+              "text": "bin: .....",
+              "parsed": true,
+              "offset": "2",
+              "size": "5",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.ScratchBlock",
+              "text": "cb: 5",
+              "parsed": true,
+              "offset": "0",
+              "size": "0",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "binary-5-True",
+      "family": "properties",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Execute",
+        "request": "AQUAAAECAwQ=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "arguments": [
+        0,
+        true
+      ]
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "8",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "HasValue: True",
+          "parsed": true,
+          "offset": "0",
+          "size": "1",
+          "valueType": "System.Boolean",
+          "raw": "True",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "Count: 5 = 0x5",
+          "parsed": true,
+          "offset": "1",
+          "size": "2",
+          "valueType": "System.UInt32",
+          "raw": "5",
+          "children": []
+        },
+        {
+          "type": "BlockParser.BlockBytes",
+          "text": "Value: 0001020304",
+          "parsed": true,
+          "offset": "3",
+          "size": "5",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.ScratchBlock",
+              "text": "bin: .....",
+              "parsed": true,
+              "offset": "3",
+              "size": "5",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            },
+            {
+              "type": "BlockParser.ScratchBlock",
+              "text": "cb: 5",
+              "parsed": true,
+              "offset": "0",
+              "size": "0",
+              "valueType": null,
+              "raw": null,
+              "children": []
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString8-address-book",
+      "family": "address-book",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "GetProps",
+        "request": "AUFkZHJlc3MtYm9vayB2YWx1ZQA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "arguments": [
+        true
+      ]
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "text": "\"Address-book value\"",
+      "parsed": true,
+      "offset": "0",
+      "size": "20",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "HasValue: True",
+          "parsed": true,
+          "offset": "0",
+          "size": "1",
+          "valueType": "System.Boolean",
+          "raw": "True",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "cch: 18 = 0x12",
+          "parsed": true,
+          "offset": "0",
+          "size": "0",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString8-absent",
+      "family": "address-book",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "GetProps",
+        "request": "AA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "arguments": [
+        true
+      ],
+      "intentionalDifference": "absent-string-layout"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "1",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockException",
+          "text": "Tree Layout Exception",
+          "parsed": true,
+          "offset": "0",
+          "size": "1",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString-address-book",
+      "family": "address-book",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "GetProps",
+        "request": "AUEAZABkAHIAZQBzAHMALQBiAG8AbwBrACAAqQMAAA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString",
+      "arguments": [
+        true
+      ]
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString",
+      "text": "\"Address-book Ω\"",
+      "parsed": true,
+      "offset": "0",
+      "size": "31",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockT`1",
+          "text": "HasValue: True",
+          "parsed": true,
+          "offset": "0",
+          "size": "1",
+          "valueType": "System.Boolean",
+          "raw": "True",
+          "children": []
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "cch: 14 = 0xE",
+          "parsed": true,
+          "offset": "0",
+          "size": "0",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "PtypString-absent",
+      "family": "address-book",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "GetProps",
+        "request": "AA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.PtypString",
+      "arguments": [
+        true
+      ],
+      "intentionalDifference": "absent-string-layout"
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.PtypString",
+      "text": null,
+      "parsed": true,
+      "offset": "0",
+      "size": "1",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "BlockParser.BlockException",
+          "text": "Tree Layout Exception",
+          "parsed": true,
+          "offset": "0",
+          "size": "1",
+          "valueType": null,
+          "raw": null,
+          "children": []
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "auxiliary-compressed-False-xor-False",
+      "family": "compression",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Connect",
+        "request": "AAAEAAgACAAIAAFIAQAAAA==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "includeDerived": true,
+      "derivedExpectation": {
+        "bytes": [
+          8,
+          0,
+          1,
+          72,
+          1,
+          0,
+          0,
+          0
+        ],
+        "encodedBytes": 8,
+        "transformed": false,
+        "exactMapping": true
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "text": "ExtendedBuffer",
+      "parsed": true,
+      "offset": "0",
+      "size": "16",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "MAPIInspector.Parsers.RPC_HEADER_EXT",
+          "text": "RPCHEADEREXT",
+          "parsed": true,
+          "offset": "0",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Version: 0 = 0x0",
+              "parsed": true,
+              "offset": "0",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "0",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Flags: Last = 0x4",
+              "parsed": true,
+              "offset": "2",
+              "size": "2",
+              "valueType": "MAPIInspector.Parsers.RpcHeaderFlags",
+              "raw": "4",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Size: 8 = 0x8",
+              "parsed": true,
+              "offset": "4",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "8",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "SizeActual: 8 = 0x8",
+              "parsed": true,
+              "offset": "6",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "8",
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Payload",
+          "parsed": true,
+          "offset": "8",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.AuxiliaryBufferPayload",
+              "text": "AuxiliaryBufferPayload",
+              "parsed": true,
+              "offset": "8",
+              "size": "8",
+              "valueType": null,
+              "raw": null,
+              "children": [
+                {
+                  "type": "MAPIInspector.Parsers.AUX_HEADER",
+                  "text": "AUXHEADER",
+                  "parsed": true,
+                  "offset": "8",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Size: 8 = 0x8",
+                      "parsed": true,
+                      "offset": "8",
+                      "size": "2",
+                      "valueType": "System.UInt16",
+                      "raw": "8",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Version: AUX_VERSION_1 = 0x1",
+                      "parsed": true,
+                      "offset": "10",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.PayloadDataVersion",
+                      "raw": "1",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Type: AUX_TYPE_ENDPOINT_CAPABILITIES = 0x48",
+                      "parsed": true,
+                      "offset": "11",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.AuxiliaryBlockType_1",
+                      "raw": "72",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "MAPIInspector.Parsers.AUX_ENDPOINT_CAPABILITIES",
+                  "text": "AuxiliaryBlock",
+                  "parsed": true,
+                  "offset": "12",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "EndpointCapabilityFlag: ENDPOINT_CAPABILITIES_SINGLE_ENDPOINT = 0x1",
+                      "parsed": true,
+                      "offset": "12",
+                      "size": "4",
+                      "valueType": "MAPIInspector.Parsers.EndpointCapabilityFlag",
+                      "raw": "1",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "auxiliary-compressed-False-xor-True",
+      "family": "compression",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Connect",
+        "request": "AAAGAAgACACtpaTtpKWlpQ==",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "includeDerived": true,
+      "derivedExpectation": {
+        "bytes": [
+          8,
+          0,
+          1,
+          72,
+          1,
+          0,
+          0,
+          0
+        ],
+        "encodedBytes": 8,
+        "transformed": true,
+        "exactMapping": true
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "text": "ExtendedBuffer",
+      "parsed": true,
+      "offset": "0",
+      "size": "16",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "MAPIInspector.Parsers.RPC_HEADER_EXT",
+          "text": "RPCHEADEREXT",
+          "parsed": true,
+          "offset": "0",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Version: 0 = 0x0",
+              "parsed": true,
+              "offset": "0",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "0",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Flags: XorMagic, Last = 0x6",
+              "parsed": true,
+              "offset": "2",
+              "size": "2",
+              "valueType": "MAPIInspector.Parsers.RpcHeaderFlags",
+              "raw": "6",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Size: 8 = 0x8",
+              "parsed": true,
+              "offset": "4",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "8",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "SizeActual: 8 = 0x8",
+              "parsed": true,
+              "offset": "6",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "8",
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Payload",
+          "parsed": true,
+          "offset": "8",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.AuxiliaryBufferPayload",
+              "text": "AuxiliaryBufferPayload",
+              "parsed": true,
+              "offset": "8",
+              "size": "8",
+              "valueType": null,
+              "raw": null,
+              "children": [
+                {
+                  "type": "MAPIInspector.Parsers.AUX_HEADER",
+                  "text": "AUXHEADER",
+                  "parsed": true,
+                  "offset": "8",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Size: 8 = 0x8",
+                      "parsed": true,
+                      "offset": "8",
+                      "size": "2",
+                      "valueType": "System.UInt16",
+                      "raw": "8",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Version: AUX_VERSION_1 = 0x1",
+                      "parsed": true,
+                      "offset": "10",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.PayloadDataVersion",
+                      "raw": "1",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Type: AUX_TYPE_ENDPOINT_CAPABILITIES = 0x48",
+                      "parsed": true,
+                      "offset": "11",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.AuxiliaryBlockType_1",
+                      "raw": "72",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "MAPIInspector.Parsers.AUX_ENDPOINT_CAPABILITIES",
+                  "text": "AuxiliaryBlock",
+                  "parsed": true,
+                  "offset": "12",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "EndpointCapabilityFlag: ENDPOINT_CAPABILITIES_SINGLE_ENDPOINT = 0x1",
+                      "parsed": true,
+                      "offset": "12",
+                      "size": "4",
+                      "valueType": "MAPIInspector.Parsers.EndpointCapabilityFlag",
+                      "raw": "1",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "auxiliary-compressed-True-xor-False",
+      "family": "compression",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Connect",
+        "request": "AAAFAAwACAAAAAAACAABSAEAAAA=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "includeDerived": true,
+      "derivedExpectation": {
+        "bytes": [
+          8,
+          0,
+          1,
+          72,
+          1,
+          0,
+          0,
+          0
+        ],
+        "encodedBytes": 12,
+        "transformed": true,
+        "exactMapping": false
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "text": "ExtendedBuffer",
+      "parsed": true,
+      "offset": "0",
+      "size": "20",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "MAPIInspector.Parsers.RPC_HEADER_EXT",
+          "text": "RPCHEADEREXT",
+          "parsed": true,
+          "offset": "0",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Version: 0 = 0x0",
+              "parsed": true,
+              "offset": "0",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "0",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Flags: Compressed, Last = 0x5",
+              "parsed": true,
+              "offset": "2",
+              "size": "2",
+              "valueType": "MAPIInspector.Parsers.RpcHeaderFlags",
+              "raw": "5",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Size: 12 = 0xC",
+              "parsed": true,
+              "offset": "4",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "12",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "SizeActual: 8 = 0x8",
+              "parsed": true,
+              "offset": "6",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "8",
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Payload",
+          "parsed": true,
+          "offset": "8",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.AuxiliaryBufferPayload",
+              "text": "AuxiliaryBufferPayload",
+              "parsed": true,
+              "offset": "8",
+              "size": "8",
+              "valueType": null,
+              "raw": null,
+              "children": [
+                {
+                  "type": "MAPIInspector.Parsers.AUX_HEADER",
+                  "text": "AUXHEADER",
+                  "parsed": true,
+                  "offset": "8",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Size: 8 = 0x8",
+                      "parsed": true,
+                      "offset": "8",
+                      "size": "2",
+                      "valueType": "System.UInt16",
+                      "raw": "8",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Version: AUX_VERSION_1 = 0x1",
+                      "parsed": true,
+                      "offset": "10",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.PayloadDataVersion",
+                      "raw": "1",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Type: AUX_TYPE_ENDPOINT_CAPABILITIES = 0x48",
+                      "parsed": true,
+                      "offset": "11",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.AuxiliaryBlockType_1",
+                      "raw": "72",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "MAPIInspector.Parsers.AUX_ENDPOINT_CAPABILITIES",
+                  "text": "AuxiliaryBlock",
+                  "parsed": true,
+                  "offset": "12",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "EndpointCapabilityFlag: ENDPOINT_CAPABILITIES_SINGLE_ENDPOINT = 0x1",
+                      "parsed": true,
+                      "offset": "12",
+                      "size": "4",
+                      "valueType": "MAPIInspector.Parsers.EndpointCapabilityFlag",
+                      "raw": "1",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "fixture": {
+      "name": "auxiliary-compressed-True-xor-True",
+      "family": "compression",
+      "expected": "complete",
+      "message": {
+        "direction": "request",
+        "requestType": "Connect",
+        "request": "AAAHAAwACAClpaWlraWk7aSlpaU=",
+        "response": ""
+      },
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "includeDerived": true,
+      "derivedExpectation": {
+        "bytes": [
+          8,
+          0,
+          1,
+          72,
+          1,
+          0,
+          0,
+          0
+        ],
+        "encodedBytes": 12,
+        "transformed": true,
+        "exactMapping": false
+      }
+    },
+    "tree": {
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "text": "ExtendedBuffer",
+      "parsed": true,
+      "offset": "0",
+      "size": "20",
+      "valueType": null,
+      "raw": null,
+      "children": [
+        {
+          "type": "MAPIInspector.Parsers.RPC_HEADER_EXT",
+          "text": "RPCHEADEREXT",
+          "parsed": true,
+          "offset": "0",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Version: 0 = 0x0",
+              "parsed": true,
+              "offset": "0",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "0",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Flags: Compressed, XorMagic, Last = 0x7",
+              "parsed": true,
+              "offset": "2",
+              "size": "2",
+              "valueType": "MAPIInspector.Parsers.RpcHeaderFlags",
+              "raw": "7",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "Size: 12 = 0xC",
+              "parsed": true,
+              "offset": "4",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "12",
+              "children": []
+            },
+            {
+              "type": "BlockParser.BlockT`1",
+              "text": "SizeActual: 8 = 0x8",
+              "parsed": true,
+              "offset": "6",
+              "size": "2",
+              "valueType": "System.UInt16",
+              "raw": "8",
+              "children": []
+            }
+          ]
+        },
+        {
+          "type": "BlockParser.ScratchBlock",
+          "text": "Payload",
+          "parsed": true,
+          "offset": "8",
+          "size": "8",
+          "valueType": null,
+          "raw": null,
+          "children": [
+            {
+              "type": "MAPIInspector.Parsers.AuxiliaryBufferPayload",
+              "text": "AuxiliaryBufferPayload",
+              "parsed": true,
+              "offset": "8",
+              "size": "8",
+              "valueType": null,
+              "raw": null,
+              "children": [
+                {
+                  "type": "MAPIInspector.Parsers.AUX_HEADER",
+                  "text": "AUXHEADER",
+                  "parsed": true,
+                  "offset": "8",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Size: 8 = 0x8",
+                      "parsed": true,
+                      "offset": "8",
+                      "size": "2",
+                      "valueType": "System.UInt16",
+                      "raw": "8",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Version: AUX_VERSION_1 = 0x1",
+                      "parsed": true,
+                      "offset": "10",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.PayloadDataVersion",
+                      "raw": "1",
+                      "children": []
+                    },
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "Type: AUX_TYPE_ENDPOINT_CAPABILITIES = 0x48",
+                      "parsed": true,
+                      "offset": "11",
+                      "size": "1",
+                      "valueType": "MAPIInspector.Parsers.AuxiliaryBlockType_1",
+                      "raw": "72",
+                      "children": []
+                    }
+                  ]
+                },
+                {
+                  "type": "MAPIInspector.Parsers.AUX_ENDPOINT_CAPABILITIES",
+                  "text": "AuxiliaryBlock",
+                  "parsed": true,
+                  "offset": "12",
+                  "size": "4",
+                  "valueType": null,
+                  "raw": null,
+                  "children": [
+                    {
+                      "type": "BlockParser.BlockT`1",
+                      "text": "EndpointCapabilityFlag: ENDPOINT_CAPABILITIES_SINGLE_ENDPOINT = 0x1",
+                      "parsed": true,
+                      "offset": "12",
+                      "size": "4",
+                      "valueType": "MAPIInspector.Parsers.EndpointCapabilityFlag",
+                      "raw": "1",
+                      "children": []
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      ]
+    }
+  }
+]

@@ -4,16 +4,20 @@
     "Buffer.BlockCopy": 4,
     "Enum.GetUnderlyingType": 3,
     "System.Runtime.InteropServices.Marshal.SizeOf": 4,
+    "derived source coordinates": 3,
     "encoding.GetString": 1,
+    "enum hexadecimal width": 1,
+    "explicit parser conversion": 776,
     "fixed sizeof": 32,
     "managed primitive read": 1,
+    "payload source provenance": 3,
     "unused namespace": 3
   },
   "bcl": "26.9.5840",
-  "bytes": 4431458,
+  "bytes": 4466945,
   "compiler": "26.10.6985",
   "enums": 92,
   "revision": "7a76470574377d14cae612c507f45b34d70e05a0",
-  "sha256": "00ff7bfeba25f540ae597bd8c5c9b586de4d8b9540d767f472527ef396f68ef7",
+  "sha256": "c84a28323e152ea0d92da092ee48788072e07791284cfaeb427952184a47c397",
   "sourceInventorySha256": "19ab240c43e2e65fb463f91c963db0ba98742318a71ab5700651c2177f1e1063"
 }

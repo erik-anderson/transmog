@@ -53,6 +53,35 @@ for future GC delays. Scripts receive no timer or other host capability.
 Full semantic parity, retained-input integration and bundling remain the gates
 below. Compilation and compatibility tests alone do not establish protocol parity.
 
+The initial protocol adapter has 60 synthetic differential cases covering nonzero
+mailbox transport, notifications, scalar/property/enum boundaries, Unicode,
+nonempty multivalues, address-book optional values, and plain/XOR/LZ77/combined
+auxiliary buffers. The semantic build explicitly preserves 776 parser-wrapper
+conversions in branches, switches, arithmetic and counts. Primitive enum reads
+are unboxed as value types, and hexadecimal enum widths preserve native formatting.
+
+Run `python scripts/test-mapi-parity.py` against the native reference, or add
+`--golden-only` to compare with committed normalized reference trees without .NET.
+`--write-reference` regenerates those trees only after successful comparison.
+Goldens exclude machine-specific exception stacks and local timestamp formatting.
+The adapter returns typed scalar records, encoding metadata and source identities;
+it has no capture-discovery or file/network API. Input, structures and derived
+buffers are bounded. Each decode discards its context/session state afterward.
+
+Three intentional presentation corrections are verified separately:
+
+- Decoded RPC payload fields use a separate source with decoded offsets. The
+  reference incorrectly shifts them into the encoded body. Plain sub-buffers
+  retain original coordinates; decoded data links to its exact encoded region,
+  with enclosing-only mapping for LZ77. Synthetic grouping nodes inherit a source
+  only when their children share it.
+- FILETIME keeps its exact unsigned ticks and supplies explicit UTC metadata with
+  seven fractional digits. Host rendering does not inherit the reference machine's
+  local timezone or locale. Out-of-range timestamp values remain exact raw integers.
+- A false address-book string presence byte produces **No value** and its exact
+  one-byte boolean field. The reference instead throws while laying out a null
+  string; the original failure and repaired output are both asserted.
+
 Before bundling, require differential coverage of:
 
 | Area | Required synthetic cases |

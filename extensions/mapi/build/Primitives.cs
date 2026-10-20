@@ -4,8 +4,29 @@ using System.Collections.Generic;
 
 namespace BlockParser
 {
+    public static class PortableEvidence
+    {
+        public static Action<BinaryParser, Block, byte[], bool, uint> OnPayload;
+        public static BinaryParser Payload(byte[] bytes, Block encoded, bool transformed, uint flags)
+        {
+            var parser = new BinaryParser(bytes);
+            OnPayload?.Invoke(parser, encoded, bytes, transformed, flags);
+            return parser;
+        }
+        public static void Shift(Block payload, long offset, bool transformed)
+        {
+            // A compressed/XOR payload has its own source coordinates, not offsets
+            // in its encoded bytes. Plain sub-buffers retain the original offset.
+            if (!transformed) payload.ShiftOffset(offset);
+        }
+    }
+
     public static partial class PortablePrimitives
     {
+        public static T Value<T>(BlockT<T> block) where T : struct => block != null ? block.Data : default;
+        public static string Text<T>(BlockT<T> block) where T : struct => block.ToString();
+        public static string Text(BlockString block) => block.Data;
+        public static string EnumHex(ulong value, int digits) => value.ToString("X").PadLeft(digits, '0');
         public static int SizeOf(Type type)
         {
             type = Underlying(type);

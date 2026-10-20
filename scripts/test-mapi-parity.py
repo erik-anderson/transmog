@@ -1,0 +1,120 @@
+"""Compare synthetic MAPI cases with the independent pinned native reference."""
+import argparse
+import importlib.util
+import json
+from pathlib import Path
+import subprocess
+
+from mapi_reference import ROOT, WORK, oracle_command
+
+SPEC = importlib.util.spec_from_file_location("mapi_corpus", ROOT / "extensions/mapi/test/corpus.py")
+corpus = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(corpus)
+
+
+def normalize(node):
+    if node is None or "failure" in node:
+        return node
+    result = {key: node[key] for key in ["type", "text", "parsed", "offset", "size", "valueType", "raw"]}
+    if node["type"] == "MAPIInspector.Parsers.PtypTime":
+        # Presentation is host-owned UTC FILETIME, not the reference machine's locale/time zone.
+        result["text"] = None
+    if node["type"] == "BlockParser.BlockException":
+        result["children"] = []  # Native and JavaScript stack traces have different frames.
+    else:
+        result["children"] = [normalize(child) for child in node["children"]]
+    return result
+
+
+def nodes(node):
+    if node:
+        yield node
+        for child in node.get("children", []):
+            yield from nodes(child)
+
+
+def shift_coordinates(node, delta):
+    result=dict(node)
+    result["offset"]=str(int(node["offset"])-delta)
+    result["children"]=[shift_coordinates(child,delta) for child in node["children"]]
+    return result
+
+
+def run(command, fixtures):
+    result = subprocess.run(command, input="".join(json.dumps(fixture) + "\n" for fixture in fixtures), cwd=ROOT,
+                            text=True, encoding="utf-8", capture_output=True, check=True, timeout=120)
+    output = [json.loads(line) for line in result.stdout.splitlines()]
+    if len(output) != len(fixtures):
+        raise AssertionError("Parity runner lost test results")
+    return output
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    modes=parser.add_mutually_exclusive_group()
+    modes.add_argument("--write-reference", action="store_true")
+    modes.add_argument("--golden-only",action="store_true",help="Use committed reference trees without requiring .NET")
+    arguments = parser.parse_args()
+    fixtures = corpus.cases()
+    reference_path=ROOT / "extensions/mapi/test/reference-cases.json"
+    if arguments.golden_only:
+        saved=json.loads(reference_path.read_text(encoding="utf-8"))
+        if [item["fixture"] for item in saved]!=fixtures:
+            raise SystemExit("Synthetic reference cases are stale; regenerate with the pinned oracle")
+        reference=[item["tree"] for item in saved]
+    else:
+        reference = run(oracle_command(), fixtures)
+    javascript = run(["node", "--experimental-vm-modules", str(ROOT / "extensions/mapi/test/run-protocol.mjs")], fixtures)
+    failures = []
+    for fixture, expected, actual in zip(fixtures, reference, javascript):
+        if "timestamp" in fixture and actual.get("timestamp")!=fixture["timestamp"]:
+            failures.append({"name":fixture["name"],"reason":"UTC FILETIME metadata mismatch","reference":expected,"javascript":actual})
+            continue
+        if "stringValue" in fixture and (actual.get("stringValue"),actual.get("charset"))!=(fixture["stringValue"],fixture["charset"]):
+            failures.append({"name":fixture["name"],"reason":"string/encoding metadata mismatch","reference":expected,"javascript":actual})
+            continue
+        if fixture.get("includeDerived"):
+            outcome=actual
+            actual=outcome.get("tree")
+            specification=fixture["derivedExpectation"]
+            derived=outcome.get("derived",[])
+            if specification["transformed"]:
+                valid=len(derived)==1 and derived[0]["bytes"]==specification["bytes"] and derived[0]["exactMapping"]==specification["exactMapping"]
+                valid=valid and derived[0]["parents"]==[{"sourceId":"body.1.request","offset":"8","length":str(specification["encodedBytes"])}]
+                valid=valid and all(item["sourceId"]==derived[0]["id"] and 0<=int(item["offset"])<=int(item["offset"])+int(item["size"])<=len(specification["bytes"])
+                                    for item in nodes(actual["children"][1]))
+                if not valid:
+                    failures.append({"name":fixture["name"],"reason":"derived provenance mismatch","reference":expected,"javascript":outcome})
+                    continue
+                # The reference shifts decoded fields into encoded coordinates.
+                # Correct this one documented presentation defect, preserving exact decoded ranges.
+                expected=dict(expected)
+                expected["children"]=list(expected["children"])
+                expected["children"][1]=shift_coordinates(expected["children"][1],8)
+            elif derived:
+                failures.append({"name":fixture["name"],"reason":"unnecessary derived source","reference":expected,"javascript":outcome})
+                continue
+        if fixture.get("intentionalDifference") == "absent-string-layout":
+            native_fault = any(item["type"] == "BlockParser.BlockException" and item["text"] == "Tree Layout Exception" for item in nodes(expected))
+            repaired = actual.get("text") == "No value" and actual.get("size") == "1" and len(actual.get("children", [])) == 1
+            if repaired:
+                value = actual["children"][0]
+                repaired = (value["valueType"], value["raw"], value["offset"], value["size"]) == ("System.Boolean", "False", "0", "1")
+            if not native_fault or not repaired:
+                failures.append({"name": fixture["name"], "reason": "absent-value layout regression", "reference": expected, "javascript": actual})
+            continue
+        if normalize(expected) != normalize(actual):
+            failures.append({"name": fixture["name"], "reason": "differential mismatch", "reference": expected, "javascript": actual})
+        elif fixture["expected"] == "complete" and ("failure" in expected or any(item["type"] == "BlockParser.BlockException" for item in nodes(expected))):
+            failures.append({"name": fixture["name"], "reason": "valid fixture did not decode", "reference": expected})
+    WORK.mkdir(exist_ok=True, parents=True)
+    (WORK / "parity-failures.json").write_text(json.dumps(failures, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+    if failures:
+        raise SystemExit(f'{len(failures)} of {len(fixtures)} cases failed; see {WORK / "parity-failures.json"}')
+    if arguments.write_reference:
+        reference_path.write_text(json.dumps([{"fixture": fixture, "tree": normalize(expected)} for fixture, expected in zip(fixtures, reference)], indent=2, ensure_ascii=False) + "\n", encoding="utf-8",newline="\n")
+    print(f"MAPI differential parity: {len(fixtures)} valid synthetic cases passed")
+
+
+if __name__ == "__main__":
+    main()

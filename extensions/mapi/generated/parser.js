@@ -54624,13 +54624,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                                             try {
                                                                 while ($e8a95.moveNext()) {
                                                                     let rop = $e8a95.current;
-                                                                    if ((TransposeR.is(rop, MAPIInspector.Parsers.RopGetRulesTableRequest) && ((TransposeR.as(rop, MAPIInspector.Parsers.RopGetRulesTableRequest)).OutputHandleIndex === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetAttachmentTableRequest) && ((TransposeR.as(rop, MAPIInspector.Parsers.RopGetAttachmentTableRequest)).OutputHandleIndex === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetPermissionsTableRequest) && ((TransposeR.as(rop, MAPIInspector.Parsers.RopGetAttachmentTableRequest)).OutputHandleIndex === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetContentsTableRequest) && ((TransposeR.as(rop, MAPIInspector.Parsers.RopGetContentsTableRequest)).OutputHandleIndex === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest) && ((TransposeR.as(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest)).OutputHandleIndex === handleIndex))) {
+                                                                    if ((TransposeR.is(rop, MAPIInspector.Parsers.RopGetRulesTableRequest) && (BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetRulesTableRequest)).OutputHandleIndex) === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetAttachmentTableRequest) && (BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetAttachmentTableRequest)).OutputHandleIndex) === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetPermissionsTableRequest) && (BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetAttachmentTableRequest)).OutputHandleIndex) === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetContentsTableRequest) && (BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetContentsTableRequest)).OutputHandleIndex) === handleIndex)) || (TransposeR.is(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest) && (BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest)).OutputHandleIndex) === handleIndex))) {
                                                                         if (MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.Count > 0) {
                                                                             let sessions = System.Linq.Enumerable.from(MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(parameters[System.Array.index(1, parameters)]).Keys, System.Int32).toList(System.Int32);
-                                                                            var $e91db = TransposeR.getEnumerator(sessions);
+                                                                            var $e9299 = TransposeR.getEnumerator(sessions);
                                                                             try {
-                                                                                while ($e91db.moveNext()) {
-                                                                                    let sessionID = $e91db.current;
+                                                                                while ($e9299.moveNext()) {
+                                                                                    let sessionID = $e9299.current;
                                                                                     if (sessionID <= thisSessionID && sessionID >= currentSessionID) {
                                                                                         let originalTuple = MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(parameters[System.Array.index(1, parameters)]).getItem(sessionID);
                                                                                         if (originalTuple.Item5 === "") {
@@ -54640,11 +54640,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                                                                     }
                                                                                 }
                                                                             }finally {
-                                                                                TransposeR.dispose($e91db);
+                                                                                TransposeR.dispose($e9299);
                                                                             }
                                                                         }
                                                                     }
-                                                                    if ((parameters[System.Array.index(0, parameters)] !== 0 && TransposeR.is(rop, MAPIInspector.Parsers.RopGetContentsTableRequest) && (TransposeR.as(rop, MAPIInspector.Parsers.RopGetContentsTableRequest)).OutputHandleIndex === handleIndex) || (parameters[System.Array.index(0, parameters)] === 0 && TransposeR.is(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest) && (TransposeR.as(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest)).OutputHandleIndex === handleIndex)) {
+                                                                    if ((parameters[System.Array.index(0, parameters)] !== 0 && TransposeR.is(rop, MAPIInspector.Parsers.RopGetContentsTableRequest) && BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetContentsTableRequest)).OutputHandleIndex) === handleIndex) || (parameters[System.Array.index(0, parameters)] === 0 && TransposeR.is(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest) && BlockParser.PortablePrimitives.Value(System.Byte, (TransposeR.as(rop, MAPIInspector.Parsers.RopGetHierarchyTableRequest)).OutputHandleIndex) === handleIndex)) {
                                                                         isFound = true;
                                                                         resultTableSessionId = Transpose.Int.clipu32(currentSessionID);
                                                                         break;
@@ -54675,10 +54675,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 }
                 if (MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.containsKey(parameters[System.Array.index(1, parameters)])) {
                     let searchkey = (parameters[System.Array.index(0, parameters)] === 0 ? "RopGetHierarchyTableRequest" : "RopGetContentsTableRequest");
-                    var $ea1b5 = TransposeR.getEnumerator(MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(parameters[System.Array.index(1, parameters)]).Keys);
+                    var $ea2bf = TransposeR.getEnumerator(MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(parameters[System.Array.index(1, parameters)]).Keys);
                     try {
-                        while ($ea1b5.moveNext()) {
-                            let sessionID = $ea1b5.current;
+                        while ($ea2bf.moveNext()) {
+                            let sessionID = $ea2bf.current;
                             let currentTuple = MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(parameters[System.Array.index(1, parameters)]).getItem(Transpose.Int.clip32(sessionID));
                             if ((sessionID >= resultTableSessionId && sessionID <= thisSessionID)) {
                                 if (currentTuple.Item1 === serverurl && currentTuple.Item2 === processName && currentTuple.Item3 === clientInfo) {
@@ -54689,7 +54689,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             }
                         }
                     }finally {
-                        TransposeR.dispose($ea1b5);
+                        TransposeR.dispose($ea2bf);
                     }
                     if (targetSessionID !== 0) {
                         result = MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(parameters[System.Array.index(1, parameters)]).getItem(Transpose.Int.clip32(targetSessionID)).Item4;
@@ -54742,10 +54742,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         },
         OverwriteOriginalInformation: function (sessionID, serverurl, processName, clientInfo) {
             if (MapiInspector.MAPIParser.ContextInformationCollection.Count > 0) {
-                var $eb4d5 = TransposeR.getEnumerator(MapiInspector.MAPIParser.ContextInformationCollection);
+                var $eb5df = TransposeR.getEnumerator(MapiInspector.MAPIParser.ContextInformationCollection);
                 try {
-                    while ($eb4d5.moveNext()) {
-                        let infor = $eb4d5.current;
+                    while ($eb5df.moveNext()) {
+                        let infor = $eb5df.current;
                         if (Transpose.getType(infor.RelatedInformation) !== System.String) {
                             switch (infor.RopID) {
                                 case MAPIInspector.Parsers.RopIdType.RopFastTransferSourceGetBuffer:
@@ -54777,7 +54777,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         }
                     }
                 }finally {
-                    TransposeR.dispose($eb4d5);
+                    TransposeR.dispose($eb5df);
                 }
             }
         },
@@ -55979,7 +55979,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 errorCodeString = System.Enum.toString(MAPIInspector.Parsers.ErrorCodes, errorCodeUint);
             }
-            return (System.String.isNullOrEmpty(errorCodeString) ? "0x{errorCodeUint:X}" : (TransposeR.toStr(errorCodeString) + " = 0x" + TransposeR.formatValue(errorCodeUint, "X")));
+            return (System.String.isNullOrEmpty(errorCodeString) ? "0x{errorCodeUint:X}" : (TransposeR.toStr(errorCodeString) + " = 0x" + TransposeR.toStr(BlockParser.PortablePrimitives.EnumHex(System.UInt64(Transpose.Int.clipu32((errorCodeUint))), 8))));
         }
     }
 },
@@ -56785,7 +56785,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         },
         Verify: function (parser, val) {
             let bufferVal = BlockParser.Block.TestParse(System.UInt32, parser);
-            return bufferVal.Parsed && bufferVal === val;
+            return bufferVal.Parsed && BlockParser.PortablePrimitives.Value(System.UInt32, bufferVal) === val;
         }
     }
 },
@@ -57144,7 +57144,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             let tempadditionalHeaders = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
             while (!parser.Empty) {
                 str = BlockParser.Block.ParseStringLineA(parser);
-                switch (str) {
+                switch (BlockParser.PortablePrimitives.Text(str)) {
                     case "PROCESSING":
                     case "PENDING":
                     case "DONE":
@@ -58929,9 +58929,46 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 }
     });
 
+    Transpose.define("BlockParser.PortableEvidence", {
+        statics: {
+    fields: {
+        OnPayload: null
+    },
+    methods: {
+        Payload: function (bytes, encoded, transformed, flags) {
+            let parser = new BlockParser.BinaryParser.$ctor1(bytes);
+            (($nc0) => $nc0 == null ? null : $nc0(parser, encoded, bytes, transformed, flags))(BlockParser.PortableEvidence.OnPayload);
+            return parser;
+        },
+        Shift: function (payload, offset, transformed) {
+            if (!transformed) {
+                payload.ShiftOffset(offset);
+            }
+        }
+    }
+},
+        ctors: {
+    ctor: function () {
+        this.$initialize();
+    }
+}
+    });
+
     Transpose.define("BlockParser.PortablePrimitives", {
         statics: {
     methods: {
+        Value: function (T, block) {
+            return (block != null ? block.Data : Transpose.getDefaultValue(T));
+        },
+        Text$1: function (T, block) {
+            return block.toString();
+        },
+        Text: function (block) {
+            return block.Data;
+        },
+        EnumHex: function (value, digits) {
+            return System.String.alignString(value.toString("X"), digits, 48);
+        },
         SizeOf: function (type) {
             type = BlockParser.PortablePrimitives.Underlying(type);
             if (type === System.Byte || type === System.SByte) {
@@ -59695,7 +59732,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyCount = this.ParseT(System.UInt32);
         let tempArray = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.PropertyCount); i = (((i) + 1) | 0)) {
             let tempproperty = new MAPIInspector.Parsers.TaggedPropertyValue();
             tempproperty.Parse(this.parser);
             tempArray.add(tempproperty);
@@ -59726,7 +59763,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.AddressCount = this.ParseT(System.UInt32);
         let tempArray = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressEntry))();
-        for (var i = 0; i < this.AddressCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.AddressCount); i = (((i) + 1) | 0)) {
             tempArray.add(this.Parse$1(MAPIInspector.Parsers.AddressEntry));
         }
         this.Addresses = tempArray.ToArray();
@@ -59759,10 +59796,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.Flag = this.ParseT(System.Byte);
-        if (this.Flag === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 0) {
             this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(this.propertyType, this.parser, this.context);
         }
-        else if (this.Flag === 10) {
+        else if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 10) {
             this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(MAPIInspector.Parsers.PropertyDataType.PtypErrorCode, this.parser, this.context);
         }
     },
@@ -59798,10 +59835,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyType = this.ParseT(MAPIInspector.Parsers.PropertyDataType);
         this.Flag = this.ParseT(System.Byte);
-        if (this.Flag === 0) {
-            this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropertyType), this.parser, this.context);
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 0) {
+            this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropertyType), this.parser, this.context);
         }
-        else if (this.Flag === 10) {
+        else if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 10) {
             this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(MAPIInspector.Parsers.PropertyDataType.PtypErrorCode, this.parser, this.context);
         }
     },
@@ -59986,7 +60023,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         if (this.isAddressBook) {
             this.HasValue = this.ParseAs(System.Byte, System.Boolean);
-            if (!this.HasValue) {
+            if (!BlockParser.PortablePrimitives.Value(System.Boolean, this.HasValue)) {
                 return;
             }
         }
@@ -59996,7 +60033,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         else {
             this.Count = this.ParseT(System.UInt32);
         }
-        this.Value = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.Count));
+        this.Value = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.Count));
     },
     ParseBlocks: function () {
         this.AddChildBlockT(System.Boolean, this.HasValue, "HasValue");
@@ -60259,7 +60296,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempBinary = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypBinary))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             let binary = new MAPIInspector.Parsers.PtypBinary(this.context, this.isAddressBook);
             binary.Parse(this.parser);
             tempBinary.add(binary);
@@ -60289,7 +60326,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypCurrency))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypCurrency));
         }
         this.Value = tempvalue.ToArray();
@@ -60317,7 +60354,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypFloating32))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypFloating32));
         }
         this.Value = tempvalue.ToArray();
@@ -60345,7 +60382,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypFloating64))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypFloating64));
         }
         this.Value = tempvalue.ToArray();
@@ -60373,7 +60410,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypFloatingTime))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypFloatingTime));
         }
         this.Value = tempvalue.ToArray();
@@ -60401,7 +60438,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypGuid))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypGuid));
         }
         this.Value = tempvalue.ToArray();
@@ -60429,7 +60466,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypInteger16))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypInteger16));
         }
         this.Value = tempvalue.ToArray();
@@ -60457,7 +60494,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypInteger32))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypInteger32));
         }
         this.Value = tempvalue.ToArray();
@@ -60485,7 +60522,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypInteger64))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypInteger64));
         }
         this.Value = tempvalue.ToArray();
@@ -60517,7 +60554,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypString))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             let str = new MAPIInspector.Parsers.PtypString.$ctor1(this.isAddressBook);
             str.Parse(this.parser);
             tempvalue.add(str);
@@ -60551,7 +60588,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypString8))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             let str = new MAPIInspector.Parsers.PtypString8.$ctor1(this.isAddressBook);
             str.Parse(this.parser);
             tempvalue.add(str);
@@ -60581,7 +60618,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt32);
         let tempvalue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypTime))();
-        for (var i = 0; i < this.Count; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.Count); i = (((i) + 1) | 0)) {
             tempvalue.add(this.Parse$1(MAPIInspector.Parsers.PtypTime));
         }
         this.Value = tempvalue.ToArray();
@@ -60642,7 +60679,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.Count = this.ParseT(System.UInt16);
-        this.ServerId = this.Parse$2(MAPIInspector.Parsers.PtypServerIdStruct, BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.Count));
+        this.ServerId = this.Parse$2(MAPIInspector.Parsers.PtypServerIdStruct, BlockParser.PortablePrimitives.Value(System.UInt16, this.Count));
     },
     ParseBlocks: function () {
         this.AddChildBlockT(System.UInt16, this.Count, "Count");
@@ -60669,7 +60706,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.Ours = this.ParseT(System.Byte);
-        if (this.Ours === 1) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.Ours) === 1) {
             this.FolderID = this.Parse$1(MAPIInspector.Parsers.FolderID);
             this.MessageID = this.Parse$1(MAPIInspector.Parsers.MessageID);
             this.Instance = this.ParseT(System.UInt32);
@@ -60722,7 +60759,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         if (this.isAddressBook) {
             this.HasValue = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasValue) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasValue)) {
                 this.Value = this.ParseStringW(Transpose.Int.clip32(-1));
             }
             return;
@@ -60771,7 +60808,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         if (this.isAddressBook) {
             this.HasValue = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasValue) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasValue)) {
                 this.Value = this.ParseStringA(Transpose.Int.clip32(-1));
             }
             return;
@@ -60804,7 +60841,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     },
     ParseBlocks: function () {
         try {
-            this.Text = System.DateTime.format(System.DateTime.toLocalTime(System.DateTime.addMilliseconds(System.DateTime.create(1601, 1, 1), (System.Int64(this.Value).div(System.UInt64("10000"))).toNumber())));
+            this.Text = System.DateTime.format(System.DateTime.toLocalTime(System.DateTime.addMilliseconds(System.DateTime.create(1601, 1, 1), (BlockParser.PortablePrimitives.Value(System.UInt64, this.Value).div(System.UInt64("10000"))).toNumber())));
         }
         catch ($ex) {
             let $e = System.Exception.create($ex);
@@ -60856,10 +60893,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if ((Transpose.Int.clipu16(this.tagInRestriction.PropertyType.Data) & 4096) === 4096) {
                 this.tagInRestriction.PropertyType.Data = (Transpose.Int.clipu16(this.tagInRestriction.PropertyType.Data) & 4095);
             }
-            this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.tagInRestriction.PropertyType), this.parser, this.context);
+            this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.tagInRestriction.PropertyType), this.parser, this.context);
         }
         else {
-            this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropertyTag.PropertyType), this.parser, this.context);
+            this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropertyTag.PropertyType), this.parser, this.context);
         }
     },
     ParseBlocks: function () {
@@ -60900,7 +60937,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.PropertyType = this.ParseT(MAPIInspector.Parsers.PropertyDataType);
-        this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropertyType), this.parser, this.context);
+        this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropertyType), this.parser, this.context);
     },
     ParseBlocks: function () {
         this.AddChildBlockT(MAPIInspector.Parsers.PropertyDataType, this.PropertyType, "PropertyType");
@@ -60989,7 +61026,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 break;
         }
         let tempRestricts = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.RestrictionType))();
-        for (var length = 0; length < this.RestrictCount; length = (((length) + 1) | 0)) {
+        for (var length = 0; length < BlockParser.PortablePrimitives.Value(System.UInt32, this.RestrictCount); length = (((length) + 1) | 0)) {
             let tempRestriction = new MAPIInspector.Parsers.RestrictionType(this.context);
             tempRestriction.Parse(this.parser);
             tempRestricts.add(tempRestriction);
@@ -61060,14 +61097,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RestrictType = this.ParseT(MAPIInspector.Parsers.RestrictTypeEnum);
         this.TaggedValuesCount = this.ParseT(System.Byte);
         let tempTaggedValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.TaggedValuesCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.Byte, this.TaggedValuesCount); i = (((i) + 1) | 0)) {
             let tempproperty = new MAPIInspector.Parsers.TaggedPropertyValue(this.context);
             tempproperty.Parse(this.parser);
             tempTaggedValue.add(tempproperty);
         }
         this.TaggedValues = tempTaggedValue.ToArray();
         this.RestrictionPresent = this.ParseAs(System.Byte, System.Boolean);
-        if (this.RestrictionPresent === true) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.RestrictionPresent) === true) {
             this.Restriction = new MAPIInspector.Parsers.RestrictionType(this.context);
             this.Restriction.Parse(this.parser);
         }
@@ -61269,7 +61306,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 break;
         }
         let tempRestricts = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.RestrictionType))();
-        for (var length = 0; length < this.RestrictCount; length = (((length) + 1) | 0)) {
+        for (var length = 0; length < BlockParser.PortablePrimitives.Value(System.UInt32, this.RestrictCount); length = (((length) + 1) | 0)) {
             let tempRestriction = new MAPIInspector.Parsers.RestrictionType(this.context);
             tempRestriction.Parse(this.parser);
             tempRestricts.add(tempRestriction);
@@ -61528,7 +61565,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.CategorizedCount = this.ParseT(System.UInt16);
         this.ExpandedCount = this.ParseT(System.UInt16);
         let tempSortOrders = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.SortOrder))();
-        for (var i = 0; i < this.SortOrderCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.SortOrderCount); i = (((i) + 1) | 0)) {
             tempSortOrders.add(this.Parse$1(MAPIInspector.Parsers.SortOrder));
         }
         this.SortOrders = tempSortOrders.ToArray();
@@ -61812,7 +61849,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             case MAPIInspector.Parsers.KindEnum.Name:
                 this.GUID = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
                 this.NameSize = this.ParseT(System.Byte);
-                this.Name = this.ParseStringW(Transpose.Int.clip32(TransposeR.idiv(this.NameSize, 2)));
+                this.Name = this.ParseStringW(Transpose.Int.clip32(TransposeR.idiv(BlockParser.PortablePrimitives.Value(System.Byte, this.NameSize), 2)));
                 break;
             case MAPIInspector.Parsers.KindEnum.NoPropertyName:
             default:
@@ -61825,7 +61862,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         MAPIInspector.Parsers.BlockGuidExtensions.AddChildGuid(this, this.GUID, "GUID");
         let namedProp = null;
         if (this.GUID != null && this.LID != null) {
-            namedProp = MAPIInspector.Parsers.NamedProperty.Lookup(BlockParser.BlockT$1(System.Guid).op_Implicit$1(this.GUID.value), BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.LID));
+            namedProp = MAPIInspector.Parsers.NamedProperty.Lookup(BlockParser.PortablePrimitives.Value(System.Guid, this.GUID.value), BlockParser.PortablePrimitives.Value(System.UInt32, this.LID));
         }
         if (this.LID != null) {
             if (namedProp != null) {
@@ -61909,18 +61946,18 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     let tempPropTag = $e09f0.current;
                     let rowPropValue = null;
                     tempPropTag.PropertyType.Data &= ~MAPIInspector.Parsers.PropertyDataType.MultivalueInstance;
-                    if (this.Flag === 0) {
-                        if (tempPropTag.PropertyType !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
-                            rowPropValue = new MAPIInspector.Parsers.PropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(tempPropTag.PropertyType), this.context);
+                    if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 0) {
+                        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tempPropTag.PropertyType) !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
+                            rowPropValue = new MAPIInspector.Parsers.PropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tempPropTag.PropertyType), this.context);
                             rowPropValue.Parse(this.parser);
                         }
                         else {
                             rowPropValue = this.Parse$1(MAPIInspector.Parsers.TypedPropertyValue);
                         }
                     }
-                    else if (this.Flag === 1) {
-                        if (tempPropTag.PropertyType !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
-                            rowPropValue = new MAPIInspector.Parsers.FlaggedPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(tempPropTag.PropertyType), this.context);
+                    else if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 1) {
+                        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tempPropTag.PropertyType) !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
+                            rowPropValue = new MAPIInspector.Parsers.FlaggedPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tempPropTag.PropertyType), this.context);
                             rowPropValue.Parse(this.parser);
                         }
                         else {
@@ -61929,14 +61966,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         }
                     }
                     tempPropTag.Size = System.Int64("0");
-                    var $e0f68 = TransposeR.getEnumerator(tempPropTag.Children);
+                    var $e104c = TransposeR.getEnumerator(tempPropTag.Children);
                     try {
-                        while ($e0f68.moveNext()) {
-                            let child = $e0f68.current;
+                        while ($e104c.moveNext()) {
+                            let child = $e104c.current;
                             child.Size = System.Int64("0");
                         }
                     }finally {
-                        TransposeR.dispose($e0f68);
+                        TransposeR.dispose($e104c);
                     }
                     rowPropValue.InsertChild(tempPropTag, "PropertyTag");
                     tempPropArray.add(rowPropValue);
@@ -61954,16 +61991,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Text = "PropertyRow";
         this.AddChildBlockT(System.Byte, this.Flag, "Flag");
         this.AddChildBytes(this.bytes, "Bytes");
-        var $e11a6 = TransposeR.getEnumerator(this.ValueArray);
+        var $e128a = TransposeR.getEnumerator(this.ValueArray);
         try {
-            while ($e11a6.moveNext()) {
-                let propValue = $e11a6.current;
+            while ($e128a.moveNext()) {
+                let propValue = $e128a.current;
                 if (propValue != null) {
                     this.AddChild$1(propValue, (TransposeR.toStr(Transpose.Reflection.getTypeName(Transpose.getType(propValue)))));
                 }
             }
         }finally {
-            TransposeR.dispose($e11a6);
+            TransposeR.dispose($e128a);
         }
     }
 }
@@ -61996,28 +62033,28 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Byte0 = this.ParseT(System.Byte);
         let index = 0;
-        this.R = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.R = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.S = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.S = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.T = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.T = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.D = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.D = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.E = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.E = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.Type = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.AddressTypeEnum, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 3), this.Byte0.Size, this.Byte0.Offset);
+        this.Type = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.AddressTypeEnum, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 3), this.Byte0.Size, this.Byte0.Offset);
         this.Byte1 = this.ParseT(System.Byte);
         index = 0;
-        this.O = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
+        this.O = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.Reserved = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte1), index, 4), this.Byte1.Size, this.Byte1.Offset);
+        this.Reserved = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte1), index, 4), this.Byte1.Size, this.Byte1.Offset);
         index = Transpose.Int.clip32(index + 4);
-        this.I = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
+        this.I = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.U = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
+        this.U = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
         index = Transpose.Int.clip32(index + 1);
-        this.N = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
+        this.N = BlockParser.Block.CreateBlock(System.Boolean, 1 === MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte1), index, 1), this.Byte1.Size, this.Byte1.Offset);
     },
     ParseBlocks: function () {
         this.Text = "RecipientFlags";
@@ -62066,36 +62103,36 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.RecipientFlags = this.Parse$1(MAPIInspector.Parsers.RecipientFlags);
-        if (this.RecipientFlags.Type === MAPIInspector.Parsers.AddressTypeEnum.X500DN) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.AddressTypeEnum, this.RecipientFlags.Type) === MAPIInspector.Parsers.AddressTypeEnum.X500DN) {
             this.AddressPrefixUsed = this.ParseT(System.Byte);
             this.DisplayType = this.ParseT(MAPIInspector.Parsers.DisplayType);
             this.X500DN = this.ParseStringA();
         }
-        else if (this.RecipientFlags.Type === MAPIInspector.Parsers.AddressTypeEnum.PersonalDistributionList1 || this.RecipientFlags.Type === MAPIInspector.Parsers.AddressTypeEnum.PersonalDistributionList2) {
+        else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.AddressTypeEnum, this.RecipientFlags.Type) === MAPIInspector.Parsers.AddressTypeEnum.PersonalDistributionList1 || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.AddressTypeEnum, this.RecipientFlags.Type) === MAPIInspector.Parsers.AddressTypeEnum.PersonalDistributionList2) {
             this.EntryIdSize = this.ParseT(System.UInt16);
             this.EntryID = this.Parse$1(MAPIInspector.Parsers.AddressBookEntryID);
             this.SearchKeySize = this.ParseT(System.UInt16);
-            this.SearchKey = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.SearchKeySize));
+            this.SearchKey = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.SearchKeySize));
         }
-        else if (this.RecipientFlags.Type === MAPIInspector.Parsers.AddressTypeEnum.NoType && this.RecipientFlags.O) {
+        else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.AddressTypeEnum, this.RecipientFlags.Type) === MAPIInspector.Parsers.AddressTypeEnum.NoType && BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.O)) {
             this.AddressType = this.ParseStringA();
         }
-        if (this.RecipientFlags.E) {
-            this.EmailAddress = (this.RecipientFlags.U ? this.ParseStringW() : this.ParseStringA());
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.E)) {
+            this.EmailAddress = (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.U) ? this.ParseStringW() : this.ParseStringA());
         }
-        if (this.RecipientFlags.D) {
-            this.DisplayName = (this.RecipientFlags.U ? this.ParseStringW() : this.ParseStringA());
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.D)) {
+            this.DisplayName = (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.U) ? this.ParseStringW() : this.ParseStringA());
         }
-        if (this.RecipientFlags.I) {
-            this.SimpleDisplayName = (this.RecipientFlags.U ? this.ParseStringW() : this.ParseStringA());
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.I)) {
+            this.SimpleDisplayName = (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.U) ? this.ParseStringW() : this.ParseStringA());
         }
-        if (this.RecipientFlags.T) {
-            this.TransmittableDisplayName = (this.RecipientFlags.U ? this.ParseStringW() : this.ParseStringA());
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.T)) {
+            this.TransmittableDisplayName = (BlockParser.PortablePrimitives.Value(System.Boolean, this.RecipientFlags.U) ? this.ParseStringW() : this.ParseStringA());
         }
         this.RecipientColumnCount = this.ParseT(System.UInt16);
         let propTagsActually = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        if (this.propTags.length >= this.RecipientColumnCount) {
-            for (var i = 0; i < this.RecipientColumnCount; i = (((i) + 1) | 0)) {
+        if (this.propTags.length >= BlockParser.PortablePrimitives.Value(System.UInt16, this.RecipientColumnCount)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.RecipientColumnCount); i = (((i) + 1) | 0)) {
                 propTagsActually.add(this.propTags[System.Array.index(i, this.propTags)]);
             }
         }
@@ -62174,7 +62211,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     },
     ParseBlocks: function () {
         if (this.value != null) {
-            this.Text = (TransposeR.toStr(MAPIInspector.Parsers.Guids.ToString(BlockParser.BlockT$1(System.Guid).op_Implicit$1(this.value))));
+            this.Text = (TransposeR.toStr(MAPIInspector.Parsers.Guids.ToString(BlockParser.PortablePrimitives.Value(System.Guid, this.value))));
         }
     }
 }
@@ -62209,7 +62246,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.WantRecursive = this.ParseAs(System.Byte, System.Boolean);
         this.UseUnicode = this.ParseAs(System.Byte, System.Boolean);
         this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
-        this.NewFolderName = (this.UseUnicode ? this.ParseStringW() : this.ParseStringA());
+        this.NewFolderName = (BlockParser.PortablePrimitives.Value(System.Boolean, this.UseUnicode) ? this.ParseStringW() : this.ParseStringA());
     },
     ParseBlocks: function () {
         this.Text = "RopCopyFolderRequest";
@@ -62295,7 +62332,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.UseUnicodeStrings = this.ParseAs(System.Byte, System.Boolean);
         this.OpenExisting = this.ParseAs(System.Byte, System.Boolean);
         this.Reserved = this.ParseT(System.Byte);
-        if (this.UseUnicodeStrings) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.UseUnicodeStrings)) {
             this.DisplayName = this.ParseStringW();
             this.Comment = this.ParseStringW();
         }
@@ -62345,17 +62382,17 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
             this.IsExistingFolder = this.ParseAs(System.Byte, System.Boolean);
-            if (this.IsExistingFolder) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.IsExistingFolder)) {
                 this.HasRules = this.ParseAs(System.Byte, System.Boolean);
                 this.IsGhosted = this.ParseAs(System.Byte, System.Boolean);
-                if (this.IsGhosted) {
+                if (BlockParser.PortablePrimitives.Value(System.Boolean, this.IsGhosted)) {
                     this.ServerCount = this.ParseT(System.UInt16);
                     this.CheapServerCount = this.ParseT(System.UInt16);
                     let tempServers = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-                    for (var i = 0; i < this.ServerCount; i = (((i) + 1) | 0)) {
+                    for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ServerCount); i = (((i) + 1) | 0)) {
                         tempServers.add(this.ParseStringA());
                     }
                     this.Servers = tempServers.ToArray();
@@ -62470,7 +62507,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.NotifyNonRead = this.ParseAs(System.Byte, System.Boolean);
         this.MessageIdCount = this.ParseT(System.UInt16);
         let tempMessageIDs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageID))();
-        for (var i = 0; i < this.MessageIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageIdCount); i = (((i) + 1) | 0)) {
             tempMessageIDs.add(this.Parse$1(MAPIInspector.Parsers.MessageID));
         }
         this.MessageIds = tempMessageIDs.ToArray();
@@ -62639,7 +62676,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.RowCount = this.ParseT(System.UInt32);
         }
     },
@@ -62706,7 +62743,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.RowCount = this.ParseT(System.UInt32);
         }
     },
@@ -62781,16 +62818,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.RestrictionDataSize = this.ParseT(System.UInt16);
-            if (this.RestrictionDataSize > 0) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize) > 0) {
                 this.RestrictionData = new MAPIInspector.Parsers.RestrictionType();
                 this.RestrictionData.Parse(this.parser);
             }
             this.LogonId = this.ParseT(System.Byte);
             this.FolderIdCount = this.ParseT(System.UInt16);
             let tempFolderIDs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.FolderID))();
-            for (var i = 0; i < this.FolderIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.FolderIdCount); i = (((i) + 1) | 0)) {
                 tempFolderIDs.add(this.Parse$1(MAPIInspector.Parsers.FolderID));
             }
             this.FolderIds = tempFolderIDs.ToArray();
@@ -62902,7 +62939,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.NotifyNonRead = this.ParseAs(System.Byte, System.Boolean);
         this.MessageIdCount = this.ParseT(System.UInt16);
         let tempMessageIDs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageID))();
-        for (var i = 0; i < this.MessageIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageIdCount); i = (((i) + 1) | 0)) {
             tempMessageIDs.add(this.Parse$1(MAPIInspector.Parsers.MessageID));
         }
         this.MessageIds = tempMessageIDs.ToArray();
@@ -62977,7 +63014,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.DestHandleIndex = this.ParseT(System.Byte);
         this.MessageIdCount = this.ParseT(System.UInt16);
         let tempMessageIDs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageID))();
-        for (var i = 0; i < this.MessageIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageIdCount); i = (((i) + 1) | 0)) {
             tempMessageIDs.add(this.Parse$1(MAPIInspector.Parsers.MessageID));
         }
         this.MessageIds = tempMessageIDs.ToArray();
@@ -63063,7 +63100,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.WantAsynchronous = this.ParseAs(System.Byte, System.Boolean);
         this.UseUnicode = this.ParseAs(System.Byte, System.Boolean);
         this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
-        if (this.UseUnicode) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.UseUnicode)) {
             this.NewFolderName = this.ParseStringW();
         }
         else {
@@ -63183,14 +63220,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.HasRules = this.ParseAs(System.Byte, System.Boolean);
             this.IsGhosted = this.ParseAs(System.Byte, System.Boolean);
-            if (this.IsGhosted) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.IsGhosted)) {
                 this.ServerCount = this.ParseT(System.UInt16);
                 this.CheapServerCount = this.ParseT(System.UInt16);
                 let tempServers = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-                for (var i = 0; i < this.ServerCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ServerCount); i = (((i) + 1) | 0)) {
                     tempServers.add(this.ParseStringA());
                 }
                 this.Servers = tempServers.ToArray();
@@ -63235,13 +63272,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.RestrictionDataSize = this.ParseT(System.UInt16);
-        if (this.RestrictionDataSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize) > 0) {
             this.RestrictionData = new MAPIInspector.Parsers.RestrictionType();
             this.RestrictionData.Parse(this.parser);
         }
         this.FolderIdCount = this.ParseT(System.UInt16);
         let tempFolderIDs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.FolderID))();
-        for (var i = 0; i < this.FolderIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.FolderIdCount); i = (((i) + 1) | 0)) {
             tempFolderIDs.add(this.Parse$1(MAPIInspector.Parsers.FolderID));
         }
         this.FolderIds = tempFolderIDs.ToArray();
@@ -63307,10 +63344,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertySet = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
         this.Flag = this.ParseT(MAPIInspector.Parsers.KindEnum);
-        if (this.Flag === MAPIInspector.Parsers.KindEnum.LID) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.KindEnum, this.Flag) === MAPIInspector.Parsers.KindEnum.LID) {
             this.Dispid = this.ParseT(System.UInt32);
         }
-        else if (this.Flag === MAPIInspector.Parsers.KindEnum.Name) {
+        else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.KindEnum, this.Flag) === MAPIInspector.Parsers.KindEnum.Name) {
             this.Name = this.ParseStringW();
         }
     },
@@ -63320,7 +63357,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(MAPIInspector.Parsers.KindEnum, this.Flag, "Flag");
         let namedProp = null;
         if (this.PropertySet != null && this.Dispid != null) {
-            namedProp = MAPIInspector.Parsers.NamedProperty.Lookup(BlockParser.BlockT$1(System.Guid).op_Implicit$1(this.PropertySet.value), BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.Dispid));
+            namedProp = MAPIInspector.Parsers.NamedProperty.Lookup(BlockParser.PortablePrimitives.Value(System.Guid, this.PropertySet.value), BlockParser.PortablePrimitives.Value(System.UInt32, this.Dispid));
         }
         if (this.Dispid != null) {
             if (namedProp != null) {
@@ -63374,14 +63411,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (!type.Parsed || !id.Parsed) {
                 return false;
             }
-            return type === MAPIInspector.Parsers.PropertyDataType.PtypInteger32 && id === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetGiven;
+            return BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, type) === MAPIInspector.Parsers.PropertyDataType.PtypInteger32 && BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, id) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetGiven;
         },
         Verify: function (parser) {
             let tag = BlockParser.Block.TestParse(MAPIInspector.Parsers.Markers, parser);
             if (!tag.Parsed) {
                 return false;
             }
-            return !parser.Empty && (MAPIInspector.Parsers.FixedPropTypePropValue.Verify$1(parser) || MAPIInspector.Parsers.VarPropTypePropValue.Verify$1(parser) || MAPIInspector.Parsers.MvPropTypePropValue.Verify$1(parser)) && !MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tag)) && !MAPIInspector.Parsers.MarkersHelper.IsMetaTag(tag.Data);
+            return !parser.Empty && (MAPIInspector.Parsers.FixedPropTypePropValue.Verify$1(parser) || MAPIInspector.Parsers.VarPropTypePropValue.Verify$1(parser) || MAPIInspector.Parsers.MvPropTypePropValue.Verify$1(parser)) && !MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tag)) && !MAPIInspector.Parsers.MarkersHelper.IsMetaTag(tag.Data);
         },
         ParseFrom: function (parser) {
             if (MAPIInspector.Parsers.FixedPropTypePropValue.Verify$1(parser)) {
@@ -63445,7 +63482,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         if (MAPIInspector.Parsers.Partial.PartialGetType !== 0 && MAPIInspector.Parsers.Partial.PartialGetServerUrl === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath && MAPIInspector.Parsers.Partial.PartialGetProcessName === MapiInspector.MAPIParser.ParsingSession.LocalProcess && MAPIInspector.Parsers.Partial.PartialGetClientInfo === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo")) {
             let tmpMarker = this.TestParse(MAPIInspector.Parsers.Markers);
-            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tmpMarker))) {
+            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tmpMarker))) {
                 this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
             }
             else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMetaPropertyID(MAPIInspector.Parsers.Partial.PartialGetId)) {
@@ -63470,7 +63507,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         else {
             let tmpMarker = this.TestParse(MAPIInspector.Parsers.Markers);
-            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tmpMarker))) {
+            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tmpMarker))) {
                 this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
             }
             else if (MAPIInspector.Parsers.MarkersHelper.IsMetaTag(tmpMarker.Data)) {
@@ -63480,13 +63517,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 let offset = this.parser.Offset;
                 let propValue = this.Parse$1(MAPIInspector.Parsers.PropValue);
                 this.parser.Offset = offset;
-                if (MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
+                if (MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.FixedPropTypePropValueGetPartial);
                 }
-                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType))) {
+                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType))) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.VarPropTypePropValueGetPartial);
                 }
-                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType))) {
+                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType))) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.MvPropTypePropValueGetPartial);
                 }
             }
@@ -63518,7 +63555,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         if (MAPIInspector.Parsers.Partial.PartialPutType !== 0 && MAPIInspector.Parsers.Partial.PartialPutServerUrl === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath && MAPIInspector.Parsers.Partial.PartialPutProcessName === MapiInspector.MAPIParser.ParsingSession.LocalProcess && MAPIInspector.Parsers.Partial.PartialPutClientInfo === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo")) {
             let tmpMarker = this.TestParse(MAPIInspector.Parsers.Markers);
-            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tmpMarker))) {
+            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tmpMarker))) {
                 this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
             }
             else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMetaPropertyID(MAPIInspector.Parsers.Partial.PartialPutId)) {
@@ -63543,7 +63580,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         else {
             let tmpMarker = this.TestParse(MAPIInspector.Parsers.Markers);
-            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tmpMarker))) {
+            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tmpMarker))) {
                 this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
             }
             else if (MAPIInspector.Parsers.MarkersHelper.IsMetaTag(tmpMarker.Data)) {
@@ -63553,13 +63590,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 let offset = this.parser.Offset;
                 let propValue = this.Parse$1(MAPIInspector.Parsers.PropValue);
                 this.parser.Offset = offset;
-                if (MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
+                if (MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.FixedPropTypePropValuePutPartial);
                 }
-                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType))) {
+                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType))) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.VarPropTypePropValuePutPartial);
                 }
-                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
+                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.MvPropTypePropValuePutPartial);
                 }
             }
@@ -63591,7 +63628,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         if (MAPIInspector.Parsers.Partial.PartialPutExtendType !== 0 && MAPIInspector.Parsers.Partial.PartialPutExtendServerUrl === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath && MAPIInspector.Parsers.Partial.PartialPutExtendProcessName === MapiInspector.MAPIParser.ParsingSession.LocalProcess && MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo")) {
             let tmpMarker = this.TestParse(MAPIInspector.Parsers.Markers);
-            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tmpMarker))) {
+            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tmpMarker))) {
                 this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
             }
             else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMetaPropertyID(MAPIInspector.Parsers.Partial.PartialPutExtendId)) {
@@ -63616,7 +63653,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         else {
             let tmpMarker = this.TestParse(MAPIInspector.Parsers.Markers);
-            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.BlockT$1(MAPIInspector.Parsers.Markers).op_Implicit$1(tmpMarker))) {
+            if (MAPIInspector.Parsers.MarkersHelper.IsMarker(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, tmpMarker))) {
                 this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
             }
             else if (MAPIInspector.Parsers.MarkersHelper.IsMetaTag(tmpMarker.Data)) {
@@ -63626,13 +63663,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 let offset = this.parser.Offset;
                 let propValue = this.Parse$1(MAPIInspector.Parsers.PropValue);
                 this.parser.Offset = offset;
-                if (MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
+                if (MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.FixedPropTypePropValuePutExtendPartial);
                 }
-                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType))) {
+                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType))) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.VarPropTypePropValuePutExtendPartial);
                 }
-                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
+                else if (MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propValue.PropType)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(this.parser)) {
                     this.PropValue = this.Parse$1(MAPIInspector.Parsers.MvPropTypePropValuePutExtendPartial);
                 }
             }
@@ -63671,11 +63708,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.NewAttach) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.NewAttach) {
             this.PidTagAttachNumber = this.Parse$1(MAPIInspector.Parsers.FixedPropTypePropValue);
             this.AttachmentContent = this.Parse$1(MAPIInspector.Parsers.AttachmentContent);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker === MAPIInspector.Parsers.Markers.EndAttach) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) === MAPIInspector.Parsers.Markers.EndAttach) {
                 this.Parsed = false;
             }
         }
@@ -63756,7 +63793,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         this.State = this.Parse$1(MAPIInspector.Parsers.State);
         this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.EndMarker !== MAPIInspector.Parsers.Markers.IncrSyncEnd) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.IncrSyncEnd) {
             this.Parsed = false;
         }
     },
@@ -63764,14 +63801,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Text = "ContentsSync";
         this.AddChild(this.ProgressTotal);
         if (this.ProgressPerMessageChanges != null) {
-            var $e08f4 = TransposeR.getEnumerator(this.ProgressPerMessageChanges);
+            var $e091a = TransposeR.getEnumerator(this.ProgressPerMessageChanges);
             try {
-                while ($e08f4.moveNext()) {
-                    let progress = $e08f4.current;
+                while ($e091a.moveNext()) {
+                    let progress = $e091a.current;
                     this.AddChild(progress);
                 }
             }finally {
-                TransposeR.dispose($e08f4);
+                TransposeR.dispose($e091a);
             }
         }
         this.AddChild(this.Deletions);
@@ -63804,7 +63841,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncDel) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncDel) {
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
         }
     },
@@ -63839,10 +63876,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.StartEmbed) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.StartEmbed) {
             this.MessageContent = this.Parse$1(MAPIInspector.Parsers.MessageContent);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker !== MAPIInspector.Parsers.Markers.EndEmbed) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.EndEmbed) {
                 this.Parsed = false;
             }
         }
@@ -63878,7 +63915,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncChg) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncChg) {
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
         }
     },
@@ -64098,7 +64135,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncGroupInfo) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncGroupInfo) {
             this.PropertiesTag = this.ParseT(System.UInt32);
             this.PropertiesLength = this.ParseT(System.UInt32);
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropertyGroupInfo);
@@ -64144,21 +64181,21 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         this.State = this.Parse$1(MAPIInspector.Parsers.State);
         this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.EndMarker === MAPIInspector.Parsers.Markers.IncrSyncEnd) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) === MAPIInspector.Parsers.Markers.IncrSyncEnd) {
             this.Parsed = false;
         }
     },
     ParseBlocks: function () {
         this.Text = "HierarchySync";
         if (this.FolderChanges != null) {
-            var $e0647 = TransposeR.getEnumerator(this.FolderChanges);
+            var $e066d = TransposeR.getEnumerator(this.FolderChanges);
             try {
-                while ($e0647.moveNext()) {
-                    let folderChange = $e0647.current;
+                while ($e066d.moveNext()) {
+                    let folderChange = $e066d.current;
                     this.AddChild$1(folderChange, "FolderChange");
                 }
             }finally {
-                TransposeR.dispose($e0647);
+                TransposeR.dispose($e066d);
             }
         }
         this.AddLabeledChild(this.Deletions, "Deletions");
@@ -64193,7 +64230,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
         this.Content = this.Parse$1(MAPIInspector.Parsers.MessageContent);
         this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.EndMarker !== MAPIInspector.Parsers.Markers.EndMessage) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.EndMessage) {
             this.Parsed = false;
         }
     },
@@ -64267,10 +64304,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncChg) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncChg) {
             this.MessageChangeHeader = this.Parse$1(MAPIInspector.Parsers.PropList);
             this.SecondMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.SecondMarker === MAPIInspector.Parsers.Markers.IncrSyncMessage) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.SecondMarker) === MAPIInspector.Parsers.Markers.IncrSyncMessage) {
                 this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
                 this.MessageChildren = this.Parse$1(MAPIInspector.Parsers.MessageChildren);
             }
@@ -64321,7 +64358,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.MetaTagIncrSyncGroupId = this.Parse$1(MAPIInspector.Parsers.MetaPropValue);
         }
         this.Marker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.Marker === MAPIInspector.Parsers.Markers.IncrSyncChgPartial) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.Marker) === MAPIInspector.Parsers.Markers.IncrSyncChgPartial) {
             this.MessageChangeHeader = this.Parse$1(MAPIInspector.Parsers.PropList);
             while (MAPIInspector.Parsers.MarkersHelper.VerifyMetaProperty(this.parser, MAPIInspector.Parsers.MetaProperties.MetaTagIncrementalSyncMessagePartial)) {
                 interMessagePartialList.add(this.Parse$1(MAPIInspector.Parsers.SyncMessagePartialPropList));
@@ -64483,11 +64520,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropType = this.ParseT(MAPIInspector.Parsers.PropertyDataType);
         this.PropID = this.ParseT(MAPIInspector.Parsers.PidTagPropertyEnum);
-        if (this.PropID !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder && this.PropID !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagDnPrefix) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID) !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder && BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID) !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagDnPrefix) {
             this.PropValue = this.ParseT(System.Int32);
         }
         else {
-            if (this.PropID !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID) !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder) {
                 this.PropValue = this.Parse$1(MAPIInspector.Parsers.FolderReplicaInfo);
             }
             else {
@@ -64528,8 +64565,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.PropID = this.ParseT(MAPIInspector.Parsers.PidTagPropertyEnum);
         }
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
-            MAPIInspector.Parsers.Partial.PartialGetId = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropID);
+            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
+            MAPIInspector.Parsers.Partial.PartialGetId = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID);
             MAPIInspector.Parsers.Partial.PartialGetServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialGetProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialGetClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -64547,8 +64584,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     MAPIInspector.Parsers.Partial.PartialGetClientInfo = "";
                 }
             }
-            let typeValue = (this.PropType != null ? BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType) : this.propertyType);
-            let identifyValue = (this.PropID != null ? BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropID) : this.propertyID);
+            let typeValue = (this.PropType != null ? BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType) : this.propertyType);
+            let identifyValue = (this.PropID != null ? BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID) : this.propertyID);
             if (identifyValue !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder && identifyValue !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagDnPrefix) {
                 this.PropValue = this.Parse$1(MAPIInspector.Parsers.PtypInteger32);
             }
@@ -64564,17 +64601,17 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     else {
                         this.length = this.ParseT(System.Int32);
                     }
-                    if (this.parser.RemainingBytes < this.length) {
+                    if (this.parser.RemainingBytes < BlockParser.PortablePrimitives.Value(System.Int32, this.length)) {
                         MAPIInspector.Parsers.Partial.PartialGetType = typeValue;
                         MAPIInspector.Parsers.Partial.PartialGetId = identifyValue;
-                        MAPIInspector.Parsers.Partial.PartialGetRemainSize = Transpose.Int.clip32(this.length - this.parser.RemainingBytes);
+                        MAPIInspector.Parsers.Partial.PartialGetRemainSize = Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.Int32, this.length) - this.parser.RemainingBytes);
                         MAPIInspector.Parsers.Partial.PartialGetServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                         MAPIInspector.Parsers.Partial.PartialGetProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
                         MAPIInspector.Parsers.Partial.PartialGetClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
                         this.PropValue = this.ParseBytes(this.parser.RemainingBytes);
                     }
                     else {
-                        this.PropValue = this.ParseBytes(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.length));
+                        this.PropValue = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.Int32, this.length));
                     }
                 }
             }
@@ -64625,8 +64662,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.PropID = this.ParseT(MAPIInspector.Parsers.PidTagPropertyEnum);
         }
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
-            MAPIInspector.Parsers.Partial.PartialPutExtendId = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropID);
+            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutExtendId = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID);
             MAPIInspector.Parsers.Partial.PartialPutExtendServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutExtendProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -64643,8 +64680,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo = "";
                 }
             }
-            let typeValue = (this.PropType != null ? BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType) : this.propertyType);
-            let identifyValue = (this.PropID != null ? BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropID) : this.propertyID);
+            let typeValue = (this.PropType != null ? BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType) : this.propertyType);
+            let identifyValue = (this.PropID != null ? BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID) : this.propertyID);
             if (identifyValue !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder && identifyValue !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagDnPrefix) {
                 this.PropValue = this.ParseT(System.UInt32);
             }
@@ -64660,17 +64697,17 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     else {
                         this.length = this.ParseT(System.Int32);
                     }
-                    if (this.parser.RemainingBytes < this.length) {
+                    if (this.parser.RemainingBytes < BlockParser.PortablePrimitives.Value(System.Int32, this.length)) {
                         MAPIInspector.Parsers.Partial.PartialGetType = typeValue;
                         MAPIInspector.Parsers.Partial.PartialGetId = identifyValue;
-                        MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize = Transpose.Int.clip32(this.length - this.parser.RemainingBytes);
+                        MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize = Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.Int32, this.length) - this.parser.RemainingBytes);
                         MAPIInspector.Parsers.Partial.PartialPutExtendServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                         MAPIInspector.Parsers.Partial.PartialPutExtendProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
                         MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
                         this.PropValue = this.ParseBytes(this.parser.RemainingBytes);
                     }
                     else {
-                        this.PropValue = this.ParseBytes(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.length));
+                        this.PropValue = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.Int32, this.length));
                     }
                 }
             }
@@ -64716,8 +64753,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.PropID = this.ParseT(MAPIInspector.Parsers.PidTagPropertyEnum);
         }
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
-            MAPIInspector.Parsers.Partial.PartialPutId = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropID);
+            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutId = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID);
             MAPIInspector.Parsers.Partial.PartialPutServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -64734,8 +64771,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     MAPIInspector.Parsers.Partial.PartialPutClientInfo = "";
                 }
             }
-            let typeValue = (this.PropType != null ? BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType) : this.propertyType);
-            let identifyValue = (this.PropID != null ? BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropID) : this.propertyID);
+            let typeValue = (this.PropType != null ? BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType) : this.propertyType);
+            let identifyValue = (this.PropID != null ? BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropID) : this.propertyID);
             if (identifyValue !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagNewFXFolder && identifyValue !== MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagDnPrefix) {
                 this.PropValue = this.ParseT(System.UInt32);
             }
@@ -64751,17 +64788,17 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     else {
                         this.length = this.ParseT(System.Int32);
                     }
-                    if (this.parser.RemainingBytes < this.length) {
+                    if (this.parser.RemainingBytes < BlockParser.PortablePrimitives.Value(System.Int32, this.length)) {
                         MAPIInspector.Parsers.Partial.PartialPutType = typeValue;
                         MAPIInspector.Parsers.Partial.PartialPutId = identifyValue;
-                        MAPIInspector.Parsers.Partial.PartialPutRemainSize = Transpose.Int.clip32(this.length - this.parser.RemainingBytes);
+                        MAPIInspector.Parsers.Partial.PartialPutRemainSize = Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.Int32, this.length) - this.parser.RemainingBytes);
                         MAPIInspector.Parsers.Partial.PartialPutServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                         MAPIInspector.Parsers.Partial.PartialPutProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
                         MAPIInspector.Parsers.Partial.PartialPutClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
                         this.PropValue = this.ParseBytes(this.parser.RemainingBytes);
                     }
                     else {
-                        this.PropValue = this.ParseBytes(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.length));
+                        this.PropValue = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.Int32, this.length));
                     }
                 }
             }
@@ -64826,7 +64863,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (!prefix.Parsed || warning.Parsed) {
                 return false;
             }
-            return !parser.Empty && (prefix === MAPIInspector.Parsers.MetaProperties.MetaTagDnPrefix || warning === MAPIInspector.Parsers.MetaProperties.MetaTagEcWarning || MAPIInspector.Parsers.Message.Verify(parser));
+            return !parser.Empty && (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.MetaProperties, prefix) === MAPIInspector.Parsers.MetaProperties.MetaTagDnPrefix || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.MetaProperties, warning) === MAPIInspector.Parsers.MetaProperties.MetaTagEcWarning || MAPIInspector.Parsers.Message.Verify(parser));
         }
     }
 },
@@ -64890,7 +64927,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncProgressPerMsg) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncProgressPerMsg) {
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
         }
     },
@@ -64960,7 +64997,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncProgressMode) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncProgressMode) {
             this.PropertiesTag = this.ParseT(System.UInt32);
             this.PropertiesLength = this.ParseT(System.UInt32);
             this.PropList = this.Parse$1(MAPIInspector.Parsers.ProgressInformation);
@@ -65026,7 +65063,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncRead) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncRead) {
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
         }
     },
@@ -65061,10 +65098,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.StartRecip) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.StartRecip) {
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker !== MAPIInspector.Parsers.Markers.EndToRecip) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.EndToRecip) {
                 this.Parsed = false;
             }
         }
@@ -65094,10 +65131,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.IncrSyncStateBegin) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.IncrSyncStateBegin) {
             this.PropList = this.Parse$1(MAPIInspector.Parsers.PropList);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker !== MAPIInspector.Parsers.Markers.IncrSyncStateEnd) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.IncrSyncStateEnd) {
                 this.Parsed = false;
             }
         }
@@ -65134,10 +65171,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.StartSubFld) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.StartSubFld) {
             this.FolderContent = this.Parse$1(MAPIInspector.Parsers.FolderContent);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker !== MAPIInspector.Parsers.Markers.EndFolder) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.EndFolder) {
                 this.Parsed = false;
             }
         }
@@ -65174,10 +65211,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.StartSubFld) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.StartSubFld) {
             this.FolderContentNoDelProps = this.Parse$1(MAPIInspector.Parsers.FolderContentNoDelProps);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker !== MAPIInspector.Parsers.Markers.EndFolder) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.EndFolder) {
                 this.Parsed = false;
             }
         }
@@ -65240,10 +65277,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.MetaTagDnPrefix = this.Parse$1(MAPIInspector.Parsers.MetaPropValue);
         }
         this.StartMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-        if (this.StartMarker === MAPIInspector.Parsers.Markers.StartTopFld) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.StartMarker) === MAPIInspector.Parsers.Markers.StartTopFld) {
             this.FolderContentNoDelProps = this.Parse$1(MAPIInspector.Parsers.FolderContentNoDelProps);
             this.EndMarker = this.ParseT(MAPIInspector.Parsers.Markers);
-            if (this.EndMarker !== MAPIInspector.Parsers.Markers.EndFolder) {
+            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.Markers, this.EndMarker) !== MAPIInspector.Parsers.Markers.EndFolder) {
                 this.Parsed = false;
             }
         }
@@ -65344,7 +65381,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.TransferDataSize = this.ParseT(System.UInt16);
-        this.parser.PushCap(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.TransferDataSize));
+        this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferDataSize));
         let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
         while (!this.parser.Empty) {
             let element = this.Parse$1(MAPIInspector.Parsers.TransferPutBufferExtendElement);
@@ -65366,14 +65403,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.TransferDataSize, "TransferDataSize");
         if (this.TransferData != null) {
-            var $e0b2d = TransposeR.getEnumerator(this.TransferData);
+            var $e0b53 = TransposeR.getEnumerator(this.TransferData);
             try {
-                while ($e0b2d.moveNext()) {
-                    let transferData = $e0b2d.current;
+                while ($e0b53.moveNext()) {
+                    let transferData = $e0b53.current;
                     this.AddLabeledChild(transferData, "TransferData");
                 }
             }finally {
-                TransposeR.dispose($e0b2d);
+                TransposeR.dispose($e0b53);
             }
         }
     }
@@ -65444,7 +65481,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.TransferDataSize = this.ParseT(System.UInt16);
-        this.parser.PushCap(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.TransferDataSize));
+        this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferDataSize));
         let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
         while (!this.parser.Empty) {
             let element = this.Parse$1(MAPIInspector.Parsers.TransferPutBufferElement);
@@ -65466,14 +65503,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.TransferDataSize, "TransferDataSize");
         if (this.TransferData != null) {
-            var $e0aff = TransposeR.getEnumerator(this.TransferData);
+            var $e0b25 = TransposeR.getEnumerator(this.TransferData);
             try {
-                while ($e0aff.moveNext()) {
-                    let transferData = $e0aff.current;
+                while ($e0b25.moveNext()) {
+                    let transferData = $e0b25.current;
                     this.AddLabeledChild(transferData, "TransferData");
                 }
             }finally {
-                TransposeR.dispose($e0aff);
+                TransposeR.dispose($e0b25);
             }
         }
     }
@@ -65614,7 +65651,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.MessageIdCount = this.ParseT(System.UInt16);
         let messageIdList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageID))();
-        for (var i = 0; i < this.MessageIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageIdCount); i = (((i) + 1) | 0)) {
             messageIdList.add(this.Parse$1(MAPIInspector.Parsers.MessageID));
         }
         this.MessageIds = messageIdList.ToArray();
@@ -65628,14 +65665,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.Byte, this.OutputHandleIndex, "OutputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.MessageIdCount, "MessageIdCount");
-        var $e0c3d = TransposeR.getEnumerator(this.MessageIds);
+        var $e0c63 = TransposeR.getEnumerator(this.MessageIds);
         try {
-            while ($e0c3d.moveNext()) {
-                let messageId = $e0c3d.current;
+            while ($e0c63.moveNext()) {
+                let messageId = $e0c63.current;
                 this.AddChild(messageId);
             }
         }finally {
-            TransposeR.dispose($e0c3d);
+            TransposeR.dispose($e0c63);
         }
         this.AddChildBlockT(MAPIInspector.Parsers.CopyFlags_CopyMessages, this.CopyFlags, "CopyFlags");
         this.AddChildBlockT(MAPIInspector.Parsers.SendOptions, this.SendOptions, "SendOptions");
@@ -65701,7 +65738,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.SendOptions = this.ParseT(MAPIInspector.Parsers.SendOptions);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let interTag = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             interTag.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.PropertyTags = interTag.ToArray();
@@ -65779,7 +65816,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.SendOptions = this.ParseT(MAPIInspector.Parsers.SendOptions);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let interTag = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             interTag.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.PropertyTags = interTag.ToArray();
@@ -65848,7 +65885,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.BufferSize = this.ParseT(System.UInt16);
-        if (this.BufferSize === 47806) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.BufferSize) === 47806) {
             this.MaximumBufferSize = this.ParseT(System.UInt16);
         }
     },
@@ -65893,8 +65930,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.TotalStepCount = this.ParseT(System.UInt16);
         this.Reserved = this.ParseT(System.Byte);
         this.TransferBufferSize = this.ParseT(System.UInt16);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
-            this.parser.PushCap(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.TransferBufferSize));
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
+            this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferBufferSize));
             let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
             while (!this.parser.Empty) {
                 let element = this.Parse$1(MAPIInspector.Parsers.TransferGetBufferElement);
@@ -65980,7 +66017,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.ReplGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
             this.GlobalCount = this.ParseBytes(6);
         }
@@ -66020,7 +66057,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.DataSize = this.ParseT(System.UInt16);
         this.LongTermIdRangeCount = this.ParseT(System.UInt32);
         let interRangs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.LongTermIdRange))();
-        for (var i = 0; i < this.LongTermIdRangeCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.LongTermIdRangeCount); i = (((i) + 1) | 0)) {
             interRangs.add(this.Parse$1(MAPIInspector.Parsers.LongTermIdRange));
         }
         this.LongTermIdRanges = interRangs.ToArray();
@@ -66097,8 +66134,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.SendOptions = this.ParseT(MAPIInspector.Parsers.SendOptions);
         this.SynchronizationFlags = this.ParseT(MAPIInspector.Parsers.SynchronizationFlags);
         this.RestrictionDataSize = this.ParseT(System.UInt16);
-        if (this.RestrictionDataSize > 0) {
-            this.parser.PushCap(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.RestrictionDataSize));
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize) > 0) {
+            this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize));
             this.RestrictionData = new MAPIInspector.Parsers.RestrictionType();
             this.RestrictionData.Parse(this.parser);
             this.parser.PopCap();
@@ -66106,7 +66143,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.SynchronizationExtraFlags = this.ParseT(MAPIInspector.Parsers.SynchronizationExtraFlags);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let interTag = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             interTag.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.PropertyTags = interTag.ToArray();
@@ -66239,7 +66276,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ImportDeleteFlags = this.ParseT(MAPIInspector.Parsers.ImportDeleteFlags);
         this.PropertyValueCount = this.ParseT(System.UInt16);
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             let value = new MAPIInspector.Parsers.TaggedPropertyValue();
             value.Parse(this.parser);
             interValue.add(value);
@@ -66310,7 +66347,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.HierarchyValueCount = this.ParseT(System.UInt16);
         let interHierarchyValues = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.HierarchyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.HierarchyValueCount); i = (((i) + 1) | 0)) {
             let val = new MAPIInspector.Parsers.TaggedPropertyValue();
             val.Parse(this.parser);
             interHierarchyValues.add(val);
@@ -66318,7 +66355,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.HierarchyValues = interHierarchyValues.ToArray();
         this.PropertyValueCount = this.ParseT(System.UInt16);
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             let val = new MAPIInspector.Parsers.TaggedPropertyValue();
             val.Parse(this.parser);
             interValue.add(val);
@@ -66357,7 +66394,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
         }
     },
@@ -66397,7 +66434,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ImportFlag = this.ParseT(MAPIInspector.Parsers.ImportFlag);
         this.PropertyValueCount = this.ParseT(System.UInt16);
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             let tagValue = new MAPIInspector.Parsers.TaggedPropertyValue();
             tagValue.Parse(this.parser);
             interValue.add(tagValue);
@@ -66436,7 +66473,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.MessageId = this.Parse$1(MAPIInspector.Parsers.MessageID);
         }
     },
@@ -66479,15 +66516,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.SourceFolderIdSize = this.ParseT(System.UInt32);
-        this.SourceFolderId = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.SourceFolderIdSize));
+        this.SourceFolderId = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.SourceFolderIdSize));
         this.SourceMessageIdSize = this.ParseT(System.UInt32);
-        this.SourceMessageId = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.SourceMessageIdSize));
+        this.SourceMessageId = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.SourceMessageIdSize));
         this.PredecessorChangeListSize = this.ParseT(System.UInt32);
-        this.PredecessorChangeList = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.PredecessorChangeListSize));
+        this.PredecessorChangeList = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.PredecessorChangeListSize));
         this.DestinationMessageIdSize = this.ParseT(System.UInt32);
-        this.DestinationMessageId = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.DestinationMessageIdSize));
+        this.DestinationMessageId = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.DestinationMessageIdSize));
         this.ChangeNumberSize = this.ParseT(System.UInt32);
-        this.ChangeNumber = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.ChangeNumberSize));
+        this.ChangeNumber = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.ChangeNumberSize));
     },
     ParseBlocks: function () {
         this.Text = "RopSynchronizationImportMessageMoveRequest";
@@ -66527,7 +66564,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.MessageId = this.Parse$1(MAPIInspector.Parsers.MessageID);
         }
     },
@@ -66563,7 +66600,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.MessageReadStatesSize = this.ParseT(System.UInt16);
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageReadState))();
-        this.parser.PushCap(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.MessageReadStatesSize));
+        this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageReadStatesSize));
         while (!this.parser.Empty) {
             interValue.add(this.Parse$1(MAPIInspector.Parsers.MessageReadState));
         }
@@ -66754,7 +66791,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.StreamDataSize = this.ParseT(System.UInt32);
-        this.StreamData = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.StreamDataSize));
+        this.StreamData = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.StreamDataSize));
     },
     ParseBlocks: function () {
         this.Text = "RopSynchronizationUploadStateStreamContinueRequest";
@@ -66974,7 +67011,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ServerDNCount = this.ParseT(System.UInt32);
         this.CheapServerDNCount = this.ParseT(System.UInt32);
         let tmpDNArray = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PtypString8))();
-        for (var i = 0; i < this.ServerDNCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.ServerDNCount); i = (((i) + 1) | 0)) {
             tmpDNArray.add(this.Parse$1(MAPIInspector.Parsers.PtypString8));
         }
         this.ServerDNArray = tmpDNArray.ToArray();
@@ -66988,16 +67025,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         this.AddChildBlockT(System.UInt32, this.ServerDNCount, "ServerDNCount");
         this.AddChildBlockT(System.UInt32, this.CheapServerDNCount, "CheapServerDNCount");
-        var $e093d = TransposeR.getEnumerator(this.ServerDNArray);
+        var $e0963 = TransposeR.getEnumerator(this.ServerDNArray);
         try {
-            while ($e093d.moveNext()) {
-                let serverDN = $e093d.current;
+            while ($e0963.moveNext()) {
+                let serverDN = $e0963.current;
                 if (serverDN != null) {
                     this.AddChild$1(serverDN, ("ServerDN"));
                 }
             }
         }finally {
-            TransposeR.dispose($e093d);
+            TransposeR.dispose($e0963);
         }
     }
 }
@@ -67020,7 +67057,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         let commonStackCollection = new (System.Collections.Generic.List$1(System.UInt32))();
         let tmp = this.TestParse(System.Byte);
         let commands = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.Command))();
-        while (tmp.Parsed && tmp !== 0) {
+        while (tmp.Parsed && BlockParser.PortablePrimitives.Value(System.Byte, tmp) !== 0) {
             switch (tmp.Data) {
                 case 1:
                 case 2:
@@ -67030,9 +67067,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 case 6:
                     let pushCommand = this.Parse$1(MAPIInspector.Parsers.PushCommand);
                     commands.add(pushCommand);
-                    if ((Transpose.Int.clipu32(commonStackLength + pushCommand.Command)) < 6) {
-                        commonStackCollection.add(BlockParser.BlockT$1(System.Byte).op_Implicit$1(pushCommand.Command));
-                        commonStackLength = Transpose.Int.clipu32((commonStackLength) + (pushCommand.Command));
+                    if ((Transpose.Int.clipu32(commonStackLength + BlockParser.PortablePrimitives.Value(System.Byte, pushCommand.Command))) < 6) {
+                        commonStackCollection.add(BlockParser.PortablePrimitives.Value(System.Byte, pushCommand.Command));
+                        commonStackLength = Transpose.Int.clipu32((commonStackLength) + (BlockParser.PortablePrimitives.Value(System.Byte, pushCommand.Command)));
                     }
                     break;
                 case 80:
@@ -67058,14 +67095,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     },
     ParseBlocks: function () {
         this.Text = "GLOBSET";
-        var $e0ace = TransposeR.getEnumerator(this.Commands);
+        var $e0b66 = TransposeR.getEnumerator(this.Commands);
         try {
-            while ($e0ace.moveNext()) {
-                let command = $e0ace.current;
+            while ($e0b66.moveNext()) {
+                let command = $e0b66.current;
                 this.AddChild(command);
             }
         }finally {
-            TransposeR.dispose($e0ace);
+            TransposeR.dispose($e0b66);
         }
     }
 }
@@ -67090,12 +67127,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Guid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
         this.Kind = this.ParseT(MAPIInspector.Parsers.KindEnum);
-        if (this.Kind === MAPIInspector.Parsers.KindEnum.LID) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.KindEnum, this.Kind) === MAPIInspector.Parsers.KindEnum.LID) {
             this.Lid = this.ParseT(System.UInt32);
         }
-        else if (this.Kind === MAPIInspector.Parsers.KindEnum.Name) {
+        else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.KindEnum, this.Kind) === MAPIInspector.Parsers.KindEnum.Name) {
             this.NameSize = this.ParseT(System.Int32);
-            this.Name = new MAPIInspector.Parsers.PtypString.$ctor2(Transpose.Int.clip32(TransposeR.idiv(this.NameSize, 2)));
+            this.Name = new MAPIInspector.Parsers.PtypString.$ctor2(Transpose.Int.clip32(TransposeR.idiv(BlockParser.PortablePrimitives.Value(System.Int32, this.NameSize), 2)));
             this.Name.Parse(this.parser);
         }
     },
@@ -67105,7 +67142,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(MAPIInspector.Parsers.KindEnum, this.Kind, "Kind");
         let namedProp = null;
         if (this.Guid != null && this.Lid != null) {
-            namedProp = MAPIInspector.Parsers.NamedProperty.Lookup(BlockParser.BlockT$1(System.Guid).op_Implicit$1(this.Guid.value), BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.Lid));
+            namedProp = MAPIInspector.Parsers.NamedProperty.Lookup(BlockParser.PortablePrimitives.Value(System.Guid, this.Guid.value), BlockParser.PortablePrimitives.Value(System.UInt32, this.Lid));
         }
         if (this.Lid != null) {
             if (namedProp != null) {
@@ -67241,7 +67278,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.MessageIdSize = this.ParseT(System.UInt16);
-        this.MessageId = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.MessageIdSize));
+        this.MessageId = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageIdSize));
         this.MarkAsRead = this.ParseAs(System.Byte, System.Boolean);
     },
     ParseBlocks: function () {
@@ -67347,7 +67384,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyTagCount = this.ParseT(System.UInt32);
         let tags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTagWithGroupPropertyName))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             tags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTagWithGroupPropertyName));
         }
         this.PropertyTags = tags.ToArray();
@@ -67356,14 +67393,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Text = "PropertyGroup";
         this.AddChildBlockT(System.UInt32, this.PropertyTagCount, "PropertyTagCount");
         if (this.PropertyTags != null) {
-            var $e052a = TransposeR.getEnumerator(this.PropertyTags);
+            var $e0550 = TransposeR.getEnumerator(this.PropertyTags);
             try {
-                while ($e052a.moveNext()) {
-                    let tag = $e052a.current;
+                while ($e0550.moveNext()) {
+                    let tag = $e0550.current;
                     this.AddChild(tag);
                 }
             }finally {
-                TransposeR.dispose($e052a);
+                TransposeR.dispose($e0550);
             }
         }
     }
@@ -67390,7 +67427,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Reserved = this.ParseT(System.UInt32);
         this.GroupCount = this.ParseT(System.UInt32);
         let tmpGrp = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyGroup))();
-        for (var i = 0; i < this.GroupCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.GroupCount); i = (((i) + 1) | 0)) {
             tmpGrp.add(this.Parse$1(MAPIInspector.Parsers.PropertyGroup));
         }
         this.Groups = tmpGrp.ToArray();
@@ -67400,14 +67437,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.UInt32, this.GroupId, "GroupId");
         this.AddChild$1(this.Reserved, "Reserved:0x00000000");
         this.AddChildBlockT(System.UInt32, this.GroupCount, "GroupCount");
-        var $e068e = TransposeR.getEnumerator(this.Groups);
+        var $e06b4 = TransposeR.getEnumerator(this.Groups);
         try {
-            while ($e068e.moveNext()) {
-                let group = $e068e.current;
+            while ($e06b4.moveNext()) {
+                let group = $e06b4.current;
                 this.AddChild(group);
             }
         }finally {
-            TransposeR.dispose($e068e);
+            TransposeR.dispose($e06b4);
         }
     }
 }
@@ -67430,7 +67467,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyType = this.ParseT(MAPIInspector.Parsers.PropertyDataType);
         this.PropertyId = this.ParseT(System.UInt16);
-        if (this.PropertyId >= 32768) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyId) >= 32768) {
             this.GroupPropertyName = this.Parse$1(MAPIInspector.Parsers.GroupPropertyName);
         }
     },
@@ -67438,7 +67475,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Text = "PropertyTagWithGroupPropertyName";
         this.AddChildBlockT(MAPIInspector.Parsers.PropertyDataType, this.PropertyType, "PropertyType");
         this.AddChildBlockT(System.UInt16, this.PropertyId, "PropertyId");
-        if (this.PropertyId >= 32768) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyId) >= 32768) {
             this.AddChild(this.GroupPropertyName);
         }
     }
@@ -67460,7 +67497,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.XidSize = this.ParseT(System.Byte);
-        this.Xid = new MAPIInspector.Parsers.XID(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.XidSize));
+        this.Xid = new MAPIInspector.Parsers.XID(BlockParser.PortablePrimitives.Value(System.Byte, this.XidSize));
         this.Xid.Parse(this.parser);
     },
     ParseBlocks: function () {
@@ -67521,7 +67558,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Reserved = this.ParseT(System.UInt16);
         this.ConnectionAttempts = this.ParseT(System.UInt32);
         this.ConnectionFlags = this.ParseT(MAPIInspector.Parsers.ConnectionFlags);
-        if (this.OffsetConnectionContextInfo !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.OffsetConnectionContextInfo) !== 0) {
             this.ConnectionContextInfo = this.ParseStringW();
         }
     },
@@ -67624,7 +67661,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this._Size = this.ParseT(System.UInt16);
         this.Version = this.ParseT(MAPIInspector.Parsers.PayloadDataVersion);
-        if (this.Version === MAPIInspector.Parsers.PayloadDataVersion.AUX_VERSION_1) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PayloadDataVersion, this.Version) === MAPIInspector.Parsers.PayloadDataVersion.AUX_VERSION_1) {
             this.Type1 = this.ParseT(MAPIInspector.Parsers.AuxiliaryBlockType_1);
         }
         else {
@@ -67756,23 +67793,23 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.MacAddressOffset = this.ParseT(System.UInt16);
         this.ClientMode = this.ParseT(MAPIInspector.Parsers.ClientModeFlag);
         this.Reserved = this.ParseT(System.UInt16);
-        if (this.MachineNameOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.MachineNameOffset) !== 0) {
             this.MachineName = this.ParseStringW();
         }
-        if (this.UserNameOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.UserNameOffset) !== 0) {
             this.UserName = this.ParseStringW();
         }
-        if (this.ClientIPSize > 0 && this.ClientIPOffset !== 0) {
-            this.ClientIP = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.ClientIPSize));
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientIPSize) > 0 && BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientIPOffset) !== 0) {
+            this.ClientIP = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientIPSize));
         }
-        if (this.ClientIPMaskSize > 0 && this.ClientIPMaskOffset !== 0) {
-            this.ClientIPMask = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.ClientIPMaskSize));
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientIPMaskSize) > 0 && BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientIPMaskOffset) !== 0) {
+            this.ClientIPMask = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientIPMaskSize));
         }
-        if (this.AdapterNameOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.AdapterNameOffset) !== 0) {
             this.AdapterName = this.ParseStringW();
         }
-        if (this.MacAddressSize > 0 && this.MacAddressOffset !== 0) {
-            this.MacAddress = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.MacAddressSize));
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.MacAddressSize) > 0 && BlockParser.PortablePrimitives.Value(System.UInt16, this.MacAddressOffset) !== 0) {
+            this.MacAddress = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.MacAddressSize));
         }
     },
     ParseBlocks: function () {
@@ -68155,7 +68192,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ProcessGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
         this.ProcessNameOffset = this.ParseT(System.UInt16);
         this.Reserved2 = this.ParseT(System.UInt16);
-        if (this.ProcessNameOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.ProcessNameOffset) !== 0) {
             this.ProcessName = this.ParseStringW();
         }
     },
@@ -68218,10 +68255,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ServerType = this.ParseT(MAPIInspector.Parsers.ServerType);
         this.ServerDNOffset = this.ParseT(System.UInt16);
         this.ServerNameOffset = this.ParseT(System.UInt16);
-        if (this.ServerDNOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.ServerDNOffset) !== 0) {
             this.ServerDN = this.ParseStringW();
         }
-        if (this.ServerNameOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.ServerNameOffset) !== 0) {
             this.ServerName = this.ParseStringW();
         }
     },
@@ -68323,19 +68360,19 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.DeviceSerialNumberOffset = this.ParseT(System.UInt16);
         this.DeviceVersionOffset = this.ParseT(System.UInt16);
         this.DeviceFirmwareVersionOffset = this.ParseT(System.UInt16);
-        if (this.DeviceManufacturerOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.DeviceManufacturerOffset) !== 0) {
             this.DeviceManufacturer = this.ParseStringW();
         }
-        if (this.DeviceModelOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.DeviceModelOffset) !== 0) {
             this.DeviceModel = this.ParseStringW();
         }
-        if (this.DeviceSerialNumberOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.DeviceSerialNumberOffset) !== 0) {
             this.DeviceSerialNumber = this.ParseStringW();
         }
-        if (this.DeviceVersionOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.DeviceVersionOffset) !== 0) {
             this.DeviceVersion = this.ParseStringW();
         }
-        if (this.DeviceFirmwareVersionOffset !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.DeviceFirmwareVersionOffset) !== 0) {
             this.DeviceFirmwareVersion = this.ParseStringW();
         }
     },
@@ -68370,7 +68407,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.OffsetServerSessionContextInfo = this.ParseT(System.UInt16);
-        if (this.OffsetServerSessionContextInfo !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.OffsetServerSessionContextInfo) !== 0) {
             this.ServerSessionContextInfo = this.ParseStringW();
         }
     },
@@ -68397,7 +68434,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.AUXHEADER = this.Parse$1(MAPIInspector.Parsers.AUX_HEADER);
-        if (this.AUXHEADER.Version === MAPIInspector.Parsers.PayloadDataVersion.AUX_VERSION_1) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PayloadDataVersion, this.AUXHEADER.Version) === MAPIInspector.Parsers.PayloadDataVersion.AUX_VERSION_1) {
             switch (this.AUXHEADER.Type1.Data) {
                 case MAPIInspector.Parsers.AuxiliaryBlockType_1.AUX_TYPE_ENDPOINT_CAPABILITIES:
                     {
@@ -68546,12 +68583,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     }
                 default:
                     {
-                        this.AuxiliaryBlock = this.ParseBytes(Transpose.Int.clip32(this.AUXHEADER._Size - 4));
+                        this.AuxiliaryBlock = this.ParseBytes(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.AUXHEADER._Size) - 4));
                         break;
                     }
             }
         }
-        else if (this.AUXHEADER.Version === MAPIInspector.Parsers.PayloadDataVersion.AUX_VERSION_2) {
+        else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PayloadDataVersion, this.AUXHEADER.Version) === MAPIInspector.Parsers.PayloadDataVersion.AUX_VERSION_2) {
             switch (this.AUXHEADER.Type2.Data) {
                 case MAPIInspector.Parsers.AuxiliaryBlockType_2.AUX_TYPE_PERF_BG_FAILURE:
                     {
@@ -68610,13 +68647,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     }
                 default:
                     {
-                        this.AuxiliaryBlock = this.ParseBytes(Transpose.Int.clip32(this.AUXHEADER._Size - 4));
+                        this.AuxiliaryBlock = this.ParseBytes(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.AUXHEADER._Size) - 4));
                         break;
                     }
             }
         }
         else {
-            this.AuxiliaryBlock = this.ParseBytes(Transpose.Int.clip32(this.AUXHEADER._Size - 4));
+            this.AuxiliaryBlock = this.ParseBytes(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.AUXHEADER._Size) - 4));
         }
     },
     ParseBlocks: function () {
@@ -68652,11 +68689,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Flags = this.ParseT(System.UInt32);
         this.HasState = this.ParseT(System.Byte);
-        if (this.HasState !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.HasState) !== 0) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68692,12 +68729,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.ServerGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68735,13 +68772,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseT(System.Byte);
-        if (this.HasState !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.HasState) !== 0) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.MinimalId1 = this.Parse$1(MAPIInspector.Parsers.MinimalEntryID);
         this.MinimalId2 = this.Parse$1(MAPIInspector.Parsers.MinimalEntryID);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68779,12 +68816,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.Result = this.ParseT(System.Int32);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68826,7 +68863,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LcidSort = this.ParseT(System.UInt32);
         this.LcidString = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68868,7 +68905,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.PollsMax = this.ParseT(System.UInt32);
             this.RetryCount = this.ParseT(System.UInt32);
@@ -68877,7 +68914,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.DisplayName = this.ParseStringW();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68911,7 +68948,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68943,11 +68980,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -68983,16 +69020,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasNames = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasNames) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasNames)) {
             this.NameCount = this.ParseT(System.UInt32);
             let nameValues = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-            for (var i = 0; i < this.NameCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.NameCount); i = (((i) + 1) | 0)) {
                 nameValues.add(this.ParseStringA());
             }
             this.NameValues = nameValues.ToArray();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69031,18 +69068,18 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasMinimalIds = this.ParseAs(System.Byte, System.Boolean);
             this.MinimalIdCount = this.ParseT(System.UInt32);
             let lm = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-            for (var i = 0; i < this.MinimalIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.MinimalIdCount); i = (((i) + 1) | 0)) {
                 lm.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
             }
             this.MinimalIds = lm.ToArray();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69081,11 +69118,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Flags = this.ParseT(System.UInt32);
         this.RopBufferSize = this.ParseT(System.UInt32);
-        this.RopBuffer = new MAPIInspector.Parsers.RgbInputBuffer(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.RopBufferSize));
+        this.RopBuffer = new MAPIInspector.Parsers.RgbInputBuffer(BlockParser.PortablePrimitives.Value(System.UInt32, this.RopBufferSize));
         this.RopBuffer.Parse(this.parser);
         this.MaxRopOut = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69124,16 +69161,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.Flags = this.ParseT(System.UInt32);
             this.RopBufferSize = this.ParseT(System.UInt32);
-            this.RopBuffer = new MAPIInspector.Parsers.RgbOutputBufferPack(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.RopBufferSize));
+            this.RopBuffer = new MAPIInspector.Parsers.RgbOutputBufferPack(BlockParser.PortablePrimitives.Value(System.UInt32, this.RopBufferSize));
             this.RopBuffer.Parse(this.parser);
         }
         if (this.parser.RemainingBytes >= 4) {
             this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-            if (this.AuxiliaryBufferSize > 0) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
                 this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
             }
         }
@@ -69172,7 +69209,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Flags = this.ParseT(System.UInt32);
         this.UserDn = this.ParseStringW();
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69207,12 +69244,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.ServerUrl = this.ParseStringW();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69248,7 +69285,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Flags = this.ParseT(System.UInt32);
         this.ServerDn = this.ParseStringW();
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69283,12 +69320,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.ServerUrl = this.ParseStringW();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69336,37 +69373,37 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasMinimalIds = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasMinimalIds) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasMinimalIds)) {
             this.MinimalIdCount = this.ParseT(System.UInt32);
             let me = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-            for (var i = 0; i < this.MinimalIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.MinimalIdCount); i = (((i) + 1) | 0)) {
                 me.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
             }
             this.MinimalIds = me.ToArray();
         }
         this.InterfaceOptionFlags = this.ParseT(System.UInt32);
         this.HasFilter = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasFilter) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasFilter)) {
             let restriction = new MAPIInspector.Parsers.RestrictionType(MAPIInspector.Parsers.PropertyCountContext.MapiHttp);
             restriction.Parse(this.parser);
             this.Filter = restriction;
         }
         this.HasPropertyName = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasPropertyName) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyName)) {
             this.PropertyNameGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
             this.PropertyNameId = this.ParseT(System.UInt32);
         }
         this.RowCount = this.ParseT(System.UInt32);
         this.HasColumns = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasColumns) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColumns)) {
             this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69422,27 +69459,27 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasState = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasState) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
                 this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
             }
             this.HasMinimalIds = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasMinimalIds) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasMinimalIds)) {
                 this.MinimalIdCount = this.ParseT(System.UInt32);
                 let listMinimalEID = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-                for (var i = 0; i < this.MinimalIdCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.MinimalIdCount); i = (((i) + 1) | 0)) {
                     listMinimalEID.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
                 }
                 this.MinimalIds = listMinimalEID.ToArray();
             }
             this.HasColsAndRows = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasColsAndRows) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColsAndRows)) {
                 this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
                 this.RowCount = this.ParseT(System.UInt32);
                 let addressBookPropRow = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressBookPropertyRow))();
-                for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.RowCount); i = (((i) + 1) | 0)) {
                     let addressPropRow = new MAPIInspector.Parsers.AddressBookPropertyRow(this.Columns);
                     addressPropRow.Parse(this.parser);
                     addressBookPropRow.add(addressPropRow);
@@ -69451,7 +69488,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69497,7 +69534,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.MinimalId = this.Parse$1(MAPIInspector.Parsers.MinimalEntryID);
         this.CodePage = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69534,15 +69571,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasPropertyTags = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasPropertyTags) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyTags)) {
                 this.PropertyTags = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69581,15 +69618,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Flags = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasPropertyTags = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasPropertyTags) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyTags)) {
             this.PropertyTags = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69629,16 +69666,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.CodePage = this.ParseT(System.UInt32);
             this.HasPropertyValues = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasPropertyValues) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyValues)) {
                 this.PropertyValues = this.Parse$1(MAPIInspector.Parsers.AddressBookPropertyValueList);
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69678,15 +69715,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Flags = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasVersion = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasVersion) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasVersion)) {
             this.Version = this.ParseT(System.UInt32);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69729,25 +69766,25 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.CodePage = this.ParseT(System.UInt32);
             this.HasVersion = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasVersion) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasVersion)) {
                 this.Version = this.ParseT(System.UInt32);
             }
             this.HasRows = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasRows) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasRows)) {
                 this.RowsCount = this.ParseT(System.UInt32);
                 let listAddressValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressBookPropertyValueList))();
-                for (var i = 0; i < this.RowsCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.RowsCount); i = (((i) + 1) | 0)) {
                     listAddressValue.add(this.Parse$1(MAPIInspector.Parsers.AddressBookPropertyValueList));
                 }
                 this.Rows = listAddressValue.ToArray();
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69792,13 +69829,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Flags = this.ParseT(System.UInt32);
         this.DisplayType = this.ParseT(System.UInt32);
         this.HasTemplateDn = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasTemplateDn) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasTemplateDn)) {
             this.TemplateDn = this.ParseStringA();
         }
         this.CodePage = this.ParseT(System.UInt32);
         this.LocaleId = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69839,16 +69876,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.CodePage = this.ParseT(System.UInt32);
             this.HasRow = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasRow) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasRow)) {
                 this.Row = this.Parse$1(MAPIInspector.Parsers.AddressBookPropertyValueList);
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69891,16 +69928,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.PropertyTag = this.Parse$1(MAPIInspector.Parsers.PropertyTag);
         this.MinimalId = this.Parse$1(MAPIInspector.Parsers.MinimalEntryID);
         this.HasEntryIds = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasEntryIds) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasEntryIds)) {
             this.EntryIdCount = this.ParseT(System.UInt32);
             let tempObj = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.EntryID))();
-            for (var i = 0; i < this.EntryIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.EntryIdCount); i = (((i) + 1) | 0)) {
                 tempObj.add(this.Parse$1(MAPIInspector.Parsers.EntryID));
             }
             this.EntryIds = tempObj.ToArray();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69938,11 +69975,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -69981,19 +70018,19 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasPropertyTags = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasPropertyTags) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyTags)) {
             this.PropertiesTags = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
         }
         this.HasPropertyValues = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasPropertyValues) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyValues)) {
             this.PropertyValues = this.Parse$1(MAPIInspector.Parsers.AddressBookPropertyValueList);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70032,11 +70069,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70069,7 +70106,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Flags = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70103,12 +70140,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.EventPending = this.ParseT(System.UInt32);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70144,7 +70181,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Reserved = this.ParseT(System.UInt32);
         this.MapiFlags = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70180,15 +70217,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasColumns = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasColumns) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColumns)) {
                 this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70230,22 +70267,22 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Flags = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.ExplicitTableCount = this.ParseT(System.UInt32);
         let miniEntryIDlist = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-        for (var i = 0; i < this.ExplicitTableCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.ExplicitTableCount); i = (((i) + 1) | 0)) {
             miniEntryIDlist.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
         }
         this.ExplicitTable = miniEntryIDlist.ToArray();
         this.RowCount = this.ParseT(System.UInt32);
         this.HasColumns = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasColumns) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColumns)) {
             this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70291,18 +70328,18 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasState = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasState) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
                 this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
             }
             this.HasColsAndRows = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasColsAndRows) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColsAndRows)) {
                 this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
                 this.RowCount = this.ParseT(System.UInt32);
                 let addressBookPRList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressBookPropertyRow))();
-                for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.RowCount); i = (((i) + 1) | 0)) {
                     let addressBookPR = new MAPIInspector.Parsers.AddressBookPropertyRow(this.Columns);
                     addressBookPR.Parse(this.parser);
                     addressBookPRList.add(addressBookPR);
@@ -70311,7 +70348,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70356,19 +70393,19 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasPropertyTags = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasPropertyTags) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasPropertyTags)) {
             this.PropertyTags = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
         }
         this.HasNames = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasNames) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasNames)) {
             this.Names = this.Parse$1(MAPIInspector.Parsers.WStringArray_r);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70415,24 +70452,24 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.CodePage = this.ParseT(System.UInt32);
             this.HasMinimalIds = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasMinimalIds) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasMinimalIds)) {
                 this.MinimalIdCount = this.ParseT(System.UInt32);
                 let miniEIDList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-                for (var i = 0; i < this.MinimalIdCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.MinimalIdCount); i = (((i) + 1) | 0)) {
                     miniEIDList.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
                 }
                 this.MinimalIds = miniEIDList.ToArray();
             }
             this.HasRowsAndCols = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasRowsAndCols) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasRowsAndCols)) {
                 this.PropertyTags = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
                 this.RowCount = this.ParseT(System.UInt32);
                 let addressPRList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressBookPropertyRow))();
-                for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.RowCount); i = (((i) + 1) | 0)) {
                     let addressPR = new MAPIInspector.Parsers.AddressBookPropertyRow(this.PropertyTags);
                     addressPR.Parse(this.parser);
                     addressPRList.add(addressPR);
@@ -70441,7 +70478,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70487,20 +70524,20 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasMinimalIds = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasMinimalIds) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasMinimalIds)) {
             this.MinimalIdCount = this.ParseT(System.UInt32);
             let miniEIDList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-            for (var i = 0; i < this.MinimalIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.MinimalIdCount); i = (((i) + 1) | 0)) {
                 miniEIDList.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
             }
             this.MinimalIds = miniEIDList.ToArray();
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70543,23 +70580,23 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasState = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasState) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
                 this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
             }
             this.HasMinimalIds = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasMinimalIds) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasMinimalIds)) {
                 this.MinimalIdCount = this.ParseT(System.UInt32);
                 let miniEIDList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-                for (var i = 0; i < this.MinimalIdCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.MinimalIdCount); i = (((i) + 1) | 0)) {
                     miniEIDList.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
                 }
                 this.MinimalIds = miniEIDList.ToArray();
             }
             this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-            if (this.AuxiliaryBufferSize > 0) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
                 this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
             }
         }
@@ -70607,28 +70644,28 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.HasTarget = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasTarget) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasTarget)) {
             this.Target = this.Parse$1(MAPIInspector.Parsers.AddressBookTaggedPropertyValue);
         }
         this.HasExplicitTable = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasExplicitTable) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasExplicitTable)) {
             this.ExplicitTableCount = this.ParseT(System.UInt32);
             let miniEIDList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MinimalEntryID))();
-            for (var i = 0; i < this.ExplicitTableCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.ExplicitTableCount); i = (((i) + 1) | 0)) {
                 miniEIDList.add(this.Parse$1(MAPIInspector.Parsers.MinimalEntryID));
             }
             this.ExplicitTable = miniEIDList.ToArray();
         }
         this.HasColumns = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasColumns) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColumns)) {
             this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70676,17 +70713,17 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasState = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasState) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
                 this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
                 this.HasColsAndRows = this.ParseAs(System.Byte, System.Boolean);
-                if (this.HasColsAndRows) {
+                if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasColsAndRows)) {
                     this.Columns = this.Parse$1(MAPIInspector.Parsers.LargePropertyTagArray);
                     this.RowCount = this.ParseT(System.UInt32);
                     let addressBookPropRow = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressBookPropertyRow))();
-                    for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+                    for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.RowCount); i = (((i) + 1) | 0)) {
                         let addressPropRow = new MAPIInspector.Parsers.AddressBookPropertyRow(this.Columns);
                         addressPropRow.Parse(this.parser);
                         addressBookPropRow.add(addressPropRow);
@@ -70696,7 +70733,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70735,7 +70772,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70768,11 +70805,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70808,12 +70845,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Reserved = this.ParseT(System.UInt32);
         this.HasState = this.ParseAs(System.Byte, System.Boolean);
-        if (this.HasState) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
             this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
         }
         this.DeltaRequested = this.ParseAs(System.Byte, System.Boolean);
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70853,19 +70890,19 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         (() => { var $ref1 = { v: null }; var $ref2 = { v: null }; var $ret = MAPIInspector.Parsers.ParseMAPIMethod.ParseAdditionalHeader(this.parser, $ref1, $ref2); this.MetaTags = $ref1.v; this.AdditionalHeaders = $ref2.v; return $ret; })();
         this.StatusCode = this.ParseT(System.UInt32);
-        if (this.StatusCode === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.StatusCode) === 0) {
             this.ErrorCode = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
             this.HasState = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasState) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasState)) {
                 this.State = this.Parse$1(MAPIInspector.Parsers.STAT);
                 this.HasDelta = this.ParseAs(System.Byte, System.Boolean);
-                if (this.HasDelta) {
+                if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasDelta)) {
                     this.Delta = this.ParseT(System.Int32);
                 }
             }
         }
         this.AuxiliaryBufferSize = this.ParseT(System.UInt32);
-        if (this.AuxiliaryBufferSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.AuxiliaryBufferSize) > 0) {
             this.AuxiliaryBuffer = this.Parse$1(MAPIInspector.Parsers.ExtendedBuffer);
         }
     },
@@ -70902,13 +70939,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.Flag = this.ParseT(System.Byte);
-        if (this.Flag !== 1) {
-            if (this.Flag === 0) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) !== 1) {
+            if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 0) {
                 let addressPropValue = new MAPIInspector.Parsers.AddressBookPropertyValue(this.propertyDataType);
                 addressPropValue.Parse(this.parser);
                 this.PropertyValue = addressPropValue;
             }
-            else if (this.Flag === 10) {
+            else if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 10) {
                 let addressPropValueForErrorCode = new MAPIInspector.Parsers.AddressBookPropertyValue(MAPIInspector.Parsers.PropertyDataType.PtypErrorCode);
                 addressPropValueForErrorCode.Parse(this.parser);
                 this.PropertyValue = addressPropValueForErrorCode;
@@ -70940,13 +70977,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyType = this.ParseT(MAPIInspector.Parsers.PropertyDataType);
         this.Flag = this.ParseT(System.Byte);
-        if (this.Flag !== 1) {
-            if (this.Flag === 0) {
-                let addressPropValue = new MAPIInspector.Parsers.AddressBookPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropertyType));
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) !== 1) {
+            if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 0) {
+                let addressPropValue = new MAPIInspector.Parsers.AddressBookPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropertyType));
                 addressPropValue.Parse(this.parser);
                 this.PropertyValue = addressPropValue;
             }
-            else if (this.Flag === 10) {
+            else if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flag) === 10) {
                 let addressPropValueForErrorCode = new MAPIInspector.Parsers.AddressBookPropertyValue(MAPIInspector.Parsers.PropertyDataType.PtypErrorCode);
                 addressPropValueForErrorCode.Parse(this.parser);
                 this.PropertyValue = addressPropValueForErrorCode;
@@ -70990,9 +71027,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             while ($e05d8.moveNext()) {
                 let propTag = $e05d8.current;
                 let addrRowValue = null;
-                if (this.Flags === 0) {
-                    if (propTag.PropertyType !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
-                        let propValue = new MAPIInspector.Parsers.AddressBookPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propTag.PropertyType));
+                if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flags) === 0) {
+                    if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propTag.PropertyType) !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
+                        let propValue = new MAPIInspector.Parsers.AddressBookPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propTag.PropertyType));
                         propValue.Parse(this.parser);
                         addrRowValue = propValue;
                     }
@@ -71000,9 +71037,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         addrRowValue = this.Parse$1(MAPIInspector.Parsers.AddressBookTypedPropertyValue);
                     }
                 }
-                else if (this.Flags === 1) {
-                    if (propTag.PropertyType !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
-                        let flagPropValue = new MAPIInspector.Parsers.AddressBookFlaggedPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(propTag.PropertyType));
+                else if (BlockParser.PortablePrimitives.Value(System.Byte, this.Flags) === 1) {
+                    if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propTag.PropertyType) !== MAPIInspector.Parsers.PropertyDataType.PtypUnspecified) {
+                        let flagPropValue = new MAPIInspector.Parsers.AddressBookFlaggedPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, propTag.PropertyType));
                         flagPropValue.Parse(this.parser);
                         addrRowValue = flagPropValue;
                     }
@@ -71048,7 +71085,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         if (hasHasValue) {
             this.HasValue = this.ParseAs(System.Byte, System.Boolean);
         }
-        if (this.HasValue == null || this.HasValue) {
+        if (this.HasValue == null || BlockParser.PortablePrimitives.Value(System.Boolean, this.HasValue)) {
             this._PropertyValue = MAPIInspector.Parsers.PropertyValue.ReadPropertyValue(this.propertyDataType, this.parser, MAPIInspector.Parsers.PropertyCountContext.MapiHttp, true);
         }
     },
@@ -71081,7 +71118,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyValueCount = this.ParseT(System.UInt32);
         let tempABTP = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AddressBookTaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             tempABTP.add(this.Parse$1(MAPIInspector.Parsers.AddressBookTaggedPropertyValue));
         }
         this.PropertyValues = tempABTP.ToArray();
@@ -71111,7 +71148,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyType = this.ParseT(MAPIInspector.Parsers.PropertyDataType);
         this.PropertyId = this.ParseT(MAPIInspector.Parsers.PidTagPropertyEnum);
-        this.PropertyValue = new MAPIInspector.Parsers.AddressBookPropertyValue(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropertyType));
+        this.PropertyValue = new MAPIInspector.Parsers.AddressBookPropertyValue(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropertyType));
         this.PropertyValue.Parse(this.parser);
     },
     ParseBlocks: function () {
@@ -71137,7 +71174,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 },
         methods: {
     Parse$3: function () {
-        this.PropertyType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ParseT(MAPIInspector.Parsers.PropertyDataType));
+        this.PropertyType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ParseT(MAPIInspector.Parsers.PropertyDataType));
         this.PropertyValue = new MAPIInspector.Parsers.AddressBookPropertyValue(this.PropertyType);
         this.PropertyValue.Parse(this.parser);
     },
@@ -71163,7 +71200,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.RPCHEADEREXT = this.Parse$1(MAPIInspector.Parsers.RPC_HEADER_EXT);
-        if (this.RPCHEADEREXT._Size > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RPCHEADEREXT._Size) > 0) {
             let payloadOffset = this.parser.Offset;
             let payloadBlock = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.RPCHEADEREXT._Size));
             let payloadBytes = payloadBlock.Data;
@@ -71179,14 +71216,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (isCompressedXOR) {
                 MapiInspector.MAPIParser.AuxPayLoadCompressedXOR = payloadBytes;
             }
-            let newParser = new BlockParser.BinaryParser.$ctor1(payloadBytes);
+            let newParser = BlockParser.PortableEvidence.Payload(payloadBytes, payloadBlock, isCompressedXOR, Transpose.Int.clipu32(this.RPCHEADEREXT.Flags.Data));
             let payload = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.AuxiliaryBufferPayload))();
-            for (var length = 0; length < this.RPCHEADEREXT._Size; ) {
+            for (var length = 0; length < BlockParser.PortablePrimitives.Value(System.UInt16, this.RPCHEADEREXT._Size); ) {
                 let buffer = BlockParser.Block.Parse(MAPIInspector.Parsers.AuxiliaryBufferPayload, newParser);
                 if (buffer.Parsed) {
-                    buffer.ShiftOffset(System.Int64(payloadOffset));
+                    BlockParser.PortableEvidence.Shift(buffer, System.Int64(payloadOffset), isCompressedXOR);
                     payload.add(buffer);
-                    length = Transpose.Int.clip32((length) + (buffer.AUXHEADER._Size));
+                    length = Transpose.Int.clip32((length) + (BlockParser.PortablePrimitives.Value(System.UInt16, buffer.AUXHEADER._Size)));
                 }
                 else {
                     break;
@@ -71220,9 +71257,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.RPCHEADEREXT = this.Parse$1(MAPIInspector.Parsers.RPC_HEADER_EXT);
-        if (this.RPCHEADEREXT._Size > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RPCHEADEREXT._Size) > 0) {
             let payloadOffset = this.parser.Offset;
-            let payloadBlock = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.RPCHEADEREXT._Size));
+            let payloadBlock = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.RPCHEADEREXT._Size));
             let payloadBytes = payloadBlock.Data;
             let isCompressedXOR = false;
             if (System.Enum.hasFlag(this.RPCHEADEREXT.Flags.Data, Transpose.box(MAPIInspector.Parsers.RpcHeaderFlags.XorMagic, MAPIInspector.Parsers.RpcHeaderFlags, function ($v) { return System.Enum.toString(MAPIInspector.Parsers.RpcHeaderFlags, $v); }))) {
@@ -71256,14 +71293,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     MapiInspector.MAPIParser.BuffersIsCompressed.add(false);
                 }
             }
-            let newParser = new BlockParser.BinaryParser.$ctor1(payloadBytes);
+            let newParser = BlockParser.PortableEvidence.Payload(payloadBytes, payloadBlock, isCompressedXOR, Transpose.Int.clipu32(this.RPCHEADEREXT.Flags.Data));
             if (MapiInspector.MAPIParser.IsOnlyGetServerHandle) {
                 this.Payload = BlockParser.Block.Parse(MAPIInspector.Parsers.ROPBufferServerObjectTable, newParser);
             }
             else {
                 this.Payload = BlockParser.Block.Parse(MAPIInspector.Parsers.ROPInputBuffer, newParser);
             }
-            this.Payload.ShiftOffset(System.Int64(payloadOffset));
+            BlockParser.PortableEvidence.Shift(this.Payload, System.Int64(payloadOffset), isCompressedXOR);
         }
     },
     ParseBlocks: function () {
@@ -71290,7 +71327,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.PropertyTagCount = this.ParseT(System.UInt32);
         let tempPT = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             tempPT.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.PropertyTags = tempPT.ToArray();
@@ -71357,7 +71394,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             let extendedBuffer_Input = new MAPIInspector.Parsers.ExtendedBuffer_Input(index);
             extendedBuffer_Input.Parse(this.parser);
             extendedBuffer_Inputs.add(extendedBuffer_Input);
-            this.ropBufferSize = Transpose.Int.clipu32((this.ropBufferSize) - (Transpose.Int.clipu32((Transpose.Int.clip32(extendedBuffer_Input.RPCHEADEREXT._Size + 8)))));
+            this.ropBufferSize = Transpose.Int.clipu32((this.ropBufferSize) - (Transpose.Int.clipu32((Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, extendedBuffer_Input.RPCHEADEREXT._Size) + 8)))));
             index = Transpose.Int.clip32((index) + (1));
         }
         this.Buffers = extendedBuffer_Inputs.ToArray();
@@ -71386,7 +71423,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.RPCHEADEREXT = this.Parse$1(MAPIInspector.Parsers.RPC_HEADER_EXT);
-        if (this.RPCHEADEREXT._Size > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RPCHEADEREXT._Size) > 0) {
             let payloadOffset = this.parser.Offset;
             let payloadBlock = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.RPCHEADEREXT._Size));
             let payloadBytes = payloadBlock.Data;
@@ -71422,14 +71459,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     MapiInspector.MAPIParser.BuffersIsCompressed.add(false);
                 }
             }
-            let newParser = new BlockParser.BinaryParser.$ctor1(payloadBytes);
+            let newParser = BlockParser.PortableEvidence.Payload(payloadBytes, payloadBlock, isCompressedXOR, Transpose.Int.clipu32(this.RPCHEADEREXT.Flags.Data));
             if (MapiInspector.MAPIParser.IsOnlyGetServerHandle) {
                 this.Payload = BlockParser.Block.Parse(MAPIInspector.Parsers.ROPBufferServerObjectTable, newParser);
             }
             else {
                 try {
                     this.Payload = BlockParser.Block.Parse(MAPIInspector.Parsers.ROPOutputBuffer, newParser);
-                    this.Payload.ShiftOffset(System.Int64(payloadOffset));
+                    BlockParser.PortableEvidence.Shift(this.Payload, System.Int64(payloadOffset), isCompressedXOR);
                 }
                 catch ($ex) {
                     let $e = System.Exception.create($ex);
@@ -71555,7 +71592,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.AttachmentID = this.ParseT(System.UInt32);
         }
     },
@@ -71629,9 +71666,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.HasMessageId = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasMessageId) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasMessageId)) {
                 this.MessageId = this.Parse$1(MAPIInspector.Parsers.MessageID);
             }
         }
@@ -71817,7 +71854,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.MessageStatusFlags = this.ParseT(MAPIInspector.Parsers.MessageStatusFlag);
         }
     },
@@ -71879,10 +71916,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.AttachmentIdCount = this.ParseT(System.UInt16);
             let attachmentIdArrays = new (System.Collections.Generic.List$1(BlockParser.BlockT$1(System.Int32)))();
-            for (var i = 0; i < this.AttachmentIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.AttachmentIdCount); i = (((i) + 1) | 0)) {
                 attachmentIdArrays.add(this.ParseT(System.Int32));
             }
             this.AttachmentIdArray = attachmentIdArrays.ToArray();
@@ -71923,13 +71960,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ColumnCount = this.ParseT(System.UInt16);
         let propertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.ColumnCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ColumnCount); i = (((i) + 1) | 0)) {
             propertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.RecipientColumns = propertyTags.ToArray();
         this.RowCount = this.ParseT(System.UInt16);
         let modifyRecipientRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.ModifyRecipientRow))();
-        for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.RowCount); i = (((i) + 1) | 0)) {
             let modifyRecipientRow = new MAPIInspector.Parsers.ModifyRecipientRow(this.RecipientColumns);
             modifyRecipientRow.Parse(this.parser);
             modifyRecipientRows.add(modifyRecipientRow);
@@ -72106,7 +72143,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.Reserved = this.ParseT(System.Byte);
             this.MessageId = this.Parse$1(MAPIInspector.Parsers.MessageID);
             this.HasNamedProperties = this.ParseAs(System.Byte, System.Boolean);
@@ -72115,13 +72152,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.RecipientCount = this.ParseT(System.UInt16);
             this.ColumnCount = this.ParseT(System.UInt16);
             let propertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-            for (var i = 0; i < this.ColumnCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ColumnCount); i = (((i) + 1) | 0)) {
                 propertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
             }
             this.RecipientColumns = propertyTags.ToArray();
             this.RowCount = this.ParseT(System.Byte);
             let openRecipientRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.OpenRecipientRow))();
-            for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.Byte, this.RowCount); i = (((i) + 1) | 0)) {
                 let openRecipientRow = new MAPIInspector.Parsers.OpenRecipientRow(this.RecipientColumns);
                 openRecipientRow.Parse(this.parser);
                 openRecipientRows.add(openRecipientRow);
@@ -72216,20 +72253,20 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.HasNamedProperties = this.ParseAs(System.Byte, System.Boolean);
             this.SubjectPrefix = this.Parse$1(MAPIInspector.Parsers.TypedString);
             this.NormalizedSubject = this.Parse$1(MAPIInspector.Parsers.TypedString);
             this.RecipientCount = this.ParseT(System.UInt16);
             this.ColumnCount = this.ParseT(System.UInt16);
             let propertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-            for (var i = 0; i < this.ColumnCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ColumnCount); i = (((i) + 1) | 0)) {
                 propertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
             }
             this.RecipientColumns = propertyTags.ToArray();
             this.RowCount = this.ParseT(System.Byte);
             let openRecipientRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.OpenRecipientRow))();
-            for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.Byte, this.RowCount); i = (((i) + 1) | 0)) {
                 let openRecipientRow = new MAPIInspector.Parsers.OpenRecipientRow(this.RecipientColumns);
                 openRecipientRow.Parse(this.parser);
                 openRecipientRows.add(openRecipientRow);
@@ -72308,10 +72345,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.RowCount = this.ParseT(System.Byte);
             let readRecipientRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.ReadRecipientRow))();
-            for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.Byte, this.RowCount); i = (((i) + 1) | 0)) {
                 readRecipientRows.add(this.Parse$1(MAPIInspector.Parsers.ReadRecipientRow));
             }
             this.RecipientRows = readRecipientRows.ToArray();
@@ -72385,20 +72422,20 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.HasNamedProperties = this.ParseAs(System.Byte, System.Boolean);
             this.SubjectPrefix = this.Parse$1(MAPIInspector.Parsers.TypedString);
             this.NormalizedSubject = this.Parse$1(MAPIInspector.Parsers.TypedString);
             this.RecipientCount = this.ParseT(System.UInt16);
             this.ColumnCount = this.ParseT(System.UInt16);
             let propertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-            for (var i = 0; i < this.ColumnCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ColumnCount); i = (((i) + 1) | 0)) {
                 propertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
             }
             this.RecipientColumns = propertyTags.ToArray();
             this.RowCount = this.ParseT(System.Byte);
             let openRecipientRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.OpenRecipientRow))();
-            for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.Byte, this.RowCount); i = (((i) + 1) | 0)) {
                 let openRecipientRow = new MAPIInspector.Parsers.OpenRecipientRow(this.RecipientColumns);
                 openRecipientRow.Parse(this.parser);
                 openRecipientRows.add(openRecipientRow);
@@ -72596,7 +72633,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.ResponseHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.InputHandleIndex = this.ParseT(System.Byte);
             this.MessageId = this.Parse$1(MAPIInspector.Parsers.MessageID);
         }
@@ -72636,12 +72673,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReadFlags = this.ParseT(MAPIInspector.Parsers.ReadFlags);
         if (!MapiInspector.MAPIParser.IsFromFiddlerCore(MapiInspector.MAPIParser.ParsingSession)) {
-            if ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(MapiInspector.MAPIParser.ParsingSession.id).getItem(this.LogonId)) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) !== Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) {
+            if ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(MapiInspector.MAPIParser.ParsingSession.id).getItem(BlockParser.PortablePrimitives.Value(System.Byte, this.LogonId))) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) !== Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) {
                 this.ClientData = this.ParseBytes(24);
             }
         }
         else {
-            if ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"))).getItem(this.LogonId)) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) !== Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) {
+            if ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"))).getItem(BlockParser.PortablePrimitives.Value(System.Byte, this.LogonId))) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) !== Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) {
                 this.ClientData = this.ParseBytes(24);
             }
         }
@@ -72678,9 +72715,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.ResponseHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.ReadStatusChanged = this.ParseAs(System.Byte, System.Boolean);
-            if (this.ReadStatusChanged) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.ReadStatusChanged)) {
                 this.LogonId = this.ParseT(System.Byte);
                 this.ClientData = this.ParseBytes(24);
             }
@@ -72754,7 +72791,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.MessageStatusFlags = this.ParseT(MAPIInspector.Parsers.MessageStatusFlag);
         }
     },
@@ -72794,7 +72831,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ReadFlags = this.ParseT(MAPIInspector.Parsers.ReadFlags);
         this.MessageIdCount = this.ParseT(System.UInt16);
         let messageIDs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageID))();
-        for (var i = 0; i < this.MessageIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageIdCount); i = (((i) + 1) | 0)) {
             messageIDs.add(this.Parse$1(MAPIInspector.Parsers.MessageID));
         }
         this.MessageIds = messageIDs.ToArray();
@@ -72864,7 +72901,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RowId = this.ParseT(System.UInt32);
         this.RecipientType = this.Parse$1(MAPIInspector.Parsers.RecipientType);
         this.RecipientRowSize = this.ParseT(System.UInt16);
-        if (this.RecipientRowSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RecipientRowSize) > 0) {
             this.RecipientRow = new MAPIInspector.Parsers.RecipientRow(this.propTags);
             this.RecipientRow.Parse(this.parser);
         }
@@ -72939,7 +72976,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.CodePageId = this.ParseT(System.UInt16);
         this.Reserved = this.ParseT(System.UInt16);
         this.RecipientRowSize = this.ParseT(System.UInt16);
-        this.RecipientRow = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.RecipientRowSize));
+        this.RecipientRow = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.RecipientRowSize));
     },
     ParseBlocks: function () {
         this.Text = "ReadRecipientRow";
@@ -72970,9 +73007,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Byte0 = this.ParseT(System.Byte);
         let index = 0;
-        this.Flag = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.RecipientTypeFlag, (MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 4) & 240), this.Byte0.Size, this.Byte0.Offset);
+        this.Flag = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.RecipientTypeFlag, (MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 4) & 240), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 4);
-        this.Type = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.RecipientTypeType, (MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 4) & 15), this.Byte0.Size, this.Byte0.Offset);
+        this.Type = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.RecipientTypeType, (MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 4) & 15), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 4);
     },
     ParseBlocks: function () {
@@ -73002,7 +73039,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.NotificationHandle = this.ParseT(System.UInt32);
         this.LogonId = this.ParseT(System.Byte);
-        this.NotificationData = new MAPIInspector.Parsers.NotificationData(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.NotificationHandle));
+        this.NotificationData = new MAPIInspector.Parsers.NotificationData(BlockParser.PortablePrimitives.Value(System.UInt32, this.NotificationHandle));
         this.NotificationData.Parse(this.parser);
     },
     ParseBlocks: function () {
@@ -73070,7 +73107,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.Reserved = this.ParseT(System.Byte);
         }
         this.WantWholeStore = this.ParseAs(System.Byte, System.Boolean);
-        if (!this.WantWholeStore) {
+        if (!BlockParser.PortablePrimitives.Value(System.Boolean, this.WantWholeStore)) {
             this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
             this.MessageId = this.Parse$1(MAPIInspector.Parsers.MessageID);
         }
@@ -73171,8 +73208,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         let isUnreadMessageCount = this.NotificationFlags.U;
         let isNewMail = this.NotificationFlags.HasFlag(MAPIInspector.Parsers.NotificationTypes.NewMail);
         if (this.TableEventType != null) {
-            let isADM = this.TableEventType === MAPIInspector.Parsers.TableEventType.TableRowAdded || this.TableEventType === MAPIInspector.Parsers.TableEventType.TableRowDeleted || this.TableEventType === MAPIInspector.Parsers.TableEventType.TableRowModified;
-            let isAM = this.TableEventType === MAPIInspector.Parsers.TableEventType.TableRowAdded || this.TableEventType === MAPIInspector.Parsers.TableEventType.TableRowModified;
+            let isADM = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.TableEventType, this.TableEventType) === MAPIInspector.Parsers.TableEventType.TableRowAdded || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.TableEventType, this.TableEventType) === MAPIInspector.Parsers.TableEventType.TableRowDeleted || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.TableEventType, this.TableEventType) === MAPIInspector.Parsers.TableEventType.TableRowModified;
+            let isAM = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.TableEventType, this.TableEventType) === MAPIInspector.Parsers.TableEventType.TableRowAdded || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.TableEventType, this.TableEventType) === MAPIInspector.Parsers.TableEventType.TableRowModified;
             if (isADM) {
                 this.TableRowFolderID = this.Parse$1(MAPIInspector.Parsers.FolderID);
             }
@@ -73200,7 +73237,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 if (MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.Count > 0 && MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.containsKey(this.notificationHandle) && MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(this.notificationHandle).containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(this.notificationHandle).getItem(parsingSessionID).Item1 === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath && MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(this.notificationHandle).getItem(parsingSessionID).Item2 === MapiInspector.MAPIParser.ParsingSession.LocalProcess && MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(this.notificationHandle).getItem(parsingSessionID).Item3 === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo")) {
                     this.propertiesBySetColum = MAPIInspector.Parsers.DecodingContext.Notify_handlePropertyTags.getItem(this.notificationHandle).getItem(parsingSessionID).Item4;
                 }
-                this.TableRowData = new MAPIInspector.Parsers.PropertyRow.$ctor1(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.TableRowDataSize), this.propertiesBySetColum);
+                this.TableRowData = new MAPIInspector.Parsers.PropertyRow.$ctor1(BlockParser.PortablePrimitives.Value(System.UInt16, this.TableRowDataSize), this.propertiesBySetColum);
                 this.TableRowData.Parse(this.parser);
             }
         }
@@ -73224,9 +73261,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         if (isCreateModify) {
             this.TagCount = this.ParseT(System.UInt16);
-            if (this.TagCount !== 0 && this.TagCount !== 65535) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt16, this.TagCount) !== 0 && BlockParser.PortablePrimitives.Value(System.UInt16, this.TagCount) !== 65535) {
                 let listTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-                for (var i = 0; i < this.TagCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.TagCount); i = (((i) + 1) | 0)) {
                     listTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
                 }
                 this.Tags = listTags.ToArray();
@@ -73241,10 +73278,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         if (isNewMail) {
             this.MessageFlags = this.ParseT(System.UInt32);
             this.UnicodeFlag = this.ParseT(System.Byte);
-            if (this.UnicodeFlag === 0) {
+            if (BlockParser.PortablePrimitives.Value(System.Byte, this.UnicodeFlag) === 0) {
                 this.MessageClass = this.ParseStringA();
             }
-            else if (this.UnicodeFlag === 1) {
+            else if (BlockParser.PortablePrimitives.Value(System.Byte, this.UnicodeFlag) === 1) {
                 this.MessageClass = this.ParseStringW();
             }
         }
@@ -73429,7 +73466,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ModifyFlags = this.ParseT(MAPIInspector.Parsers.ModifyFlags);
         this.ModifyCount = this.ParseT(System.UInt16);
         let listPermissionData = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PermissionData))();
-        for (var i = 0; i < this.ModifyCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ModifyCount); i = (((i) + 1) | 0)) {
             listPermissionData.add(this.Parse$1(MAPIInspector.Parsers.PermissionData));
         }
         this.PermissionsData = listPermissionData.ToArray();
@@ -73492,7 +73529,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.PermissionDataFlags = this.ParseT(MAPIInspector.Parsers.PermissionDataFlags);
         this.PropertyValueCount = this.ParseT(System.UInt16);
         let listPropertyValues = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             let tempPropertyValue = new MAPIInspector.Parsers.TaggedPropertyValue();
             tempPropertyValue.Parse(this.parser);
             listPropertyValues.add(tempPropertyValue);
@@ -73651,7 +73688,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.CopyFlags = this.ParseT(MAPIInspector.Parsers.CopyFlags);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let tmpPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             tmpPropertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.PropertyTags = tmpPropertyTags.ToArray();
@@ -73691,10 +73728,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.SourceHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyProblemCount = this.ParseT(System.UInt16);
             let interPropertyProblem = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyProblem))();
-            for (var i = 0; i < this.PropertyProblemCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyProblemCount); i = (((i) + 1) | 0)) {
                 interPropertyProblem.add(this.Parse$1(MAPIInspector.Parsers.PropertyProblem));
             }
             this.PropertyProblems = interPropertyProblem.ToArray();
@@ -73745,7 +73782,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.CopyFlags = this.ParseT(MAPIInspector.Parsers.CopyFlags);
         this.ExcludedTagCount = this.ParseT(System.UInt16);
         let tmpExcludedTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.ExcludedTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ExcludedTagCount); i = (((i) + 1) | 0)) {
             tmpExcludedTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.ExcludedTags = tmpExcludedTags.ToArray();
@@ -73786,10 +73823,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.SourceHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyProblemCount = this.ParseT(System.UInt16);
             let interPropertyProblem = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyProblem))();
-            for (var i = 0; i < this.PropertyProblemCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyProblemCount); i = (((i) + 1) | 0)) {
                 interPropertyProblem.add(this.Parse$1(MAPIInspector.Parsers.PropertyProblem));
             }
             this.PropertyProblems = interPropertyProblem.ToArray();
@@ -73905,7 +73942,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let tmpPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             let tmppropertytag = this.Parse$1(MAPIInspector.Parsers.PropertyTag);
             tmpPropertyTags.add(tmppropertytag);
         }
@@ -73942,10 +73979,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyProblemCount = this.ParseT(System.UInt16);
             let interPropertyProblem = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyProblem))();
-            for (var i = 0; i < this.PropertyProblemCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyProblemCount); i = (((i) + 1) | 0)) {
                 interPropertyProblem.add(this.Parse$1(MAPIInspector.Parsers.PropertyProblem));
             }
             this.PropertyProblems = interPropertyProblem.ToArray();
@@ -73984,7 +74021,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let tmpPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             let tmppropertytag = this.Parse$1(MAPIInspector.Parsers.PropertyTag);
             tmpPropertyTags.add(tmppropertytag);
         }
@@ -74021,10 +74058,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyProblemCount = this.ParseT(System.UInt16);
             let interPropertyProblem = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyProblem))();
-            for (var i = 0; i < this.PropertyProblemCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyProblemCount); i = (((i) + 1) | 0)) {
                 interPropertyProblem.add(this.Parse$1(MAPIInspector.Parsers.PropertyProblem));
             }
             this.PropertyProblems = interPropertyProblem.ToArray();
@@ -74063,7 +74100,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.PropertyIdCount = this.ParseT(System.UInt16);
         let tmpPropertyIds = new (System.Collections.Generic.List$1(BlockParser.BlockT$1(System.UInt16)))();
-        for (var i = 0; i < this.PropertyIdCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyIdCount); i = (((i) + 1) | 0)) {
             tmpPropertyIds.add(this.ParseT(System.UInt16));
         }
         this.PropertyIds = tmpPropertyIds.ToArray();
@@ -74099,10 +74136,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyNameCount = this.ParseT(System.UInt16);
             let tmpPropertyNames = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyName))();
-            for (var i = 0; i < this.PropertyNameCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyNameCount); i = (((i) + 1) | 0)) {
                 tmpPropertyNames.add(this.Parse$1(MAPIInspector.Parsers.PropertyName));
             }
             this.PropertyNames = tmpPropertyNames.ToArray();
@@ -74173,10 +74210,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyValueCount = this.ParseT(System.UInt16);
             let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-            for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
                 let value = new MAPIInspector.Parsers.TaggedPropertyValue();
                 value.Parse(this.parser);
                 interValue.add(value);
@@ -74243,10 +74280,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyTagCount = this.ParseT(System.UInt16);
             let tmpPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-            for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
                 tmpPropertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
             }
             this.PropertyTags = tmpPropertyTags.ToArray();
@@ -74289,7 +74326,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.WantUnicode = this.ParseAs(System.UInt16, System.Boolean);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let tmpPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             let tmppropertytag = this.Parse$1(MAPIInspector.Parsers.PropertyTag);
             tmpPropertyTags.add(tmppropertytag);
         }
@@ -74327,13 +74364,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             let propTags = System.Array.init(TransposeR.array(0, null), MAPIInspector.Parsers.PropertyTag);
             if (!MapiInspector.MAPIParser.IsFromFiddlerCore(MapiInspector.MAPIParser.ParsingSession)) {
-                propTags = MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.getItem(MapiInspector.MAPIParser.ParsingSession.id).getItem(this.InputHandleIndex).Dequeue();
+                propTags = MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.getItem(MapiInspector.MAPIParser.ParsingSession.id).getItem(BlockParser.PortablePrimitives.Value(System.Byte, this.InputHandleIndex)).Dequeue();
             }
             else {
-                propTags = MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.getItem(System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"))).getItem(this.InputHandleIndex).Dequeue();
+                propTags = MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.getItem(System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"))).getItem(BlockParser.PortablePrimitives.Value(System.Byte, this.InputHandleIndex)).Dequeue();
             }
             this.RowData = new MAPIInspector.Parsers.PropertyRow(propTags, MAPIInspector.Parsers.PropertyCountContext.RopBuffers);
             this.RowData.Parse(this.parser);
@@ -74373,7 +74410,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Flags = this.ParseT(System.Byte);
         this.PropertyNameCount = this.ParseT(System.UInt16);
         let tmpPropertyNames = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyName))();
-        for (var i = 0; i < this.PropertyNameCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyNameCount); i = (((i) + 1) | 0)) {
             tmpPropertyNames.add(this.Parse$1(MAPIInspector.Parsers.PropertyName));
         }
         this.PropertyNames = tmpPropertyNames.ToArray();
@@ -74410,10 +74447,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyIdCount = this.ParseT(System.UInt16);
             let tmpPropertyIds = new (System.Collections.Generic.List$1(BlockParser.BlockT$1(System.UInt16)))();
-            for (var i = 0; i < this.PropertyIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyIdCount); i = (((i) + 1) | 0)) {
                 tmpPropertyIds.add(this.ParseT(System.UInt16));
             }
             this.PropertyIds = tmpPropertyIds.ToArray();
@@ -74477,7 +74514,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.StreamSize = this.ParseT(System.UInt32);
         }
     },
@@ -74612,7 +74649,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.StreamSize = this.ParseT(System.UInt32);
         }
     },
@@ -74678,7 +74715,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.LogonId = this.ParseT(System.Byte);
             this.CompletedTaskCount = this.ParseT(System.UInt32);
             this.TotalTaskCount = this.ParseT(System.UInt32);
@@ -74719,7 +74756,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.QueryFlags = this.ParseT(System.Byte);
         this.HasGuid = this.ParseT(System.Byte);
-        if (this.HasGuid !== 0) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, this.HasGuid) !== 0) {
             this.PropertyGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
         }
     },
@@ -74756,15 +74793,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.IdCount = this.ParseT(System.UInt16);
             let tmpPropertyIds = new (System.Collections.Generic.List$1(BlockParser.BlockT$1(System.UInt16)))();
             let tmpPropertyNames = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyName))();
-            for (var i = 0; i < this.IdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.IdCount); i = (((i) + 1) | 0)) {
                 tmpPropertyIds.add(this.ParseT(System.UInt16));
             }
             this.PropertyIds = tmpPropertyIds.ToArray();
-            for (var i = 0; i < this.IdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.IdCount); i = (((i) + 1) | 0)) {
                 tmpPropertyNames.add(this.Parse$1(MAPIInspector.Parsers.PropertyName));
             }
             this.PropertyNames = tmpPropertyNames.ToArray();
@@ -74803,7 +74840,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ByteCount = this.ParseT(System.UInt16);
-        if (this.ByteCount === 47806) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.ByteCount) === 47806) {
             this.MaximumByteCount = this.ParseT(System.UInt32);
         }
     },
@@ -74839,7 +74876,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
         this.DataSize = this.ParseT(System.UInt16);
-        this.Data = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.DataSize));
+        this.Data = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.DataSize));
     },
     ParseBlocks: function () {
         this.Text = "RopReadStreamResponse";
@@ -74905,7 +74942,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.NewPosition = this.ParseT(System.UInt64);
         }
     },
@@ -74943,7 +74980,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.PropertyValueSize = this.ParseT(System.UInt16);
         this.PropertyValueCount = this.ParseT(System.UInt16);
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             let value = new MAPIInspector.Parsers.TaggedPropertyValue();
             value.Parse(this.parser);
             interValue.add(value);
@@ -74982,10 +75019,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyProblemCount = this.ParseT(System.UInt16);
             let interPropertyProblem = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyProblem))();
-            for (var i = 0; i < this.PropertyProblemCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyProblemCount); i = (((i) + 1) | 0)) {
                 interPropertyProblem.add(this.Parse$1(MAPIInspector.Parsers.PropertyProblem));
             }
             this.PropertyProblems = interPropertyProblem.ToArray();
@@ -75028,7 +75065,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.PropertyValueCount = this.ParseT(System.UInt16);
         this.parser.PushCap(Transpose.Int.clip32(this.PropertyValueSize.Data - 2));
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount && !this.parser.Empty; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount) && !this.parser.Empty; i = (((i) + 1) | 0)) {
             let value = new MAPIInspector.Parsers.TaggedPropertyValue(MAPIInspector.Parsers.PropertyCountContext.RopBuffers);
             value.Parse(this.parser);
             interValue.add(value);
@@ -75073,10 +75110,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         let tmpRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyRow))();
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyProblemCount = this.ParseT(System.UInt16);
             let interPropertyProblem = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyProblem))();
-            for (var i = 0; i < this.PropertyProblemCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyProblemCount); i = (((i) + 1) | 0)) {
                 interPropertyProblem.add(this.Parse$1(MAPIInspector.Parsers.PropertyProblem));
             }
             this.PropertyProblems = interPropertyProblem.ToArray();
@@ -75238,7 +75275,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.DataSize = this.ParseT(System.UInt16);
-        this.Data = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.DataSize));
+        this.Data = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.DataSize));
     },
     ParseBlocks: function () {
         this.Text = "RopWriteAndCommitStreamRequest";
@@ -75303,7 +75340,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.DataSize = this.ParseT(System.UInt16);
-        this.Data = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.DataSize));
+        this.Data = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.DataSize));
     },
     ParseBlocks: function () {
         this.Text = "RopWriteStreamExtendedRequest";
@@ -75368,7 +75405,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.DataSize = this.ParseT(System.UInt16);
-        this.Data = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.DataSize));
+        this.Data = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.DataSize));
     },
     ParseBlocks: function () {
         this.Text = "RopWriteStreamRequest";
@@ -75432,7 +75469,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.parser.Advance(Transpose.Int.clip32(ropSize - 2));
         this.ServerObjectHandleTable = new (System.Collections.Generic.List$1(System.UInt32))();
         while (this.parser.RemainingBytes >= 4) {
-            this.ServerObjectHandleTable.add(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.ParseT(System.UInt32)));
+            this.ServerObjectHandleTable.add(BlockParser.PortablePrimitives.Value(System.UInt32, this.ParseT(System.UInt32)));
         }
     },
     ParseBlocks: function () {
@@ -75466,9 +75503,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             parsingSessionID = System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"));
         }
         let currentPosition = this.parser.Offset;
-        this.parser.Advance(Transpose.Int.clip32(this.RopSize - 2));
+        this.parser.Advance(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
         while (this.parser.RemainingBytes >= 4) {
-            let serverObjectTable = BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.ParseT(System.UInt32));
+            let serverObjectTable = BlockParser.PortablePrimitives.Value(System.UInt32, this.ParseT(System.UInt32));
             if (MapiInspector.MAPIParser.TargetHandle.Count > 0) {
                 MapiInspector.MAPIParser.IsLooperCall = true;
                 let item = MapiInspector.MAPIParser.TargetHandle.Peek();
@@ -75486,20 +75523,20 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             let proDics = new (System.Collections.Generic.Queue$1(System.Array.type(MAPIInspector.Parsers.PropertyTag)))();
             let propertyTagsForGetPropertiesSpec = new (System.Collections.Generic.Dictionary$2(System.UInt32, System.Collections.Generic.Queue$1(System.Array.type(MAPIInspector.Parsers.PropertyTag))))();
             let logonFlagsInLogonRop = new (System.Collections.Generic.Dictionary$2(System.UInt32, MAPIInspector.Parsers.LogonFlags))();
-            if (Transpose.Int.clip32(this.RopSize - 2) > 1) {
-                ropRemainSize.add(Transpose.Int.clipu32(this.RopSize - Transpose.Int.clipu32(2)));
-                this.parser.PushCap(Transpose.Int.clip32(this.RopSize - 2));
+            if (Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2) > 1) {
+                ropRemainSize.add(Transpose.Int.clipu32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - Transpose.Int.clipu32(2)));
+                this.parser.PushCap(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
                 do {
                     let currentRop = this.TestParse(MAPIInspector.Parsers.RopIdType);
                     switch (currentRop.Data) {
                         case MAPIInspector.Parsers.RopIdType.RopLogon:
                             let ropLogonRequest = this.Parse$1(MAPIInspector.Parsers.RopLogonRequest);
                             ropsList.add(ropLogonRequest);
-                            if (logonFlagsInLogonRop.Count > 0 && logonFlagsInLogonRop.containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropLogonRequest.OutputHandleIndex))) {
-                                logonFlagsInLogonRop.setItem(ropLogonRequest.OutputHandleIndex, BlockParser.BlockT$1(MAPIInspector.Parsers.LogonFlags).op_Implicit$1(ropLogonRequest.LogonFlags));
+                            if (logonFlagsInLogonRop.Count > 0 && logonFlagsInLogonRop.containsKey(BlockParser.PortablePrimitives.Value(System.Byte, ropLogonRequest.OutputHandleIndex))) {
+                                logonFlagsInLogonRop.setItem(BlockParser.PortablePrimitives.Value(System.Byte, ropLogonRequest.OutputHandleIndex), BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.LogonFlags, ropLogonRequest.LogonFlags));
                             }
                             else {
-                                logonFlagsInLogonRop.add(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropLogonRequest.OutputHandleIndex), BlockParser.BlockT$1(MAPIInspector.Parsers.LogonFlags).op_Implicit$1(ropLogonRequest.LogonFlags));
+                                logonFlagsInLogonRop.add(BlockParser.PortablePrimitives.Value(System.Byte, ropLogonRequest.OutputHandleIndex), BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.LogonFlags, ropLogonRequest.LogonFlags));
                             }
                             if (logonFlagsInLogonRop.Count > 0) {
                                 if (MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.containsKey(parsingSessionID)) {
@@ -75521,11 +75558,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                     logIdAndFlags = clientInfoMap.getItem(MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo"));
                                     clientInfoMap.remove(MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo"));
                                 }
-                                if (logIdAndFlags.containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropLogonRequest.LogonId))) {
-                                    logIdAndFlags.remove(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropLogonRequest.LogonId));
+                                if (logIdAndFlags.containsKey(BlockParser.PortablePrimitives.Value(System.Byte, ropLogonRequest.LogonId))) {
+                                    logIdAndFlags.remove(BlockParser.PortablePrimitives.Value(System.Byte, ropLogonRequest.LogonId));
                                 }
                             }
-                            logIdAndFlags.add(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropLogonRequest.LogonId), BlockParser.BlockT$1(MAPIInspector.Parsers.LogonFlags).op_Implicit$1(ropLogonRequest.LogonFlags));
+                            logIdAndFlags.add(BlockParser.PortablePrimitives.Value(System.Byte, ropLogonRequest.LogonId), BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.LogonFlags, ropLogonRequest.LogonFlags));
                             clientInfoMap.add(MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo"), logIdAndFlags);
                             processNameMap.add(MapiInspector.MAPIParser.ParsingSession.LocalProcess, clientInfoMap);
                             MAPIInspector.Parsers.DecodingContext.LogonFlagMapLogId.add(MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath, processNameMap);
@@ -75568,8 +75605,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let ropId = this.ParseT(MAPIInspector.Parsers.RopIdType);
                             let logonId = this.ParseT(System.Byte);
                             this.parser.Offset = ropWritePerUserInformationPosition;
-                            if (!(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.Count > 0 && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(parsingSessionID).containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(logonId)))) {
-                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing LogonFlags information for RopWritePerUserInformation", BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop), System.Array.init([BlockParser.BlockT$1(System.Byte).op_Implicit$1(logonId)], System.UInt32)));
+                            if (!(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.Count > 0 && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(parsingSessionID).containsKey(BlockParser.PortablePrimitives.Value(System.Byte, logonId)))) {
+                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing LogonFlags information for RopWritePerUserInformation", BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop), System.Array.init([BlockParser.PortablePrimitives.Value(System.Byte, logonId)], System.UInt32)));
                                 ropsList.add(this.ParseJunk("Remaining Data"));
                             }
                             else {
@@ -75606,32 +75643,32 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         case MAPIInspector.Parsers.RopIdType.RopRelease:
                             let ropReleaseRequest = this.Parse$1(MAPIInspector.Parsers.RopReleaseRequest);
                             ropsList.add(ropReleaseRequest);
-                            let handle_Release = tempServerObjectHandleTable.getItem(ropReleaseRequest.InputHandleIndex);
+                            let handle_Release = tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, ropReleaseRequest.InputHandleIndex));
                             let serverRequestPath = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                             if (MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.containsKey(handle_Release)) {
                                 let sessions = new (System.Collections.Generic.List$1(System.Int32))();
-                                var $e3633 = TransposeR.getEnumerator(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(handle_Release));
+                                var $e38df = TransposeR.getEnumerator(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(handle_Release));
                                 try {
-                                    while ($e3633.moveNext()) {
-                                        let ele = $e3633.current;
+                                    while ($e38df.moveNext()) {
+                                        let ele = $e38df.current;
                                         if (ele.value.Item1 === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath && ele.value.Item2 === MapiInspector.MAPIParser.ParsingSession.LocalProcess && ele.value.Item3 === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo")) {
                                             sessions.add(ele.key);
                                         }
                                     }
                                 }finally {
-                                    TransposeR.dispose($e3633);
+                                    TransposeR.dispose($e38df);
                                 }
                                 if (sessions.Count > 0) {
                                     let temp = MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(handle_Release);
                                     MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.remove(handle_Release);
-                                    var $e3a89 = TransposeR.getEnumerator(sessions);
+                                    var $e3d35 = TransposeR.getEnumerator(sessions);
                                     try {
-                                        while ($e3a89.moveNext()) {
-                                            let $var = $e3a89.current;
+                                        while ($e3d35.moveNext()) {
+                                            let $var = $e3d35.current;
                                             temp.remove($var);
                                         }
                                     }finally {
-                                        TransposeR.dispose($e3a89);
+                                        TransposeR.dispose($e3d35);
                                     }
                                     if (temp.Count !== 0) {
                                         MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.add(handle_Release, temp);
@@ -75642,7 +75679,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         case MAPIInspector.Parsers.RopIdType.RopSetColumns:
                             let ropSetColumnsRequest = this.Parse$1(MAPIInspector.Parsers.RopSetColumnsRequest);
                             ropsList.add(ropSetColumnsRequest);
-                            let handle_SetColumns = tempServerObjectHandleTable.getItem(ropSetColumnsRequest.InputHandleIndex);
+                            let handle_SetColumns = tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, ropSetColumnsRequest.InputHandleIndex));
                             let serverUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                             if (handle_SetColumns !== 4294967295) {
                                 if (MapiInspector.MAPIParser.TargetHandle.Count > 0) {
@@ -75682,7 +75719,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                     let outputHandle;
                                     try {
                                         MapiInspector.MAPIParser.IsOnlyGetServerHandle = true;
-                                        outputHandle = MapiInspector.MAPIParser.ParseResponseMessageSimply(MapiInspector.MAPIParser.ParsingSession, BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropSetColumnsRequest.InputHandleIndex));
+                                        outputHandle = MapiInspector.MAPIParser.ParseResponseMessageSimply(MapiInspector.MAPIParser.ParsingSession, BlockParser.PortablePrimitives.Value(System.Byte, ropSetColumnsRequest.InputHandleIndex));
                                     }
                                     finally {
                                         MapiInspector.MAPIParser.IsOnlyGetServerHandle = false;
@@ -75724,7 +75761,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let outputHandle;
                                 try {
                                     MapiInspector.MAPIParser.IsOnlyGetServerHandle = true;
-                                    outputHandle = MapiInspector.MAPIParser.ParseResponseMessageSimply(MapiInspector.MAPIParser.ParsingSession, BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropSetColumnsRequest.InputHandleIndex));
+                                    outputHandle = MapiInspector.MAPIParser.ParseResponseMessageSimply(MapiInspector.MAPIParser.ParsingSession, BlockParser.PortablePrimitives.Value(System.Byte, ropSetColumnsRequest.InputHandleIndex));
                                 }
                                 finally {
                                     MapiInspector.MAPIParser.IsOnlyGetServerHandle = false;
@@ -75851,12 +75888,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             this.parser.Advance(Transpose.Int.clip32(1 + 1));
                             let tempInputHandleIndex_putBuffer = this.ParseT(System.Byte);
                             this.parser.Offset = currentPos_putBuffer;
-                            let ropPutbufferHandle = tempServerObjectHandleTable.getItem(tempInputHandleIndex_putBuffer);
+                            let ropPutbufferHandle = tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_putBuffer));
                             let destinationParsingSession = MapiInspector.MAPIParser.ParsingSession;
                             let destinationParsingSessionID = parsingSessionID;
-                            if (tempServerObjectHandleTable.getItem(tempInputHandleIndex_putBuffer) !== 4294967295) {
+                            if (tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_putBuffer)) !== 4294967295) {
                                 if (!MAPIInspector.Parsers.DecodingContext.PartialInformationReady.containsKey(destinationParsingSessionID)) {
-                                    throw new MAPIInspector.Parsers.MissingPartialInformationException(BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop), ropPutbufferHandle);
+                                    throw new MAPIInspector.Parsers.MissingPartialInformationException(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop), ropPutbufferHandle);
                                 }
                             }
                             else {
@@ -75888,12 +75925,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             this.parser.Advance(Transpose.Int.clip32(1 + 1));
                             let tempInputHandleIndex_putBufferExtended = this.ParseT(System.Byte);
                             this.parser.Offset = currentPos_putBufferExtended;
-                            let ropPutExtendbufferHandle = tempServerObjectHandleTable.getItem(tempInputHandleIndex_putBufferExtended);
+                            let ropPutExtendbufferHandle = tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_putBufferExtended));
                             let aimsParsingSessionID = parsingSessionID;
                             let aimsParsingSession = MapiInspector.MAPIParser.ParsingSession;
-                            if (tempServerObjectHandleTable.getItem(tempInputHandleIndex_putBufferExtended) !== 4294967295) {
+                            if (tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_putBufferExtended)) !== 4294967295) {
                                 if (!MAPIInspector.Parsers.DecodingContext.PartialInformationReady.containsKey(aimsParsingSessionID)) {
-                                    throw new MAPIInspector.Parsers.MissingPartialInformationException(BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop), ropPutExtendbufferHandle);
+                                    throw new MAPIInspector.Parsers.MissingPartialInformationException(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop), ropPutExtendbufferHandle);
                                 }
                             }
                             else {
@@ -75962,17 +75999,17 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         case MAPIInspector.Parsers.RopIdType.RopGetPropertiesSpecific:
                             let ropGetPropertiesSpecificRequest = this.Parse$1(MAPIInspector.Parsers.RopGetPropertiesSpecificRequest);
                             ropsList.add(ropGetPropertiesSpecificRequest);
-                            if (propertyTagsForGetPropertiesSpec.containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropGetPropertiesSpecificRequest.InputHandleIndex))) {
-                                if (propertyTagsForGetPropertiesSpec.getItem(ropGetPropertiesSpecificRequest.InputHandleIndex).Count === 1) {
-                                    proDics.Enqueue(propertyTagsForGetPropertiesSpec.getItem(ropGetPropertiesSpecificRequest.InputHandleIndex).Dequeue());
+                            if (propertyTagsForGetPropertiesSpec.containsKey(BlockParser.PortablePrimitives.Value(System.Byte, ropGetPropertiesSpecificRequest.InputHandleIndex))) {
+                                if (propertyTagsForGetPropertiesSpec.getItem(BlockParser.PortablePrimitives.Value(System.Byte, ropGetPropertiesSpecificRequest.InputHandleIndex)).Count === 1) {
+                                    proDics.Enqueue(propertyTagsForGetPropertiesSpec.getItem(BlockParser.PortablePrimitives.Value(System.Byte, ropGetPropertiesSpecificRequest.InputHandleIndex)).Dequeue());
                                 }
                                 proDics.Enqueue(ropGetPropertiesSpecificRequest.PropertyTags);
-                                propertyTagsForGetPropertiesSpec.setItem(ropGetPropertiesSpecificRequest.InputHandleIndex, proDics);
+                                propertyTagsForGetPropertiesSpec.setItem(BlockParser.PortablePrimitives.Value(System.Byte, ropGetPropertiesSpecificRequest.InputHandleIndex), proDics);
                             }
                             else {
                                 let proDic0 = new (System.Collections.Generic.Queue$1(System.Array.type(MAPIInspector.Parsers.PropertyTag)))();
                                 proDic0.Enqueue(ropGetPropertiesSpecificRequest.PropertyTags);
-                                propertyTagsForGetPropertiesSpec.add(BlockParser.BlockT$1(System.Byte).op_Implicit$1(ropGetPropertiesSpecificRequest.InputHandleIndex), proDic0);
+                                propertyTagsForGetPropertiesSpec.add(BlockParser.PortablePrimitives.Value(System.Byte, ropGetPropertiesSpecificRequest.InputHandleIndex), proDic0);
                             }
                             if (propertyTagsForGetPropertiesSpec.Count > 0) {
                                 if (MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.containsKey(parsingSessionID)) {
@@ -76133,8 +76170,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let ropId_setReadFlag = this.ParseT(MAPIInspector.Parsers.RopIdType);
                             let logId = this.ParseT(System.Byte);
                             this.parser.Offset = ropSetMessageReadFlagPosition;
-                            if (!(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.Count > 0 && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(parsingSessionID).containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(logId)))) {
-                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing LogonFlags information for RopSetMessageReadFlag", BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop), System.Array.init([BlockParser.BlockT$1(System.Byte).op_Implicit$1(logId)], System.UInt32)));
+                            if (!(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.Count > 0 && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(parsingSessionID).containsKey(BlockParser.PortablePrimitives.Value(System.Byte, logId)))) {
+                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing LogonFlags information for RopSetMessageReadFlag", BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop), System.Array.init([BlockParser.PortablePrimitives.Value(System.Byte, logId)], System.UInt32)));
                                 ropsList.add(this.ParseJunk("Remaining Data"));
                             }
                             else {
@@ -76175,10 +76212,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             ropsList.add(this.ParseJunk("Remaining Data"));
                             break;
                     }
-                    if (currentRop === MAPIInspector.Parsers.RopIdType.RopRelease) {
+                    if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop) === MAPIInspector.Parsers.RopIdType.RopRelease) {
                         ropRemainSize.removeAt(Transpose.Int.clip32(ropRemainSize.Count - 1));
                     }
-                    ropRemainSize.add(Transpose.Int.clipu32(this.RopSize - Transpose.Int.clipu32(this.parser.Offset)));
+                    ropRemainSize.add(Transpose.Int.clipu32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - Transpose.Int.clipu32(this.parser.Offset)));
                 }
                 while (this.parser.RemainingBytes > 0);
                 this.parser.PopCap();
@@ -76193,20 +76230,20 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             this.RopsList = ropsList.ToArray();
         }
         else {
-            ropsList.add(this.ParseBytes(Transpose.Int.clip32(this.RopSize - 1)));
+            ropsList.add(this.ParseBytes(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 1)));
         }
         this.RopsList = ropsList.ToArray();
         if (this.RopsList.length !== 0) {
-            var $ef25d = TransposeR.getEnumerator(ropsList);
+            var $ef801 = TransposeR.getEnumerator(ropsList);
             try {
-                while ($ef25d.moveNext()) {
-                    let obj = $ef25d.current;
+                while ($ef801.moveNext()) {
+                    let obj = $ef801.current;
                     if (MapiInspector.MAPIParser.AllRopsList.Count <= 0 || !MapiInspector.MAPIParser.AllRopsList.contains(Transpose.Reflection.getTypeName(Transpose.getType(obj)))) {
                         MapiInspector.MAPIParser.AllRopsList.add(Transpose.Reflection.getTypeName(Transpose.getType(obj)));
                     }
                 }
             }finally {
-                TransposeR.dispose($ef25d);
+                TransposeR.dispose($ef801);
             }
         }
         while (this.parser.RemainingBytes >= 4) {
@@ -76244,7 +76281,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         let serverObjectHandleTable = new (System.Collections.Generic.List$1(BlockParser.BlockT$1(System.UInt32)))();
         let tempServerObjectHandleTable = new (System.Collections.Generic.List$1(BlockParser.BlockT$1(System.UInt32)))();
         let currentPosition = this.parser.Offset;
-        this.parser.Advance(Transpose.Int.clip32(this.RopSize - 2));
+        this.parser.Advance(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
         let parsingSessionID = MapiInspector.MAPIParser.ParsingSession.id;
         if (MapiInspector.MAPIParser.IsFromFiddlerCore(MapiInspector.MAPIParser.ParsingSession)) {
             parsingSessionID = System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"));
@@ -76254,7 +76291,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (MapiInspector.MAPIParser.TargetHandle.Count > 0) {
                 MapiInspector.MAPIParser.IsLooperCall = true;
                 let item = MapiInspector.MAPIParser.TargetHandle.Peek();
-                if (System.Linq.Enumerable.from(item, System.Collections.Generic.KeyValuePair$2(MAPIInspector.Parsers.RopIdType, System.Collections.Generic.Dictionary$2(System.Int32, System.UInt32))).first().value.ContainsValue(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(serverObjectTable))) {
+                if (System.Linq.Enumerable.from(item, System.Collections.Generic.KeyValuePair$2(MAPIInspector.Parsers.RopIdType, System.Collections.Generic.Dictionary$2(System.Int32, System.UInt32))).first().value.ContainsValue(BlockParser.PortablePrimitives.Value(System.UInt32, serverObjectTable))) {
                     parseToCROPSResponseLayer = true;
                 }
             }
@@ -76266,8 +76303,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.parser.Offset = currentPosition;
         if (!MapiInspector.MAPIParser.IsLooperCall || parseToCROPSResponseLayer || MapiInspector.MAPIParser.NeedToParseCROPSLayer) {
             MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse = new (System.Collections.Generic.List$1(System.UInt32))();
-            if (Transpose.Int.clip32(this.RopSize - 2) > 1) {
-                this.parser.PushCap(Transpose.Int.clip32(this.RopSize - 2));
+            if (Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2) > 1) {
+                this.parser.PushCap(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
                 do {
                     let currentRop = BlockParser.Block.TestParse(MAPIInspector.Parsers.RopIdType, this.parser);
                     switch (currentRop.Data) {
@@ -76276,12 +76313,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             this.parser.Advance(1);
                             let tempOutputHandleIndex_logon = this.ParseT(System.Byte);
                             this.parser.Offset = currentPos_logon;
-                            if (!(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.Count > 0 && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.getItem(parsingSessionID).containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempOutputHandleIndex_logon)))) {
-                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing LogonFlags information for RopLogon", BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop)));
+                            if (!(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.Count > 0 && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.getItem(parsingSessionID).containsKey(BlockParser.PortablePrimitives.Value(System.Byte, tempOutputHandleIndex_logon)))) {
+                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing LogonFlags information for RopLogon", BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop)));
                                 ropsList.add(this.ParseJunk("Remaining Data"));
                             }
                             else {
-                                if ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.getItem(parsingSessionID).getItem(tempOutputHandleIndex_logon)) & 1) === Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) {
+                                if ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagsInLogonRop.getItem(parsingSessionID).getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempOutputHandleIndex_logon))) & 1) === Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) {
                                     ropsList.add(this.Parse$1(MAPIInspector.Parsers.RopLogonResponse_PrivateMailboxes));
                                 }
                                 else {
@@ -76367,15 +76404,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 ropsList.add(ropBufferTooSmallResponse);
                             }
                             else {
-                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing RequestBuffersSize information for RopBufferTooSmall", BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop)));
+                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing RequestBuffersSize information for RopBufferTooSmall", BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop)));
                                 ropsList.add(this.ParseJunk("Remaining Data"));
                             }
                             break;
                         case MAPIInspector.Parsers.RopIdType.RopSetColumns:
                             let ropSetColumnsResponse = this.Parse$1(MAPIInspector.Parsers.RopSetColumnsResponse);
                             ropsList.add(ropSetColumnsResponse);
-                            if (!(MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse.Count > 0 && MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse.contains(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(ropSetColumnsResponse.InputHandleIndex))))) {
-                                MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse.add(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(ropSetColumnsResponse.InputHandleIndex)));
+                            if (!(MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse.Count > 0 && MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse.contains(BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, ropSetColumnsResponse.InputHandleIndex)))))) {
+                                MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse.add(BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, ropSetColumnsResponse.InputHandleIndex))));
                             }
                             break;
                         case MAPIInspector.Parsers.RopIdType.RopSortTable:
@@ -76393,10 +76430,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let serverPath_QueryRow = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                             let processName_QueryROw = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
                             let clientInfo_QueryROw = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
-                            let objHandle_QueryROw = BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(tempInputHandleIndex_QueryRow));
-                            if (returnValue_queryRow === MAPIInspector.Parsers.ErrorCodes.Success) {
+                            let objHandle_QueryROw = BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_QueryRow)));
+                            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, returnValue_queryRow) === MAPIInspector.Parsers.ErrorCodes.Success) {
                                 if (!(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.containsKey(objHandle_QueryROw) && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_QueryROw).containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_QueryROw).getItem(parsingSessionID).Item1 === serverPath_QueryRow && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_QueryROw).getItem(parsingSessionID).Item2 === processName_QueryROw && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_QueryROw).getItem(parsingSessionID).Item3 === clientInfo_QueryROw)) {
-                                    ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing PropertyTags information for RopQueryRowsResponse", MAPIInspector.Parsers.RopIdType.RopQueryRows, System.Array.init([BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempInputHandleIndex_QueryRow), BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(tempInputHandleIndex_QueryRow))], System.UInt32)));
+                                    ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing PropertyTags information for RopQueryRowsResponse", MAPIInspector.Parsers.RopIdType.RopQueryRows, System.Array.init([BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempInputHandleIndex_QueryRow), BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_QueryRow)))], System.UInt32)));
                                     ropsList.add(this.ParseJunk("Remaining Data"));
                                 }
                                 else {
@@ -76441,11 +76478,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let tempInputHandleIndex_findRow = this.ParseT(System.Byte);
                             let returnValue_findRow = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
                             this.parser.Offset = currentPos_findRow;
-                            let objHandle_FindRow = BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(tempInputHandleIndex_findRow));
+                            let objHandle_FindRow = BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_findRow)));
                             let serverPath_FindRow = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                             let processName_FindRow = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
                             let clientInfo_FindRow = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
-                            if (returnValue_findRow === MAPIInspector.Parsers.ErrorCodes.Success) {
+                            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, returnValue_findRow) === MAPIInspector.Parsers.ErrorCodes.Success) {
                                 if (!(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.containsKey(objHandle_FindRow) && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_FindRow).containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_FindRow).getItem(parsingSessionID).Item1 === serverPath_FindRow && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_FindRow).getItem(parsingSessionID).Item2 === processName_FindRow && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_FindRow).getItem(parsingSessionID).Item3 === clientInfo_FindRow)) {
                                     ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing PropertyTags information for RopFindRowsResponse", MAPIInspector.Parsers.RopIdType.RopFindRow, System.Array.init([BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempInputHandleIndex_findRow), objHandle_FindRow], System.UInt32)));
                                     ropsList.add(this.ParseJunk("Remaining Data"));
@@ -76474,11 +76511,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let tempInputHandleIndex_expandRow = this.ParseT(System.Byte);
                             let returnValue_expandRow = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
                             this.parser.Offset = currentPos_expandRow;
-                            let objHandle_ExpandRow = BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(tempInputHandleIndex_expandRow));
+                            let objHandle_ExpandRow = BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_expandRow)));
                             let serverPath_ExpandRow = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                             let processName_ExpandRow = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
                             let clientInfo_ExpandRow = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
-                            if (returnValue_expandRow === MAPIInspector.Parsers.ErrorCodes.Success) {
+                            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, returnValue_expandRow) === MAPIInspector.Parsers.ErrorCodes.Success) {
                                 if (!(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.containsKey(objHandle_ExpandRow) && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_ExpandRow).containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_ExpandRow).getItem(parsingSessionID).Item1 === serverPath_ExpandRow && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_ExpandRow).getItem(parsingSessionID).Item2 === processName_ExpandRow && MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(objHandle_ExpandRow).getItem(parsingSessionID).Item3 === clientInfo_ExpandRow)) {
                                     ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing PropertyTags information for RopExpandRowsResponse", MAPIInspector.Parsers.RopIdType.RopExpandRow, System.Array.init([BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempInputHandleIndex_expandRow), objHandle_ExpandRow], System.UInt32)));
                                     ropsList.add(this.ParseJunk("Remaining Data"));
@@ -76533,11 +76570,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             this.parser.Offset = currentPos_getBuffer;
                             let getParsingSessionID = parsingSessionID;
                             let getParsingSession = MapiInspector.MAPIParser.ParsingSession;
-                            let ropGetbufferHandle = BlockParser.BlockT$1(System.UInt32).op_Implicit$1(tempServerObjectHandleTable.getItem(tempInputHandleIndex_getBuffer));
+                            let ropGetbufferHandle = BlockParser.PortablePrimitives.Value(System.UInt32, tempServerObjectHandleTable.getItem(BlockParser.PortablePrimitives.Value(System.Byte, tempInputHandleIndex_getBuffer)));
                             let partialBeforeAndAfterInformation = System.Array.init(TransposeR.array(2, null), MAPIInspector.Parsers.PartialContextInformation);
-                            if (returnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+                            if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, returnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
                                 if (!MAPIInspector.Parsers.DecodingContext.PartialInformationReady.containsKey(getParsingSessionID)) {
-                                    throw new MAPIInspector.Parsers.MissingPartialInformationException(BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop), ropGetbufferHandle);
+                                    throw new MAPIInspector.Parsers.MissingPartialInformationException(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop), ropGetbufferHandle);
                                 }
                             }
                             let ropFastTransferSourceGetBufferResponse = new MAPIInspector.Parsers.RopFastTransferSourceGetBufferResponse();
@@ -76616,7 +76653,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let tempInputHandleIndex_getPropertiesSpec = this.ParseT(System.Byte);
                             this.parser.Offset = currentPos_getPropertiesSpec;
                             if (!(MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.Count > 0 && MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.containsKey(parsingSessionID) && MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.getItem(parsingSessionID).containsKey(BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempInputHandleIndex_getPropertiesSpec)) && MAPIInspector.Parsers.DecodingContext.GetPropertiesSpec_propertyTags.getItem(parsingSessionID).getItem(BlockParser.BlockT$1(System.Byte).op_Implicit$1(tempInputHandleIndex_getPropertiesSpec)).Count !== 0)) {
-                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing PropertyTags information for RopGetPropertiesSpecific", BlockParser.BlockT$1(MAPIInspector.Parsers.RopIdType).op_Implicit$1(currentRop)));
+                                ropsList.add(MAPIInspector.Parsers.MissingInformationException.MaybeThrow("Missing PropertyTags information for RopGetPropertiesSpecific", BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.RopIdType, currentRop)));
                                 ropsList.add(this.ParseJunk("Remaining Data"));
                             }
                             else {
@@ -76822,20 +76859,20 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
         }
         else {
-            ropsList.add(this.ParseBytes(Transpose.Int.clip32(this.RopSize - 1)));
+            ropsList.add(this.ParseBytes(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 1)));
         }
         this.RopsList = ropsList.ToArray();
         if (this.RopsList.length !== 0) {
-            var $eb7d9 = TransposeR.getEnumerator(ropsList);
+            var $ebc27 = TransposeR.getEnumerator(ropsList);
             try {
-                while ($eb7d9.moveNext()) {
-                    let obj = $eb7d9.current;
+                while ($ebc27.moveNext()) {
+                    let obj = $ebc27.current;
                     if (MapiInspector.MAPIParser.AllRopsList.Count <= 0 || !MapiInspector.MAPIParser.AllRopsList.contains(Transpose.Reflection.getTypeName(Transpose.getType(obj)))) {
                         MapiInspector.MAPIParser.AllRopsList.add(Transpose.Reflection.getTypeName(Transpose.getType(obj)));
                     }
                 }
             }finally {
-                TransposeR.dispose($eb7d9);
+                TransposeR.dispose($ebc27);
             }
         }
         while (this.parser.RemainingBytes >= 4) {
@@ -76938,12 +76975,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Duration = this.ParseT(System.UInt32);
         this.BackoffRopCount = this.ParseT(System.Byte);
         let backoffRopDataList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.BackoffRop))();
-        for (var i = 0; i < this.BackoffRopCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.Byte, this.BackoffRopCount); i = (((i) + 1) | 0)) {
             backoffRopDataList.add(this.Parse$1(MAPIInspector.Parsers.BackoffRop));
         }
         this.BackoffRopData = backoffRopDataList.ToArray();
         this.AdditionalDataSize = this.ParseT(System.UInt16);
-        this.AdditionalData = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.AdditionalDataSize));
+        this.AdditionalData = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.AdditionalDataSize));
     },
     ParseBlocks: function () {
         this.Text = "RopBackoffResponse";
@@ -77037,11 +77074,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.AddressTypeCount = this.ParseT(System.UInt16);
             this.AddressTypeSize = this.ParseT(System.UInt16);
             let listAddressTypes = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-            for (var i = 0; i < this.AddressTypeCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.AddressTypeCount); i = (((i) + 1) | 0)) {
                 listAddressTypes.add(this.ParseStringA());
             }
             this.AddressTypes = listAddressTypes.ToArray();
@@ -77106,7 +77143,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
         }
     },
@@ -77177,12 +77214,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         MAPIInspector.Parsers.HelpMethod.AddError(this, this.ReturnValue, "ReturnValue");
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.Reserved = this.ParseT(System.Byte);
             this.OptionalInfoSize = this.ParseT(System.UInt16);
             this.OptionalInfo = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.OptionalInfoSize));
             this.HelpFileSize = this.ParseT(System.UInt16);
-            if (this.HelpFileSize !== 0) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt16, this.HelpFileSize) !== 0) {
                 this.HelpFile = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.HelpFileSize));
                 this.HelpFileName = this.ParseStringA();
             }
@@ -77525,11 +77562,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.NoPropertiesReturned = this.ParseT(System.Byte);
             this.PropertyValueCount = this.ParseT(System.UInt16);
             let tempPropertyValues = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-            for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
                 let temptaggedPropertyValue = new MAPIInspector.Parsers.TaggedPropertyValue(MAPIInspector.Parsers.PropertyCountContext.RopBuffers);
                 temptaggedPropertyValue.Parse(this.parser);
                 tempPropertyValues.add(temptaggedPropertyValue);
@@ -77626,11 +77663,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.OwningServersCount = this.ParseT(System.UInt16);
             this.CheapServersCount = this.ParseT(System.UInt16);
             let tmpOwning = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-            for (var i = 0; i < this.OwningServersCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.OwningServersCount); i = (((i) + 1) | 0)) {
                 tmpOwning.add(this.ParseStringA());
             }
             this.OwningServers = tmpOwning.ToArray();
@@ -77698,7 +77735,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.DatabaseGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
         }
     },
@@ -77763,10 +77800,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.LongTermIdCount = this.ParseT(System.UInt16);
             let tmpLongTermIds = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.LongTermID))();
-            for (var i = 0; i < this.LongTermIdCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.LongTermIdCount); i = (((i) + 1) | 0)) {
                 tmpLongTermIds.add(this.Parse$1(MAPIInspector.Parsers.LongTermID));
             }
             this.LongTermIds = tmpLongTermIds.ToArray();
@@ -77834,7 +77871,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.FolderId = this.Parse$1(MAPIInspector.Parsers.FolderID);
             this.ExplicitMessageClass = this.ParseStringA();
         }
@@ -77898,11 +77935,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             let properties_GetReceiveFolderTable = System.Array.init([new MAPIInspector.Parsers.PropertyTag.$ctor1(MAPIInspector.Parsers.PropertyDataType.PtypInteger64, MAPIInspector.Parsers.PidTagPropertyEnum.PidTagFolderId), new MAPIInspector.Parsers.PropertyTag.$ctor1(MAPIInspector.Parsers.PropertyDataType.PtypString8, MAPIInspector.Parsers.PidTagPropertyEnum.PidTagMessageClass), new MAPIInspector.Parsers.PropertyTag.$ctor1(MAPIInspector.Parsers.PropertyDataType.PtypTime, MAPIInspector.Parsers.PidTagPropertyEnum.PidTagLastModificationTime)], MAPIInspector.Parsers.PropertyTag);
             this.RowCount = this.ParseT(System.UInt32);
             let tmpRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyRow))();
-            for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.RowCount); i = (((i) + 1) | 0)) {
                 let proRow = new MAPIInspector.Parsers.PropertyRow(properties_GetReceiveFolderTable);
                 proRow.Parse(this.parser);
                 tmpRows.add(proRow);
@@ -77968,7 +78005,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.StoreState = this.ParseT(System.UInt32);
         }
     },
@@ -78032,7 +78069,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.ObjectId = this.ParseBytes(8);
         }
     },
@@ -78073,7 +78110,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.OpenFlags = this.ParseT(MAPIInspector.Parsers.OpenFlags);
         this.StoreState = this.ParseT(System.UInt32);
         this.EssdnSize = this.ParseT(System.UInt16);
-        if (this.EssdnSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.EssdnSize) > 0) {
             this.Essdn = this.ParseStringA();
         }
     },
@@ -78120,7 +78157,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.LogonFlags = this.ParseT(MAPIInspector.Parsers.LogonFlags);
             this.FolderIds = System.Array.init(TransposeR.array(13, null), MAPIInspector.Parsers.FolderID);
             for (var i = 0; i < 13; i = (((i) + 1) | 0)) {
@@ -78187,7 +78224,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.OutputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.LogonFlags = this.ParseT(MAPIInspector.Parsers.LogonFlags);
             this.FolderIds = System.Array.init(TransposeR.array(13, null), MAPIInspector.Parsers.FolderID);
             for (var i = 0; i < 13; i = (((i) + 1) | 0)) {
@@ -78270,7 +78307,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.LongTermId = this.Parse$1(MAPIInspector.Parsers.LongTermID);
         }
     },
@@ -78336,13 +78373,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.IsGhosted = this.ParseAs(System.Byte, System.Boolean);
-            if (this.IsGhosted === true) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.IsGhosted) === true) {
                 this.ServersCount = this.ParseT(System.UInt16);
                 this.CheapServersCount = this.ParseT(System.UInt16);
                 let tmpServers = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-                for (var i = 0; i < this.ServersCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.ServersCount); i = (((i) + 1) | 0)) {
                     tmpServers.add(this.ParseStringA());
                 }
                 this.Servers = tmpServers.ToArray();
@@ -78422,10 +78459,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.HasFinished = this.ParseAs(System.Byte, System.Boolean);
             this.DataSize = this.ParseT(System.UInt16);
-            this.Data = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.DataSize));
+            this.Data = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.DataSize));
         }
     },
     ParseBlocks: function () {
@@ -78529,14 +78566,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.HasFinished = this.ParseAs(System.Byte, System.Boolean);
         this.DataOffset = this.ParseT(System.UInt32);
         this.DataSize = this.ParseT(System.UInt16);
-        this.Data = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.DataSize));
+        this.Data = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.DataSize));
         if (!MapiInspector.MAPIParser.IsFromFiddlerCore(MapiInspector.MAPIParser.ParsingSession)) {
-            if (this.DataOffset === 0 && ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(MapiInspector.MAPIParser.ParsingSession.id).getItem(this.LogonId)) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) === Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private))) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt32, this.DataOffset) === 0 && ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(MapiInspector.MAPIParser.ParsingSession.id).getItem(BlockParser.PortablePrimitives.Value(System.Byte, this.LogonId))) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) === Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private))) {
                 this.ReplGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
             }
         }
         else {
-            if (this.DataOffset === 0 && ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"))).getItem(this.LogonId)) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) === Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private))) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt32, this.DataOffset) === 0 && ((Transpose.Int.clipu8(MAPIInspector.Parsers.DecodingContext.SessionLogonFlagMapLogId.getItem(System.Int32.parse(MapiInspector.MAPIParser.ParsingSession.getItem("VirtualID"))).getItem(BlockParser.PortablePrimitives.Value(System.Byte, this.LogonId))) & Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private)) === Transpose.Int.clipu8(MAPIInspector.Parsers.LogonFlags.Private))) {
                 this.ReplGuid = this.Parse$1(MAPIInspector.Parsers.BlockGuid);
             }
         }
@@ -78670,7 +78707,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.TableStatus = this.ParseT(MAPIInspector.Parsers.TableStatus);
         }
     },
@@ -78734,7 +78771,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.CollapsedRowCount = this.ParseT(System.UInt32);
         }
     },
@@ -78796,7 +78833,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.BookmarkSize = this.ParseT(System.UInt16);
             this.Bookmark = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.BookmarkSize));
         }
@@ -78869,11 +78906,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.ExpandedRowCount = this.ParseT(System.UInt32);
             this.RowCount = this.ParseT(System.UInt16);
             let tempPropertyRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyRow))();
-            for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.RowCount); i = (((i) + 1) | 0)) {
                 let tempPropertyRow = new MAPIInspector.Parsers.PropertyRow(this.propertiesBySetColum);
                 tempPropertyRow.Parse(this.parser);
                 tempPropertyRows.add(tempPropertyRow);
@@ -78919,13 +78956,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.FindRowFlags = this.ParseT(MAPIInspector.Parsers.FindRowFlags);
         this.RestrictionDataSize = this.ParseT(System.UInt16);
-        if (this.RestrictionDataSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize) > 0) {
             this.RestrictionData = new MAPIInspector.Parsers.RestrictionType();
             this.RestrictionData.Parse(this.parser);
         }
         this.Origin = this.ParseT(MAPIInspector.Parsers.Bookmarks);
         this.BookmarkSize = this.ParseT(System.UInt16);
-        this.Bookmark = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.BookmarkSize));
+        this.Bookmark = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.BookmarkSize));
     },
     ParseBlocks: function () {
         this.Text = "RopFindRowRequest";
@@ -78965,10 +79002,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.RowNoLongerVisible = this.ParseAs(System.Byte, System.Boolean);
             this.HasRowData = this.ParseAs(System.Byte, System.Boolean);
-            if (this.HasRowData) {
+            if (BlockParser.PortablePrimitives.Value(System.Boolean, this.HasRowData)) {
                 this.RowData = new MAPIInspector.Parsers.PropertyRow(this.propertiesBySetColum);
                 this.RowData.Parse(this.parser);
             }
@@ -79007,7 +79044,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.BookmarkSize = this.ParseT(System.UInt16);
-        this.Bookmark = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.BookmarkSize));
+        this.Bookmark = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.BookmarkSize));
     },
     ParseBlocks: function () {
         this.Text = "RopFreeBookmarkRequest";
@@ -79102,7 +79139,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.CollapseStateSize = this.ParseT(System.UInt16);
             this.CollapseState = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.CollapseStateSize));
         }
@@ -79165,7 +79202,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.TableStatus = this.ParseT(MAPIInspector.Parsers.TableStatus);
         }
     },
@@ -79227,10 +79264,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.PropertyTagCount = this.ParseT(System.UInt16);
             let tempPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-            for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+            for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
                 tempPropertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
             }
             this.PropertyTags = tempPropertyTags.ToArray();
@@ -79295,7 +79332,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.Numerator = this.ParseT(System.UInt32);
             this.Denominator = this.ParseT(System.UInt32);
         }
@@ -79371,12 +79408,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.Origin = this.ParseT(MAPIInspector.Parsers.Bookmarks);
             this.RowCount = this.ParseT(System.UInt16);
-            if (this.RowCount !== 0) {
+            if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RowCount) !== 0) {
                 let tempPropertyRows = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyRow))();
-                for (var i = 0; i < this.RowCount; i = (((i) + 1) | 0)) {
+                for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.RowCount); i = (((i) + 1) | 0)) {
                     let tempPropertyRow = new MAPIInspector.Parsers.PropertyRow(this.propertiesBySetColum);
                     tempPropertyRow.Parse(this.parser);
                     tempPropertyRows.add(tempPropertyRow);
@@ -79476,7 +79513,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.RestrictFlags = this.ParseT(MAPIInspector.Parsers.AsynchronousFlags);
         this.RestrictionDataSize = this.ParseT(System.UInt16);
-        if (this.RestrictionDataSize > 0) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize) > 0) {
             this.RestrictionData = new MAPIInspector.Parsers.RestrictionType();
             this.RestrictionData.Parse(this.parser);
         }
@@ -79512,7 +79549,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.TableStatus = this.ParseT(MAPIInspector.Parsers.TableStatus);
         }
     },
@@ -79549,7 +79586,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.BookmarkSize = this.ParseT(System.UInt16);
-        this.Bookmark = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.BookmarkSize));
+        this.Bookmark = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.BookmarkSize));
         this.RowCount = this.ParseT(System.Int32);
         this.WantRowMovedCount = this.ParseAs(System.Byte, System.Boolean);
     },
@@ -79587,7 +79624,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.RowNoLongerVisible = this.ParseAs(System.Byte, System.Boolean);
             this.HasSoughtLess = this.ParseAs(System.Byte, System.Boolean);
             this.RowsSought = this.ParseT(System.UInt32);
@@ -79724,7 +79761,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.HasSoughtLess = this.ParseAs(System.Byte, System.Boolean);
             this.RowsSought = this.ParseT(System.Int32);
         }
@@ -79761,7 +79798,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.CollapseStateSize = this.ParseT(System.UInt16);
-        this.CollapseState = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.CollapseStateSize));
+        this.CollapseState = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.CollapseStateSize));
     },
     ParseBlocks: function () {
         this.Text = "RopSetCollapseStateRequest";
@@ -79794,7 +79831,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.BookmarkSize = this.ParseT(System.UInt16);
             this.Bookmark = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.BookmarkSize));
         }
@@ -79834,7 +79871,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.SetColumnsFlags = this.ParseT(MAPIInspector.Parsers.AsynchronousFlags);
         this.PropertyTagCount = this.ParseT(System.UInt16);
         let tempPropertyTags = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.PropertyTag))();
-        for (var i = 0; i < this.PropertyTagCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyTagCount); i = (((i) + 1) | 0)) {
             tempPropertyTags.add(this.Parse$1(MAPIInspector.Parsers.PropertyTag));
         }
         this.PropertyTags = tempPropertyTags.ToArray();
@@ -79870,7 +79907,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.TableStatus = this.ParseT(MAPIInspector.Parsers.TableStatus);
         }
     },
@@ -79912,7 +79949,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.CategoryCount = this.ParseT(System.UInt16);
         this.ExpandedCount = this.ParseT(System.UInt16);
         let tempSortOrders = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.SortOrder))();
-        for (var i = 0; i < this.SortOrderCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.SortOrderCount); i = (((i) + 1) | 0)) {
             tempSortOrders.add(this.Parse$1(MAPIInspector.Parsers.SortOrder));
         }
         this.SortOrders = tempSortOrders.ToArray();
@@ -79950,7 +79987,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RopId = this.ParseT(MAPIInspector.Parsers.RopIdType);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ReturnValue = this.ParseT(MAPIInspector.Parsers.ErrorCodes);
-        if (this.ReturnValue === MAPIInspector.Parsers.ErrorCodes.Success) {
+        if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
             this.TableStatus = this.ParseT(MAPIInspector.Parsers.TableStatus);
         }
     },
@@ -79981,10 +80018,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.EntryIDSize = this.ParseT(System.UInt32);
         let currentByte = this.TestParse(System.Byte);
-        if (currentByte === 135) {
+        if (BlockParser.PortablePrimitives.Value(System.Byte, currentByte) === 135) {
             this.EphemeralEntryID = this.Parse$1(MAPIInspector.Parsers.EphemeralEntryID);
         }
-        else if (currentByte === 0) {
+        else if (BlockParser.PortablePrimitives.Value(System.Byte, currentByte) === 0) {
             this.PermanentEntryID = this.Parse$1(MAPIInspector.Parsers.PermanentEntryID);
         }
     },
@@ -80167,7 +80204,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.CValues = this.ParseT(System.UInt32);
         let tmpList = new (System.Collections.Generic.List$1(BlockParser.BlockString))();
-        for (var i = System.UInt64("0"); i.lt(this.CValues); (i = i.add(System.UInt64(1)))) {
+        for (var i = System.UInt64("0"); i.lt(BlockParser.PortablePrimitives.Value(System.UInt32, this.CValues)); (i = i.add(System.UInt64(1)))) {
             tmpList.add(this.ParseStringW());
         }
         this.LppszW = tmpList.ToArray();
@@ -80265,7 +80302,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.ModifyRulesFlags = this.Parse$1(MAPIInspector.Parsers.ModifyRulesFlags);
         this.RulesCount = this.ParseT(System.UInt16);
         let tempRulesDatas = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.RuleData))();
-        for (var i = 0; i < this.RulesCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.RulesCount); i = (((i) + 1) | 0)) {
             tempRulesDatas.add(this.Parse$1(MAPIInspector.Parsers.RuleData));
         }
         this.RulesData = tempRulesDatas.ToArray();
@@ -80333,9 +80370,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.ServerEntryIdSize = this.ParseT(System.UInt16);
-        this.ServerEntryId = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.ServerEntryIdSize));
+        this.ServerEntryId = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.ServerEntryIdSize));
         this.ClientEntryIdSize = this.ParseT(System.UInt16);
-        this.ClientEntryId = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.ClientEntryIdSize));
+        this.ClientEntryId = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.ClientEntryIdSize));
     },
     ParseBlocks: function () {
         this.Text = "RopUpdateDeferredActionMessagesRequest";
@@ -80435,37 +80472,37 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 }
         }
         this.ActionFlags = this.ParseT(System.UInt32);
-        if (this.ActionLength > 9) {
+        if (BlockParser.PortablePrimitives.Value(System.UInt32, this.ActionLength) > 9) {
             let isExtended = (this.context !== MAPIInspector.Parsers.PropertyCountContext.RopBuffers);
-            if ((MAPIInspector.Parsers.ActionType.OP_MOVE === this._actionType || MAPIInspector.Parsers.ActionType.OP_COPY === this._actionType) && !isExtended) {
+            if ((MAPIInspector.Parsers.ActionType.OP_MOVE === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType) || MAPIInspector.Parsers.ActionType.OP_COPY === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) && !isExtended) {
                 this.ActionData = new MAPIInspector.Parsers.OP_MOVE_and_OP_COPY_ActionData_forStandard();
                 this.ActionData.Parse(this.parser);
             }
-            else if ((MAPIInspector.Parsers.ActionType.OP_MOVE === this._actionType || MAPIInspector.Parsers.ActionType.OP_COPY === this._actionType) && isExtended) {
+            else if ((MAPIInspector.Parsers.ActionType.OP_MOVE === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType) || MAPIInspector.Parsers.ActionType.OP_COPY === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) && isExtended) {
                 this.ActionData = new MAPIInspector.Parsers.OP_MOVE_and_OP_COPY_ActionData_forExtended();
                 this.ActionData.Parse(this.parser);
             }
-            else if ((MAPIInspector.Parsers.ActionType.OP_REPLY === this._actionType || MAPIInspector.Parsers.ActionType.OP_OOF_REPLY === this._actionType) && !isExtended) {
+            else if ((MAPIInspector.Parsers.ActionType.OP_REPLY === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType) || MAPIInspector.Parsers.ActionType.OP_OOF_REPLY === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) && !isExtended) {
                 this.ActionData = new MAPIInspector.Parsers.OP_REPLY_and_OP_OOF_REPLY_ActionData_forStandard();
                 this.ActionData.Parse(this.parser);
             }
-            else if ((MAPIInspector.Parsers.ActionType.OP_REPLY === this._actionType || MAPIInspector.Parsers.ActionType.OP_OOF_REPLY === this._actionType) && isExtended) {
+            else if ((MAPIInspector.Parsers.ActionType.OP_REPLY === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType) || MAPIInspector.Parsers.ActionType.OP_OOF_REPLY === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) && isExtended) {
                 this.ActionData = new MAPIInspector.Parsers.OP_REPLY_and_OP_OOF_REPLY_ActionData_forExtended();
                 this.ActionData.Parse(this.parser);
             }
-            else if (MAPIInspector.Parsers.ActionType.OP_FORWARD === this._actionType || MAPIInspector.Parsers.ActionType.OP_DELEGATE === this._actionType) {
+            else if (MAPIInspector.Parsers.ActionType.OP_FORWARD === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType) || MAPIInspector.Parsers.ActionType.OP_DELEGATE === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) {
                 this.ActionData = new MAPIInspector.Parsers.OP_FORWARD_and_OP_DELEGATE_ActionData();
                 this.ActionData.Parse(this.parser);
             }
-            else if (MAPIInspector.Parsers.ActionType.OP_BOUNCE === this._actionType) {
+            else if (MAPIInspector.Parsers.ActionType.OP_BOUNCE === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) {
                 this.ActionData = new MAPIInspector.Parsers.OP_BOUNCE_ActionData();
                 this.ActionData.Parse(this.parser);
             }
-            else if (MAPIInspector.Parsers.ActionType.OP_TAG === this._actionType) {
+            else if (MAPIInspector.Parsers.ActionType.OP_TAG === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) {
                 this.ActionData = new MAPIInspector.Parsers.TaggedPropertyValue(this.context);
                 this.ActionData.Parse(this.parser);
             }
-            else if (MAPIInspector.Parsers.ActionType.OP_DEFER_ACTION === this._actionType) {
+            else if (MAPIInspector.Parsers.ActionType.OP_DEFER_ACTION === BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ActionType, this._actionType)) {
                 this.ActionData = new MAPIInspector.Parsers.OP_DEFER_ACTION(Transpose.Int.clip32(this.ActionLength.Data));
                 this.ActionData.Parse(this.parser);
             }
@@ -80503,15 +80540,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Byte0 = this.ParseT(System.Byte);
         let index = 0;
-        this.Reservedbits0 = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 4), this.Byte0.Size, this.Byte0.Offset);
+        this.Reservedbits0 = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 4), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32((index) + (4));
-        this.TM = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.TM = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32((index) + (1));
-        this.AT = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.AT = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32((index) + (1));
-        this.NC = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.NC = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32((index) + (1));
-        this.PR = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.PR = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         this.Reservedbits1 = this.ParseBytes(3);
     },
     ParseBlocks: function () {
@@ -80544,11 +80581,11 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Byte0 = this.ParseT(System.Byte);
         let index = 0;
-        this.Reservedbits0 = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 6), this.Byte0.Size, this.Byte0.Offset);
+        this.Reservedbits0 = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 6), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32((index) + (6));
-        this.ST = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.ST = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32((index) + (1));
-        this.NS = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.NS = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
         this.Reservedbits1 = this.ParseBytes(3);
     },
     ParseBlocks: function () {
@@ -80598,9 +80635,9 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.Byte0 = this.ParseT(System.Byte);
         let index = 0;
-        this.X = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 7), this.Byte0.Size, this.Byte0.Offset);
+        this.X = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 7), this.Byte0.Size, this.Byte0.Offset);
         index = Transpose.Int.clip32(index + 7);
-        this.R = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
+        this.R = BlockParser.Block.CreateBlock(System.Byte, MapiInspector.Utilities.GetBits(BlockParser.PortablePrimitives.Value(System.Byte, this.Byte0), index, 1), this.Byte0.Size, this.Byte0.Offset);
     },
     ParseBlocks: function () {
         this.AddChildBlockT(System.Byte, this.X, "X");
@@ -80669,7 +80706,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.RecipientCount = this.ParseT(System.UInt16);
         let recipientBlocks = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.RecipientBlockData))();
-        for (var i = 0; i < this.RecipientCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.RecipientCount); i = (((i) + 1) | 0)) {
             let recipientBlock = new MAPIInspector.Parsers.RecipientBlockData();
             recipientBlock.Parse(this.parser);
             recipientBlocks.add(recipientBlock);
@@ -80700,7 +80737,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.StoreEIDSize = this.ParseAs(System.Byte, System.UInt32);
-        this.StoreEID = this.ParseBytes$1(BlockParser.BlockT$1(System.UInt32).op_Implicit$1(this.StoreEIDSize));
+        this.StoreEID = this.ParseBytes$1(BlockParser.PortablePrimitives.Value(System.UInt32, this.StoreEIDSize));
         this.FolderEIDSize = this.ParseAs(System.Byte, System.UInt32);
         this.FolderEID = this.Parse$1(MAPIInspector.Parsers.FolderEntryID);
     },
@@ -80732,14 +80769,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         this.FolderInThisStore = this.ParseAs(System.Byte, System.Boolean);
         this.StoreEIDSize = this.ParseT(System.UInt16);
-        this.StoreEID = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.StoreEIDSize));
+        this.StoreEID = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.StoreEIDSize));
         this.FolderEIDSize = this.ParseT(System.UInt16);
-        if (this.FolderInThisStore) {
+        if (BlockParser.PortablePrimitives.Value(System.Boolean, this.FolderInThisStore)) {
             this.FolderEID = new MAPIInspector.Parsers.ServerEid();
             this.FolderEID.Parse(this.parser);
         }
         else {
-            this.FolderEID = this.ParseBytes(BlockParser.BlockT$1(System.UInt16).op_Implicit$1(this.FolderEIDSize));
+            this.FolderEID = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.UInt16, this.FolderEIDSize));
         }
     },
     ParseBlocks: function () {
@@ -80824,7 +80861,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Reserved = this.ParseT(System.Byte);
         this.NoOfProperties = this.ParseT(System.UInt16);
         let propertyValues = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.NoOfProperties; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.NoOfProperties); i = (((i) + 1) | 0)) {
             let propertyValue = new MAPIInspector.Parsers.TaggedPropertyValue();
             propertyValue.Parse(this.parser);
             propertyValues.add(propertyValue);
@@ -80869,7 +80906,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 break;
         }
         let tempActionBlocks = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.ActionBlock))();
-        for (var i = 0; i < this.NoOfActions; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt32, this.NoOfActions); i = (((i) + 1) | 0)) {
             let tempActionBlock = new MAPIInspector.Parsers.ActionBlock(this.context);
             tempActionBlock.Parse(this.parser);
             tempActionBlocks.add(tempActionBlock);
@@ -80902,7 +80939,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.RuleDataFlags = this.ParseT(MAPIInspector.Parsers.RuleDataFlags);
         this.PropertyValueCount = this.ParseT(System.UInt16);
         let tempPropertyValues = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
-        for (var i = 0; i < this.PropertyValueCount; i = (((i) + 1) | 0)) {
+        for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount); i = (((i) + 1) | 0)) {
             let temptaggedPropertyValue = new MAPIInspector.Parsers.TaggedPropertyValue(MAPIInspector.Parsers.PropertyCountContext.ExtendedRules);
             temptaggedPropertyValue.Parse(this.parser);
             tempPropertyValues.add(temptaggedPropertyValue);
@@ -81278,7 +81315,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (tmp == null || !tmp.Parsed) {
                 return false;
             }
-            return MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(tmp)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(parser);
+            return MAPIInspector.Parsers.LexicalTypeHelper.IsFixedType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tmp)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(parser);
         },
         ParseFixedProp: function (parser, dataType, id) {
             switch (dataType) {
@@ -81335,7 +81372,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
-        this.FixedValue = MAPIInspector.Parsers.FixedPropTypePropValue.ParseFixedProp(this.parser, BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType), BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropInfo.PropID));
+        this.FixedValue = MAPIInspector.Parsers.FixedPropTypePropValue.ParseFixedProp(this.parser, BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType), BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID));
     },
     ParseBlocks: function () {
         MAPIInspector.Parsers.PropValue.prototype.ParseBlocks.call(this);
@@ -81360,8 +81397,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
-            MAPIInspector.Parsers.Partial.PartialGetId = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropInfo.PropID);
+            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
+            MAPIInspector.Parsers.Partial.PartialGetId = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID);
             MAPIInspector.Parsers.Partial.PartialGetServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialGetProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialGetClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81379,12 +81416,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
-            let identifyValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1((this.PropInfo != null ? this.PropInfo.PropID : this.pid));
+            let identifyValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, (this.PropInfo != null ? this.PropInfo.PropID : this.pid));
             this.FixedValue = MAPIInspector.Parsers.FixedPropTypePropValue.ParseFixedProp(this.parser, typeValue, identifyValue);
         }
     },
@@ -81413,8 +81450,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
-            MAPIInspector.Parsers.Partial.PartialPutExtendId = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropInfo.PropID);
+            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutExtendId = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID);
             MAPIInspector.Parsers.Partial.PartialPutExtendServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutExtendProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81432,12 +81469,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
-            let identifyValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1((this.PropInfo != null ? this.PropInfo.PropID : this.pid));
+            let identifyValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, (this.PropInfo != null ? this.PropInfo.PropID : this.pid));
             this.FixedValue = MAPIInspector.Parsers.FixedPropTypePropValue.ParseFixedProp(this.parser, typeValue, identifyValue);
         }
     },
@@ -81466,8 +81503,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
-            MAPIInspector.Parsers.Partial.PartialPutId = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1(this.PropInfo.PropID);
+            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutId = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID);
             MAPIInspector.Parsers.Partial.PartialPutServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81485,12 +81522,12 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             }
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
-            let identifyValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PidTagPropertyEnum).op_Implicit$1((this.PropInfo != null ? this.PropInfo.PropID : this.pid));
+            let identifyValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, (this.PropInfo != null ? this.PropInfo.PropID : this.pid));
             this.FixedValue = MAPIInspector.Parsers.FixedPropTypePropValue.ParseFixedProp(this.parser, typeValue, identifyValue);
         }
     },
@@ -81512,7 +81549,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (tmp == null || !tmp.Parsed) {
                 return false;
             }
-            return MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(tmp)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(parser);
+            return MAPIInspector.Parsers.LexicalTypeHelper.IsMVType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tmp)) && !MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(parser);
         },
         ParseArray: function (parser, dataType, dataCount, context) {
             if (context === undefined) { context = 0; }
@@ -81582,8 +81619,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         this.Length = this.ParseT(System.Int32);
-        let dataCount = BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length);
-        this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType), dataCount, this.context);
+        let dataCount = System.Int64(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
+        this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType), dataCount, this.context);
     },
     ParseBlocks: function () {
         MAPIInspector.Parsers.PropValue.prototype.ParseBlocks.call(this);
@@ -81611,7 +81648,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             MAPIInspector.Parsers.Partial.PartialGetServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialGetProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialGetClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81637,8 +81674,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 this.Length = this.ParseT(System.Int32);
             }
-            let typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1((this.PropType.Parsed ? this.PropType : this.ptype));
-            let countValue = (this.Length.Parsed ? BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length) : this.Plength);
+            let typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, (this.PropType.Parsed ? this.PropType : this.ptype));
+            let countValue = (this.Length.Parsed ? BlockParser.PortablePrimitives.Value(System.Int32, this.Length) : this.Plength);
             this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, typeValue, System.Int64(countValue));
         }
     },
@@ -81670,7 +81707,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             MAPIInspector.Parsers.Partial.PartialPutExtendServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutExtendProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81696,15 +81733,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 this.Length = this.ParseT(System.Int32);
             }
-            let blocksCount = (this.Length != null ? BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length) : this.Plength);
+            let blocksCount = (this.Length != null ? BlockParser.PortablePrimitives.Value(System.Int32, this.Length) : this.Plength);
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
-            this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType), System.Int64(blocksCount));
+            this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType), System.Int64(blocksCount));
         }
     },
     ParseBlocks: function () {
@@ -81735,7 +81772,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             MAPIInspector.Parsers.Partial.PartialPutServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81761,15 +81798,15 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 this.Length = this.ParseT(System.Int32);
             }
-            let blocksCount = (this.Length != null ? BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length) : this.Plength);
+            let blocksCount = (this.Length != null ? BlockParser.PortablePrimitives.Value(System.Int32, this.Length) : this.Plength);
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
-            this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType), System.Int64(blocksCount));
+            this.ValueArray = MAPIInspector.Parsers.MvPropTypePropValue.ParseArray(this.parser, BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType), System.Int64(blocksCount));
         }
     },
     ParseBlocks: function () {
@@ -81791,7 +81828,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             if (!tmp.Parsed) {
                 return false;
             }
-            return MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(tmp)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(tmp));
+            return MAPIInspector.Parsers.LexicalTypeHelper.IsVarType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tmp)) || MAPIInspector.Parsers.PropValue.IsMetaTagIdsetGiven(parser) || MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, tmp));
         }
     }
 },
@@ -81809,7 +81846,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         this.Length = this.ParseT(System.Int32);
-        if (MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType))) {
+        if (MAPIInspector.Parsers.LexicalTypeHelper.IsCodePageType(BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType))) {
             let type = this.PropType.Data;
             switch (type) {
                 case MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode:
@@ -81828,22 +81865,22 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             switch (this.PropType.Data) {
                 case MAPIInspector.Parsers.PropertyDataType.PtypInteger32:
                 case MAPIInspector.Parsers.PropertyDataType.PtypBinary:
-                    if (this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagSourceKey || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagParentSourceKey || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagChangeKey) {
-                        if (this.Length !== 0) {
-                            let tmpXID = new MAPIInspector.Parsers.XID(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length));
+                    if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagSourceKey || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagParentSourceKey || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagChangeKey) {
+                        if (BlockParser.PortablePrimitives.Value(System.Int32, this.Length) !== 0) {
+                            let tmpXID = new MAPIInspector.Parsers.XID(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
                             tmpXID.Parse(this.parser);
                             this.ValueArray = tmpXID;
                         }
                     }
-                    else if (this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagPredecessorChangeList) {
-                        let tmpPredecessorChangeList = new MAPIInspector.Parsers.PredecessorChangeList(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length));
+                    else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.PidTagPredecessorChangeList) {
+                        let tmpPredecessorChangeList = new MAPIInspector.Parsers.PredecessorChangeList(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
                         tmpPredecessorChangeList.Parse(this.parser);
                         this.ValueArray = tmpPredecessorChangeList;
                     }
-                    else if (this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetRead || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetUnread || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetDeleted || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetNoLongerInScope || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetExpired) {
-                        if (this.Length !== 0) {
+                    else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetRead || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetUnread || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetDeleted || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetNoLongerInScope || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetExpired) {
+                        if (BlockParser.PortablePrimitives.Value(System.Int32, this.Length) !== 0) {
                             this.ValueArray.Text = "IDSET_REPLID list";
-                            let EveLength = BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length);
+                            let EveLength = System.Int64(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
                             let InterIDSET_REPLID = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.IDSET_REPLID))();
                             while (EveLength.gt(System.Int64("0"))) {
                                 let tmpIDSET_REPLID = this.Parse$1(MAPIInspector.Parsers.IDSET_REPLID);
@@ -81853,10 +81890,10 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             }
                         }
                     }
-                    else if (this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetGiven || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagCnsetSeen || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagCnsetSeenFAI || this.PropInfo.PropID === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagCnsetRead) {
-                        if (this.Length !== 0) {
+                    else if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagIdsetGiven || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagCnsetSeen || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagCnsetSeenFAI || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PidTagPropertyEnum, this.PropInfo.PropID) === MAPIInspector.Parsers.PidTagPropertyEnum.MetaTagCnsetRead) {
+                        if (BlockParser.PortablePrimitives.Value(System.Int32, this.Length) !== 0) {
                             this.ValueArray.Text = "IDSET_REPLGUID list";
-                            let EveLength = BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length);
+                            let EveLength = System.Int64(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
                             let InterIDSET_REPLGUID = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.IDSET_REPLGUID))();
                             while (EveLength.gt(System.Int64("0"))) {
                                 let tmpIDSET_REPLGUID = this.Parse$1(MAPIInspector.Parsers.IDSET_REPLGUID);
@@ -81866,7 +81903,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                         }
                     }
                     else {
-                        this.ValueArray = this.ParseBytes(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length));
+                        this.ValueArray = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
                     }
                     break;
                 case MAPIInspector.Parsers.PropertyDataType.PtypString:
@@ -81882,7 +81919,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     this.ValueArray = this.Parse$1(MAPIInspector.Parsers.PtypObject_Or_PtypEmbeddedTable);
                     break;
                 default:
-                    this.ValueArray = this.ParseBytes(BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length));
+                    this.ValueArray = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.Int32, this.Length));
                     break;
             }
         }
@@ -81915,7 +81952,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+            MAPIInspector.Parsers.Partial.PartialGetType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             MAPIInspector.Parsers.Partial.PartialGetServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialGetProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialGetClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -81926,7 +81963,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 this.ptype = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.PropertyDataType, MAPIInspector.Parsers.Partial.PartialGetType, System.Int64("0"), System.Int64("0"));
                 if (MAPIInspector.Parsers.Partial.PartialGetRemainSize !== Transpose.Int.clip32(-1)) {
                     this.plength = MAPIInspector.Parsers.Partial.PartialGetRemainSize;
-                    if (this.plength % 2 !== 0 && (this.ptype === MAPIInspector.Parsers.PropertyDataType.PtypString || this.ptype === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode || this.ptype === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52)) {
+                    if (this.plength % 2 !== 0 && (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.PropertyDataType.PtypString || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52)) {
                         MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = true;
                     }
                     MAPIInspector.Parsers.Partial.PartialGetRemainSize = Transpose.Int.clip32(-1);
@@ -81944,13 +81981,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 this.Length = this.ParseT(System.Int32);
             }
-            let blockLength = (this.Length != null ? BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length) : this.plength);
+            let blockLength = (this.Length != null ? BlockParser.PortablePrimitives.Value(System.Int32, this.Length) : this.plength);
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
             if (this.parser.RemainingBytes < blockLength) {
                 MAPIInspector.Parsers.Partial.PartialGetType = typeValue;
@@ -81969,7 +82006,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMoreGetByteToRead = MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead) {
                                     let oneMoreGetByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMoreGetByte.Size, oneMoreGetByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMoreGetByte, "X2") + " " + TransposeR.formatValue(oneMoreGetByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = false;
                                 }
@@ -81980,14 +82017,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMoreGetByteToRead && blockLength % 2 === 0) || (!wasOneMoreGetByteToRead && blockLength % 2 !== 0)) {
                                     let oneMoreGetByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMoreGetByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte);
+                                    MAPIInspector.Parsers.Partial.OneMoreGetByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead) {
                                 let oneMoreGetByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMoreGetByte.Size, oneMoreGetByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMoreGetByte, "X2") + " " + TransposeR.formatValue(oneMoreGetByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = false;
                             }
@@ -82000,7 +82037,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     case MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52:
                         if (this.Length != null) {
                             this.Length = this.ParseT(System.Int32);
-                            blockLength = BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length);
+                            blockLength = BlockParser.PortablePrimitives.Value(System.Int32, this.Length);
                         }
                         if (this.parser.RemainingBytes < blockLength) {
                             MAPIInspector.Parsers.Partial.PartialGetRemainSize = Transpose.Int.clip32(blockLength - this.parser.RemainingBytes);
@@ -82010,7 +82047,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMoreGetByteToRead = MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead) {
                                     let oneMoreGetByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMoreGetByte.Size, oneMoreGetByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMoreGetByte, "X2") + " " + TransposeR.formatValue(oneMoreGetByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = false;
                                 }
@@ -82021,14 +82058,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMoreGetByteToRead && blockLength % 2 === 0) || (!wasOneMoreGetByteToRead && blockLength % 2 !== 0)) {
                                     let oneMoreGetByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMoreGetByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte);
+                                    MAPIInspector.Parsers.Partial.OneMoreGetByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead) {
                                 let oneMoreGetByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMoreGetByte.Size, oneMoreGetByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMoreGetByte, "X2") + " " + TransposeR.formatValue(oneMoreGetByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = false;
                             }
@@ -82070,7 +82107,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMoreGetByteToRead = MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead) {
                                     let oneMoreGetByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMoreGetByte.Size, oneMoreGetByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMoreGetByte, "X2") + " " + TransposeR.formatValue(oneMoreGetByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = false;
                                 }
@@ -82081,14 +82118,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMoreGetByteToRead && blockLength % 2 === 0) || (!wasOneMoreGetByteToRead && blockLength % 2 !== 0)) {
                                     let oneMoreGetByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMoreGetByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte);
+                                    MAPIInspector.Parsers.Partial.OneMoreGetByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead) {
                                 let oneMoreGetByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMoreGetByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMoreGetByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMoreGetByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMoreGetByte.Size, oneMoreGetByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMoreGetByte, "X2") + " " + TransposeR.formatValue(oneMoreGetByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMoreGetByteToRead = false;
                             }
@@ -82159,7 +82196,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutExtendType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             MAPIInspector.Parsers.Partial.PartialPutExtendServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutExtendProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutExtendClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -82170,7 +82207,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 this.ptype = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.PropertyDataType, MAPIInspector.Parsers.Partial.PartialPutExtendType, System.Int64("0"), System.Int64("0"));
                 if (MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize !== Transpose.Int.clip32(-1)) {
                     this.plength = MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize;
-                    if (this.plength % 2 !== 0 && (this.ptype === MAPIInspector.Parsers.PropertyDataType.PtypString || this.ptype === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode || this.ptype === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52)) {
+                    if (this.plength % 2 !== 0 && (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.PropertyDataType.PtypString || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52)) {
                         MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = true;
                     }
                     MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize = Transpose.Int.clip32(-1);
@@ -82188,13 +82225,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 this.Length = this.ParseT(System.Int32);
             }
-            let blockLength = (this.Length != null ? BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length) : this.plength);
+            let blockLength = (this.Length != null ? BlockParser.PortablePrimitives.Value(System.Int32, this.Length) : this.plength);
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
             if (this.parser.RemainingBytes < blockLength) {
                 MAPIInspector.Parsers.Partial.PartialPutExtendType = typeValue;
@@ -82213,7 +82250,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMorePutExtendByteToRead = MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead) {
                                     let oneMorePutExtendByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutExtendByte.Size, oneMorePutExtendByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutExtendByte, "X2") + " " + TransposeR.formatValue(oneMorePutExtendByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = false;
                                 }
@@ -82224,14 +82261,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMorePutExtendByteToRead && blockLength % 2 === 0) || (!wasOneMorePutExtendByteToRead && blockLength % 2 !== 0)) {
                                     let OneMorePutExtendByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMorePutExtendByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(OneMorePutExtendByte);
+                                    MAPIInspector.Parsers.Partial.OneMorePutExtendByte = BlockParser.PortablePrimitives.Value(System.Byte, OneMorePutExtendByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead) {
                                 let oneMorePutExtendByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutExtendByte.Size, oneMorePutExtendByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutExtendByte, "X2") + " " + TransposeR.formatValue(oneMorePutExtendByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = false;
                             }
@@ -82244,7 +82281,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     case MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52:
                         if (this.Length != null) {
                             this.Length = this.ParseT(System.Int32);
-                            blockLength = BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length);
+                            blockLength = BlockParser.PortablePrimitives.Value(System.Int32, this.Length);
                         }
                         if (this.parser.RemainingBytes < blockLength) {
                             MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize = Transpose.Int.clip32(blockLength - this.parser.RemainingBytes);
@@ -82254,7 +82291,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMorePutExtendByteToRead = MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead) {
                                     let oneMorePutExtendByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutExtendByte.Size, oneMorePutExtendByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutExtendByte, "X2") + " " + TransposeR.formatValue(oneMorePutExtendByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = false;
                                 }
@@ -82265,14 +82302,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMorePutExtendByteToRead && blockLength % 2 === 0) || (!wasOneMorePutExtendByteToRead && blockLength % 2 !== 0)) {
                                     let oneMorePutExtendByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMorePutExtendByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte);
+                                    MAPIInspector.Parsers.Partial.OneMorePutExtendByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead) {
                                 let oneMorePutExtendByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutExtendByte.Size, oneMorePutExtendByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutExtendByte, "X2") + " " + TransposeR.formatValue(oneMorePutExtendByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = false;
                             }
@@ -82314,7 +82351,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMorePutExtendByteToRead = MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead) {
                                     let oneMorePutExtendByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutExtendByte.Size, oneMorePutExtendByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutExtendByte, "X2") + " " + TransposeR.formatValue(oneMorePutExtendByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = false;
                                 }
@@ -82325,14 +82362,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMorePutExtendByteToRead && blockLength % 2 === 0) || (!wasOneMorePutExtendByteToRead && blockLength % 2 !== 0)) {
                                     let oneMorePutExtendByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMorePutExtendByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte);
+                                    MAPIInspector.Parsers.Partial.OneMorePutExtendByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead) {
                                 let oneMorePutExtendByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutExtendByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutExtendByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutExtendByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutExtendByte.Size, oneMorePutExtendByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutExtendByte, "X2") + " " + TransposeR.formatValue(oneMorePutExtendByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMorePutExtendByteToRead = false;
                             }
@@ -82403,7 +82440,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     Parse$3: function () {
         MAPIInspector.Parsers.PropValue.prototype.Parse$3.call(this);
         if (this.parser.Empty) {
-            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+            MAPIInspector.Parsers.Partial.PartialPutType = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             MAPIInspector.Parsers.Partial.PartialPutServerUrl = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
             MAPIInspector.Parsers.Partial.PartialPutProcessName = MapiInspector.MAPIParser.ParsingSession.LocalProcess;
             MAPIInspector.Parsers.Partial.PartialPutClientInfo = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo");
@@ -82414,7 +82451,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                 this.ptype = BlockParser.Block.CreateBlock(MAPIInspector.Parsers.PropertyDataType, MAPIInspector.Parsers.Partial.PartialPutType, System.Int64("0"), System.Int64("0"));
                 if (MAPIInspector.Parsers.Partial.PartialPutRemainSize !== Transpose.Int.clip32(-1)) {
                     this.plength = MAPIInspector.Parsers.Partial.PartialPutRemainSize;
-                    if (this.plength % 2 !== 0 && (this.ptype === MAPIInspector.Parsers.PropertyDataType.PtypString || this.ptype === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode || this.ptype === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52)) {
+                    if (this.plength % 2 !== 0 && (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.PropertyDataType.PtypString || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode || BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype) === MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52)) {
                         MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = true;
                     }
                     MAPIInspector.Parsers.Partial.PartialPutRemainSize = Transpose.Int.clip32(-1);
@@ -82432,13 +82469,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 this.Length = this.ParseT(System.Int32);
             }
-            let blockLength = (this.Length != null ? BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length) : this.plength);
+            let blockLength = (this.Length != null ? BlockParser.PortablePrimitives.Value(System.Int32, this.Length) : this.plength);
             let typeValue = MAPIInspector.Parsers.PropertyDataType.PtypUnspecified;
             if (this.PropType != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.PropType);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.PropType);
             }
             else if (this.ptype != null) {
-                typeValue = BlockParser.BlockT$1(MAPIInspector.Parsers.PropertyDataType).op_Implicit$1(this.ptype);
+                typeValue = BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.PropertyDataType, this.ptype);
             }
             if (this.parser.RemainingBytes < blockLength) {
                 MAPIInspector.Parsers.Partial.PartialPutType = typeValue;
@@ -82457,7 +82494,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMorePutByteToRead = MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead) {
                                     let oneMorePutByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutByte.Size, oneMorePutByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutByte, "X2") + " " + TransposeR.formatValue(oneMorePutByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = false;
                                 }
@@ -82468,14 +82505,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMorePutByteToRead && blockLength % 2 === 0) || (!wasOneMorePutByteToRead && blockLength % 2 !== 0)) {
                                     let OneMorePutByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMorePutByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(OneMorePutByte);
+                                    MAPIInspector.Parsers.Partial.OneMorePutByte = BlockParser.PortablePrimitives.Value(System.Byte, OneMorePutByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead) {
                                 let oneMorePutByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutByte.Size, oneMorePutByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutByte, "X2") + " " + TransposeR.formatValue(oneMorePutByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = false;
                             }
@@ -82488,7 +82525,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                     case MAPIInspector.Parsers.CodePageType.PtypCodePageUnicode52:
                         if (this.Length != null) {
                             this.Length = this.ParseT(System.Int32);
-                            blockLength = BlockParser.BlockT$1(System.Int32).op_Implicit$1(this.Length);
+                            blockLength = BlockParser.PortablePrimitives.Value(System.Int32, this.Length);
                         }
                         if (this.parser.RemainingBytes < blockLength) {
                             MAPIInspector.Parsers.Partial.PartialPutRemainSize = Transpose.Int.clip32(blockLength - this.parser.RemainingBytes);
@@ -82498,7 +82535,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMorePutByteToRead = MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead) {
                                     let oneMorePutByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutByte.Size, oneMorePutByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutByte, "X2") + " " + TransposeR.formatValue(oneMorePutByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = false;
                                 }
@@ -82509,14 +82546,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMorePutByteToRead && blockLength % 2 === 0) || (!wasOneMorePutByteToRead && blockLength % 2 !== 0)) {
                                     let oneMorePutByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMorePutByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte);
+                                    MAPIInspector.Parsers.Partial.OneMorePutByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead) {
                                 let oneMorePutByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutByte.Size, oneMorePutByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutByte, "X2") + " " + TransposeR.formatValue(oneMorePutByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = false;
                             }
@@ -82558,7 +82595,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 let wasOneMorePutByteToRead = MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead;
                                 if (MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead) {
                                     let oneMorePutByte = this.ParseT(System.Byte);
-                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte)], System.Byte));
+                                    let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte)], System.Byte));
                                     this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutByte.Size, oneMorePutByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutByte, "X2") + " " + TransposeR.formatValue(oneMorePutByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                     MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = false;
                                 }
@@ -82569,14 +82606,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                                 if ((wasOneMorePutByteToRead && blockLength % 2 === 0) || (!wasOneMorePutByteToRead && blockLength % 2 !== 0)) {
                                     let oneMorePutByte = this.ParseT(System.Byte);
                                     MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = true;
-                                    MAPIInspector.Parsers.Partial.OneMorePutByte = BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte);
+                                    MAPIInspector.Parsers.Partial.OneMorePutByte = BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte);
                                 }
                             }
                         }
                         else {
                             if (MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead) {
                                 let oneMorePutByte = this.ParseT(System.Byte);
-                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.BlockT$1(System.Byte).op_Implicit$1(oneMorePutByte)], System.Byte));
+                                let skippedChar = System.Text.Encoding.Unicode.GetString(System.Array.init([MAPIInspector.Parsers.Partial.OneMorePutByte, BlockParser.PortablePrimitives.Value(System.Byte, oneMorePutByte)], System.Byte));
                                 this.SkippedBytes = BlockParser.Block.Create$1(oneMorePutByte.Size, oneMorePutByte.Offset, ("SkippedBytes: " + TransposeR.formatValue(MAPIInspector.Parsers.Partial.OneMorePutByte, "X2") + " " + TransposeR.formatValue(oneMorePutByte.Data, "X2") + " = \"" + TransposeR.toStr(skippedChar) + "\""));
                                 MAPIInspector.Parsers.Partial.IsOneMorePutByteToRead = false;
                             }
@@ -82719,7 +82756,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         methods: {
     Parse$3: function () {
         this.Command = this.ParseT(System.Byte);
-        this.CommonBytes = this.ParseBytes(BlockParser.BlockT$1(System.Byte).op_Implicit$1(this.Command), 6);
+        this.CommonBytes = this.ParseBytes(BlockParser.PortablePrimitives.Value(System.Byte, this.Command), 6);
     },
     ParseBlocks: function () {
         this.Text = "PushCommand";
@@ -82925,7 +82962,8 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     $m("MAPIInspector.Parsers.PidTagPropertyEnum", function () { return {"att":257,"a":2,"m":[{"a":2,"isSynthetic":true,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":"PidTagTemplateData","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTemplateData","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAlternateRecipientAllowed","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAlternateRecipientAllowed","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScriptData","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScriptData","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAutoForwardComment","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAutoForwardComment","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAutoForwarded","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAutoForwarded","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeferredDeliveryTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeferredDeliveryTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeliverTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeliverTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExpiryTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExpiryTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagImportance","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagImportance","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageClass","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageClass","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginatorDeliveryReportRequested","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginatorDeliveryReportRequested","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagParentKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagParentKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPriority","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPriority","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptRequested","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptRequested","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceiptTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceiptTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientReassignmentProhibited","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientReassignmentProhibited","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSensitivity","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSensitivity","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReplyTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReplyTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportTag","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportTag","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSensitivity","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSensitivity","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSubject","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSubject","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagClientSubmitTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagClientSubmitTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSubjectPrefix","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSubjectPrefix","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedByEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedByEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedByName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedByName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedRepresentingEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedRepresentingEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedRepresentingName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedRepresentingName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageSubmissionId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageSubmissionId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSubject","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSubject","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalMessageClass","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalMessageClass","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalAuthorEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalAuthorEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalAuthorName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalAuthorName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSubmitTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSubmitTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReplyRecipientEntries","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReplyRecipientEntries","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReplyRecipientNames","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReplyRecipientNames","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedBySearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedBySearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedRepresentingSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedRepresentingSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalDeliveryTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalDeliveryTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageToMe","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageToMe","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageCcMe","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageCcMe","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageRecipientMe","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageRecipientMe","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSenderName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSenderName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSenderEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSenderEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSenderSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSenderSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSentRepresentingName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSentRepresentingName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSentRepresentingEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSentRepresentingEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSentRepresentingSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSentRepresentingSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStartDate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStartDate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagEndDate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagEndDate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOwnerAppointmentId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOwnerAppointmentId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagResponseRequested","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagResponseRequested","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSenderAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSenderAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSenderEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSenderEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSentRepresentingAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSentRepresentingAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalSentRepresentingEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalSentRepresentingEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagConversationTopic","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagConversationTopic","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagConversationIndex","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagConversationIndex","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalDisplayBcc","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalDisplayBcc","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalDisplayCc","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalDisplayCc","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalDisplayTo","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalDisplayTo","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedByAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedByAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedByEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedByEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedRepresentingAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedRepresentingAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedRepresentingEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedRepresentingEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTransportMessageHeaders","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTransportMessageHeaders","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTnefCorrelationKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTnefCorrelationKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportDisposition","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportDisposition","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportDispositionMode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportDispositionMode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookRoomCapacity","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookRoomCapacity","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookRoomDescription","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookRoomDescription","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNonDeliveryReportReasonCode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNonDeliveryReportReasonCode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNonDeliveryReportDiagCode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNonDeliveryReportDiagCode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNonReceiptNotificationRequested","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNonReceiptNotificationRequested","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginatorNonDeliveryReportRequested","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginatorNonDeliveryReportRequested","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReplyRequested","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReplyRequested","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSupplementaryInfo","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSupplementaryInfo","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNonDeliveryReportStatusCode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNonDeliveryReportStatusCode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRemoteMessageTransferAgent","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRemoteMessageTransferAgent","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeleteAfterSubmit","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeleteAfterSubmit","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayBcc","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayBcc","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayCc","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayCc","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayTo","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayTo","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageDeliveryTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageDeliveryTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageSize","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageSize","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageSizeExtended","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageSizeExtended","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagParentEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagParentEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagResponsibility","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagResponsibility","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageRecipients","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageRecipients","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageAttachments","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageAttachments","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageStatus","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageStatus","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHasAttachments","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHasAttachments","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNormalizedSubject","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNormalizedSubject","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRtfInSync","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRtfInSync","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachSize","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachSize","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPrimarySendAccount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPrimarySendAccount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNextSendAcct","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNextSendAcct","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagToDoItemFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagToDoItemFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSwappedToDoStore","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSwappedToDoStore","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSwappedToDoData","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSwappedToDoData","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRead","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRead","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSecurityDescriptorAsXml","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSecurityDescriptorAsXml","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTrustSender","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTrustSender","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExchangeNTSecurityDescriptor","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExchangeNTSecurityDescriptor","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExtendedRuleMessageActions","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExtendedRuleMessageActions","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExtendedRuleMessageCondition","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExtendedRuleMessageCondition","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExtendedRuleSizeLimit","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExtendedRuleSizeLimit","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAccess","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAccess","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRowType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRowType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInstanceKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInstanceKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAccessLevel","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAccessLevel","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMappingSignature","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMappingSignature","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecordKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecordKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStoreEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStoreEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagObjectType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagObjectType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBody","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBody","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportText","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportText","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRtfSyncBodyCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRtfSyncBodyCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRtfSyncBodyTag","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRtfSyncBodyTag","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRtfCompressed","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRtfCompressed","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRtfSyncPrefixCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRtfSyncPrefixCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRtfSyncTrailingCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRtfSyncTrailingCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHtml","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHtml","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBodyHtml","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBodyHtml","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBodyContentLocation","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBodyContentLocation","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBodyContentId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBodyContentId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNativeBody","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNativeBody","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInternetMessageId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInternetMessageId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInternetReferences","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInternetReferences","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInReplyToId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInReplyToId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagListHelp","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagListHelp","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagListSubscribe","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagListSubscribe","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagListUnsubscribe","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagListUnsubscribe","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalMessageId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalMessageId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIconIndex","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIconIndex","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLastVerbExecuted","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLastVerbExecuted","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLastVerbExecutionTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLastVerbExecutionTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFlagStatus","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFlagStatus","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFlagCompleteTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFlagCompleteTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFollowupIcon","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFollowupIcon","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBlockStatus","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBlockStatus","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagICalendarStartTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagICalendarStartTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagICalendarEndTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagICalendarEndTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCdoRecurrenceid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCdoRecurrenceid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagICalendarReminderNextTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagICalendarReminderNextTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttributeHidden","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttributeHidden","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttributeReadOnly","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttributeReadOnly","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRowid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRowid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagComment","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagComment","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDepth","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDepth","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCreationTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCreationTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLastModificationTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLastModificationTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"OrigEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"OrigEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTargetEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTargetEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagConversationId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagConversationId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagConversationIndexTracking","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagConversationIndexTracking","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagArchiveTag","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagArchiveTag","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPolicyTag","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPolicyTag","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRetentionPeriod","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRetentionPeriod","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStartDateEtc","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStartDateEtc","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRetentionDate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRetentionDate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRetentionFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRetentionFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagArchivePeriod","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagArchivePeriod","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagArchiveDate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagArchiveDate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStoreSupportMask","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStoreSupportMask","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStoreState","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStoreState","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContainerFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContainerFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFolderType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFolderType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContentCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContentCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContentUnreadCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContentUnreadCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSelectable","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSelectable","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSubfolders","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSubfolders","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAnr","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAnr","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContainerHierarchy","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContainerHierarchy","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContainerContents","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContainerContents","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFolderAssociatedContents","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFolderAssociatedContents","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContainerClass","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContainerClass","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIpmAppointmentEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIpmAppointmentEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIpmContactEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIpmContactEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIpmJournalEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIpmJournalEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIpmNoteEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIpmNoteEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIpmTaskEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIpmTaskEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRemindersOnlineEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRemindersOnlineEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIpmDraftsEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIpmDraftsEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAdditionalRenEntryIds","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAdditionalRenEntryIds","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAdditionalRenEntryIdsEx","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAdditionalRenEntryIdsEx","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExtendedFolderFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExtendedFolderFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOrdinalMost","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOrdinalMost","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFreeBusyEntryIds","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFreeBusyEntryIds","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDefaultPostMessageClass","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDefaultPostMessageClass","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagClientActivelyEditingUntil","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagClientActivelyEditingUntil","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachDataObject","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachDataObject","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachDataBinary","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachDataBinary","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachEncoding","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachEncoding","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachExtension","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachExtension","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachFilename","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachFilename","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachMethod","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachMethod","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachLongFilename","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachLongFilename","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachPathname","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachPathname","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachRendering","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachRendering","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachTag","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachTag","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRenderingPosition","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRenderingPosition","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachTransportName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachTransportName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachLongPathname","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachLongPathname","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachMimeTag","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachMimeTag","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachAdditionalInformation","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachAdditionalInformation","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachContentBase","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachContentBase","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachContentId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachContentId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachContentLocation","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachContentLocation","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachPayloadProviderGuidString","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachPayloadProviderGuidString","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachPayloadClass","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachPayloadClass","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTextAttachmentCharset","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTextAttachmentCharset","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTemplateid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTemplateid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayTypeEx","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayTypeEx","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSmtpAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSmtpAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDisplayNamePrintable","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDisplayNamePrintable","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAccount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAccount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCallbackTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCallbackTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagGeneration","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagGeneration","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagGivenName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagGivenName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagGovernmentIdNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagGovernmentIdNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBusinessTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBusinessTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInitials","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInitials","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagKeyword","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagKeyword","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLanguage","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLanguage","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLocation","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLocation","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageHandlingSystemCommonName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageHandlingSystemCommonName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOrganizationalIdNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOrganizationalIdNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSurname","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSurname","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOriginalEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOriginalEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPostalAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPostalAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCompanyName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCompanyName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTitle","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTitle","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDepartmentName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDepartmentName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfficeLocation","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfficeLocation","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPrimaryTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPrimaryTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBusiness2TelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBusiness2TelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBusiness2TelephoneNumbers","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBusiness2TelephoneNumbers","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMobileTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMobileTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRadioTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRadioTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCarTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCarTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTransmittableDisplayName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTransmittableDisplayName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPagerTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPagerTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagUserCertificate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagUserCertificate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPrimaryFaxNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPrimaryFaxNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBusinessFaxNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBusinessFaxNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeFaxNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeFaxNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCountry","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCountry","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLocality","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLocality","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStateOrProvince","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStateOrProvince","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagStreetAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagStreetAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPostalCode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPostalCode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPostOfficeBox","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPostOfficeBox","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTelexNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTelexNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagIsdnNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagIsdnNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAssistantTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAssistantTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHome2TelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHome2TelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHome2TelephoneNumbers","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHome2TelephoneNumbers","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAssistant","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAssistant","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSendRichInfo","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSendRichInfo","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWeddingAnniversary","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWeddingAnniversary","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBirthday","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBirthday","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHobbies","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHobbies","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMiddleName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMiddleName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDisplayNamePrefix","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDisplayNamePrefix","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagProfession","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagProfession","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReferredByName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReferredByName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSpouseName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSpouseName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagComputerNetworkName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagComputerNetworkName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCustomerId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCustomerId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagTelecommunicationsDeviceForDeafTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagTelecommunicationsDeviceForDeafTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFtpSite","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFtpSite","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagGender","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagGender","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagManagerName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagManagerName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagNickname","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagNickname","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPersonalHomePage","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPersonalHomePage","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagBusinessHomePage","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagBusinessHomePage","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCompanyMainTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCompanyMainTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagChildrensNames","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagChildrensNames","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeAddressCity","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeAddressCity","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeAddressCountry","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeAddressCountry","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeAddressPostalCode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeAddressPostalCode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeAddressStateOrProvince","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeAddressStateOrProvince","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeAddressStreet","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeAddressStreet","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHomeAddressPostOfficeBox","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHomeAddressPostOfficeBox","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherAddressCity","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherAddressCity","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherAddressCountry","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherAddressCountry","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherAddressPostalCode","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherAddressPostalCode","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherAddressStateOrProvince","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherAddressStateOrProvince","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherAddressStreet","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherAddressStreet","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOtherAddressPostOfficeBox","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOtherAddressPostOfficeBox","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagUserX509Certificate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagUserX509Certificate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSendInternetEncoding","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSendInternetEncoding","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInitialDetailsPane","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInitialDetailsPane","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInternetCodepage","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInternetCodepage","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAutoResponseSuppress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAutoResponseSuppress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAccessControlListData","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAccessControlListData","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDelegatedByRule","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDelegatedByRule","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagResolveMethod","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagResolveMethod","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHasDeferredActionMessages","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHasDeferredActionMessages","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeferredSendNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeferredSendNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeferredSendUnits","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeferredSendUnits","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExpiryNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExpiryNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExpiryUnits","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExpiryUnits","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeferredSendTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeferredSendTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagConflictEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagConflictEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageLocaleId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageLocaleId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCreatorName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCreatorName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCreatorEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCreatorEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLastModifierName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLastModifierName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLastModifierEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLastModifierEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageCodepage","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageCodepage","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagDnPrefix","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagDnPrefix","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagEcWarning","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagEcWarning","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagNewFXFolder","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagNewFXFolder","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagFXDelProp","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagFXDelProp","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIdsetGiven","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIdsetGiven","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIdsetNoLongerInScope","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIdsetNoLongerInScope","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptAddressType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptAddressType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIdsetRead","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIdsetRead","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIdsetUnread","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIdsetUnread","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagContentFilterSpamConfidenceLevel","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagContentFilterSpamConfidenceLevel","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderIdStatus","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderIdStatus","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIncrementalSyncMessagePartial","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIncrementalSyncMessagePartial","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIncrSyncGroupId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIncrSyncGroupId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPurportedSenderDomain","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPurportedSenderDomain","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInternetMailOverrideFormat","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInternetMailOverrideFormat","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMessageEditorFormat","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMessageEditorFormat","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderSmtpAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderSmtpAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentRepresentingSmtpAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentRepresentingSmtpAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReadReceiptSmtpAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReadReceiptSmtpAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedBySmtpAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedBySmtpAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReceivedRepresentingSmtpAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReceivedRepresentingSmtpAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientOrder","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientOrder","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientProposed","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientProposed","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientProposedStartTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientProposedStartTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientProposedEndTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientProposedEndTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientDisplayName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientDisplayName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientTrackStatusTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientTrackStatusTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRecipientTrackStatus","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRecipientTrackStatus","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagJunkIncludeContacts","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagJunkIncludeContacts","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagJunkThreshold","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagJunkThreshold","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagJunkPermanentlyDelete","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagJunkPermanentlyDelete","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagJunkAddRecipientsToSafeSendersList","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagJunkAddRecipientsToSafeSendersList","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagJunkPhishingEnableLinks","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagJunkPhishingEnableLinks","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMimeSkeleton","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMimeSkeleton","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReplyTemplateId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReplyTemplateId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSecureSubmitFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSecureSubmitFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSourceKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSourceKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagParentSourceKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagParentSourceKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagChangeKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagChangeKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagPredecessorChangeList","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagPredecessorChangeList","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageState","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageState","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageUserFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageUserFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageProvider","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageProvider","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageLevel","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageLevel","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageProviderData","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageProviderData","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleMessageSequence","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleMessageSequence","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagUserEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagUserEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMailboxOwnerEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMailboxOwnerEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMailboxOwnerName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMailboxOwnerName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOutOfOfficeState","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOutOfOfficeState","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSchedulePlusFreeBusyEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSchedulePlusFreeBusyEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRights","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRights","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHasRules","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHasRules","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHierarchyChangeNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHierarchyChangeNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagClientActions","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagClientActions","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDamOriginalEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDamOriginalEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDamBackPatched","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDamBackPatched","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleError","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleError","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleActionType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleActionType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagHasNamedProperties","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagHasNamedProperties","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleActionNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleActionNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleFolderEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleFolderEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagProhibitReceiveQuota","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagProhibitReceiveQuota","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInConflict","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInConflict","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMaximumSubmitMessageSize","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMaximumSubmitMessageSize","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagProhibitSendQuota","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagProhibitSendQuota","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMemberId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMemberId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMemberName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMemberName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMemberRights","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMemberRights","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleIds","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleIds","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleSequence","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleSequence","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleState","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleState","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleUserFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleUserFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleCondition","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleCondition","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleActions","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleActions","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleProvider","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleProvider","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleLevel","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleLevel","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRuleProviderData","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRuleProviderData","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeletedOn","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeletedOn","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLocaleId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLocaleId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCodePageId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCodePageId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookManageDistributionList","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookManageDistributionList","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSortLocaleId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSortLocaleId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLocalCommitTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLocalCommitTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagLocalCommitTimeMax","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagLocalCommitTimeMax","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeletedCountTotal","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeletedCountTotal","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFlatUrlName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFlatUrlName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSentMailSvrEID","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSentMailSvrEID","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDeferredActionMessageOriginalEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDeferredActionMessageOriginalEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFolderId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFolderId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagParentFolderId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagParentFolderId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagMid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagMid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInstID","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInstID","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagInstanceNum","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagInstanceNum","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookMessageId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookMessageId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIdsetExpired","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIdsetExpired","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagCnsetSeen","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagCnsetSeen","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagChangeNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagChangeNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAssociated","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAssociated","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagCnsetRead","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagCnsetRead","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagCnsetSeenFAI","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagCnsetSeenFAI","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"MetaTagIdsetDeleted","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"MetaTagIdsetDeleted","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfflineAddressBookName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfflineAddressBookName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfflineAddressBookSequence","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfflineAddressBookSequence","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfflineAddressBookContainerGuid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfflineAddressBookContainerGuid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRwRulesStream","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRwRulesStream","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSenderTelephoneNumber","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSenderTelephoneNumber","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfflineAddressBookMessageClass","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfflineAddressBookMessageClass","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagVoiceMessageSenderName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagVoiceMessageSenderName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfflineAddressBookDistinguishedName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfflineAddressBookDistinguishedName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFaxNumberOfPages","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFaxNumberOfPages","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagVoiceMessageAttachmentOrder","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagVoiceMessageAttachmentOrder","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOfflineAddressBookTruncatedProperties","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOfflineAddressBookTruncatedProperties","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagCallId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagCallId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagReportingMessageTransferAgent","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagReportingMessageTransferAgent","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchFolderLastUsed","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchFolderLastUsed","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchFolderExpiration","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchFolderExpiration","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoResourceType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoResourceType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchFolderId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchFolderId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDelegatorWantsCopy","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDelegatorWantsCopy","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDontMailDelegates","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDontMailDelegates","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDelegateNames","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDelegateNames","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchFolderRecreateInfo","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchFolderRecreateInfo","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDelegateEntryIds","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDelegateEntryIds","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchFolderDefinition","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchFolderDefinition","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSearchFolderStorageType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSearchFolderStorageType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagGatewayNeedsToRefresh","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagGatewayNeedsToRefresh","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFreeBusyPublishStart","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFreeBusyPublishStart","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFreeBusyPublishEnd","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFreeBusyPublishEnd","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFreeBusyMessageEmailAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFreeBusyMessageEmailAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDelegateNamesW","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDelegateNamesW","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDelegatorWantsInfo","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDelegatorWantsInfo","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkOrdinal","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkOrdinal","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkRecordKey","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkRecordKey","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkStoreEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkStoreEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoMonthsMerged","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoMonthsMerged","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkFolderType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkFolderType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoFreeBusyMerged","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoFreeBusyMerged","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkGroupClsid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkGroupClsid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoMonthsTentative","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoMonthsTentative","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkGroupName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkGroupName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoFreeBusyTentative","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoFreeBusyTentative","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkSection","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkSection","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkCalendarColor","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkCalendarColor","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoMonthsBusy","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoMonthsBusy","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoFreeBusyBusy","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoFreeBusyBusy","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkAddressBookEID","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkAddressBookEID","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoMonthsAway","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoMonthsAway","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoFreeBusyAway","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoFreeBusyAway","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFreeBusyRangeTimestamp","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFreeBusyRangeTimestamp","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagFreeBusyCountMonths","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagFreeBusyCountMonths","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoAppointmentTombstone","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoAppointmentTombstone","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagDelegateFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagDelegateFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoFreeBusy","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoFreeBusy","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoAutoAcceptAppointments","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoAutoAcceptAppointments","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDisallowRecurringAppts","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDisallowRecurringAppts","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagScheduleInfoDisallowOverlappingAppts","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagScheduleInfoDisallowOverlappingAppts","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkClientID","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkClientID","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkAddressBookStoreEID","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkAddressBookStoreEID","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagWlinkROGroupType","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagWlinkROGroupType","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagViewDescriptorBinary","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagViewDescriptorBinary","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagViewDescriptorStrings","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagViewDescriptorStrings","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagViewDescriptorName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagViewDescriptorName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagViewDescriptorVersion","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagViewDescriptorVersion","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRoamingDatatypes","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRoamingDatatypes","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRoamingDictionary","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRoamingDictionary","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagRoamingXmlStream","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagRoamingXmlStream","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagOscSyncEnabled","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagOscSyncEnabled","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagProcessed","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagProcessed","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExceptionReplaceTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExceptionReplaceTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachmentLinkId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachmentLinkId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExceptionStartTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExceptionStartTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagExceptionEndTime","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagExceptionEndTime","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachmentFlags","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachmentFlags","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachmentHidden","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachmentHidden","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAttachmentContactPhoto","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAttachmentContactPhoto","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookFolderPathname","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookFolderPathname","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookManager","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookManager","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookManagerDistinguishedName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookManagerDistinguishedName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHomeMessageDatabase","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHomeMessageDatabase","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookIsMemberOfDistributionList","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookIsMemberOfDistributionList","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookMember","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookMember","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookOwner","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookOwner","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookReports","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookReports","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookProxyAddresses","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookProxyAddresses","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookTargetAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookTargetAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookPublicDelegates","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookPublicDelegates","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookOwnerBackLink","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookOwnerBackLink","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute1","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute1","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute2","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute2","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute3","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute3","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute4","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute4","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute5","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute5","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute6","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute6","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute7","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute7","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute8","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute8","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute9","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute9","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute10","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute10","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookObjectDistinguishedName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookObjectDistinguishedName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDeliveryContentLength","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDeliveryContentLength","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDistributionListMemberSubmitAccepted","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDistributionListMemberSubmitAccepted","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookNetworkAddress","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookNetworkAddress","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute11","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute11","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute12","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute12","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute13","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute13","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute14","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute14","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookExtensionAttribute15","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookExtensionAttribute15","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookX509Certificate","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookX509Certificate","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookObjectGuid","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookObjectGuid","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookPhoneticGivenName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookPhoneticGivenName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookPhoneticSurname","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookPhoneticSurname","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookPhoneticDepartmentName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookPhoneticDepartmentName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookPhoneticCompanyName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookPhoneticCompanyName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookPhoneticDisplayName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookPhoneticDisplayName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDisplayTypeExtended","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDisplayTypeExtended","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHierarchicalShowInDepartments","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHierarchicalShowInDepartments","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookRoomContainers","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookRoomContainers","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHierarchicalDepartmentMembers","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHierarchicalDepartmentMembers","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHierarchicalRootDepartment","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHierarchicalRootDepartment","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHierarchicalParentDepartment","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHierarchicalParentDepartment","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHierarchicalChildDepartments","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHierarchicalChildDepartments","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagThumbnailPhoto","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagThumbnailPhoto","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookSeniorityIndex","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookSeniorityIndex","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookOrganizationalUnitRootDistinguishedName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookOrganizationalUnitRootDistinguishedName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookSenderHintTranslations","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookSenderHintTranslations","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookModerationEnabled","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookModerationEnabled","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagSpokenName","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagSpokenName","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookAuthorizedSenders","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookAuthorizedSenders","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookUnauthorizedSenders","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookUnauthorizedSenders","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDistributionListMemberSubmitRejected","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDistributionListMemberSubmitRejected","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDistributionListRejectMessagesFromDLMembers","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDistributionListRejectMessagesFromDLMembers","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookHierarchicalIsHierarchicalGroup","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookHierarchicalIsHierarchicalGroup","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDistributionListMemberCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDistributionListMemberCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookDistributionListExternalMemberCount","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookDistributionListExternalMemberCount","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookIsMaster","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookIsMaster","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookParentEntryId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookParentEntryId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}},{"a":2,"n":"PidTagAddressBookContainerId","is":true,"t":4,"rt":$n[5].PidTagPropertyEnum,"sn":"PidTagAddressBookContainerId","box":function ($v) { return Transpose.box($v, $n[5].PidTagPropertyEnum, System.Enum.toStringFn($n[5].PidTagPropertyEnum));}}]}; }, $n);
     $m("MAPIInspector.Parsers.BaseStructure", function () { return {"nested":[$n[5].BaseStructure.Position],"att":1048577,"a":2,"m":[{"a":2,"isSynthetic":true,"n":".ctor","t":1,"sn":"ctor"}]}; }, $n);
     $m("MAPIInspector.Parsers.BaseStructure.Position", function () { return {"td":$n[5].BaseStructure,"att":1048578,"a":2,"m":[{"a":2,"n":".ctor","t":1,"p":[$n[0].Int32,$n[0].Int32],"pi":[{"n":"startIndex","pt":$n[0].Int32,"ps":0},{"n":"offset","pt":$n[0].Int32,"ps":1}],"sn":"ctor"},{"a":2,"n":"BufferIndex","t":4,"rt":$n[0].Int32,"sn":"BufferIndex","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},{"a":2,"n":"IsAuxiliaryPayload","t":4,"rt":$n[0].Boolean,"sn":"IsAuxiliaryPayload","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":2,"n":"IsCompressedXOR","t":4,"rt":$n[0].Boolean,"sn":"IsCompressedXOR","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":2,"n":"Offset","t":4,"rt":$n[0].Int32,"sn":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},{"a":2,"n":"SourceBlock","t":4,"rt":$n[2].Block,"sn":"SourceBlock"},{"a":2,"n":"StartIndex","t":4,"rt":$n[0].Int32,"sn":"StartIndex","box":function ($v) { return Transpose.box($v, $n[0].Int32);}}]}; }, $n);
-    $m("BlockParser.PortablePrimitives", function () { return {"att":1048961,"a":2,"s":true,"m":[{"a":2,"n":"Ascii","is":true,"t":8,"pi":[{"n":"bytes","pt":System.Array.type($n[0].Byte),"ps":0}],"sn":"Ascii","rt":$n[0].String,"p":[System.Array.type($n[0].Byte)]},{"a":2,"n":"Read","is":true,"t":8,"pi":[{"n":"type","pt":$n[0].Type,"ps":0},{"n":"bytes","pt":System.Array.type($n[0].Byte),"ps":1}],"sn":"Read","rt":$n[0].Object,"p":[$n[0].Type,System.Array.type($n[0].Byte)]},{"a":2,"n":"SizeOf","is":true,"t":8,"pi":[{"n":"type","pt":$n[0].Type,"ps":0}],"sn":"SizeOf","rt":$n[0].Int32,"p":[$n[0].Type],"box":function ($v) { return Transpose.box($v, $n[0].Int32);}},{"a":2,"n":"Underlying","is":true,"t":8,"pi":[{"n":"type","pt":$n[0].Type,"ps":0}],"sn":"Underlying","rt":$n[0].Type,"p":[$n[0].Type]}]}; }, $n);
+    $m("BlockParser.PortableEvidence", function () { return {"att":1048961,"a":2,"s":true,"m":[{"a":2,"n":"Payload","is":true,"t":8,"pi":[{"n":"bytes","pt":System.Array.type($n[0].Byte),"ps":0},{"n":"encoded","pt":$n[2].Block,"ps":1},{"n":"transformed","pt":$n[0].Boolean,"ps":2},{"n":"flags","pt":$n[0].UInt32,"ps":3}],"sn":"Payload","rt":$n[2].BinaryParser,"p":[System.Array.type($n[0].Byte),$n[2].Block,$n[0].Boolean,$n[0].UInt32]},{"a":2,"n":"Shift","is":true,"t":8,"pi":[{"n":"payload","pt":$n[2].Block,"ps":0},{"n":"offset","pt":$n[0].Int64,"ps":1},{"n":"transformed","pt":$n[0].Boolean,"ps":2}],"sn":"Shift","rt":$n[0].Void,"p":[$n[2].Block,$n[0].Int64,$n[0].Boolean]},{"a":2,"n":"OnPayload","is":true,"t":4,"rt":Function,"sn":"OnPayload"}]}; }, $n);
+    $m("BlockParser.PortablePrimitives", function () { return {"att":1048961,"a":2,"s":true,"m":[{"a":2,"n":"Ascii","is":true,"t":8,"pi":[{"n":"bytes","pt":System.Array.type($n[0].Byte),"ps":0}],"sn":"Ascii","rt":$n[0].String,"p":[System.Array.type($n[0].Byte)]},{"a":2,"n":"EnumHex","is":true,"t":8,"pi":[{"n":"value","pt":$n[0].UInt64,"ps":0},{"n":"digits","pt":$n[0].Int32,"ps":1}],"sn":"EnumHex","rt":$n[0].String,"p":[$n[0].UInt64,$n[0].Int32]},{"a":2,"n":"Read","is":true,"t":8,"pi":[{"n":"type","pt":$n[0].Type,"ps":0},{"n":"bytes","pt":System.Array.type($n[0].Byte),"ps":1}],"sn":"Read","rt":$n[0].Object,"p":[$n[0].Type,System.Array.type($n[0].Byte)]},{"a":2,"n":"SizeOf","is":true,"t":8,"pi":[{"n":"type","pt":$n[0].Type,"ps":0}],"sn":"SizeOf","rt":$n[0].Int32,"p":[$n[0].Type],"box":function ($v) { return Transpose.box($v, $n[0].Int32);}},{"a":2,"n":"Text","is":true,"t":8,"pi":[{"n":"block","pt":$n[2].BlockString,"ps":0}],"sn":"Text","rt":$n[0].String,"p":[$n[2].BlockString]},{"a":2,"n":"Text","is":true,"t":8,"pi":[{"n":"block","pt":$n[2].BlockT$1(System.Object),"ps":0}],"tpc":1,"tprm":["T"],"sn":"Text$1","rt":$n[0].String,"p":[$n[2].BlockT$1(System.Object)]},{"a":2,"n":"Underlying","is":true,"t":8,"pi":[{"n":"type","pt":$n[0].Type,"ps":0}],"sn":"Underlying","rt":$n[0].Type,"p":[$n[0].Type]},{"a":2,"n":"Value","is":true,"t":8,"pi":[{"n":"block","pt":$n[2].BlockT$1(System.Object),"ps":0}],"tpc":1,"tprm":["T"],"sn":"Value","rt":$n[0].Object,"p":[$n[2].BlockT$1(System.Object)]}]}; }, $n);
     $m("System.Drawing.Color", function () { return {"att":257,"a":2,"m":[{"a":2,"isSynthetic":true,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":"PaleVioletRed","is":true,"t":4,"rt":$n[6].Color,"sn":"PaleVioletRed","box":function ($v) { return Transpose.box($v, $n[6].Color, System.Enum.toStringFn($n[6].Color));}},{"a":2,"n":"Coral","is":true,"t":4,"rt":$n[6].Color,"sn":"Coral","box":function ($v) { return Transpose.box($v, $n[6].Color, System.Enum.toStringFn($n[6].Color));}},{"a":2,"n":"LightPink","is":true,"t":4,"rt":$n[6].Color,"sn":"LightPink","box":function ($v) { return Transpose.box($v, $n[6].Color, System.Enum.toStringFn($n[6].Color));}},{"a":2,"n":"Salmon","is":true,"t":4,"rt":$n[6].Color,"sn":"Salmon","box":function ($v) { return Transpose.box($v, $n[6].Color, System.Enum.toStringFn($n[6].Color));}}]}; }, $n);
     $m("System.Collections.Generic.SortedDictionary$2", function (TKey, TValue) { return {"att":1048577,"a":2,"m":[{"a":2,"isSynthetic":true,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":"Keys","t":16,"rt":$n[1].ICollection$1(TKey),"g":{"a":2,"n":"get_Keys","t":8,"rt":$n[1].ICollection$1(TKey),"fg":"Keys$1"},"fn":"Keys$1"}]}; }, $n);
     $m("MapiInspector.SessionExtensions", function () { return {"att":1048961,"a":2,"s":true,"m":[{"a":2,"n":"Next","is":true,"t":8,"pi":[{"n":"session","pt":$n[3].Session,"ps":0}],"sn":"Next","rt":$n[3].Session,"p":[$n[3].Session]},{"a":2,"n":"Previous","is":true,"t":8,"pi":[{"n":"session","pt":$n[3].Session,"ps":0}],"sn":"Previous","rt":$n[3].Session,"p":[$n[3].Session]},{"a":2,"n":"AllSessionsNavigator","is":true,"t":16,"rt":$n[4].SessionNavigator,"g":{"a":2,"n":"get_AllSessionsNavigator","t":8,"rt":$n[4].SessionNavigator,"fg":"AllSessionsNavigator","is":true},"s":{"a":1,"n":"set_AllSessionsNavigator","t":8,"p":[$n[4].SessionNavigator],"rt":$n[0].Void,"fs":"AllSessionsNavigator","is":true},"fn":"AllSessionsNavigator"},{"a":1,"n":"_allSessionsNavigator","is":true,"t":4,"rt":$n[4].SessionNavigator,"sn":"_allSessionsNavigator"}]}; }, $n);
@@ -83469,3 +83507,6 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 
 // MAPI binary fields are little-endian, independently of the BCL runtime's host default.
 System.BitConverter.IsLittleEndian=true;
+// Cast from the primitive reader's object result to a value type, including enums.
+const tmReadPrimitive=BlockParser.PortablePrimitives.Read;
+BlockParser.PortablePrimitives.Read=(type,bytes)=>Transpose.unbox(tmReadPrimitive(type,bytes));

@@ -3,14 +3,45 @@
 use std::{collections::BTreeMap, sync::Arc};
 use transmog_extension_supervisor::{HostConfig, Runner};
 use transmog_extensions::{
-    Invocation, Manifest, Snapshot, Value, VisualizationInput, VisualizationStep,
+    BytePage, Invocation, Manifest, Snapshot, Value, VisualizationInput, VisualizationStep,
 };
+
+fn start(entry: &str) -> Arc<Runner> {
+    let parser = include_bytes!("../../../extensions/mapi/generated/parser.js");
+    let core = include_bytes!("../../../extensions/mapi/src/protocol.js");
+    let manifest: Manifest = serde_json::from_value(serde_json::json!({
+        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"test.mapi.compiler","version":"1.0.0","name":"MAPI compiler compatibility",
+        "visualizers":[{"id":"test","name":"Test","entry":"main.js","surfaces":["headers"],
+            "inputs":{"request":{"headers":["x-requesttype"],"body":"optional"},"response":{"headers":[],"body":"none"}},
+            "matches":[{"direction":"request","headers":[{"direction":"request","name":"x-requesttype","test":{"op":"present"}}]}]}],
+        "files":[{"path":"main.js","bytes":entry.len()},{"path":"generated/parser.js","bytes":parser.len()},{"path":"src/protocol.js","bytes":core.len()}]
+    })).unwrap();
+    let snapshot = Snapshot::new(
+        manifest,
+        BTreeMap::from([
+            ("main.js".into(), Arc::<[u8]>::from(entry.as_bytes())),
+            (
+                "generated/parser.js".into(),
+                Arc::<[u8]>::from(parser.as_slice()),
+            ),
+            ("src/protocol.js".into(), Arc::<[u8]>::from(core.as_slice())),
+        ]),
+    )
+    .unwrap();
+    Runner::start(
+        &HostConfig {
+            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+        },
+        snapshot,
+        "test",
+    )
+    .unwrap()
+}
 
 #[tokio::test]
 async fn generated_mapi_parser_preserves_exact_values_without_restoring_runtime_capabilities() {
-    let parser = include_bytes!("../../../extensions/mapi/generated/parser.js");
     let entry = r"
-import './parser.js';
+import './generated/parser.js';
 export function visualize() {
   if(typeof globalThis.Function!=='undefined'||typeof fetch!=='undefined'||typeof Deno!=='undefined')throw new Error('Capability restored');
   let blocked=false;try{(function(){}).constructor('return 1')();}catch{blocked=true;}
@@ -30,29 +61,7 @@ export function visualize() {
   ]}};
 }
 ";
-    let manifest: Manifest = serde_json::from_value(serde_json::json!({
-        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"test.mapi.compiler","version":"1.0.0","name":"MAPI compiler compatibility",
-        "visualizers":[{"id":"test","name":"Test","entry":"main.js","surfaces":["headers"],
-            "inputs":{"request":{"headers":["x-requesttype"],"body":"none"},"response":{"headers":[],"body":"none"}},
-            "matches":[{"direction":"request","headers":[{"direction":"request","name":"x-requesttype","test":{"op":"present"}}]}]}],
-        "files":[{"path":"main.js","bytes":entry.len()},{"path":"parser.js","bytes":parser.len()}]
-    })).unwrap();
-    let snapshot = Snapshot::new(
-        manifest,
-        BTreeMap::from([
-            ("main.js".into(), Arc::<[u8]>::from(entry.as_bytes())),
-            ("parser.js".into(), Arc::<[u8]>::from(parser.as_slice())),
-        ]),
-    )
-    .unwrap();
-    let runner = Runner::start(
-        &HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
-        },
-        snapshot,
-        "test",
-    )
-    .unwrap();
+    let runner = start(entry);
     let input: VisualizationInput = serde_json::from_value(serde_json::json!({
         "instanceId":"test","exchangeId":"test","requestNumber":"1","generation":"1","direction":"request",
         "request":{"evidenceId":"test","headers":[],"method":"POST","path":"/mapi/emsmdb"}
@@ -74,4 +83,60 @@ export function visualize() {
         document.roots[1].value,
         Some(Value::Guid("00112233-4455-6677-8899-aabbccddeeff".into()))
     );
+}
+
+#[tokio::test]
+async fn mapi_decoded_fields_keep_separate_sources_and_authenticated_encoded_provenance() {
+    let runner = start(
+        r"
+import {decode} from './src/protocol.js';
+export function visualize(input) {return {kind:'needInput',token:'body',reads:[{sourceId:input.request.body.sourceId,offset:'0',maxBytes:20}]};}
+export function resume(token,pages) {
+  const decoded=decode([{id:1,requestType:'Connect',request:{sourceId:pages[0].sourceId,bytes:pages[0].bytes}}],1,'request',{type:'MAPIInspector.Parsers.ExtendedBuffer'});
+  function field(node){if(node.valueType==='MAPIInspector.Parsers.EndpointCapabilityFlag')return node;for(const child of node.children){const found=field(child);if(found)return found;}}
+  const value=field(decoded.tree);if(!value)throw new Error('Missing auxiliary structure');
+  return {kind:'document',document:{title:'Decoded MAPI auxiliary buffer',status:'complete',presentation:'tree',
+    sources:decoded.derived.map(source=>({id:source.id,name:'Decoded MAPI buffer',bytesBase64:System.Convert.toBase64String(System.Array.init(source.bytes,System.Byte)),parents:source.parents,transform:source.transform,exactMapping:source.exactMapping})),
+    roots:[{id:'capabilities',name:'Endpoint capabilities',value:{kind:'integer',value:value.raw},spans:[{sourceId:value.sourceId,offset:value.offset,length:value.size}]}]}};
+}
+",
+    );
+    let input: VisualizationInput = serde_json::from_value(serde_json::json!({
+        "instanceId":"test","exchangeId":"test","requestNumber":"1","generation":"1","direction":"request",
+        "request":{"evidenceId":"test","headers":[],"body":{"sourceId":"encoded-body","length":"20","availability":"complete"},"method":"POST","path":"/mapi/emsmdb"}
+    })).unwrap();
+    assert!(matches!(
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input)
+            })
+            .await
+            .unwrap(),
+        VisualizationStep::NeedInput { .. }
+    ));
+    let encoded = [0_u8, 0, 0, 0, 8, 0, 1, 0x48, 1, 0, 0, 0].map(|byte| byte ^ 0xa5);
+    let mut bytes = vec![0, 0, 7, 0, 12, 0, 8, 0];
+    bytes.extend(encoded);
+    let VisualizationStep::Document { document } = runner
+        .invoke(Invocation::Resume {
+            token: "body".into(),
+            pages: vec![BytePage {
+                source_id: "encoded-body".into(),
+                offset: "0".into(),
+                bytes,
+            }],
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("Expected decoded source")
+    };
+    assert_eq!(document.roots[0].value, Some(Value::Integer("1".into())));
+    assert_eq!(document.roots[0].spans[0].offset, "4");
+    assert_eq!(document.roots[0].spans[0].length, "4");
+    assert_eq!(document.roots[0].spans[0].source_id, "mapi-derived.0");
+    assert_eq!(document.sources[0].parents[0].source_id, "encoded-body");
+    assert_eq!(document.sources[0].parents[0].offset, "8");
+    assert_eq!(document.sources[0].parents[0].length, "12");
+    assert!(!document.sources[0].exact_mapping);
 }
