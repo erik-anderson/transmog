@@ -187,7 +187,7 @@ await page.addInitScript((configuration) => {
       switch (command) {
         case 'plugin:event|listen': {const id=++nativeEventId;nativeEvents.set(id,{event:args.event,handler:args.handler});return id;}
         case 'plugin:event|unlisten': nativeEvents.delete(args.eventId);return;
-        case 'visualizer_choices': return structuredClone(state.visualizerChoices?.[args.selection.surface]??[]);
+        case 'visualizer_choices': return structuredClone((state.visualizerChoicesBySession?.[args.selection.sessionId]??state.visualizerChoices)?.[args.selection.surface]??[]);
         case 'extension_traffic_columns': return structuredClone(state.extensionColumnChoices??[]);
         case 'classify_traffic_rows': {
           state.classificationRequests??=[];state.classificationRequests.push(structuredClone(args));
@@ -204,7 +204,7 @@ await page.addInitScript((configuration) => {
           const handle={slot:request.slot,generation:request.generation,pageId:request.pageId,instanceId:'worker-'+state.visualizerStarts.length};
           const supported=state.visualizerLiveSupported??false,available=supported&&state.visualizerLiveAvailable!==false;
           if(request.live&&!available)throw new Error('Live updates unavailable');
-          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),development:!!state.visualizerDevelopment,declaration:{liveUpdates:supported?{events:['response'],bodyProgress:false}:null}},document:structuredClone(state.visualizerDocument),sources:structuredClone(state.visualizerSources??[]),live:{available,enabled:!!request.live,missedHints:'0'},reloadEpoch:state.reloadEpochs?.[request.extensionId]??0,sourceEpoch:state.sourceEpoch??0};
+          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),development:!!state.visualizerDevelopment,declaration:{liveUpdates:supported?{events:['response'],bodyProgress:false}:null}},document:structuredClone(state.visualizerDocuments?.[request.visualizerId]??state.visualizerDocument),sources:structuredClone(state.visualizerSources??[]),live:{available,enabled:!!request.live,missedHints:'0'},reloadEpoch:state.reloadEpochs?.[request.extensionId]??0,sourceEpoch:state.sourceEpoch??0};
           state.visualizerActive??={};state.visualizerActive[handle.slot]=view;return structuredClone(view);
         }
         case 'deactivate_visualizer': {

@@ -1,9 +1,10 @@
 # MAPI/HTTP visualizer
 
 This extension provides request and response body viewers, a header viewer, and
-an optional static MAPI/HTTP traffic classification column. Choose MAPI/HTTP in
-the relevant viewer selector to activate it. Ordinary traffic browsing does not
-load or execute its parser.
+an optional static MAPI/HTTP traffic classification column. The visible Body
+viewer's Auto option tries MAPI/HTTP when its declared header rules match and
+shows it after a complete parse. Choose MAPI/HTTP explicitly to inspect partial
+results. Traffic-list rendering does not load or execute its parser.
 
 The decoder is authored in TypeScript and compiled to ES2022 JavaScript. It uses
 bounded binary readers, protocol modules and a typed tree. It does not include a

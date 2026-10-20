@@ -461,7 +461,8 @@
         "heapBytes": 268435456,
         "durationMs": 2000,
         "nodes": 20000
-      }
+      },
+      "automatic": true
     },
     {
       "id": "body-response",
@@ -918,7 +919,8 @@
         "heapBytes": 268435456,
         "durationMs": 2000,
         "nodes": 20000
-      }
+      },
+      "automatic": true
     },
     {
       "id": "headers",

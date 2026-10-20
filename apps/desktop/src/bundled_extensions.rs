@@ -2,6 +2,7 @@
 use transmog_app::extensions::BundledExtension;
 
 pub(super) static RESOURCES: [BundledExtension; 1] = [BundledExtension {
+    previous_ids: &["com.transmog.mapi"],
     manifest: include_bytes!(concat!(env!("OUT_DIR"), "/mapi-manifest.json")),
     archive: mapi_archive,
 }];
@@ -24,6 +25,7 @@ mod tests {
             root.path().join("extensions"),
             None,
             &[BundledExtension {
+                previous_ids: &[],
                 manifest: RESOURCES[0].manifest,
                 archive: no_archive,
             }],

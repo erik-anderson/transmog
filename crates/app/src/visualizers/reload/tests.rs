@@ -19,6 +19,7 @@ fn setup() -> (Service, VisualizerHandle, Arc<Ticket>) {
     let current = instance("original");
     ticket.bind(current.clone()).unwrap();
     let activation = VisualizerActivation {
+        automatic: false,
         slot: "pane".into(),
         generation: "1".into(),
         page_id: "1".into(),

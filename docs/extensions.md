@@ -9,7 +9,7 @@ each worker still has its own AppContainer, Job Object, runtime and IPC session.
 The standalone extension-host executable is a development test fixture and is
 not installed. `transmog-extension-registry`
 provides shared installation and active-instance ownership. `transmog-app`
-connects explicit activation to retained headers and body ranges. Desktop Extensions
+connects visible-message activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector
 offers explicit selection, scoped retained context, opt-in live controls and host-owned structured rendering.
 The [bundled MAPI/HTTP extension](../extensions/mapi/README.md) uses the same
@@ -24,6 +24,33 @@ explicit header-name list and a body mode: `none`, `optional` or `required`.
 Omission is invalid. Header wildcards, case-colliding names and matching/context
 predicates which depend on undeclared headers are rejected. A declaration never
 overrides capture redaction or grants network access.
+
+## Automatic visualization and remembered views
+
+A contribution can declare `"automatic": true` to participate in the Body viewer's
+**Auto** option. Omission preserves explicit-only activation and existing package
+digests. The host first applies its native header/content-type rules to the selected
+message. Only a visible body pane may start a matching candidate; discovery and the
+traffic list never run parsers or read bodies for this purpose. Auto tries at most
+four opted-in candidates, serially in package/contribution ID order. Existing input,
+context, origin, sandbox and resource restrictions apply unchanged.
+
+Only a host-validated document with `status: "complete"` replaces the built-in
+representation. A partial, malformed, unavailable or limited result, startup error,
+or invalid document releases that worker and tries the next candidate, then falls
+back to the built-in Auto representation. Explicit selection still permits partial
+results. Failed candidates are not retried on unrelated traffic refreshes; selecting
+Auto again, changing retained body evidence or changing extension metadata permits
+a fresh attempt. Leaving the pane stops its work, including pending startup and live
+delivery. Auto can resume when that pane becomes visible again. Live updates remain
+an explicit checkbox choice.
+
+Request and response panes remember the chosen viewer and Headers/Body/Split mode
+independently for the current window. A protocol preference is applied only where
+that contribution remains available. An unmatched request uses the ordinary Headers
+mode (response uses Body), without erasing the preference; returning to matching
+traffic restores it. This preference contains no captured values and is not a
+full-capture classification cache. The bundled MAPI body viewers opt into Auto.
 
 `project_headers` copies only declared occurrences, preserving original order,
 names and indices; redacted values remain unavailable. `check_body_access` denies
@@ -165,6 +192,9 @@ archive or copy it into the user installation store. Explicit activation verifie
 the immutable archive and its payloads. App upgrades refresh trusted declarations
 while preserving the saved enabled choice. Corrupt catalog storage leaves bundles
 disabled; an ID conflict preserves user-owned files and permits uninstall recovery.
+Trusted bundle renames may list previous app-owned IDs and carry their enable
+choice forward without opening code. MAPI migrates `com.transmog.mapi` to
+`net.transmog.mapi`; user-installed entries are never migrated by this path.
 
 Registering an unpacked developer directory reads only its manifest. Activation
 uses pinned local directory handles, rejects reparse points and links, bounds
@@ -449,8 +479,9 @@ an operation already started may finish.
 
 Matching contributions appear in the existing Body viewer selector and in a
 Headers viewer selector when one applies. Raw headers and Auto remain the initial
-choices. Selection is explicit and resets when changing exchange or observation
-boundary. Request, response, header and body contributions own independent slots;
+choices. Auto attempts opted-in matching body contributions, and each pane restores
+its preferred viewer where applicable, as described above. Request, response,
+header and body contributions own independent slots;
 one package may run several at once, including both surfaces in Split mode.
 
 The host renders a virtualized keyboard-navigable structure tree, complete selected
@@ -470,8 +501,9 @@ is labeled separately from exact mapping. Displaying a tree does not read source
 bytes just to populate its source selector.
 
 Hidden/inactive surfaces clear documents and byte caches and cancel pending
-starts as well as ready workers. Returning to a still-selected visible surface
-shows Open visualizer; that explicit action opens a fresh instance. Selection
+starts as well as ready workers. Returning to a manually selected visible surface
+shows Open visualizer; that explicit action opens a fresh instance. Auto may attempt
+its matching contribution again while visible. Selection
 changes and late replies cannot restore an old document. Native suspension uses
 the same explicit reopening after the window is restored.
 Losing focus while visible does not suspend it. Extension-management notifications

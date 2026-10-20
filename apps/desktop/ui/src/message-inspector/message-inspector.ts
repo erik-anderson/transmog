@@ -41,6 +41,11 @@ export class MessageInspector extends WebUIElement {
   private choiceListenerGeneration=0;
   private choiceVisible=false;
   private choiceObserver:IntersectionObserver|null=null;
+  private preferredMode = '';
+  private preferredBodyViewer = 'auto';
+  private preferredHeaderViewer = 'raw';
+  private preferredProtocol: string | null = null;
+  private rejectedAutomatic = new Set<string>();
   @observable detail: SessionDetail | null = null;
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
@@ -82,7 +87,12 @@ export class MessageInspector extends WebUIElement {
   private previousId: string | null = null;
   private inspectedBodyKey: string | null = null;
 
-  sideChanged(): void { this.mode = this.side === 'request' ? 'headers' : 'body'; this.updateMessage(); }
+  sideChanged(): void {
+    this.preferredMode = this.side === 'request' ? 'headers' : 'body';
+    this.preferredProtocol = null;
+    this.mode = this.preferredMode;
+    this.updateMessage();
+  }
   paneChanged():void {this.headerSlot=this.pane+'-headers';this.bodySlot=this.pane+'-body';}
   protected hydratedCallback():void {
     this.choiceObserver=new IntersectionObserver(entries=>{const visible=entries.some(entry=>entry.isIntersecting);if(this.choiceVisible===visible)return;this.choiceVisible=visible;if(visible){this.watchChoices();void this.refreshChoices();}else {this.choiceGeneration++;this.choiceKey='';this.unwatchChoices();}});this.choiceObserver.observe(this);
@@ -92,23 +102,58 @@ export class MessageInspector extends WebUIElement {
     void listen('extensions-changed',()=>{if(this.choiceVisible)void this.refreshChoices(true);}).then(unlisten=>{if(this.isConnected&&this.choiceVisible&&generation===this.choiceListenerGeneration)this.choiceListener=unlisten;else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>undefined);
   }
   private unwatchChoices():void {this.choiceListenerGeneration++;const unlisten=this.choiceListener;this.choiceListener=undefined;if(unlisten)void Promise.resolve(unlisten()).catch(()=>undefined);}
-  private setChoices():void {this.headerChoice=this.headerChoices.find(choice=>choice.key===this.headerViewer)??null;this.bodyChoice=this.bodyChoices.find(choice=>choice.key===this.viewer)??null;this.bodyExtension=!!this.bodyChoice;}
+  private setChoices(): void {
+    this.headerChoice = this.headerChoices.find(choice => choice.key === this.headerViewer) ?? null;
+    const candidates = this.bodyChoices.filter(choice => choice.automatic)
+      .sort((left, right) => left.key.localeCompare(right.key)).slice(0, 4);
+    this.bodyChoice = this.viewer === 'auto'
+      ? candidates.find(choice => !this.rejectedAutomatic.has(choice.key)) ?? null
+      : this.bodyChoices.find(choice => choice.key === this.viewer) ?? null;
+    this.bodyExtension = !!this.bodyChoice;
+  }
+  private rememberView(): void {
+    this.preferredMode = this.mode;
+    this.preferredBodyViewer = this.viewer;
+    this.preferredHeaderViewer = this.headerViewer;
+    this.preferredProtocol = this.mode === 'headers' ? this.headerChoice?.key ?? null
+      : this.mode === 'body' || this.mode === 'split' ? this.bodyChoice?.key ?? null : null;
+  }
+  private restoreView(): void {
+    this.headerViewer = this.headerChoices.some(choice => choice.key === this.preferredHeaderViewer)
+      ? this.preferredHeaderViewer : 'raw';
+    this.viewer = !this.preferredBodyViewer.startsWith('extension:')
+      || this.bodyChoices.some(choice => choice.key === this.preferredBodyViewer)
+      ? this.preferredBodyViewer : 'auto';
+    const available = !this.preferredProtocol
+      || [...this.headerChoices, ...this.bodyChoices].some(choice => choice.key === this.preferredProtocol);
+    this.mode = available ? this.preferredMode || (this.side === 'request' ? 'headers' : 'body')
+      : this.side === 'request' ? 'headers' : 'body';
+    this.setChoices();
+    if (this.mode === 'body' || this.mode === 'split') void this.inspectBody(false);
+  }
+  automaticRejected(event: CustomEvent<{selection: VisualizerSelection; key: string}>): void {
+    const {selection, key} = event.detail;
+    if (this.viewer !== 'auto' || this.bodyChoice?.key !== key
+      || this.detail?.id !== selection.sessionId || this.boundary !== selection.boundary) return;
+    this.rejectedAutomatic.add(key);
+    this.setChoices();
+    if (!this.bodyChoice) void this.inspectBody();
+  }
   private async refreshChoices(force=false):Promise<void> {
     if(!this.isConnected||!this.choiceVisible||!this.detail)return;
-    const key=JSON.stringify([this.detail.id,this.boundary,...this.detail.requests.map(head=>[head.boundary,head.method,head.summary?.totalFields,head.summary?.serializedBytes]),...this.detail.responses.map(head=>[head.boundary,head.status,head.summary?.totalFields,head.summary?.serializedBytes])]);
+    const key=JSON.stringify([this.detail.id,this.boundary,...this.detail.requests.map(head=>[head.boundary,head.method,head.summary?.totalFields,head.summary?.serializedBytes]),...this.detail.responses.map(head=>[head.boundary,head.status,head.summary?.totalFields,head.summary?.serializedBytes]),...this.detail.storedBodies.map(body=>[body.boundary,body.availability,body.availability==='complete'?body.retainedBytes:null,body.sha256])]);
     if(!force&&this.choiceKey===key)return;this.choiceKey=key;
+    this.rejectedAutomatic.clear();
     const generation=++this.choiceGeneration,sessionId=this.detail.id,boundary=this.boundary;
     try {
       const results=await Promise.all((['headers','body'] as const).map(surface=>invoke<Omit<VisualizerChoice,'key'>[]>('visualizer_choices',{selection:{sessionId,boundary,surface}})));
       if(generation!==this.choiceGeneration||!this.choiceVisible||!this.isConnected)return;
       const map=(choices:Omit<VisualizerChoice,'key'>[]):VisualizerChoice[]=>choices.map(choice=>({...choice,key:'extension:'+choice.extensionId+':'+choice.visualizerId}));
       this.headerChoices=map(results[0]!);this.bodyChoices=map(results[1]!);
-      if(!this.headerChoices.some(choice=>choice.key===this.headerViewer))this.headerViewer='raw';
-      if(this.viewer.startsWith('extension:')&&!this.bodyChoices.some(choice=>choice.key===this.viewer))this.viewer='auto';
-      this.setChoices();
+      this.restoreView();
     } catch {if(generation===this.choiceGeneration)this.choiceKey='';}
   }
-  changeHeaderViewer(event:Event):void {this.headerViewer=(event.currentTarget as HTMLSelectElement).value;this.setChoices();}
+  changeHeaderViewer(event:Event):void {this.headerViewer=(event.currentTarget as HTMLSelectElement).value;this.setChoices();this.rememberView();}
   splitChanged(): void { this.headerShare = this.split+'%'; }
   detailChanged(): void {
     if (this.detail?.id !== this.previousId) { this.previousId = this.detail?.id ?? null; this.headerOffset=0;this.headersBusy=false;this.headerGeneration++; this.resetViewers(); this.boundary = ''; this.imageUrl = ''; }
@@ -138,8 +183,12 @@ export class MessageInspector extends WebUIElement {
       this.bodyText='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
     }
   }
-  showMode(mode:string): void { this.mode = mode; if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
-  private resetViewers():void {this.viewer='auto';this.headerViewer='raw';this.headerChoice=null;this.bodyChoice=null;this.bodyExtension=false;this.headerChoices=[];this.bodyChoices=[];this.choiceKey='';this.choiceGeneration++;}
+  showMode(mode:string): void { this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
+  private resetViewers():void {
+    this.viewer='auto';this.headerViewer='raw';this.headerChoice=null;this.bodyChoice=null;this.bodyExtension=false;
+    this.headerChoices=[];this.bodyChoices=[];this.choiceKey='';this.choiceGeneration++;this.rejectedAutomatic.clear();
+    this.mode=this.preferredProtocol?(this.side==='request'?'headers':'body'):this.preferredMode||this.mode;
+  }
   changeBoundary(event:Event): void { this.headerOffset=0; this.resetViewers();this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
   toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.headerOffset=0;const head=this.heads().find(head=>head.boundary===this.boundary);if((head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);else this.sortHeaders();}
   previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
@@ -162,7 +211,11 @@ export class MessageInspector extends WebUIElement {
     finally {if(generation===this.headerGeneration)this.headersBusy=false;}
   }
   private sortHeaders():void {this.headerRows=[...this.headerRows].sort(this.largestFirst?(a,b)=>b.bytes-a.bytes:(a,b)=>Number(a.id)-Number(b.id));}
-  changeViewer(event:Event): void { this.viewer = (event.currentTarget as HTMLSelectElement).value;this.setChoices(); void this.inspectBody(); }
+  changeViewer(event:Event): void {
+    this.viewer = (event.currentTarget as HTMLSelectElement).value;
+    if (this.viewer === 'auto') this.rejectedAutomatic.clear();
+    this.setChoices();this.rememberView();void this.inspectBody();
+  }
   changeDecoding(event:Event): void { this.decodeContent = (event.currentTarget as HTMLInputElement).checked; void this.inspectBody(); }
   resizeHeaders(event:CustomEvent<{value:number;committed:boolean}>): void {
     this.headerShare = event.detail.value+'%';

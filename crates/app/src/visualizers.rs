@@ -48,6 +48,8 @@ pub struct VisualizerChoice {
     pub visualizer_id: String,
     /// Plain selector label.
     pub name: String,
+    /// This matching contribution opts into Auto parsing for the visible message.
+    pub automatic: bool,
 }
 /// Explicit user selection; a slot allows cancellation before worker startup completes.
 #[derive(Clone, Debug, Deserialize)]
@@ -68,6 +70,9 @@ pub struct VisualizerActivation {
     /// Explicit opt-in for this fresh activation; omitted means snapshot-only.
     #[serde(default)]
     pub live: bool,
+    /// Auto selection requires a declaration opt-in and a complete parse result.
+    #[serde(default)]
+    pub automatic: bool,
 }
 impl VisualizerActivation {
     fn handle(&self, instance: &Instance) -> VisualizerHandle {
@@ -471,6 +476,7 @@ impl Application {
                     extension_id,
                     visualizer_id: declaration.id,
                     name: declaration.name,
+                    automatic: declaration.automatic,
                 });
             }
         }
@@ -512,6 +518,7 @@ impl Application {
             .any(|choice| {
                 choice.extension_id == request.extension_id
                     && choice.visualizer_id == request.visualizer_id
+                    && (!request.automatic || choice.automatic)
             })
         {
             return Err(invalid(
@@ -540,6 +547,9 @@ impl Application {
         ticket: &Arc<Ticket>,
     ) -> Result<VisualizerView, AppError> {
         let instance = self.initialize_visualizer_ticket(request, ticket).await?;
+        if request.automatic && !instance.declaration.automatic {
+            return Err(invalid("This visualizer no longer supports Auto selection"));
+        }
         let (mut snapshot, store) = self.visualizer_evidence(&request.selection.session_id)?;
         let selected = boundaries(&request.selection.boundary)?;
         if !Admission::new(&snapshot, selected)
@@ -605,6 +615,9 @@ impl Application {
             input: Box::new(input),
         };
         let document = self.run_visualizer(ticket, invocation).await?;
+        if request.automatic && document.status != transmog_extensions::ParseStatus::Complete {
+            return Err(invalid("Auto visualization requires a complete parse"));
+        }
         Ok(VisualizerView {
             metadata_changed: false,
             handle: request.handle(&instance),

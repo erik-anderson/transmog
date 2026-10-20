@@ -5,6 +5,9 @@ use transmog_extensions::{CatalogEntry, Manifest, Origin, sha256};
 /// Trusted app resources with a separately generated metadata sidecar.
 #[derive(Clone, Copy)]
 pub struct BundledExtension {
+    /// Previous app-owned IDs whose saved enable choice follows this renamed bundle.
+    /// User-installed entries with those IDs are never migrated or removed.
+    pub previous_ids: &'static [&'static str],
     /// Bounded generated manifest bytes; discovery never opens the archive.
     pub manifest: &'static [u8],
     /// Returns immutable ordinary tmext bytes only upon explicit activation.
@@ -34,7 +37,15 @@ pub(super) fn merge(
         let prior = state
             .entries
             .iter()
-            .position(|entry| entry.catalog.manifest.id == id);
+            .position(|entry| entry.catalog.manifest.id == id)
+            .or_else(|| {
+                state.entries.iter().position(|entry| {
+                    entry.catalog.origin == Origin::Bundled
+                        && resource
+                            .previous_ids
+                            .contains(&entry.catalog.manifest.id.as_str())
+                })
+            });
         if let Some(index) = prior
             && state.entries[index].catalog.origin != Origin::Bundled
         {
@@ -66,6 +77,13 @@ pub(super) fn merge(
         } else {
             state.entries.push(entry);
         }
+        state.entries.retain(|entry| {
+            entry.catalog.origin != Origin::Bundled
+                || entry.catalog.manifest.id == id
+                || !resource
+                    .previous_ids
+                    .contains(&entry.catalog.manifest.id.as_str())
+        });
         bundled.insert(id, *resource);
     }
     // Cached metadata cannot make an absent app-owned resource executable.

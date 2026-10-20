@@ -103,7 +103,8 @@ when changing the experience.
   work only after its destination is ready; independent utility windows retain
   their own drafts and do not depend on the originating workspace's lifetime.
 
-- Protocol extensions offer visualizers through explicit selection and declare
+- Protocol extensions offer visualizers through explicit selection or opt-in Auto
+  parsing of the visible selected message, and declare
   their request/response header and body inputs. The host owns presentation;
   hidden visualizers release their workers and data. Manage installation and
   declarations together in [Extensions settings](extensions.md), without access histories.

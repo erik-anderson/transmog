@@ -251,6 +251,10 @@ pub struct Visualizer {
     pub inputs: Inputs,
     /// Display matching rules.
     pub matches: Vec<MatchRule>,
+    /// Allow the visible Auto viewer to attempt this matching contribution.
+    /// Only a complete parse may replace the built-in representation.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub automatic: bool,
     /// Optional narrower/different declared context/live input matches.
     #[serde(default)]
     pub input_matches: Vec<MatchRule>,

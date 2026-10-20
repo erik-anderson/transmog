@@ -37,6 +37,25 @@ fn document() -> VisualizationDocument {
 }
 
 #[test]
+fn automatic_visualizers_opt_in_without_changing_existing_package_revisions() {
+    let original = manifest();
+    assert!(!original.visualizers[0].automatic);
+    assert!(
+        serde_json::to_value(&original).unwrap()["visualizers"][0]
+            .get("automatic")
+            .is_none()
+    );
+    let mut automatic = original.clone();
+    automatic.visualizers[0].automatic = true;
+    let encoded = serde_json::to_vec(&automatic).unwrap();
+    let round_trip = Manifest::parse(&encoded, true).unwrap();
+    assert!(round_trip.visualizers[0].automatic);
+    // Opt-in does not weaken native matching or input declarations.
+    automatic.visualizers[0].matches.clear();
+    assert!(automatic.validate(true).is_err());
+}
+
+#[test]
 fn missing_access_is_invalid_and_matching_cannot_read_undeclared_headers() {
     let mut value = serde_json::to_value(manifest()).unwrap();
     value["visualizers"][0]["inputs"]["request"]

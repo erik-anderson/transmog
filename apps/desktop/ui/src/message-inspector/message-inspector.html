@@ -28,7 +28,7 @@
 </div></details>
           <if condition="side == 'response'"><button type="button" class="secondary compact-button" title="Save the full original response body with content decoding" @click="{saveBody()}" ?disabled="{{saving || !bodyMetadata || bodyMetadata.availability != 'complete' || bodyMetadata.retainedBytes == 0}}"><if condition="saving">Saving…</if><if condition="!saving">Save as…</if></button></if>
         </div>
-        <if condition="bodyChoice"><extension-visualizer slot="{{bodySlot}}" ?active="{{mode == 'body' || mode == 'split'}}" :selection="{{bodySelection}}" :choice="{{bodyChoice}}"></extension-visualizer></if>
+        <if condition="bodyChoice"><extension-visualizer slot="{{bodySlot}}" ?automatic="{{viewer == 'auto'}}" @automatic-rejected="{automaticRejected(e)}" ?active="{{mode == 'body' || mode == 'split'}}" :selection="{{bodySelection}}" :choice="{{bodyChoice}}"></extension-visualizer></if>
         <details class="body-facts" ?hidden="{{bodyExtension}}"><summary><strong>{{viewerLabel}}</strong><span>{{bodySummary}}</span></summary><p>{{bodyFacts}}</p></details>
         <div class="body-scroll" ?hidden="{{bodyExtension}}" ?data-hex="{{hexPreview != null}}">
           <if condition="hexPreview != null"><if condition="bodyText"><p class="body-preview body-warning" role="status">{{bodyText}}</p></if><hex-viewer :preview="{{hexPreview}}"></hex-viewer></if>

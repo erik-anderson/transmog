@@ -1,7 +1,7 @@
 import type {ExtensionContribution} from '../extension-settings/models.js';
 
 export type Presentation='tree'|'table'|'text'|'hex';
-export interface VisualizerChoice {extensionId:string;visualizerId:string;name:string;key:string;}
+export interface VisualizerChoice {extensionId:string;visualizerId:string;name:string;key:string;automatic?:boolean;}
 export interface VisualizerSelection {sessionId:string;boundary:string;surface:'headers'|'body';}
 export interface VisualizerHandle {slot:string;generation:string;instanceId:string;pageId:string;}
 export interface Span {sourceId:string;offset:string;length:string;}

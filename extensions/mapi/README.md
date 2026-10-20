@@ -4,6 +4,10 @@ The bundled MAPI/HTTP visualizer is an independent strict TypeScript project.
 It parses messages into protocol fields, then projects those fields through the
 host's tree, value, encoding and source-range contract. The extension supplies
 no UI and has no filesystem, network, timer or browser API.
+Its app-owned ID is `net.transmog.mapi`. Matching body contributions participate
+in Auto for the visible selected message; a complete parse is required before
+Auto shows the visualization. Explicit selection remains available for partial
+results.
 
 ## Authoring and packaging
 
@@ -27,7 +31,7 @@ modified. Development snapshots measure the current declared files. Enable hot r
 instances after a successful build. Explicit Reload also lives in settings.
 Leaving the visualizer releases its worker, granted data and source watcher.
 
-Use **Package to .tmext** in Extensions settings to package a loose folder.
+Use **Package extension…** in Extensions settings to package a loose folder.
 Only `manifest.json` and its four explicitly listed payloads are included:
 
 - `dist/runtime/body.js`
@@ -39,6 +43,11 @@ The package excludes TypeScript sources, tests, reference code, compiler tools,
 source maps and unlisted files. `dist/package-manifest.json` is the build's
 length/hash metadata, not an additional archive member. Installed extensions
 need neither TypeScript nor .NET. The .NET oracle is a developer test tool only.
+
+**Visualizers and declared inputs → Save to folder…** exports the bundled content
+for inspection and editing. The two runtime scripts use readable JavaScript;
+they can be changed directly. Give the copied manifest a different ID before
+loading it alongside the app-owned extension with **Load unpacked…**.
 
 ## Architecture
 

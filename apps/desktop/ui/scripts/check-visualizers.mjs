@@ -4,6 +4,7 @@ import {checkLiveVisualizers} from './check-live-visualizers.mjs';
 import {checkHttpVisualizers} from './check-http-visualizers.mjs';
 import {checkReloadVisualizers} from './check-reload-visualizers.mjs';
 import {checkVisualizerSelection} from './check-visualizer-selection.mjs';
+import {checkAutomaticVisualizers} from './check-automatic-visualizers.mjs';
 
 export async function checkVisualizers(page,root) {
   await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
@@ -198,7 +199,8 @@ export async function checkVisualizers(page,root) {
     await response.getByRole('button',{name:'Body',exact:true}).click();
     await traffic.locator('.session-link').nth(1).click();
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id===document.querySelector('app-shell').traffic.selectedSessionId);
-    assert.equal(await selector.inputValue(),'auto','Changing exchange reused an explicit protocol choice');
+    assert.equal(await selector.inputValue(),'extension:example.protocol:structure','A matching exchange forgot the explicit protocol choice');
+    await checkAutomaticVisualizers(page,root);
   } finally {
     await page.evaluate(preferences=>{const s=globalThis.__workspaceFixture;s.visualizerChoices={};s.visualizerActive={};s.emitNative('extensions-changed');document.querySelector('app-shell').traffic.preferences=preferences;},saved.preferences);
     await page.setViewportSize({width:1280,height:800});

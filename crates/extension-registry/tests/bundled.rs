@@ -45,10 +45,43 @@ fn never_open() -> &'static [u8] {
 }
 
 #[test]
+fn renaming_a_bundle_preserves_disable_choice_without_opening_code() {
+    let root = tempfile::tempdir().unwrap();
+    let mut old = snapshot("1.0.0").manifest;
+    old.id = "example.legacy".into();
+    let old_metadata = Box::leak(serde_json::to_vec(&old).unwrap().into_boxed_slice());
+    let first = Registry::load_with_bundled(
+        root.path().into(),
+        None,
+        &[BundledExtension {
+            previous_ids: &[],
+            manifest: old_metadata,
+            archive: never_open,
+        }],
+    );
+    first.set_enabled("example.legacy", false).unwrap();
+    let renamed = Registry::load_with_bundled(
+        root.path().into(),
+        None,
+        &[BundledExtension {
+            previous_ids: &["example.legacy"],
+            manifest: metadata("2.0.0"),
+            archive: never_open,
+        }],
+    );
+    let status = renamed.status();
+    assert_eq!(status.entries.len(), 1);
+    assert_eq!(status.entries[0].catalog.manifest.id, "example.bundled");
+    assert!(!status.entries[0].catalog.enabled);
+    assert!(status.warning.is_none());
+}
+
+#[test]
 fn bundled_discovery_listing_and_enable_do_not_open_archive_or_create_install_files() {
     let root = tempfile::tempdir().unwrap();
     let store = root.path().join("extensions");
     let resource = BundledExtension {
+        previous_ids: &[],
         manifest: metadata("1.0.0"),
         archive: never_open,
     };
@@ -75,6 +108,7 @@ fn bundled_upgrade_refreshes_trusted_metadata_and_archive_while_preserving_disab
         root.path().into(),
         None,
         &[BundledExtension {
+            previous_ids: &[],
             manifest: metadata("1.0.0"),
             archive: version_one,
         }],
@@ -93,6 +127,7 @@ fn bundled_upgrade_refreshes_trusted_metadata_and_archive_while_preserving_disab
         root.path().into(),
         None,
         &[BundledExtension {
+            previous_ids: &[],
             manifest: metadata("2.0.0"),
             archive: version_two,
         }],
@@ -139,6 +174,7 @@ fn bundled_resources_do_not_reenable_after_corrupt_catalog_or_overwrite_recovery
         root.path().into(),
         None,
         &[BundledExtension {
+            previous_ids: &[],
             manifest: metadata("1.0.0"),
             archive: never_open,
         }],
@@ -163,6 +199,7 @@ fn bundled_id_collision_preserves_user_files_and_allows_explicit_uninstall_recov
     .unwrap();
     Registry::load(store.clone(), None).install(&file).unwrap();
     let resource = BundledExtension {
+        previous_ids: &[],
         manifest: metadata("1.0.0"),
         archive: never_open,
     };
@@ -189,6 +226,7 @@ fn bundled_missing_or_mismatched_archive_fails_only_explicit_snapshot() {
         root.path().into(),
         None,
         &[BundledExtension {
+            previous_ids: &[],
             manifest: metadata("1.0.0"),
             archive: version_two,
         }],

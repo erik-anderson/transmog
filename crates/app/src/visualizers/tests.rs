@@ -301,6 +301,51 @@ fn no_enabled_extensions_skip_retained_evidence_discovery() {
     );
 }
 
+#[tokio::test]
+async fn automatic_activation_without_opt_in_is_denied_before_any_source_is_loaded() {
+    let root = tempfile::tempdir().unwrap();
+    let registry = Registry::load(root.path().join("registry"), None);
+    let directory = root.path().join("development");
+    std::fs::create_dir(&directory).unwrap();
+    let manifest = serde_json::json!({
+        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.evidence","version":"1.0.0","name":"Evidence",
+        "visualizers":[declaration()],"files":[{"path":"main.js","bytes":0}]
+    });
+    std::fs::write(
+        directory.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    // The module is deliberately absent: rejection must occur before loading it.
+    registry.register_directory(&directory, false).unwrap();
+    let app = Application::new(AppConfig {
+        extensions: Some(registry),
+        ..AppConfig::default()
+    })
+    .unwrap();
+    let snapshot = snapshot(&app);
+    let selection = VisualizerSelection {
+        session_id: format!("{:032x}", snapshot.exchange_id.0),
+        boundary: "client-response".into(),
+        surface: Surface::Body,
+    };
+    let choices = app.visualizer_choices(&selection).unwrap();
+    assert_eq!(choices.len(), 1);
+    assert!(!choices[0].automatic);
+    let request = VisualizerActivation {
+        slot: "auto-pane".into(),
+        generation: "1".into(),
+        page_id: "1".into(),
+        selection,
+        extension_id: "example.evidence".into(),
+        visualizer_id: "view".into(),
+        live: false,
+        automatic: true,
+    };
+    let error = app.activate_visualizer(request).await.unwrap_err();
+    assert!(error.to_string().contains("does not match"), "{error}");
+}
+
 #[test]
 fn headers_are_complete_projected_and_bound_to_the_exact_message_stage() {
     let app = Application::new(AppConfig::default()).unwrap();

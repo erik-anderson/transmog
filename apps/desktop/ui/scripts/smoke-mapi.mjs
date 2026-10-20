@@ -19,21 +19,22 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     const child=(inspector,side='body')=>(inspector.shadowRoot??inspector).querySelector('extension-visualizer[slot$="'+side+'"]');
     function fields(document){const walk=node=>[node,...(node.children??[]).flatMap(walk)];return document.roots.flatMap(walk);}
     async function expand(viewer){for(let count=0;count<256;count++){const next=fields(viewer.view.document).find(node=>node.childrenToken);if(!next)return;await viewer.toggleNode(next.id);}throw new Error('MAPI expansion was not bounded');}
-    async function show(name,direction='response'){
+    async function show(name,direction='response',automatic=false){
       const expected=specification.cases.find(item=>item.name===name),row=traffic.sessions.find(row=>row.requestBytes===expected.requestBytes&&row.responseBytes===expected.responseBytes&&row.host===expected.host);
       if(!row)throw new Error('Synthetic MAPI exchange missing: '+name+' '+traffic.importStatus);
       await traffic.selectTraffic(row,new MouseEvent('click'));
       const inspector=direction==='request'?request:response;
       await wait(()=>inspector.detail?.id===row.id&&inspector.bodyChoices.some(choice=>choice.extensionId==='net.transmog.mapi'));
-      inspector.showMode('body');choose(inspector,'Body viewer','extension:net.transmog.mapi:body-'+direction);
-      await wait(()=>child(inspector)?.view||child(inspector)?.visualizerError);
+      inspector.showMode('body');choose(inspector,'Body viewer',automatic?'auto':'extension:net.transmog.mapi:body-'+direction);
+      await wait(()=>child(inspector)?.visualizerError||child(inspector)?.view&&child(inspector)?.automatic===automatic&&!child(inspector)?.visualizerBusy);
       const viewer=child(inspector);if(viewer.visualizerError)throw new Error(viewer.visualizerError);
       if(viewer.view.instance.development||viewer.view.instance.extensionId!=='net.transmog.mapi')throw new Error('MAPI did not use its bundled package');
       await expand(viewer);
       if(viewer.view.document.status!=='complete')throw new Error('Synthetic MAPI did not decode completely: '+name+' '+JSON.stringify(viewer.view.document.diagnostics));
       return {viewer,row};
     }
-    let {viewer}=await show('properties');
+    let {viewer}=await show('properties','response',true);
+    if(!viewer.automatic)throw new Error('MAPI did not use automatic protocol visualization');
     let values=fields(viewer.view.document).map(node=>node.value?.value);
     if(!values.includes('9007199254740993')||!values.includes('132537600000000000')||!values.includes('2020-12-30T00:00:00.0000000Z'))throw new Error('Bundled MAPI lost exact property values');
     ({viewer}=await show('transformed'));

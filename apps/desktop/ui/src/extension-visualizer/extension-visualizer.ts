@@ -11,6 +11,7 @@ const next=():string=>(++nextGeneration).toString();
 export class ExtensionVisualizer extends WebUIElement {
   @attr slot='visualizer';
   @attr({mode:'boolean'}) active=false;
+  @attr({mode:'boolean'}) automatic=false;
   @observable selection:VisualizerSelection|null=null;
   @observable choice:VisualizerChoice|null=null;
   @observable visualizerBusy=false;
@@ -76,6 +77,7 @@ export class ExtensionVisualizer extends WebUIElement {
   readonly visualizerAboutId=this.rendererId+'-about';
   private readonly visibility=():void=>{if(!document.hidden)this.suspended=false;this.schedule();};
   activeChanged():void {this.schedule();}
+  automaticChanged():void {this.paused=false;this.schedule();}
   selectionChanged():void {this.schedule();}
   choiceChanged(previous:VisualizerChoice|null|undefined):void {if(previous?.key!==this.choice?.key)this.paused=false;this.schedule();}
   slotChanged():void {this.schedule();}
@@ -93,10 +95,10 @@ export class ExtensionVisualizer extends WebUIElement {
   private get visible():boolean {return this.isConnected&&this.active&&this.inViewport&&!document.hidden&&!this.suspended;}
   private reconcile():void {
     const selection=this.selection,choice=this.choice;
-    const signature=this.visible&&selection&&choice?JSON.stringify([this.slot,selection.sessionId,selection.boundary,selection.surface,choice.extensionId,choice.visualizerId]):'';
+    const signature=this.visible&&selection&&choice?JSON.stringify([this.slot,selection.sessionId,selection.boundary,selection.surface,choice.extensionId,choice.visualizerId,this.automatic]):'';
     if(signature===this.signature)return;
     if(!signature){const wasOpen=!!this.signature;this.stop();if(wasOpen)this.pause();return;}
-    if(this.paused)return;
+    if(this.paused&&!this.automatic)return;
     this.stop();this.signature=signature;
     if(signature)void this.start();
   }
@@ -140,15 +142,22 @@ export class ExtensionVisualizer extends WebUIElement {
   private pause():void {this.paused=true;this.visualizerPaused=true;this.visualizerError='Visualizer paused. Open it again to continue with available retained evidence.';}
   private async start(live=false):Promise<void> {
     const selection=this.selection,choice=this.choice;if(!selection||!choice)return;
-    const revision=++this.revision,slot=this.slot,generation=next();this.visualizerBusy=true;this.liveWanted=live;this.visualizerLive=live;this.watch();
+    const revision=++this.revision,slot=this.slot,generation=next(),automatic=this.automatic;this.visualizerBusy=true;this.liveWanted=live;this.visualizerLive=live;this.watch();
     try {
       const pageId=await invoke<string>('visualizer_page');
       if(revision!==this.revision||!this.visible)return;
       this.pending={slot,generation,pageId};
-      const view=await invoke<VisualizerView>('activate_visualizer',{request:{...this.pending,selection,extensionId:choice.extensionId,visualizerId:choice.visualizerId,live}});
+      const view=await invoke<VisualizerView>('activate_visualizer',{request:{...this.pending,selection,extensionId:choice.extensionId,visualizerId:choice.visualizerId,live,automatic}});
       if(revision!==this.revision||!this.visible){void invoke('deactivate_visualizer',{slot,generation,pageId}).catch(()=>undefined);return;}
+      if(automatic&&view.document.status!=='complete')throw new Error('Auto visualization requires a complete parse');
       this.accept(view);
-    }catch(error:unknown){if(revision===this.revision){if(live&&this.root)this.failLive(describeError(error));else this.fail(describeError(error));}}
+    }catch(error:unknown){
+      if(revision===this.revision){
+        if(automatic&&!live){this.stop();this.$emit('automatic-rejected',{selection,key:choice.key});}
+        else if(live&&this.root)this.failLive(describeError(error));
+        else this.fail(describeError(error));
+      }
+    }
     finally {if(revision===this.revision){this.visualizerBusy=false;this.scheduleLive(revision);this.reloadObserver.checkSoon();}}
   }
   private async reload():Promise<void> {

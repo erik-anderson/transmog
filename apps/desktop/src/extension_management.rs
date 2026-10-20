@@ -105,6 +105,14 @@ pub(super) async fn export_extension(
     state: State<'_, DesktopState>,
 ) -> Result<Option<transmog_app::extensions::ExportedExtension>, String> {
     let registry = registry(&window, &state)?;
+    if !registry
+        .status()
+        .entries
+        .iter()
+        .any(|entry| entry.catalog.manifest.id == id)
+    {
+        return Err("Choose an installed extension to save.".into());
+    }
     let selected = rfd::AsyncFileDialog::new()
         .set_parent(&window)
         .set_title("Choose a parent folder for the extension copy")

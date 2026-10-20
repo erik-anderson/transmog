@@ -2,7 +2,7 @@
 <section aria-labelledby="extensions-heading" class="extension-panel">
  <header class="extension-panel-heading"><h2 id="extensions-heading">Extensions</h2>
  <div class="actions extension-actions"><button type="button" @click="{install()}" ?disabled="{{extensionsBusy || extensionsBlocked}}">Install extension…</button><button type="button" class="secondary" @click="{unpacked()}" ?disabled="{{extensionsBusy || extensionsBlocked}}">Load unpacked…</button><button type="button" class="secondary" @click="{refresh()}" ?disabled="{{extensionsBusy}}">Refresh</button></div></header>
- <p class="field-help">Install read-only visualizers and header classification columns. Scripts run only when you choose a visualizer, with no network access.</p>
+ <p class="field-help">Read-only visualizers and header classification columns. Scripts run for the visible message when chosen explicitly or matched by Auto, with no network access.</p>
  <div class="extension-feedback"><output role="status" aria-live="polite">{{extensionsText}}</output><button type="button" class="secondary compact-button" ?hidden="{{!extensionsText && !extensionsError}}" @click="{dismiss()}" ?disabled="{{extensionsBusy}}">Dismiss</button></div>
  <p role="status" class="field-error" ?hidden="{{!extensionsError}}">{{extensionsError}}</p>
  <p role="status" class="field-error" ?hidden="{{!extensionsWarning}}">{{extensionsWarning}}</p>
