@@ -152,7 +152,8 @@ class SupplyChainTests(unittest.TestCase):
         self.assertEqual([p["name"] for p in packages], ["@scope/pkg"])
         notice, sbom = module.artifacts({"packages": [], "resolve": {"nodes": []}}, packages, "1.2.3")
         self.assertIn("| @scope/pkg | 2 | MIT |", notice)
-        self.assertEqual(sbom["components"][0]["purl"], "pkg:npm/%40scope/pkg@2")
+        component = next(item for item in sbom["components"] if item["bom-ref"] == "npm:@scope/pkg@2")
+        self.assertEqual(component["purl"], "pkg:npm/%40scope/pkg@2")
         with self.assertRaisesRegex(ValueError, "Unexpected npm"):
             module.production_npm({"packages": {"not-a-package": {"version": "1"}}})
 
