@@ -24,6 +24,20 @@ export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
   assert.equal(await tree.evaluate(element=>element.matches(':focus')),true,'Live delivery stole focus');
   assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'text');
 
+  await visualizer.locator('.visualizer-value pre').focus();
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.roots.pop();});
+  await visualizer.getByRole('region',{name:'Selected structure',exact:true}).waitFor({state:'hidden'});
+  assert.equal(await tree.evaluate(element=>element===element.getRootNode().activeElement),true,'Removing the inspected field left focus in hidden details');
+  assert.equal(await tree.getByRole('treeitem',{selected:true}).count(),1,'Removing a selected field left the replacement selection outside the tree window');
+  await page.keyboard.press('ArrowDown');
+  await visualizer.locator('.visualizer-node-heading > strong').filter({hasText:'Field 0'}).waitFor();
+  await selector.focus();
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.roots.shift();});
+  await visualizer.getByRole('region',{name:'Selected structure',exact:true}).waitFor({state:'hidden'});
+  assert.equal(await selector.evaluate(element=>element===element.getRootNode().activeElement),true,'Removing a field stole focus from outside its details');
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);});
+  await page.waitForFunction(()=>!globalThis.__workspaceFixture.nextLiveDocument);
+
   await tree.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
   await tree.getByText('Nested text',{exact:true}).waitFor();
   await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.expandedVisualizerDocument);s.nextLiveDocument.roots[1].children[0].value.value='Updated nested value';});

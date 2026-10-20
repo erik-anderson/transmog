@@ -52,6 +52,12 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     const focusedTree=detailRoot.querySelector('.visualizer-tree');
     if(!detailRoot.querySelector('.visualizer-node').hidden||focusedTree!==focusedTree.getRootNode().activeElement)throw new Error('Closing MAPI details did not restore tree space and focus');
     viewer.selectNode(rowNode.id);viewer.showSpan(rowNode.spans[0]);
+    await wait(()=>!!(viewer.shadowRoot??viewer).querySelector('hex-viewer')?.hasSelection);
+    const byteViewer=detailRoot.querySelector('hex-viewer'),byteGrid=(byteViewer.shadowRoot??byteViewer).querySelector('[role="grid"]');
+    byteGrid.focus();byteGrid.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true,cancelable:true}));
+    await wait(()=>!byteViewer.hasSelection);
+    if(!viewer.visualizerDetailsOpen)throw new Error('Clearing MAPI byte selection closed structure details');
+    viewer.showSpan(rowNode.spans[0]);
     const rowHandle=viewer.view.handle;
     response.showMode('split');request.showMode('split');
     choose(response,'Headers viewer','extension:com.transmog.mapi:headers');choose(request,'Headers viewer','extension:com.transmog.mapi:headers');choose(request,'Body viewer','extension:com.transmog.mapi:body-request');
@@ -63,12 +69,19 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
       const local=view.shadowRoot??view,tree=local.querySelector('.visualizer-tree'),layout=local.querySelector('.visualizer-layout');
       if(tree.getBoundingClientRect().width<layout.getBoundingClientRect().width-2)throw new Error('An unselected MAPI structure reserved an empty detail pane');
     }
+    const infoButton=detailRoot.querySelector('button[aria-label="About this visualizer"]'),infoPanel=detailRoot.querySelector('.visualizer-about');
+    const inspectionHeight=detailRoot.querySelector('.visualizer-layout').getBoundingClientRect().height;
+    infoButton.click();await wait(()=>infoPanel.matches(':popover-open'));
+    if(detailRoot.querySelector('.visualizer-layout').getBoundingClientRect().height!==inspectionHeight)throw new Error('MAPI information consumed inspection space');
+    infoPanel.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true,cancelable:true}));
+    await wait(()=>!infoPanel.matches(':popover-open'));
+    if(infoButton!==infoButton.getRootNode().activeElement)throw new Error('Closing MAPI information lost trigger focus');
 
     globalThis.__mapiProbe.handles=views().map(view=>view.view.handle);
     const columns=await invoke('classify_traffic_rows',{ids:[traffic.activeId??response.detail.id],columns:['com.transmog.mapi:protocol']});
     if(!columns.some(row=>row.values['com.transmog.mapi:protocol']?.[0]==='MAPI/HTTP'))throw new Error('Bundled MAPI static classification missing');
     globalThis.__mapiProbe.concurrent=true;
-    return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,retainedRows:true,scopedContext:true,byteSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,initialHandle:rowHandle};
+    return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,retainedRows:true,scopedContext:true,byteSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
   })()`);
   if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-mapi-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
   await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});

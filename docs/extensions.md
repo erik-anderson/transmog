@@ -476,8 +476,13 @@ worker; opening it again returns to snapshot mode.
 
 A result initially gives its structure tree the full pane width. Selecting a
 field opens its value, format and source details; Close or Escape returns that
-space to the tree without losing the field or inspected request. Result metadata
-stays in the compact title row. Extensions settings keeps management actions
+space to the tree without losing the field or inspected request. Escape inside
+Hex clears its byte selection without closing details. Collapsing an ancestor
+selects that branch. If a live update removes the selected field, the tree returns
+to the result root and restores focus only when it was in the disappearing details.
+A small information button opens the visualizer's identity, summary and
+diagnostics in a bounded popover without consuming inspection space. Close or
+Escape returns focus to that button. Extensions settings keeps management actions
 visible and folds long matching-rule lists behind a counted disclosure.
 
 Browser fixtures cover large trees, concurrent surfaces, deferred expansion,

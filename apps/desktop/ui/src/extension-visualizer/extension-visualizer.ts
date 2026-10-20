@@ -42,6 +42,9 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable visualizerSourceText='';
   @observable visualizerHex:HexPreview|null=null;
   treeViewport!:HTMLDivElement;
+  detailsViewport!:HTMLElement;
+  aboutButton!:HTMLButtonElement;
+  aboutPanel!:HTMLElement;
   private view:VisualizerView|null=null;
   private root:VisualizerNode|null=null;
   private nodes=new Map<string,VisualizerNode>();
@@ -70,6 +73,7 @@ export class ExtensionVisualizer extends WebUIElement {
     replace:()=>this.reload(),notice:message=>{this.visualizerReloadNotice=message;},
   });
   private readonly rendererId='visualizer-'+nextRenderer++;
+  readonly visualizerAboutId=this.rendererId+'-about';
   private readonly visibility=():void=>{if(!document.hidden)this.suspended=false;this.schedule();};
   activeChanged():void {this.schedule();}
   selectionChanged():void {this.schedule();}
@@ -218,7 +222,9 @@ export class ExtensionVisualizer extends WebUIElement {
     this.expanded=new Set([...this.expanded].filter(id=>{const node=this.nodes.get(id);return node&&(!node.childrenToken||node.children.length>0);}));
     const retained=preserveMode&&this.nodes.has(this.selected);
     if(!retained){
-      this.visualizerDetailsOpen=false;
+      if(this.detailsViewport.matches(':focus-within'))this.closeDetails();
+      else this.visualizerDetailsOpen=false;
+      this.treeViewport.scrollTop=0;
       this.selected=DOCUMENT_NODE;
       this.tableOffset=0;
     }
@@ -248,8 +254,18 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerDetailsOpen=false;
     this.treeViewport.focus({preventScroll:true});
   }
+  closeAbout():void {
+    this.aboutPanel.hidePopover();
+    this.aboutButton.focus({preventScroll:true});
+  }
+  aboutKey(event:KeyboardEvent):void {
+    if(event.key!=='Escape')return;
+    event.preventDefault();
+    event.stopPropagation();
+    this.closeAbout();
+  }
   detailsKey(event:KeyboardEvent):void {
-    if(event.key!=='Escape'||!this.visualizerDetailsOpen)return;
+    if(event.defaultPrevented||event.key!=='Escape'||!this.visualizerDetailsOpen)return;
     event.preventDefault();
     event.stopPropagation();
     this.closeDetails();
@@ -269,7 +285,17 @@ export class ExtensionVisualizer extends WebUIElement {
   async toggleNode(id:string,event?:Event):Promise<void> {
     event?.stopPropagation();const node=this.nodes.get(id);if(!node)return;
     if(this.visualizerFrozen&&node.childrenToken)return;
-    if(this.expanded.has(id)){this.expanded.delete(id);this.updateRows();return;}
+    if(this.expanded.has(id)){
+      this.expanded.delete(id);
+      this.updateRows();
+      if(!this.allRows.some(row=>row.id===this.selected)){
+        this.selected=id;
+        this.tableOffset=0;
+        this.updateRows();
+        this.describeNode();
+      }
+      return;
+    }
     if(node.childrenToken&&this.view&&!this.visualizerBusy){
       const handle=this.view.handle,revision=this.revision;this.visualizerBusy=true;
       try {await this.livePoll;if(revision!==this.revision||!this.visible)return;const token=this.nodes.get(id)?.childrenToken;if(!token){this.expanded.add(id);this.updateRows();return;}const view=await invoke<VisualizerView>('expand_visualizer',{handle,token});if(revision!==this.revision||!this.visible)return;this.expanded.add(id);this.accept(view);}

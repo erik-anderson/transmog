@@ -64,6 +64,26 @@ export async function checkVisualizers(page,root) {
       });
       assert.equal(fits,true,'Selected details overflowed a small inspector instead of remaining scrollable');
       await visualizer.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-narrow-details.png')});
+      const aboutButton=visualizer.getByRole('button',{name:'About this visualizer',exact:true});
+      const beforeAbout=await visualizer.locator('.visualizer-layout').evaluate(element=>element.getBoundingClientRect().height);
+      await aboutButton.click();
+      const about=visualizer.getByRole('dialog',{name:'About this visualizer',exact:true});
+      await about.waitFor();
+      await about.getByText('Read only · No network access',{exact:true}).waitFor();
+      const inspectionHeight=await visualizer.locator('.visualizer-layout').evaluate(element=>element.getBoundingClientRect().height);
+      assert.ok(inspectionHeight>=52,'Opening result metadata hid the inspection panes in a compact viewer');
+      assert.equal(inspectionHeight,beforeAbout,'Extension context consumed inspection space');
+      await about.getByText('An earlier exchange is unavailable.',{exact:false}).scrollIntoViewIfNeeded();
+      const fitsViewport=await about.evaluate(element=>{const r=element.getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;});
+      assert.equal(fitsViewport,true,'Visualizer information escaped the viewport');
+      await page.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-narrow-about.png')});
+      await page.keyboard.press('Escape');await about.waitFor({state:'hidden'});
+      assert.equal(await aboutButton.evaluate(element=>element===element.getRootNode().activeElement),true,'Closing visualizer information lost trigger focus');
+      assert.equal(await details.isVisible(),true,'Closing visualizer information also closed structure details');
+      assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId),inspected,'Closing visualizer information cleared the inspected request');
+      await page.keyboard.press('Enter');await about.waitFor();
+      await about.getByRole('button',{name:'Close visualizer information',exact:true}).click();
+      await about.waitFor({state:'hidden'});
     } finally {
       await visualizer.evaluate((element,style)=>{if(style===null)element.removeAttribute('style');else element.setAttribute('style',style);},originalStyle);
     }
@@ -77,6 +97,11 @@ export async function checkVisualizers(page,root) {
     assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'hex','Reopening details lost the chosen representation');
     const retainedRange=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
     assert.deepEqual(retainedRange,range,'Reopening details lost the exact byte selection');
+    await visualizer.getByRole('grid',{name:'Hex byte viewer',exact:true}).focus();
+    await page.keyboard.press('Escape');
+    assert.equal(await details.isVisible(),true,'Clearing a byte selection also closed structure details');
+    assert.equal(await visualizer.locator('hex-viewer').evaluate(element=>element.rangeStart),'-1');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId),inspected,'Clearing a byte selection cleared the inspected request');
 
     await page.waitForFunction(()=>globalThis.__workspaceFixture.visualizerRanges?.length>0);
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.visualizerRanges.every(read=>read.handle.instanceId&&read.request.maxBytes<=65536)),true);
@@ -89,6 +114,11 @@ export async function checkVisualizers(page,root) {
     await visualizer.getByText('enclosing parent regions only',{exact:false}).waitFor();
     const derivedRange=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
     assert.deepEqual(derivedRange,{first:'1',last:'4'});
+    await tree.getByRole('button',{name:'Collapse Field 1',exact:true}).click();
+    assert.equal(await tree.getByRole('treeitem',{selected:true}).count(),1,'Collapsing a branch left its hidden child selected');
+    assert.equal(await tree.getByRole('treeitem',{selected:true}).textContent().then(text=>text.includes('Field 1')),true,'Collapsing a branch left its hidden child selected');
+    await tree.focus();await page.keyboard.press('ArrowDown');
+    await visualizer.locator('.visualizer-node-heading > strong').filter({hasText:'Field 2'}).waitFor();
     await tree.focus();await page.keyboard.press('End');
     await visualizer.locator('.visualizer-node-heading > strong').filter({hasText:'Field 4999'}).waitFor();
     assert.ok(await tree.getByRole('treeitem').count()<80,'Large structures created unbounded DOM');
@@ -109,14 +139,26 @@ export async function checkVisualizers(page,root) {
     await request.getByRole('combobox',{name:'Headers viewer',exact:true}).selectOption({label:'Protocol headers'});
     await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length===3);
     await checkReloadVisualizers(page,visualizer,selector);
+    const viewers=traffic.locator('extension-visualizer');
+    for(const viewer of await viewers.all()){
+      await viewer.getByRole('button',{name:'About this visualizer',exact:true}).click();
+      const about=viewer.getByRole('dialog',{name:'About this visualizer',exact:true});
+      await about.waitFor();
+      const name=await viewer.evaluate(element=>element.choice.name);
+      await about.locator('header > strong').filter({hasText:name}).waitFor();
+      assert.equal(await traffic.locator('.visualizer-about:popover-open').count(),1,'Concurrent viewers opened the wrong information panel');
+      await about.getByRole('button',{name:'Close visualizer information',exact:true}).click();
+    }
     for(const [width,height] of [[1440,900],[960,720],[800,600]]){
       await page.setViewportSize({width,height});
       assert.equal(await response.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true);
       await page.screenshot({path:resolve(root,`../../../target/ui-check/visualizer-${width}.png`)});
     }
     await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
+    await visualizer.getByRole('button',{name:'About this visualizer',exact:true}).click();
     await page.locator('a[data-view="settings"]').click();
     await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length===0);
+    assert.equal(await page.locator('.visualizer-about:popover-open').count(),0,'An inactive visualizer left its context panel open');
     assert.equal(await page.locator('extension-visualizer .visualizer-heading > strong').count(),0,'Hidden views retained captured documents');
     await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
     await response.getByRole('button',{name:'Open visualizer',exact:true}).first().waitFor();
