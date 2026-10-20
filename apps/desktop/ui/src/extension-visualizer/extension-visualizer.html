@@ -1,6 +1,7 @@
 <template>
   <section class="extension-visualizer" aria-label="Extension visualizer" aria-busy="{{visualizerBusy}}">
-    <p class="visualizer-feedback" role="status" ?hidden="{{!visualizerBusy}}">Visualizing…</p>
+    <p class="visualizer-feedback" role="status" ?hidden="{{!visualizerBusy}}"><if condition="visualizerReloading">Reloading…</if><if condition="!visualizerReloading">Visualizing…</if></p>
+    <p class="visualizer-feedback" role="status" ?hidden="{{!visualizerReloadNotice}}">{{visualizerReloadNotice}}</p>
     <div class="visualizer-feedback" ?hidden="{{!visualizerError}}"><p role="status">{{visualizerError}}</p><button type="button" class="secondary compact-button" @click="{retry()}"><if condition="visualizerPaused">Open visualizer</if><if condition="!visualizerPaused">Retry visualizer</if></button></div>
     <p class="visualizer-feedback" ?hidden="{{!visualizerFrozen}}">Showing the last result.</p>
     <if condition="visualizerTitle">

@@ -14,7 +14,7 @@ export const sourceDescription=(source:SourceInfo):string=>`${source.length} byt
 export interface VisualizerDocument {title:string;status:string;presentation:Presentation;summary:string|null;roots:VisualizerNode[];sources:DerivedSource[];diagnostics:Array<{code:string;message:string;nodeId:string|null}>;}
 export interface LiveStatus {available:boolean;enabled:boolean;missedHints:string;}
 export interface LiveUpdate {view:VisualizerView|null;status:LiveStatus;busy:boolean;}
-export interface VisualizerView {handle:VisualizerHandle;instance:{id:string;extensionId:string;visualizerId:string;digest:string;declaration:ExtensionContribution};document:VisualizerDocument;sources:SourceInfo[];live:LiveStatus;}
+export interface VisualizerView {handle:VisualizerHandle;instance:{id:string;extensionId:string;visualizerId:string;digest:string;development?:boolean;declaration:ExtensionContribution};document:VisualizerDocument;sources:SourceInfo[];live:LiveStatus;}
 export interface SourcePage {sourceId:string;totalBytes:string;offset:string;bytesBase64:string;}
 export interface TreeRow {id:string;domId:string;parent:string;level:number;position:number;setSize:number;indent:string;top:string;name:string;value:string;format:string;expandable:boolean;expanded:boolean;expandedState:string|null;selected:boolean;toggleLabel:string;}
 export const DOCUMENT_NODE='$document';

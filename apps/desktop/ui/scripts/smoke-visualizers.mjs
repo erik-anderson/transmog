@@ -3,6 +3,7 @@ import {smokeLiveVisualizers} from './smoke-live-visualizers.mjs';
 import {smokeHttpVisualizers} from './smoke-http-visualizers.mjs';
 import {smokeClassifications} from './smoke-classifications.mjs';
 import {smokeVisualizerReload} from './smoke-visualizer-reload.mjs';
+import {smokeDevelopmentVisualizers} from './smoke-development-visualizers.mjs';
 
 /** Real WebView2 -> native evidence broker -> AppContainer worker -> host renderer. */
 export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
@@ -47,6 +48,7 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     const classifications=globalThis.__nativeClassificationVerified;delete globalThis.__nativeClassificationVerified;
     return {workers:viewers.length,byteContinuation:true,sameOriginContext:true,sameCaptureContext:true,expansion:true,sourceDenied:denied,classifications};
   })()`);
+  const development=await smokeDevelopmentVisualizers(evaluate,tracePath);
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
   if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-visualizer-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
   await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
@@ -64,5 +66,5 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
   const live=await smokeLiveVisualizers(call,evaluate,screenshotPath);
   const http=await smokeHttpVisualizers(call,evaluate,screenshotPath);
   const reload=await smokeVisualizerReload(evaluate,tracePath);
-  return {...result,unloaded:true,live,http,reload};
+  return {...result,unloaded:true,live,http,reload,development};
 }

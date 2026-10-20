@@ -13,7 +13,8 @@ extension-settings {display:block;}
 .extension-heading {display:flex;align-items:center;gap:.6rem;}
 .extension-heading > div {flex:1;min-width:0;}
 .extension-enable,.extension-reload {display:flex;align-items:center;gap:.3rem;font-size:.8125rem;white-space:nowrap;}
-.extension-reload {margin-top:.6rem;white-space:normal;}
+.extension-development {display:flex;align-items:center;flex-wrap:wrap;gap:.4rem .75rem;margin-top:.6rem;}
+.extension-reload {white-space:normal;}
 .extension-folder {margin-top:.3rem;}
 .extension-declarations {margin-top:.5rem;}
 .extension-declarations > summary {cursor:pointer;color:var(--muted);}

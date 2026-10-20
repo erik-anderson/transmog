@@ -3,6 +3,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {describeError} from '../utilities.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
+import {ReloadObserver} from './reload.js';
 import {DOCUMENT_NODE,documentNode,formatText,nodeIndex,sourceDescription,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
 
 let nextGeneration=0n,nextRenderer=0;
@@ -13,6 +14,8 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable selection:VisualizerSelection|null=null;
   @observable choice:VisualizerChoice|null=null;
   @observable visualizerBusy=false;
+  @observable visualizerReloading=false;
+  @observable visualizerReloadNotice='';
   @observable visualizerPaused=false;
   @observable visualizerLiveSupported=false;
   @observable visualizerLiveAvailable=false;
@@ -60,6 +63,11 @@ export class ExtensionVisualizer extends WebUIElement {
   private livePoll:Promise<void>|null=null;
   private retryLive=false;
   private liveWanted=false;
+  private checkActivityAfterReload=false;
+  private readonly reloadObserver=new ReloadObserver({
+    state:()=>this.visible&&this.view?.instance.development?{revision:this.revision,handle:this.view.handle,busy:this.visualizerBusy}:null,
+    replace:()=>this.reload(),notice:message=>{this.visualizerReloadNotice=message;},
+  });
   private readonly rendererId='visualizer-'+nextRenderer++;
   private readonly visibility=():void=>{if(!document.hidden)this.suspended=false;this.schedule();};
   activeChanged():void {this.schedule();}
@@ -89,20 +97,33 @@ export class ExtensionVisualizer extends WebUIElement {
   }
   private watch():void {
     const revision=++this.listenerRevision;
-    const add=(event:string,handler:()=>void):void=>{void listen(event,handler).then(unlisten=>{if(revision===this.listenerRevision&&this.visible)this.listeners.push(unlisten);else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>{if(revision===this.listenerRevision)this.fail('Visualizer updates could not be observed. Retry to reopen it.');});};
+    const add=(event:string,handler:(event:{payload:unknown})=>void):void=>{void listen(event,handler).then(unlisten=>{if(revision===this.listenerRevision&&this.visible)this.listeners.push(unlisten);else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>{if(revision===this.listenerRevision)this.fail('Visualizer updates could not be observed. Retry to reopen it.');});};
     add('visualizers-suspended',()=>{this.suspended=true;this.stop();this.pause();});
-    add('extensions-changed',()=>{const handle=this.view?.handle;if(handle)void invoke<boolean>('visualizer_active',{handle}).then(active=>{if(revision===this.listenerRevision&&!active)this.fail('This extension changed or was disabled. Choose an available viewer to continue.');}).catch(()=>{if(revision===this.listenerRevision)this.fail('The visualizer is no longer available.');});});
+    add('extensions-changed',()=>this.extensionsChanged(revision));
+    add('extension-reload-requested',event=>{if(event.payload===this.choice?.extensionId)this.reloadObserver.checkSoon();});
+  }
+  private extensionsChanged(revision:number):void {
+    if(this.visualizerReloading){this.checkActivityAfterReload=true;return;}
+    const handle=this.view?.handle;if(!handle)return;
+    void invoke<boolean>('visualizer_active',{handle}).then(active=>{
+      if(this.visualizerReloading){this.checkActivityAfterReload=true;return;}
+      if(revision!==this.listenerRevision||handle.instanceId!==this.view?.handle.instanceId)return;
+      if(!active)this.fail('This extension changed or was disabled. Choose an available viewer to continue.');
+      else this.reloadObserver.checkSoon();
+    }).catch(()=>{if(this.visualizerReloading){this.checkActivityAfterReload=true;return;}if(revision===this.listenerRevision&&handle.instanceId===this.view?.handle.instanceId)this.fail('The visualizer is no longer available.');});
   }
   private unwatch():void {this.listenerRevision++;for(const unlisten of this.listeners)void Promise.resolve(unlisten()).catch(()=>undefined);this.listeners=[];}
   private stop(preserveResult=false):void {
     this.revision++;const pending=this.pending;this.pending=null;this.signature='';this.unwatch();
     this.stopPolling();this.retryLive=false;this.liveWanted=false;
+    this.reloadObserver.stop();this.visualizerReloading=false;this.checkActivityAfterReload=false;
     if(pending)void invoke('deactivate_visualizer',pending).catch(()=>undefined);
     if(preserveResult){this.view=null;this.visualizerHex=null;this.visualizerFrozen=true;this.visualizerLive=false;this.visualizerBusy=false;}
     else this.clear();
   }
   private clear():void {
     this.view=null;this.root=null;this.nodes.clear();this.allRows=[];this.visualizerRows=[];
+    this.visualizerReloadNotice='';
     this.visualizerBusy=false;this.visualizerPaused=false;this.visualizerTitle='';this.visualizerStatus='';this.visualizerSummary='';this.visualizerError='';
     this.visualizerLiveSupported=false;this.visualizerLiveAvailable=false;this.visualizerLive=false;this.visualizerLiveWarning='';this.visualizerFrozen=false;
     this.visualizerSelectedName='';this.visualizerValue='';this.visualizerFormat='';this.visualizerSpans=[];this.visualizerDiagnostics=[];this.visualizerSources=[];this.visualizerSource='';this.visualizerSourceText='';this.visualizerHex=null;this.visualizerCanvasHeight='0px';this.visualizerActiveRow='';
@@ -122,7 +143,24 @@ export class ExtensionVisualizer extends WebUIElement {
       if(revision!==this.revision||!this.visible){void invoke('deactivate_visualizer',{slot,generation,pageId}).catch(()=>undefined);return;}
       this.accept(view);
     }catch(error:unknown){if(revision===this.revision){if(live&&this.root)this.failLive(describeError(error));else this.fail(describeError(error));}}
-    finally {if(revision===this.revision){this.visualizerBusy=false;this.scheduleLive(revision);}}
+    finally {if(revision===this.revision){this.visualizerBusy=false;this.scheduleLive(revision);this.reloadObserver.checkSoon();}}
+  }
+  private async reload():Promise<void> {
+    const previous=this.view;if(!previous?.instance.development||!this.visible||this.visualizerBusy)return;
+    const revision=++this.revision,generation=next(),handle=previous.handle;
+    const pending={slot:handle.slot,pageId:handle.pageId,generation};this.pending=pending;
+    this.visualizerBusy=true;this.visualizerReloading=true;this.visualizerReloadNotice='';this.stopPolling();
+    try {
+      await this.livePoll;
+      if(revision!==this.revision||!this.visible)return;
+      const view=await invoke<VisualizerView>('reload_visualizer',{request:{handle,generation}});
+      if(revision!==this.revision||!this.visible){void invoke('deactivate_visualizer',pending).catch(()=>undefined);return;}
+      const stoppedLive=this.liveWanted&&!view.live.enabled;
+      if(stoppedLive)this.liveWanted=false;
+      this.accept(view);
+      if(stoppedLive)this.visualizerReloadNotice='Reloaded. Live updates are off because the declaration changed.';
+    }catch(error:unknown){if(revision===this.revision)this.visualizerReloadNotice='Reload failed: '+describeError(error)+' Showing the previous result. Retry in Settings → Extensions.';}
+    finally {if(revision===this.revision){this.visualizerBusy=false;this.visualizerReloading=false;this.scheduleLive(revision);if(this.checkActivityAfterReload){this.checkActivityAfterReload=false;this.extensionsChanged(this.listenerRevision);}}}
   }
   retry():void {const live=this.retryLive;this.suspended=false;this.paused=false;if(live&&this.visible){this.reopenLive();return;}this.stop();this.schedule();}
   private stopPolling():void {if(this.liveTimer!==null)clearTimeout(this.liveTimer);this.liveTimer=null;}

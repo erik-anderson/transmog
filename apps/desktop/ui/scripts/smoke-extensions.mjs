@@ -15,6 +15,9 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       const original=await window.__TAURI_INTERNALS__.invoke('extension_status');
       if(original.warning||original.entries.length!==1||original.entries[0].catalog.manifest.id!=='test.development')throw new Error('Native extension fixture was not loaded');
       const root=editor.shadowRoot??editor,entry=root.querySelector('article');
+      entry.querySelector('button[aria-label="Reload active visualizers for Development visualizer fixture"]').click();
+      await wait(()=>!editor.extensionsBusy);
+      if(!editor.extensionsText.startsWith('No active visualizers'))throw new Error('Settings reload did not stay idle without active instances');
       entry.querySelector('summary').click();
       const columns=[...entry.querySelectorAll('summary')].find(summary=>summary.textContent==='Traffic columns and header rules');if(!columns)throw new Error('Static column declarations missing');columns.click();
       if(!entry.textContent.includes('Synthetic protocol')||!entry.textContent.includes('request x-example: equals Native header evidence'))throw new Error('Static header rules were not disclosed');

@@ -10,6 +10,8 @@
   "headerSlot": "message-headers",
   "bodySlot": "message-body",
   "visualizerBusy": false,
+  "visualizerReloading": false,
+  "visualizerReloadNotice": "",
   "visualizerPaused": false,
   "visualizerLiveSupported": false,
   "visualizerLiveAvailable": false,

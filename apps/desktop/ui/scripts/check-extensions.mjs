@@ -47,6 +47,11 @@ export async function checkExtensions(page,root) {
   await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},development);
   await panel.getByRole('button',{name:'Load unpacked…',exact:true}).click();
   const developer=panel.getByRole('article',{name:'Development protocol',exact:true});
+  assert.equal(await installed.getByRole('button',{name:/Reload active/}).count(),0);
+  const reload=developer.getByRole('button',{name:'Reload active visualizers for Development protocol',exact:true});
+  await reload.focus();await page.keyboard.press('Enter');
+  await panel.getByText('No active visualizers to reload.',{exact:false}).waitFor();
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.reload_visualizer??0),0,'Reloading an inactive extension started code');
   await developer.getByRole('checkbox',{name:'Hot reload Development protocol',exact:true}).check();
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);

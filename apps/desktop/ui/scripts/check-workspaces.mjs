@@ -173,7 +173,7 @@ await page.addInitScript((configuration) => {
   const callbacks = new Map();
   const nativeEvents=new Map();let nativeEventId=0;
   state.extensionListenerCount=()=>Array.from(nativeEvents.values()).filter(entry=>entry.event==='extensions-changed').length;
-  state.emitNative=(event)=>{for(const [id,entry] of nativeEvents)if(entry.event===event)callbacks.get(entry.handler)?.({event,id,payload:null});};
+  state.emitNative=(event,payload=null)=>{for(const [id,entry] of nativeEvents)if(entry.event===event)callbacks.get(entry.handler)?.({event,id,payload});};
   window.__TAURI_EVENT_PLUGIN_INTERNALS__={unregisterListener(_event,id){const entry=nativeEvents.get(id);if(entry)callbacks.delete(entry.handler);nativeEvents.delete(id);}};
   state.callbackCount=()=>callbacks.size;
   let callbackId = 0;
@@ -204,12 +204,32 @@ await page.addInitScript((configuration) => {
           const handle={slot:request.slot,generation:request.generation,pageId:request.pageId,instanceId:'worker-'+state.visualizerStarts.length};
           const supported=state.visualizerLiveSupported??false,available=supported&&state.visualizerLiveAvailable!==false;
           if(request.live&&!available)throw new Error('Live updates unavailable');
-          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),declaration:{liveUpdates:supported?{events:['response'],bodyProgress:false}:null}},document:structuredClone(state.visualizerDocument),sources:structuredClone(state.visualizerSources??[]),live:{available,enabled:!!request.live,missedHints:'0'}};
+          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),development:!!state.visualizerDevelopment,declaration:{liveUpdates:supported?{events:['response'],bodyProgress:false}:null}},document:structuredClone(state.visualizerDocument),sources:structuredClone(state.visualizerSources??[]),live:{available,enabled:!!request.live,missedHints:'0'},reloadEpoch:state.reloadEpochs?.[request.extensionId]??0,sourceEpoch:state.sourceEpoch??0};
           state.visualizerActive??={};state.visualizerActive[handle.slot]=view;return structuredClone(view);
         }
         case 'deactivate_visualizer': {
           state.visualizerClosed??={};const previous=BigInt(state.visualizerClosed[args.slot]??0);if(BigInt(args.generation)>previous)state.visualizerClosed[args.slot]=args.generation;
-          if(state.visualizerActive?.[args.slot]?.handle.generation===args.generation)delete state.visualizerActive[args.slot];return;
+          if(state.visualizerActive?.[args.slot]&&BigInt(state.visualizerActive[args.slot].handle.generation)<=BigInt(args.generation))delete state.visualizerActive[args.slot];return;
+        }
+        case 'visualizer_reload_status': {
+          const view=state.visualizerActive?.[args.handle.slot];if(view?.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
+          return {available:!!view.instance.development,enabled:!!state.visualizerHotReload,dirty:!!state.visualizerHotReload&&(state.sourceEpoch??0)>view.sourceEpoch,requested:(state.reloadEpochs?.[view.instance.extensionId]??0)>view.reloadEpoch?'1':null,error:null};
+        }
+        case 'reload_extension': {
+          state.reloadEpochs??={};state.reloadEpochs[args.id]=(state.reloadEpochs[args.id]??0)+1;
+          const activeInstances=Object.values(state.visualizerActive??{}).filter(view=>view.instance.extensionId===args.id).length;
+          state.emitNative('extension-reload-requested',args.id);return {activeInstances};
+        }
+        case 'reload_visualizer': {
+          const {handle,generation}=args.request,previous=state.visualizerActive?.[handle.slot];if(previous?.handle.instanceId!==handle.instanceId)throw new Error('Visualizer closed');
+          state.visualizerReloads??=[];state.visualizerReloads.push(structuredClone(args.request));
+          const epoch=state.reloadEpochs?.[previous.instance.extensionId]??0,sourceEpoch=state.sourceEpoch??0;previous.reloadEpoch=epoch;previous.sourceEpoch=sourceEpoch;
+          if(state.holdReload&&(!state.holdReloadSlot||state.holdReloadSlot===handle.slot)){state.holdReload=false;await new Promise(resolve=>state.finishReload=resolve);}
+          if(state.visualizerActive?.[handle.slot]?.handle.instanceId!==handle.instanceId||BigInt(state.visualizerClosed?.[handle.slot]??0)>=BigInt(generation))throw new Error('Visualizer closed');
+          if(state.reloadError)throw new Error('Synthetic reload failed');
+          const view=structuredClone(previous);view.handle={...handle,generation,instanceId:'reload-worker-'+state.visualizerReloads.length};view.instance.id=view.handle.instanceId;view.instance.digest='b'.repeat(64);view.reloadEpoch=epoch;view.sourceEpoch=sourceEpoch;view.document=structuredClone(state.reloadDocument??previous.document);
+          if(state.reloadDropsLive)view.live.enabled=false;
+          state.visualizerActive[handle.slot]=view;if(state.reloadEmitsMetadata)state.emitNative('extensions-changed');return structuredClone(view);
         }
         case 'visualizer_active': return state.visualizerActive?.[args.handle.slot]?.handle.instanceId===args.handle.instanceId;
         case 'expand_visualizer': {const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');view.document=structuredClone(state.expandedVisualizerDocument);return structuredClone(view);}

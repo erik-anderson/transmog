@@ -8,7 +8,7 @@ provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector
 offers explicit selection, scoped retained context, opt-in live controls and host-owned structured rendering.
-Transactional hot reload and the bundled MAPI extension remain in the
+The bundled MAPI extension remains in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
 An extension is a versioned package containing independently identified visualizer
@@ -181,8 +181,26 @@ the current worker to make space.
 
 Live parsing starts from fresh retained evidence and a new bounded queue; no
 JavaScript heap state transfers. A changed contribution declaration stops live
-delivery in the candidate and requires another explicit opt-in. Desktop reload
-controls remain pending; the native commands and source observer are available.
+delivery in the candidate and requires another explicit opt-in.
+
+Development reload actions live in **Settings → Extensions**. Each enabled
+unpacked entry offers **Reload active visualizers**, which requests replacement
+of all its currently active instances in every window, and **Hot reload active
+visualizers**, which applies source changes automatically. Neither action opens
+an inactive visualizer. With none active, the settings action reports that fact;
+the next explicit visualization collects fresh source bytes. Installed and bundled
+entries have no development reload controls.
+
+Visible development viewers check native metadata on activation and relevant
+management events. Only hot reload schedules ongoing checks, one every 500 ms,
+serialized with itself and deferred while parsing is busy. Packaged and inactive
+viewers have no source-status polling. Replacement preserves the old result while
+working, retains matching field selection, expansion and view mode on success,
+and reports failures beside the retained result. Retry source replacement in
+Extensions settings; the visualizer adds no development reload button. Hide,
+navigation or deselection cancels queued and running replacements, clears the
+result and stops observation. Metadata publication during a swap cannot invalidate
+the new view through an old activity-check reply.
 
 ### Active development source notifications
 
@@ -250,8 +268,7 @@ Changes use the shared registry across main and capture-viewer windows. Disablin
 stops ready and starting workers; enabling does not resume them. Bundled entries
 can be disabled, while their files remain owned by the app. Removing an unpacked
 entry leaves its source folder intact. Its hot-reload preference controls native
-observation only while a development visualizer is active; desktop automatic
-reload controls remain pending.
+observation only while development visualizers are active, across every window.
 
 Inventory reads and enable changes never evaluate source modules. Failed writes
 restore the saved checkbox state. A cleanup failure after a catalog change reads

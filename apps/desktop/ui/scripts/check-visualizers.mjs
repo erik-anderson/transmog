@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {checkLiveVisualizers} from './check-live-visualizers.mjs';
 import {checkHttpVisualizers} from './check-http-visualizers.mjs';
+import {checkReloadVisualizers} from './check-reload-visualizers.mjs';
 
 export async function checkVisualizers(page,root) {
   await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
@@ -68,6 +69,7 @@ export async function checkVisualizers(page,root) {
     await response.getByRole('combobox',{name:'Headers viewer',exact:true}).selectOption({label:'Protocol headers'});
     await request.getByRole('combobox',{name:'Headers viewer',exact:true}).selectOption({label:'Protocol headers'});
     await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length===3);
+    await checkReloadVisualizers(page,visualizer,selector);
     for(const [width,height] of [[1440,900],[960,720],[800,600]]){
       await page.setViewportSize({width,height});
       assert.equal(await response.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true);
