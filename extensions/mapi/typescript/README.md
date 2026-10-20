@@ -32,6 +32,17 @@ artifacts and are never checked in. Packaging compiles the project with the
 pinned compiler. Tests under `test` exercise boundary conditions and the
 independent reference corpus.
 
+Source formatting uses Prettier 3.6.2 and the adjacent `.prettierrc.json`.
+Protocol enum tables contain data only; `generate-mapi-constants.py` checks their
+provenance against the pinned source. No parser behavior is generated from C#.
+
+The differential runner compares wire values and ranges, not the inspector's UI
+nodes. Known UI omissions are checked against explicit protocol field positions.
+The old OptionsData response shape is invalid: the reference omits reading its
+return code and the generated probe includes a large padding tail. It remains
+an archived malformed-input regression; independent valid success/failure tests
+verify the new parser's status and payload handling.
+
 The replacement is being introduced in phases. Until integration and parity
 qualification complete, the existing production manifest still selects the old
 decoder. Passing reader tests alone does not qualify the replacement for use.

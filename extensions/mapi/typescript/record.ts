@@ -90,7 +90,10 @@ export class RecordReader {
       ? [exact[0]]
       : definition.flags
         ? Object.entries(definition.values)
-            .filter(([, candidate]) => candidate !== 0 && (BigInt(value) & BigInt(candidate)) === BigInt(candidate))
+            .filter(
+              ([, candidate]) =>
+                candidate !== 0 && (BigInt(value) & BigInt(candidate)) === BigInt(candidate),
+            )
             .map(([name]) => name)
         : [];
     this.value(name, type, start, {
@@ -104,11 +107,13 @@ export class RecordReader {
 
   string(name: string, wide: boolean, length?: number): string {
     const start = this.reader.offset;
-    const value = length === undefined
-      ? this.reader.terminatedString(wide)
-      : wide
-        ? this.reader.utf16(length)
-        : this.reader.ascii(length);
+    const decoded =
+      length === undefined
+        ? this.reader.terminatedString(wide)
+        : wide
+          ? this.reader.utf16(length)
+          : this.reader.ascii(length);
+    const value = length === undefined ? decoded : decoded.replace(/\0$/, "");
     const field = this.value(name, "string", start, { kind: "string", value });
     field.encoding = wide ? "utf-16le" : "us-ascii";
     return value;

@@ -1,9 +1,12 @@
 import { readHttpMessage } from "./http.js";
+import { Conversation } from "./conversation.js";
 import { ParseBudget, ParseError } from "./model.js";
 import type { DecodeResult, Direction, Exchange, ParsedField } from "./model.js";
 import { parsePropertyFixture } from "./properties.js";
 import { BinaryReader } from "./reader.js";
 import { RecordReader } from "./record.js";
+import { RpcDecoder } from "./rpc.js";
+import { readRop } from "./rops.js";
 
 export interface DecodeOptions {
   readonly type?: string;
@@ -45,6 +48,52 @@ export function decode(
     throw new Error("Missing selected message");
   }
   const budget = new ParseBudget();
+  const conversation = new Conversation();
+  const payloadReaders = {
+    transfer(record: RecordReader, length: number): void {
+      if (length !== 0) {
+        unavailable(record, "FastTransfer stream");
+      }
+    },
+  };
+  const rpc = new RpcDecoder(conversation, payloadReaders);
+  const httpReaders = {
+    auxiliary(record: RecordReader, length: number): void {
+      rpc.read(record, length, true, direction);
+    },
+    rops(record: RecordReader, length: number, side: Direction): void {
+      rpc.read(record, length, false, side);
+    },
+  };
+  const parseMessage = (exchange: Exchange, side: Direction): void => {
+    const body = exchange[side];
+    if (!body?.bytes.length) {
+      return;
+    }
+    const reader = new BinaryReader(body.bytes, body.sourceId, budget);
+    const record = new RecordReader(reader, `${exchange.requestType} ${side}`);
+    try {
+      readHttpMessage(record, exchange.requestType, side, httpReaders);
+    } catch (error) {
+      if (!(error instanceof ParseError)) {
+        throw error;
+      }
+      // A failed earlier parse is not evidence for context it did not produce.
+      // The selected parse reports any missing dependency at its point of use.
+    }
+  };
+  for (const exchange of [...exchanges].sort((left, right) => left.id - right.id)) {
+    if (exchange.id >= selectedId) {
+      break;
+    }
+    conversation.beginExchange();
+    parseMessage(exchange, "request");
+    parseMessage(exchange, "response");
+  }
+  conversation.beginExchange();
+  if (direction === "response" || options.prepareRequest) {
+    parseMessage(selected, "request");
+  }
   const offset = options.offset ?? 0;
   const end = options.count ? offset + options.count : body.bytes.length;
   const reader = new BinaryReader(body.bytes, body.sourceId, budget, offset, end);
@@ -52,17 +101,22 @@ export function decode(
   const record = new RecordReader(reader, type ?? `${selected.requestType} ${direction}`);
   try {
     if (type) {
-      if (!parsePropertyFixture(record, type, options.arguments ?? [])) {
+      if (type === "ExtendedBuffer") {
+        rpc.read(record, reader.remaining, true, direction);
+      } else if (type.startsWith("Rop")) {
+        readRop(record, direction, [], conversation, payloadReaders);
+      } else if (!parsePropertyFixture(record, type, options.arguments ?? [])) {
         unavailable(record, type);
       }
     } else {
-      readHttpMessage(record, selected.requestType, direction, {
-        auxiliary: (record) => unavailable(record, "Auxiliary buffer"),
-        rops: (record) => unavailable(record, "ROP buffer"),
-      });
+      readHttpMessage(record, selected.requestType, direction, httpReaders);
     }
     if (reader.remaining !== 0) {
-      throw new ParseError("malformed", "Unexpected trailing message bytes", reader.range(reader.offset, reader.remaining));
+      throw new ParseError(
+        "malformed",
+        "Unexpected trailing message bytes",
+        reader.range(reader.offset, reader.remaining),
+      );
     }
   } catch (error) {
     if (!(error instanceof ParseError)) {
@@ -78,5 +132,5 @@ export function decode(
     record.add(issue);
     record.field.issue = { kind: error.kind, message: error.message };
   }
-  return { root: record.finish(), derivedSources: [] };
+  return { root: record.finish(), derivedSources: rpc.derivedSources };
 }

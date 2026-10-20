@@ -32,9 +32,7 @@ function readState(record: RecordReader): void {
 }
 
 function optionalState(record: RecordReader, byteFlag = false): boolean {
-  const present = byteFlag
-    ? record.integer("HasState", "u8") !== 0
-    : record.boolean("HasState");
+  const present = byteFlag ? record.integer("HasState", "u8") !== 0 : record.boolean("HasState");
   if (present) {
     nested(record, "State", readState, "STAT");
   }
@@ -67,10 +65,22 @@ function columnsAndRows(record: RecordReader, flag = "HasColsAndRows", name = "C
     return;
   }
   let tags: PropertyTag[] = [];
-  nested(record, name, (child) => { tags = readPropertyTags(child, true); }, "LargePropertyTagArray");
+  nested(
+    record,
+    name,
+    (child) => {
+      tags = readPropertyTags(child, true);
+    },
+    "LargePropertyTagArray",
+  );
   const count = record.integer("RowCount", "u32");
   repeat(record, count, () => {
-    nested(record, "RowData", (child) => readPropertyRow(child, tags, true), "AddressBookPropertyRow");
+    nested(
+      record,
+      "RowData",
+      (child) => readPropertyRow(child, tags, true),
+      "AddressBookPropertyRow",
+    );
   });
 }
 
@@ -93,7 +103,12 @@ function readRequest(record: RecordReader, operation: string, payload: HttpPaylo
   switch (operation) {
     case "Connect":
       record.string("UserDn", false);
-      readFields(record, { Flags: "u32", DefaultCodePage: "u32", LcidSort: "u32", LcidString: "u32" });
+      readFields(record, {
+        Flags: "u32",
+        DefaultCodePage: "u32",
+        LcidSort: "u32",
+        LcidString: "u32",
+      });
       return;
     case "Disconnect":
       return;
@@ -231,7 +246,11 @@ function readRequest(record: RecordReader, operation: string, payload: HttpPaylo
       record.string(operation === "GetMailboxUrl" ? "ServerDn" : "UserDn", true);
       return;
     default:
-      throw new ParseError("unsupported", `Unknown MAPI HTTP operation: ${operation}`, record.reader.range());
+      throw new ParseError(
+        "unsupported",
+        `Unknown MAPI HTTP operation: ${operation}`,
+        record.reader.range(),
+      );
   }
 }
 
@@ -283,7 +302,12 @@ function readResponse(record: RecordReader, operation: string, payload: HttpPayl
       }
       if (record.boolean("HasRows")) {
         const count = record.integer("RowsCount", "u32");
-        repeat(record, count, () => nested(record, "Rows", (child) => readPropertyList(child, true)), 4);
+        repeat(
+          record,
+          count,
+          () => nested(record, "Rows", (child) => readPropertyList(child, true)),
+          4,
+        );
       }
       return;
     case "GetTemplateInfo":
@@ -328,7 +352,11 @@ function readResponse(record: RecordReader, operation: string, payload: HttpPayl
     case "ModProps":
       return;
     default:
-      throw new ParseError("unsupported", `Unknown MAPI HTTP operation: ${operation}`, record.reader.range());
+      throw new ParseError(
+        "unsupported",
+        `Unknown MAPI HTTP operation: ${operation}`,
+        record.reader.range(),
+      );
   }
 }
 
@@ -353,7 +381,10 @@ export function readHttpMessage(
   }
 
   // The inspector omits this field on a failed ResortRestriction envelope.
-  if ((operation === "Execute" || (operation === "ResortRestriction" && status !== 0)) && record.reader.remaining === 0) {
+  if (
+    (operation === "Execute" || (operation === "ResortRestriction" && status !== 0)) &&
+    record.reader.remaining === 0
+  ) {
     return;
   }
   const size = record.integer("AuxiliaryBufferSize", "u32");

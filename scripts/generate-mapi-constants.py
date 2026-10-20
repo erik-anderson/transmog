@@ -44,11 +44,17 @@ def render():
             enums[name] = {"wire": widths[underlying or "int"],
                            "flags": bool(re.search(r"\[Flags\]\s*$", source[:match.start()])),
                            "values": values}
+    data = json.dumps(dict(sorted(enums.items())), indent=2, ensure_ascii=False)
+    data = re.sub(r'^(\s*)"([A-Za-z_$][\w$]*)":', r"\1\2:", data, flags=re.M)
+    # Keep the generated data in the same conventional format as authored TS.
+    lines = data.splitlines()
+    data = "\n".join(line if index == len(lines) - 1 or line.endswith(("{", ",")) else line + ","
+                     for index, line in enumerate(lines))
     return ("// Protocol constants from the pinned Microsoft reference; no executable parser code.\n"
             "// Refresh with python scripts/generate-mapi-constants.py.\n"
             'import type { EnumDefinition } from "./record.js";\n\n'
             "export const enums: Readonly<Record<string, EnumDefinition>> = "
-            + json.dumps(dict(sorted(enums.items())), indent=2, ensure_ascii=False)
+            + data
             + ";\n")
 
 

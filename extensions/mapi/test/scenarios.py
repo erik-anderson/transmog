@@ -28,7 +28,7 @@ def cases(case, execute_request, execute_response):
         ("RopGetHierarchyTable",b"\0\4",u32(123)),
         ("RopGetContentsTable",b"\0\2",u32(456)),
         ("RopCreateMessage",b"\0"+u16(1252)+folder+b"\1",b"\1"+message),
-        ("RopOpenMessage",b"\0"+u16(1252)+folder+b"\3"+message,b"\1\2RE: \0\3"+wide("Synthetic message Ω")+u16(0)+u16(0)+b"\0"),
+        ("RopOpenMessage",b"\0"+u16(1252)+folder+b"\3"+message,b"\1\2RE: \0\4"+wide("Synthetic message Ω")+u16(0)+u16(0)+b"\0"),
         ("RopOpenStream",b"\0"+u32(0x10000102)+b"\1",u32(4097)),
         ("RopReadStream",u16(0xbabe)+u32(65536),u16(len(stream))+stream),
         ("RopWriteStream",u16(len(stream))+stream,u16(len(stream))),

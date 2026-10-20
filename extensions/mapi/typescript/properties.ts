@@ -34,15 +34,23 @@ export function readPropertyTag(record: RecordReader): PropertyTag {
 export function readPropertyTags(record: RecordReader, large: boolean): PropertyTag[] {
   const count = record.integer("PropertyTagCount", large ? "u32" : "u16");
   const tags: PropertyTag[] = [];
-  repeat(record, count, () => {
-    nested(record, "PropertyTag", (child) => tags.push(readPropertyTag(child)));
-  }, 4);
+  repeat(
+    record,
+    count,
+    () => {
+      nested(record, "PropertyTag", (child) => tags.push(readPropertyTag(child)));
+    },
+    4,
+  );
   return tags;
 }
 
 function propertyName(type: number): string {
-  return Object.entries(enums.PropertyDataType!.values)
-    .find(([, candidate]) => candidate === type)?.[0] ?? `Property 0x${type.toString(16)}`;
+  return (
+    Object.entries(enums.PropertyDataType!.values).find(
+      ([, candidate]) => candidate === type,
+    )?.[0] ?? `Property 0x${type.toString(16)}`
+  );
 }
 
 export function readPropertyValue(
@@ -112,7 +120,11 @@ export function readPropertyValue(
       readRestriction(record, context);
       return;
     default:
-      throw new ParseError("unsupported", `Unsupported property type 0x${type.toString(16)}`, record.reader.range());
+      throw new ParseError(
+        "unsupported",
+        `Unsupported property type 0x${type.toString(16)}`,
+        record.reader.range(),
+      );
   }
 }
 
@@ -139,11 +151,16 @@ export function readTaggedValue(record: RecordReader, context: PropertyContext =
 
 export function readPropertyList(record: RecordReader, addressBook: boolean): void {
   const count = record.integer("PropertyValueCount", addressBook ? "u32" : "u16");
-  repeat(record, count, () => {
-    nested(record, "TaggedPropertyValue", (child) => {
-      readTaggedValue(child, addressBook ? "address-book" : "rop");
-    });
-  }, 4);
+  repeat(
+    record,
+    count,
+    () => {
+      nested(record, "TaggedPropertyValue", (child) => {
+        readTaggedValue(child, addressBook ? "address-book" : "rop");
+      });
+    },
+    4,
+  );
 }
 
 export function readPropertyRow(
@@ -155,31 +172,36 @@ export function readPropertyRow(
   if (flag !== 0 && flag !== 1) {
     throw new ParseError("malformed", "Unknown property row flag", record.reader.range());
   }
-  repeat(record, tags.length, (index) => {
-    const tag = tags[index]!;
-    nested(record, `Property 0x${tag.id.toString(16)}`, (child) => {
-      let type = tag.type & ~0x2000;
-      if (type === 0) {
-        type = readEnum(child, "PropertyType", "PropertyDataType");
-      }
-      if (flag === 1) {
-        const valueFlag = child.integer("Flag", "u8");
-        if (valueFlag === 1) {
-          return;
+  repeat(
+    record,
+    tags.length,
+    (index) => {
+      const tag = tags[index]!;
+      nested(record, `Property 0x${tag.id.toString(16)}`, (child) => {
+        let type = tag.type & ~0x2000;
+        if (type === 0) {
+          type = readEnum(child, "PropertyType", "PropertyDataType");
         }
-        if (valueFlag === 0x0a) {
-          type = 0x000a;
-        } else if (valueFlag !== 0) {
-          throw new ParseError("malformed", "Unknown property value flag", child.reader.range());
+        if (flag === 1) {
+          const valueFlag = child.integer("Flag", "u8");
+          if (valueFlag === 1) {
+            return;
+          }
+          if (valueFlag === 0x0a) {
+            type = 0x000a;
+          } else if (valueFlag !== 0) {
+            throw new ParseError("malformed", "Unknown property value flag", child.reader.range());
+          }
         }
-      }
-      if (addressBook) {
-        readAddressBookValue(child, type);
-      } else {
-        readPropertyValue(child, type);
-      }
-    });
-  }, 0);
+        if (addressBook) {
+          readAddressBookValue(child, type);
+        } else {
+          readPropertyValue(child, type);
+        }
+      });
+    },
+    0,
+  );
 }
 
 export function readNamedProperty(record: RecordReader): void {
@@ -197,10 +219,13 @@ export function readNamedProperty(record: RecordReader): void {
 
 export function readRestriction(record: RecordReader, context: PropertyContext = "rop"): void {
   const type = readEnum(record, "RestrictType", "RestrictTypeEnum");
-  const readChild = (name: string) => nested(record, name, (child) => readRestriction(child, context));
+  const readChild = (name: string) =>
+    nested(record, name, (child) => readRestriction(child, context));
   const readTag = (name: string) => {
     let tag: PropertyTag | undefined;
-    nested(record, name, (child) => { tag = readPropertyTag(child); });
+    nested(record, name, (child) => {
+      tag = readPropertyTag(child);
+    });
     return tag!;
   };
   switch (type) {
@@ -252,7 +277,12 @@ export function readRestriction(record: RecordReader, context: PropertyContext =
       return;
     case 10: {
       const count = record.integer("TaggedValuesCount", "u8");
-      repeat(record, count, () => nested(record, "TaggedValue", (child) => readTaggedValue(child, context)), 4);
+      repeat(
+        record,
+        count,
+        () => nested(record, "TaggedValue", (child) => readTaggedValue(child, context)),
+        4,
+      );
       if (record.boolean("RestrictionPresent")) {
         readChild("Restriction");
       }
@@ -263,12 +293,20 @@ export function readRestriction(record: RecordReader, context: PropertyContext =
       readChild("SubRestriction");
       return;
     default:
-      throw new ParseError("unsupported", `Unsupported restriction type ${type}`, record.reader.range());
+      throw new ParseError(
+        "unsupported",
+        `Unsupported restriction type ${type}`,
+        record.reader.range(),
+      );
   }
 }
 
 /** Used by protocol fixture tests without exposing a test hook to the host. */
-export function parsePropertyFixture(record: RecordReader, type: string, arguments_: readonly unknown[]): boolean {
+export function parsePropertyFixture(
+  record: RecordReader,
+  type: string,
+  arguments_: readonly unknown[],
+): boolean {
   if (type === "PropertyTag") {
     readPropertyTag(record);
   } else if (type === "RestrictionType") {
@@ -281,7 +319,12 @@ export function parsePropertyFixture(record: RecordReader, type: string, argumen
       return false;
     }
     if (type === "PtypBinary") {
-      readPropertyValue(record, dataType, arguments_[0] === 0 ? "rop" : "address-book", arguments_[1] === true);
+      readPropertyValue(
+        record,
+        dataType,
+        arguments_[0] === 0 ? "rop" : "address-book",
+        arguments_[1] === true,
+      );
     } else {
       readPropertyValue(record, dataType, "rop", arguments_[0] === true);
     }
