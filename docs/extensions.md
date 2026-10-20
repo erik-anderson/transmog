@@ -92,10 +92,30 @@ redacted values cannot produce a value match. Changed row evidence, declarations
 selection or visibility invalidate pending results; hidden workspaces release
 the cache and metadata listener.
 
+Column labels load on idle time, separately from traffic queries and row loading.
+Only one bounded label request may be in flight per workspace; scrolling coalesces
+to its newest viewport. Installed headings are indexed once, and optional column
+controls are created only while their settings are open. With no columns selected,
+row refresh and rendering skip classifier calls and use no per-row classifier
+allocations. Label replies update only extension cells, retaining ordinary cells,
+focus and scroll. Unchanged labels keep their prior cells through idle refreshes;
+changing declarations or selection and hiding the workspace clear those caches.
+
 This path uses the already available retained header index for live or imported
 traffic. It does not import another capture, walk all TMCap entries, acquire a
 body capability, open a body blob, read extension modules or start a worker.
 There is no per-installed-extension capture callback or full-capture label cache.
+
+The production-template performance probe is
+`node scripts/check-workspaces.mjs --traffic-perf-only --perf-output <path>`
+from `apps/desktop/ui`. It exercises 100,000 entries with no columns, 2,048
+installed declarations, and one/eight selected columns. It checks bounded DOM and
+label caches, no classification calls when off, no full query while scrolling,
+and continued row loading while label replies are delayed. Native Viewer checks
+also record viewport rendering and 20,000-entry refresh/query IPC timings. Compare
+warm samples on the same machine; absolute timings vary with system load.
+
+## Documents and packages
 
 Output is a `VisualizationDocument`: typed tree/table/text/hex data, diagnostics,
 format metadata, exact source spans and bounded derived buffers with provenance.

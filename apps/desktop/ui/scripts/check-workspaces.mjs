@@ -39,6 +39,7 @@ import { build, Protocol } from '@microsoft/webui';
 import { checkHexViewer } from './check-hex-viewer.mjs';
 import { checkTrafficPresentation } from './check-traffic-presentation.mjs';
 import {checkTrafficClassifications} from './check-traffic-classifications.mjs';
+import {checkTrafficPerformance} from './check-traffic-performance.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
 import {checkAppSelection} from './check-app-selection.mjs';
 import {checkTimingLabels} from './check-timing-labels.mjs';
@@ -898,6 +899,7 @@ const newScratch=async()=>{await page.locator('.workspace-tabs').getByRole('butt
 const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace');return !workspace.savingAutoResponse && workspace.existingResponse && !workspace.draftDirty;});};
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
+  if(process.argv.includes('--traffic-perf-only')){const index=process.argv.indexOf('--perf-output');await checkTrafficPerformance(page,index>=0?process.argv[index+1]:undefined);assert.deepEqual(errors,[]);await browser.close();process.exit(0);}
   if(process.argv.includes('--visualizers-only')){await page.goto('https://workspace.test/');await checkVisualizers(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Host visualizers, bounded structures, exact source spans and inactive cancellation verified.\n');process.exit(0);}
   if(process.argv.includes('--extensions-only')){await page.goto('https://workspace.test/');await checkExtensions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Extension management, declared inputs, inert metadata and async lifetimes verified.\n');process.exit(0);}
   if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}

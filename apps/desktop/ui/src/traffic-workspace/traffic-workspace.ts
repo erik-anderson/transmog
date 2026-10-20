@@ -35,6 +35,8 @@ import {traceMarkers,type MarkerReview,type TraceMarker} from '../markers.js';
 type ContextValue={dimension:TrafficDimension;label:string;value:TrafficFilterValue};
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
 type Row = SessionSummary & {extensionCells:Array<{key:string;text:string;title:string}>;index:number;rowIndex:number;loading:boolean;tone:string;selectionState:string;rowLabel:string;markerLabel:string;activeStreamLabel:string;streamLabel:string;streamDisplay:string;streamAccessibleLabel:string;cells:Array<{id:ColumnId;text:string;title:string;pinned:boolean;numeric:boolean;offsetCss:string;tone:string}>};
+const NO_EXTENSION_KEYS:string[]=[];
+const NO_EXTENSION_CELLS:Array<{key:string;text:string;title:string}>=[];
 type PreviewPageChoices={pages:Array<{id:string;url:string;startedAt:number;recordedReferrer:boolean}>;more:boolean};
 
 export class TrafficWorkspace extends WorkspaceElement {
@@ -526,7 +528,35 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable extensionSettingsColumns:Array<{key:string;label:string;checked:boolean;disabled:boolean}>=[];
   @observable extensionColumnError='';
   @observable trafficColumnCount=0;
-  private classifications=new TrafficClassifications(()=>this.preferences.extensionColumns??[],()=>{this.rebuildColumns();this.scheduleViewport();});
+  @observable extensionColumnSettingsVisible=false;
+  private columnSettingsOpen=false;
+  private extensionSelection:string[]|undefined;
+  private classifications=new TrafficClassifications(()=>this.preferences.extensionColumns??NO_EXTENSION_KEYS,()=>{this.rebuildExtensionColumns();this.rebuildColumns();this.scheduleViewport();},()=>this.refreshClassificationCells());
+  extensionSettingsToggled(event:Event):void {
+    if(event.target instanceof HTMLDetailsElement)this.columnSettingsOpen=event.target.open;
+    const visible=this.columnSettingsOpen&&!!this.viewMenu?.matches(':popover-open');
+    if(visible===this.extensionColumnSettingsVisible)return;
+    this.extensionColumnSettingsVisible=visible;
+    this.rebuildExtensionOptions();
+  }
+  private rebuildExtensionOptions():void {
+    if(!this.extensionColumnSettingsVisible){this.extensionSettingsColumns=[];return;}
+    const chosen=this.preferences.extensionColumns??NO_EXTENSION_KEYS,choices=this.classifications.choices,known=new Set(choices.map(column=>column.key));
+    this.extensionSettingsColumns=[...choices.map(column=>({key:column.key,label:column.name+' · '+column.extensionName})),...chosen.filter(key=>!known.has(key)).map(key=>({key,label:'Unavailable: '+key}))].map(column=>({...column,checked:chosen.includes(column.key),disabled:!chosen.includes(column.key)&&chosen.length>=8}));
+  }
+  private refreshClassificationCells():void {
+    this.extensionColumnError=this.classifications.error;
+    if(!this.extensionTableColumns.length)return;
+    let changed=false;
+    const rows=this.sessions.map(row=>{const cells=this.classifications.cells(row.id);if(cells===row.extensionCells)return row;changed=true;return {...row,extensionCells:cells};});
+    if(changed)this.sessions=rows;
+  }
+  private rebuildExtensionColumns():void {
+    this.extensionSelection=this.preferences.extensionColumns??NO_EXTENSION_KEYS;
+    this.extensionTableColumns=this.classifications.columns.map(column=>({...column,title:column.name+' · '+column.extensionName+' · Header classification'}));
+    this.extensionColumnError=this.classifications.error;
+    this.rebuildExtensionOptions();
+  }
   refreshExtensionColumns():void {void this.classifications.refresh();}
   setExtensionColumn(key:string,event:Event):void {
     const checked=(event.currentTarget as HTMLInputElement).checked,previous=this.preferences.extensionColumns??[];
@@ -1104,7 +1134,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   pendingChanged():void { this.renderSessionState(); this.renderFollowState(); }
   viewChanged():void {this.scheduleTrafficClock();if(this.view==='traffic'){if(this.isConnected)void this.classifications.connect();this.scheduleViewport();if(this.timelineMode)void this.refreshTimeline();}else this.classifications.disconnect();}
   preferencesChanged():void {
-    this.classifications.invalidate();
+    if(this.extensionSelection!==(this.preferences.extensionColumns??NO_EXTENSION_KEYS)){this.classifications.invalidate();this.rebuildExtensionColumns();}
     this.listShare = this.preferences.listSplit+'%';
     this.requestShare = this.preferences.requestSplit+'%';
     this.dividerOrientation = this.preferences.layout === 'stacked' ? 'horizontal' : 'vertical';
@@ -1114,10 +1144,6 @@ export class TrafficWorkspace extends WorkspaceElement {
   selectedSessionIdChanged():void { this.rebuildRows(this.sessions); }
   private requestNumberDigits=1;
   private rebuildColumns():void {
-    this.extensionTableColumns=this.classifications.columns.map(column=>({...column,title:column.name+' · '+column.extensionName+' · Header classification'}));
-    const chosen=this.preferences.extensionColumns??[],choices=this.classifications.choices;
-    this.extensionSettingsColumns=[...choices.map(column=>({key:column.key,label:column.name+' · '+column.extensionName})),...chosen.filter(key=>!choices.some(column=>column.key===key)).map(key=>({key,label:'Unavailable: '+key}))].map(column=>({...column,checked:chosen.includes(column.key),disabled:!chosen.includes(column.key)&&chosen.length>=8}));
-    this.extensionColumnError=this.classifications.error;
     this.columns = displayColumns(this.preferences.columns.map(column=>column.id==='request-number'&&column.width===72?{...column,width:Math.max(column.width,this.requestNumberDigits*8+24)}:column)).map((column) => ({...column,sortDirection:this.sort.column === column.id ? this.sort.direction : 'none',sortArrow:this.sort.column === column.id ? this.sort.direction === 'ascending' ? '↑' : '↓' : ''}));
     this.settingsColumns = this.preferences.columns.map((column) => ({...column,label:column.id==='request-number'?'Request order (#)':columnDefinitions.find((definition) => definition.id === column.id)!.label}));
     this.trafficColumnCount=this.columns.length+this.extensionTableColumns.length;
@@ -1131,7 +1157,7 @@ export class TrafficWorkspace extends WorkspaceElement {
       const activeStreamLabel = row.terminal === 'active'
         ? row.streamProtocol === 'web-socket' ? 'WebSocket · Active' : row.streamProtocol === 'sse' ? 'SSE · Active' : ''
         : '';
-      return {...row,extensionCells:this.classifications.cells(row.id),streamLabel,streamDisplay:streamLabel==='WebSocket'&&(this.preferences.columns.find(column=>column.id==='protocol')?.width??210)<145?'WS':streamLabel,streamAccessibleLabel,markerLabel:this.markerItems.some(m=>m.entryId===row.id)?'Flagged':'',activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(streamLabel ? streamLabel+' · '+stateText(row.terminal)+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
+      return {...row,extensionCells:this.extensionTableColumns.length?this.classifications.cells(row.id):NO_EXTENSION_CELLS,streamLabel,streamDisplay:streamLabel==='WebSocket'&&(this.preferences.columns.find(column=>column.id==='protocol')?.width??210)<145?'WS':streamLabel,streamAccessibleLabel,markerLabel:this.markerItems.some(m=>m.entryId===row.id)?'Flagged':'',activeStreamLabel,index:this.virtualList.indexes.get(row.id)??0,rowIndex:(this.virtualList.indexes.get(row.id)??0)+2,loading:!this.rowCache.has(row.id),tone:statusTone(row),selectionState:this.trafficSelection.ids.has(row.id) ? 'true' : 'false',rowLabel:this.rowCache.has(row.id)?(streamLabel ? streamLabel+' · '+stateText(row.terminal)+': ' : '')+(row.topLevelNavigation ? 'Top-level navigation: ' : '')+row.method+' '+row.host+row.path:'Loading traffic entry',
       cells:this.columns.map((column) => ({id:column.id,text:column.id === 'status' && row.status === 304 ? '304' : cellText(row,column.id),title:column.id==='duration'&&streamLabel?lifetimeDescription(row.streamLifetime):cellText(row,column.id)+(column.id==='protocol'&&streamLabel?' · '+streamLabel+' · '+stateText(row.terminal):''),pinned:column.pinned,numeric:column.numeric,offsetCss:column.offsetCss,tone:column.id === 'status' ? statusTone(row) : ''}))};
     });
     this.selectedTrafficCount=this.trafficSelection.ids.size;
@@ -1141,7 +1167,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private releaseView(view:TrafficView|null):void {if(view)void invoke('release_traffic_view',{viewId:view.id}).catch(()=>{});}
   private cacheRows(rows:SessionSummary[]):void {
-    this.classifications.invalidate(rows.map(row=>row.id));
+    if(this.extensionTableColumns.length)this.classifications.invalidate(rows.map(row=>row.id));
     const digits=Math.max(this.requestNumberDigits,...rows.map(row=>row.requestNumber?.length??1));
     if(digits>this.requestNumberDigits){this.requestNumberDigits=digits;this.rebuildColumns();}
     for(const row of rows){this.rowCache.delete(row.id);this.rowCache.set(row.id,row);}
@@ -1177,7 +1203,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     const ids=this.virtualList.ids.slice(range.start,range.end);
     const rows=ids.map(id=>this.rowCache.get(id)??{id,caller:{kind:'local-unknown',processName:null,processId:null},method:'…',host:'',path:'',url:'',startedAt:0,contentType:null,topLevelNavigation:false,fetchDestination:null,protocol:'',status:null,durationMs:null,requestBytes:0,responseBytes:0,terminal:'active',loss:false,capturing:false,autoResponse:null} as SessionSummary);
     this.rebuildRows(rows);this.updateSpacers();this.$flushUpdates();
-    void this.classifications.load(ids);
+    if(this.extensionTableColumns.length)this.classifications.schedule(ids);
     this.rowObserver?.disconnect();
     for(const id of ids){const element=root.getElementById('session-'+id);if(element)this.rowObserver?.observe(element);}
     for(let offset=Math.floor(range.start/100)*100;offset<range.end;offset+=100){

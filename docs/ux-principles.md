@@ -107,6 +107,9 @@ when changing the experience.
   their request/response header and body inputs. The host owns presentation;
   hidden visualizers release their workers and data. Manage installation and
   declarations together in [Extensions settings](extensions.md), without access histories.
+  Optional classification columns read bounded header metadata after primary row
+  rendering; their results must not delay traffic queries, rebuild ordinary cells
+  or mount installed-extension controls while those settings are closed.
 
 ## Preserve work across changes
 

@@ -37,6 +37,7 @@
   "extensionTableColumns": [],
   "extensionSettingsColumns": [],
   "extensionColumnError": "",
+  "extensionColumnSettingsVisible": false,
   "trafficColumnCount": 0,
   "extensionsEntries": [],
   "extensionsBusy": false,

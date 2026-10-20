@@ -18,6 +18,7 @@ export function hexReachability(viewer, offset) {
 }
 
 export async function checkHexViewer(page, inspector, screenshotPath) {
+  const originalDetail = await inspector.evaluate(element => structuredClone(element.detail));
   const viewer = inspector.locator('hex-viewer');
   const grid = viewer.getByRole('grid');
   const cell = (index, column = 'hex') => viewer.locator(`.hex-cell[data-byte="${index}"][data-column="${column}"]`);
@@ -288,6 +289,8 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
       else delete navigator.clipboard;
       delete globalThis.__hexClipboardDescriptor; delete globalThis.__hexCopied;
     }, original);
-    await inspector.evaluate(element => element.inspectBody());
+    // Resizing can rebind the parent's retained detail. Restore the caller's
+    // overridden metadata together with its byte fixture, not that rebound copy.
+    await inspector.evaluate(async (element, detail) => { element.detail = detail; await element.inspectBody(); }, originalDetail);
   }
 }

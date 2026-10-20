@@ -17,6 +17,9 @@ export async function checkTrafficClassifications(page,root) {
     assert.ok(requests.length);assert.ok(requests.every(request=>request.ids.length<=100&&request.columns.join()==='office:protocol'));
     assert.ok((await page.evaluate(()=>globalThis.__workspaceFixture.calls.classify_traffic_rows))>before);
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer??0),saved.starts,'A static column started extension code');
+    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,s=globalThis.__workspaceFixture;globalThis.__ordinaryCells=t.sessions.map(row=>({id:row.id,cells:row.cells}));s.classificationValues=['Updated headers'];t.trafficTable.focus();t.classifications.invalidate(t.sessions.map(row=>row.id));t.classifications.schedule(t.sessions.map(row=>row.id));});
+    await traffic.locator('[data-extension-column="office:protocol"]').first().getByText('Updated headers',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;const unchanged=globalThis.__ordinaryCells.every(previous=>t.sessions.find(row=>row.id===previous.id)?.cells===previous.cells);delete globalThis.__ordinaryCells;return unchanged&&t.getRootNode().activeElement===t.trafficTable;}),true,'A label reply rebuilt ordinary traffic cells or moved focus');
     // Same exchange IDs with newer header evidence must reject the earlier reply.
     await page.evaluate(()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.classificationValues=['Old'];s.deferClassifications=true;t.classifications.invalidate();t.scheduleViewport();});
     await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishClassifications);

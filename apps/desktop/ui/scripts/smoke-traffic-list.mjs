@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import {writeFile} from 'node:fs/promises';
+import {smokeTrafficPerformance} from './smoke-traffic-performance.mjs';
 
 /** Real WebView2 probe using imported backend data and native input events. */
 export async function smokeTrafficList(client,screenshot) {
@@ -7,6 +8,7 @@ export async function smokeTrafficList(client,screenshot) {
   const wait=async(expression,timeout=30000)=>{const deadline=Date.now()+timeout;while(Date.now()<deadline){if(await client.evaluate(expression))return;await new Promise(resolve=>setTimeout(resolve,50));}const state=await client.evaluate(`(()=>{const s=document.querySelector('app-shell'),w=s?.traffic;return {shell:!!s,total:w?.totalMatched,rows:w?.sessions.length,importing:w?.importingTrace,importStatus:w?.importStatus,queryError:w?.queryError,notice:s?.noticeMessageText};})()`);throw new Error('Traffic probe did not settle: '+expression+' · '+JSON.stringify(state));};
   process.stdout.write('Loading native 20,000-entry traffic fixture…\n');
   await wait(`document.querySelector("app-shell")?.traffic && ${t}.totalMatched===20000 && !${t}.importingTrace && ${t}.sessions.every(row=>!row.loading)`,120000);
+  await smokeTrafficPerformance(client,screenshot);
   const ids=await client.evaluate(`(()=>{const w=${t};return [w.virtualList.ids[0],w.virtualList.ids[5000],w.virtualList.ids.at(-1)];})()`);
   const click=async(id,modifiers=0)=>{
     const box=await client.evaluate(`(()=>{const r=${t}.getRootNode().getElementById(${JSON.stringify('session-')}+${JSON.stringify(id)}).getBoundingClientRect();return {x:r.x+100,y:r.y+r.height/2};})()`);
