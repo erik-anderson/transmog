@@ -84,6 +84,15 @@ export class ExtensionSettings extends WorkspaceElement {
     }catch(error:unknown){if(generation===this.generation&&this.isConnected){this.extensionsError=describeError(error);this.extensionsText='';if(this.active)await this.showError('Extension reload could not be requested',this.extensionsError);}}
     finally {if(generation===this.generation){this.extensionsBusy=false;this.refreshQueued();}}
   }
+  async package(id:string):Promise<void> {
+    if(this.extensionsBusy)return;
+    const generation=++this.generation;this.extensionsBusy=true;this.extensionsError='';this.extensionsText='Packaging extension…';
+    try {
+      const result=await invoke<{path:string;digest:string;bytes:number}|null>('package_extension',{id});
+      if(generation===this.generation&&this.isConnected)this.extensionsText=result?'Extension packaged: '+result.path:'';
+    }catch(error:unknown){if(generation===this.generation&&this.isConnected){this.extensionsError=describeError(error);this.extensionsText='';if(this.active)await this.showError('Extension could not be packaged',this.extensionsError);}}
+    finally {if(generation===this.generation){this.extensionsBusy=false;this.refreshQueued();}}
+  }
   uninstall(id:string):void {void this.change('uninstall_extension',{id},'Removing extension…','Extension removed from Transmog. Unpacked source files are unchanged.');}
   dismiss():void {this.extensionsText='';this.extensionsError='';}
 }

@@ -15,6 +15,8 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       const original=await window.__TAURI_INTERNALS__.invoke('extension_status');
       if(original.warning||original.entries.length!==1||original.entries[0].catalog.manifest.id!=='test.development')throw new Error('Native extension fixture was not loaded');
       const root=editor.shadowRoot??editor,entry=root.querySelector('article');
+      const packageButton=entry.querySelector('button[aria-label="Package Development visualizer fixture"]');
+      if(!packageButton||packageButton.disabled)throw new Error('Unpacked extension has no available packaging action');
       entry.querySelector('button[aria-label="Reload active visualizers for Development visualizer fixture"]').click();
       await wait(()=>!editor.extensionsBusy);
       if(!editor.extensionsText.startsWith('No active visualizers'))throw new Error('Settings reload did not stay idle without active instances');

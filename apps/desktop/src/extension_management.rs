@@ -99,6 +99,38 @@ pub(super) async fn extension_hot_reload(
     Ok(changed(&window, &registry))
 }
 #[tauri::command]
+pub(super) async fn package_extension(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<transmog_app::extensions::PackagedExtension>, String> {
+    let registry = registry(&window, &state)?;
+    if !registry
+        .status()
+        .entries
+        .iter()
+        .any(|entry| entry.catalog.manifest.id == id && entry.directory.is_some())
+    {
+        return Err("Choose an unpacked development extension to package.".into());
+    }
+    let selected = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Package a Transmog extension")
+        .add_filter("Transmog extension", &["tmext"])
+        .set_file_name(format!("{id}.tmext"))
+        .save_file()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let destination = selected.path().to_path_buf();
+    tauri::async_runtime::spawn_blocking(move || registry.package_directory(&id, &destination))
+        .await
+        .map_err(|_| "Extension packaging could not finish.".to_owned())?
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
 pub(super) fn reload_extension(
     id: String,
     window: tauri::WebviewWindow,

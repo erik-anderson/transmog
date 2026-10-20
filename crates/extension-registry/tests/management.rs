@@ -95,6 +95,138 @@ fn developer_registration_and_listing_do_not_read_code_and_uninstall_keeps_sourc
     registry.uninstall("example.headers").unwrap();
     assert!(sources.join("src/main.js").is_file());
 }
+
+fn development(registry: &Registry, root: &std::path::Path) {
+    std::fs::create_dir_all(root.join("src")).unwrap();
+    std::fs::write(
+        root.join("manifest.json"),
+        serde_json::to_vec(&manifest()).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        root.join("src/main.js"),
+        b"throw new Error('Packaging must not execute this');",
+    )
+    .unwrap();
+    registry.register_directory(root, false).unwrap();
+}
+
+#[test]
+fn packaging_disabled_development_sources_normalizes_current_bytes_and_round_trips() {
+    let root = tempfile::tempdir().unwrap();
+    let registry = Registry::load(root.path().join("registry"), None);
+    let source = root.path().join("source");
+    development(&registry, &source);
+    let mut metadata = manifest();
+    metadata
+        .files
+        .push(serde_json::from_value(serde_json::json!({"path":"README.md","bytes":0})).unwrap());
+    std::fs::write(
+        source.join("manifest.json"),
+        serde_json::to_vec(&metadata).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(source.join("README.md"), b"Declared documentation").unwrap();
+    std::fs::write(source.join("author.ts"), b"Unlisted authoring source").unwrap();
+    std::fs::write(source.join("private.txt"), b"Unlisted private file").unwrap();
+    registry.set_enabled("example.headers", false).unwrap();
+    let before = serde_json::to_value(registry.status()).unwrap();
+    let output = source.join("distribution.TMEXT");
+    let first = registry
+        .package_directory("example.headers", &output)
+        .unwrap();
+    let mut package = transmog_extensions::Package::open(File::open(&output).unwrap()).unwrap();
+    assert_eq!(first.bytes, std::fs::metadata(&output).unwrap().len());
+    assert_eq!(first.digest, package.snapshot().unwrap().digest);
+    assert!(
+        package
+            .manifest()
+            .files
+            .iter()
+            .all(|file| file.sha256.is_some())
+    );
+    drop(package);
+    let latest = b"export function visualize(){return {kind:'document',document:{title:'Current source',status:'complete',presentation:'tree',roots:[]}};}";
+    std::fs::write(source.join("src/main.js"), latest).unwrap();
+    let second = registry
+        .package_directory("example.headers", &output)
+        .unwrap();
+    assert_ne!(first.digest, second.digest);
+    assert_eq!(
+        serde_json::to_value(registry.status()).unwrap(),
+        before,
+        "Packaging must not publish source metadata, enable code or create instances"
+    );
+    let recipient = Registry::load(root.path().join("recipient"), None);
+    recipient.install(&output).unwrap();
+    let snapshot = recipient.snapshot("example.headers").unwrap();
+    assert_eq!(snapshot.digest, second.digest);
+    assert_eq!(snapshot.files["src/main.js"].as_ref(), latest);
+    // An unlisted output in the source folder is excluded on subsequent saves.
+    assert_eq!(
+        snapshot.files["README.md"].as_ref(),
+        b"Declared documentation"
+    );
+    assert_eq!(snapshot.files.len(), 2);
+}
+
+#[test]
+fn packaging_failure_preserves_existing_output_and_declared_source_assets() {
+    let root = tempfile::tempdir().unwrap();
+    let registry = Registry::load(root.path().join("registry"), None);
+    let source = root.path().join("source");
+    development(&registry, &source);
+    let output = root.path().join("existing.tmext");
+    std::fs::write(&output, b"keep original archive").unwrap();
+    let metadata = source.join("manifest.json");
+    let original = std::fs::read(&metadata).unwrap();
+    for invalid in [b"invalid JSON".as_slice(), br#"{"id":"changed.identity"}"#] {
+        std::fs::write(&metadata, invalid).unwrap();
+        assert!(
+            registry
+                .package_directory("example.headers", &output)
+                .is_err()
+        );
+        assert_eq!(std::fs::read(&output).unwrap(), b"keep original archive");
+    }
+    std::fs::write(&metadata, &original).unwrap();
+    std::fs::remove_file(source.join("src/main.js")).unwrap();
+    assert!(
+        registry
+            .package_directory("example.headers", &output)
+            .is_err()
+    );
+    assert_eq!(std::fs::read(&output).unwrap(), b"keep original archive");
+    std::fs::write(source.join("src/main.js"), b"inert source").unwrap();
+    let mut m = manifest();
+    m.files.push(
+        serde_json::from_value(serde_json::json!({"path":"src/reference.tmext","bytes":0}))
+            .unwrap(),
+    );
+    std::fs::write(&metadata, serde_json::to_vec(&m).unwrap()).unwrap();
+    std::fs::write(source.join("src/reference.tmext"), b"declared asset").unwrap();
+    assert!(
+        registry
+            .package_directory("example.headers", &source.join("src/reference.tmext"))
+            .is_err()
+    );
+    #[cfg(windows)]
+    assert!(
+        registry
+            .package_directory("example.headers", &source.join("SRC/REFERENCE.TMEXT"))
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(source.join("src/reference.tmext")).unwrap(),
+        b"declared asset"
+    );
+    assert!(
+        registry
+            .package_directory("example.headers", &root.path().join("incorrect.zip"))
+            .is_err()
+    );
+    assert!(registry.package_directory("missing", &output).is_err());
+}
 #[test]
 fn catalog_failure_preserves_enabled_state_and_corruption_does_not_break_construction() {
     let root = tempfile::tempdir().unwrap();

@@ -52,6 +52,54 @@ fn invocation(instance: &str) -> Invocation {
         input: Box::new(input),
     }
 }
+
+#[tokio::test]
+async fn packaged_current_sources_run_in_a_new_sandbox_without_replacing_active_development() {
+    let _serial = REGISTRY_TEST.lock().await;
+    let (root, registry, sources) = setup();
+    let active = registry
+        .activate("development", "example.registry", "view")
+        .unwrap();
+    let old_worker = registry.runner("development", &active.id).unwrap();
+    std::fs::write(
+        sources.join("main.js"),
+        SOURCE.replace("title:'View'", "title:'Packaged'"),
+    )
+    .unwrap();
+    let output = root.path().join("saved.tmext");
+    registry
+        .package_directory("example.registry", &output)
+        .unwrap();
+    assert!(!old_worker.is_stopped());
+    let VisualizationStep::Document { document } =
+        old_worker.invoke(invocation(&active.id)).await.unwrap()
+    else {
+        panic!("Expected original document")
+    };
+    assert_eq!(document.title, "View");
+    let recipient = Registry::load(
+        root.path().join("recipient"),
+        Some(HostConfig {
+            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+        }),
+    );
+    recipient.install(&output).unwrap();
+    let imported = recipient
+        .activate("recipient", "example.registry", "view")
+        .unwrap();
+    assert_ne!(active.digest, imported.digest);
+    assert!(!imported.development);
+    let VisualizationStep::Document { document } = recipient
+        .runner("recipient", &imported.id)
+        .unwrap()
+        .invoke(invocation(&imported.id))
+        .await
+        .unwrap()
+    else {
+        panic!("Expected packaged document")
+    };
+    assert_eq!(document.title, "Packaged");
+}
 struct Resources {
     stopped: AtomicBool,
     data: Mutex<Option<Vec<u8>>>,

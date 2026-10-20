@@ -1,7 +1,9 @@
 //! Shared metadata-only extension management; workers belong to explicitly activated instances.
 mod directory;
+mod packaging;
 mod reload;
 mod watch;
+pub use packaging::PackagedExtension;
 pub use reload::ReloadRequest;
 use serde::{Deserialize, Serialize};
 use std::{

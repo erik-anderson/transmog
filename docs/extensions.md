@@ -264,6 +264,15 @@ access and live/context capabilities under **Visualizers and declared inputs**.
 Names and all extension-provided metadata remain inert text. This is declaration
 management, without access histories or an auditing subsystem.
 
+For an unpacked entry, **Package extension…** opens a native save dialog for a
+`.tmext` archive. Packaging works even when the extension is disabled. It reads
+only the manifest and its declared files, computes current lengths and hashes,
+and saves a Stored ZIP64 archive without evaluating scripts. Unlisted files,
+including a previous output in the source folder, are excluded. Validation or
+write failure preserves the previous destination; a declared source file cannot
+be chosen as the output. Packaging does not install the archive, publish changed
+development declarations or reload active visualizers.
+
 Changes use the shared registry across main and capture-viewer windows. Disabling
 stops ready and starting workers; enabling does not resume them. Bundled entries
 can be disabled, while their files remain owned by the app. Removing an unpacked
