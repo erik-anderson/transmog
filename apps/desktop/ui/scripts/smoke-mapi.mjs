@@ -24,11 +24,11 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
       if(!row)throw new Error('Synthetic MAPI exchange missing: '+name+' '+traffic.importStatus);
       await traffic.selectTraffic(row,new MouseEvent('click'));
       const inspector=direction==='request'?request:response;
-      await wait(()=>inspector.detail?.id===row.id&&inspector.bodyChoices.some(choice=>choice.extensionId==='com.transmog.mapi'));
-      inspector.showMode('body');choose(inspector,'Body viewer','extension:com.transmog.mapi:body-'+direction);
+      await wait(()=>inspector.detail?.id===row.id&&inspector.bodyChoices.some(choice=>choice.extensionId==='net.transmog.mapi'));
+      inspector.showMode('body');choose(inspector,'Body viewer','extension:net.transmog.mapi:body-'+direction);
       await wait(()=>child(inspector)?.view||child(inspector)?.visualizerError);
       const viewer=child(inspector);if(viewer.visualizerError)throw new Error(viewer.visualizerError);
-      if(viewer.view.instance.development||viewer.view.instance.extensionId!=='com.transmog.mapi')throw new Error('MAPI did not use its bundled package');
+      if(viewer.view.instance.development||viewer.view.instance.extensionId!=='net.transmog.mapi')throw new Error('MAPI did not use its bundled package');
       await expand(viewer);
       if(viewer.view.document.status!=='complete')throw new Error('Synthetic MAPI did not decode completely: '+name+' '+JSON.stringify(viewer.view.document.diagnostics));
       return {viewer,row};
@@ -70,7 +70,7 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     viewer.showSpan(rowNode.spans[0]);
     const rowHandle=viewer.view.handle;
     response.showMode('split');request.showMode('split');
-    choose(response,'Headers viewer','extension:com.transmog.mapi:headers');choose(request,'Headers viewer','extension:com.transmog.mapi:headers');choose(request,'Body viewer','extension:com.transmog.mapi:body-request');
+    choose(response,'Headers viewer','extension:net.transmog.mapi:headers');choose(request,'Headers viewer','extension:net.transmog.mapi:headers');choose(request,'Body viewer','extension:net.transmog.mapi:body-request');
     const views=()=>[request,response].flatMap(inspector=>[...(inspector.shadowRoot??inspector).querySelectorAll('extension-visualizer')]);
     await wait(()=>views().filter(view=>view.view).length===4);
     if(views().some(view=>view.visualizerError))throw new Error('Concurrent MAPI contributions failed');
@@ -88,8 +88,8 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     if(infoButton!==infoButton.getRootNode().activeElement)throw new Error('Closing MAPI information lost trigger focus');
 
     globalThis.__mapiProbe.handles=views().map(view=>view.view.handle);
-    const columns=await invoke('classify_traffic_rows',{ids:[traffic.activeId??response.detail.id],columns:['com.transmog.mapi:protocol']});
-    if(!columns.some(row=>row.values['com.transmog.mapi:protocol']?.[0]==='MAPI/HTTP'))throw new Error('Bundled MAPI static classification missing');
+    const columns=await invoke('classify_traffic_rows',{ids:[traffic.activeId??response.detail.id],columns:['net.transmog.mapi:protocol']});
+    if(!columns.some(row=>row.values['net.transmog.mapi:protocol']?.[0]==='MAPI/HTTP'))throw new Error('Bundled MAPI static classification missing');
     globalThis.__mapiProbe.concurrent=true;
     return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
   })()`);

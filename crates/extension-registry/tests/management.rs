@@ -37,6 +37,46 @@ fn package_version(path: &std::path::Path, version: &str) {
     .unwrap();
 }
 #[test]
+fn exporting_disabled_content_is_editable_and_never_overwrites_existing_files() {
+    let root = tempfile::tempdir().unwrap();
+    let source = root.path().join("original.tmext");
+    package(&source);
+    let registry = Registry::load(root.path().join("installed"), None);
+    registry.install(&source).unwrap();
+    registry.set_enabled("example.headers", false).unwrap();
+    let before = serde_json::to_value(registry.status()).unwrap();
+    let destination = root.path().join("editable");
+    let result = registry
+        .export_directory("example.headers", &destination)
+        .unwrap();
+    assert_eq!(result.files, 1);
+    assert!(destination.join("src/main.js").is_file());
+    let copy = Registry::load(root.path().join("other-registry"), None);
+    copy.register_directory(&destination, false).unwrap();
+    assert_eq!(
+        copy.snapshot("example.headers").unwrap().manifest.id,
+        "example.headers"
+    );
+    std::fs::write(destination.join("src/main.js"), b"local edits").unwrap();
+    assert!(
+        registry
+            .export_directory("example.headers", &destination)
+            .is_err()
+    );
+    assert_eq!(
+        std::fs::read(destination.join("src/main.js")).unwrap(),
+        b"local edits"
+    );
+    assert_eq!(serde_json::to_value(registry.status()).unwrap(), before);
+    assert!(
+        registry
+            .export_directory("missing", &root.path().join("missing"))
+            .is_err()
+    );
+    assert!(!root.path().join("missing").exists());
+}
+
+#[test]
 fn install_persists_inert_metadata_and_enable_never_requires_a_runtime() {
     let root = tempfile::tempdir().unwrap();
     let source = root.path().join("source.tmext");

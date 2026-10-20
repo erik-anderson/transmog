@@ -115,6 +115,30 @@ export class ExtensionSettings extends WorkspaceElement {
     }catch(error:unknown){if(generation===this.generation&&this.isConnected){this.extensionsError=describeError(error);this.extensionsText='';if(this.active)await this.showError('Extension could not be packaged',this.extensionsError);}}
     finally {if(generation===this.generation){this.extensionsBusy=false;this.refreshQueued();}}
   }
+  async exportFolder(id: string): Promise<void> {
+    if (this.extensionsBusy) return;
+    const generation = ++this.generation;
+    this.extensionsBusy = true;
+    this.extensionsError = '';
+    this.extensionsText = 'Saving extension content…';
+    try {
+      const result = await invoke<{path: string; files: number} | null>('export_extension', {id});
+      if (generation === this.generation && this.isConnected) {
+        this.extensionsText = result ? 'Extension saved: ' + result.path + '. To load a separate development copy, change its manifest ID first.' : '';
+      }
+    } catch (error: unknown) {
+      if (generation === this.generation && this.isConnected) {
+        this.extensionsError = describeError(error);
+        this.extensionsText = '';
+        if (this.active) await this.showError('Extension could not be saved', this.extensionsError);
+      }
+    } finally {
+      if (generation === this.generation) {
+        this.extensionsBusy = false;
+        this.refreshQueued();
+      }
+    }
+  }
   uninstall(id:string):void {void this.change('uninstall_extension',{id},'Removing extension…','Extension removed from Transmog. Unpacked source files are unchanged.');}
   dismiss():void {this.extensionsText='';this.extensionsError='';}
 }

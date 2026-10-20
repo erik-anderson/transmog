@@ -204,6 +204,15 @@ an inactive visualizer. With none active, the settings action reports that fact;
 the next explicit visualization collects fresh source bytes. Installed and bundled
 entries have no development reload controls.
 
+**Visualizers and declared inputs → Save to folder…** saves an editable copy of
+any extension, including disabled or app-bundled entries. Choose a parent folder;
+Transmog creates a new folder named after the extension ID and refuses to replace
+an existing folder. It verifies and copies only `manifest.json` and inventoried
+files, never runs code, and leaves installation and enable state unchanged. Change
+the copied manifest's ID before loading it alongside the original with **Load
+unpacked…**. The bundled MAPI ID is `net.transmog.mapi`; its exported runtime
+JavaScript is readable and can be edited directly without a TypeScript compiler.
+
 Visible development viewers check native metadata on activation and relevant
 management events. Only hot reload schedules ongoing checks, one every 500 ms,
 serialized with itself and deferred while parsing is busy. Packaged and inactive

@@ -5,7 +5,7 @@ mod packaging;
 mod reload;
 mod watch;
 pub use bundled::BundledExtension;
-pub use packaging::PackagedExtension;
+pub use packaging::{ExportedExtension, PackagedExtension};
 pub use reload::ReloadRequest;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -436,6 +436,10 @@ impl Registry {
     /// Rejects disabled/missing entries, replaced packages and unsafe developer files.
     pub fn snapshot(&self, id: &str) -> Result<Snapshot, Error> {
         let entry = self.enabled_entry(id)?;
+        self.entry_snapshot(&entry)
+    }
+    fn entry_snapshot(&self, entry: &ExtensionEntry) -> Result<Snapshot, Error> {
+        let id = &entry.catalog.manifest.id;
         let snapshot = match entry.catalog.origin {
             Origin::Development => directory::Directory::open(
                 entry
@@ -455,7 +459,7 @@ impl Registry {
                 Package::open(std::io::Cursor::new((resource.archive)()))?.snapshot()?
             }
         };
-        if snapshot.manifest.id != id
+        if snapshot.manifest.id != *id
             || (entry.catalog.origin != Origin::Development
                 && snapshot.digest != entry.catalog.digest)
         {

@@ -54,7 +54,7 @@ async function build() {
     format: "iife",
     globalName: "mapiImplementation",
     target: "es2022",
-    minify: true,
+    minify: false,
     charset: "ascii",
     sourcemap: false,
     legalComments: "none",
@@ -108,7 +108,7 @@ async function build() {
 
   if (process.argv.includes("--development")) {
     const development = structuredClone(manifest);
-    development.id = "com.transmog.mapi.development";
+    development.id = "net.transmog.mapi.development";
     development.name = "MAPI/HTTP (Development)";
     const folder = resolve(root, "dist/development");
     for (const file of development.files) {

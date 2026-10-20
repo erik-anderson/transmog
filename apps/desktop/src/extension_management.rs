@@ -99,6 +99,28 @@ pub(super) async fn extension_hot_reload(
     Ok(changed(&window, &registry))
 }
 #[tauri::command]
+pub(super) async fn export_extension(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Option<transmog_app::extensions::ExportedExtension>, String> {
+    let registry = registry(&window, &state)?;
+    let selected = rfd::AsyncFileDialog::new()
+        .set_parent(&window)
+        .set_title("Choose a parent folder for the extension copy")
+        .pick_folder()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(None);
+    };
+    let destination = selected.path().join(&id);
+    tauri::async_runtime::spawn_blocking(move || registry.export_directory(&id, &destination))
+        .await
+        .map_err(|_| "The extension could not be saved to a folder.".to_owned())?
+        .map(Some)
+        .map_err(|error| error.to_string())
+}
+#[tauri::command]
 pub(super) async fn package_extension(
     id: String,
     window: tauri::WebviewWindow,

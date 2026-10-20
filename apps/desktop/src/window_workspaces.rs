@@ -526,6 +526,7 @@ mod tests {
             "start_capture",
             "reload_extension",
             "package_extension",
+            "export_extension",
             "stop_capture",
             "activate_automation",
             "change_header_rule",

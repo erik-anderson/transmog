@@ -2479,6 +2479,7 @@ pub fn run() {
                 extension_management::extension_hot_reload,
                 extension_management::reload_extension,
                 extension_management::package_extension,
+                extension_management::export_extension,
                 extension_management::uninstall_extension,
                 read_body_range,
                 save_response_body,

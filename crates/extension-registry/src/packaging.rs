@@ -7,6 +7,16 @@ use std::{
 };
 use transmog_extensions::write_package;
 
+/// A fresh editable copy. Export does not enable, install or execute the copy.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExportedExtension {
+    /// Newly created folder containing the exact declared content.
+    pub path: PathBuf,
+    /// Number of payload files, excluding the manifest.
+    pub files: usize,
+}
+
 /// A completed archive save; source files and installation state are unchanged.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -19,6 +29,53 @@ pub struct PackagedExtension {
     pub bytes: u64,
 }
 impl Registry {
+    /// Saves declared content from any installation, including disabled bundles.
+    /// The destination must be a new folder; existing content is never replaced.
+    /// # Errors
+    /// Rejects missing entries, unsafe or corrupt content and existing destinations.
+    pub fn export_directory(
+        &self,
+        id: &str,
+        destination: &Path,
+    ) -> Result<ExportedExtension, Error> {
+        let entry = self
+            .status()
+            .entries
+            .into_iter()
+            .find(|entry| entry.catalog.manifest.id == id)
+            .ok_or_else(|| invalid("The extension is no longer installed"))?;
+        let snapshot = self.entry_snapshot(&entry)?;
+        let destination = std::path::absolute(destination)?;
+        if destination.try_exists()? {
+            return Err(invalid(
+                "This folder already exists. Choose another destination.",
+            ));
+        }
+        let parent = destination
+            .parent()
+            .ok_or(Error::AccessDenied)?
+            .canonicalize()?;
+        let target = parent.join(destination.file_name().ok_or(Error::AccessDenied)?);
+        let staged = tempfile::Builder::new()
+            .prefix(".transmog-extension-")
+            .tempdir_in(&parent)?;
+        std::fs::write(
+            staged.path().join("manifest.json"),
+            serde_json::to_vec_pretty(&snapshot.manifest)
+                .map_err(|_| invalid("The extension manifest could not be saved"))?,
+        )?;
+        for (name, bytes) in &snapshot.files {
+            let path = staged.path().join(name);
+            std::fs::create_dir_all(path.parent().ok_or(Error::AccessDenied)?)?;
+            std::fs::write(path, bytes)?;
+        }
+        // Publish only complete, verified content. Windows rename refuses an existing target.
+        std::fs::rename(staged.path(), &target)?;
+        Ok(ExportedExtension {
+            path: target,
+            files: snapshot.files.len(),
+        })
+    }
     /// Packages the current registered development folder, including disabled entries.
     /// # Errors
     /// Rejects unsafe sources, invalid metadata, source overwrite, non-tmext destinations and failed writes.

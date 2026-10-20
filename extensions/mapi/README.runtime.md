@@ -25,3 +25,7 @@ end-to-end validation is claimed.
 
 Only the two runtime scripts, this README, and the Microsoft MIT notice are
 listed for packaging. Authoring sources, tests and tools are not distributed.
+The runtime scripts are readable JavaScript. Use Settings → Extensions →
+Visualizers and declared inputs → Save to folder to inspect or edit them. Change
+the exported manifest's ID (for example, to `local.mapi`) before using Load
+unpacked to register it alongside the built-in `net.transmog.mapi` extension.

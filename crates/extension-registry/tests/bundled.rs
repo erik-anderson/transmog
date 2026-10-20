@@ -84,6 +84,11 @@ fn bundled_upgrade_refreshes_trusted_metadata_and_archive_while_preserving_disab
         "1.0.0"
     );
     first.set_enabled("example.bundled", false).unwrap();
+    let exported = root.path().join("editable-bundle");
+    first
+        .export_directory("example.bundled", &exported)
+        .unwrap();
+    assert_eq!(std::fs::read(exported.join("main.js")).unwrap(), SOURCE);
     let next = Registry::load_with_bundled(
         root.path().into(),
         None,

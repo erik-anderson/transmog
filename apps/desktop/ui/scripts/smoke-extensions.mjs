@@ -13,7 +13,7 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       const wait=async(condition)=>{const deadline=Date.now()+10000;while(!condition()){if(Date.now()>deadline)throw new Error('Extensions did not settle');await new Promise(resolve=>setTimeout(resolve,25));}};
       await wait(()=>editor.extensionsLoaded&&!editor.extensionsBusy);
       const original=await window.__TAURI_INTERNALS__.invoke('extension_status');
-      const development=original.entries.find(entry=>entry.catalog.manifest.id==='test.development'),bundled=original.entries.find(entry=>entry.catalog.manifest.id==='com.transmog.mapi');
+      const development=original.entries.find(entry=>entry.catalog.manifest.id==='test.development'),bundled=original.entries.find(entry=>entry.catalog.manifest.id==='net.transmog.mapi');
       if(original.warning||!development||!bundled||bundled.catalog.origin!=='bundled')throw new Error('Native extension fixture and bundled MAPI were not loaded');
       const root=editor.shadowRoot??editor,entry=[...root.querySelectorAll('article')].find(entry=>entry.getAttribute('aria-label')==='Development visualizer fixture');
       const bundledRow=[...root.querySelectorAll('article')].find(entry=>entry.getAttribute('aria-label')==='MAPI/HTTP');
@@ -51,7 +51,7 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
     if(!layout.fits||!layout.button)throw new Error('Native Extensions controls are clipped');
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-extensions-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
     const native=visualizerTracePath?await smokeVisualizers(call,evaluate,screenshotPath,visualizerTracePath):null;
-    await evaluate(`(async()=>{const editor=document.querySelector('app-shell').settings.extensionsEditor,root=editor.shadowRoot??editor;root.querySelector('button[aria-label="Uninstall Development visualizer fixture"]').click();const deadline=Date.now()+10000;while(editor.extensionsBusy){if(Date.now()>deadline)throw new Error('Native extension removal timed out');await new Promise(resolve=>setTimeout(resolve,25));}if(editor.extensionsError||editor.extensionsEntries.some(entry=>entry.id==='test.development')||!editor.extensionsEntries.some(entry=>entry.id==='com.transmog.mapi'))throw new Error('Native extension removal failed');})()`);
+    await evaluate(`(async()=>{const editor=document.querySelector('app-shell').settings.extensionsEditor,root=editor.shadowRoot??editor;root.querySelector('button[aria-label="Uninstall Development visualizer fixture"]').click();const deadline=Date.now()+10000;while(editor.extensionsBusy){if(Date.now()>deadline)throw new Error('Native extension removal timed out');await new Promise(resolve=>setTimeout(resolve,25));}if(editor.extensionsError||editor.extensionsEntries.some(entry=>entry.id==='test.development')||!editor.extensionsEntries.some(entry=>entry.id==='net.transmog.mapi'))throw new Error('Native extension removal failed');})()`);
     return {...result,native,removed:true};
   } finally {
     await call('Emulation.clearDeviceMetricsOverride');

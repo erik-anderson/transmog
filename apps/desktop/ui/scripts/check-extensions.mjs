@@ -44,6 +44,14 @@ export async function checkExtensions(page,root) {
   await enabled.focus();await page.keyboard.press('Space');
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   assert.equal(await enabled.isChecked(),false);
+  const exportButton=installed.getByRole('button',{name:'Save '+name+' to folder',exact:true});
+  await exportButton.focus();await page.keyboard.press('Enter');
+  await panel.getByText('Extension saved: C:/extensions/example.protocol.',{exact:false}).waitFor();
+  assert.equal(await enabled.isChecked(),false,'Export changed the disabled preference');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.cancelExtensionPicker=true;});
+  await exportButton.click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText),'');
   assert.equal(await installed.locator('details').evaluate(element=>element.open),true,'Updating enable state collapsed declarations');
   await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=true;});
   await enabled.click();

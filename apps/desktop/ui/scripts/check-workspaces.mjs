@@ -266,6 +266,7 @@ await page.addInitScript((configuration) => {
         case 'enable_extension': {if(state.extensionSaveError)throw new Error('Extension settings could not be saved.');state.extensionStatus.entries.find(entry=>entry.catalog.manifest.id===args.id).catalog.enabled=args.enabled;return structuredClone(state.extensionStatus);}
         case 'extension_hot_reload': {state.extensionStatus.entries.find(entry=>entry.catalog.manifest.id===args.id).hotReload=args.enabled;return structuredClone(state.extensionStatus);}
         case 'package_extension': {if(state.cancelExtensionPicker){state.cancelExtensionPicker=false;return null;}if(state.extensionPackageError)throw new Error('A declared source file is missing.');return {path:'C:/extensions/exported.tmext',digest:'b'.repeat(64),bytes:1536};}
+        case 'export_extension': {if(state.cancelExtensionPicker){state.cancelExtensionPicker=false;return null;}if(state.extensionExportError)throw new Error('This folder already exists. Choose another destination.');return {path:'C:/extensions/'+args.id,files:2};}
         case 'uninstall_extension': {state.extensionStatus.entries=state.extensionStatus.entries.filter(entry=>entry.catalog.manifest.id!==args.id);if(state.extensionCleanupError)throw new Error('The extension was removed but its old package file could not be deleted.');return structuredClone(state.extensionStatus);}
         case 'cancel_format_conversion': return;
         case 'convert_format': {

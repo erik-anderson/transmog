@@ -30,7 +30,7 @@ mod tests {
         );
         let status = registry.status();
         assert_eq!(status.entries.len(), 1);
-        assert_eq!(status.entries[0].catalog.manifest.id, "com.transmog.mapi");
+        assert_eq!(status.entries[0].catalog.manifest.id, "net.transmog.mapi");
         assert_eq!(registry.enabled_visualizers().len(), 3);
         assert_eq!(registry.classification_choices().len(), 1);
         assert!(!root.path().join("extensions").exists());
@@ -40,7 +40,7 @@ mod tests {
     fn bundled_mapi_is_an_ordinary_minimal_zip64_package() {
         let root = tempfile::tempdir().unwrap();
         let registry = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
-        let snapshot = registry.snapshot("com.transmog.mapi").unwrap();
+        let snapshot = registry.snapshot("net.transmog.mapi").unwrap();
         assert_eq!(snapshot.files.len(), 4);
         assert!(snapshot.files.keys().all(|name| matches!(
             name.as_str(),
@@ -55,7 +55,7 @@ mod tests {
                 .any(|bytes| bytes == [0x50, 0x4b, 0x06, 0x06]),
             "ZIP64 end record missing"
         );
-        registry.set_enabled("com.transmog.mapi", false).unwrap();
+        registry.set_enabled("net.transmog.mapi", false).unwrap();
         let reopened = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
         assert!(reopened.enabled_visualizers().is_empty());
         assert!(!reopened.status().entries[0].catalog.enabled);
