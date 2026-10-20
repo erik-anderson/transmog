@@ -22,6 +22,14 @@ pub enum ParseStatus {
     Limited,
 }
 
+/// Optional, irreversible update policy for this visualization instance.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum UpdatePolicy {
+    /// No future traffic can improve this view. Stop its live subscription.
+    Final,
+}
+
 /// Host-owned primary presentation. No templates or executable UI are accepted.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -171,6 +179,9 @@ pub struct VisualizationDocument {
     pub title: String,
     /// Parse status distinct from capture status.
     pub status: ParseStatus,
+    /// Omission preserves the current policy; final lasts until a new instance.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updates: Option<UpdatePolicy>,
     /// Host renderer selection.
     pub presentation: Presentation,
     /// Plain short summary.

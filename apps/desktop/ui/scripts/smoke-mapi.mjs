@@ -20,9 +20,11 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     function fields(document){const walk=node=>[node,...(node.children??[]).flatMap(walk)];return document.roots.flatMap(walk);}
     async function expand(viewer){for(let count=0;count<256;count++){const next=fields(viewer.view.document).find(node=>node.childrenToken);if(!next)return;await viewer.toggleNode(next.id);}throw new Error('MAPI expansion was not bounded');}
     async function show(name,direction='response',automatic=false){
-      const expected=specification.cases.find(item=>item.name===name),row=traffic.sessions.find(row=>row.requestBytes===expected.requestBytes&&row.responseBytes===expected.responseBytes&&row.host===expected.host);
+      const expected=specification.cases.find(item=>item.name===name);
+      const rows=(await invoke('query_sessions',{query:{search:'/mapi/emsmdb',limit:100,offset:0}})).sessions;
+      const row=rows.find(row=>row.requestBytes===expected.requestBytes&&row.responseBytes===expected.responseBytes&&row.host===expected.host);
       if(!row)throw new Error('Synthetic MAPI exchange missing: '+name+' '+traffic.importStatus);
-      await traffic.selectTraffic(row,new MouseEvent('click'));
+      await traffic.revealSession(row.id);
       const inspector=direction==='request'?request:response;
       await wait(()=>inspector.detail?.id===row.id&&inspector.bodyChoices.some(choice=>choice.extensionId==='net.transmog.mapi'));
       inspector.showMode('body');choose(inspector,'Body viewer',automatic?'auto':'extension:net.transmog.mapi:body-'+direction);
@@ -31,6 +33,8 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
       if(viewer.view.instance.development||viewer.view.instance.extensionId!=='net.transmog.mapi')throw new Error('MAPI did not use its bundled package');
       await expand(viewer);
       if(viewer.view.document.status!=='complete')throw new Error('Synthetic MAPI did not decode completely: '+name+' '+JSON.stringify(viewer.view.document.diagnostics));
+      if(viewer.view.document.updates!=='final'||viewer.view.live.available||viewer.view.live.enabled)throw new Error('Complete MAPI snapshot did not finalize updates');
+      if((viewer.shadowRoot??viewer).querySelector('.visualizer-live'))throw new Error('An immutable MAPI view offered Live updates');
       return {viewer,row};
     }
     let {viewer}=await show('properties','response',true);
@@ -41,6 +45,11 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     if(!viewer.view.document.sources.some(source=>source.exactMapping===false))throw new Error('Transformed RPC lacks decoded evidence');
     ({viewer}=await show('http-gzip'));
     if(!viewer.view.sources.some(source=>source.httpDecoded?.codings.includes('gzip')))throw new Error('HTTP gzip lacks decoded evidence');
+    ({viewer}=await show('budget-14kb'));
+    if(!fields(viewer.view.document).some(node=>node.value?.value==='A'.repeat(7600)))throw new Error('14.9 KiB MAPI Execute lost its selected value');
+    ({viewer}=await show('budget-compressed'));
+    if(fields(viewer.view.document).filter(node=>node.value?.value==='A'.repeat(15000)).length!==4)throw new Error('Compressed MAPI work regression lost decoded values');
+    if(!viewer.view.document.diagnostics.some(item=>item.code==='mapi-parser-budget'&&item.message.includes('Selected response:')))throw new Error('MAPI parser budget context is unavailable');
     ({viewer}=await show('rows'));
     values=fields(viewer.view.document).map(node=>node.value?.value);
     if(!values.includes('9007199254740993')||!values.includes('Synthetic café Ω'))throw new Error('MAPI table context crossed origin/capture scope or lost its columns');
@@ -58,6 +67,18 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     if(tree!==tree.getRootNode().activeElement||selectedBounds.top<treeBounds.top-1||selectedBounds.bottom>treeBounds.bottom+1)throw new Error('MAPI table selection did not reveal and focus its structure row');
     viewer.showSpan(rowNode.spans[0]);
     await wait(()=>!!(viewer.shadowRoot??viewer).querySelector('hex-viewer')?.hasSelection);
+    const otherRange=fields(viewer.view.document).find(node=>node.id!==rowNode.id&&node.spans?.[0]?.length!=='0'&&node.spans?.length);
+    viewer.selectNode(otherRange.id);
+    await wait(()=>detailRoot.querySelector('hex-viewer')?.rangeStart===otherRange.spans[0].offset);
+    if(viewer.visualizerMode!=='hex')throw new Error('Selecting a MAPI field closed source Hex');
+    viewer.selectNode(rowNode.id);
+    await wait(()=>detailRoot.querySelector('hex-viewer')?.rangeStart===rowNode.spans[0].offset);
+    const divider=detailRoot.querySelector('pane-divider');
+    const separator=(divider.shadowRoot??divider).querySelector('[role="separator"]');
+    const nextSplit=String(Math.min(85,Number(viewer.visualizerSplit)+10));
+    separator.focus();separator.dispatchEvent(new KeyboardEvent('keydown',{key:viewer.visualizerOrientation==='vertical'?'ArrowRight':'ArrowDown',shiftKey:true,bubbles:true,composed:true,cancelable:true}));
+    await wait(()=>viewer.visualizerSplit===nextSplit);
+    if(separator.getAttribute('aria-valuenow')!==nextSplit)throw new Error('MAPI divider resize did not update its position');
     detailRoot.querySelector('button[aria-label="Close structure details"]').click();
     await wait(()=>detailRoot.querySelector('.visualizer-node').hidden);
     const focusedTree=detailRoot.querySelector('.visualizer-tree');
@@ -92,7 +113,7 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     const columns=await invoke('classify_traffic_rows',{ids:[traffic.activeId??response.detail.id],columns:['net.transmog.mapi:protocol']});
     if(!columns.some(row=>row.values['net.transmog.mapi:protocol']?.[0]==='MAPI/HTTP'))throw new Error('Bundled MAPI static classification missing');
     globalThis.__mapiProbe.concurrent=true;
-    return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
+    return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,budget14kb:true,budgetCompressed:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
   })()`);
   if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-mapi-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
   await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});

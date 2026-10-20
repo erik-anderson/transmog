@@ -366,7 +366,14 @@ function render(): VisualizationStep {
       const source = record.sides[side];
       if (source?.bytes) origins.push([source.reference.sourceId, source.bytes.length]);
     }
-  current.presentation = present(decoded, origins, title(), diagnostics(), current.presentation);
+  current.presentation = present(
+    decoded,
+    origins,
+    title(),
+    diagnostics(),
+    current.presentation,
+    body.reference.availability === "complete",
+  );
   return current.presentation.step;
 }
 

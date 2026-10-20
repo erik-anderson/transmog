@@ -168,6 +168,7 @@ impl Source {
 }
 pub(super) struct Resources {
     pub(super) live_available: bool,
+    pub(super) finalized: AtomicBool,
     pub(super) live: Mutex<Option<Arc<super::live::Feed>>>,
     pub(super) stopped: AtomicBool,
     pub(super) sources: Mutex<BTreeMap<String, Arc<Source>>>,
@@ -200,13 +201,25 @@ impl InstanceResources for Resources {
     }
 }
 impl Resources {
+    pub(super) fn finalize_updates(&self) {
+        self.finalized.store(true, Ordering::Release);
+        if let Some(feed) = self
+            .live
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
+        {
+            feed.stop();
+        }
+    }
+
     pub(super) fn live_status(&self) -> super::VisualizerLiveStatus {
         let live = self
             .live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         super::VisualizerLiveStatus {
-            available: self.live_available,
+            available: self.live_available && !self.finalized.load(Ordering::Acquire),
             enabled: live.as_ref().is_some_and(|feed| feed.enabled()),
             missed_hints: live.as_ref().map_or(0, |feed| feed.missed()).to_string(),
         }

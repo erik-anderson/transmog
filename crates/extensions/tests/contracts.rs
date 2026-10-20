@@ -37,6 +37,29 @@ fn document() -> VisualizationDocument {
 }
 
 #[test]
+fn final_updates_are_optional_and_independent_of_parse_status() {
+    let original = document();
+    assert!(original.updates.is_none());
+    assert!(
+        serde_json::to_value(&original)
+            .unwrap()
+            .get("updates")
+            .is_none()
+    );
+    let mut final_view = original;
+    final_view.status = ParseStatus::Partial;
+    final_view.updates = Some(UpdatePolicy::Final);
+    let mut encoded = serde_json::to_value(&final_view).unwrap();
+    assert_eq!(encoded["updates"], "final");
+    assert_eq!(
+        serde_json::from_value::<VisualizationDocument>(encoded.clone()).unwrap(),
+        final_view
+    );
+    encoded["updates"] = serde_json::json!("restart");
+    assert!(serde_json::from_value::<VisualizationDocument>(encoded).is_err());
+}
+
+#[test]
 fn automatic_visualizers_opt_in_without_changing_existing_package_revisions() {
     let original = manifest();
     assert!(!original.visualizers[0].automatic);

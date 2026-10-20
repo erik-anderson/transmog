@@ -41,6 +41,7 @@ fn feed(app: &Application, anchor: &SessionSnapshot, declaration: &Visualizer) -
 fn resources(feed: &Arc<Feed>) -> Resources {
     Resources {
         live_available: true,
+        finalized: AtomicBool::new(false),
         live: Mutex::new(Some(Arc::clone(feed))),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(BTreeMap::new()),
@@ -166,6 +167,39 @@ async fn native_admission_filters_before_projection_and_unload_clears_the_feed()
     assert!(resources.sources.lock().unwrap().is_empty());
     assert!(hub.state.lock().unwrap().index.is_empty());
     assert!(hub.task.lock().unwrap().is_none());
+}
+
+#[tokio::test]
+async fn finalized_view_releases_admission_and_preserves_retained_source_access() {
+    let app = Application::new(AppConfig::default()).unwrap();
+    let (snapshot, declaration) = live_fixture(&app);
+    let anchor = publish(&app, 700, &snapshot);
+    let feed = feed(&app, &anchor, &declaration);
+    let hub = Hub::new(app.service.catalog().clone(), app.visualizers.owner.clone());
+    hub.subscribe("finalized", &feed).unwrap();
+    publish(&app, 701, &snapshot);
+    settled(&feed, ExchangeId(701)).await;
+    let resources = resources(&feed);
+    project_batch(app.service.catalog(), &feed, &resources, "finalized").unwrap();
+    let sources = resources.sources.lock().unwrap().len();
+    assert!(sources > 0);
+    publish(&app, 702, &snapshot);
+    settled(&feed, ExchangeId(702)).await;
+
+    resources.finalize_updates();
+    resources.finalize_updates();
+    let status = resources.live_status();
+    assert!(!status.available && !status.enabled);
+    assert!(feed.take().is_empty());
+    assert!(!feed.enabled());
+    assert!(hub.state.lock().unwrap().index.is_empty());
+    assert!(hub.task.lock().unwrap().is_none());
+    assert!(!resources.stopped.load(Ordering::Acquire));
+    assert_eq!(resources.sources.lock().unwrap().len(), sources);
+    assert!(resources.info().is_ok());
+    publish(&app, 703, &snapshot);
+    assert!(feed.take().is_empty());
+    assert!(!resources.live_status().available);
 }
 
 #[tokio::test]

@@ -19,7 +19,8 @@ declare module "transmog:extensions/v1" {
   export interface Node { id: string; name: string; value?: Value; format?: Format; spans?: Span[]; children?: Node[]; childrenToken?: string; presentation?: Presentation; }
   export interface DerivedSource { id: string; name: string; bytesBase64: string; parents: Span[]; transform: string; exactMapping: boolean; }
   export interface Diagnostic { code: string; message: string; nodeId?: string; }
-  export interface VisualizationDocument { title: string; status: ParseStatus; presentation: Presentation; summary?: string; roots: Node[]; sources?: DerivedSource[]; diagnostics?: Diagnostic[]; }
+  /** `updates: "final"` permanently stops this instance's feed. Omission preserves its policy. */
+  export interface VisualizationDocument { title: string; status: ParseStatus; updates?: "final"; presentation: Presentation; summary?: string; roots: Node[]; sources?: DerivedSource[]; diagnostics?: Diagnostic[]; }
   export interface Header { sourceId?: string; index: number; name: string; value?: readonly number[] | null; redacted: boolean; originalBytes?: string | null; }
   export interface BodyReference { sourceId: string; length: string; availability: string; }
   export interface DecodedBody {body: BodyReference; parent: Span; codings: readonly string[];}

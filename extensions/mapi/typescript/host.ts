@@ -84,6 +84,7 @@ export type ParseStatus = "complete" | "partial" | "malformed" | "limited" | "un
 export interface VisualizationDocument {
   readonly title: string;
   readonly status: ParseStatus;
+  readonly updates?: "final";
   readonly presentation: "tree";
   readonly summary?: string;
   readonly roots: TreeNode[];

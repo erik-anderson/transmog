@@ -205,6 +205,7 @@ await page.addInitScript((configuration) => {
           const supported=state.visualizerLiveSupported??false,available=supported&&state.visualizerLiveAvailable!==false;
           if(request.live&&!available)throw new Error('Live updates unavailable');
           const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),development:!!state.visualizerDevelopment,declaration:{liveUpdates:supported?{events:['response'],bodyProgress:false}:null}},document:structuredClone(state.visualizerDocuments?.[request.visualizerId]??state.visualizerDocument),sources:structuredClone(state.visualizerSources??[]),live:{available,enabled:!!request.live,missedHints:'0'},reloadEpoch:state.reloadEpochs?.[request.extensionId]??0,sourceEpoch:state.sourceEpoch??0};
+          if(view.document.updates==='final')view.live={available:false,enabled:false,missedHints:'0'};
           state.visualizerActive??={};state.visualizerActive[handle.slot]=view;return structuredClone(view);
         }
         case 'deactivate_visualizer': {
@@ -235,7 +236,9 @@ await page.addInitScript((configuration) => {
         case 'expand_visualizer': {
           const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
           if(state.holdVisualizerExpansion){state.holdVisualizerExpansion=false;await new Promise(resolve=>state.finishVisualizerExpansion=resolve);}
-          view.document=structuredClone(state.expandedVisualizerDocument);return structuredClone(view);
+          view.document=structuredClone(state.expandedVisualizerDocument);
+          if(view.document.updates==='final')view.live={available:false,enabled:false,missedHints:'0'};
+          return structuredClone(view);
         }
         case 'stop_visualizer_live': {
           const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
@@ -251,6 +254,7 @@ await page.addInitScript((configuration) => {
           view.live.missedHints=state.liveMissedHints??'0';
           if(!state.nextLiveDocument)return {view:null,status:structuredClone(view.live),busy:false};
           view.document=structuredClone(state.nextLiveDocument);delete state.nextLiveDocument;
+          if(view.document.updates==='final')view.live={available:false,enabled:false,missedHints:'0'};
           if(view.live.missedHints!=='0'&&view.document.status==='complete')view.document.status='partial';
           return {view:structuredClone(view),status:structuredClone(view.live),busy:false};
         }

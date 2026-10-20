@@ -61,6 +61,7 @@ export function present(
   title: string,
   diagnostics: readonly Diagnostic[],
   previous?: Presentation,
+  finalInput = false,
 ): Presentation {
   const revision = ++epoch;
   const expanded = new Set(previous?.expanded ?? []);
@@ -257,7 +258,15 @@ export function present(
           : "complete";
     const step: DocumentStep = {
       kind: "document",
-      document: { title, status, presentation: "tree", roots, sources, diagnostics: issues },
+      document: {
+        title,
+        status,
+        ...(finalInput && status === "complete" ? { updates: "final" as const } : {}),
+        presentation: "tree",
+        roots,
+        sources,
+        diagnostics: issues,
+      },
     };
     if (serializedSize(step) > 7 * 1024 * 1024) {
       if (nodeBudget > 128 || textBudget > 16_384) {

@@ -12,11 +12,14 @@ export function resume(token,pages) {
   if(token!=='body-page')throw new Error('Unknown continuation');
   const page=pages[0],span={sourceId:page.sourceId,offset:page.offset,length:String(page.bytes.length)};
   parsed=document([{id:'body-text',name:'Body text',value:{kind:'string',value:String.fromCharCode(...page.bytes)},format:{charset:'us-ascii',protocol:'Synthetic protocol'},spans:[span],children:[],childrenToken:'fields'}]);
+  if(parsed.document.roots[0].value.value==='Native final response')parsed.document.updates='final';
   return parsed;
 }
 export function expand(token) {
   if(token!=='fields'||!parsed)throw new Error('Unknown expansion');
   const node=parsed.document.roots[0];node.childrenToken=null;
+  // Omission in later documents must preserve the host's terminal update policy.
+  delete parsed.document.updates;
   node.children=[{id:'wide-integer',name:'Exact integer',value:{kind:'integer',value:'9007199254740993'},format:{byteOrder:'little-endian',radix:16},spans:[],children:[]}];
   return parsed;
 }

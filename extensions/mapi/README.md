@@ -88,6 +88,11 @@ reports per-phase work categories, input and decoded byte counts, limits and the
 largest operation. Copy diagnostics exports those summaries without captured
 field values, making budget failures diagnosable without sharing a trace.
 
+Header views declare `updates: "final"`. Body views also finalize when their
+selected body is complete and parsing succeeds. Incomplete bodies or missing
+protocol context can retain the optional live feed. Imported captures never
+offer Live updates, regardless of the parse result.
+
 ## Qualification
 
 The unchanged [Microsoft reference](../../third_party/mapi-inspector/README.md)

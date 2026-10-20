@@ -583,6 +583,7 @@ impl Application {
         )?;
         let resources = Arc::new(Resources {
             live_available,
+            finalized: AtomicBool::new(false),
             live: Mutex::new(feed),
             stopped: AtomicBool::new(false),
             sources: Mutex::new(
@@ -716,7 +717,12 @@ impl Application {
                     return Err(unavailable());
                 }
                 match step {
-                    VisualizationStep::Document { document } => return Ok(document),
+                    VisualizationStep::Document { document } => {
+                        if document.updates == Some(transmog_extensions::UpdatePolicy::Final) {
+                            resources.finalize_updates();
+                        }
+                        return Ok(document);
+                    }
                     VisualizationStep::NeedInput { reads, token } => {
                         let resources = Arc::clone(&resources);
                         let pages = tokio::task::spawn_blocking(move || {

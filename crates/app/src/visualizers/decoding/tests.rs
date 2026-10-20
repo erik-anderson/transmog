@@ -105,6 +105,7 @@ fn fixture(bytes: Vec<u8>, codings: &[&str]) -> Fixture {
         .clone();
     let resources = Arc::new(Resources {
         live_available: false,
+        finalized: AtomicBool::new(false),
         live: Mutex::new(None),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(

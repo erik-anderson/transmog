@@ -13,9 +13,14 @@ owns the UI and supplies only declared headers, explicitly requested body pages,
 and bounded related traffic from the same capture, conversation and origin.
 
 Live updates are optional and begin only when enabled in an active viewer.
+Completed interpretations declare that no further data is needed; Transmog then
+stops that view's feed and hides Live updates. Imported captures also omit it.
 Leaving the visualizer releases its worker, subscriptions and retained data.
 Context and body limits can make a parse partial or limited; original retained
 bytes remain available in Hex. Missing traffic cannot be reconstructed.
+Open ⓘ for parser budget summaries and Copy diagnostics when investigating a
+limit. Work is bounded separately for the selected message, paired request and
+earlier context, so replaying context cannot consume the selected message's work.
 
 Synthetic qualification uses the pinned Microsoft Office Inspectors for Fiddler
 implementation and protocol specifications as references. Intentional differences

@@ -455,6 +455,7 @@ fn body_sources_are_lazy_and_header_only_inputs_never_open_or_read_bodies() {
     let body = input.response.unwrap().body.unwrap();
     let resources = Resources {
         live_available: false,
+        finalized: AtomicBool::new(false),
         live: Mutex::new(None),
         info: Mutex::new(Vec::new()),
         context: Mutex::new(None),
@@ -499,6 +500,7 @@ fn required_missing_counterpart_and_ungranted_source_ranges_fail_closed() {
     );
     let resources = Resources {
         live_available: false,
+        finalized: AtomicBool::new(false),
         live: Mutex::new(None),
         info: Mutex::new(Vec::new()),
         context: Mutex::new(None),

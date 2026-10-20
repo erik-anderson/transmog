@@ -11,6 +11,7 @@ export function visualize(input: VisualizationInput): DocumentStep {
     kind: "document",
     document: {
       title: "MAPI/HTTP headers",
+      updates: "final",
       status: limited ? "limited" : operation ? "complete" : "partial",
       presentation: "tree",
       summary: limited

@@ -475,6 +475,15 @@ sandbox, deadlines and aggregate budgets. `stop_visualizer_live` removes admissi
 while preserving the active worker for the visible snapshot and expansions;
 an operation already started may finish.
 
+A document can return `updates: "final"` when no future traffic can improve that
+instance's view. This is independent of parse status and works from `visualize`,
+`onTraffic`, or deferred expansion. After validating the result, the host removes
+the feed's native admission, discards queued hints and stops polling. It keeps
+the worker, source reads and expansion capabilities for inspecting the snapshot.
+Omitting `updates` preserves the instance's policy; later documents cannot undo
+`final`. A new activation or developer reload gets a fresh policy. Extensions
+that omit the field keep the existing optional live behavior.
+
 ## Desktop visualizers
 
 Matching contributions appear in the existing Body viewer selector and in a
@@ -518,8 +527,9 @@ Losing focus while visible does not suspend it. Extension-management notificatio
 check exact activity so an unrelated installation change does not restart a view.
 
 Contributions that declare live updates show a Live updates checkbox beside the
-result title. It starts off on every activation. Imported traffic or a missing
-retained conversation leaves it unavailable. Turning it on opens a fresh worker
+result title only when updates are available and the view has not declared itself
+final. It starts off on every activation. Imported traffic, a missing retained
+conversation and finalized views omit the control. Turning it on opens a fresh worker
 from the selected exchange; turning it off stops admission and polling while
 keeping the last visible result and its expansion capabilities. Late stop replies
 cannot change a newer activation. Polls are serialized with expansion and stopping.

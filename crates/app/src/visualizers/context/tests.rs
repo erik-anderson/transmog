@@ -68,6 +68,7 @@ pub(in crate::visualizers) fn publish(
 fn resources(broker: Broker) -> Resources {
     Resources {
         live_available: false,
+        finalized: AtomicBool::new(false),
         live: Mutex::new(None),
         stopped: AtomicBool::new(false),
         sources: Mutex::new(BTreeMap::new()),

@@ -5,13 +5,12 @@
     <div class="visualizer-feedback" ?hidden="{{!visualizerError}}"><p role="status">{{visualizerError}}</p><button type="button" class="secondary compact-button" @click="{retry()}"><if condition="visualizerPaused">Open visualizer</if><if condition="!visualizerPaused">Retry visualizer</if></button></div>
     <p class="visualizer-feedback" ?hidden="{{!visualizerFrozen}}">Showing the last result.</p>
     <if condition="visualizerTitle">
-      <header class="visualizer-heading"><strong>{{visualizerTitle}}</strong><if condition="visualizerLiveSupported"><label class="visualizer-live"><input type="checkbox" checked="{{visualizerLive}}" ?disabled="{{visualizerBusy || visualizerFrozen || !visualizerLiveAvailable}}" @change="{setLive(e)}">Live updates</label></if><span class="status-badge">{{visualizerStatus}}</span><button w-ref="{aboutButton}" type="button" class="secondary visualizer-about-button" aria-label="About this visualizer" title="About this visualizer" aria-haspopup="dialog" popovertarget="{{visualizerAboutId}}"><span aria-hidden="true">ⓘ</span></button></header>
+      <header class="visualizer-heading"><strong>{{visualizerTitle}}</strong><if condition="visualizerLiveSupported"><label class="visualizer-live"><input w-ref="{liveControl}" type="checkbox" checked="{{visualizerLive}}" ?disabled="{{visualizerBusy || visualizerFrozen || !visualizerLiveAvailable}}" @change="{setLive(e)}">Live updates</label></if><span class="status-badge">{{visualizerStatus}}</span><button w-ref="{aboutButton}" type="button" class="secondary visualizer-about-button" aria-label="About this visualizer" title="About this visualizer" aria-haspopup="dialog" popovertarget="{{visualizerAboutId}}"><span aria-hidden="true">ⓘ</span></button></header>
       <section w-ref="{aboutPanel}" id="{{visualizerAboutId}}" class="visualizer-about" popover="auto" role="dialog" aria-modal="false" aria-label="About this visualizer" @keydown="{aboutKey(e)}">
         <header><strong>{{choice.name}}</strong><button type="button" class="secondary visualizer-close compact-button" aria-label="Close visualizer information" autofocus @click="{closeAbout()}">×</button></header>
         <p class="visualizer-extension-id"><code>{{choice.extensionId}}</code></p>
         <p ?hidden="{{!visualizerSummary}}">{{visualizerSummary}}</p>
         <p class="visualizer-context">Read only · No network access</p>
-        <p ?hidden="{{!visualizerLiveSupported || visualizerLiveAvailable}}">Live updates are unavailable for this exchange.</p>
         <for each="item in visualizerDiagnostics"><p><strong>{{item.code}}</strong> {{item.message}}</p></for>
         <if condition="visualizerDiagnostics.length"><button type="button" class="secondary compact-button visualizer-copy-diagnostics" @click="{copyDiagnostics()}">Copy diagnostics</button><p role="status" ?hidden="{{!visualizerDiagnosticStatus}}">{{visualizerDiagnosticStatus}}</p></if>
       </section>

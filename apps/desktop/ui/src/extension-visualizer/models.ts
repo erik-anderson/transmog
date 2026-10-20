@@ -11,7 +11,7 @@ export interface VisualizerNode {id:string;name:string;value?:Value|null;format?
 export interface DerivedSource {id:string;name:string;bytesBase64:string;parents:Span[];transform:string;exactMapping:boolean;}
 export interface SourceInfo {id:string;name:string;length:string;availability:string;sessionId:string;boundary:string;httpDecoded?:{parent:Span;codings:string[]};}
 export const sourceDescription=(source:SourceInfo):string=>`${source.length} bytes · ${source.availability}`+(source.httpDecoded?` · HTTP content decoding (${source.httpDecoded.codings.join(', ')}) · enclosing parent regions only`:'');
-export interface VisualizerDocument {title:string;status:string;presentation:Presentation;summary:string|null;roots:VisualizerNode[];sources:DerivedSource[];diagnostics:Array<{code:string;message:string;nodeId:string|null}>;}
+export interface VisualizerDocument {title:string;status:string;updates?:'final';presentation:Presentation;summary:string|null;roots:VisualizerNode[];sources:DerivedSource[];diagnostics:Array<{code:string;message:string;nodeId:string|null}>;}
 export interface LiveStatus {available:boolean;enabled:boolean;missedHints:string;}
 export interface LiveUpdate {view:VisualizerView|null;status:LiveStatus;busy:boolean;}
 export interface VisualizerView {handle:VisualizerHandle;instance:{id:string;extensionId:string;visualizerId:string;digest:string;development?:boolean;declaration:ExtensionContribution};document:VisualizerDocument;sources:SourceInfo[];live:LiveStatus;}

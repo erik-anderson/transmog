@@ -52,6 +52,7 @@ export class ExtensionVisualizer extends WebUIElement {
   detailsViewport!:HTMLElement;
   aboutButton!:HTMLButtonElement;
   aboutPanel!:HTMLElement;
+  liveControl?: HTMLInputElement;
   private view:VisualizerView|null=null;
   private root:VisualizerNode|null=null;
   private nodes=new Map<string,VisualizerNode>();
@@ -205,7 +206,7 @@ export class ExtensionVisualizer extends WebUIElement {
       const stoppedLive=this.liveWanted&&!view.live.enabled;
       if(stoppedLive)this.liveWanted=false;
       this.accept(view);
-      if(stoppedLive)this.visualizerReloadNotice='Reloaded. Live updates are off because the declaration changed.';
+      if(stoppedLive)this.visualizerReloadNotice='Reloaded. Live updates are off for this view.';
     }catch(error:unknown){if(revision===this.revision)this.visualizerReloadNotice='Reload failed: '+describeError(error)+' Showing the previous result. Retry in Settings → Extensions.';}
     finally {if(revision===this.revision){this.visualizerBusy=false;this.visualizerReloading=false;this.scheduleLive(revision);if(this.checkActivityAfterReload){this.checkActivityAfterReload=false;this.extensionsChanged(this.listenerRevision);}}}
   }
@@ -213,6 +214,10 @@ export class ExtensionVisualizer extends WebUIElement {
   private stopPolling():void {if(this.liveTimer!==null)clearTimeout(this.liveTimer);this.liveTimer=null;}
   private liveStatus(status:LiveStatus):void {
     if(this.view)this.view.live=status;
+    const supported=!!this.view?.instance.declaration.liveUpdates&&status.available&&this.view.document.updates!=='final';
+    if(!supported&&this.liveControl?.matches(':focus'))this.treeViewport.focus({preventScroll:true});
+    this.visualizerLiveSupported=supported;
+    if(!this.visualizerLiveSupported){this.liveWanted=false;this.stopPolling();}
     this.visualizerLiveAvailable=status.available;this.visualizerLive=status.enabled&&this.liveWanted;
     this.visualizerLiveWarning=status.missedHints!=='0'?'Some updates may be missing. Reopen the visualizer to rebuild context.':'';
   }
@@ -274,7 +279,7 @@ export class ExtensionVisualizer extends WebUIElement {
       this.selected=DOCUMENT_NODE;
       this.tableOffset=0;
     }
-    this.visualizerFrozen=false;this.visualizerLiveSupported=!!view.instance.declaration.liveUpdates;this.liveStatus(view.live);
+    this.visualizerFrozen=false;this.liveStatus(view.live);
     this.visualizerTitle=view.document.title;this.visualizerStatus=view.document.status;this.visualizerSummary=view.document.summary??'';this.visualizerDiagnostics=view.document.diagnostics;
     this.visualizerDiagnosticStatus='';
     this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:sourceDescription(source)})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
@@ -327,13 +332,13 @@ export class ExtensionVisualizer extends WebUIElement {
     this.aboutButton.focus({preventScroll:true});
   }
   async copyDiagnostics(): Promise<void> {
-    const revision = this.revision;
+    const revision = this.revision, view = this.view;
     const text = this.visualizerDiagnostics.map(item => `${item.code}: ${item.message}`).join('\n\n');
     try {
       await navigator.clipboard.writeText(text);
-      if (revision === this.revision && this.visible) this.visualizerDiagnosticStatus = 'Diagnostics copied.';
+      if (revision === this.revision && view === this.view && this.visible) this.visualizerDiagnosticStatus = 'Diagnostics copied.';
     } catch {
-      if (revision === this.revision && this.visible) this.visualizerDiagnosticStatus = 'Select the diagnostic text and use Copy.';
+      if (revision === this.revision && view === this.view && this.visible) this.visualizerDiagnosticStatus = 'Select the diagnostic text and use Copy.';
     }
   }
   aboutKey(event:KeyboardEvent):void {
