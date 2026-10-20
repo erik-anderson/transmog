@@ -33,7 +33,7 @@ def cases(case, execute_request, execute_response):
         ("RopReadStream",u16(0xbabe)+u32(65536),u16(len(stream))+stream),
         ("RopWriteStream",u16(len(stream))+stream,u16(len(stream))),
         ("RopSeekStream",b"\2"+u64(9007199254740993),u64(9007199254741017)),
-        ("RopGetPropertiesAll",u16(4096)+u16(1),u16(3)+tagged),
+        ("RopGetPropertiesAll",u16(4096)+u16(1),u16(4)+tagged+u32(0x30070040)+u64(132537600000000000)),
         ("RopGetPropertiesSpecific",u16(4096)+u16(1)+u16(3)+tags,b"\0"+values),
         ("RopSetProperties",u16(2+len(tagged))+u16(3)+tagged,u16(0)),
         ("RopSynchronizationGetTransferState",b"\0",b""),

@@ -15,3 +15,6 @@ third_party/mapi-inspector/LICENSE -text -whitespace
 third_party/transpose/LICENSE -text -whitespace
 third_party/transpose/licenses/** -text -whitespace
 extensions/mapi/generated/** -text -whitespace
+extensions/mapi/src/** -text
+extensions/mapi/LICENSES/** -text -whitespace
+extensions/mapi/README.runtime.md -text

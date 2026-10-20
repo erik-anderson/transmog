@@ -117576,7 +117576,7 @@
         "direction": "request",
         "requestType": "Execute",
         "request": "AAAAAEMAAAAAAAQAOwA7ADcA/gcAAQAAAAAAAAAAIAAvbz1FeGFtcGxlL291PVN5bnRoZXRpYy9jbj1Vc2VyAAgHAAAQAQB4VjQSAAABAAAAAAA=",
-        "response": "RE9ORQ0KDQoAAAAAAAAAAAAAAABQAAAAAAAEAEgASABEAAgAAAAAAAMAHwA3AFMAeQBuAHQAaABlAHQAaQBjACAAYwBhAGYA6QAgAKkDAAADAAcOQDAgEBQACA4BAAAAAAAgAHhWNBIAAAAA"
+        "response": "RE9ORQ0KDQoAAAAAAAAAAAAAAABcAAAAAAAEAFQAVABQAAgAAAAAAAQAHwA3AFMAeQBuAHQAaABlAHQAaQBjACAAYwBhAGYA6QAgAKkDAAADAAcOQDAgEBQACA4BAAAAAAAgAEAABzAAAGK3Pt7WAXhWNBIAAAAA"
       }
     },
     "tree": {
@@ -117929,7 +117929,7 @@
         "direction": "response",
         "requestType": "Execute",
         "request": "AAAAAEMAAAAAAAQAOwA7ADcA/gcAAQAAAAAAAAAAIAAvbz1FeGFtcGxlL291PVN5bnRoZXRpYy9jbj1Vc2VyAAgHAAAQAQB4VjQSAAABAAAAAAA=",
-        "response": "RE9ORQ0KDQoAAAAAAAAAAAAAAABQAAAAAAAEAEgASABEAAgAAAAAAAMAHwA3AFMAeQBuAHQAaABlAHQAaQBjACAAYwBhAGYA6QAgAKkDAAADAAcOQDAgEBQACA4BAAAAAAAgAHhWNBIAAAAA"
+        "response": "RE9ORQ0KDQoAAAAAAAAAAAAAAABcAAAAAAAEAFQAVABQAAgAAAAAAAQAHwA3AFMAeQBuAHQAaABlAHQAaQBjACAAYwBhAGYA6QAgAKkDAAADAAcOQDAgEBQACA4BAAAAAAAgAEAABzAAAGK3Pt7WAXhWNBIAAAAA"
       }
     },
     "tree": {
@@ -117937,7 +117937,7 @@
       "text": "ExecuteResponseBody",
       "parsed": true,
       "offset": "0",
-      "size": "108",
+      "size": "120",
       "valueType": null,
       "raw": null,
       "children": [
@@ -118015,12 +118015,12 @@
         },
         {
           "type": "BlockParser.BlockT`1",
-          "text": "RopBufferSize: 80 = 0x50",
+          "text": "RopBufferSize: 92 = 0x5C",
           "parsed": true,
           "offset": "20",
           "size": "4",
           "valueType": "System.UInt32",
-          "raw": "80",
+          "raw": "92",
           "children": []
         },
         {
@@ -118028,7 +118028,7 @@
           "text": "RopBuffer",
           "parsed": true,
           "offset": "24",
-          "size": "80",
+          "size": "92",
           "valueType": null,
           "raw": null,
           "children": [
@@ -118037,7 +118037,7 @@
               "text": "RgbOutputBuffers",
               "parsed": true,
               "offset": "24",
-              "size": "80",
+              "size": "92",
               "valueType": null,
               "raw": null,
               "children": [
@@ -118046,7 +118046,7 @@
                   "text": "rgbOutputBuffer",
                   "parsed": true,
                   "offset": "24",
-                  "size": "80",
+                  "size": "92",
                   "valueType": null,
                   "raw": null,
                   "children": [
@@ -118081,22 +118081,22 @@
                         },
                         {
                           "type": "BlockParser.BlockT`1",
-                          "text": "Size: 72 = 0x48",
+                          "text": "Size: 84 = 0x54",
                           "parsed": true,
                           "offset": "28",
                           "size": "2",
                           "valueType": "System.UInt16",
-                          "raw": "72",
+                          "raw": "84",
                           "children": []
                         },
                         {
                           "type": "BlockParser.BlockT`1",
-                          "text": "SizeActual: 72 = 0x48",
+                          "text": "SizeActual: 84 = 0x54",
                           "parsed": true,
                           "offset": "30",
                           "size": "2",
                           "valueType": "System.UInt16",
-                          "raw": "72",
+                          "raw": "84",
                           "children": []
                         }
                       ]
@@ -118106,18 +118106,18 @@
                       "text": "Payload",
                       "parsed": true,
                       "offset": "32",
-                      "size": "72",
+                      "size": "84",
                       "valueType": null,
                       "raw": null,
                       "children": [
                         {
                           "type": "BlockParser.BlockT`1",
-                          "text": "RopSize: 68 = 0x44",
+                          "text": "RopSize: 80 = 0x50",
                           "parsed": true,
                           "offset": "32",
                           "size": "2",
                           "valueType": "System.UInt16",
-                          "raw": "68",
+                          "raw": "80",
                           "children": []
                         },
                         {
@@ -118125,7 +118125,7 @@
                           "text": "RopsList",
                           "parsed": true,
                           "offset": "34",
-                          "size": "66",
+                          "size": "78",
                           "valueType": null,
                           "raw": null,
                           "children": [
@@ -118134,7 +118134,7 @@
                               "text": "RopGetPropertiesAllResponse",
                               "parsed": true,
                               "offset": "34",
-                              "size": "66",
+                              "size": "78",
                               "valueType": null,
                               "raw": null,
                               "children": [
@@ -118170,12 +118170,12 @@
                                 },
                                 {
                                   "type": "BlockParser.BlockT`1",
-                                  "text": "PropertyValueCount: 3 = 0x3",
+                                  "text": "PropertyValueCount: 4 = 0x4",
                                   "parsed": true,
                                   "offset": "40",
                                   "size": "2",
                                   "valueType": "System.UInt16",
-                                  "raw": "3",
+                                  "raw": "4",
                                   "children": []
                                 },
                                 {
@@ -118183,7 +118183,7 @@
                                   "text": "PropertyValues",
                                   "parsed": true,
                                   "offset": "42",
-                                  "size": "58",
+                                  "size": "70",
                                   "valueType": null,
                                   "raw": null,
                                   "children": [
@@ -118353,6 +118353,58 @@
                                           "children": []
                                         }
                                       ]
+                                    },
+                                    {
+                                      "type": "MAPIInspector.Parsers.TaggedPropertyValue",
+                                      "text": "TaggedPropertyValue",
+                                      "parsed": true,
+                                      "offset": "100",
+                                      "size": "12",
+                                      "valueType": null,
+                                      "raw": null,
+                                      "children": [
+                                        {
+                                          "type": "MAPIInspector.Parsers.PropertyTag",
+                                          "text": "PropertyTag",
+                                          "parsed": true,
+                                          "offset": "100",
+                                          "size": "4",
+                                          "valueType": null,
+                                          "raw": null,
+                                          "children": [
+                                            {
+                                              "type": "BlockParser.BlockT`1",
+                                              "text": "PropertyType: PtypTime = 0x40",
+                                              "parsed": true,
+                                              "offset": "100",
+                                              "size": "2",
+                                              "valueType": "MAPIInspector.Parsers.PropertyDataType",
+                                              "raw": "64",
+                                              "children": []
+                                            },
+                                            {
+                                              "type": "BlockParser.BlockT`1",
+                                              "text": "PropertyId: PidTagCreationTime = 0x3007",
+                                              "parsed": true,
+                                              "offset": "102",
+                                              "size": "2",
+                                              "valueType": "MAPIInspector.Parsers.PidTagPropertyEnum",
+                                              "raw": "12295",
+                                              "children": []
+                                            }
+                                          ]
+                                        },
+                                        {
+                                          "type": "MAPIInspector.Parsers.PtypTime",
+                                          "text": null,
+                                          "parsed": true,
+                                          "offset": "104",
+                                          "size": "8",
+                                          "valueType": "System.UInt64",
+                                          "raw": "132537600000000000",
+                                          "children": []
+                                        }
+                                      ]
                                     }
                                   ]
                                 }
@@ -118364,7 +118416,7 @@
                           "type": "BlockParser.ScratchBlock",
                           "text": "ServerObjectHandleTable",
                           "parsed": true,
-                          "offset": "100",
+                          "offset": "112",
                           "size": "4",
                           "valueType": null,
                           "raw": null,
@@ -118373,7 +118425,7 @@
                               "type": "BlockParser.BlockT`1",
                               "text": "305419896 = 0x12345678",
                               "parsed": true,
-                              "offset": "100",
+                              "offset": "112",
                               "size": "4",
                               "valueType": "System.UInt32",
                               "raw": "305419896",
@@ -118393,7 +118445,7 @@
           "type": "BlockParser.BlockT`1",
           "text": "AuxiliaryBufferSize: 0 = 0x0",
           "parsed": true,
-          "offset": "104",
+          "offset": "116",
           "size": "4",
           "valueType": "System.UInt32",
           "raw": "0",

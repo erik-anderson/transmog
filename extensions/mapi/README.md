@@ -50,8 +50,9 @@ found and fixed the extension host's V8 GC executor lifetime: create the isolate
 inside its retained Tokio executor and poll ready foreground work without waiting
 for future GC delays. Scripts receive no timer or other host capability.
 
-Full semantic parity, retained-input integration and bundling remain the gates
-below. Compilation and compatibility tests alone do not establish protocol parity.
+Synthetic protocol qualification and retained-input integration are implemented.
+App bundling and native desktop qualification remain the final delivery gates;
+compilation and compatibility tests alone do not establish protocol parity.
 
 The protocol adapter has 720 synthetic differential cases covering nonzero
 mailbox transport, notifications, scalar/property/enum boundaries, Unicode,
@@ -118,6 +119,38 @@ Intentional differences from the reference are verified explicitly:
   state. One separate semantic regression verifies the remaining Unicode value
   and exact selected-body span; it is excluded from the 720 differential passes.
   The original reference remains unchanged and its stalling probe is bounded.
+
+## Production contributions
+
+`manifest.json` declares independent request-body and response-body contributions,
+one header contribution usable on either side, and an optional static MAPI/HTTP
+traffic classification. Body discovery matches the 23 declared operations and
+media type natively. The header entry has a small closed module graph and never
+initializes the binary decoder. Both sides declare exact header names and body
+access; the selected body is required and the paired body is optional.
+
+`src/body.js` uses authenticated paged reads and HTTP decode continuations, asking
+for earlier retained input only when Execute decoding needs context. Native
+capture/conversation/origin guards remain authoritative. Each snapshot holds at
+most 64 related exchanges and 8 MiB of body bytes. Live updates retain the inspected
+exchange, ignore later exchanges that cannot affect it, deduplicate revisions and
+replace stale source diagnostics when a body completes. Deferred expansion keeps
+large trees bounded; values, encodings, exact integers, UTC timestamps/raw ticks
+and original/decoded spans use the host's standard output contract.
+
+`python scripts/test-mapi-visualizer.py` exercises all 401 full-message corpus
+cases through the production entries, plus header isolation, HTTP decode failure,
+live completion, missed updates and oversized-body rejection. Actual AppContainer
+tests also exercise input/context pages, expansion, exact wide ordering, separate
+HTTP-decoded capabilities, live completion and header-only grants.
+
+`python scripts/prepare-mapi-package.py` refreshes the runtime manifest and copied
+license notices; `--check` verifies them without changing files. Its exact 12-file
+allowlist includes runtime scripts, a runtime README and required notices. Tools,
+C# authoring sources, tests, generated receipts and unlisted folder files are
+excluded. Runtime bytes have explicit Git attributes so checkout newline settings
+cannot change their manifest hashes. The app packages these committed assets
+without invoking the authoring compiler.
 
 Before bundling, require differential coverage of:
 
