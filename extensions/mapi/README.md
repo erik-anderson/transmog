@@ -75,7 +75,9 @@ input receives an explicit diagnostic while original Hex remains available.
 
 The unchanged [Microsoft reference](../../third_party/mapi-inspector/README.md)
 is pinned at `7a76470574377d14cae612c507f45b34d70e05a0`. Its 651 source-file
-hashes and native Marshal reader provide independent reference evidence.
+hashes and native Marshal reader provide independent reference evidence. The
+C# source is fetched on demand into an ignored cache rather than vendored; the
+small oracle adapters are isolated under `test/reference`.
 Only enum data is generated from C#; no parser behavior is transpiled.
 
 Run these from the repository root:
@@ -89,7 +91,7 @@ python scripts/test-mapi-visualizer.py
 node --test extensions/mapi/test/reader.test.mjs extensions/mapi/test/protocol.test.mjs extensions/mapi/test/view.test.mjs
 ```
 
-`test-mapi-parity.py` builds the developer-only .NET 10 oracle and compares its
+`test-mapi-parity.py` fetches the hash-pinned reference if needed, builds the developer-only .NET 10 oracle and compares its
 fresh output with the committed corpus, then checks the TypeScript decoder.
 Use `--golden-only` without .NET. `--write-reference` updates reference results
 only after the comparison succeeds. Machine-local timestamps and exception

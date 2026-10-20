@@ -1,37 +1,33 @@
-# Pinned MAPI inspector reference
+# MAPI reference provenance
 
-The 651 source files in `Source` are an unchanged, byte-preserved subset of
-[OfficeDev/Office-Inspectors-for-Fiddler](https://github.com/OfficeDev/Office-Inspectors-for-Fiddler)
-at `7a76470574377d14cae612c507f45b34d70e05a0`. `source.json` records every SHA-256.
-The upstream MIT license is retained in `LICENSE`.
+`source.json` pins the 651 reference source hashes at Microsoft Office Inspectors
+for Fiddler commit `7a76470574377d14cae612c507f45b34d70e05a0`. The C# source tree
+is not vendored in this repository. The MIT notice remains because the bundled
+TypeScript visualizer uses protocol enum data derived from this reference.
+Desktop Credits names that shipped enum data rather than a .NET runtime.
 
-The subset contains all BlockParser and protocol parser files, plus MAPIParser,
-SessionNavigator, SessionExtensions and Utilities. Fiddler's windows, controls,
-capture hooks, resources, build output and capture/export integration are excluded.
-`Parsers/BaseStructure.cs`, the legacy WinForms presentation adapter, is retained
-as reference source but excluded from the headless build.
+Ordinary app builds and synthetic tests use the checked-in TypeScript and
+reference results, without .NET or a source download. Explicit fresh native
+comparisons and enum regeneration obtain only the pinned reference into the
+ignored `.tools/mapi-build/reference` cache:
 
-`python scripts/mapi_reference.py --verify` checks the exact inventory and hashes.
-`python scripts/mapi_reference.py --inventory` builds the developer-only .NET 10
-oracle and lists its concrete parser blocks. Without options it accepts one JSON
-test case per stdin line and emits a structured block tree, exact decimal ranges
-and scalar values. It has no access to an app capture or active extension worker.
-All generated and executable build output belongs under `.tools/mapi-build`.
+```text
+python scripts/mapi_reference.py --fetch
+python scripts/mapi_reference.py --verify
+python scripts/test-mapi-reference.py
+python scripts/test-mapi-parity.py
+```
 
-The oracle retains the original native binary reader and protocol logic. Its
-headless adapters remove the fallback to Fiddler's global UI session list and
-legacy capture-file JSON export. Its session array is supplied by each fixture;
-an absent array stays empty. `extensions/mapi/build/Headless.cs` implements only
-the read-only header/session members used by the parser. This is a differential
-reference, not a shippable native visualizer. The production extension must emit
-ordinary static JavaScript and run through Transmog's existing sandbox.
+The fetcher uses a fixed GitHub repository and immutable revision, bounded
+archive/member sizes, and exact per-file SHA-256 verification before publishing
+the cache. It extracts only the recorded inventory and never modifies tracked
+sources. A changed or incomplete cached reference fails verification.
 
-The bundled visualizer is an independent TypeScript implementation; no parser
-behavior or .NET runtime is compiled into the app. Only enum tables are generated
-from this source, with the MIT notice retained in the extension, desktop Credits
-and supply-chain notices. See [implementation and qualification](../../extensions/mapi/README.md).
+The small developer-only oracle and headless adapters live under
+`extensions/mapi/test/reference`. They retain the independent native reader and
+remove Fiddler UI/global-session fallback and legacy JSON export. Fresh native
+comparisons require .NET 10; `test-mapi-parity.py --golden-only` does not.
+No .NET code or reference source is packaged in `.tmext` or the application.
 
-No sanitized Office captures are available. Synthetic differential checks cover
-broad protocol behavior, bounded resources and derived-source provenance, with
-native sandbox and desktop qualification. Real Office end-to-end validation is
-deferred and production-capture compatibility is not claimed.
+See [implementation and qualification](../../extensions/mapi/README.md).
+Real Office capture validation remains deferred.

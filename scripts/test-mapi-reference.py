@@ -1,6 +1,10 @@
 """Verify the pinned protocol oracle before using it for JavaScript parity tests."""
 import base64
 import json
+import hashlib
+from io import BytesIO
+from unittest.mock import patch
+from zipfile import ZipFile
 import shutil
 import struct
 import subprocess
@@ -42,16 +46,41 @@ class ReferenceTests(unittest.TestCase):
     def test_hash_and_inventory_drift_fail_before_compiling(self):
         with tempfile.TemporaryDirectory() as temporary:
             vendor = Path(temporary) / "reference"
-            shutil.copytree(reference.VENDOR, vendor)
-            source = vendor / "Source/BlockParser/BinaryParser.cs"
+            shutil.copytree(reference.SOURCE, vendor)
+            source = vendor / "BlockParser/BinaryParser.cs"
             original = source.read_bytes()
             source.write_bytes(original + b" ")
             with self.assertRaisesRegex(ValueError, "reference changed"):
                 reference.verify_sources(vendor)
             source.write_bytes(original)
-            (vendor / "Source/Unexpected.cs").write_bytes(b"")
+            (vendor / "Unexpected.cs").write_bytes(b"")
             with self.assertRaisesRegex(ValueError, "inventory changed"):
                 reference.verify_sources(vendor)
+
+    def test_fetched_members_are_verified_before_cache_publication(self):
+        revision = "a" * 40
+        name = "BlockParser/example.cs"
+        data = b"pinned reference"
+        receipt = {"revision": revision, "files": {name: hashlib.sha256(data).hexdigest()}}
+        for changed in [False, True]:
+            with self.subTest(changed=changed), tempfile.TemporaryDirectory() as temporary:
+                source = Path(temporary) / "Source"
+                archive = BytesIO()
+                with ZipFile(archive, "w") as bundle:
+                    prefix = f"Office-Inspectors-for-Fiddler-{revision}/MAPIInspector/Source/"
+                    bundle.writestr(prefix + name, b"modified reference" if changed else data)
+                    bundle.writestr(prefix + "Unlisted.cs", b"must not be extracted")
+                archive.seek(0)
+                with patch.object(reference, "SOURCE", source), patch.object(reference, "RECEIPT", receipt), patch.object(reference, "urlopen", return_value=archive):
+                    if changed:
+                        with self.assertRaisesRegex(ValueError, "reference changed"):
+                            reference.ensure_sources()
+                        self.assertFalse(source.exists())
+                    else:
+                        self.assertEqual(reference.ensure_sources(), source)
+                        self.assertEqual((source / name).read_bytes(), data)
+                        self.assertFalse((source / "Unlisted.cs").exists())
+                        reference.verify_sources()
 
     def test_nonzero_fields_wide_integers_and_byte_ranges(self):
         connect = fixture("Connect", b"/o=Example\0" + struct.pack("<IIIII", 0x1020304, 1252, 1033, 1041, 0))

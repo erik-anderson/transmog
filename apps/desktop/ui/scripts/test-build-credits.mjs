@@ -13,9 +13,10 @@ const packages=Object.entries(sources).map(([name,source])=>({
   manifest_path:resolve(repository,'third_party/rust-transport/vendor',name,'Cargo.toml'),
 }));
 
-test('credits retain the pinned MAPI reference and its complete license',async()=>{
+test('credits retain the shipped MAPI enum data and its complete license',async()=>{
   const entries=await extensionCredits(repository);
   assert.equal(entries.length,1);
+  assert.equal(entries[0].name,'Microsoft MAPI protocol enum data');
   assert.equal(entries[0].version,'7a76470574377d14cae612c507f45b34d70e05a0');
   assert.equal(entries[0].text,await readFile(resolve(repository,'third_party/mapi-inspector/LICENSE'),'utf8'));
 });

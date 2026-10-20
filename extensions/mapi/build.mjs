@@ -169,7 +169,7 @@ if (process.argv.includes("--watch")) {
   }
   watch(root, { recursive: true }, (_event, filename) => {
     const path = String(filename ?? "").replaceAll("\\", "/");
-    if (path.startsWith("dist/") || path.startsWith("test/") || path.startsWith("build/")) return;
+    if (path.startsWith("dist/") || path.startsWith("test/")) return;
     if (
       !path.startsWith("typescript/") &&
       !["manifest.json", "tsconfig.json", "README.runtime.md", "LICENSES/Office-MIT.txt"].includes(

@@ -4,7 +4,7 @@ import ast
 import json
 import re
 
-from mapi_reference import ROOT, VENDOR, verify_sources
+from mapi_reference import ROOT, ensure_sources
 
 
 def number(expression, previous):
@@ -23,11 +23,11 @@ def number(expression, previous):
 
 
 def render():
-    verify_sources()
+    reference = ensure_sources()
     widths = {"byte": "u8", "sbyte": "i8", "ushort": "u16", "short": "i16",
               "uint": "u32", "int": "i32", "ulong": "u64", "long": "i64"}
     enums = {}
-    for path in sorted((VENDOR / "Source").rglob("*.cs")):
+    for path in sorted(reference.rglob("*.cs")):
         source = path.read_text(encoding="utf-8-sig")
         source = re.sub(r"/\*.*?\*/|//[^\n]*", "", source, flags=re.S)
         for match in re.finditer(r"\bpublic\s+enum\s+(\w+)\s*(?::\s*(\w+))?\s*\{([^}]+)\}", source):

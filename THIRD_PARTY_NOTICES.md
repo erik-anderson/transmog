@@ -1495,7 +1495,7 @@ Source and reproducible generator: `third_party/chromium-root-store` and `script
 
 ## MAPI protocol reference data
 
-The bundled TypeScript visualizer uses enum data from [Microsoft Office Inspectors for Fiddler](https://github.com/OfficeDev/Office-Inspectors-for-Fiddler/tree/7a76470574377d14cae612c507f45b34d70e05a0). The original parser is retained only as a developer test reference; its .NET runtime is not bundled.
+The bundled TypeScript visualizer uses enum data from [Microsoft Office Inspectors for Fiddler](https://github.com/OfficeDev/Office-Inspectors-for-Fiddler/tree/7a76470574377d14cae612c507f45b34d70e05a0).
 
 The MIT License (MIT)
 

@@ -7,7 +7,7 @@ import struct
 import subprocess
 import tempfile
 
-from mapi_reference import ROOT, VENDOR, WORK, oracle_command
+from mapi_reference import ROOT, WORK, ensure_sources, oracle_command
 
 
 def u16(value): return struct.pack("<H",value)
@@ -46,7 +46,7 @@ def fixture(item, payload, paired):
 
 
 def main():
-    files=VENDOR/"Source/Parsers/MSOXCROPS"
+    files=ensure_sources()/"Parsers/MSOXCROPS"
     enum=(files/"enums/RopIdType.cs").read_text(encoding="utf-8-sig")
     ids={name:int(value,0) for name,value in re.findall(r"\b(Rop\w+)\s*=\s*(0x[0-9a-fA-F]+|\d+)",enum)}
     inventory={item["type"].split(".")[-1]:item for item in json.loads((ROOT/"extensions/mapi/test/reference-inventory.json").read_text())["blocks"]}

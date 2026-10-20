@@ -1,8 +1,0 @@
-<Project>
-  <PropertyGroup>
-    <BaseIntermediateOutputPath>$(MSBuildThisFileDirectory)../../../.tools/mapi-build/$(MSBuildProjectName)-obj/</BaseIntermediateOutputPath>
-    <OutputPath>$(MSBuildThisFileDirectory)../../../.tools/mapi-build/$(MSBuildProjectName)-bin/$(Configuration)/</OutputPath>
-    <NuGetAudit>false</NuGetAudit>
-    <RestoreIgnoreFailedSources>false</RestoreIgnoreFailedSources>
-  </PropertyGroup>
-</Project>

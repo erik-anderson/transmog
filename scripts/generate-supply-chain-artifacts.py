@@ -89,7 +89,7 @@ def artifacts(metadata, npm, version, *, native=None):
     mapi = json.loads((ROOT / "third_party/mapi-inspector/source.json").read_text(encoding="utf-8"))
     mapi_url = mapi["repository"] + "/tree/" + mapi["revision"]
     lines += ["", "## MAPI protocol reference data", "",
-              f"The bundled TypeScript visualizer uses enum data from [Microsoft Office Inspectors for Fiddler]({mapi_url}). The original parser is retained only as a developer test reference; its .NET runtime is not bundled.", "",
+              f"The bundled TypeScript visualizer uses enum data from [Microsoft Office Inspectors for Fiddler]({mapi_url}).", "",
               (ROOT / "third_party/mapi-inspector/LICENSE").read_text(encoding="utf-8").rstrip()]
     components = [{"type": "data", "bom-ref": "mapi-reference-data", "name": "Microsoft MAPI protocol enum data",
                    "version": mapi["revision"], "licenses": [{"license": {"id": "MIT"}}],

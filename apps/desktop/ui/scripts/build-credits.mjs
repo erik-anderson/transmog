@@ -48,7 +48,7 @@ export async function cargoCredits(repository, metadata) {
 }
 export async function extensionCredits(repository) {
   const mapi=JSON.parse(await readFile(join(repository,'third_party/mapi-inspector/source.json'),'utf8'));
-  return [{id:'mapi-inspector',name:'Microsoft Office Inspectors for Fiddler (MAPI reference)',version:mapi.revision,license:'MIT',text:await readFile(join(repository,'third_party/mapi-inspector/LICENSE'),'utf8')}];
+  return [{id:'mapi-inspector',name:'Microsoft MAPI protocol enum data',version:mapi.revision,license:'MIT',text:await readFile(join(repository,'third_party/mapi-inspector/LICENSE'),'utf8')}];
 }
 export async function buildCredits(uiRoot, output) {
   const repository=resolve(uiRoot,'../../..');
