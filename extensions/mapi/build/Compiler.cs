@@ -92,6 +92,13 @@ sealed class PortableSource(string file, SortedDictionary<string, int> changes) 
     }
     public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
+        if (node.Identifier.ValueText == "Parse" && file is "Parsers/MSOXCMAPIHTTP/structs/RgbInputBuffer.cs" or "Parsers/MSOXCMAPIHTTP/structs/RgbOutputBufferPack.cs")
+        {
+            var visited = (MethodDeclarationSyntax)base.VisitMethodDeclaration(node)!;
+            var length = file.EndsWith("/RgbInputBuffer.cs", StringComparison.Ordinal) ? "ropBufferSize" : "RopBufferSize";
+            Count("bounded RPC envelope");
+            return visited.WithBody((BlockSyntax)SyntaxFactory.ParseStatement($"{{parser.PushStrictCap((int){length});try{visited.Body}finally{{parser.PopCap();}}}}"));
+        }
         if (file == "BlockParser/BinaryParser.cs")
         {
             string? body = node.Identifier.ValueText switch
@@ -113,6 +120,23 @@ sealed class PortableSource(string file, SortedDictionary<string, int> changes) 
             return node.WithBody((BlockSyntax)SyntaxFactory.ParseStatement("{return (U)PortablePrimitives.Read(typeof(U), parser.ReadBytes(PortablePrimitives.SizeOf(typeof(U))));}"));
         }
         return base.VisitMethodDeclaration(node);
+    }
+    public override SyntaxNode? VisitWhileStatement(WhileStatementSyntax node)
+    {
+        var visited = (WhileStatementSyntax)base.VisitWhileStatement(node)!;
+        if (file is not ("Parsers/MSOXCMAPIHTTP/structs/RgbInputBuffer.cs" or "Parsers/MSOXCMAPIHTTP/structs/RgbOutputBufferPack.cs")) return visited;
+        Count("RPC forward progress");
+        var body = (BlockSyntax)visited.Statement;
+        return visited.WithStatement(body.WithStatements(body.Statements.Insert(0, SyntaxFactory.ParseStatement("var tmBufferOffset=parser.Offset;"))
+            .Add(SyntaxFactory.ParseStatement("if(parser.Offset<=tmBufferOffset)throw new System.FormatException(\"Incomplete RPC buffer\");"))));
+    }
+    public override SyntaxNode? VisitIfStatement(IfStatementSyntax node)
+    {
+        var visited = (IfStatementSyntax)base.VisitIfStatement(node)!;
+        if (file is not ("Parsers/MSOXCFXICS/rops/RopFastTransferDestinationPutBufferRequest.cs" or "Parsers/MSOXCFXICS/rops/RopFastTransferDestinationPutBufferExtendedRequest.cs")
+            || node.Condition.ToString() != "!element.Parsed") return visited;
+        Count("upload forward progress");
+        return visited.WithCondition(SyntaxFactory.ParseExpression("!element.Parsed || element.Size == 0"));
     }
     public override SyntaxNode? VisitLocalDeclarationStatement(LocalDeclarationStatementSyntax node)
     {

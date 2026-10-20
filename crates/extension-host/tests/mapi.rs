@@ -212,3 +212,44 @@ export function visualize(){
     };
     assert_eq!(document.roots[0].value, Some(Value::Integer("12".into())));
 }
+
+#[tokio::test]
+async fn mapi_corrupt_buffers_stop_and_empty_upload_preserves_the_following_rop() {
+    let runner = start(
+        r"
+import {decode} from './src/protocol.js';
+const u16=n=>[n&255,(n>>>8)&255],u32=n=>[n&255,(n>>>8)&255,(n>>>16)&255,(n>>>24)&255];
+function parse(bytes){return decode([{id:1,requestType:'Execute',request:{sourceId:'synthetic',bytes}}],1,'request').tree;}
+function fields(node){return node?[node,...node.children.flatMap(fields)]:[];}
+export function visualize(){
+  for(const bytes of [
+    [...u32(0),...u32(0xffffffff),...Array(16).fill(0)],
+    [...u32(0),...u32(8),0,0,4,0,255,255,255,255,...u32(0),...u32(0)],
+    [...u32(0),...u32(16),...Array(8).fill(0)]
+  ]){
+    let result;try{result=parse(bytes);}catch{continue;}
+    if(!fields(result).some(node=>node.type==='BlockParser.BlockException'))throw new Error('Malformed RPC envelope accepted');
+  }
+  const rops=[0x54,7,0,0,0,1,7,0],payload=[...u16(2+rops.length),...rops,255,255,255,255];
+  const rpc=[0,0,4,0,...u16(payload.length),...u16(payload.length),...payload];
+  const result=parse([...u32(0),...u32(rpc.length),...rpc,...u32(65536),...u32(0)]),nodes=fields(result);
+  if(nodes.some(node=>node.type==='BlockParser.BlockException')||!nodes.some(node=>node.type==='MAPIInspector.Parsers.RopReleaseRequest'))throw new Error('Empty upload consumed the following ROP');
+  return {kind:'document',document:{title:'Bounded MAPI parsing',status:'complete',presentation:'tree',roots:[{id:'release',name:'Following ROP preserved',value:{kind:'boolean',value:true}}]}};
+}
+",
+    );
+    let input: VisualizationInput = serde_json::from_value(serde_json::json!({
+        "instanceId":"test","exchangeId":"test","requestNumber":"1","generation":"1","direction":"request",
+        "request":{"evidenceId":"test","headers":[]}
+    })).unwrap();
+    let VisualizationStep::Document { document } = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("Expected bounded malformed-input recovery")
+    };
+    assert_eq!(document.roots[0].value, Some(Value::Boolean(true)));
+}

@@ -65399,7 +65399,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
         while (!this.parser.Empty) {
             let element = this.Parse$1(MAPIInspector.Parsers.TransferPutBufferExtendElement);
-            if (!element.Parsed) {
+            if (!element.Parsed || element.Size.eq(System.Int64("0"))) {
                 break;
             }
             transferBufferList.add(element);
@@ -65417,14 +65417,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.TransferDataSize, "TransferDataSize");
         if (this.TransferData != null) {
-            var $e0b4c = TransposeR.getEnumerator(this.TransferData);
+            var $e0b61 = TransposeR.getEnumerator(this.TransferData);
             try {
-                while ($e0b4c.moveNext()) {
-                    let transferData = $e0b4c.current;
+                while ($e0b61.moveNext()) {
+                    let transferData = $e0b61.current;
                     this.AddLabeledChild(transferData, "TransferData");
                 }
             }finally {
-                TransposeR.dispose($e0b4c);
+                TransposeR.dispose($e0b61);
             }
         }
     }
@@ -65499,7 +65499,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
         while (!this.parser.Empty) {
             let element = this.Parse$1(MAPIInspector.Parsers.TransferPutBufferElement);
-            if (!element.Parsed) {
+            if (!element.Parsed || element.Size.eq(System.Int64("0"))) {
                 break;
             }
             transferBufferList.add(element);
@@ -65517,14 +65517,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.TransferDataSize, "TransferDataSize");
         if (this.TransferData != null) {
-            var $e0b1e = TransposeR.getEnumerator(this.TransferData);
+            var $e0b33 = TransposeR.getEnumerator(this.TransferData);
             try {
-                while ($e0b1e.moveNext()) {
-                    let transferData = $e0b1e.current;
+                while ($e0b33.moveNext()) {
+                    let transferData = $e0b33.current;
                     this.AddLabeledChild(transferData, "TransferData");
                 }
             }finally {
-                TransposeR.dispose($e0b1e);
+                TransposeR.dispose($e0b33);
             }
         }
     }
@@ -71400,18 +71400,28 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 },
         methods: {
     Parse$3: function () {
-        let index = 0;
-        let extendedBuffer_Inputs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.ExtendedBuffer_Input))();
-        MapiInspector.MAPIParser.InputPayLoadCompressedXOR = new (System.Collections.Generic.List$1(System.Array.type(System.Byte)))();
-        MapiInspector.MAPIParser.BuffersIsCompressed = new (System.Collections.Generic.List$1(System.Boolean))();
-        while (this.ropBufferSize > 0) {
-            let extendedBuffer_Input = new MAPIInspector.Parsers.ExtendedBuffer_Input(index);
-            extendedBuffer_Input.Parse(this.parser);
-            extendedBuffer_Inputs.add(extendedBuffer_Input);
-            this.ropBufferSize = Transpose.Int.clipu32((this.ropBufferSize) - (Transpose.Int.clipu32((Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, extendedBuffer_Input.RPCHEADEREXT._Size) + 8)))));
-            index = Transpose.Int.clip32((index) + (1));
+        this.parser.PushStrictCap(Transpose.Int.clip32(this.ropBufferSize));
+        try {
+            let index = 0;
+            let extendedBuffer_Inputs = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.ExtendedBuffer_Input))();
+            MapiInspector.MAPIParser.InputPayLoadCompressedXOR = new (System.Collections.Generic.List$1(System.Array.type(System.Byte)))();
+            MapiInspector.MAPIParser.BuffersIsCompressed = new (System.Collections.Generic.List$1(System.Boolean))();
+            while (this.ropBufferSize > 0) {
+                let tmBufferOffset = this.parser.Offset;
+                let extendedBuffer_Input = new MAPIInspector.Parsers.ExtendedBuffer_Input(index);
+                extendedBuffer_Input.Parse(this.parser);
+                extendedBuffer_Inputs.add(extendedBuffer_Input);
+                this.ropBufferSize = Transpose.Int.clipu32((this.ropBufferSize) - (Transpose.Int.clipu32((Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, extendedBuffer_Input.RPCHEADEREXT._Size) + 8)))));
+                index = Transpose.Int.clip32((index) + (1));
+                if (this.parser.Offset <= tmBufferOffset) {
+                    throw new System.FormatException.$ctor1("Incomplete RPC buffer");
+                }
+            }
+            this.Buffers = extendedBuffer_Inputs.ToArray();
         }
-        this.Buffers = extendedBuffer_Inputs.ToArray();
+        finally {
+            this.parser.PopCap();
+        }
     },
     ParseBlocks: function () {
         this.Text = "RgbInputBuffer";
@@ -71521,33 +71531,43 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 },
         methods: {
     Parse$3: function () {
-        let index = 0;
-        let rgbOutputBufferList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.RgbOutputBuffer))();
-        let startPosition = this.parser.Offset;
-        MapiInspector.MAPIParser.OutputPayLoadCompressedXOR = new (System.Collections.Generic.List$1(System.Array.type(System.Byte)))();
-        MapiInspector.MAPIParser.BuffersIsCompressed = new (System.Collections.Generic.List$1(System.Boolean))();
-        while (Transpose.Int.clip32(this.parser.Offset - startPosition) < this.RopBufferSize) {
-            let buffer = new MAPIInspector.Parsers.RgbOutputBuffer(index);
-            try {
-                buffer.Parse(this.parser);
+        this.parser.PushStrictCap(Transpose.Int.clip32(this.RopBufferSize));
+        try {
+            let index = 0;
+            let rgbOutputBufferList = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.RgbOutputBuffer))();
+            let startPosition = this.parser.Offset;
+            MapiInspector.MAPIParser.OutputPayLoadCompressedXOR = new (System.Collections.Generic.List$1(System.Array.type(System.Byte)))();
+            MapiInspector.MAPIParser.BuffersIsCompressed = new (System.Collections.Generic.List$1(System.Boolean))();
+            while (Transpose.Int.clip32(this.parser.Offset - startPosition) < this.RopBufferSize) {
+                let tmBufferOffset = this.parser.Offset;
+                let buffer = new MAPIInspector.Parsers.RgbOutputBuffer(index);
+                try {
+                    buffer.Parse(this.parser);
+                }
+                catch ($ex) {
+                    let $e = System.Exception.create($ex);
+                    let e = $e;
+                    if (TransposeR.is($e, MAPIInspector.Parsers.MissingInformationException)) {
+                        throw $ex;
+                    }
+                    else if (TransposeR.is($e, MAPIInspector.Parsers.MissingPartialInformationException)) {
+                        throw $ex;
+                    }
+                    else {
+                        this.AddChild(BlockParser.BlockException.Create$3("Exception", e, System.Int64("0")));
+                    }
+                }
+                rgbOutputBufferList.add(buffer);
+                index = Transpose.Int.clip32((index) + (1));
+                if (this.parser.Offset <= tmBufferOffset) {
+                    throw new System.FormatException.$ctor1("Incomplete RPC buffer");
+                }
             }
-            catch ($ex) {
-                let $e = System.Exception.create($ex);
-                let e = $e;
-                if (TransposeR.is($e, MAPIInspector.Parsers.MissingInformationException)) {
-                    throw $ex;
-                }
-                else if (TransposeR.is($e, MAPIInspector.Parsers.MissingPartialInformationException)) {
-                    throw $ex;
-                }
-                else {
-                    this.AddChild(BlockParser.BlockException.Create$3("Exception", e, System.Int64("0")));
-                }
-            }
-            rgbOutputBufferList.add(buffer);
-            index = Transpose.Int.clip32((index) + (1));
+            this.RgbOutputBuffers = rgbOutputBufferList.ToArray();
         }
-        this.RgbOutputBuffers = rgbOutputBufferList.ToArray();
+        finally {
+            this.parser.PopCap();
+        }
     },
     ParseBlocks: function () {
         this.Text = "rgbOutputBufferPack";

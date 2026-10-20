@@ -92,6 +92,13 @@ length means an empty sub-buffer. The generic parser's omitted-cap sentinel is
 unchanged. A parser work counter bounds repeated block parsing before projection.
 The developer-only native oracle also runs with a 256 MiB GC heap ceiling;
 shape generation isolates each probe with a deadline and file-backed input.
+RPC envelopes are capped to their declared size and must make forward progress;
+upload elements that consume no bytes stop before the remaining-data fallback.
+`python scripts/test-mapi-robustness.py` checks 93 truncated/corrupt/boundary
+inputs and a valid decode after each one in the same worker. An actual sandbox
+test also checks malformed-envelope recovery and an empty upload followed by
+Release, which must remain a separate ROP. Hostile probes do not run in the
+unmodified native reference.
 
 Intentional differences from the reference are verified explicitly:
 

@@ -3,7 +3,9 @@
     "ASCII replacement fallback": 1,
     "Buffer.BlockCopy": 4,
     "Enum.GetUnderlyingType": 3,
+    "RPC forward progress": 2,
     "System.Runtime.InteropServices.Marshal.SizeOf": 4,
+    "bounded RPC envelope": 2,
     "bounded binary reader": 3,
     "derived source coordinates": 3,
     "encoding.GetString": 1,
@@ -14,13 +16,14 @@
     "managed primitive read": 1,
     "payload source provenance": 3,
     "strict protocol sub-buffer": 8,
-    "unused namespace": 3
+    "unused namespace": 3,
+    "upload forward progress": 2
   },
   "bcl": "26.9.5840",
-  "bytes": 4467721,
+  "bytes": 4468721,
   "compiler": "26.10.6985",
   "enums": 92,
   "revision": "7a76470574377d14cae612c507f45b34d70e05a0",
-  "sha256": "67c86cad9fecccbf9b8acc5d7b45140d696b80182d97c61ba07a0e3e3627b774",
+  "sha256": "47cce9fc1153fce60b565d9bf27f7fda9fc2cc25fb36b5887b0731da3a037fa0",
   "sourceInventorySha256": "19ab240c43e2e65fb463f91c963db0ba98742318a71ab5700651c2177f1e1063"
 }
