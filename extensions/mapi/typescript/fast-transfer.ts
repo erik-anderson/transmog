@@ -164,6 +164,13 @@ export class FastTransferDecoder {
     if (previous?.length) {
       const current = chunk.take(chunk.remaining);
       fragments = [...previous, { bytes: current, range: chunk.range(chunk.start, length) }];
+      if (fragments.length > 64) {
+        throw new ParseError(
+          "limit",
+          "FastTransfer continuation has too many source fragments",
+          chunk.range(),
+        );
+      }
       const count = fragments.reduce((total, fragment) => total + fragment.bytes.length, 0);
       this.assemblyWork += count;
       if (this.assemblyWork > 8 * 1024 * 1024 || this.derivedSources.length >= 128) {

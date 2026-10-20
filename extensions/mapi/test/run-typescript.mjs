@@ -25,10 +25,10 @@ async function loadModule(url) {
   return modules.get(url.href);
 }
 
-const entry = await loadModule(new URL("decode.js", root));
+const entry = await loadModule(new URL("testing.js", root));
 await entry.link((specifier, owner) => loadModule(new URL(specifier, owner.identifier)));
 await entry.evaluate({ timeout: 2_000 });
-context.decode = entry.namespace.decode;
+context.decode = entry.namespace.decodeFixture;
 
 for await (const line of createInterface({ input: process.stdin, crlfDelay: Infinity })) {
   try {

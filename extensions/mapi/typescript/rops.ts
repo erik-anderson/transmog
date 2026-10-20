@@ -852,7 +852,7 @@ export function readRop(
   const operation = opcodes.get(opcode);
   if (!operation) {
     throw new ParseError(
-      "unsupported",
+      opcode === 0 ? "malformed" : "unsupported",
       `Unknown ROP 0x${opcode.toString(16)}`,
       record.reader.range(),
     );

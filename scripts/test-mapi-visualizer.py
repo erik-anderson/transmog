@@ -28,7 +28,7 @@ def main():
     failures=[]
     for fixture,outcome in zip(fixtures,outcomes):
         document=outcome.get("document")
-        expected="partial" if fixture["name"]=="dispatch-RopBufferTooSmallResponse" else "complete"
+        expected="malformed" if fixture["name"]=="dispatch-RopOptionsDataResponse" else "partial" if fixture["name"]=="dispatch-RopBufferTooSmallResponse" else "complete"
         if not document or document["status"]!=expected:
             failures.append({"name":fixture["name"],"outcome":outcome});continue
         identities=set()
@@ -44,6 +44,9 @@ def main():
     headers=run([connect],"headers")[0]
     if headers["reads"] or headers["parserLoaded"]:raise AssertionError("Header contribution loaded the body decoder")
     if not any(node.get("value")=={"kind":"string","value":"Connect"} for node in nodes(headers["document"])):raise AssertionError("Missing request operation")
+    long_header=copy.deepcopy(connect);long_header["message"]["requestHeaders"]={"x-requesttype":"X"*17000}
+    header_limit=run([long_header],"headers")[0]
+    if header_limit["document"]["status"]!="limited" or header_limit["reads"] or header_limit["parserLoaded"]:raise AssertionError("Large header loaded a decoder or hid its display limit")
     encoded=copy.deepcopy(connect);encoded["message"]["requestHeaders"]={"content-encoding":"gzip"};encoded["decodedBytes"]=encoded["message"]["request"]
     encoded["message"]["request"]=base64.b64encode(b"synthetic HTTP encoded bytes").decode()
     decoded,failed=run([encoded,dict(encoded,decodedFailure="unsupported")])
@@ -59,6 +62,14 @@ def main():
     unchanged=copy.deepcopy(connect);unchanged["missedHints"]=True
     missed=run([unchanged])[0]
     if not any(item["code"]=="missed-live-data" for item in missed["document"].get("diagnostics",[])):raise AssertionError("Missed live hints were not shown")
+    response=copy.deepcopy(next(fixture for fixture in corpus if fixture["name"]=="connect-response-nonzero"))
+    response["updates"]=[dict(response["message"],revision=1,responseHeaders={"x-responsecode":"7"})]
+    changed=run([response])[0]
+    if changed["document"]["status"]!="partial" or changed["document"]["roots"] or changed["reads"]!=1:raise AssertionError("Changed live status kept a stale parsed body or read rejected data")
+    bounded=copy.deepcopy(connect);bounded["message"]["order"]=1000
+    bounded["updates"]=[{"order":index,"requestType":"Execute","revision":1} for index in range(1,131)]
+    bounded_live=run([bounded])[0]
+    if bounded_live["reads"]!=1 or not any(item["code"]=="live-context-limit" for item in bounded_live["document"].get("diagnostics",[])):raise AssertionError("Live context did not remain bounded")
     print(f"MAPI production visualizers: {len(fixtures)} corpus cases, header-only loading, HTTP decoding/failure and selected live updates passed")
 
 

@@ -26,6 +26,7 @@ export interface ParsedField {
   readonly children: ParsedField[];
   value?: FieldValue;
   encoding?: string;
+  units?: string;
   timestamp?: string;
   issue?: ParseIssue;
 }

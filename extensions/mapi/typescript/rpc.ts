@@ -105,12 +105,15 @@ export class RpcDecoder {
             payload,
             auxiliary ? "Auxiliary payload" : "ROP payload",
           );
-          if (auxiliary) {
-            this.readAuxiliary(decoded);
-          } else {
-            this.readRops(decoded, direction);
+          try {
+            if (auxiliary) {
+              this.readAuxiliary(decoded);
+            } else {
+              this.readRops(decoded, direction);
+            }
+          } finally {
+            buffer.add(decoded.finish());
           }
-          buffer.add(decoded.finish());
         });
       }
     });
@@ -177,17 +180,20 @@ export class RpcDecoder {
       handles.push(handleFields.integer("Handle", "u32"));
     }
     const operations = new RecordReader(rops, "Operations");
-    while (rops.remaining !== 0) {
-      const position = rops.offset;
-      nested(operations, ropName(rops.peekUInt8(), direction), (operation) => {
-        readRop(operation, direction, handles, this.conversation, this.payloadReaders);
-      });
-      if (rops.offset <= position) {
-        throw new ParseError("malformed", "ROP did not consume input", rops.range());
+    try {
+      while (rops.remaining !== 0) {
+        const position = rops.offset;
+        nested(operations, ropName(rops.peekUInt8(), direction), (operation) => {
+          readRop(operation, direction, handles, this.conversation, this.payloadReaders);
+        });
+        if (rops.offset <= position) {
+          throw new ParseError("malformed", "ROP did not consume input", rops.range());
+        }
       }
+    } finally {
+      record.add(operations.finish());
+      record.add(handleFields.finish());
     }
-    record.add(operations.finish());
-    record.add(handleFields.finish());
   }
 
   private readAuxiliary(record: RecordReader): void {

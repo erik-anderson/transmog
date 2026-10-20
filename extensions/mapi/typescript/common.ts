@@ -62,9 +62,9 @@ export function bounded(
     }
   } finally {
     reader.budget.leave();
+    record.add(child.finish());
   }
   const field = child.finish();
-  record.add(field);
   return field;
 }
 

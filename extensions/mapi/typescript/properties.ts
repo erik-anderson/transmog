@@ -72,7 +72,10 @@ export function readPropertyValue(
   const scalar = scalarProperties[type];
   if (scalar) {
     const value = record.scalar("Value", scalar);
+    if (type === 0x0006) record.field.children.at(-1)!.units = "1/10000 currency unit";
+    if (type === 0x0007) record.field.children.at(-1)!.units = "OLE Automation DATE";
     if (type === 0x0040) {
+      record.field.children.at(-1)!.units = "100 ns since 1601-01-01 UTC";
       const timestamp = filetime(value as bigint);
       if (timestamp) {
         record.field.children.at(-1)!.timestamp = timestamp;
@@ -302,35 +305,4 @@ export function readRestriction(record: RecordReader, context: PropertyContext =
         record.reader.range(),
       );
   }
-}
-
-/** Used by protocol fixture tests without exposing a test hook to the host. */
-export function parsePropertyFixture(
-  record: RecordReader,
-  type: string,
-  arguments_: readonly unknown[],
-): boolean {
-  if (type === "PropertyTag") {
-    readPropertyTag(record);
-  } else if (type === "RestrictionType") {
-    readRestriction(record, arguments_[0] === 0 ? "rop" : "address-book");
-  } else if (type === "PtypBooleanShort") {
-    record.boolean("Value", "i16");
-  } else {
-    const dataType = enums.PropertyDataType!.values[type];
-    if (dataType === undefined) {
-      return false;
-    }
-    if (type === "PtypBinary") {
-      readPropertyValue(
-        record,
-        dataType,
-        arguments_[0] === 0 ? "rop" : "address-book",
-        arguments_[1] === true,
-      );
-    } else {
-      readPropertyValue(record, dataType, "rop", arguments_[0] === true);
-    }
-  }
-  return true;
 }
