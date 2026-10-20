@@ -12,6 +12,7 @@ getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
+tokio.workspace = true
 transmog-extensions = { version = "=0.1.7", path = "../extensions" }
 transmog-extension-supervisor = { version = "=0.1.7", path = "../extension-supervisor" }
 

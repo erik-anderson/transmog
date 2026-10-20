@@ -524,6 +524,7 @@ mod tests {
             "create_ca",
             "reset_ca",
             "start_capture",
+            "reload_extension",
             "stop_capture",
             "activate_automation",
             "change_header_rule",

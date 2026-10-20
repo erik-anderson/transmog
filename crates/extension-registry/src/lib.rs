@@ -1,6 +1,8 @@
 //! Shared metadata-only extension management; workers belong to explicitly activated instances.
 mod directory;
+mod reload;
 mod watch;
+pub use reload::ReloadRequest;
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -82,6 +84,7 @@ struct Active {
     publication: Option<Publication>,
     watch_files: Vec<String>,
     watch: Option<watch::ActiveWatch>,
+    reload_epoch: u64,
 }
 #[derive(Clone)]
 struct Publication {
@@ -109,12 +112,15 @@ struct State {
     entries: Vec<ExtensionEntry>,
     active: BTreeMap<String, Active>,
     warning: Option<String>,
+    reload_epoch: u64,
+    reload_requests: BTreeMap<String, u64>,
 }
 struct Inner {
     root: Option<PathBuf>,
     host: Option<HostConfig>,
     mutation: Mutex<()>,
     state: Mutex<State>,
+    reload_gate: Arc<tokio::sync::Mutex<()>>,
 }
 /// Cloneable registry shared by all windows; enable state and disable/uninstall are global.
 #[derive(Clone)]
@@ -129,6 +135,7 @@ impl Default for Registry {
                 host: None,
                 mutation: Mutex::new(()),
                 state: Mutex::new(State::default()),
+                reload_gate: Arc::default(),
             }),
         }
     }
@@ -146,6 +153,7 @@ impl Registry {
                 host,
                 mutation: Mutex::new(()),
                 state: Mutex::new(state),
+                reload_gate: Arc::default(),
             }),
         }
     }
@@ -449,6 +457,7 @@ impl Registry {
                 "Invalid visualizer owner",
             ));
         }
+        let reload_epoch = self.reload_epoch(id).map_err(management_failure)?;
         let entry = self.enabled_entry(id).map_err(management_failure)?;
         if canceled() {
             return Err(management_failure(invalid("Activation was canceled")));
@@ -502,6 +511,7 @@ impl Registry {
             resources: None,
             watch_files,
             watch,
+            reload_epoch,
             publication: (entry.catalog.origin == Origin::Development).then_some(Publication {
                 expected: entry.clone(),
                 manifest,

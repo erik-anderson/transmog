@@ -7284,6 +7284,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tokio",
  "transmog-directory-watch",
  "transmog-extension-supervisor",
  "transmog-extensions",

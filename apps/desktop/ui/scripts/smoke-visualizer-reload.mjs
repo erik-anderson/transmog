@@ -16,7 +16,7 @@ export async function smokeVisualizerReload(evaluate,tracePath) {
     const selection=await evaluate(`(async()=>{const t=document.querySelector('app-shell').traffic;await t.refreshSessions(undefined,true);const view=await window.__TAURI_INTERNALS__.invoke('query_sessions',{query:{search:'/extension-fixture',limit:100,offset:0}});const row=view.sessions.find(row=>row.path==='/extension-fixture'&&row.responseBytes===23);if(!row)throw new Error('Reload retained fixture is missing');return {sessionId:row.id,boundary:'client-response',surface:'body'};})()`);
     const first=await invoke('activate_visualizer',{request:{slot,generation:String(generation),pageId,selection,extensionId:'test.development',visualizerId:'native-body'}});
     assert.equal(first.instance.development,true);
-    assert.deepEqual(await reloadStatus(first.handle),{available:true,enabled:true,dirty:false,error:null});
+    assert.deepEqual(await reloadStatus(first.handle),{available:true,enabled:true,dirty:false,requested:null,error:null});
     const changed=original.replace("title:'Synthetic protocol'","title:'Reloaded protocol'");assert.notEqual(changed,original);
     await writeFile(path,changed);
     await waitDirty(first.handle);

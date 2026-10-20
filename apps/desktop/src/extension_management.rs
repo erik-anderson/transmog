@@ -99,6 +99,21 @@ pub(super) async fn extension_hot_reload(
     Ok(changed(&window, &registry))
 }
 #[tauri::command]
+pub(super) fn reload_extension(
+    id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::extensions::ReloadRequest, String> {
+    let request = registry(&window, &state)?
+        .request_reload(&id)
+        .map_err(|error| error.to_string())?;
+    window
+        .app_handle()
+        .emit("extension-reload-requested", &id)
+        .map_err(|_| "Reload could not be announced. Try again.".to_owned())?;
+    Ok(request)
+}
+#[tauri::command]
 pub(super) async fn uninstall_extension(
     id: String,
     window: tauri::WebviewWindow,

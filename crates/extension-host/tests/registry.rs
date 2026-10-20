@@ -429,3 +429,93 @@ fn disabling_hot_reload_during_initialization_cannot_register_a_late_watcher() {
     assert_eq!(sources.parent(), moved.parent());
     std::fs::rename(&sources, &moved).unwrap();
 }
+
+#[test]
+fn settings_reload_requests_reach_all_owners_without_hot_reload_or_starting_workers() {
+    let _serial = REGISTRY_TEST.blocking_lock();
+    let (_root, registry, sources) = setup();
+    registry.set_hot_reload("example.registry", false).unwrap();
+    assert_eq!(
+        registry
+            .request_reload("example.registry")
+            .unwrap()
+            .active_instances,
+        0
+    );
+    let first = registry
+        .activate("one", "example.registry", "view")
+        .unwrap();
+    let second = registry
+        .activate("two", "example.registry", "view")
+        .unwrap();
+    assert!(
+        registry
+            .reload_status("one", &first.id)
+            .unwrap()
+            .requested
+            .is_none()
+    );
+    // Explicit scheduling is metadata-only, even with an unreadable changed entry.
+    let mut exclusive = std::fs::OpenOptions::new();
+    std::os::windows::fs::OpenOptionsExt::share_mode(&mut exclusive, 0);
+    let exclusive = exclusive.write(true).open(sources.join("main.js")).unwrap();
+    assert_eq!(
+        registry
+            .clone()
+            .request_reload("example.registry")
+            .unwrap()
+            .active_instances,
+        2
+    );
+    assert!(
+        registry
+            .reload_status("one", &first.id)
+            .unwrap()
+            .requested
+            .is_some()
+    );
+    assert!(
+        registry
+            .reload_status("two", &second.id)
+            .unwrap()
+            .requested
+            .is_some()
+    );
+    registry.acknowledge_reload("one", &first.id);
+    assert!(
+        registry
+            .reload_status("one", &first.id)
+            .unwrap()
+            .requested
+            .is_none()
+    );
+    assert!(
+        registry
+            .reload_status("two", &second.id)
+            .unwrap()
+            .requested
+            .is_some()
+    );
+    drop(exclusive);
+    let fresh = registry
+        .activate("three", "example.registry", "view")
+        .unwrap();
+    assert!(
+        registry
+            .reload_status("three", &fresh.id)
+            .unwrap()
+            .requested
+            .is_none()
+    );
+    registry.request_reload("example.registry").unwrap();
+    assert!(
+        registry
+            .reload_status("three", &fresh.id)
+            .unwrap()
+            .requested
+            .is_some()
+    );
+    registry.set_enabled("example.registry", false).unwrap();
+    assert!(registry.request_reload("example.registry").is_err());
+    assert!(registry.request_reload("not.installed").is_err());
+}

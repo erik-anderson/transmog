@@ -186,6 +186,16 @@ controls remain pending; the native commands and source observer are available.
 
 ### Active development source notifications
 
+The main-window `reload_extension` settings command requests a fresh revision for
+all active instances of one enabled unpacked extension, including other window
+owners. It only sets a transient package signal and announces it; it reads no
+source files and starts no inactive contribution. Each instance acknowledges its
+own request. A request arriving during candidate initialization remains pending
+when that candidate did not snapshot it. Candidate replacements share one
+cancelable admission gate across windows; ordinary live parsing remains independent.
+Replacement still requires spare worker capacity and retains each last good result
+on failure. Manual requests work with automatic hot reload turned off.
+
 Native `visualizer_reload_status` reports metadata changes only for the exact
 owned active development instance with hot reload enabled. Installed packages
 and inactive developer entries have no watcher. Observation starts before the

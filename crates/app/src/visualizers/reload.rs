@@ -140,6 +140,26 @@ impl Service {
     }
 }
 
+impl Service {
+    async fn reload_permit(
+        &self,
+        candidate: &Ticket,
+    ) -> Result<tokio::sync::OwnedMutexGuard<()>, AppError> {
+        let waiting = self.registry.reload_gate().lock_owned();
+        tokio::pin!(waiting);
+        loop {
+            tokio::select! {
+                permit = &mut waiting => {
+                    if candidate.canceled.load(Ordering::Acquire) { return Err(unavailable()); }
+                    return Ok(permit);
+                }
+                () = tokio::time::sleep(std::time::Duration::from_millis(50)) => {
+                    if candidate.canceled.load(Ordering::Acquire) { return Err(unavailable()); }
+                }
+            }
+        }
+    }
+}
 impl Application {
     /// Polls native source metadata notifications for one exact visible development result.
     /// # Errors
@@ -196,6 +216,7 @@ impl Application {
             .registry
             .acknowledge_reload(&self.visualizers.owner, &request.handle.instance_id);
         let result = async {
+            let _permit = self.visualizers.reload_permit(&candidate).await?;
             let mut view = self
                 .activate_visualizer_ticket(&activation, &candidate)
                 .await?;

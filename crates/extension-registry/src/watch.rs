@@ -15,6 +15,8 @@ pub struct ReloadStatus {
     pub enabled: bool,
     /// A relevant source change settled and is ready for a candidate attempt.
     pub dirty: bool,
+    /// An explicit settings request is newer than this instance's immutable snapshot.
+    pub requested: Option<String>,
     /// A bounded static explanation if OS notifications failed; manual reload remains available.
     pub error: Option<String>,
 }
@@ -64,6 +66,7 @@ struct WatchSpec {
     root: Option<std::path::PathBuf>,
     files: Vec<String>,
     watch: Option<ActiveWatch>,
+    requested: Option<String>,
 }
 impl Registry {
     pub(super) fn stop_watches(&self, id: &str) {
@@ -118,6 +121,11 @@ impl Registry {
                 Vec::new()
             },
             watch: active.watch.clone(),
+            requested: state
+                .reload_requests
+                .get(&active.info.extension_id)
+                .filter(|epoch| **epoch > active.reload_epoch)
+                .map(ToString::to_string),
         })
     }
     fn observe(&self, owner: &str, instance: &str, spec: &WatchSpec) -> Result<ActiveWatch, Error> {
@@ -160,6 +168,7 @@ impl Registry {
             available: spec.available,
             enabled: spec.enabled,
             dirty: false,
+            requested: spec.requested.clone(),
             error: None,
         };
         if !status.available || !status.enabled {
@@ -206,12 +215,18 @@ impl Registry {
     }
     /// Acknowledges the current source hint when a replacement attempt starts; failed edits do not loop.
     pub fn acknowledge_reload(&self, owner: &str, instance: &str) {
-        let watch = self.inner.state.lock().ok().and_then(|state| {
-            state
+        let watch = self.inner.state.lock().ok().and_then(|mut state| {
+            let id = state
                 .active
                 .get(instance)
-                .filter(|active| active.owner == owner)
-                .and_then(|active| active.watch.clone())
+                .filter(|active| active.owner == owner)?
+                .info
+                .extension_id
+                .clone();
+            let epoch = state.reload_requests.get(&id).copied().unwrap_or(0);
+            let active = state.active.get_mut(instance)?;
+            active.reload_epoch = epoch;
+            active.watch.clone()
         });
         if let Some(watch) = watch
             && let Ok(Ok(watch)) = watch.lock().as_deref_mut()

@@ -57,6 +57,25 @@ fn failed_candidate_retains_the_original_binding_and_its_generation() {
     assert!(current.canceled.load(Ordering::Acquire) && retry.canceled.load(Ordering::Acquire));
 }
 
+#[tokio::test]
+async fn hiding_a_candidate_waiting_for_reload_capacity_cancels_promptly() {
+    let (service, handle, _) = setup();
+    let service = Arc::new(service);
+    let held = service.registry.reload_gate().lock_owned().await;
+    let candidate = service.begin_reload(&handle, "2").unwrap();
+    let waiting = Arc::clone(&service);
+    let task = tokio::spawn(async move { waiting.reload_permit(&candidate).await });
+    service.cancel("pane", "2", "1");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_millis(500), task)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    drop(held);
+}
+
 #[test]
 fn successful_swap_revokes_original_handles_only_after_publication() {
     let (service, handle, current) = setup();
