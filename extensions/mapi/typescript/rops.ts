@@ -28,6 +28,7 @@ import type { WireLayout } from "./rop-layouts.js";
 
 export interface RopPayloadReaders {
   readonly transfer: (record: RecordReader, length: number, stream: string, handle: number) => void;
+  readonly release?: (handle: number) => void;
 }
 
 const scalarTypes = new Set([
@@ -304,7 +305,7 @@ function readRequestTail(
             properties,
             () =>
               nested(child, "PropertyValue", (value) =>
-                readTaggedValue(value, operation === "RopModifyRules" ? "address-book" : "rop"),
+                readTaggedValue(value, operation === "RopModifyRules" ? "extended-rule" : "rop"),
               ),
             4,
           );
@@ -403,6 +404,7 @@ function readRequestTail(
     case "RopRelease":
       if (request.handle !== undefined) {
         conversation.columns.delete(request.handle);
+        payload.release?.(request.handle);
       }
       return;
     case "RopModifyRecipients": {

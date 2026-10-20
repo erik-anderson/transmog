@@ -1,6 +1,6 @@
 import { bounded, nested, readEnum } from "./common.js";
 import type { Conversation } from "./conversation.js";
-import { enums } from "./constants.js";
+import { readAuxiliaryBody } from "./auxiliary.js";
 import { ParseError } from "./model.js";
 import type { DerivedSource, Direction } from "./model.js";
 import { BinaryReader } from "./reader.js";
@@ -205,18 +205,7 @@ export class RpcDecoder {
         const version = readEnum(block, "Version", "PayloadDataVersion");
         const enumType = version === 1 ? "AuxiliaryBlockType_1" : "AuxiliaryBlockType_2";
         const type = readEnum(block, "Type", enumType);
-        const name = Object.entries(enums[enumType]!.values).find(
-          ([, value]) => value === type,
-        )?.[0];
-        if (name === "AUX_TYPE_ENDPOINT_CAPABILITIES") {
-          readEnum(block, "EndpointCapabilityFlag", "EndpointCapabilityFlag");
-        } else {
-          block.bytes("Auxiliary data", block.reader.remaining);
-          block.field.issue = {
-            kind: "unsupported",
-            message: `Unsupported auxiliary block ${name ?? type}`,
-          };
-        }
+        readAuxiliaryBody(block, type, version);
       });
     }
   }

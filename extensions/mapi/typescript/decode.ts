@@ -1,5 +1,6 @@
 import { readHttpMessage } from "./http.js";
 import { Conversation } from "./conversation.js";
+import { FastTransferDecoder } from "./fast-transfer.js";
 import { ParseBudget, ParseError } from "./model.js";
 import type { DecodeResult, Direction, Exchange, ParsedField } from "./model.js";
 import { parsePropertyFixture } from "./properties.js";
@@ -49,11 +50,13 @@ export function decode(
   }
   const budget = new ParseBudget();
   const conversation = new Conversation();
+  const transfer = new FastTransferDecoder();
   const payloadReaders = {
-    transfer(record: RecordReader, length: number): void {
-      if (length !== 0) {
-        unavailable(record, "FastTransfer stream");
-      }
+    transfer(record: RecordReader, length: number, operation: string, handle: number): void {
+      transfer.read(record, length, operation, handle);
+    },
+    release(handle: number): void {
+      transfer.release(handle);
     },
   };
   const rpc = new RpcDecoder(conversation, payloadReaders);
@@ -132,5 +135,23 @@ export function decode(
     record.add(issue);
     record.field.issue = { kind: error.kind, message: error.message };
   }
-  return { root: record.finish(), derivedSources: rpc.derivedSources };
+  const root = record.finish();
+  const allSources = [...rpc.derivedSources, ...transfer.derivedSources];
+  const needed = new Set<string>();
+  const visit = (field: ParsedField): void => {
+    needed.add(field.range.sourceId);
+    field.children.forEach(visit);
+  };
+  visit(root);
+  const byId = new Map(allSources.map((source) => [source.id, source]));
+  const pendingSources = [...needed];
+  for (let index = 0; index < pendingSources.length; index++) {
+    for (const parent of byId.get(pendingSources[index]!)?.parents ?? []) {
+      if (!needed.has(parent.sourceId)) {
+        needed.add(parent.sourceId);
+        pendingSources.push(parent.sourceId);
+      }
+    }
+  }
+  return { root, derivedSources: allSources.filter((source) => needed.has(source.id)) };
 }

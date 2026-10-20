@@ -54,6 +54,7 @@ export class BinaryReader {
         "malformed",
         `Expected ${length} bytes; ${this.remaining} remain`,
         this.range(this.position, this.remaining),
+        Number.isSafeInteger(length) && length >= 0 ? "truncated" : "invalid",
       );
     }
   }
@@ -124,6 +125,17 @@ export class BinaryReader {
     return result;
   }
 
+  fork(): BinaryReader {
+    return new BinaryReader(this.bytes, this.sourceId, this.budget, this.position, this.end);
+  }
+
+  at(offset: number): BinaryReader {
+    if (!Number.isSafeInteger(offset) || offset < this.start || offset > this.end) {
+      throw new ParseError("malformed", "Field offset is outside its structure", this.range());
+    }
+    return new BinaryReader(this.bytes, this.sourceId, this.budget, offset, this.end);
+  }
+
   /** ASCII's replacement rule is deliberate; bytes are not decoded as UTF-8. */
   ascii(length: number): string {
     return this.take(length)
@@ -131,16 +143,28 @@ export class BinaryReader {
       .join("");
   }
 
-  utf16(length: number): string {
+  utf16(length: number, littleEndian = true): string {
     this.require(length);
     if (length % 2 !== 0) {
       throw new ParseError("malformed", "UTF-16 has an incomplete code unit", this.range());
     }
     const characters: string[] = [];
     for (let index = 0; index < length; index += 2) {
-      characters.push(String.fromCharCode(this.integer("u16")));
+      const unit = littleEndian
+        ? this.integer("u16")
+        : this.integer("u8") * 256 + this.integer("u8");
+      characters.push(String.fromCharCode(unit));
     }
     return characters.join("");
+  }
+
+  windows1252(length: number): string {
+    const punctuation = "€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008dŽ\u008f\u0090‘’“”•–—˜™š›œ\u009džŸ";
+    return this.take(length)
+      .map((value) =>
+        value >= 0x80 && value <= 0x9f ? punctuation[value - 0x80]! : String.fromCharCode(value),
+      )
+      .join("");
   }
 
   terminatedString(wide: boolean): string {
@@ -154,10 +178,13 @@ export class BinaryReader {
     }
   }
 
-  line(): string {
+  line(allowNull = false): string {
     const characters: string[] = [];
     for (;;) {
       const value = this.integer("u8");
+      if (allowNull && value === 0) {
+        return characters.join("");
+      }
       if (value === 13 && this.peekUInt8() === 10) {
         this.skip(1);
         return characters.join("");

@@ -43,6 +43,17 @@ return code and the generated probe includes a large padding tail. It remains
 an archived malformed-input regression; independent valid success/failure tests
 verify the new parser's status and payload handling.
 
+FastTransfer continuation uses bounded byte fragments per stream/handle. The
+parser reassembles a complete wire element before decoding it, preserving all
+chunk ranges as parents of a derived source. It displays a complete value rather
+than the reference's final text fragment. The corpus checks the concatenated
+bytes, decoded Unicode/binary/integer values and every parent range independently.
+MetaTagEcWarning is an unsigned error code in both directions; the reference's
+download path displays its bits as a signed integer. Per-element lengths for
+variable multivalues follow the protocol's lexical grammar, independently of the
+reference's null-terminated multivalue helper.
+See Microsoft's [FastTransfer lexical structure](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcfxics/bafa8ce0-ff31-4c36-b464-8e8852d22a10).
+
 The replacement is being introduced in phases. Until integration and parity
 qualification complete, the existing production manifest still selects the old
 decoder. Passing reader tests alone does not qualify the replacement for use.

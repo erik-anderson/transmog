@@ -67,6 +67,7 @@ export class ParseError extends Error {
     readonly kind: ParseIssue["kind"],
     message: string,
     readonly range: ByteRange,
+    readonly reason: "invalid" | "truncated" = "invalid",
   ) {
     super(message);
     this.name = "ParseError";

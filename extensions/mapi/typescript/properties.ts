@@ -1,10 +1,10 @@
 import { bounded, filetime, nested, readEnum, readObjectId, repeat } from "./common.js";
 import { enums } from "./constants.js";
 import { ParseError } from "./model.js";
-import type { ParsedField } from "./model.js";
 import type { RecordReader, ScalarType } from "./record.js";
+import { readRuleActions } from "./rules.js";
 
-export type PropertyContext = "rop" | "address-book" | "fast-transfer";
+export type PropertyContext = "rop" | "address-book" | "fast-transfer" | "extended-rule";
 
 export interface PropertyTag {
   readonly type: number;
@@ -118,6 +118,9 @@ export function readPropertyValue(
     }
     case 0x00fd:
       readRestriction(record, context);
+      return;
+    case 0x00fe:
+      readRuleActions(record, context);
       return;
     default:
       throw new ParseError(

@@ -48,3 +48,8 @@ test("IEEE-754 and reader work share a bounded budget", () => {
     (error) => error.kind === "limit",
   );
 });
+
+test("declared code pages preserve non-ASCII characters and byte order", () => {
+  assert.equal(new BinaryReader([0x80, 0x93, 0xe9], "cp1252").windows1252(3), "€“é");
+  assert.equal(new BinaryReader([0x03, 0xa9, 0, 0], "big-endian").utf16(4, false), "Ω\0");
+});

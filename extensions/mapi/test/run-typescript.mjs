@@ -13,12 +13,13 @@ async function loadModule(url) {
     throw new Error("Fixture module escaped the extension");
   }
   if (!modules.has(url.href)) {
+    // Linking requests shared dependencies concurrently. Cache the promise
+    // before reading, so each module has exactly one class/type identity.
     modules.set(
       url.href,
-      new vm.SourceTextModule(await readFile(fileURLToPath(url), "utf8"), {
-        context,
-        identifier: url.href,
-      }),
+      readFile(fileURLToPath(url), "utf8").then(
+        (source) => new vm.SourceTextModule(source, { context, identifier: url.href }),
+      ),
     );
   }
   return modules.get(url.href);
@@ -61,6 +62,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
     });
     console.log(JSON.stringify(result));
   } catch (error) {
+    if (process.argv.includes("--debug")) console.error(error.stack);
     console.log(JSON.stringify({ failure: error.name, message: error.message }));
   } finally {
     delete context.messages;

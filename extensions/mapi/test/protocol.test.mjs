@@ -3,9 +3,23 @@ import { test } from "node:test";
 import { decode } from "../dist/decode.js";
 import { BinaryReader } from "../dist/reader.js";
 import { decompressLz77 } from "../dist/rpc.js";
+import { RecordReader } from "../dist/record.js";
+import { readRuleActions } from "../dist/rules.js";
+import { readSynchronizationBinary } from "../dist/synchronization.js";
+import { readAuxiliaryBody } from "../dist/auxiliary.js";
+import { enums } from "../dist/constants.js";
+import { FastTransferDecoder } from "../dist/fast-transfer.js";
 
 function uint32(value) {
   return [value & 255, (value >>> 8) & 255, (value >>> 16) & 255, value >>> 24];
+}
+
+function uint16(value) {
+  return [value & 255, value >>> 8];
+}
+
+function unicode(value) {
+  return Array.from(Buffer.from(value + "\0", "utf16le"));
 }
 
 function execute(rop, response) {
@@ -75,4 +89,132 @@ test("a malformed decode cannot provide state to the next decode", () => {
   );
   assert.ok(fields(recovered.root).every((field) => !field.issue));
   assert.ok(fields(recovered.root).some((field) => field.name === "RopRelease request"));
+});
+
+test("rule actions keep their own lengths and property count widths", () => {
+  const action = (type, bytes) => [
+    ...uint16(9 + bytes.length),
+    type,
+    ...uint32(0),
+    ...uint32(0),
+    ...bytes,
+  ];
+  const data = [
+    ...uint16(3),
+    ...action(6, uint32(13)),
+    ...action(9, [...uint32(0x0037001f), ...unicode("Rule Ω")]),
+    ...action(10, []),
+  ];
+  const record = new RecordReader(new BinaryReader(data, "rules"), "Rule actions");
+  readRuleActions(record, "rop");
+  assert.equal(record.reader.remaining, 0);
+  assert.ok(fields(record.finish()).some((field) => field.value?.value === "Rule Ω"));
+  const extended = [
+    ...uint32(1),
+    ...uint32(20),
+    9,
+    ...uint32(0),
+    ...uint32(0),
+    ...uint32(0x0fff0102),
+    ...uint32(3),
+    1,
+    2,
+    3,
+  ];
+  const second = new RecordReader(new BinaryReader(extended, "extended"), "Rule actions");
+  readRuleActions(second, "extended-rule");
+  assert.equal(second.reader.remaining, 0);
+  assert.ok(
+    fields(second.finish()).some((field) => field.name === "Count" && field.range.length === 4),
+  );
+  const invalid = [...data];
+  invalid[2] = 8; // A length cannot fit the mandatory nine-byte action header.
+  assert.throws(() =>
+    readRuleActions(new RecordReader(new BinaryReader(invalid, "bad"), "Rules"), "rop"),
+  );
+});
+
+test("synchronization identifier sets enforce stack, range and bitmask boundaries", () => {
+  const commands = [5, 1, 2, 3, 4, 5, 0x42, 10, 5, 0x50, 0];
+  const data = [...Array(16).fill(0), ...commands];
+  const parse = (bytes) => {
+    const record = new RecordReader(new BinaryReader(bytes, "ids"), "Identifier set");
+    assert.equal(readSynchronizationBinary(record, 0x6796, bytes.length), true);
+    assert.equal(record.reader.remaining, 0);
+    return record.finish();
+  };
+  assert.ok(
+    fields(parse(data)).some((field) => field.name === "Bitmask" && field.value.value === "5"),
+  );
+  for (const commands of [
+    [0x50, 0],
+    [1, 1, 0],
+    [0x42, 1, 1, 0],
+    [0xff],
+    [5, 1, 2, 3, 4, 5, 0x42, 255, 1, 0x50, 0],
+  ]) {
+    assert.throws(() => parse([...Array(16).fill(0), ...commands]));
+  }
+});
+
+test("auxiliary strings use declared offsets within their own block", () => {
+  const name = unicode("host");
+  const dn = unicode("dc=example");
+  const bytes = [
+    0,
+    0,
+    1,
+    0,
+    ...uint16(7),
+    ...uint16(1),
+    ...uint16(12 + name.length),
+    ...uint16(12),
+    ...name,
+    ...dn,
+  ];
+  const type = enums.AuxiliaryBlockType_1.values.AUX_TYPE_PERF_SERVERINFO;
+  const parse = (bytes) => {
+    const reader = new BinaryReader(bytes, "auxiliary");
+    const record = new RecordReader(reader, "AUX header");
+    reader.skip(4);
+    readAuxiliaryBody(record, type, 1);
+    return record.finish();
+  };
+  const values = fields(parse(bytes)).map((field) => field.value?.value);
+  assert.ok(values.includes("host") && values.includes("dc=example"));
+  const invalid = [...bytes];
+  invalid[10] = 255;
+  invalid[11] = 255;
+  assert.throws(() => parse(invalid));
+});
+
+test("FastTransfer variable multivalues carry a length for each encoded value", () => {
+  const first = unicode("Ω");
+  const second = unicode("two");
+  const data = [
+    ...uint32(0x0e07101f),
+    ...uint32(2),
+    ...uint32(first.length),
+    ...first,
+    ...uint32(second.length),
+    ...second,
+    ...uint32(0x003784b1),
+    ...uint32(4),
+    3,
+    0xa9,
+    0,
+    0,
+    ...uint32(0x003784e4),
+    ...uint32(2),
+    0x80,
+    0,
+  ];
+  const record = new RecordReader(new BinaryReader(data, "transfer"), "Stream");
+  new FastTransferDecoder().read(record, data.length, "put", 7);
+  const parsed = fields(record.finish());
+  assert.ok(parsed.every((field) => !field.issue));
+  const values = parsed.map((field) => field.value?.value);
+  assert.ok(values.includes("Ω") && values.includes("two") && values.includes("€"));
+  assert.ok(parsed.some((field) => field.encoding === "utf-16be"));
+  assert.ok(parsed.some((field) => field.encoding === "windows-1252"));
 });

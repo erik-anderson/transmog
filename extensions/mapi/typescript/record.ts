@@ -119,10 +119,19 @@ export class RecordReader {
     return value;
   }
 
-  line(name: string): string {
+  line(name: string, allowNull = false): string {
     const start = this.reader.offset;
-    const value = this.reader.line();
+    const value = this.reader.line(allowNull);
     this.value(name, "string", start, { kind: "string", value }).encoding = "us-ascii";
+    return value;
+  }
+
+  encodedString(name: string, encoding: "utf-16be" | "windows-1252", length: number): string {
+    const start = this.reader.offset;
+    const text =
+      encoding === "utf-16be" ? this.reader.utf16(length, false) : this.reader.windows1252(length);
+    const value = text.replace(/\0$/, "");
+    this.value(name, "string", start, { kind: "string", value }).encoding = encoding;
     return value;
   }
 
@@ -140,9 +149,9 @@ export class RecordReader {
       parse(child);
     } finally {
       this.reader.budget.leave();
+      this.add(child.finish());
     }
     const field = child.finish();
-    this.add(field);
     return field;
   }
 
