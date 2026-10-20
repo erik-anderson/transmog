@@ -3,7 +3,11 @@
 `transmog-extensions` provides the UI-independent revision-1 visualizer metadata,
 native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide
-the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-registry`
+the isolated JavaScript worker and its bounded lifecycle. The installed
+`transmog-script-host.exe` runs either the traffic-script or extension protocol;
+each worker still has its own AppContainer, Job Object, runtime and IPC session.
+The standalone extension-host executable is a development test fixture and is
+not installed. `transmog-extension-registry`
 provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector

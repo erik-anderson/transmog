@@ -1,5 +1,6 @@
 //! Production MAPI contributions with ordinary authenticated host continuations.
 #![cfg(windows)]
+mod support;
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 use transmog_extension_supervisor::{HostConfig, Runner};
 use transmog_extensions::{
@@ -81,7 +82,7 @@ async fn mapi_loose_folder_package_roundtrip_keeps_only_declared_runtime_files()
         assert!(!snapshot.files.contains_key("author.ts"));
         let runner = Runner::start(
             &HostConfig {
-                executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+                executable: support::host_executable().into(),
             },
             snapshot,
             "body-request",
@@ -101,7 +102,7 @@ async fn mapi_loose_folder_package_roundtrip_keeps_only_declared_runtime_files()
 fn start(id: &str) -> Arc<Runner> {
     Runner::start(
         &HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            executable: support::host_executable().into(),
         },
         snapshot(),
         id,

@@ -13,7 +13,7 @@ python scripts/build-desktop.py --configuration Debug --locked-dependencies
 python scripts/dev-env.py --run cargo run --locked -p transmog-desktop
 ```
 
-This checks the native tools, prepares locked dependencies, builds the UI and all three
+This checks the native tools, prepares locked dependencies, builds the UI and both
 sandbox helpers, and launches the desktop. Use `--configuration Release` and
 `cargo run --release` for an optimized build. `CARGO_TARGET_DIR` is honored.
 Initial dependency downloads require network access.
@@ -216,8 +216,10 @@ python scripts/cache-v8.py --archive-path C:\staging\rusty_v8.lib.gz
 ```
 
 The script rejects bytes that do not match the pinned hash.
-Release packaging builds `transmog-script-host`, `transmog-preview-worker`, and
-`transmog-extension-host` beside the desktop executable.
+Release packaging builds `transmog-script-host` and the isolated
+`transmog-preview-worker` beside the desktop executable.
+The script-host executable also contains the extension runtime, launched in a
+separate sandboxed worker process through its extension mode.
 Production activation requires the host's Windows AppContainer plus Job Object;
 there is no production fallback to an unsandboxed process.
 
@@ -248,10 +250,10 @@ For build-and-launch commands, use the [entry point above](#build-and-launch-the
 Choose validation from [desktop and capture tests](testing.md#desktop-and-capture-workflows).
 
 The desktop locates `transmog-script-host.exe` beside its own executable. The
-repository build script builds the desktop and all three helpers into the same
-Cargo profile directory. Release packaging copies the exact release helpers to Tauri's
+repository build script builds the desktop and both helpers into the same
+Cargo profile directory. Release packaging copies the exact release host to Tauri's
 target-qualified `externalBin` inputs and removes those staging copies
-afterward; the NSIS bundle therefore always installs all three AppContainer helpers
+afterward; the NSIS bundle therefore always installs both AppContainer helpers
 beside Transmog.
 
 Create an unsigned development installer from the repository root:

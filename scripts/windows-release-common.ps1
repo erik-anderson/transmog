@@ -71,7 +71,7 @@ function Assert-ReleasePayload {
     if ($actualFiles.Count -ne $seen.Count) { throw 'The build payload contains unlisted files.' }
     ConvertTo-ReleaseSemVer $manifest.Version | Out-Null
     Resolve-ReleaseType $manifest $manifest.SourceBranch $manifest.ReleaseType | Out-Null
-    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe')) {
+    foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         $expectedPath = 'target/release/' + $binary
         if (@($manifest.Files | Where-Object { $_.Path -ceq $expectedPath }).Count -ne 1) { throw "Missing or duplicate payload binary: $binary" }
     }

@@ -1,5 +1,6 @@
 //! Management uses the real sandbox and releases resources across window owners.
 #![cfg(windows)]
+mod support;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -30,7 +31,7 @@ fn setup() -> (tempfile::TempDir, Registry, std::path::PathBuf) {
     let registry = Registry::load(
         root.path().join("installed"),
         Some(HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            executable: support::host_executable().into(),
         }),
     );
     registry.register_directory(&sources, true).unwrap();
@@ -80,7 +81,7 @@ async fn packaged_current_sources_run_in_a_new_sandbox_without_replacing_active_
     let recipient = Registry::load(
         root.path().join("recipient"),
         Some(HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            executable: support::host_executable().into(),
         }),
     );
     recipient.install(&output).unwrap();

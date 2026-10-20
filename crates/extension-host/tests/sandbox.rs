@@ -1,5 +1,6 @@
 //! Production `AppContainer` coverage for capability-free extension execution and lifecycle.
 #![cfg(windows)]
+mod support;
 use std::{collections::BTreeMap, sync::Arc};
 use transmog_extension_supervisor::{HostConfig, Runner};
 use transmog_extensions::*;
@@ -29,7 +30,7 @@ fn snapshot(source: &str) -> Snapshot {
 fn start(snapshot: Snapshot) -> Result<Arc<Runner>, Failure> {
     Runner::start(
         &HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            executable: support::host_executable().into(),
         },
         snapshot,
         "view",
@@ -414,10 +415,17 @@ async fn infinite_loop_times_out_and_unload_is_independent_between_instances() {
 }
 #[test]
 fn helper_refuses_an_unsandboxed_launch() {
-    let result = std::process::Command::new(env!("CARGO_BIN_EXE_transmog-extension-host"))
-        .output()
-        .unwrap();
-    assert_eq!(result.status.code(), Some(72));
+    for args in [
+        vec!["--extension"],
+        vec!["--extension", "--sandboxed"],
+        vec!["--extension", "--sandboxed", "--development"],
+    ] {
+        let result = std::process::Command::new(support::host_executable())
+            .args(&args)
+            .output()
+            .unwrap();
+        assert_eq!(result.status.code(), Some(72), "arguments: {args:?}");
+    }
 }
 
 #[test]
@@ -467,7 +475,7 @@ fn canceling_initialization_terminates_top_level_code_without_waiting_for_startu
     let worker = std::thread::spawn(move || {
         Runner::start_cancellable(
             &HostConfig {
-                executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+                executable: support::host_executable().into(),
             },
             snapshot(&source),
             "view",
@@ -487,7 +495,7 @@ fn cancellation_closes_an_already_ready_workers_idle_queue() {
     let started = std::time::Instant::now();
     let result = Runner::start_cancellable(
         &HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            executable: support::host_executable().into(),
         },
         snapshot(&format!(
             "export function visualize(){{return {DOCUMENT};}}"

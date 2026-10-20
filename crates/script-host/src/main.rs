@@ -1,6 +1,10 @@
 //! Entrypoint for the capability-free Transmog script helper.
 
 fn main() {
+    let args: Vec<_> = std::env::args_os().skip(1).collect();
+    if args.first().is_some_and(|arg| arg == "--extension") {
+        std::process::exit(transmog_extension_host::run_process(&args[1..]));
+    }
     let mut arguments = std::env::args_os().skip(1);
     if arguments.next().as_deref() == Some(std::ffi::OsStr::new("--sandbox-bootstrap")) {
         let max_heap_bytes = arguments

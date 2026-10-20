@@ -20,17 +20,45 @@ pub fn configure_v8() {
 /// # Errors
 /// Returns a safe error if the native sandbox or its requested limit is unavailable.
 pub fn sandbox_bootstrap(heap: usize) -> Result<i32, String> {
+    bootstrap(heap, transmog_process_sandbox::SandboxMode::Default)
+}
+
+fn bootstrap(heap: usize, mode: transmog_process_sandbox::SandboxMode) -> Result<i32, String> {
     if !(16 * 1024 * 1024..=256 * 1024 * 1024).contains(&heap) {
         return Err("Invalid worker heap limit".into());
     }
-    transmog_process_sandbox::sandbox_bootstrap(
+    transmog_process_sandbox::sandbox_bootstrap_with_mode(
         transmog_process_sandbox::SandboxIdentity {
             profile_namespace: "Extension",
             display_name: "Transmog isolated visualizer",
             description: "Ephemeral zero-capability protocol visualizer",
         },
         heap.saturating_mul(3).saturating_add(128 * 1024 * 1024),
+        mode,
     )
+}
+
+/// Runs the extension entry point of the shared JavaScript helper.
+/// Returns a process exit code without logging source or captured input.
+pub fn run_process(args: &[std::ffi::OsString]) -> i32 {
+    if args.first().is_some_and(|arg| arg == "--sandbox-bootstrap") {
+        let heap = args
+            .get(1)
+            .and_then(|value| value.to_string_lossy().parse::<usize>().ok())
+            .unwrap_or(128 * 1024 * 1024);
+        return bootstrap(heap, transmog_process_sandbox::SandboxMode::Extension).unwrap_or(71);
+    }
+    if args.len() != 1
+        || args[0] != "--sandboxed"
+        || transmog_process_sandbox::verify_current_process().is_err()
+    {
+        return 72;
+    }
+    configure_v8();
+    if run(std::io::stdin().lock(), std::io::stdout().lock()).is_err() {
+        return 70;
+    }
+    0
 }
 
 /// Serves framed IPC after the executable has verified containment.

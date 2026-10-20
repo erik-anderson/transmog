@@ -95,6 +95,7 @@ impl AttributeList {
 pub(super) fn bootstrap(
     identity: SandboxIdentity,
     process_memory_bytes: usize,
+    mode: super::SandboxMode,
 ) -> Result<i32, String> {
     // The profile is unique per bootstrap, so scripts cannot share its private
     // storage even if a future native-engine defect exposes file APIs.
@@ -226,7 +227,7 @@ pub(super) fn bootstrap(
         }
     }
     let executable = std::env::current_exe().map_err(|_| "host executable is unavailable")?;
-    let mut command_line = command_line(&executable);
+    let mut command_line = command_line(&executable, mode);
     let mut startup: STARTUPINFOEXW = unsafe { zeroed() };
     startup.StartupInfo.cb =
         u32::try_from(size_of::<STARTUPINFOEXW>()).map_err(|_| "startup structure is invalid")?;
@@ -370,10 +371,14 @@ fn wide_path(value: &Path) -> Vec<u16> {
     value.as_os_str().encode_wide().chain(Some(0)).collect()
 }
 
-fn command_line(executable: &Path) -> Vec<u16> {
+fn command_line(executable: &Path, mode: super::SandboxMode) -> Vec<u16> {
     let mut value = String::from("\"");
     value.push_str(&executable.to_string_lossy());
-    value.push_str("\" --sandboxed");
+    value.push('"');
+    if matches!(mode, super::SandboxMode::Extension) {
+        value.push_str(" --extension");
+    }
+    value.push_str(" --sandboxed");
     wide(&value)
 }
 

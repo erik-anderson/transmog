@@ -788,6 +788,7 @@ fn launch(config: &HostConfig, heap: usize) -> Result<Child, Failure> {
         let mut command = Command::new(&config.executable);
         command
             .creation_flags(0x0800_0000)
+            .arg("--extension")
             .arg("--sandbox-bootstrap")
             .arg(heap.to_string())
             .env_clear()

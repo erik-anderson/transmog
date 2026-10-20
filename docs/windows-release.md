@@ -45,7 +45,7 @@ downgrades are rejected in every install mode.
 Every hosted release publishes `Transmog_<version>_windows-x64-symbols.zip` and
 `Transmog_<version>_windows-arm64-symbols.zip` as public GitHub Release assets.
 Each contains full PDBs for its architecture's desktop executable,
-script host, preview worker, extension host, and standalone CLI. The build verifies each PDB's
+script host, preview worker, and standalone CLI. The build verifies each PDB's
 GUID and age against its executable before signing, then preserves the archive
 through the same-run artifact checks, release checksums, and provenance
 attestation. A missing or altered archive blocks release publication.
@@ -132,7 +132,7 @@ certificate and archive gates can reuse the binaries compiled by workspace tests
 The production optimized build continues to use its own shipping feature set.
 
 After those checks pass, build the optimized app and helpers once, qualify the
-CLI, check all five matching full PDBs, and run the release's three-minute WebView
+CLI, check all four matching full PDBs, and run the release's three-minute WebView
 soak. `SkipTests` here follows the complete gate above:
 
 Run this qualification on each native architecture available to you; the hosted
@@ -150,7 +150,7 @@ $releaseBuild = & ./scripts/package-windows.ps1 -UnsignedDevelopment -BuildOnly 
 if (@($releaseBuild).Count -ne 1) { throw 'Expected one optimized build result.' }
 python ./scripts/test-cli-support.py --executable (Join-Path $releaseBuild.BuildDirectory 'transmog-cli.exe') --artifacts ./artifacts/local-release-cli
 . ./scripts/windows-release-symbols.ps1
-foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe')) {
+foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
     $pdb = [IO.Path]::GetFileNameWithoutExtension($binary).Replace('-', '_') + '.pdb'
     Get-WindowsSymbolEvidence -Binary (Join-Path $releaseBuild.BuildDirectory $binary) -Pdb (Join-Path $releaseBuild.BuildDirectory $pdb)
 }

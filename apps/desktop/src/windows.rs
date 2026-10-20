@@ -2172,7 +2172,7 @@ pub fn run() {
         preview_worker_executable: packaged_preview_worker(),
         extensions: Some(transmog_app::extensions::Registry::load_with_bundled(
             state_root.join("extensions-v1"),
-            packaged_extension_host()
+            packaged_script_host()
                 .map(|executable| transmog_app::extensions::HostConfig { executable }),
             &crate::bundled_extensions::RESOURCES,
         )),
@@ -2644,12 +2644,6 @@ fn packaged_preview_worker() -> Option<PathBuf> {
     let worker = executable.with_file_name("transmog-preview-worker.exe");
     worker.is_file().then_some(worker)
 }
-fn packaged_extension_host() -> Option<PathBuf> {
-    let executable = std::env::current_exe().ok()?;
-    let host = executable.with_file_name("transmog-extension-host.exe");
-    host.is_file().then_some(host)
-}
-
 fn preview_response(application: &Application, request: &Request<Vec<u8>>) -> Response<Vec<u8>> {
     let handle = preview_handle(request.uri().path());
     let preview = (request.method() == tauri::http::Method::GET)

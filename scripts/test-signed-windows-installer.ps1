@@ -39,6 +39,7 @@ Invoke-MaintenanceProcess -FilePath $cli -Arguments @('--version')
 if ($LASTEXITCODE -ne 0) { throw 'Signed CLI capture/lifecycle qualification failed.' }
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', '/TMCAP=1', '/SAZ=1', '/HAR=1', "/D=$installDirectory")
 if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe')) { throw 'The standalone CLI must not be bundled in the app installer.' }
+if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-extension-host.exe')) { throw 'Extensions must use the shared script host instead of a duplicate installed runtime.' }
 foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     $openCommand = (Get-Item -LiteralPath "HKCU:\Software\Classes\Transmog.$kind\shell\open\command").GetValue('')
     if ($openCommand -cne ('"' + (Join-Path $installDirectory 'transmog.exe') + '" "%1"')) { throw "$kind registration did not quote the executable and file path correctly." }
@@ -49,7 +50,7 @@ foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     if ((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Erik Anderson\Transmog' -Name ($kind + 'Registration')) -ne 1) { throw "$kind choice was not preserved during an in-place install." }
 }
 Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--verify-update-artifact', ('"' + (Resolve-Path -LiteralPath $installer).Path + '"'), ('"' + (Resolve-Path -LiteralPath "$installer.sig").Path + '"'), (ConvertTo-ReleaseSemVer $manifest.Version))
-foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'uninstall.exe')) {
+foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
     if ($name -cne 'uninstall.exe') { Assert-WindowsBinaryTarget -Path (Join-Path $installDirectory $name) -Target $Target }
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }

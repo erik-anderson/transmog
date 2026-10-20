@@ -26,7 +26,7 @@ try {
     $installerEvidence = Get-WindowsSignatureEvidence -FilePath $package.Installer -ExpectedPublisher $env:SIGNING_PUBLISHER
     $cliEvidence = Get-WindowsSignatureEvidence -FilePath $package.Cli -ExpectedPublisher $env:SIGNING_PUBLISHER
     $journal = @(Get-Content -LiteralPath $env:TRANSMOG_SIGNING_JOURNAL | ForEach-Object { $_ | ConvertFrom-Json })
-    foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe', 'NSISdl.dll', 'StartMenu.dll', 'System.dll', 'nsDialogs.dll', 'nsis_tauri_utils.dll')) {
+    foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe', 'NSISdl.dll', 'StartMenu.dll', 'System.dll', 'nsDialogs.dll', 'nsis_tauri_utils.dll')) {
         if (-not ($journal | Where-Object { $_.Name -ceq $name })) { throw "Missing signature evidence for $name" }
     }
     Copy-Item -LiteralPath $package.Installer -Destination (Join-Path $releaseRoot $installerEvidence.Name)

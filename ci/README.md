@@ -49,10 +49,10 @@ tests, and 3-minute WebView soak before credentials exist. Soak progress logs
 include UTC timestamps and elapsed/remaining time once per
 minute, with a completion timestamp. Same-run immutable
 artifacts carry hashes, commit, run ID, version, and target architecture. The
-build also validates matching full PDBs for all five released executables and
+build also validates matching full PDBs for all four released executables and
 retains them in a versioned public symbols ZIP. The archive includes the source
 commit and debug identifiers and receives release checksums and provenance.
-The signing job checks that catalog before restoring the app, three bundled helpers,
+The signing job checks that catalog before restoring the app, two bundled helpers,
 standalone CLI and UI assets;
 it bundles those outputs without recompiling the application or running npm
 installation scripts with Azure credentials.
@@ -67,7 +67,7 @@ Browser workspace checks run first so UI failures do not wait for Rust compilati
 The release builder first fetches the locked Cargo dependencies, so offline UI
 Credits generation can read their metadata and license files on a fresh runner.
 The repository-wide Clippy/tests then run before optimized compilation. That full gate
-replaces the packaging wrapper's narrower test pass. Tauri forwards all five
+replaces the packaging wrapper's narrower test pass. Tauri forwards all four
 package selections to one Cargo release build, and sidecars are staged
 later during bundling. Clippy/development and release artifacts remain separate;
 this avoids redundant test/package passes without removing the quality checks.

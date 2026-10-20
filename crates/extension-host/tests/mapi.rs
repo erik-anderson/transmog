@@ -1,5 +1,6 @@
 //! The TypeScript decoder runs in the ordinary capability-free native worker.
 #![cfg(windows)]
+mod support;
 use std::{
     collections::BTreeMap,
     path::PathBuf,
@@ -46,7 +47,7 @@ fn start(entry: &str) -> Arc<Runner> {
     .unwrap();
     Runner::start(
         &HostConfig {
-            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            executable: support::host_executable().into(),
         },
         snapshot,
         "test",

@@ -7508,9 +7508,15 @@ dependencies = [
 name = "transmog-script-host"
 version = "0.1.7"
 dependencies = [
+ "base64 0.22.1",
  "deno_core",
  "serde_json",
+ "tempfile",
  "tokio",
+ "transmog-extension-host",
+ "transmog-extension-registry",
+ "transmog-extension-supervisor",
+ "transmog-extensions",
  "transmog-process-sandbox",
  "transmog-script",
  "transmog-script-supervisor",

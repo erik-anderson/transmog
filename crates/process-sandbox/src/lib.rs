@@ -19,6 +19,15 @@ pub struct SandboxIdentity {
     pub description: &'static str,
 }
 
+/// Trusted worker entry point preserved when the sandbox re-executes its binary.
+#[derive(Clone, Copy, Debug)]
+pub enum SandboxMode {
+    /// The binary's default worker protocol.
+    Default,
+    /// The extension protocol in the shared JavaScript host.
+    Extension,
+}
+
 /// Re-executes the current helper binary inside an ephemeral zero-capability
 /// `AppContainer` and a kill-on-close Job Object.
 ///
@@ -30,6 +39,18 @@ pub struct SandboxIdentity {
 pub fn sandbox_bootstrap(
     identity: SandboxIdentity,
     process_memory_bytes: usize,
+) -> Result<i32, String> {
+    sandbox_bootstrap_with_mode(identity, process_memory_bytes, SandboxMode::Default)
+}
+
+/// Re-executes a trusted worker mode inside the same zero-capability boundary.
+///
+/// # Errors
+/// Returns a redaction-safe platform or resource setup failure.
+pub fn sandbox_bootstrap_with_mode(
+    identity: SandboxIdentity,
+    process_memory_bytes: usize,
+    mode: SandboxMode,
 ) -> Result<i32, String> {
     if identity.profile_namespace.is_empty()
         || identity.profile_namespace.len() > 32
@@ -45,11 +66,11 @@ pub fn sandbox_bootstrap(
     }
     #[cfg(windows)]
     {
-        windows::bootstrap(identity, process_memory_bytes)
+        windows::bootstrap(identity, process_memory_bytes, mode)
     }
     #[cfg(not(windows))]
     {
-        let _ = (identity, process_memory_bytes);
+        let _ = (identity, process_memory_bytes, mode);
         Err("the helper sandbox is supported only on Windows".to_owned())
     }
 }

@@ -57,14 +57,14 @@ try {
 }
 
 if (-not $SkipTests) {
-    $cargoArguments = @('test', '--locked', '-p', 'transmog', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-extension-host', '-p', 'transmog-desktop')
+    $cargoArguments = @('test', '--locked', '-p', 'transmog', '-p', 'transmog-app', '-p', 'transmog-app-webui', '-p', 'transmog-host-windows', '-p', 'transmog-script', '-p', 'transmog-script-host', '-p', 'transmog-script-supervisor', '-p', 'transmog-preview-worker', '-p', 'transmog-desktop')
     if ($Offline) { $cargoArguments += '--offline' }
     & cargo @cargoArguments
     if ($LASTEXITCODE -ne 0) { throw "Cargo release tests failed with exit code $LASTEXITCODE" }
 }
 
 if (-not $BuildOnly) {
-    $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker', '-p', 'transmog-extension-host')
+    $hostBuildArguments = @('build', '--locked', '--release', '-p', 'transmog', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker')
     if ($platform.Architecture -ceq 'arm64') { $hostBuildArguments += @('--target', $Target) }
     if ($Offline) { $hostBuildArguments += '--offline' }
     & cargo @hostBuildArguments
@@ -77,12 +77,11 @@ $standaloneCli = Join-Path $buildDirectory 'transmog-cli.exe'
 if (-not $BuildOnly -and -not (Test-Path -LiteralPath $standaloneCli -PathType Leaf)) { throw 'The standalone CLI release executable is missing.' }
 $bundledHost = Join-Path $binaryDirectory "transmog-script-host-$Target.exe"
 $bundledPreview = Join-Path $binaryDirectory "transmog-preview-worker-$Target.exe"
-$bundledExtension = Join-Path $binaryDirectory "transmog-extension-host-$Target.exe"
 if (-not $BuildOnly) { New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null }
 if ($SigningMetadataPath) {
     $SigningMetadataPath = (Resolve-Path -LiteralPath $SigningMetadataPath).Path
     $SigningClientDll = (Resolve-Path -LiteralPath $SigningClientDll).Path
-    foreach ($helperName in @('transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe')) {
+    foreach ($helperName in @('transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
         & (Join-Path $PSScriptRoot 'sign-windows-file.ps1') -FilePath (Join-Path $buildDirectory $helperName) -MetadataPath $SigningMetadataPath -ClientDll $SigningClientDll -ExpectedPublisher $ExpectedPublisher | Out-Host
     }
 }
@@ -96,7 +95,6 @@ if (-not $BuildOnly) {
     }
     Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-script-host.exe') -Destination $bundledHost -Force
     Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-preview-worker.exe') -Destination $bundledPreview -Force
-    Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-extension-host.exe') -Destination $bundledExtension -Force
 }
 
 $tauriArguments = if ($BuildOnly) { @('build', '--no-bundle', '--no-sign', '--ci') }
@@ -110,7 +108,7 @@ $override = @{
         externalBin = @()
     }
 }
-if (-not $BuildOnly) { $override.bundle.externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker', 'binaries/transmog-extension-host') }
+if (-not $BuildOnly) { $override.bundle.externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker') }
 if ($SigningMetadataPath) {
     $override.bundle.windows = @{
         digestAlgorithm = 'sha256'
@@ -134,7 +132,7 @@ if (-not $BundleOnly) {
     if ($BuildOnly) {
         # One Cargo release graph builds the app, bundled helpers and standalone CLI. Sidecars are
         # staged only when bundling, after these outputs exist.
-        $tauriArguments += @('-p', 'transmog-desktop', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker', '-p', 'transmog-extension-host', '-p', 'transmog')
+        $tauriArguments += @('-p', 'transmog-desktop', '-p', 'transmog-script-host', '-p', 'transmog-preview-worker', '-p', 'transmog')
     }
 }
 
@@ -169,7 +167,6 @@ try {
     if (-not $BuildOnly) {
         Remove-Item -LiteralPath $bundledHost -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $bundledPreview -Force -ErrorAction SilentlyContinue
-        Remove-Item -LiteralPath $bundledExtension -Force -ErrorAction SilentlyContinue
     }
 }
 
