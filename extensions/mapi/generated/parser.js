@@ -75956,7 +75956,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             MAPIInspector.Parsers.Partial.IsPutExtend = true;
                             ropFastTransferDestinationPutBufferExtendedRequest.Parse(this.parser);
                             ropsList.add(ropFastTransferDestinationPutBufferExtendedRequest);
-                            let putExtendBufferPartialInformaiton = new MAPIInspector.Parsers.PartialContextInformation(MAPIInspector.Parsers.Partial.PartialPutType, MAPIInspector.Parsers.Partial.PartialPutId, MAPIInspector.Parsers.Partial.PartialPutRemainSize, MAPIInspector.Parsers.Partial.PartialPutSubRemainSize, false, aimsParsingSession, MapiInspector.MAPIParser.InputPayLoadCompressedXOR);
+                            let putExtendBufferPartialInformaiton = new MAPIInspector.Parsers.PartialContextInformation(MAPIInspector.Parsers.Partial.PartialPutExtendType, MAPIInspector.Parsers.Partial.PartialPutExtendId, MAPIInspector.Parsers.Partial.PartialPutExtendRemainSize, MAPIInspector.Parsers.Partial.PartialPutExtendSubRemainSize, false, aimsParsingSession, MapiInspector.MAPIParser.InputPayLoadCompressedXOR);
                             let sessionputExtendContextInfor = new (System.Collections.Generic.SortedDictionary$2(System.Int32, MAPIInspector.Parsers.PartialContextInformation))();
                             if (MAPIInspector.Parsers.Partial.HandleWithSessionPutExtendContextInformation.containsKey(ropPutExtendbufferHandle)) {
                                 sessionputExtendContextInfor = MAPIInspector.Parsers.Partial.HandleWithSessionPutExtendContextInformation.getItem(ropPutExtendbufferHandle);
@@ -76248,16 +76248,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         this.RopsList = ropsList.ToArray();
         if (this.RopsList.length !== 0) {
-            var $ef7f2 = TransposeR.getEnumerator(ropsList);
+            var $ef774 = TransposeR.getEnumerator(ropsList);
             try {
-                while ($ef7f2.moveNext()) {
-                    let obj = $ef7f2.current;
+                while ($ef774.moveNext()) {
+                    let obj = $ef774.current;
                     if (MapiInspector.MAPIParser.AllRopsList.Count <= 0 || !MapiInspector.MAPIParser.AllRopsList.contains(Transpose.Reflection.getTypeName(Transpose.getType(obj)))) {
                         MapiInspector.MAPIParser.AllRopsList.add(Transpose.Reflection.getTypeName(Transpose.getType(obj)));
                     }
                 }
             }finally {
-                TransposeR.dispose($ef7f2);
+                TransposeR.dispose($ef774);
             }
         }
         while (this.parser.RemainingBytes >= 4) {

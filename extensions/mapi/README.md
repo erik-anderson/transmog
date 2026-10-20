@@ -53,7 +53,7 @@ for future GC delays. Scripts receive no timer or other host capability.
 Full semantic parity, retained-input integration and bundling remain the gates
 below. Compilation and compatibility tests alone do not establish protocol parity.
 
-The protocol adapter has 675 synthetic differential cases covering nonzero
+The protocol adapter has 720 synthetic differential cases covering nonzero
 mailbox transport, notifications, scalar/property/enum boundaries, Unicode,
 nonempty multivalues, address-book optional values, and plain/XOR/LZ77/combined
 auxiliary buffers. These include 260 minimal ROP parser shapes (128 request and
@@ -67,8 +67,14 @@ operations include successful populated responses and failed status envelopes,
 nonzero STAT fields, Unicode names, property rows and lists, optional state and
 arrays, signed deltas, named properties, an existence restriction, and both
 permanent and ephemeral entry IDs. The test runner checks dispatcher coverage
-against the pinned source. Eight representative NSPI/context cases also compare
-their full reference trees inside the actual AppContainer worker.
+against the pinned source. Representative NSPI/context and FastTransfer cases
+also compare their full reference trees inside the actual AppContainer worker.
+FastTransfer coverage includes fixed, variable and multivalued properties,
+numeric and string named properties, markers and metadata, both upload variants,
+binary/UTF-16/header continuations, and three reordered retained chunks.
+Synchronization configuration includes a nested restriction and read-state
+changes. Multi-buffer RPC cases exercise XOR, literal and matching LZ77, and
+their combination, checking decoded bytes and exact enclosing provenance.
 The semantic build explicitly preserves 776 parser-wrapper
 conversions in branches, switches, arithmetic and counts. Primitive enum reads
 are unboxed as value types, and hexadecimal enum widths preserve native formatting.
@@ -87,7 +93,7 @@ unchanged. A parser work counter bounds repeated block parsing before projection
 The developer-only native oracle also runs with a 256 MiB GC heap ceiling;
 shape generation isolates each probe with a deadline and file-backed input.
 
-Three intentional presentation corrections are verified separately:
+Intentional differences from the reference are verified explicitly:
 
 - Decoded RPC payload fields use a separate source with decoded offsets. The
   reference incorrectly shifts them into the encoded body. Plain sub-buffers
@@ -100,6 +106,11 @@ Three intentional presentation corrections are verified separately:
 - A false address-book string presence byte produces **No value** and its exact
   one-byte boolean field. The reference instead throws while laying out a null
   string; the original failure and repaired output are both asserted.
+- Extended uploads save their own continuation fields. The pinned input
+  dispatcher mistakenly saves ordinary-upload fields, losing the third chunk's
+  state. One separate semantic regression verifies the remaining Unicode value
+  and exact selected-body span; it is excluded from the 720 differential passes.
+  The original reference remains unchanged and its stalling probe is bounded.
 
 Before bundling, require differential coverage of:
 

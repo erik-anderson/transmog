@@ -157,6 +157,22 @@ sealed class PortableSource(string file, SortedDictionary<string, int> changes) 
     }
     public override SyntaxNode? VisitObjectCreationExpression(ObjectCreationExpressionSyntax node)
     {
+        if (file == "Parsers/MSOXCROPS/ropBuffers/ROPInputBuffer.cs" && node.Type.ToString() == "PartialContextInformation"
+            && node.Parent is EqualsValueClauseSyntax { Parent: VariableDeclaratorSyntax { Identifier.ValueText: "putExtendBufferPartialInformaiton" } })
+        {
+            // The reference saves ordinary-upload state here by mistake. The
+            // third extended chunk then loses its type/remaining-byte state.
+            Count("extended upload continuation state");
+            var arguments = node.ArgumentList!.Arguments.Select(argument => argument.Expression.ToString() switch
+            {
+                "Partial.PartialPutType" => argument.WithExpression(SyntaxFactory.ParseExpression("Partial.PartialPutExtendType")),
+                "Partial.PartialPutId" => argument.WithExpression(SyntaxFactory.ParseExpression("Partial.PartialPutExtendId")),
+                "Partial.PartialPutRemainSize" => argument.WithExpression(SyntaxFactory.ParseExpression("Partial.PartialPutExtendRemainSize")),
+                "Partial.PartialPutSubRemainSize" => argument.WithExpression(SyntaxFactory.ParseExpression("Partial.PartialPutExtendSubRemainSize")),
+                _ => argument
+            });
+            return node.WithArgumentList(node.ArgumentList.WithArguments(SyntaxFactory.SeparatedList(arguments)));
+        }
         if (HasPayload && node.Type.ToString() == "BinaryParser")
         {
             Count("payload source provenance");

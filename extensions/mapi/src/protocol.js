@@ -111,6 +111,7 @@ function session(message){
   result.RequestHeaders.setItem('X-RequestType',message.requestType);
   result.RequestHeaders.setItem('X-ClientInfo',message.clientInfo??'synthetic-client');
   result.ResponseHeaders.setItem('Content-Type',message.responseType??'application/mapi-http');
+  result.ResponseHeaders.setItem('X-RequestType',message.requestType);
   result.ResponseHeaders.setItem('X-ResponseCode',message.responseCode??'0');
   result.requestBodyBytes=System.Array.init(Array.from(message.request?.bytes??[]),System.Byte);
   result.responseBodyBytes=System.Array.init(Array.from(message.response?.bytes??[]),System.Byte);

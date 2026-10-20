@@ -123,6 +123,7 @@ internal static class Oracle
         session.RequestHeaders["Content-Type"] = "application/mapi-http";
         session.ResponseHeaders["Content-Type"] = "application/mapi-http";
         session.RequestHeaders["X-RequestType"] = message.RequestType;
+        session.ResponseHeaders["X-RequestType"] = message.RequestType;
         session.RequestHeaders["X-ClientInfo"] = "synthetic-client";
         session.RequestHeaders.RequestPath = "/mapi/emsmdb";
         session.ResponseHeaders["X-ResponseCode"] = "0";

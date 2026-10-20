@@ -61,6 +61,8 @@ export function visualize() {
   const bounded=new BlockParser.BinaryParser.$ctor1(System.Array.init([1,2,3],System.Byte));
   bounded.PushStrictCap(0);if(!bounded.Empty)throw new Error('Empty protocol buffer widened');bounded.PopCap();
   let rejected=false;try{bounded.PushStrictCap(4);}catch{rejected=true;}if(!rejected||bounded.CheckSize(-1))throw new Error('Invalid protocol bounds accepted');
+  const matched=MAPIInspector.Parsers.CompressionAndObfuscationAlgorithm.LZ77Decompress(System.Array.init([0,0,0,16,65,66,67,19,0],System.Byte),9);
+  if(Array.from(matched).join(',')!=='65,66,67,65,66,67,65,66,67')throw new Error('LZ77 match mismatch');
   return {kind:'document',document:{title:'MAPI compatibility',status:'complete',presentation:'tree',roots:[
     {id:'wide',name:'Exact integer',value:{kind:'integer',value:wide.toString()}},
     {id:'guid',name:'GUID',value:{kind:'guid',value:guid.toString()}},
@@ -163,6 +165,10 @@ async fn mapi_synthetic_address_book_and_retained_context_match_native_reference
         "nspi-props-without-values-response",
         "success-table-retained-columns",
         "dispatch-RopWritePerUserInformationRequest",
+        "ft-partial-get-unicode",
+        "ft-out-of-order-RopFastTransferDestinationPutBuffer",
+        "ft-RopFastTransferDestinationPutBufferExtended-markers-named-multivalue-request",
+        "ft-out-of-order-RopFastTransferDestinationPutBufferExtended",
     ];
     let selected: Vec<_> = corpus
         .into_iter()
@@ -180,7 +186,11 @@ export function visualize(){
       return {id,requestType:message.requestType,...Object.fromEntries(['request','response'].map(side=>[side,{sourceId:'body.'+id+'.'+side,bytes:System.Convert.fromBase64String(message[side]??'')}]))};
     });
     const actual=decode(messages,messages.at(-1).id,fixture.message.direction).tree;
-    if(JSON.stringify(normalize(actual))!==JSON.stringify(tree))throw new Error('Native parity mismatch: '+fixture.name);
+    if(fixture.referenceUnsupported){
+      function fields(node){return [node,...node.children.flatMap(fields)];}
+      const values=fields(actual),strings=values.filter(node=>node.stringValue===fixture.semanticString);
+      if(values.some(node=>node.type==='BlockParser.BlockException')||strings.length!==1||strings[0].sourceId!=='body.30.request'||strings[0].offset!=='24')throw new Error('Extended continuation state regression');
+    }else if(JSON.stringify(normalize(actual))!==JSON.stringify(tree))throw new Error('Native parity mismatch: '+fixture.name);
   }
   return {kind:'document',document:{title:'MAPI synthetic parity',status:'complete',presentation:'tree',roots:[{id:'cases',name:'Cases passed',value:{kind:'integer',value:String(fixtures.length)}}]}};
 }
@@ -200,5 +210,5 @@ export function visualize(){
     else {
         panic!("Expected native-reference parity result")
     };
-    assert_eq!(document.roots[0].value, Some(Value::Integer("8".into())));
+    assert_eq!(document.roots[0].value, Some(Value::Integer("12".into())));
 }

@@ -42,6 +42,17 @@ def shift_coordinates(node, delta):
     return result
 
 
+def decoded_coordinates(expected,actual,sources):
+    result=dict(expected)
+    source=sources.get(actual.get("sourceId"))
+    if source:
+        result["offset"]=str(int(expected["offset"])-int(source["parents"][0]["offset"]))
+    result["children"]=[decoded_coordinates(left,right,sources) for left,right in zip(expected.get("children",[]),actual.get("children",[]))]
+    if len(expected.get("children",[]))!=len(actual.get("children",[])):
+        return expected  # Preserve a structural mismatch for ordinary comparison.
+    return result
+
+
 def run(command, fixtures):
     # Windows communicate writes stdin synchronously before honoring its timeout.
     # Use an inherited file so a stalled parser cannot block the test's input writer.
@@ -76,17 +87,46 @@ def main():
             raise SystemExit("Synthetic reference cases are stale; regenerate with the pinned oracle")
         reference=[item["tree"] for item in saved]
     else:
-        reference = run(oracle_command(), fixtures)
+        native_fixtures=[fixture for fixture in fixtures if not fixture.get("referenceUnsupported")]
+        native_results=iter(run(oracle_command(),native_fixtures))
+        reference=[None if fixture.get("referenceUnsupported") else next(native_results) for fixture in fixtures]
     javascript = run(["node", "--max-old-space-size=192", "--experimental-vm-modules", str(ROOT / "extensions/mapi/test/run-protocol.mjs")], fixtures)
     failures = []
     for fixture, expected, actual in zip(fixtures, reference, javascript):
+        if fixture.get("referenceUnsupported"):
+            if fixture["referenceUnsupported"]!="extended-upload-continuation-state":
+                raise AssertionError("Unrecognized reference correction")
+            # The pinned reference loops on its third extended-upload chunk:
+            # it saves ordinary-upload fields instead of extended-upload fields.
+            # This is an explicit semantic regression check, never counted as a
+            # differential pass or substituted with an implementation gold master.
+            values=list(nodes(actual))
+            valid=actual and "failure" not in actual and not any(node["type"]=="BlockParser.BlockException" for node in values)
+            strings=[node for node in values if node.get("stringValue")==fixture["semanticString"]]
+            valid=valid and len(strings)==1 and strings[0]["sourceId"]=="body.30.request" and strings[0]["offset"]=="24" and strings[0]["size"]==str(len((fixture["semanticString"]+"\0").encode("utf-16-le")))
+            if not valid:failures.append({"name":fixture["name"],"reason":"extended upload continuation regression","javascript":actual})
+            continue
         if "timestamp" in fixture and actual.get("timestamp")!=fixture["timestamp"]:
             failures.append({"name":fixture["name"],"reason":"UTC FILETIME metadata mismatch","reference":expected,"javascript":actual})
             continue
         if "stringValue" in fixture and (actual.get("stringValue"),actual.get("charset"))!=(fixture["stringValue"],fixture["charset"]):
             failures.append({"name":fixture["name"],"reason":"string/encoding metadata mismatch","reference":expected,"javascript":actual})
             continue
-        if fixture.get("includeDerived"):
+        if "rpcDerivedExpectations" in fixture:
+            outcome=actual
+            actual=outcome.get("tree")
+            derived=outcome.get("derived",[])
+            specifications=fixture["rpcDerivedExpectations"]
+            valid=len(derived)==len(specifications)
+            for source,specification in zip(derived,specifications):
+                valid=valid and source["bytes"]==specification["bytes"] and source["exactMapping"]==specification["exactMapping"]
+                valid=valid and source["parents"]==[{"sourceId":"body.1."+fixture["message"]["direction"],"offset":specification["offset"],"length":specification["length"]}]
+                valid=valid and all(0<=int(item["offset"])<=int(item["offset"])+int(item["size"])<=len(source["bytes"]) for item in nodes(actual) if item.get("sourceId")==source["id"])
+            if not valid:
+                failures.append({"name":fixture["name"],"reason":"RPC decoded provenance mismatch","reference":expected,"javascript":outcome})
+                continue
+            expected=decoded_coordinates(expected,actual,{source["id"]:source for source in derived})
+        elif fixture.get("includeDerived"):
             outcome=actual
             actual=outcome.get("tree")
             specification=fixture["derivedExpectation"]
@@ -126,7 +166,8 @@ def main():
         raise SystemExit(f'{len(failures)} of {len(fixtures)} cases failed; see {WORK / "parity-failures.json"}')
     if arguments.write_reference:
         reference_path.write_text(json.dumps([{"fixture": fixture, "tree": normalize(expected)} for fixture, expected in zip(fixtures, reference)], indent=2, ensure_ascii=False) + "\n", encoding="utf-8",newline="\n")
-    print(f"MAPI differential parity: {len(fixtures)} valid synthetic cases passed")
+    corrected=sum(bool(fixture.get("referenceUnsupported")) for fixture in fixtures)
+    print(f"MAPI differential parity: {len(fixtures)-corrected} valid synthetic cases passed; {corrected} explicit correction regression(s) passed")
 
 
 if __name__ == "__main__":

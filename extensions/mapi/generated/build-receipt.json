@@ -9,6 +9,7 @@
     "encoding.GetString": 1,
     "enum hexadecimal width": 1,
     "explicit parser conversion": 776,
+    "extended upload continuation state": 1,
     "fixed sizeof": 32,
     "managed primitive read": 1,
     "payload source provenance": 3,
@@ -16,10 +17,10 @@
     "unused namespace": 3
   },
   "bcl": "26.9.5840",
-  "bytes": 4467697,
+  "bytes": 4467721,
   "compiler": "26.10.6985",
   "enums": 92,
   "revision": "7a76470574377d14cae612c507f45b34d70e05a0",
-  "sha256": "203d9225c8e24b202c8cd3f5fe0746e7696867f80f82a079cfaadd18c73a0609",
+  "sha256": "67c86cad9fecccbf9b8acc5d7b45140d696b80182d97c61ba07a0e3e3627b774",
   "sourceInventorySha256": "19ab240c43e2e65fb463f91c963db0ba98742318a71ab5700651c2177f1e1063"
 }

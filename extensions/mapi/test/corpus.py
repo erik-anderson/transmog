@@ -132,4 +132,5 @@ def cases():
         module=importlib.util.module_from_spec(specification)
         specification.loader.exec_module(module)
         return module
-    return result+rop_shapes()+load("scenarios").cases(case,execute_request,execute_response)+load("address_book").cases(case)
+    return (result+rop_shapes()+load("scenarios").cases(case,execute_request,execute_response)
+            +load("address_book").cases(case)+load("fast_transfer").cases(case,execute_request,execute_response))
