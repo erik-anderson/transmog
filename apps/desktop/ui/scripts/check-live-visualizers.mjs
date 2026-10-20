@@ -24,6 +24,30 @@ export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
   assert.equal(await tree.evaluate(element=>element.matches(':focus')),true,'Live delivery stole focus');
   assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'text');
 
+  const liveStarts=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
+  await page.evaluate(()=>{
+    const s=globalThis.__workspaceFixture,document=structuredClone(s.visualizerDocument),last=document.roots.pop();
+    last.value={kind:'string',value:'Moved last field'};
+    document.roots.unshift({id:'new-group',name:'New group',value:{kind:'object'},children:[last],spans:[]});
+    s.nextLiveDocument=document;
+  });
+  await visualizer.locator('pre').filter({hasText:'Moved last field'}).waitFor();
+  const moved=tree.getByRole('treeitem',{selected:true});
+  assert.equal(await moved.count(),1,'Live restructuring left the selected field hidden under a new ancestor');
+  assert.ok((await moved.textContent()).includes('Field 4999'));
+  await tree.getByRole('button',{name:'Collapse New group',exact:true}).waitFor();
+  assert.equal(await tree.evaluate(element=>element===element.getRootNode().activeElement),true,'Live restructuring stole tree focus');
+  assert.equal(await moved.evaluate(element=>{
+    const row=element.getBoundingClientRect(),viewport=element.parentElement.parentElement.getBoundingClientRect();
+    return row.top>=viewport.top-1&&row.bottom<=viewport.bottom+1;
+  }),true,'The moved field remained outside the tree viewport');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),liveStarts,'Revealing a moved field restarted the worker');
+  await tree.evaluate(element=>{element.scrollTop=80000;element.dispatchEvent(new Event('scroll'));});
+  const manualScroll=await tree.evaluate(element=>element.scrollTop);
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);});
+  await visualizer.locator('.visualizer-value pre').filter({hasText:/^4999$/}).waitFor();
+  assert.equal(await tree.evaluate(element=>element.scrollTop),manualScroll,'Live restructuring overrode a manual scroll away from the selection');
+
   await visualizer.locator('.visualizer-value pre').focus();
   await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.roots.pop();});
   await visualizer.getByRole('region',{name:'Selected structure',exact:true}).waitFor({state:'hidden'});

@@ -86,6 +86,20 @@ export async function checkExtensions(page,root) {
   await reload.focus();await page.keyboard.press('Enter');
   await panel.getByText('No active visualizers to reload.',{exact:false}).waitFor();
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.reload_visualizer??0),0,'Reloading an inactive extension started code');
+  const completedReload=await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText);
+  const statusCalls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.extension_status);
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.deferExtensionStatus=true;s.emitNative('extensions-changed');});
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishExtensionStatus);
+  await page.evaluate(()=>{
+    const s=globalThis.__workspaceFixture;
+    s.extensionStatus.entries[0].catalog.enabled=true;
+    for(let i=0;i<10;i++)s.emitNative('extensions-changed');
+    s.finishExtensionStatus();delete s.finishExtensionStatus;
+  });
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await installed.getByRole('checkbox',{name:'Enable '+name,exact:true}).isChecked(),true,'A catalog change arriving during refresh was lost');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.extension_status),statusCalls+2,'Concurrent catalog notifications were not coalesced');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText),completedReload,'A background refresh erased the completed action feedback');
   await developer.getByRole('checkbox',{name:'Hot reload Development protocol',exact:true}).check();
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);

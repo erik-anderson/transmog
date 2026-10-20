@@ -4,7 +4,7 @@ import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {describeError} from '../utilities.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
 import {ReloadObserver} from './reload.js';
-import {DOCUMENT_NODE,documentNode,formatText,nodeIndex,sourceDescription,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
+import {DOCUMENT_NODE,documentNode,formatText,nodeAncestors,nodeIndex,sourceDescription,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
 
 let nextGeneration=0n,nextRenderer=0;
 const next=():string=>(++nextGeneration).toString();
@@ -214,6 +214,10 @@ export class ExtensionVisualizer extends WebUIElement {
   }
   private accept(view:VisualizerView):void {
     const preserveMode=!!this.root;
+    const previousIndex = this.allRows.findIndex(row => row.selected);
+    const previousTop = previousIndex * 26;
+    const selectedWasVisible = previousIndex >= 0 && previousTop + 26 > this.treeViewport.scrollTop &&
+      previousTop < this.treeViewport.scrollTop + this.treeViewport.clientHeight;
     const previous=this.view,hex=this.visualizerHex;
     const retainHex=!!hex&&previous?.handle.instanceId===view.handle.instanceId&&(
       view.sources.some(source=>source.id===this.visualizerSource&&previous.sources.some(old=>old.id===source.id&&old.length===source.length&&old.availability===source.availability&&old.name===source.name))||
@@ -231,24 +235,45 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerFrozen=false;this.visualizerLiveSupported=!!view.instance.declaration.liveUpdates;this.liveStatus(view.live);
     this.visualizerTitle=view.document.title;this.visualizerStatus=view.document.status;this.visualizerSummary=view.document.summary??'';this.visualizerDiagnostics=view.document.diagnostics;
     this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:sourceDescription(source)})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
-    this.updateRows();this.describeNode(retained,retained&&retainHex);
+    this.updateRows(retained);
+    this.describeNode(retained,retained&&retainHex);
+    if (retained && selectedWasVisible && this.allRows.findIndex(row => row.selected) !== previousIndex) {
+      this.scrollSelectedRow();
+    }
   }
-  private updateRows():void {
-    this.allRows=this.root?treeRows(this.root,this.expanded,this.selected,this.rendererId):[];
-    this.visualizerCanvasHeight=this.allRows.length*26+'px';this.windowRows();
+  private updateRows(revealSelection = false): void {
+    this.allRows = this.root ? treeRows(this.root, this.expanded, this.selected, this.rendererId) : [];
+    if (revealSelection && this.root && !this.allRows.some(row => row.selected)) {
+      for (const ancestor of nodeAncestors(this.root, this.selected)) this.expanded.add(ancestor);
+      this.allRows = treeRows(this.root, this.expanded, this.selected, this.rendererId);
+    }
+    this.visualizerCanvasHeight = this.allRows.length * 26 + 'px';
+    this.windowRows();
   }
   windowRows():void {
     const first=Math.max(0,Math.floor((this.treeViewport?.scrollTop??0)/26)-4),count=Math.ceil((this.treeViewport?.clientHeight??260)/26)+8;
     this.visualizerRows=this.allRows.slice(first,first+Math.max(12,count));
     this.visualizerActiveRow=this.visualizerRows.find(row=>row.id===this.selected)?.domId??'';
   }
-  selectNode(id:string):void {
-    if(!this.nodes.has(id))return;
-    this.visualizerDetailsOpen=true;
-    this.selected=id;
-    this.tableOffset=0;
-    this.updateRows();
+  selectNode(id: string): void {
+    if (!this.nodes.has(id)) return;
+    this.visualizerDetailsOpen = true;
+    this.selected = id;
+    this.tableOffset = 0;
+    this.updateRows(true);
     this.describeNode();
+    this.scrollSelectedRow();
+  }
+  private scrollSelectedRow(): void {
+    const index = this.allRows.findIndex(row => row.selected);
+    if (index < 0) return;
+    this.$flushUpdates();
+    const top = index * 26, bottom = top + 26;
+    if (top < this.treeViewport.scrollTop) this.treeViewport.scrollTop = top;
+    else if (bottom > this.treeViewport.scrollTop + this.treeViewport.clientHeight) {
+      this.treeViewport.scrollTop = bottom - this.treeViewport.clientHeight;
+    }
+    this.windowRows();
   }
   closeDetails():void {
     this.visualizerDetailsOpen=false;
@@ -311,7 +336,12 @@ export class ExtensionVisualizer extends WebUIElement {
       case 'ArrowDown':target=Math.min(index+1,this.allRows.length-1);break;
       case 'ArrowUp':target=Math.max(0,index-1);break;
       case 'Home':target=0;break;case 'End':target=this.allRows.length-1;break;
-      case 'ArrowRight':if(row.expandable&&!row.expanded){event.preventDefault();void this.toggleNode(row.id);return;}target=Math.min(index+1,this.allRows.length-1);break;
+      case 'ArrowRight':
+        event.preventDefault();
+        if(!row.expandable)return;
+        if(!row.expanded){void this.toggleNode(row.id);return;}
+        target=Math.min(index+1,this.allRows.length-1);
+        break;
       case 'ArrowLeft':if(row.expanded){event.preventDefault();void this.toggleNode(row.id);return;}target=Math.max(0,this.allRows.findIndex(candidate=>candidate.id===row.parent));break;
       case 'Enter':case ' ':
         event.preventDefault();
@@ -321,10 +351,6 @@ export class ExtensionVisualizer extends WebUIElement {
       default:return;
     }
     event.preventDefault();this.selectNode(this.allRows[target]!.id);
-    const top=target*26,bottom=top+26;
-    if(top<this.treeViewport.scrollTop)this.treeViewport.scrollTop=top;
-    else if(bottom>this.treeViewport.scrollTop+this.treeViewport.clientHeight)this.treeViewport.scrollTop=bottom-this.treeViewport.clientHeight;
-    this.windowRows();
   }
   changeMode(event:Event):void {this.visualizerMode=(event.currentTarget as HTMLSelectElement).value as Presentation;if(this.visualizerMode==='hex')this.openSpan(this.nodes.get(this.selected)?.spans[0]);else this.visualizerHex=null;}
   tablePage(delta:number):void {const node=this.nodes.get(this.selected);if(node){this.tableOffset=Math.max(0,this.tableOffset+delta);this.visualizerTable=tablePage(node,this.tableOffset);}}

@@ -41,18 +41,39 @@ export class ExtensionSettings extends WorkspaceElement {
   }
   private watch():void {
     if(this.observing)return;this.observing=true;const generation=++this.listenerGeneration;
-    void listen('extensions-changed',()=>{if(this.active&&!this.extensionsBusy)void this.refresh();}).then(unlisten=>{if(generation===this.listenerGeneration&&this.isConnected&&this.active)this.unlisten=unlisten;else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>{if(generation===this.listenerGeneration){this.observing=false;this.extensionsError='Extension changes could not be observed. Use Refresh to check the current state.';}});
+    void listen('extensions-changed', () => {
+      if (!this.active) return;
+      if (this.extensionsBusy) this.refreshAgain = true;
+      else void this.refresh(true);
+    }).then(unlisten=>{if(generation===this.listenerGeneration&&this.isConnected&&this.active)this.unlisten=unlisten;else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>{if(generation===this.listenerGeneration){this.observing=false;this.extensionsError='Extension changes could not be observed. Use Refresh to check the current state.';}});
   }
   private unwatch():void {this.listenerGeneration++;this.observing=false;const unlisten=this.unlisten;this.unlisten=undefined;if(unlisten)void Promise.resolve(unlisten()).catch(()=>undefined);}
   disconnectedCallback():void {this.generation++;this.unwatch();super.disconnectedCallback();}
-  private refreshQueued():void {if(this.refreshAgain&&this.active){this.refreshAgain=false;void this.refresh();}}
+  private refreshQueued(): void {
+    if (!this.refreshAgain) return;
+    this.refreshAgain = false;
+    if (this.active) void this.refresh(true);
+  }
   private accept(status:ExtensionStatus):void {this.extensionsEntries=status.entries.map(row);this.extensionsWarning=status.warning??'';this.extensionsBlocked=status.managementBlocked??Boolean(status.warning);this.extensionsLoaded=true;}
-  async refresh():Promise<void> {
-    if(this.extensionsBusy)return;
-    const generation=++this.generation;this.extensionsBusy=true;this.extensionsError='';this.extensionsText='';
-    try {const status=await invoke<ExtensionStatus>('extension_status');if(generation===this.generation&&this.isConnected&&!this.refreshAgain)this.accept(status);}
-    catch(error:unknown){if(generation===this.generation&&!this.refreshAgain)this.extensionsError=describeError(error);}
-    finally {if(generation===this.generation){this.extensionsBusy=false;this.refreshQueued();}}
+  async refresh(preserveFeedback = false): Promise<void> {
+    if (this.extensionsBusy) return;
+    const generation = ++this.generation;
+    this.extensionsBusy = true;
+    if (!preserveFeedback) {
+      this.extensionsError = '';
+      this.extensionsText = '';
+    }
+    try {
+      const status = await invoke<ExtensionStatus>('extension_status');
+      if (generation === this.generation && this.isConnected && !this.refreshAgain) this.accept(status);
+    } catch (error: unknown) {
+      if (generation === this.generation && !this.refreshAgain) this.extensionsError = describeError(error);
+    } finally {
+      if (generation === this.generation) {
+        this.extensionsBusy = false;
+        this.refreshQueued();
+      }
+    }
   }
   private async change(command:string,args:Record<string,unknown>,progress:string,complete:string,rollback?:ExtensionRow[]):Promise<void> {
     if(this.extensionsBusy)return;

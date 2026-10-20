@@ -39,6 +39,20 @@ export function nodeIndex(root:VisualizerNode):Map<string,VisualizerNode> {
   const index=new Map<string,VisualizerNode>();
   const visit=(node:VisualizerNode):void=>{index.set(node.id,node);for(const child of node.children)visit(child);};visit(root);return index;
 }
+/** Ancestors of an already materialized node; revealing it never requests more data. */
+export function nodeAncestors(root: VisualizerNode, id: string): string[] {
+  const ancestors: string[] = [];
+  const visit = (node: VisualizerNode): boolean => {
+    if (node.id === id) return true;
+    ancestors.push(node.id);
+    for (const child of node.children) {
+      if (visit(child)) return true;
+    }
+    ancestors.pop();
+    return false;
+  };
+  return visit(root) ? ancestors : [];
+}
 export function treeRows(root:VisualizerNode,expanded:Set<string>,selected:string,prefix:string):TreeRow[] {
   const rows:TreeRow[]=[];
   const visit=(node:VisualizerNode,parent:string,level:number,position:number,setSize:number):void=>{

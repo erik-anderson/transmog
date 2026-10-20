@@ -292,8 +292,9 @@ Inventory reads and enable changes never evaluate source modules. Failed writes
 restore the saved checkbox state. A cleanup failure after a catalog change reads
 back the authoritative inventory, preserving the actual installation result.
 Leaving and returning to a pending inventory refresh requests fresh metadata and
-rejects the earlier response. The management view releases its event listener
-when hidden.
+rejects the earlier response. Catalog notifications during pending work coalesce
+into a fresh follow-up read. Background refreshes preserve action feedback.
+The management view releases its event listener when hidden.
 Catalog corruption blocks management until recovery. Other declaration notices
 leave recovery controls available; a warning alone does not disable uninstalling
 an installation that conflicts with an app-owned ID.
@@ -444,6 +445,10 @@ values, format metadata, paginated tables, text and Hex. Table previews shorten
 cells and bound columns; the structure preserves access to every field. Nested
 presentation hints choose the selected structure's initial view. Captured names,
 values, diagnostics and transform descriptions remain inert text.
+Selecting a table row reveals its existing ancestors, scrolls it into the
+structure viewport and returns keyboard focus to the tree. Revealing a selection
+never fetches deferred children. Right Arrow expands branches or enters their
+children; it leaves a leaf selected.
 
 Source-range buttons select exact decimal offsets in the existing paged Hex
 viewer. Original sources use the active worker's capability; derived buffers stay
@@ -468,8 +473,9 @@ serialized with expansion and stopping. Updates retain selected fields, expanded
 rows, tree scroll, view mode and unchanged byte selections. A replaced deferred
 branch without materialized children collapses for explicit expansion, keeping
 live delivery from automatically parsing a large set of previously opened
-branches. If delivery falls
-behind, a warning offers an explicit fresh opening to rebuild context. Parser
+branches. If a visible selected field moves into a new materialized branch, its
+ancestors open and the tree follows it without moving keyboard focus. If delivery
+falls behind, a warning offers an explicit fresh opening to rebuild context. Parser
 failure stops the feed and freezes the last result, revoking byte access until
 an explicit retry succeeds. Hiding the pane clears that result and reaps its
 worker; opening it again returns to snapshot mode.
