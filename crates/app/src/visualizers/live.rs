@@ -551,8 +551,7 @@ impl super::Application {
         .map_err(|_| unavailable())
         .and_then(std::convert::identity);
         if result.is_err() {
-            self.visualizers
-                .cancel(&handle.slot, &handle.generation, &handle.page_id);
+            self.visualizers.cancel_ticket(handle, &ticket);
         }
         result
     }

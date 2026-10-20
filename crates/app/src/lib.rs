@@ -59,8 +59,8 @@ pub use transmog_extension_registry as extensions;
 pub use transmog_extensions::ReadRequest as VisualizerReadRequest;
 pub use visualizers::{
     VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerLiveStatus,
-    VisualizerLiveUpdate, VisualizerSelection, VisualizerSourceInfo, VisualizerSourcePage,
-    VisualizerView,
+    VisualizerLiveUpdate, VisualizerReload, VisualizerSelection, VisualizerSourceInfo,
+    VisualizerSourcePage, VisualizerView,
 };
 mod workspace;
 

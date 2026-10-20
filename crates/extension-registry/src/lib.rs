@@ -522,6 +522,20 @@ impl Registry {
     /// # Errors
     /// Rejects initialization-only, foreign, stopped or superseded instances and storage failures.
     pub fn commit_document(&self, owner: &str, instance: &str) -> Result<bool, Error> {
+        self.commit_document_guarded(owner, instance, || Ok(()))
+            .map(|(changed, ())| changed)
+    }
+    /// Commits a validated revision while retaining a host-provided lifecycle guard.
+    /// Source-independent catalog serialization and syncing finish before acquiring the guard.
+    /// The guard callback must not reenter the registry; its returned guard spans publication.
+    /// # Errors
+    /// Rejects stale/invalid instances, lifecycle guard failures and persistence failures.
+    pub fn commit_document_guarded<G>(
+        &self,
+        owner: &str,
+        instance: &str,
+        guard: impl FnOnce() -> Result<G, Error>,
+    ) -> Result<(bool, G), Error> {
         let _mutation = self
             .inner
             .mutation
@@ -541,7 +555,7 @@ impl Registry {
             (active.info.clone(), active.publication.clone())
         };
         let Some(publication) = publication else {
-            return Ok(false);
+            return Ok((false, guard()?));
         };
         let mut entries = self.status().entries;
         let current = entries
@@ -551,16 +565,23 @@ impl Registry {
         let changed = current.catalog.digest != info.digest;
         current.catalog.manifest = publication.manifest;
         current.catalog.digest.clone_from(&info.digest);
-        if changed {
+        let lease = if changed {
             self.publish_if(entries, |state| {
-                state.active.get(instance).is_some_and(|active| {
+                if state.active.get(instance).is_some_and(|active| {
                     active.owner == owner && active.runner.has_validated_document()
                 }) && state
                     .entries
                     .iter()
                     .any(|entry| activation_current(entry, &publication.expected, &info.digest))
-            })?;
-        }
+                {
+                    guard()
+                } else {
+                    Err(Error::AccessDenied)
+                }
+            })?
+        } else {
+            guard()?
+        };
         let mut state = self
             .inner
             .state
@@ -572,7 +593,7 @@ impl Registry {
             .filter(|active| active.owner == owner && active.runner.has_validated_document())
             .ok_or(Error::AccessDenied)?;
         active.publication = None;
-        Ok(changed)
+        Ok((changed, lease))
     }
     /// Finds an instance only for its owning window/application.
     /// # Errors
@@ -589,6 +610,20 @@ impl Registry {
             .filter(|a| a.owner == owner)
             .map(|a| Arc::clone(&a.runner))
             .ok_or(Error::AccessDenied)
+    }
+    /// Whether this exact owned instance belongs to an enabled unpacked development entry.
+    /// This check reads cached metadata only; it never inspects source files.
+    pub fn development_instance(&self, owner: &str, instance: &str) -> bool {
+        self.inner.state.lock().is_ok_and(|state| {
+            state.active.get(instance).is_some_and(|active| {
+                active.owner == owner
+                    && state.entries.iter().any(|entry| {
+                        entry.catalog.enabled
+                            && entry.catalog.origin == Origin::Development
+                            && entry.catalog.manifest.id == active.info.extension_id
+                    })
+            })
+        })
     }
     /// Attaches retained-data ownership exactly once, before delivering traffic.
     /// # Errors
@@ -722,13 +757,13 @@ impl Registry {
         Ok(entries)
     }
     fn publish(&self, entries: Vec<ExtensionEntry>) -> Result<(), Error> {
-        self.publish_if(entries, |_| true)
+        self.publish_if(entries, |_| Ok(()))
     }
-    fn publish_if(
+    fn publish_if<G>(
         &self,
         entries: Vec<ExtensionEntry>,
-        current: impl FnOnce(&State) -> bool,
-    ) -> Result<(), Error> {
+        current: impl FnOnce(&State) -> Result<G, Error>,
+    ) -> Result<G, Error> {
         if self.status().warning.is_some() {
             return Err(invalid(
                 "Repair the extension catalog before changing installations",
@@ -748,14 +783,12 @@ impl Registry {
             .state
             .lock()
             .map_err(|_| invalid("Extension state is unavailable"))?;
-        if !current(&state) {
-            return Err(invalid("Extension changed before its result was ready"));
-        }
+        let lease = current(&state)?;
         staged
             .persist(root.join("catalog.json"))
             .map_err(|e| Error::Io(e.error))?;
         state.entries = entries;
-        Ok(())
+        Ok(lease)
     }
 }
 fn load(root: &Path) -> Result<Vec<ExtensionEntry>, Error> {

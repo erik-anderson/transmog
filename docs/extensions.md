@@ -169,8 +169,21 @@ is global: it stops all package instances across registry clones. Instance resou
 owners receive an immediate, idempotent stop callback before worker termination
 to cancel subscriptions and clear retained buffers, even when a pending operation
 still holds a temporary reference. Enabling does not resurrect those instances.
-Hot-reload preference is persisted here; file watching and transactional result
-replacement belong to the pending desktop broker integration.
+The native reload command starts a fresh immutable revision alongside the current
+development instance. It rechecks exact owner, pane generation, page and visibility
+before publishing its valid document and replacing the active ticket. Failed
+source, sandbox, parser, capacity or publication attempts retain the original
+worker and source handles. Successful replacement revokes those old handles and
+stops its feed/worker. Close, hide, navigation, a newer activation or another
+candidate cancel pending work. Catalog serialization and syncing happen before
+the pane's final swap lock. Reload requires spare worker capacity; it never evicts
+the current worker to make space.
+
+Live parsing starts from fresh retained evidence and a new bounded queue; no
+JavaScript heap state transfers. A changed contribution declaration stops live
+delivery in the candidate and requires another explicit opt-in. Hot-reload
+preference is persisted here; file watching and desktop reload controls remain
+pending.
 
 ## Extensions settings
 

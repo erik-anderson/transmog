@@ -131,6 +131,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "visualizer_page"
             | "visualizer_choices"
             | "activate_visualizer"
+            | "reload_visualizer"
             | "expand_visualizer"
             | "poll_visualizer_live"
             | "stop_visualizer_live"
@@ -546,6 +547,7 @@ mod tests {
             "read_body_range",
             "visualizer_choices",
             "activate_visualizer",
+            "reload_visualizer",
             "expand_visualizer",
             "poll_visualizer_live",
             "stop_visualizer_live",

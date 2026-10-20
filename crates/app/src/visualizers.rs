@@ -19,8 +19,10 @@ mod context;
 mod decoding;
 mod evidence;
 mod live;
+mod reload;
 use admission::Admission;
 use evidence::{Resources, boundaries, project_input, source_infos};
+pub use reload::VisualizerReload;
 use transmog_session::SessionSnapshot;
 #[cfg(test)]
 mod tests;
@@ -176,15 +178,44 @@ pub(super) struct Service {
 struct Slot {
     generation: u64,
     ticket: Option<Arc<Ticket>>,
+    candidate: Option<Arc<Ticket>>,
 }
 struct Ticket {
     registry: Registry,
     owner: String,
     canceled: AtomicBool,
     instance: Mutex<Option<Instance>>,
+    generation: u64,
+    activation: Mutex<Option<VisualizerActivation>>,
+    reload_contract: Option<transmog_extensions::Visualizer>,
     operation: tokio::sync::Mutex<()>,
 }
+impl Slot {
+    fn tickets(self) -> impl Iterator<Item = Arc<Ticket>> {
+        self.ticket.into_iter().chain(self.candidate)
+    }
+    fn take_tickets(&mut self) -> impl Iterator<Item = Arc<Ticket>> + use<> {
+        self.ticket.take().into_iter().chain(self.candidate.take())
+    }
+}
 impl Ticket {
+    fn new(
+        registry: Registry,
+        owner: String,
+        generation: u64,
+        reload_contract: Option<transmog_extensions::Visualizer>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            registry,
+            owner,
+            generation,
+            reload_contract,
+            canceled: AtomicBool::new(false),
+            instance: Mutex::new(None),
+            activation: Mutex::new(None),
+            operation: tokio::sync::Mutex::new(()),
+        })
+    }
     fn cancel(&self) {
         self.canceled.store(true, Ordering::Release);
         let instance = self
@@ -239,13 +270,7 @@ impl Service {
         }
         let generation =
             decimal(generation).map_err(|_| invalid("Invalid visualizer generation"))?;
-        let ticket = Arc::new(Ticket {
-            registry: self.registry.clone(),
-            owner: self.owner.clone(),
-            canceled: AtomicBool::new(false),
-            instance: Mutex::new(None),
-            operation: tokio::sync::Mutex::new(()),
-        });
+        let ticket = Ticket::new(self.registry.clone(), self.owner.clone(), generation, None);
         let mut slots = self.slots.lock().map_err(|_| unavailable())?;
         if self.closed.load(Ordering::Acquire)
             || !self.visible.load(Ordering::Acquire)
@@ -274,11 +299,14 @@ impl Service {
             Slot {
                 generation,
                 ticket: Some(Arc::clone(&ticket)),
+                candidate: None,
             },
         );
         drop(slots);
-        if let Some(previous) = previous.and_then(|s| s.ticket) {
-            previous.cancel();
+        if let Some(previous) = previous {
+            for ticket in previous.tickets() {
+                ticket.cancel();
+            }
         }
         Ok(ticket)
     }
@@ -293,8 +321,8 @@ impl Service {
         }
         let ticket = slots
             .get(slot)
-            .filter(|s| s.generation == generation)
             .and_then(|s| s.ticket.clone())
+            .filter(|ticket| ticket.generation == generation)
             .ok_or_else(unavailable)?;
         if ticket.current()?.id != handle.instance_id {
             return Err(unavailable());
@@ -315,12 +343,12 @@ impl Service {
         if !self.current_page(page_id) {
             return;
         }
-        let ticket = if let Some(state) = slots.get_mut(slot) {
+        let tickets = if let Some(state) = slots.get_mut(slot) {
             if state.generation > generation {
                 return;
             }
             state.generation = generation;
-            state.ticket.take()
+            state.take_tickets().collect::<Vec<_>>()
         } else {
             if slots.len() < 128 {
                 slots.insert(
@@ -328,13 +356,14 @@ impl Service {
                     Slot {
                         generation,
                         ticket: None,
+                        candidate: None,
                     },
                 );
             }
-            None
+            Vec::new()
         };
         drop(slots);
-        if let Some(ticket) = ticket {
+        for ticket in tickets {
             ticket.cancel();
         }
     }
@@ -346,7 +375,30 @@ impl Service {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner),
         );
-        for ticket in slots.into_values().filter_map(|s| s.ticket) {
+        for ticket in slots.into_values().flat_map(Slot::tickets) {
+            ticket.cancel();
+        }
+    }
+    /// Operation failure belongs to a ticket, including after failed reloads advanced the watermark.
+    fn cancel_ticket(&self, handle: &VisualizerHandle, ticket: &Arc<Ticket>) {
+        let mut slots = self
+            .slots
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !self.current_page(&handle.page_id) {
+            return;
+        }
+        let tickets = slots
+            .get_mut(&handle.slot)
+            .filter(|slot| {
+                slot.ticket
+                    .as_ref()
+                    .is_some_and(|current| Arc::ptr_eq(current, ticket))
+            })
+            .map(|slot| slot.take_tickets().collect::<Vec<_>>())
+            .unwrap_or_default();
+        drop(slots);
+        for ticket in tickets {
             ticket.cancel();
         }
     }
@@ -361,7 +413,7 @@ impl Service {
         self.page_id.fetch_add(1, Ordering::AcqRel);
         let previous = std::mem::take(&mut *slots);
         drop(slots);
-        for ticket in previous.into_values().filter_map(|s| s.ticket) {
+        for ticket in previous.into_values().flat_map(Slot::tickets) {
             ticket.cancel();
         }
     }
@@ -376,7 +428,7 @@ impl Service {
         } else {
             slots
                 .values_mut()
-                .filter_map(|s| s.ticket.take())
+                .flat_map(Slot::take_tickets)
                 .collect::<Vec<_>>()
         };
         drop(slots);
@@ -435,18 +487,24 @@ impl Application {
         let ticket =
             self.visualizers
                 .begin(&request.slot, &request.generation, &request.page_id)?;
-        let result = self.activate_visualizer_ticket(&request, &ticket).await;
+        let result = async {
+            let mut view = self.activate_visualizer_ticket(&request, &ticket).await?;
+            view.metadata_changed = self.commit_visualizer_document(&ticket).await?;
+            Ok(view)
+        }
+        .await;
         if result.is_err() {
             self.visualizers
                 .cancel(&request.slot, &request.generation, &request.page_id);
         }
         result
     }
-    async fn activate_visualizer_ticket(
+    async fn initialize_visualizer_ticket(
         &self,
         request: &VisualizerActivation,
         ticket: &Arc<Ticket>,
-    ) -> Result<VisualizerView, AppError> {
+    ) -> Result<Instance, AppError> {
+        *ticket.activation.lock().map_err(|_| unavailable())? = Some(request.clone());
         // Native admission happens before reading any source module or body metadata.
         if !self
             .visualizer_choices(&request.selection)?
@@ -474,6 +532,14 @@ impl Application {
         .map_err(|_| unavailable())?
         .map_err(worker_failure)?;
         ticket.bind(instance.clone())?;
+        Ok(instance)
+    }
+    async fn activate_visualizer_ticket(
+        &self,
+        request: &VisualizerActivation,
+        ticket: &Arc<Ticket>,
+    ) -> Result<VisualizerView, AppError> {
+        let instance = self.initialize_visualizer_ticket(request, ticket).await?;
         let (mut snapshot, store) = self.visualizer_evidence(&request.selection.session_id)?;
         let selected = boundaries(&request.selection.boundary)?;
         if !Admission::new(&snapshot, selected)
@@ -484,8 +550,13 @@ impl Application {
             ));
         }
         let live_available = live::available(self, &snapshot, selected, &instance.declaration);
+        let mut effective = request.clone();
+        effective.live &= ticket
+            .reload_contract
+            .as_ref()
+            .is_none_or(|old| old == &instance.declaration);
         let feed = self.start_visualizer_feed(
-            request,
+            &effective,
             &instance,
             &mut snapshot,
             selected,
@@ -534,9 +605,8 @@ impl Application {
             input: Box::new(input),
         };
         let document = self.run_visualizer(ticket, invocation).await?;
-        let metadata_changed = self.commit_visualizer_document(ticket).await?;
         Ok(VisualizerView {
-            metadata_changed,
+            metadata_changed: false,
             handle: request.handle(&instance),
             instance,
             document,
@@ -575,8 +645,7 @@ impl Application {
                 })
             }
             Err(error) => {
-                self.visualizers
-                    .cancel(&handle.slot, &handle.generation, &handle.page_id);
+                self.visualizers.cancel_ticket(handle, &ticket);
                 Err(error)
             }
         }

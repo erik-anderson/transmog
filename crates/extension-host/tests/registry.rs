@@ -145,6 +145,18 @@ async fn source_declarations_publish_only_after_a_validated_document() {
     assert!(runner.has_validated_document());
     assert!(
         registry
+            .commit_document_guarded("window", &instance.id, || {
+                Err::<(), _>(transmog_extensions::Error::AccessDenied)
+            })
+            .is_err()
+    );
+    assert_eq!(
+        registry.status().entries[0].catalog,
+        before,
+        "A failed lifecycle guard published metadata"
+    );
+    assert!(
+        registry
             .commit_document("foreign-window", &instance.id)
             .is_err()
     );

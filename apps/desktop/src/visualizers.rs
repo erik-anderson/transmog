@@ -3,8 +3,8 @@ use super::DesktopState;
 use tauri::{Emitter as _, Manager as _, State};
 use transmog_app::{
     AppError, VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerLiveStatus,
-    VisualizerLiveUpdate, VisualizerReadRequest, VisualizerSelection, VisualizerSourcePage,
-    VisualizerView,
+    VisualizerLiveUpdate, VisualizerReadRequest, VisualizerReload, VisualizerSelection,
+    VisualizerSourcePage, VisualizerView,
 };
 
 #[tauri::command]
@@ -33,6 +33,21 @@ pub(super) async fn activate_visualizer(
     let view = state
         .window_application(&window)?
         .activate_visualizer(request)
+        .await?;
+    if view.metadata_changed {
+        let _ = window.app_handle().emit("extensions-changed", ());
+    }
+    Ok(view)
+}
+#[tauri::command]
+pub(super) async fn reload_visualizer(
+    request: VisualizerReload,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<VisualizerView, AppError> {
+    let view = state
+        .window_application(&window)?
+        .reload_visualizer(request)
         .await?;
     if view.metadata_changed {
         let _ = window.app_handle().emit("extensions-changed", ());

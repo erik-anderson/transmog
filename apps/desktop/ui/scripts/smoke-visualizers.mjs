@@ -2,6 +2,7 @@ import {writeFile} from 'node:fs/promises';
 import {smokeLiveVisualizers} from './smoke-live-visualizers.mjs';
 import {smokeHttpVisualizers} from './smoke-http-visualizers.mjs';
 import {smokeClassifications} from './smoke-classifications.mjs';
+import {smokeVisualizerReload} from './smoke-visualizer-reload.mjs';
 
 /** Real WebView2 -> native evidence broker -> AppContainer worker -> host renderer. */
 export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
@@ -62,5 +63,6 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
   await call('Emulation.clearDeviceMetricsOverride');
   const live=await smokeLiveVisualizers(call,evaluate,screenshotPath);
   const http=await smokeHttpVisualizers(call,evaluate,screenshotPath);
-  return {...result,unloaded:true,live,http};
+  const reload=await smokeVisualizerReload(evaluate,tracePath);
+  return {...result,unloaded:true,live,http,reload};
 }
