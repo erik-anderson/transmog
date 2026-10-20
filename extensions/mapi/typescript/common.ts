@@ -32,7 +32,7 @@ export function repeat(
   }
   record.reader.require(count * minimumBytes);
   for (let index = 0; index < count; index++) {
-    record.reader.budget.step(record.reader.range());
+    record.reader.budget.step(record.reader.range(), 1, "loops");
     parse(index);
   }
 }

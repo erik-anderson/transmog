@@ -22,7 +22,7 @@ export function decompressLz77(reader: BinaryReader, expectedLength: number): nu
   let remainingFlags = 0;
   let highNibble: number | undefined;
   while (reader.remaining !== 0) {
-    reader.budget.step(reader.range());
+    reader.budget.step(reader.range(), 1, "loops");
     if (remainingFlags === 0) {
       flags = reader.integer("u32");
       remainingFlags = 32;
@@ -64,6 +64,7 @@ export function decompressLz77(reader: BinaryReader, expectedLength: number): nu
     if (distance > output.length || length > expectedLength - output.length) {
       throw new ParseError("malformed", "Invalid LZ77 backward match", reader.range());
     }
+    reader.budget.step(reader.range(), length, "decodedBytes");
     for (let index = 0; index < length; index++) {
       output.push(output[output.length - distance]!);
     }
@@ -147,6 +148,7 @@ export class RpcDecoder {
       throw new ParseError("limit", "Derived RPC source limit exceeded", parent);
     }
     const id = `mapi-derived.${this.derivedSources.length}`;
+    reader.budget.transformed(size, bytes.length);
     const transforms: string[] = [];
     if ((flags & 2) !== 0) {
       transforms.push("MAPI XOR 0xA5");
@@ -183,8 +185,11 @@ export class RpcDecoder {
     try {
       while (rops.remaining !== 0) {
         const position = rops.offset;
-        nested(operations, ropName(rops.peekUInt8(), direction), (operation) => {
-          readRop(operation, direction, handles, this.conversation, this.payloadReaders);
+        const name = ropName(rops.peekUInt8(), direction);
+        rops.budget.track(name, rops.range(), () => {
+          nested(operations, name, (operation) => {
+            readRop(operation, direction, handles, this.conversation, this.payloadReaders);
+          });
         });
         if (rops.offset <= position) {
           throw new ParseError("malformed", "ROP did not consume input", rops.range());

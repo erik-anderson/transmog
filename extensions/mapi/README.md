@@ -80,6 +80,14 @@ body access, bounded and revision-aware. Later irrelevant exchanges do not
 change the inspected message. Unknown, malformed, incomplete and unavailable
 input receives an explicit diagnostic while original Hex remains available.
 
+Parser work is bounded independently for the selected message, its paired request
+and related context. Each phase allows 1,000,000 work units, 50,000 fields and 48
+levels of nesting; LZ77 copying counts toward work. Context exhaustion leaves
+selected-message fields available with a Limited result. The visualizer's ⓘ panel
+reports per-phase work categories, input and decoded byte counts, limits and the
+largest operation. Copy diagnostics exports those summaries without captured
+field values, making budget failures diagnosable without sharing a trace.
+
 ## Qualification
 
 The unchanged [Microsoft reference](../../third_party/mapi-inspector/README.md)

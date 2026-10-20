@@ -9,6 +9,7 @@ extension-visualizer { display:block; min-height:0; min-width:0; height:100%; ov
 .visualizer-about > header { display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; }
 .visualizer-about strong { overflow-wrap:anywhere; }
 .visualizer-about p { margin:.4rem 0 0; white-space:pre-wrap; overflow-wrap:anywhere; }
+.visualizer-copy-diagnostics { margin-top:.5rem; }
 .visualizer-extension-id,.visualizer-context { color:var(--muted); }
 @supports(anchor-name:--visualizer-about) { .visualizer-about { position-anchor:--visualizer-about; inset:auto; position-area:block-end span-inline-start; position-try-fallbacks:flip-inline,flip-block; position-try-order:most-height; margin:.25rem 0; } }
 .visualizer-live { display:inline-flex; align-items:center; gap:.3rem; white-space:nowrap; }

@@ -35,6 +35,7 @@
   "visualizerMode": "tree",
   "visualizerSpans": [],
   "visualizerDiagnostics": [],
+  "visualizerDiagnosticStatus": "",
   "visualizerTable": {"columns": [], "rows": [], "text": "", "previous": false, "next": false, "limited": false},
   "visualizerSources": [],
   "visualizerSource": "",

@@ -13,6 +13,7 @@
         <p class="visualizer-context">Read only · No network access</p>
         <p ?hidden="{{!visualizerLiveSupported || visualizerLiveAvailable}}">Live updates are unavailable for this exchange.</p>
         <for each="item in visualizerDiagnostics"><p><strong>{{item.code}}</strong> {{item.message}}</p></for>
+        <if condition="visualizerDiagnostics.length"><button type="button" class="secondary compact-button visualizer-copy-diagnostics" @click="{copyDiagnostics()}">Copy diagnostics</button><p role="status" ?hidden="{{!visualizerDiagnosticStatus}}">{{visualizerDiagnosticStatus}}</p></if>
       </section>
       <div class="visualizer-live-warning" ?hidden="{{!visualizerLiveWarning}}"><p role="status">{{visualizerLiveWarning}}</p><button type="button" class="secondary compact-button" ?disabled="{{visualizerBusy}}" @click="{reopenLive()}">Reopen visualizer</button></div>
     </if>

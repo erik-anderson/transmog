@@ -1,4 +1,4 @@
-import type { ByteRange, DecodeResult, ParsedField } from "./model.js";
+import type { ByteRange, DecodeResult, ParsedField, ParserBudgetReport } from "./model.js";
 import type {
   Diagnostic,
   DocumentStep,
@@ -37,6 +37,21 @@ export interface Presentation {
 
 function span(range: ByteRange): SourceSpan {
   return { sourceId: range.sourceId, offset: String(range.offset), length: String(range.length) };
+}
+
+function budgetDiagnostic(report: ParserBudgetReport): Diagnostic {
+  const largest = report.largest;
+  return {
+    code: "mapi-parser-budget",
+    message: `${report.phase}: ${report.inputBytes} input bytes; ` +
+      `${report.work}/${report.maximumWork} work units; ${report.fields}/${report.maximumFields} fields; ` +
+      `peak depth ${report.peakDepth}/${report.maximumDepth}. ` +
+      `Work: ${report.reads} reader checks, ${report.loops} loop iterations, ` +
+      `${report.decodedBytes} LZ77 copied bytes. ` +
+      `RPC transforms: ${report.encodedBytes} encoded bytes to ${report.expandedBytes} decoded bytes.` +
+      (largest ? ` Largest operation: ${largest.name} (${largest.work} own work units; ` +
+        `source ${largest.range.sourceId}, offset ${largest.range.offset}).` : ""),
+  };
 }
 
 /** Converts protocol facts to host-owned presentation. It never creates UI. */
@@ -92,7 +107,8 @@ export function present(
     let malformed = false;
     let partial = diagnostics.length !== 0;
     const incompleteInput = diagnostics.some((item) => item.code === "body-incomplete");
-    const issues: Diagnostic[] = [...diagnostics];
+    // Counters are informational. They must not turn a successful parse partial.
+    const issues: Diagnostic[] = [...diagnostics, ...(decoded.budgets ?? []).map(budgetDiagnostic)];
 
     const boundedText = (value: string, maximum: number): string => {
       const room = Math.max(0, Math.min(maximum, Math.floor((textBudget - textBytes) / 3)));

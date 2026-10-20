@@ -42,6 +42,7 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable visualizerMode:Presentation='tree';
   @observable visualizerSpans:Array<Span&{id:string;label:string}>=[];
   @observable visualizerDiagnostics:Array<{code:string;message:string;nodeId:string|null}>=[];
+  @observable visualizerDiagnosticStatus = '';
   @observable visualizerTable:ReturnType<typeof tablePage>={columns:[],rows:[],text:'',previous:false,next:false,limited:false};
   @observable visualizerSources:Array<{id:string;name:string;description:string}>=[];
   @observable visualizerSource='';
@@ -161,6 +162,7 @@ export class ExtensionVisualizer extends WebUIElement {
   private clear():void {
     this.view=null;this.root=null;this.nodes.clear();this.allRows=[];this.visualizerRows=[];
     this.visualizerReloadNotice='';
+    this.visualizerDiagnosticStatus='';
     this.visualizerBusy=false;this.visualizerPaused=false;this.visualizerTitle='';this.visualizerStatus='';this.visualizerSummary='';this.visualizerError='';
     this.visualizerLiveSupported=false;this.visualizerLiveAvailable=false;this.visualizerLive=false;this.visualizerLiveWarning='';this.visualizerFrozen=false;
     this.visualizerDetailsOpen=false;
@@ -274,6 +276,7 @@ export class ExtensionVisualizer extends WebUIElement {
     }
     this.visualizerFrozen=false;this.visualizerLiveSupported=!!view.instance.declaration.liveUpdates;this.liveStatus(view.live);
     this.visualizerTitle=view.document.title;this.visualizerStatus=view.document.status;this.visualizerSummary=view.document.summary??'';this.visualizerDiagnostics=view.document.diagnostics;
+    this.visualizerDiagnosticStatus='';
     this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:sourceDescription(source)})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
     this.updateRows(retained);
     this.describeNode(retained,retained&&retainHex);
@@ -322,6 +325,16 @@ export class ExtensionVisualizer extends WebUIElement {
   closeAbout():void {
     this.aboutPanel.hidePopover();
     this.aboutButton.focus({preventScroll:true});
+  }
+  async copyDiagnostics(): Promise<void> {
+    const revision = this.revision;
+    const text = this.visualizerDiagnostics.map(item => `${item.code}: ${item.message}`).join('\n\n');
+    try {
+      await navigator.clipboard.writeText(text);
+      if (revision === this.revision && this.visible) this.visualizerDiagnosticStatus = 'Diagnostics copied.';
+    } catch {
+      if (revision === this.revision && this.visible) this.visualizerDiagnosticStatus = 'Select the diagnostic text and use Copy.';
+    }
   }
   aboutKey(event:KeyboardEvent):void {
     if(event.key!=='Escape')return;

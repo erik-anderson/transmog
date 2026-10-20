@@ -80,6 +80,9 @@ export async function checkVisualizers(page,root) {
       assert.ok(inspectionHeight>=52,'Opening result metadata hid the inspection panes in a compact viewer');
       assert.equal(inspectionHeight,beforeAbout,'Extension context consumed inspection space');
       await about.getByText('An earlier exchange is unavailable.',{exact:false}).scrollIntoViewIfNeeded();
+      await about.getByRole('button',{name:'Copy diagnostics',exact:true}).click();
+      await about.getByRole('status').filter({hasText:'Diagnostics copied.'}).waitFor();
+      assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'missing-context: An earlier exchange is unavailable.');
       const fitsViewport=await about.evaluate(element=>{const r=element.getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;});
       assert.equal(fitsViewport,true,'Visualizer information escaped the viewport');
       await page.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-narrow-about.png')});

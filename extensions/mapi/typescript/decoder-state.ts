@@ -11,7 +11,10 @@ import { RpcDecoder } from "./rpc.js";
 export class DecodeSession {
   readonly conversation = new Conversation();
   readonly transfer = new FastTransferDecoder();
-  readonly budget = new ParseBudget();
+  readonly budget: ParseBudget;
+  private readonly historyBudget = new ParseBudget(50_000, 48, 1_000_000, "Related context");
+  private readonly requestBudget = new ParseBudget(50_000, 48, 1_000_000, "Paired request");
+  private readonly preparationIssues: ParseError[] = [];
   readonly selected: Exchange;
   readonly body: MessageBody;
   readonly payloadReaders = {
@@ -54,17 +57,19 @@ export class DecodeSession {
     }
     this.selected = selected;
     this.body = body;
+    this.budget = new ParseBudget(50_000, 48, 1_000_000, `Selected ${direction}`);
+    this.budget.input(body.bytes.length);
   }
 
   prepare(includeSelectedRequest: boolean): void {
     for (const exchange of [...this.exchanges].sort((left, right) => left.id - right.id)) {
       if (exchange.id >= this.selectedId) break;
       this.conversation.beginExchange();
-      this.replay(exchange, "request");
-      this.replay(exchange, "response");
+      if (!this.replay(exchange, "request", this.historyBudget)) break;
+      if (!this.replay(exchange, "response", this.historyBudget)) break;
     }
     this.conversation.beginExchange();
-    if (includeSelectedRequest) this.replay(this.selected, "request");
+    if (includeSelectedRequest) this.replay(this.selected, "request", this.requestBudget);
   }
 
   record(name: string, offset = 0, count?: number): RecordReader {
@@ -74,9 +79,11 @@ export class DecodeSession {
   }
 
   readMessage(record: RecordReader, operation: string, direction: Direction): void {
-    readHttpMessage(record, operation, direction, {
-      auxiliary: (record, length) => this.rpc.read(record, length, true, direction),
-      rops: (record, length, side) => this.rpc.read(record, length, false, side),
+    record.reader.budget.track(`${operation} ${direction}`, record.reader.range(), () => {
+      readHttpMessage(record, operation, direction, {
+        auxiliary: (record, length) => this.rpc.read(record, length, true, direction),
+        rops: (record, length, side) => this.rpc.read(record, length, false, side),
+      });
     });
   }
 
@@ -101,21 +108,36 @@ export class DecodeSession {
       });
       record.field.issue = { kind: error.kind, message: error.message };
     }
+    for (const error of this.preparationIssues) {
+      record.add({
+        name: error.message,
+        type: "Context parse issue",
+        range: error.range,
+        children: [],
+        issue: { kind: error.kind, message: error.message },
+      });
+    }
     return this.result(record);
   }
 
-  private replay(exchange: Exchange, side: Direction): void {
+  private replay(exchange: Exchange, side: Direction, budget: ParseBudget): boolean {
     const body = exchange[side];
-    if (!body?.bytes.length) return;
-    const reader = new BinaryReader(body.bytes, body.sourceId, this.budget);
-    const record = new RecordReader(reader, `${exchange.requestType} ${side}`);
+    if (!body?.bytes.length) return true;
+    budget.input(body.bytes.length);
+    const reader = new BinaryReader(body.bytes, body.sourceId, budget);
     try {
+      const record = new RecordReader(reader, `${exchange.requestType} ${side}`);
       this.readMessage(record, exchange.requestType, side);
     } catch (error) {
       if (!(error instanceof ParseError)) throw error;
+      if (error.kind === "limit") {
+        this.preparationIssues.push(error);
+        return false;
+      }
       // Keep facts read before an earlier error. Any dependency it could not
       // produce is reported at its point of use in the selected message.
     }
+    return true;
   }
 
   private result(record: RecordReader): DecodeResult {
@@ -137,6 +159,12 @@ export class DecodeSession {
         }
       }
     }
-    return { root, derivedSources: sources.filter((source) => needed.has(source.id)) };
+    return {
+      root,
+      derivedSources: sources.filter((source) => needed.has(source.id)),
+      budgets: [this.historyBudget, this.requestBudget, this.budget]
+        .map((budget) => budget.report())
+        .filter((report) => report.inputBytes > 0),
+    };
   }
 }
