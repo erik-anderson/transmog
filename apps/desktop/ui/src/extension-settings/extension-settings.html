@@ -1,7 +1,7 @@
 <template>
 <section aria-labelledby="extensions-heading" class="extension-panel">
  <h2 id="extensions-heading">Extensions</h2>
- <p class="field-help">Install read-only visualizers for request and response content. They run only when you choose one, with no network access.</p>
+ <p class="field-help">Install read-only visualizers and header classification columns. Visualizer scripts run only when you choose one, with no network access.</p>
  <div class="actions extension-actions"><button type="button" @click="{install()}" ?disabled="{{extensionsBusy || extensionsWarning}}">Install extension…</button><button type="button" class="secondary" @click="{unpacked()}" ?disabled="{{extensionsBusy || extensionsWarning}}">Load unpacked…</button><button type="button" class="secondary" @click="{refresh()}" ?disabled="{{extensionsBusy}}">Refresh</button></div>
  <div class="extension-feedback"><output role="status" aria-live="polite">{{extensionsText}}</output><button type="button" class="secondary compact-button" ?hidden="{{!extensionsText && !extensionsError}}" @click="{dismiss()}" ?disabled="{{extensionsBusy}}">Dismiss</button></div>
  <p role="status" class="field-error" ?hidden="{{!extensionsError}}">{{extensionsError}}</p>
@@ -16,6 +16,7 @@
     <for each="visualizer in extension.visualizers"><section key="{{visualizer.id}}" class="extension-contribution"><h4>{{visualizer.name}} <span>{{visualizer.surfaces}}</span></h4><dl><dt>Request headers</dt><dd><code>{{visualizer.requestHeaders}}</code></dd><dt>Request body</dt><dd>{{visualizer.requestBody}}</dd><dt>Response headers</dt><dd><code>{{visualizer.responseHeaders}}</code></dd><dt>Response body</dt><dd>{{visualizer.responseBody}}</dd><dt>Matching messages</dt><dd><for each="match in visualizer.matches"><p>{{match}}</p></for></dd><dt>Live updates</dt><dd>{{visualizer.live}}</dd><dt>Related context</dt><dd>{{visualizer.context}}</dd></dl></section></for>
     <p class="extension-id">Revision <code>{{extension.revision}}</code></p>
    </details>
+   <if condition="extension.columns.length"><details class="extension-declarations"><summary>Traffic columns and header rules</summary><p class="field-help">Fixed labels from retained headers. No body access or extension scripts.</p><for each="column in extension.columns"><section key="{{column.id}}" class="extension-contribution"><h4>{{column.name}}</h4><dl><dt>Request headers</dt><dd><code>{{column.requestHeaders}}</code></dd><dt>Response headers</dt><dd><code>{{column.responseHeaders}}</code></dd><for each="value in column.values"><dt>{{value.value}}</dt><dd><for each="match in value.matches"><p>{{match}}</p></for></dd></for></dl></section></for></details></if>
   </article></for>
  </div>
  <p class="field-help extension-help">Disabling stops active visualizers in every window. Uninstalling an unpacked extension leaves its source files in place.</p>

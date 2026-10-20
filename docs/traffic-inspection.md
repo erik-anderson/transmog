@@ -57,6 +57,13 @@ HTTP version. A failed connection attempt does not hide HTTP evidence from
 another attempt. Selection, focus and range anchors use stable IDs and the
 complete display order; leaving the rendered window never deselects an entry.
 
+**View → List columns → Extension columns** optionally adds fixed protocol labels
+from installed extensions. Their request/response header rules run natively on
+bounded visible-row metadata, without starting extension code or reading bodies.
+Choose up to eight; disabling an extension removes its columns. A **Limited**
+cell means its header classification exceeded the metadata budget. Manage their
+declared header names and conditions in [Extensions settings](extensions.md).
+
 ## Request order
 
 The leading pinned **#** column is **Request order**: a positive, workspace-local

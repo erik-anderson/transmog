@@ -129,6 +129,9 @@ pub struct WorkspacePreferences {
     pub compact_rows: bool,
     /// Ordered column presentation preferences.
     pub columns: Vec<ColumnPreference>,
+    /// Optional package-qualified static classification columns, with no captured values.
+    #[serde(default)]
+    pub extension_columns: Vec<String>,
 }
 
 impl Default for WorkspacePreferences {
@@ -149,6 +152,7 @@ impl Default for WorkspacePreferences {
             autoresponse_split: 45,
             wrap_cells: false,
             compact_rows: true,
+            extension_columns: Vec::new(),
             columns: [
                 (RequestNumber, 72),
                 (Method, 76),
@@ -218,6 +222,17 @@ impl WorkspacePreferences {
         let ids: std::collections::BTreeSet<_> =
             self.columns.iter().map(|column| column.id).collect();
         self.columns.len() == 18
+            && self.extension_columns.len() <= 8
+            && self
+                .extension_columns
+                .iter()
+                .collect::<std::collections::BTreeSet<_>>()
+                .len()
+                == self.extension_columns.len()
+            && self
+                .extension_columns
+                .iter()
+                .all(|key| transmog_extensions::valid_classification_key(key))
             && ids.len() == 18
             && self.columns.iter().any(|column| column.visible)
             && self

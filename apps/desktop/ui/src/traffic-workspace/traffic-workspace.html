@@ -37,16 +37,16 @@
         <traffic-timeline w-ref="{timeline}" :entries="{{timelineEntries}}" :chosen="{{timelineSelection}}" :sources="{{traceMetadataRows}}" :compact="{{preferences.compactRows}}" :markers="{{markerItems}}" marker-current="{{markerCurrent}}" @timeline-marker="{timelineMarker(e)}" current="{{selectedSessionId}}" @timeline-inspect="{inspectTimeline(e)}" @timeline-clear-selection="{clearTrafficSelection()}" @timeline-refresh="{refreshTimeline()}" @timeline-select="{selectTimeline(e)}"></traffic-timeline></div>
         <div w-ref="{sessionScroller}" class="table-wrap" ?hidden="{{timelineMode}}" @scroll="{sessionScrolled()}">
           <table w-ref="{trafficTable}" class="traffic-table" role="grid" tabindex="0" aria-rowcount="{{rowCount}}" aria-activedescendant="{{activeRowId}}" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-compact="{{preferences.compactRows}}">
-            <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for></colgroup>
+            <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for><for each="column in extensionTableColumns"><col key="{{column.key}}" data-width="180px"></for></colgroup>
             <thead><tr aria-rowindex="1"><for each="column in columns">
               <th key="{{column.id}}" id="header-{{column.id}}" scope="col" data-column-id="{{column.id}}" ?data-pinned="{{column.pinned}}" data-offset="{{column.offsetCss}}" aria-sort="{{column.sortDirection}}" ?data-dragging="{{column.id == draggingColumn}}" ?data-drop-target="{{column.id == dropColumnId}}" data-drop-placement="{{dropPlacement}}">
                 <button type="button" class="column-trigger" popovertarget="column-actions" @click="{openColumnMenu(column.id,e)}" @pointerdown="{startColumnDrag(column.id,e)}" @pointermove="{moveColumnDrag(e)}" @pointerup="{finishColumnDrag(e)}" @pointercancel="{cancelColumnDrag(e)}" @lostpointercapture="{cancelColumnDrag(e)}" @keydown="{cancelColumnDrag(e)}" aria-label="{{column.label}}" title="Click to sort or filter; drag to move {{column.label}}"><span class="column-label">{{column.headerLabel}}</span><span class="sort-arrow">{{column.sortArrow}}</span><span class="column-caret" aria-hidden="true">⌄</span></button>
                 <span class="column-resizer" role="separator" tabindex="0" aria-orientation="vertical" aria-label="Resize {{column.label}} column" aria-valuemin="32" aria-valuemax="1200" aria-valuenow="{{column.width}}" @pointerdown="{startColumnResize(column.id,e)}" @pointermove="{resizeColumn(e)}" @pointerup="{finishColumnResize(e)}" @pointercancel="{cancelColumnResize(e)}" @keydown="{resizeColumnWithKeyboard(column.id,e)}" @dblclick="{fitColumn(column.id)}"></span>
               </th>
-            </for></tr></thead>
+            </for><for each="column in extensionTableColumns"><th key="{{column.key}}" scope="col" class="extension-column-heading" title="{{column.title}}">{{column.name}}</th></for></tr></thead>
             <tbody>
-              <if condition="!totalMatched"><tr aria-rowindex="2"><td colspan="{{columns.length}}" class="empty-cell">{{emptyTrafficText}}</td></tr></if>
-              <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{columns.length}}"><div data-size="{{topSpace}}"></div></td></tr>
+              <if condition="!totalMatched"><tr aria-rowindex="2"><td colspan="{{trafficColumnCount}}" class="empty-cell">{{emptyTrafficText}}</td></tr></if>
+              <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{trafficColumnCount}}"><div data-size="{{topSpace}}"></div></td></tr>
               <for each="session in sessions">
                 <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="-1" aria-rowindex="{{session.rowIndex}}" aria-busy="{{session.loading}}" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-loading="{{session.loading}}" data-tone="{{session.tone}}" ?data-current="{{session.id == selectedSessionId}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}">
                   <for each="cell in session.cells">
@@ -58,10 +58,10 @@
                       <if condition="session.autoResponse && cell.id == 'status'"><span class="auto-badge" title="Served by an auto-response rule">AUTO</span></if>
                       <if condition="session.loss && cell.id == 'state'"><span title="Some exchange evidence was omitted"> · loss</span></if>
                     </td>
-                  </for>
+                  </for><for each="cell in session.extensionCells"><td key="{{cell.key}}" data-extension-column="{{cell.key}}" title="{{cell.title}}"><span class="cell-value">{{cell.text}}</span></td></for>
                 </tr>
               </for>
-              <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{columns.length}}"><div data-size="{{bottomSpace}}"></div></td></tr>
+              <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{trafficColumnCount}}"><div data-size="{{bottomSpace}}"></div></td></tr>
             </tbody>
           </table>
         </div>
@@ -272,6 +272,7 @@
       <label>Layout <select aria-label="Traffic layout" @change="{setLayout(e)}"><option value="stacked" ?selected="{{preferences.layout == 'stacked'}}">Inspector below</option><option value="side-by-side" ?selected="{{preferences.layout == 'side-by-side'}}">Inspector beside</option></select></label>
       <label><input type="checkbox" ?checked="{{preferences.compactRows}}" @change="{setCompact(e)}"> Compact rows</label>
       <if condition="!timelineMode"><details class="list-column-settings"><summary>List columns</summary><for each="column in settingsColumns"><label key="{{column.id}}"><input type="checkbox" ?checked="{{column.visible}}" @change="{setVisible(column.id,e)}"> {{column.label}}</label></for>
+      <if condition="extensionSettingsColumns.length"><fieldset class="extension-column-options"><legend>Extension columns</legend><for each="column in extensionSettingsColumns"><label key="{{column.key}}"><input type="checkbox" ?checked="{{column.checked}}" ?disabled="{{column.disabled}}" @change="{setExtensionColumn(column.key,e)}"> {{column.label}}</label></for><p class="column-hint">Choose up to 8. Fixed labels use retained request and response headers.</p></fieldset></if><p role="status" ?hidden="{{!extensionColumnError}}">{{extensionColumnError}}</p><button type="button" class="secondary compact-button" @click="{refreshExtensionColumns()}">Refresh extension columns</button>
       <p class="column-hint">Drag headers to reorder. Drag their edges to resize; double-click an edge to fit.</p><button type="button" @click="{resetColumns()}">Reset columns</button></details></if>
     </div>
   </section>

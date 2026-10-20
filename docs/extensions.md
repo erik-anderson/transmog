@@ -33,6 +33,70 @@ Installed packages are not per-event subscribers; an empty active set exits
 immediately. Removing one instance does not remove another contribution from
 the same extension.
 
+Each matching rule is a conjunction; alternative rules combine with OR. A rule
+for a request viewer may require both request and response headers. Missing
+paired headers defer availability; a later response can make the viewer appear.
+Presence tests use the retained name, including redacted fields. Exact and
+not-equal value tests never inspect redacted values, and an absent field cannot
+satisfy not-equal. Declare every matching name on its exact input side.
+
+## Static traffic columns
+
+Optional `trafficColumns` declarations classify retained requests using literal
+labels selected by the same native header matcher. Each has a package-local
+`id`, heading `name`, exact `inputs` and `values` with alternative `matches`.
+Request and response conditions may be combined. Both body declarations must
+be `none`; HTTP decoding, method/path/status predicates, executable callbacks
+and interpolation of captured header values are rejected. A package may contain
+only column metadata, with empty `visualizers` and `files` inventories.
+
+For example, this abbreviated column requires a specific request SOAPAction
+and a SOAP response before adding its fixed label. Authors should use the
+exact protocol action values applicable to their classifier:
+
+```json
+{
+  "id": "protocol",
+  "name": "Protocol",
+  "inputs": {
+    "request": {"headers": ["soapaction"], "body": "none"},
+    "response": {"headers": ["content-type"], "body": "none"}
+  },
+  "values": [{
+    "value": "MS-FSSHTTP",
+    "matches": [{
+      "direction": "response",
+      "contentTypes": ["application/soap+xml"],
+      "headers": [{"direction": "request", "name": "soapaction",
+        "test": {"op": "equals", "value": "CellStorageService"}}]
+    }]
+  }]
+}
+```
+
+**Traffic → View → List columns → Extension columns** offers enabled declarations.
+All start hidden; choose up to eight. Labels appear after ordinary columns in
+declaration order, once per matching literal. These initial classification
+columns display labels without adding sort/filter actions. Their package-qualified
+identities persist as layout preferences, independently of traffic values.
+Disabled or removed entries disappear from the table; unavailable selected
+identities can still be unchecked in View. Extensions settings shows their
+header names, literal values and rules.
+
+Classification receives at most 512 existing retained identities per native
+call; the desktop requests at most 100 rows near the viewport and caches at
+most 1,024 results. Only selected declarations and matching header names are
+projected, with borrowed values and finite metadata, comparison and output
+budgets. Exhaustion shows **Limited**, discarding partial labels. Missing or
+redacted values cannot produce a value match. Changed row evidence, declarations,
+selection or visibility invalidate pending results; hidden workspaces release
+the cache and metadata listener.
+
+This path uses the already available retained header index for live or imported
+traffic. It does not import another capture, walk all TMCap entries, acquire a
+body capability, open a body blob, read extension modules or start a worker.
+There is no per-installed-extension capture callback or full-capture label cache.
+
 Output is a `VisualizationDocument`: typed tree/table/text/hex data, diagnostics,
 format metadata, exact source spans and bounded derived buffers with provenance.
 The host validates unique IDs, depth/count/encoded-byte budgets, exact decimal

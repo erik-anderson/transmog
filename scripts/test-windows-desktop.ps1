@@ -105,6 +105,7 @@ if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly) {
     $extensionManifest.files += @{path='http.js';bytes=0}
     $nativeInputs = @{request=@{headers=@('x-example');body='none'};response=@{headers=@('content-type');body='none'}}
     $nativeMatches = @(@{direction='request';headers=@(@{direction='request';name='x-example';test=@{op='present'}})},@{direction='response';contentTypes=@('text/plain')})
+    $extensionManifest.trafficColumns = @(@{id='protocol';name='Protocol classification';inputs=$nativeInputs;values=@(@{value='Synthetic protocol';matches=@(@{direction='response';contentTypes=@('text/plain');headers=@(@{direction='request';name='x-example';test=@{op='equals';value='Native header evidence'}})})})})
     $extensionManifest.visualizers += @{id='native-headers';name='Native fields';entry='parser.js';surfaces=@('headers');inputs=$nativeInputs;matches=$nativeMatches}
     $extensionManifest.visualizers += @{id='native-body';name='Native protocol';entry='parser.js';surfaces=@('body');inputs=@{request=@{headers=@();body='none'};response=@{headers=@('content-type');body='required'}};matches=@(@{direction='response';contentTypes=@('text/plain')})}
     $extensionManifest.visualizers += @{id='native-live';name='Native live protocol';entry='parser.js';surfaces=@('body');inputs=@{request=@{headers=@();body='none'};response=@{headers=@('content-type');body='required'}};matches=@(@{direction='response';contentTypes=@('text/plain')});liveUpdates=@{events=@('response');bodyProgress=$false}}

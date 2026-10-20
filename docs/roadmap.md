@@ -29,8 +29,9 @@ are implemented, as are Extensions settings and shared management. Bounded
 same-origin context reads and opt-in native live feeding, including desktop
 controls and inactive unloading, are implemented. Declared on-demand HTTP
 decoding preserves separate encoded and decoded capabilities with enclosing
-provenance. Metadata classification columns, transactional development reload
-and MAPI parity remain below.
+provenance. Optional static traffic columns use bounded native header matching
+without loading bodies or code. Transactional development reload and MAPI
+parity remain below.
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
 capture, selection, and built-in inspection must not load extension code.
@@ -248,23 +249,9 @@ conditions against the named side, with missing/redacted/invalid values explicit
 The host must not test hidden sensitive values to infer a match that would reveal
 them. Header-only matches work for HEAD/204 responses and captures without bodies.
 
-The same metadata matcher must also support extension-declared traffic columns.
-Each column has a stable package-qualified identity, a display name and fixed
-label values selected by explicit request/response header rules. A rule may
-combine both sides to classify a request, for example as MS-FSSHTTP. Values are
-literal extension metadata, never script results or values copied from captured
-headers. Columns are optional host-owned traffic columns, with finite rule,
-label and value counts. Disabled or unselected contributions add no script,
-body, source-file or per-request callback work.
-
-Classification uses bounded native header metadata access. It must not request
-body capabilities, run extension code, import another capture or materialize a
-whole TMCap trace. Saved-trace evaluation uses existing indexed metadata access
-with bounded paging and caches tied to evidence and declaration revisions;
-sorting/filtering must not turn it into body loading or unbounded retention.
-Missing, redacted or unavailable headers remain explicit and cannot satisfy
-value predicates. Show column declarations and conditions in Extensions settings.
-
+Static traffic columns now share this matcher. Their implemented declarations,
+viewport paging, fixed labels and metadata-only limits are documented in
+[Extensions](extensions.md#static-traffic-columns).
 MAPI's main registration is `application/mapi-http`. Request-side registration
 uses the corresponding request media type. Add a narrowly qualified `text/html`
 error-response registration using MAPI request metadata and nonzero

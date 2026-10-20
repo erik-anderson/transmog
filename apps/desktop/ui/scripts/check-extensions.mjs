@@ -43,15 +43,19 @@ export async function checkExtensions(page,root) {
   await panel.getByRole('button',{name:'Dismiss',exact:true}).click();
   const development=extension('example.development','Development protocol',true);development.catalog.manifest.visualizers[0].context.lookAhead=true;
   const decoded=development.catalog.manifest.visualizers[1].inputs.response;decoded.headers.push('content-encoding');decoded.decodeHttpContent=true;
+  development.catalog.manifest.trafficColumns=[{id:'protocol',name:'Protocol classification',inputs:{request:{headers:['soapaction'],body:'none'},response:{headers:['content-type'],body:'none'}},values:[{value:'MS-FSSHTTP',matches:[{direction:'response',contentTypes:['application/soap+xml'],headers:[{direction:'request',name:'soapaction',test:{op:'equals',value:'CellStorageService'}}]}]}]}];
   await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},development);
   await panel.getByRole('button',{name:'Load unpacked…',exact:true}).click();
   const developer=panel.getByRole('article',{name:'Development protocol',exact:true});
   await developer.getByRole('checkbox',{name:'Hot reload Development protocol',exact:true}).check();
   await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);
-  await developer.locator('summary').click();
+  await developer.getByText('Visualizers and declared inputs',{exact:true}).click();
   await developer.getByText('Up to 32 earlier or later exchanges from the same capture, origin, and conversation; request x-requesttype',{exact:true}).waitFor();
   await developer.getByText('Required · HTTP decoding on demand',{exact:true}).waitFor();
+  await developer.getByText('Traffic columns and header rules',{exact:true}).click();
+  await developer.getByText('MS-FSSHTTP',{exact:true}).waitFor();
+  await developer.getByText('Response · application/soap+xml · request soapaction: equals CellStorageService',{exact:true}).waitFor();
   for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
     await page.setViewportSize({width,height});
     assert.equal(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true,'Extensions overflowed the settings pane');

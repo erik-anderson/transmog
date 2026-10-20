@@ -34,6 +34,10 @@
   "visualizerSource": "",
   "visualizerSourceText": "",
   "visualizerHex": null,
+  "extensionTableColumns": [],
+  "extensionSettingsColumns": [],
+  "extensionColumnError": "",
+  "trafficColumnCount": 0,
   "extensionsEntries": [],
   "extensionsBusy": false,
   "extensionsLoaded": false,
@@ -541,6 +545,7 @@
     "autoresponseSplit": 45,
     "wrapCells": false,
     "compactRows": true,
+    "extensionColumns": [],
     "columns": [
       {
         "id": "request-number",
@@ -662,6 +667,7 @@
     "responseBodySplit": 35,
     "wrapCells": false,
     "compactRows": true,
+    "extensionColumns": [],
     "columns": [
       {
         "id": "request-number",

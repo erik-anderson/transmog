@@ -64,7 +64,7 @@ impl InputAccess {
     pub fn permits_header(&self, name: &str) -> bool {
         self.headers.iter().any(|h| h.eq_ignore_ascii_case(name))
     }
-    fn validate(&self) -> Result<(), Error> {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
         if self.decode_http_content
             && (self.body == BodyAccess::None || !self.permits_header("content-encoding"))
         {
@@ -97,6 +97,10 @@ pub struct Inputs {
     pub response: InputAccess,
 }
 impl Inputs {
+    pub(crate) fn validate(&self) -> Result<(), Error> {
+        self.request.validate()?;
+        self.response.validate()
+    }
     /// Access declaration for the specified side.
     pub fn side(&self, side: Direction) -> &InputAccess {
         match side {
@@ -275,14 +279,13 @@ impl Visualizer {
             return Err(invalid("Invalid visualizer identity, entry or surfaces"));
         }
         transmog_package_zip::name(self.entry.as_bytes())?;
-        self.inputs.request.validate()?;
-        self.inputs.response.validate()?;
+        self.inputs.validate()?;
         self.limits.validate()?;
         if self.matches.is_empty() || self.matches.len() > 32 || self.input_matches.len() > 32 {
             return Err(invalid("Declare finite selective matching rules"));
         }
         for rule in self.matches.iter().chain(&self.input_matches) {
-            self.validate_rule(rule)?;
+            validate_rule(&self.inputs, rule)?;
         }
         if let Some(live) = &self.live_updates
             && (live.events.is_empty()
@@ -304,63 +307,53 @@ impl Visualizer {
                 return Err(invalid("Declare bounded conversation correlation"));
             }
             for field in &context.headers {
-                self.validate_header(field)?;
+                validate_header(&self.inputs, field)?;
             }
         }
         Ok(())
     }
-    fn validate_header(&self, field: &HeaderPredicate) -> Result<(), Error> {
-        if !self
-            .inputs
-            .side(field.direction)
-            .permits_header(&field.name)
-        {
-            return Err(Error::AccessDenied);
-        }
-        if let HeaderTest::Equals { value } | HeaderTest::NotEquals { value } = &field.test
-            && (value.len() > 1024
-                || !value.is_ascii()
-                || value.bytes().any(|b| b.is_ascii_control()))
-        {
-            return Err(invalid("Invalid header comparison value"));
-        }
-        Ok(())
+}
+fn validate_header(inputs: &Inputs, field: &HeaderPredicate) -> Result<(), Error> {
+    if !inputs.side(field.direction).permits_header(&field.name) {
+        return Err(Error::AccessDenied);
     }
-    fn validate_rule(&self, rule: &MatchRule) -> Result<(), Error> {
-        if rule.content_types.len() > 16
-            || rule.headers.len() > 16
-            || rule.methods.len() > 16
-            || rule.statuses.len() > 16
-            || rule.path_prefixes.len() > 8
-            || (rule.content_types.is_empty()
-                && rule.headers.is_empty()
-                && rule.path_prefixes.is_empty())
-        {
-            return Err(invalid("Matching rules must be selective and bounded"));
-        }
-        if !rule.content_types.is_empty()
-            && !self
-                .inputs
-                .side(rule.direction)
-                .permits_header("content-type")
-        {
-            return Err(Error::AccessDenied);
-        }
-        if rule.content_types.iter().any(|t| !media_type(t))
-            || rule.methods.iter().any(|m| !valid_header_name(m))
-            || rule
-                .path_prefixes
-                .iter()
-                .any(|p| !p.starts_with('/') || p.len() > 1024 || p.chars().any(char::is_control))
-            || rule.statuses.iter().any(|s| !(100..=599).contains(s))
-        {
-            return Err(invalid("Invalid native matching predicate"));
-        }
-        for field in &rule.headers {
-            self.validate_header(field)?;
-        }
-        Ok(())
+    if let HeaderTest::Equals { value } | HeaderTest::NotEquals { value } = &field.test
+        && (value.len() > 1024 || !value.is_ascii() || value.bytes().any(|b| b.is_ascii_control()))
+    {
+        return Err(invalid("Invalid header comparison value"));
     }
+    Ok(())
+}
+pub(crate) fn validate_rule(inputs: &Inputs, rule: &MatchRule) -> Result<(), Error> {
+    if rule.content_types.len() > 16
+        || rule.headers.len() > 16
+        || rule.methods.len() > 16
+        || rule.statuses.len() > 16
+        || rule.path_prefixes.len() > 8
+        || (rule.content_types.is_empty()
+            && rule.headers.is_empty()
+            && rule.path_prefixes.is_empty())
+    {
+        return Err(invalid("Matching rules must be selective and bounded"));
+    }
+    if !rule.content_types.is_empty() && !inputs.side(rule.direction).permits_header("content-type")
+    {
+        return Err(Error::AccessDenied);
+    }
+    if rule.content_types.iter().any(|t| !media_type(t))
+        || rule.methods.iter().any(|m| !valid_header_name(m))
+        || rule
+            .path_prefixes
+            .iter()
+            .any(|p| !p.starts_with('/') || p.len() > 1024 || p.chars().any(char::is_control))
+        || rule.statuses.iter().any(|s| !(100..=599).contains(s))
+    {
+        return Err(invalid("Invalid native matching predicate"));
+    }
+    for field in &rule.headers {
+        validate_header(inputs, field)?;
+    }
+    Ok(())
 }
 
 /// Exact payload inventory; only immutable verified bytes enter a worker.
@@ -393,6 +386,9 @@ pub struct Manifest {
     pub name: String,
     /// Concurrent independent visualizer contributions.
     pub visualizers: Vec<Visualizer>,
+    /// Optional header-only traffic columns, with no executable callbacks.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub traffic_columns: Vec<crate::ClassificationColumn>,
     /// Complete payload inventory, excluding manifest.json itself.
     pub files: Vec<Payload>,
 }
@@ -426,9 +422,9 @@ impl Manifest {
                 .version
                 .bytes()
                 .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'-' | b'+'))
-            || self.visualizers.is_empty()
+            || (self.visualizers.is_empty() && self.traffic_columns.is_empty())
             || self.visualizers.len() > 32
-            || self.files.is_empty()
+            || self.traffic_columns.len() > 16
             || self.files.len() > MAX_PACKAGE_FILES
         {
             return Err(invalid("Invalid extension identity or inventory"));
@@ -458,10 +454,17 @@ impl Manifest {
                 return Err(invalid("Duplicate visualizer or missing entry module"));
             }
         }
+        let mut columns = BTreeSet::new();
+        for column in &self.traffic_columns {
+            column.validate()?;
+            if !columns.insert(&column.id) {
+                return Err(invalid("Duplicate traffic column identity"));
+            }
+        }
         Ok(())
     }
 }
-fn label(value: &str) -> bool {
+pub(crate) fn label(value: &str) -> bool {
     !value.trim().is_empty() && value.len() <= 160 && !value.chars().any(char::is_control)
 }
 pub(crate) fn digest(value: &str) -> bool {

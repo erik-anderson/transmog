@@ -1,10 +1,12 @@
 //! Read-only extension metadata, native admission and host-owned presentation contracts.
+mod columns;
 mod document;
 mod manifest;
 mod matching;
 mod package;
 mod protocol;
 
+pub use columns::*;
 pub use document::*;
 pub use manifest::*;
 pub use matching::*;

@@ -1,6 +1,7 @@
 import {writeFile} from 'node:fs/promises';
 import {smokeLiveVisualizers} from './smoke-live-visualizers.mjs';
 import {smokeHttpVisualizers} from './smoke-http-visualizers.mjs';
+import {smokeClassifications} from './smoke-classifications.mjs';
 
 /** Real WebView2 -> native evidence broker -> AppContainer worker -> host renderer. */
 export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
@@ -11,6 +12,7 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     await traffic.importTrace(${JSON.stringify(tracePath)});
     await traffic.importTrace(${JSON.stringify(tracePath.replace(/\.saz$/i,'-other.saz'))});
+    await (${smokeClassifications.toString()})(traffic);
     const row=traffic.sessions.find(row=>row.path==='/extension-fixture'&&row.responseBytes===23);if(!row)throw new Error('Native visualizer fixture did not import: '+traffic.importStatus);
     traffic.preferences={...traffic.preferences,layout:'stacked',listSplit:30};
     await traffic.selectTraffic(row,new MouseEvent('click'));
@@ -41,7 +43,8 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     const viewers=children();
     for(const view of viewers.filter(view=>view.view?.instance.visualizerId==='native-headers'))if(view.view.sources.some(source=>source.name.endsWith(' · body')))throw new Error('Header-only native visualizer acquired a body source');
     globalThis.__visualizerProbe.handles=viewers.map(view=>view.view.handle);
-    return {workers:viewers.length,byteContinuation:true,sameOriginContext:true,sameCaptureContext:true,expansion:true,sourceDenied:denied};
+    const classifications=globalThis.__nativeClassificationVerified;delete globalThis.__nativeClassificationVerified;
+    return {workers:viewers.length,byteContinuation:true,sameOriginContext:true,sameCaptureContext:true,expansion:true,sourceDenied:denied,classifications};
   })()`);
   await call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
   if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-visualizer-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));

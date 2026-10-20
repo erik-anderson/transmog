@@ -16,6 +16,8 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       if(original.warning||original.entries.length!==1||original.entries[0].catalog.manifest.id!=='test.development')throw new Error('Native extension fixture was not loaded');
       const root=editor.shadowRoot??editor,entry=root.querySelector('article');
       entry.querySelector('summary').click();
+      const columns=[...entry.querySelectorAll('summary')].find(summary=>summary.textContent==='Traffic columns and header rules');if(!columns)throw new Error('Static column declarations missing');columns.click();
+      if(!entry.textContent.includes('Synthetic protocol')||!entry.textContent.includes('request x-example: equals Native header evidence'))throw new Error('Static header rules were not disclosed');
       const enabled=entry.querySelector('input[type="checkbox"]');enabled.focus();enabled.click();
       await wait(()=>!editor.extensionsBusy&&!editor.extensionsEntries[0].enabled);
       const disabled=await window.__TAURI_INTERNALS__.invoke('extension_status');

@@ -81,6 +81,8 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "query_traffic_view"
             | "traffic_facets"
             | "traffic_view_rows"
+            | "extension_traffic_columns"
+            | "classify_traffic_rows"
             | "traffic_timeline_rows"
             | "release_traffic_view"
             | "session_detail"

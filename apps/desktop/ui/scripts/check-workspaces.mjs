@@ -38,6 +38,7 @@ import { fileURLToPath } from 'node:url';
 import { build, Protocol } from '@microsoft/webui';
 import { checkHexViewer } from './check-hex-viewer.mjs';
 import { checkTrafficPresentation } from './check-traffic-presentation.mjs';
+import {checkTrafficClassifications} from './check-traffic-classifications.mjs';
 import { checkTrafficList } from './check-traffic-list.mjs';
 import {checkAppSelection} from './check-app-selection.mjs';
 import {checkTimingLabels} from './check-timing-labels.mjs';
@@ -186,6 +187,13 @@ await page.addInitScript((configuration) => {
         case 'plugin:event|listen': {const id=++nativeEventId;nativeEvents.set(id,{event:args.event,handler:args.handler});return id;}
         case 'plugin:event|unlisten': nativeEvents.delete(args.eventId);return;
         case 'visualizer_choices': return structuredClone(state.visualizerChoices?.[args.selection.surface]??[]);
+        case 'extension_traffic_columns': return structuredClone(state.extensionColumnChoices??[]);
+        case 'classify_traffic_rows': {
+          state.classificationRequests??=[];state.classificationRequests.push(structuredClone(args));
+          const rows=args.ids.map(id=>({id,values:Object.fromEntries(args.columns.map(key=>[key,state.classificationValues??['MS-FSSHTTP']])),limited:!!state.classificationLimited}));
+          if(state.deferClassifications){state.deferClassifications=false;await new Promise(resolve=>state.finishClassifications=resolve);}
+          return rows;
+        }
         case 'visualizer_page': return '1';
         case 'activate_visualizer': {
           const request=structuredClone(args.request);state.visualizerStarts??=[];state.visualizerStarts.push(request);
@@ -895,6 +903,7 @@ try {
   if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--incidents-only')){await checkIncidents(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Incident review, export dialog lifecycle, stale reviews and capture markers verified.\n');process.exit(0);}
   if(process.argv.includes('--traffic-presentation-only')){await page.goto('https://workspace.test/');await checkTrafficPresentation(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic presentation and one-click inspector switching verified.\n');process.exit(0);}
+  if(process.argv.includes('--classifications-only')){await page.goto('https://workspace.test/');await checkTrafficClassifications(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Static header classifications, bounded windows, stale replies and inactive cleanup verified.\n');process.exit(0);}
   if(process.argv.includes('--request-controls-only')){await checkRequestControls(page);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Request cancellation, uncached selections and delayed removal focus verified.\n');process.exit(0);}
   if(process.argv.includes('--response-followups-only')){await checkResponseSetFollowups(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response collection, active state, cancellation and Clear regressions verified.\n');process.exit(0);}
   if(process.argv.includes('--saved-demos-only')){await checkSavedDemos(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Durable demo save/review/playback/replace/delete and layouts verified.\n');process.exit(0);}
@@ -2716,6 +2725,7 @@ try {
   await checkActionMenus(page,root);
   await checkWindowShortcuts(page,root);
   await checkTrafficPresentation(page,root);
+  await checkTrafficClassifications(page,root);
   await checkBodyRefresh(page,root);
   await checkRequestOrder(page,root);
   await checkTrafficNavigation(page);

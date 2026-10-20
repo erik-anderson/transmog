@@ -38,7 +38,9 @@ export function normalizeWorkspace(value: WorkspacePreferences | undefined): Wor
   if (missing.some(column=>!['request-number','http-duration','stream-sent','stream-received'].includes(column.id))) return fallback;
   if (!ids.has('request-number')) columns.unshift({...fallback.columns[0]!});
   for(const id of ['http-duration','stream-sent','stream-received'])if(!ids.has(id as ColumnId))columns.push({...fallback.columns.find(column=>column.id===id)!});
-  return { ...fallback, ...value, wrapCells:false, columns };
+  const extensionColumns=value.extensionColumns??[];
+  if(!Array.isArray(extensionColumns)||extensionColumns.length>8||new Set(extensionColumns).size!==extensionColumns.length||extensionColumns.some(key=>typeof key!=='string'||!/^[a-z0-9][-a-z0-9._]{0,127}:[a-z0-9][-a-z0-9._]{0,127}$/.test(key)))return fallback;
+  return { ...fallback, ...value, wrapCells:false, columns,extensionColumns };
 }
 
 export function displayColumns(columns: ColumnPreference[]) {

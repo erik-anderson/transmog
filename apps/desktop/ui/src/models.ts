@@ -240,7 +240,10 @@ export interface WorkspacePreferences {
   wrapCells: boolean;
   compactRows: boolean;
   columns: ColumnPreference[];
+  extensionColumns: string[];
 }
+export interface ExtensionTrafficColumn {key:string;name:string;extensionName:string;}
+export interface TrafficClassification {id:string;values:Record<string,string[]>;limited:boolean;}
 export type ResponseSetGuideHistory = 'not-offered' | 'offered' | 'started';
 export interface ResponseSetGuideUpdate {history:ResponseSetGuideHistory;offered:boolean;}
 export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }

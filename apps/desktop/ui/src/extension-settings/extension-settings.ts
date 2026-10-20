@@ -4,21 +4,22 @@ import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {WorkspaceElement} from '../workspace-element.js';
 import {describeError} from '../utilities.js';
-import type {ContributionRow,ExtensionContribution,ExtensionEntry,ExtensionRow,ExtensionStatus} from './models.js';
+import type {ContributionRow,ExtensionContribution,ExtensionEntry,ExtensionRow,ExtensionStatus,ExtensionRule} from './models.js';
 
 const bodyLabel={none:'No body access',optional:'Optional',required:'Required'};
 const headersLabel=(headers:string[]):string=>headers.length?headers.join(', '):'No headers';
 const bodyAccess=(access:ExtensionContribution['inputs']['request']):string=>bodyLabel[access.body]+(access.decodeHttpContent?' · HTTP decoding on demand':'');
+const ruleLabel=(rule:ExtensionRule):string=>[rule.direction==='request'?'Request':'Response',...(rule.contentTypes??[]),...(rule.methods??[]),...(rule.pathPrefixes??[]),...(rule.statuses??[]).map(String),...(rule.headers??[]).map(header=>`${header.direction} ${header.name}: ${header.test.op}${header.test.value===undefined?'':` ${header.test.value}`}`)].join(' · ');
 function contribution(value:ExtensionContribution):ContributionRow {
   return {id:value.id,name:value.name,surfaces:value.surfaces.map(side=>side==='headers'?'Headers':'Body').join(' and '),
     requestHeaders:headersLabel(value.inputs.request.headers),responseHeaders:headersLabel(value.inputs.response.headers),requestBody:bodyAccess(value.inputs.request),responseBody:bodyAccess(value.inputs.response),
-    matches:value.matches.map(rule=>[rule.direction==='request'?'Request':'Response',...(rule.contentTypes??[]),...(rule.methods??[]),...(rule.pathPrefixes??[]),...(rule.statuses??[]).map(String),...(rule.headers??[]).map(header=>`${header.direction} ${header.name}: ${header.test.op}${header.test.value===undefined?'':` ${header.test.value}`}`)].join(' · ')),
+    matches:value.matches.map(ruleLabel),
     live:value.liveUpdates?`Optional ${value.liveUpdates.events.join('/')} updates${value.liveUpdates.bodyProgress?', including body progress':''}`:'Not supported',
     context:value.context?`Up to ${value.context.maxExchanges} ${value.context.lookAhead?'earlier or later':'earlier'} exchanges from the same capture, origin, and conversation; ${value.context.headers.map(header=>`${header.direction} ${header.name}`).join(', ')}`:'Selected exchange only'};
 }
 function row(entry:ExtensionEntry):ExtensionRow {
   const {manifest,enabled,origin,digest}=entry.catalog;
-  return {id:manifest.id,name:manifest.name,version:manifest.version,enabled,origin:origin==='bundled'?'Included with Transmog':origin==='development'?'Unpacked development folder':'Installed',bundled:origin==='bundled',development:origin==='development',directory:entry.directory??'',hotReload:entry.hotReload,runtime:manifest.runtime,revision:digest,visualizers:manifest.visualizers.map(contribution)};
+  return {id:manifest.id,name:manifest.name,version:manifest.version,enabled,origin:origin==='bundled'?'Included with Transmog':origin==='development'?'Unpacked development folder':'Installed',bundled:origin==='bundled',development:origin==='development',directory:entry.directory??'',hotReload:entry.hotReload,runtime:manifest.runtime,revision:digest,visualizers:manifest.visualizers.map(contribution),columns:(manifest.trafficColumns??[]).map(column=>({id:column.id,name:column.name,requestHeaders:headersLabel(column.inputs.request.headers),responseHeaders:headersLabel(column.inputs.response.headers),values:column.values.map(value=>({value:value.value,matches:value.matches.map(ruleLabel)}))}))};
 }
 export class ExtensionSettings extends WorkspaceElement {
   @attr({mode:'boolean'}) active=false;

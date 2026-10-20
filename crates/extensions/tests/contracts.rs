@@ -330,3 +330,112 @@ fn output_limit_counts_serialized_structure_and_identifiers_are_safe_on_windows(
     };
     assert!(matches!(doc.validate(&sources, limits), Err(Error::Limit)));
 }
+
+#[test]
+fn static_columns_are_header_only_and_packages_can_contain_just_metadata() {
+    let column = serde_json::json!({"id":"protocol","name":"Protocol",
+        "inputs":{"request":{"headers":["soapaction"],"body":"none"},"response":{"headers":["content-type"],"body":"none"}},
+        "values":[{"value":"MS-FSSHTTP","matches":[{"direction":"response","contentTypes":["application/soap+xml"],"headers":[{"direction":"request","name":"soapaction","test":{"op":"equals","value":"CellStorageService"}}]}]}]});
+    let mut metadata = serde_json::to_value(manifest()).unwrap();
+    metadata["visualizers"] = serde_json::json!([]);
+    metadata["files"] = serde_json::json!([]);
+    metadata["trafficColumns"] = serde_json::json!([column.clone()]);
+    let parsed = Manifest::parse(&serde_json::to_vec(&metadata).unwrap(), true).unwrap();
+    let snapshot = Snapshot::new(parsed, BTreeMap::new()).unwrap();
+    let mut package = Vec::new();
+    write_package(&mut package, &snapshot, &AtomicBool::new(false)).unwrap();
+    assert_eq!(
+        Package::open(Cursor::new(package))
+            .unwrap()
+            .manifest()
+            .traffic_columns[0]
+            .values[0]
+            .value,
+        "MS-FSSHTTP"
+    );
+    for (path, value) in [
+        ("/inputs/request/body", serde_json::json!("optional")),
+        (
+            "/inputs/response/decodeHttpContent",
+            serde_json::json!(true),
+        ),
+        ("/inputs/request/headers", serde_json::json!([])),
+        ("/values/0/matches/0/methods", serde_json::json!(["POST"])),
+        ("/values/0/matches/0/pathPrefixes", serde_json::json!(["/"])),
+        ("/values/0/matches/0/statuses", serde_json::json!([200])),
+    ] {
+        let mut invalid = column.clone();
+        let (parent, key) = path.rsplit_once('/').unwrap();
+        invalid
+            .pointer_mut(parent)
+            .unwrap()
+            .as_object_mut()
+            .unwrap()
+            .insert(key.into(), value);
+        assert!(
+            serde_json::from_value::<ClassificationColumn>(invalid)
+                .unwrap()
+                .validate()
+                .is_err(),
+            "{path}"
+        );
+    }
+    assert!(
+        !serde_json::to_value(manifest())
+            .unwrap()
+            .as_object()
+            .unwrap()
+            .contains_key("trafficColumns"),
+        "Old package revisions must retain their canonical manifest bytes"
+    );
+    for key in ["", "x", "a:b:c", "con:protocol", "a:../b"] {
+        assert!(!valid_classification_key(key));
+    }
+    assert!(valid_classification_key(&classification_key(
+        "office", "protocol"
+    )));
+}
+
+#[test]
+fn viewer_rules_can_require_both_request_and_response_headers() {
+    let rule: MatchRule =
+        serde_json::from_value(serde_json::json!({"direction":"request","headers":[
+            {"direction":"request","name":"x-requesttype","test":{"op":"equals","value":"Execute"}},
+            {"direction":"response","name":"x-responsecode","test":{"op":"equals","value":"0"}}
+        ]}))
+        .unwrap();
+    let request = [header("X-RequestType", b"Execute", 0)];
+    let response = [header("X-ResponseCode", b"0", 0)];
+    let message = |direction, headers| MessageMetadata {
+        direction,
+        headers,
+        method: None,
+        path: None,
+        status: None,
+    };
+    let pending = ExchangeMetadata {
+        request: Some(message(Direction::Request, &request)),
+        response: None,
+    };
+    assert!(!matches(&rule, pending, Direction::Request));
+    assert!(matches(
+        &rule,
+        ExchangeMetadata {
+            response: Some(message(Direction::Response, &response)),
+            ..pending
+        },
+        Direction::Request
+    ));
+    let response = [Header {
+        redacted: true,
+        ..response[0].clone()
+    }];
+    assert!(!matches(
+        &rule,
+        ExchangeMetadata {
+            response: Some(message(Direction::Response, &response)),
+            ..pending
+        },
+        Direction::Request
+    ));
+}

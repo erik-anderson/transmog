@@ -1421,6 +1421,33 @@ fn traffic_view_rows(
 }
 
 #[tauri::command]
+fn extension_traffic_columns(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<transmog_app::extensions::ClassificationChoice>, AppError> {
+    Ok(state
+        .window_application(&window)?
+        .extension_traffic_columns())
+}
+
+#[tauri::command]
+async fn classify_traffic_rows(
+    ids: Vec<String>,
+    columns: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<transmog_app::TrafficClassification>, AppError> {
+    let application = state.window_application(&window)?;
+    tauri::async_runtime::spawn_blocking(move || application.classify_traffic_rows(&ids, &columns))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Header classification worker failed".into(),
+            retryable: true,
+        })?
+}
+
+#[tauri::command]
 fn release_traffic_view(
     view_id: String,
     window: tauri::WebviewWindow,
@@ -2416,6 +2443,8 @@ pub fn run() {
                 traffic_facets,
                 traffic_timeline_rows,
                 traffic_view_rows,
+                extension_traffic_columns,
+                classify_traffic_rows,
                 release_traffic_view,
                 session_detail,
                 stream_page,

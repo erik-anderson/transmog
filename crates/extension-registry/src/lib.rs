@@ -39,6 +39,17 @@ pub struct ExtensionStatus {
     /// Safe storage-recovery explanation; capture remains available.
     pub warning: Option<String>,
 }
+/// One optional static table column; no executable code or captured values.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationChoice {
+    /// Package-qualified stable identity.
+    pub key: String,
+    /// Inert heading.
+    pub name: String,
+    /// Package name for disambiguating headings in View settings.
+    pub extension_name: String,
+}
 /// Exact active contribution identity, separate from its package and UI owner.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +166,61 @@ impl Registry {
                     .iter()
                     .cloned()
                     .map(|visualizer| (entry.catalog.manifest.id.clone(), visualizer))
+            })
+            .collect()
+    }
+    /// Selects only enabled static columns, without copying modules, inventories or traffic.
+    pub fn classification_columns(
+        &self,
+        keys: &[String],
+    ) -> Vec<(String, transmog_extensions::ClassificationColumn)> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        keys.iter()
+            .filter_map(|key| {
+                let (package, id) = key.split_once(':')?;
+                let entry = state
+                    .entries
+                    .iter()
+                    .find(|entry| entry.catalog.enabled && entry.catalog.manifest.id == package)?;
+                let column = entry
+                    .catalog
+                    .manifest
+                    .traffic_columns
+                    .iter()
+                    .find(|column| column.id == id)?;
+                Some((key.clone(), column.clone()))
+            })
+            .collect()
+    }
+    /// Lists headings from enabled declarations without copying matching rules or file inventories.
+    pub fn classification_choices(&self) -> Vec<ClassificationChoice> {
+        let state = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state
+            .entries
+            .iter()
+            .filter(|entry| entry.catalog.enabled)
+            .flat_map(|entry| {
+                entry
+                    .catalog
+                    .manifest
+                    .traffic_columns
+                    .iter()
+                    .map(|column| ClassificationChoice {
+                        key: transmog_extensions::classification_key(
+                            &entry.catalog.manifest.id,
+                            &column.id,
+                        ),
+                        name: column.name.clone(),
+                        extension_name: entry.catalog.manifest.name.clone(),
+                    })
             })
             .collect()
     }
