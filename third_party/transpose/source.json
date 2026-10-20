@@ -1,0 +1,40 @@
+{
+  "compiler": {
+    "id": "Transpose.Compiler.Library",
+    "version": "26.10.6985",
+    "revision": "c514aa842eb65a0c26715c897e12fbf9aad93c7c"
+  },
+  "bcl": {
+    "id": "Transpose.BCL",
+    "version": "26.9.5840",
+    "revision": "c9fde312a9a781ac0d3dd00533a074fe410a3776"
+  },
+  "runtimeResources": {
+    "Decimal.js": {
+      "library": "decimal.js 7.1.0",
+      "upstreamResource": "BCL/Transpose.BCL/Resources/Decimal.js",
+      "sha256": "957d6d5b75d59fcb2fc96d1f02dd9aabca2fbebd7f398d79c26b589f5c24682b",
+      "licenseFile": "licenses/decimal-LICENSE",
+      "licenseSha256": "d93938b1051df8cca3abdebd64cce29d40f8b1f31472509de40e979649b9df2e"
+    },
+    "Long.js": {
+      "library": "long.js",
+      "upstreamResource": "BCL/Transpose.BCL/Resources/Long.js",
+      "sha256": "92fd2d3fd323a2b27721d214b04849b7a10774beacda7b58cf8a792cc503fe40",
+      "licenseFile": "licenses/long-LICENSE",
+      "licenseSha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    "linq.js": {
+      "library": "linq.js 3.0.4-Beta5",
+      "upstreamResource": "BCL/Transpose.BCL/Resources/linq.js",
+      "sha256": "80eda5b3d76c4726c7b5fd25c703b74b831c3d6a323d15577889089459aa05ae",
+      "licenseFile": "licenses/linq-LICENSE",
+      "licenseSha256": "94390dd90d426e4332d1f4e6ab562417a332f9880cc5367445b8a779710eae3c"
+    }
+  },
+  "licenseSources": {
+    "decimal-LICENSE": "https://registry.npmjs.org/decimal.js/-/decimal.js-7.1.0.tgz:package/LICENCE.md",
+    "long-LICENSE": "https://raw.githubusercontent.com/dcodeIO/long.js/master/LICENSE",
+    "linq-LICENSE": "https://raw.githubusercontent.com/mihaifm/linq/master/LICENSE"
+  }
+}

@@ -46,7 +46,10 @@ const BOOTSTRAP: &str = r"
 ";
 
 pub(super) struct Runtime {
-    runtime: JsRuntime,
+    engine: JsRuntime,
+    // V8 retains this executor's handle for delayed foreground work, including GC.
+    // Drop the isolate first, then its executor. This does not expose JS timers.
+    executor: tokio::runtime::Runtime,
     visualizer: Visualizer,
 }
 impl Runtime {
@@ -59,6 +62,18 @@ impl Runtime {
             .ok_or_else(|| fail(FailureKind::Validation, "Unknown visualizer contribution"))?
             .clone();
         let (entry, modules) = load_modules(snapshot, &visualizer)?;
+        let executor = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .map_err(|_| {
+                fail(
+                    FailureKind::Unavailable,
+                    "The worker executor is unavailable",
+                )
+            })?;
+        // deno_core captures Handle::try_current when registering the isolate.
+        // Without this context, sufficiently large modules abort on delayed GC.
+        let context = executor.enter();
         let mut runtime = JsRuntime::try_new(RuntimeOptions {
             create_params: Some(
                 v8::CreateParams::default()
@@ -82,15 +97,6 @@ impl Runtime {
                     "Runtime restrictions could not initialize",
                 )
             })?;
-        let executor = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|_| {
-                fail(
-                    FailureKind::Unavailable,
-                    "The worker executor is unavailable",
-                )
-            })?;
         executor.block_on(async {
             let id = runtime
                 .load_main_es_module(&entry)
@@ -105,8 +111,10 @@ impl Runtime {
                 .await
                 .map_err(|_| fail(FailureKind::Exception, "Extension initialization failed"))
         })?;
+        drop(context);
         Ok(Self {
-            runtime,
+            engine: runtime,
+            executor,
             visualizer,
         })
     }
@@ -123,14 +131,35 @@ impl Runtime {
             .map_err(|_| fail(FailureKind::Protocol, "Invocation serialization failed"))?;
         let literal = serde_json::to_string(&input)
             .map_err(|_| fail(FailureKind::Protocol, "Invocation encoding failed"))?;
+        // Drive ready foreground work once without waiting for future GC delays.
+        // A hidden instance still has no executor or worker to poll.
+        self.executor.block_on(async {
+            tokio::task::yield_now().await;
+            std::future::poll_fn(|context| {
+                std::task::Poll::Ready(
+                    match self
+                        .engine
+                        .poll_event_loop(context, deno_core::PollEventLoopOptions::default())
+                    {
+                        std::task::Poll::Ready(Err(_)) => Err(fail(
+                            FailureKind::Exception,
+                            "The visualizer operation failed",
+                        )),
+                        _ => Ok(()),
+                    },
+                )
+            })
+            .await
+        })?;
+        let _context = self.executor.enter();
         let result = self
-            .runtime
+            .engine
             .execute_script(
                 "transmog:extension-invoke",
                 format!("globalThis.__tmInvoke({literal})"),
             )
             .map_err(|_| fail(FailureKind::Exception, "The visualizer operation failed"))?;
-        deno_core::scope!(scope, &mut self.runtime);
+        deno_core::scope!(scope, &mut self.engine);
         let result = v8::Local::new(scope, result);
         let output = result.to_string(scope).ok_or_else(|| {
             fail(

@@ -13,3 +13,5 @@ third_party/rust-transport/** -text -whitespace
 third_party/mapi-inspector/Source/** -text -whitespace
 third_party/mapi-inspector/LICENSE -text -whitespace
 third_party/transpose/LICENSE -text -whitespace
+third_party/transpose/licenses/** -text -whitespace
+extensions/mapi/generated/** -text -whitespace
