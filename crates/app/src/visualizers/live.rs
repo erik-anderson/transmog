@@ -611,6 +611,7 @@ impl super::Application {
         let status = resources.live_status();
         Ok(super::VisualizerLiveUpdate {
             view: Some(super::VisualizerView {
+                metadata_changed: false,
                 handle: handle.clone(),
                 instance: instance.clone(),
                 document,

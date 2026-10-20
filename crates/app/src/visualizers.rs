@@ -81,6 +81,9 @@ impl VisualizerActivation {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerView {
+    /// Native notification hint after a validated development revision was published.
+    #[serde(skip)]
+    pub metadata_changed: bool,
     /// Exact host binding for subsequent source and expansion requests.
     pub handle: VisualizerHandle,
     /// Exact executing revision and input declaration.
@@ -527,16 +530,13 @@ impl Application {
                 Arc::clone(&resources),
             )
             .map_err(|_| unavailable())?;
-        let document = self
-            .run_visualizer(
-                ticket,
-                Invocation::Visualize {
-                    input: Box::new(input),
-                },
-            )
-            .await?;
-        ticket.current()?;
+        let invocation = Invocation::Visualize {
+            input: Box::new(input),
+        };
+        let document = self.run_visualizer(ticket, invocation).await?;
+        let metadata_changed = self.commit_visualizer_document(ticket).await?;
         Ok(VisualizerView {
+            metadata_changed,
             handle: request.handle(&instance),
             instance,
             document,
@@ -566,6 +566,7 @@ impl Application {
                     .resources::<Resources>(&self.visualizers.owner, &instance.id)
                     .map_err(|_| unavailable())?;
                 Ok(VisualizerView {
+                    metadata_changed: false,
                     handle: handle.clone(),
                     instance,
                     document,
@@ -579,6 +580,18 @@ impl Application {
                 Err(error)
             }
         }
+    }
+    async fn commit_visualizer_document(&self, ticket: &Ticket) -> Result<bool, AppError> {
+        let registry = self.visualizers.registry.clone();
+        let owner = self.visualizers.owner.clone();
+        let worker = ticket.current()?.id;
+        let changed =
+            tokio::task::spawn_blocking(move || registry.commit_document(&owner, &worker))
+                .await
+                .map_err(|_| unavailable())?
+                .map_err(|_| unavailable())?;
+        ticket.current()?;
+        Ok(changed)
     }
     async fn run_visualizer(
         &self,

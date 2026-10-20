@@ -7,8 +7,8 @@ the isolated JavaScript worker and its bounded lifecycle. `transmog-extension-re
 provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector
-offers explicit selection, scoped retained context and host-owned structured rendering. Desktop live controls,
-transactional hot reload and the bundled MAPI extension remain in the
+offers explicit selection, scoped retained context, opt-in live controls and host-owned structured rendering.
+Transactional hot reload and the bundled MAPI extension remain in the
 [implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
 
 An extension is a versioned package containing independently identified visualizer
@@ -157,8 +157,11 @@ Registering an unpacked developer directory reads only its manifest. Activation
 uses pinned local directory handles, rejects reparse points and links, bounds
 every file read and collects an immutable snapshot. Source lengths and digests
 are calculated for that snapshot, so authors do not maintain them after each
-edit. The exact executing declaration is published only after worker initialization
-succeeds. Unregistering a developer extension never deletes its sources.
+edit. The exact executing declaration is published only after the worker returns
+a host-validated visualization document. Initialization alone, parser failures and
+invalid output preserve the prior catalog. Publication rechecks the active owner,
+worker and catalog revision so a stopped or superseded candidate cannot publish.
+Unregistering a developer extension never deletes its sources.
 
 Each instance belongs to one application/window owner. Foreign instance IDs
 cannot retrieve its worker or retained-data resources. Disabling or uninstalling

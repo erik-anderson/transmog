@@ -1,6 +1,6 @@
 //! Read-only visualizer commands scoped to the calling window's retained capture.
 use super::DesktopState;
-use tauri::State;
+use tauri::{Emitter as _, Manager as _, State};
 use transmog_app::{
     AppError, VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerLiveStatus,
     VisualizerLiveUpdate, VisualizerReadRequest, VisualizerSelection, VisualizerSourcePage,
@@ -30,10 +30,14 @@ pub(super) async fn activate_visualizer(
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<VisualizerView, AppError> {
-    state
+    let view = state
         .window_application(&window)?
         .activate_visualizer(request)
-        .await
+        .await?;
+    if view.metadata_changed {
+        let _ = window.app_handle().emit("extensions-changed", ());
+    }
+    Ok(view)
 }
 #[tauri::command]
 pub(super) async fn expand_visualizer(

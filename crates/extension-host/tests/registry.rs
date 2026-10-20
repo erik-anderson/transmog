@@ -6,7 +6,7 @@ use std::sync::{
 };
 use transmog_extension_registry::{InstanceResources, Registry};
 use transmog_extension_supervisor::HostConfig;
-use transmog_extensions::Manifest;
+use transmog_extensions::{Invocation, Manifest, VisualizationInput, VisualizationStep};
 
 const SOURCE: &str = "export function visualize(){return {kind:'document',document:{title:'View',status:'complete',presentation:'tree',roots:[]}};}";
 fn manifest() -> Manifest {
@@ -39,6 +39,15 @@ fn write_manifest(directory: &std::path::Path, manifest: &Manifest) {
         serde_json::to_vec(manifest).unwrap(),
     )
     .unwrap();
+}
+fn invocation(instance: &str) -> Invocation {
+    let input: VisualizationInput = serde_json::from_value(serde_json::json!({
+        "instanceId":instance,"exchangeId":"selected","requestNumber":"1","generation":"1","direction":"request",
+        "request":{"evidenceId":"request-head","headers":[],"method":"GET","path":"/"}
+    })).unwrap();
+    Invocation::Visualize {
+        input: Box::new(input),
+    }
 }
 struct Resources {
     stopped: AtomicBool,
@@ -96,8 +105,8 @@ fn disabling_from_another_window_stops_workers_and_releases_retained_resources()
     registry.set_enabled("example.registry", true).unwrap();
     assert!(worker_one.is_stopped() && worker_two.is_stopped());
 }
-#[test]
-fn source_declarations_publish_only_after_successful_worker_initialization() {
+#[tokio::test]
+async fn source_declarations_publish_only_after_a_validated_document() {
     let (_root, registry, sources) = setup();
     let mut changed = manifest();
     changed.visualizers[0]
@@ -125,6 +134,25 @@ fn source_declarations_publish_only_after_successful_worker_initialization() {
             .request
             .permits_header("x-extra")
     );
+    let runner = registry.runner("window", &instance.id).unwrap();
+    assert!(!runner.has_validated_document());
+    assert!(registry.commit_document("window", &instance.id).is_err());
+    assert_eq!(registry.status().entries[0].catalog, before);
+    assert!(matches!(
+        runner.invoke(invocation(&instance.id)).await.unwrap(),
+        VisualizationStep::Document { .. }
+    ));
+    assert!(runner.has_validated_document());
+    assert!(
+        registry
+            .commit_document("foreign-window", &instance.id)
+            .is_err()
+    );
+    assert!(registry.commit_document("window", &instance.id).unwrap());
+    assert!(
+        !registry.commit_document("window", &instance.id).unwrap(),
+        "Publication is idempotent"
+    );
     let after = registry.status().entries[0].catalog.clone();
     assert_eq!(after.digest, instance.digest);
     assert!(
@@ -133,10 +161,80 @@ fn source_declarations_publish_only_after_successful_worker_initialization() {
             .request
             .permits_header("x-extra")
     );
-    let runner = registry.runner("window", &instance.id).unwrap();
     registry.uninstall("example.registry").unwrap();
     assert!(runner.is_stopped());
     assert!(sources.join("main.js").is_file());
+}
+
+#[tokio::test]
+async fn failed_or_invalid_documents_preserve_catalog_declarations() {
+    let (_root, registry, sources) = setup();
+    let before = registry.status().entries[0].catalog.clone();
+    let mut changed = manifest();
+    changed.visualizers[0]
+        .inputs
+        .request
+        .headers
+        .push("x-extra".into());
+    write_manifest(&sources, &changed);
+    for source in [
+        "export function visualize(){throw new Error('failed parser');}",
+        "export function visualize(){return {kind:'document',document:{title:'Invalid',status:'complete',presentation:'tree',roots:[{id:'broken'}]}};}",
+    ] {
+        std::fs::write(sources.join("main.js"), source).unwrap();
+        let instance = registry
+            .activate("window", "example.registry", "view")
+            .unwrap();
+        let runner = registry.runner("window", &instance.id).unwrap();
+        assert!(runner.invoke(invocation(&instance.id)).await.is_err());
+        assert!(!runner.has_validated_document());
+        assert!(registry.commit_document("window", &instance.id).is_err());
+        assert_eq!(registry.status().entries[0].catalog, before);
+        registry.deactivate("window", &instance.id);
+    }
+}
+
+#[tokio::test]
+async fn a_newer_published_revision_rejects_an_older_windows_staged_document() {
+    let (_root, registry, sources) = setup();
+    let mut changed = manifest();
+    changed.visualizers[0]
+        .inputs
+        .request
+        .headers
+        .push("x-older".into());
+    write_manifest(&sources, &changed);
+    let older = registry
+        .activate("older", "example.registry", "view")
+        .unwrap();
+    changed.visualizers[0]
+        .inputs
+        .request
+        .headers
+        .push("x-newer".into());
+    write_manifest(&sources, &changed);
+    let newer = registry
+        .activate("newer", "example.registry", "view")
+        .unwrap();
+    for (owner, instance) in [("older", &older), ("newer", &newer)] {
+        let runner = registry.runner(owner, &instance.id).unwrap();
+        assert!(matches!(
+            runner.invoke(invocation(&instance.id)).await.unwrap(),
+            VisualizationStep::Document { .. }
+        ));
+    }
+    assert!(registry.commit_document("newer", &newer.id).unwrap());
+    assert!(registry.commit_document("older", &older.id).is_err());
+    let after = registry.status().entries[0].catalog.clone();
+    assert_eq!(after.digest, newer.digest);
+    assert!(
+        after.manifest.visualizers[0]
+            .inputs
+            .request
+            .permits_header("x-newer")
+    );
+    registry.deactivate("newer", &newer.id);
+    assert!(registry.commit_document("newer", &newer.id).is_err());
 }
 
 #[test]

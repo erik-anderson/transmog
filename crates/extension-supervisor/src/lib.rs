@@ -72,6 +72,7 @@ pub struct Runner {
     sender: SyncSender<Option<Work>>,
     process: Arc<Mutex<Option<Child>>>,
     failed: Arc<AtomicBool>,
+    validated_document: AtomicBool,
     next_id: AtomicU64,
     visualizer: Visualizer,
     thread: Mutex<Option<std::thread::JoinHandle<()>>>,
@@ -172,6 +173,7 @@ impl Runner {
                 sender,
                 process,
                 failed,
+                validated_document: AtomicBool::new(false),
                 next_id: AtomicU64::new(1),
                 visualizer,
                 thread: Mutex::new(Some(thread)),
@@ -208,7 +210,12 @@ impl Runner {
         )
         .await
         {
-            Ok(Ok(result)) => result,
+            Ok(Ok(result)) => {
+                if matches!(&result, Ok(VisualizationStep::Document { .. })) {
+                    self.validated_document.store(true, Ordering::Release);
+                }
+                result
+            }
             Ok(Err(_)) => {
                 self.stop();
                 Err(unavailable())
@@ -236,6 +243,11 @@ impl Runner {
     /// Whether the owning view must create a fresh instance before invoking again.
     pub fn is_stopped(&self) -> bool {
         self.failed.load(Ordering::Acquire)
+    }
+    /// Whether this exact live worker has returned a host-validated document.
+    /// Initialization alone does not qualify a development revision for publication.
+    pub fn has_validated_document(&self) -> bool {
+        self.validated_document.load(Ordering::Acquire) && !self.is_stopped()
     }
 }
 fn wait_ready(

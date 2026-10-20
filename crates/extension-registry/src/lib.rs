@@ -75,6 +75,12 @@ struct Active {
     owner: String,
     runner: Arc<Runner>,
     resources: Option<Arc<dyn InstanceResources>>,
+    publication: Option<Publication>,
+}
+#[derive(Clone)]
+struct Publication {
+    expected: ExtensionEntry,
+    manifest: transmog_extensions::Manifest,
 }
 impl Active {
     fn stop(self) {
@@ -472,36 +478,31 @@ impl Registry {
             digest,
             declaration,
         };
-        // Serialize the final stale check and declaration publication with disable,
+        // Serialize the final stale check and staged instance registration with disable,
         // uninstall and replacement; none can race an instance back into the registry.
         let _mutation = self
             .inner
             .mutation
             .lock()
             .map_err(|_| management_failure(invalid("Extension management is unavailable")))?;
-        let mut entries = self.status().entries;
         if canceled() {
             return Err(management_failure(invalid("Activation was canceled")));
-        }
-        let Some(current) = entries
-            .iter_mut()
-            .find(|e| activation_current(e, &entry, &info.digest))
-        else {
-            return Err(Failure::new(
-                transmog_extensions::FailureKind::Unavailable,
-                "Extension changed during activation",
-            ));
-        };
-        if entry.catalog.origin == Origin::Development {
-            current.catalog.manifest = manifest;
-            current.catalog.digest.clone_from(&info.digest);
-            self.publish(entries).map_err(management_failure)?;
         }
         let mut state = self
             .inner
             .state
             .lock()
             .map_err(|_| management_failure(invalid("Extension state is unavailable")))?;
+        if !state
+            .entries
+            .iter()
+            .any(|e| activation_current(e, &entry, &info.digest))
+        {
+            return Err(Failure::new(
+                transmog_extensions::FailureKind::Unavailable,
+                "Extension changed during activation",
+            ));
+        }
         state.active.insert(
             info.id.clone(),
             Active {
@@ -509,9 +510,69 @@ impl Registry {
                 owner: owner.into(),
                 runner,
                 resources: None,
+                publication: (entry.catalog.origin == Origin::Development).then_some(Publication {
+                    expected: entry,
+                    manifest,
+                }),
             },
         );
         Ok(info)
+    }
+    /// Publishes a staged development declaration only after this worker produced a valid document.
+    /// # Errors
+    /// Rejects initialization-only, foreign, stopped or superseded instances and storage failures.
+    pub fn commit_document(&self, owner: &str, instance: &str) -> Result<bool, Error> {
+        let _mutation = self
+            .inner
+            .mutation
+            .lock()
+            .map_err(|_| invalid("Extension management is unavailable"))?;
+        let (info, publication) = {
+            let state = self
+                .inner
+                .state
+                .lock()
+                .map_err(|_| invalid("Extension state is unavailable"))?;
+            let active = state
+                .active
+                .get(instance)
+                .filter(|active| active.owner == owner && active.runner.has_validated_document())
+                .ok_or(Error::AccessDenied)?;
+            (active.info.clone(), active.publication.clone())
+        };
+        let Some(publication) = publication else {
+            return Ok(false);
+        };
+        let mut entries = self.status().entries;
+        let current = entries
+            .iter_mut()
+            .find(|entry| activation_current(entry, &publication.expected, &info.digest))
+            .ok_or_else(|| invalid("Extension changed before its result was ready"))?;
+        let changed = current.catalog.digest != info.digest;
+        current.catalog.manifest = publication.manifest;
+        current.catalog.digest.clone_from(&info.digest);
+        if changed {
+            self.publish_if(entries, |state| {
+                state.active.get(instance).is_some_and(|active| {
+                    active.owner == owner && active.runner.has_validated_document()
+                }) && state
+                    .entries
+                    .iter()
+                    .any(|entry| activation_current(entry, &publication.expected, &info.digest))
+            })?;
+        }
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| invalid("Extension state is unavailable"))?;
+        let active = state
+            .active
+            .get_mut(instance)
+            .filter(|active| active.owner == owner && active.runner.has_validated_document())
+            .ok_or(Error::AccessDenied)?;
+        active.publication = None;
+        Ok(changed)
     }
     /// Finds an instance only for its owning window/application.
     /// # Errors
@@ -661,6 +722,13 @@ impl Registry {
         Ok(entries)
     }
     fn publish(&self, entries: Vec<ExtensionEntry>) -> Result<(), Error> {
+        self.publish_if(entries, |_| true)
+    }
+    fn publish_if(
+        &self,
+        entries: Vec<ExtensionEntry>,
+        current: impl FnOnce(&State) -> bool,
+    ) -> Result<(), Error> {
         if self.status().warning.is_some() {
             return Err(invalid(
                 "Repair the extension catalog before changing installations",
@@ -675,14 +743,18 @@ impl Registry {
         let mut staged = tempfile::NamedTempFile::new_in(root)?;
         staged.write_all(&bytes)?;
         staged.as_file_mut().sync_all()?;
+        let mut state = self
+            .inner
+            .state
+            .lock()
+            .map_err(|_| invalid("Extension state is unavailable"))?;
+        if !current(&state) {
+            return Err(invalid("Extension changed before its result was ready"));
+        }
         staged
             .persist(root.join("catalog.json"))
             .map_err(|e| Error::Io(e.error))?;
-        self.inner
-            .state
-            .lock()
-            .map_err(|_| invalid("Extension state is unavailable"))?
-            .entries = entries;
+        state.entries = entries;
         Ok(())
     }
 }
