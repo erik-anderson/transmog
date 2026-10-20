@@ -116,6 +116,7 @@ claim which patches are applied.
 | Code editing | `monaco-editor` | TypeScript automation editing and diagnostics in the desktop UI. |
 | Sandboxed script execution | `deno_core` and V8 | Executes user automation in a separate capability-restricted process with explicit time and memory containment. |
 | TypeScript parsing/transpilation | `deno_ast` | Validates and transpiles the supported TypeScript subset before isolated execution. |
+| Protocol visualizers | `deno_core`, V8 and `deno_ast` | Executes JavaScript ES2022 in an isolated read-only worker; validates static modules without runtime transpilation. Bundled MAPI is authored in TypeScript and compiled at build time. |
 | Browser-side code | TypeScript and `esbuild` | Typed UI components, browser interactions and projections. Generated bundles are reproducibly verified from the npm lockfile. |
 | Windows integration | `windows-sys` | Current-user proxy settings, process attribution, AppContainer and Job Object sandboxing, console suppression, and related host APIs. |
 

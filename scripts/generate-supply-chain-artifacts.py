@@ -86,7 +86,15 @@ def artifacts(metadata, npm, version, *, native=None):
               f"The bundled crs.pb is generated from public Chromium source revision {snapshot['sourceRevision']} (root-store version {snapshot['rootStoreVersion']}). It supplies certificate-based Trust Anchor IDs and public certificates. Network profiles can select these public TLS anchors for verification; OS mode uses them as untrusted chain-building helpers.", "",
               "Source and reproducible generator: `third_party/chromium-root-store` and `scripts/generate-chromium-root-store.py`. Google’s PKIMetadata CRX package is not redistributed.", "",
               (ROOT / "third_party/chromium-root-store/LICENSE").read_text(encoding="utf-8").rstrip()]
-    components = []
+    mapi = json.loads((ROOT / "third_party/mapi-inspector/source.json").read_text(encoding="utf-8"))
+    mapi_url = mapi["repository"] + "/tree/" + mapi["revision"]
+    lines += ["", "## MAPI protocol reference data", "",
+              f"The bundled TypeScript visualizer uses enum data from [Microsoft Office Inspectors for Fiddler]({mapi_url}). The original parser is retained only as a developer test reference; its .NET runtime is not bundled.", "",
+              (ROOT / "third_party/mapi-inspector/LICENSE").read_text(encoding="utf-8").rstrip()]
+    components = [{"type": "data", "bom-ref": "mapi-reference-data", "name": "Microsoft MAPI protocol enum data",
+                   "version": mapi["revision"], "licenses": [{"license": {"id": "MIT"}}],
+                   "hashes": [{"alg": "SHA-256", "content": hashlib.sha256((ROOT / "extensions/mapi/typescript/constants.ts").read_bytes()).hexdigest()}],
+                   "externalReferences": [{"type": "vcs", "url": mapi_url}]}]
     for package in packages:
         transport = transports.get(package["id"])
         component = {"type": "library" if package.get("source") or transport else "application", "bom-ref": package["id"],
@@ -139,6 +147,11 @@ def artifacts(metadata, npm, version, *, native=None):
                                   {"alg": "SHA-256", "content": policy["sha256"]["cert_verify_proc_blocklist.inc"]}],
                        "externalReferences": [{"type": "vcs", "url": f"https://github.com/chromium/chromium/tree/{policy['chromiumVersion']}/net/cert"}]})
     dependencies = [{"ref": node["id"], "dependsOn": list(node["dependencies"])} for node in metadata["resolve"]["nodes"]]
+    for node in dependencies:
+        package = next((p for p in packages if p["id"] == node["ref"]), None)
+        if package and package["name"] == "transmog-desktop":
+            node["dependsOn"].append("mapi-reference-data")
+    dependencies.append({"ref": "mapi-reference-data", "dependsOn": []})
     if native is not None:
         if native["boringssl_revision"] != pki["revision"] or native["revision"] != pki["boring_revision"]:
             raise ValueError("Native provenance disagrees with the PKI source receipt")

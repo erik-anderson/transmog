@@ -20,6 +20,8 @@ also run in the Linux test gate; Linux and macOS desktop products are not qualif
 - Chromium network profiles with configurable TLS, protocol, and trust settings.
 - Streaming gzip, Brotli, DEFLATE, and zstd processing; text, binary, image, and
   captured-page viewers.
+- [Protocol visualizer extensions](docs/extensions.md), including MAPI/HTTP, with
+  structured fields linked to their source bytes.
 - Compressed `.tmcap` recording and on-demand body reads, SAZ interoperability,
   and optional password encryption.
 

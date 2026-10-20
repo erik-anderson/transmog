@@ -8,8 +8,10 @@ provides shared installation and active-instance ownership. `transmog-app`
 connects explicit activation to retained headers and body ranges. Desktop Extensions
 settings provides installation and declaration management. The desktop inspector
 offers explicit selection, scoped retained context, opt-in live controls and host-owned structured rendering.
-The bundled MAPI extension remains in the
-[implementation roadmap](roadmap.md#request-and-response-visualizer-extensions).
+The [bundled MAPI/HTTP extension](../extensions/mapi/README.md) uses the same
+package and sandbox contracts, with an independent TypeScript parser qualified
+against synthetic Microsoft-reference cases. Its header viewer has no body-parser
+dependency. Real Office end-to-end validation remains deferred.
 
 An extension is a versioned package containing independently identified visualizer
 contributions. Each contribution declares its entry module, host surfaces, native
@@ -476,8 +478,11 @@ Browser fixtures cover large trees, concurrent surfaces, deferred expansion,
 wide offsets, derived provenance, late activation and narrow/forced-color layouts.
 The isolated native desktop fixture exercises the same renderer through actual
 AppContainer initialization, retained byte continuations, expansion, denied source
-reads and unloading. These are synthetic host acceptance tests, not MAPI parity
-or validation against real Office captures; that end-to-end pass is deferred.
+reads and unloading. The bundled MAPI acceptance additionally checks synthetic
+binary messages, exact values, scoped retained context, transformed sources and
+concurrent contributions. The [MAPI guide](../extensions/mapi/README.md) records
+independent protocol comparisons separately from host acceptance. Validation
+against real Office captures is deferred.
 The native live fixture also sends controlled HTTP exchanges through the proxy
 to the production sandbox, checking response-body continuation, origin and
 content-type filtering, explicit opt-in, stopping and inactive unloading.

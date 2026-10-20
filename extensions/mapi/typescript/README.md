@@ -1,6 +1,6 @@
 # MAPI parser architecture
 
-This is the authoring source for the replacement MAPI decoder. It is written in
+This is the authoring source for the bundled MAPI decoder. It is written in
 strict TypeScript and compiles to ordinary ES2022 modules. The extension host
 does not compile TypeScript, load .NET, or provide browser or network APIs.
 
@@ -54,6 +54,8 @@ variable multivalues follow the protocol's lexical grammar, independently of the
 reference's null-terminated multivalue helper.
 See Microsoft's [FastTransfer lexical structure](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcfxics/bafa8ce0-ff31-4c36-b464-8e8852d22a10).
 
-The replacement is being introduced in phases. Until integration and parity
-qualification complete, the existing production manifest still selects the old
-decoder. Passing reader tests alone does not qualify the replacement for use.
+The production manifest selects the compiled body and header bundles. Explicit
+synchronous export wrappers preserve API 1 handler names through minification.
+The build rejects binary-parser dependencies in the header bundle. The separate
+`testing.ts` reference bridge is never imported by production or packaged.
+See [qualification and developer commands](../README.md).

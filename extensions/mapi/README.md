@@ -1,170 +1,139 @@
-# MAPI extension implementation and qualification
+# MAPI extension
 
-The bundled visualizer uses the pinned Office MAPI inspector as its behavioral
-reference. This directory owns its authoring tools and synthetic parity corpus.
-The protocol source snapshot and attribution live in
-[`third_party/mapi-inspector`](../../third_party/mapi-inspector/README.md).
+The bundled MAPI/HTTP visualizer is an independent strict TypeScript project.
+It parses messages into protocol fields, then projects those fields through the
+host's tree, value, encoding and source-range contract. The extension supplies
+no UI and has no filesystem, network, timer or browser API.
 
-The developer-only .NET oracle preserves the original binary parser. Run:
+## Authoring and packaging
+
+Install the desktop UI's locked npm dependencies first. From the repository root:
+
+```text
+node extensions/mapi/build.mjs
+node extensions/mapi/build.mjs --development --watch
+```
+
+The build uses the repository's pinned TypeScript and esbuild dependencies.
+It type-checks before publishing replacement runtime files and emits ordinary
+ES2022. All JavaScript under `dist/` is ignored build output; do not commit it.
+The app's build compiles and embeds an ordinary stored ZIP64 `.tmext`, plus a
+small metadata sidecar used for discovery without loading the scripts.
+
+For development, register `extensions/mapi/dist/development` in Extensions
+settings. The `--development` build gives it a distinct ID and name so it can
+coexist with the app's reserved bundled ID; the root authoring manifest is not
+modified. Development snapshots measure the current declared files. Enable hot reload in settings to replace active
+instances after a successful build. Explicit Reload also lives in settings.
+Leaving the visualizer releases its worker, granted data and source watcher.
+
+Use **Package to .tmext** in Extensions settings to package a loose folder.
+Only `manifest.json` and its four explicitly listed payloads are included:
+
+- `dist/runtime/body.js`
+- `dist/runtime/headers.js`
+- `README.runtime.md`
+- `LICENSES/Office-MIT.txt`
+
+The package excludes TypeScript sources, tests, reference code, compiler tools,
+source maps and unlisted files. `dist/package-manifest.json` is the build's
+length/hash metadata, not an additional archive member. Installed extensions
+need neither TypeScript nor .NET. The .NET oracle is a developer test tool only.
+
+## Architecture
+
+See [the source guide](typescript/README.md). `BinaryReader` supplies bounded
+forward reads, exact 64-bit integers and explicit encodings. `RecordReader`
+collects typed protocol facts with original byte ranges. Protocol modules own
+HTTP envelopes, mailbox/NSPI messages, ROPs, properties, notifications, auxiliary
+buffers, restrictions, rules, synchronization and FastTransfer lexical elements.
+Conversation and continuation state belongs to one decode session.
+
+FastTransfer retains bounded byte fragments per stream and handle, assembling
+a complete element before decoding it. Derived sources record every contributing
+chunk. XOR/LZ77 transformations likewise preserve exact encoded parents and
+separate decoded offsets. The output adapter owns bounded deferred expansion;
+it does not copy the reference inspector's class hierarchy or presentation tree.
+Keep these utilities local until another extension establishes a shared need.
+
+The header contribution has a separate small bundle and no binary-parser
+imports. Body contributions share one implementation but have independent
+request/response registrations and workers. All contributions declare exact
+header names and body access. Native media-type/operation matching determines
+applicability. Optional traffic classification supplies a literal `MAPI/HTTP`
+label from headers only; it never executes the parser or loads capture bodies.
+
+Body reads use authenticated pages and host-provided HTTP decoding. Retained
+context is requested only when needed, and is restricted by the host to the
+same capture, origin and conversation. A snapshot holds at most 64 related
+exchanges and 8 MiB of body bytes. Live updates are opt-in, filtered before
+body access, bounded and revision-aware. Later irrelevant exchanges do not
+change the inspected message. Unknown, malformed, incomplete and unavailable
+input receives an explicit diagnostic while original Hex remains available.
+
+## Qualification
+
+The unchanged [Microsoft reference](../../third_party/mapi-inspector/README.md)
+is pinned at `7a76470574377d14cae612c507f45b34d70e05a0`. Its 651 source-file
+hashes and native Marshal reader provide independent reference evidence.
+Only enum data is generated from C#; no parser behavior is transpiled.
+
+Run these from the repository root:
 
 ```text
 python scripts/test-mapi-reference.py
+python scripts/generate-mapi-constants.py --check
+python scripts/test-mapi-parity.py
+python scripts/test-mapi-robustness.py
+python scripts/test-mapi-visualizer.py
+node --test extensions/mapi/test/reader.test.mjs extensions/mapi/test/protocol.test.mjs extensions/mapi/test/view.test.mjs
 ```
 
-This verifies all 651 source hashes, the 529 concrete parser block types and
-constructor shapes, nonzero little-endian transport fields, signed 64-bit values
-beyond JavaScript's safe integer range, GUID byte order and exact byte ranges.
-It is the reference-harness gate, not a claim of completed MAPI parity. No
-sanitized Office capture is included or claimed to have been tested.
+`test-mapi-parity.py` builds the developer-only .NET 10 oracle and compares its
+fresh output with the committed corpus, then checks the TypeScript decoder.
+Use `--golden-only` without .NET. `--write-reference` updates reference results
+only after the comparison succeeds. Machine-local timestamps and exception
+stacks are excluded from the normalized reference data.
 
-The protocol implementation is compiled to static JavaScript ES2022 with
-`Transpose.Compiler.Library` 26.10.6985 and `Transpose.BCL` 26.9.5840. The compiler
-and transitive packages are locked with content hashes. Regenerate with
-`python scripts/build-mapi-extension.py`, or use `--check` to compare the exact
-generated bytes and build receipt. This authoring command requires .NET 10;
-ordinary app builds and installed extensions use the committed JavaScript.
+The 721 synthetic probes comprise 707 wire-fact comparisons, 12 continuation
+evidence checks and two archived invalid OptionsData response probes. These
+are deliberately separate counts. Coverage includes every request/response
+HTTP dispatch path for all 23 operations, 128 request ROP shapes, response
+variants, populated NSPI data, meaningful mailbox/table responses, scalar and
+multivalued properties, Unicode, exact wide integers, handles, auxiliary
+buffers, multi-buffer RPC, XOR/LZ77 and FastTransfer continuations. Dispatcher
+coverage is checked against the pinned source.
 
-The compiler uses Roslyn syntax rewrites for the unsupported native primitive
-reader, constant `sizeof` expressions, byte-array copies and the custom ASCII
-replacement fallback. It retains upstream protocol classes and dispatchers.
-The 92 enum underlying types are generated from the source declarations.
-An ordered-key dictionary adapter supplies the sorted-key lookup used by the
-partial-stream decoder; desktop presentation colors become inert enum values.
-The native oracle retains its original Marshal reader, giving the portable
-reader an independent comparison.
+The independent reader/protocol/output tests cover valid and invalid boundaries,
+compression overlap, rule counts, synchronization sets, auxiliary offsets,
+per-value FastTransfer lengths, UTF-16 validity and serialized output limits.
+Robustness checks exercise 93 malformed/boundary inputs with a valid same-worker
+recovery after each. The exact production bundles pass 401 full-message viewer
+cases plus header isolation, HTTP decode failure, live completion/status changes,
+missed updates and resource limits.
 
-Four unused runtime string-compilation/import helpers throw instead of generating
-code. A legacy global resolver uses `globalThis`; the runtime's Function type
-identity stays local to its module, with no global Function restored. V8 still
-prohibits string compilation, including calls through constructor aliases.
-The compiler's web cache-buster becomes a source hash for reproducible output.
-MAPI decoding explicitly uses little-endian primitives, independently of the
-runtime's host default. Attribution includes the embedded Decimal, Long and
-LINQ libraries in [the runtime notices](../../third_party/transpose/README.md).
+Native AppContainer tests run representative reference cases and production
+handlers, denied runtime capabilities, exact ranges, authenticated continuations,
+header-only inputs, live updates and loose-folder/package roundtrips. Desktop
+acceptance uses synthetic SAZ evidence to check exact values, retained rows,
+same-origin/capture context isolation, transformed and HTTP-compressed evidence,
+source highlighting, concurrent surfaces, static classification and unload.
 
-The native AppContainer compatibility test loads the entire 4.4 MB module under
-the existing default heap and deadline limits. It checks nonzero transport fields,
-enum names, GUIDs and an exact unsigned integer above JavaScript's safe range,
-and verifies string compilation and network globals remain unavailable. This
-found and fixed the extension host's V8 GC executor lifetime: create the isolate
-inside its retained Tokio executor and poll ready foreground work without waiting
-for future GC delays. Scripts receive no timer or other host capability.
+Intentional corrections to reference behavior have explicit evidence:
 
-Synthetic protocol qualification and retained-input integration are implemented.
-App bundling and native desktop qualification remain the final delivery gates;
-compilation and compatibility tests alone do not establish protocol parity.
+- Decoded RPC fields use decoded source coordinates, linked to their encoded
+  region; compression has enclosing provenance rather than a false byte mapping.
+- FILETIME retains unsigned ticks and explicit UTC metadata with seven fractional
+  digits. Optional absent address-book strings remain absent values.
+- FastTransfer shows complete continued values and preserves all chunk parents.
+  Extended uploads retain their own state. Variable multivalues use each value's
+  declared wire length, following Microsoft's lexical grammar.
+- MetaTagEcWarning preserves unsigned error bits in both directions.
+- OptionsData reads ReturnValue before success fields. The reference's omitted
+  status read made two old padded shape probes invalid; separate valid success
+  and failure cases verify the protocol layout.
+- The Unicode subject fixture uses the protocol's correct discriminator, 4.
 
-The protocol adapter has 720 synthetic differential cases covering nonzero
-mailbox transport, notifications, scalar/property/enum boundaries, Unicode,
-nonempty multivalues, address-book optional values, and plain/XOR/LZ77/combined
-auxiliary buffers. These include 260 minimal ROP parser shapes (128 request and
-132 response shapes, including both Logon variants), all their full Execute
-dispatch paths, and 30 successful nonzero mailbox/table scenarios. The latter
-exercise folder servers, message subjects, stream data, exact wide positions,
-tagged properties and rows with paired or retained SetColumns state. Logon
-dependencies use actual earlier synthetic exchanges and matching handles.
-All 23 MAPI HTTP operations are covered in both directions. The 19 address-book
-operations include successful populated responses and failed status envelopes,
-nonzero STAT fields, Unicode names, property rows and lists, optional state and
-arrays, signed deltas, named properties, an existence restriction, and both
-permanent and ephemeral entry IDs. The test runner checks dispatcher coverage
-against the pinned source. Representative NSPI/context and FastTransfer cases
-also compare their full reference trees inside the actual AppContainer worker.
-FastTransfer coverage includes fixed, variable and multivalued properties,
-numeric and string named properties, markers and metadata, both upload variants,
-binary/UTF-16/header continuations, and three reordered retained chunks.
-Synchronization configuration includes a nested restriction and read-state
-changes. Multi-buffer RPC cases exercise XOR, literal and matching LZ77, and
-their combination, checking decoded bytes and exact enclosing provenance.
-The semantic build explicitly preserves 776 parser-wrapper
-conversions in branches, switches, arithmetic and counts. Primitive enum reads
-are unboxed as value types, and hexadecimal enum widths preserve native formatting.
-
-Run `python scripts/test-mapi-parity.py` against the native reference, or add
-`--golden-only` to compare with committed normalized reference trees without .NET.
-`--write-reference` regenerates those trees only after successful comparison.
-Goldens exclude machine-specific exception stacks and local timestamp formatting.
-The adapter returns typed scalar records, encoding metadata and source identities;
-it has no capture-discovery or file/network API. Input, structures and derived
-buffers are bounded. Each decode discards its context/session state afterward.
-Enum reads preserve the original underlying bits, including unknown values and
-high-bit HRESULTs. Protocol sub-buffer lengths cannot widen their parent; zero
-length means an empty sub-buffer. The generic parser's omitted-cap sentinel is
-unchanged. A parser work counter bounds repeated block parsing before projection.
-The developer-only native oracle also runs with a 256 MiB GC heap ceiling;
-shape generation isolates each probe with a deadline and file-backed input.
-RPC envelopes are capped to their declared size and must make forward progress;
-upload elements that consume no bytes stop before the remaining-data fallback.
-`python scripts/test-mapi-robustness.py` checks 93 truncated/corrupt/boundary
-inputs and a valid decode after each one in the same worker. An actual sandbox
-test also checks malformed-envelope recovery and an empty upload followed by
-Release, which must remain a separate ROP. Hostile probes do not run in the
-unmodified native reference.
-
-Intentional differences from the reference are verified explicitly:
-
-- Decoded RPC payload fields use a separate source with decoded offsets. The
-  reference incorrectly shifts them into the encoded body. Plain sub-buffers
-  retain original coordinates; decoded data links to its exact encoded region,
-  with enclosing-only mapping for LZ77. Synthetic grouping nodes inherit a source
-  only when their children share it.
-- FILETIME keeps its exact unsigned ticks and supplies explicit UTC metadata with
-  seven fractional digits. Host rendering does not inherit the reference machine's
-  local timezone or locale. Out-of-range timestamp values remain exact raw integers.
-- A false address-book string presence byte produces **No value** and its exact
-  one-byte boolean field. The reference instead throws while laying out a null
-  string; the original failure and repaired output are both asserted.
-- Extended uploads save their own continuation fields. The pinned input
-  dispatcher mistakenly saves ordinary-upload fields, losing the third chunk's
-  state. One separate semantic regression verifies the remaining Unicode value
-  and exact selected-body span; it is excluded from the 720 differential passes.
-  The original reference remains unchanged and its stalling probe is bounded.
-
-## Production contributions
-
-`manifest.json` declares independent request-body and response-body contributions,
-one header contribution usable on either side, and an optional static MAPI/HTTP
-traffic classification. Body discovery matches the 23 declared operations and
-media type natively. The header entry has a small closed module graph and never
-initializes the binary decoder. Both sides declare exact header names and body
-access; the selected body is required and the paired body is optional.
-
-`src/body.js` uses authenticated paged reads and HTTP decode continuations, asking
-for earlier retained input only when Execute decoding needs context. Native
-capture/conversation/origin guards remain authoritative. Each snapshot holds at
-most 64 related exchanges and 8 MiB of body bytes. Live updates retain the inspected
-exchange, ignore later exchanges that cannot affect it, deduplicate revisions and
-replace stale source diagnostics when a body completes. Deferred expansion keeps
-large trees bounded; values, encodings, exact integers, UTC timestamps/raw ticks
-and original/decoded spans use the host's standard output contract.
-
-`python scripts/test-mapi-visualizer.py` exercises all 401 full-message corpus
-cases through the production entries, plus header isolation, HTTP decode failure,
-live completion, missed updates and oversized-body rejection. Actual AppContainer
-tests also exercise input/context pages, expansion, exact wide ordering, separate
-HTTP-decoded capabilities, live completion and header-only grants.
-
-`python scripts/prepare-mapi-package.py` refreshes the runtime manifest and copied
-license notices; `--check` verifies them without changing files. Its exact 12-file
-allowlist includes runtime scripts, a runtime README and required notices. Tools,
-C# authoring sources, tests, generated receipts and unlisted folder files are
-excluded. Runtime bytes have explicit Git attributes so checkout newline settings
-cannot change their manifest hashes. The app packages these committed assets
-without invoking the authoring compiler.
-
-Before bundling, require differential coverage of:
-
-| Area | Required synthetic cases |
-| --- | --- |
-| Mailbox transport | Connect, Disconnect, Execute and NotificationWait, both directions; nonzero flags/status/errors and auxiliary buffers |
-| Address book | All dispatch operations in the pinned MAPI parser; NSPI structures, counts, strings and nullable fields |
-| ROPs | Every request/response dispatcher branch; meaningful nonzero operations and handle tables, errors and unknown ROPs |
-| Data | Property scalars, wide integers, GUIDs, flags, strings, multivalues, restrictions and nested entry IDs |
-| Transformations | XOR, LZ77, combined and multi-buffer payloads; derived bytes with enclosing encoded provenance |
-| FastTransfer | Representative lexical structures, partial continuations, synchronization and cross-exchange handles |
-| Context and live | Bounded retained sessions only; missing/out-of-order context, same-origin grants, idempotent updates, cancellation and unload |
-| Robustness | Truncation, corrupt counts/lengths, unsupported operations, bounded allocations/output/work and network denial in the real sandbox |
-
-Known unsupported cases must be resolved before shipment. Full protocol-class
-compilation or zero-filled structures alone cannot satisfy this matrix. Host
-rendering and byte selection also need native packaged/unpacked qualification.
+No sanitized Office captures are available. Real Office end-to-end validation
+is deferred by agreement; synthetic qualification does not establish complete
+production-capture compatibility or support for every possible protocol value.

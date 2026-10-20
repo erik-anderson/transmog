@@ -14,7 +14,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 
 - [Traffic inspection](traffic-inspection.md): headers, bodies, search, selection and replay.
 - [Format converter](format-converter.md): temporary text/byte conversions and independent scratch windows.
-- [Extension contracts](extensions.md): explicit visualizer inputs, native matching and bounded `.tmext` packages; desktop/runtime work remains in the roadmap.
+- [Extension contracts](extensions.md): sandboxed visualizers, declared inputs, host rendering, `.tmext` packaging, development reload and bundled MAPI/HTTP.
 - [Request timings](request-timings.md): waterfalls and shared transport evidence.
 - [Streams](stream-inspection.md): WebSocket/SSE inspection and retained messages.
 - [Automation](automation.md): auto-responses, header overrides and scripts.

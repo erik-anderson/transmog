@@ -26,7 +26,12 @@ the read-only header/session members used by the parser. This is a differential
 reference, not a shippable native visualizer. The production extension must emit
 ordinary static JavaScript and run through Transmog's existing sandbox.
 
-No sanitized Office captures are available. Synthetic differential checks do
-not establish production-capture compatibility. Broad protocol parity, bounded
-resources, derived-source provenance and native sandbox qualification remain
-required before the MAPI extension is bundled.
+The bundled visualizer is an independent TypeScript implementation; no parser
+behavior or .NET runtime is compiled into the app. Only enum tables are generated
+from this source, with the MIT notice retained in the extension, desktop Credits
+and supply-chain notices. See [implementation and qualification](../../extensions/mapi/README.md).
+
+No sanitized Office captures are available. Synthetic differential checks cover
+broad protocol behavior, bounded resources and derived-source provenance, with
+native sandbox and desktop qualification. Real Office end-to-end validation is
+deferred and production-capture compatibility is not claimed.

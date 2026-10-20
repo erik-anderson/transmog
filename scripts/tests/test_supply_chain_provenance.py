@@ -12,6 +12,20 @@ from test_tools import load
 
 
 class ProvenanceTests(unittest.TestCase):
+    def test_mapi_enum_data_has_pinned_source_license_hash_and_desktop_edge(self):
+        module = load("generate-supply-chain-artifacts")
+        metadata = {"packages": [{"id": "desktop", "name": "transmog-desktop", "version": "1"}],
+                    "resolve": {"nodes": [{"id": "desktop", "dependencies": []}]}}
+        notice, sbom = module.artifacts(metadata, [], "1")
+        receipt = json.loads((module.ROOT / "third_party/mapi-inspector/source.json").read_text(encoding="utf-8"))
+        component = next(c for c in sbom["components"] if c["bom-ref"] == "mapi-reference-data")
+        self.assertEqual(component["version"], receipt["revision"])
+        self.assertEqual(component["licenses"], [{"license": {"id": "MIT"}}])
+        self.assertEqual(component["hashes"][0]["content"], hashlib.sha256((module.ROOT / "extensions/mapi/typescript/constants.ts").read_bytes()).hexdigest())
+        self.assertTrue(component["externalReferences"][0]["url"].endswith(receipt["revision"]))
+        self.assertIn((module.ROOT / "third_party/mapi-inspector/LICENSE").read_text(encoding="utf-8").rstrip(), notice)
+        self.assertIn("mapi-reference-data", next(d for d in sbom["dependencies"] if d["ref"] == "desktop")["dependsOn"])
+
     def transport_fixture(self):
         module = load("generate-supply-chain-artifacts")
         base = module.ROOT / "third_party/rust-transport"
