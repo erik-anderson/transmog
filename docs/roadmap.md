@@ -33,6 +33,8 @@ provenance. Optional static traffic columns use bounded native header matching
 without loading bodies or code. Native transactional development reload and
 active-only source notifications and Settings reload controls are implemented;
 MAPI parity remains below.
+The pinned upstream parser snapshot, native differential oracle and concrete
+block inventory are implemented under [the MAPI extension](../extensions/mapi/README.md).
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
 capture, selection, and built-in inspection must not load extension code.
@@ -703,7 +705,7 @@ and declaration details here, with ordinary error feedback and no auditing UI.
 ### Bundled MAPI parity and implementation sequence
 
 Use the [Office inspector](https://github.com/OfficeDev/Office-Inspectors-for-Fiddler)
-as a behavioral reference, porting its parser/data concepts to TypeScript. Its
+as a behavioral reference, preserving its parser/data concepts in static JavaScript. Its
 Fiddler/.NET integration cannot run unchanged in this runtime. Its
 [user guide](https://github.com/OfficeDev/Office-Inspectors-for-Fiddler/wiki)
 demonstrates expandable fields with linked source-byte highlighting. The

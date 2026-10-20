@@ -1,0 +1,1593 @@
+﻿using System;
+using System.Collections.Generic;
+using System.IO;
+using System.Linq;
+using System.Text;
+using BlockParser;
+using Fiddler;
+using MAPIInspector;
+using MAPIInspector.Parsers;
+using Newtonsoft.Json;
+
+namespace MapiInspector
+{
+    /// <summary>
+    /// MAPIParser Class
+    /// </summary>
+    public class MAPIParser
+    {
+        /// <summary>
+        /// Gets or sets the parsing session in fiddler.
+        /// </summary>
+        public static Session ParsingSession;
+
+        /// <summary>
+        /// The targetHandle is used to record the session id and its object handle before a loop parsing for context session
+        /// </summary>
+        public static Stack<Dictionary<RopIdType, Dictionary<int, uint>>> TargetHandle = new Stack<Dictionary<RopIdType, Dictionary<int, uint>>>();
+
+        /// <summary>
+        /// The ContextInformationCollection is used to record current session for all of the context information results.
+        /// </summary>
+        public static List<ContextInformation> ContextInformationCollection = new List<ContextInformation>();
+
+        /// <summary>
+        /// Indicate whether the current parsing session is in the loop of the context session parsing
+        /// </summary>
+        public static bool IsLooperCall = false;
+
+        /// <summary>
+        /// Indicate whether the current parsing session is need to parse crops layer
+        /// </summary>
+        public static bool NeedToParseCROPSLayer = false;
+
+        /// <summary>
+        /// Indicate whether this session is only for getting the server object handle
+        /// </summary>
+        public static bool IsOnlyGetServerHandle = false;
+
+        /// <summary>
+        /// Used to record all MAPIHTTP buffers in one session is compressed one or not
+        /// </summary>
+        public static List<bool> BuffersIsCompressed = new List<bool>();
+
+        /// <summary>
+        /// The requestDic is used to save the session id and its parsed execute request.
+        /// </summary>
+        internal static Dictionary<int, Block> requestDic = new Dictionary<int, Block>();
+
+        /// <summary>
+        /// The responseDic is used to save the session id and its parsed execute response.
+        /// </summary>
+        internal static Dictionary<int, Block> responseDic = new Dictionary<int, Block>();
+
+        /// <summary>
+        /// The handleGetDic is used to save the session id and its response handle for RopGetBuffer.
+        /// </summary>
+        internal static Dictionary<int, List<uint>> handleGetDic = new Dictionary<int, List<uint>>();
+
+        /// <summary>
+        /// The handlePutDic is used to save the session id and its request handle for RopPutBuffer.
+        /// </summary>
+        internal static Dictionary<int, List<uint>> handlePutDic = new Dictionary<int, List<uint>>();
+
+        /// <summary>
+        /// The requestBytesForHexview is used to save the session id and its parsed request bytes provided for MAPIHexBox.
+        /// </summary>
+        internal static Dictionary<int, byte[]> requestBytesForHexview = new Dictionary<int, byte[]>();
+
+        /// <summary>
+        /// The responseBytesForHexview is used to save the session id and its parsed response bytes provided for MAPIHexBox.
+        /// </summary>
+        internal static Dictionary<int, byte[]> responseBytesForHexview = new Dictionary<int, byte[]>();
+
+        /// <summary>
+        /// The AllRopsList is used to save all Rop messages when automation test.
+        /// </summary>
+        public static List<string> AllRopsList = new List<string>();
+
+        /// <summary>
+        /// Enum for traffic direction
+        /// </summary>
+        public enum TrafficDirection
+        {
+            /// <summary>
+            /// Indicates request
+            /// </summary>
+            In,
+
+            /// <summary>
+            /// Indicates response
+            /// </summary>
+            Out
+        }
+
+        /// <summary>
+        /// Gets or sets the ROPInputBuffer payload for compressed or XOR
+        /// </summary>
+        public static List<byte[]> InputPayLoadCompressedXOR { get; set; }
+
+        /// <summary>
+        /// Gets or sets the ROPOutputBuffer payload for compressed or XOR
+        /// </summary>
+        public static List<byte[]> OutputPayLoadCompressedXOR { get; set; }
+
+        /// <summary>
+        /// Gets or sets the AuxiliaryBufferPayload payload for compressed or XOR
+        /// </summary>
+        public static byte[] AuxPayLoadCompressedXOR { get; set; }
+
+        /// <summary>
+        /// Gets or sets the base HTTP headers assigned by the request or response
+        /// </summary>
+        public static HTTPHeaders BaseHeaders { get; set; }
+
+        /// <summary>
+        /// Parse special session's response message to MAPI layer only
+        /// </summary>
+        /// <param name="currentSession">The session to parse</param>
+        /// <param name="outputHandleIndex">The handle index need to get</param>
+        /// <returns>The object handle table</returns>
+        public static uint ParseResponseMessageSimply(Session currentSession, int outputHandleIndex)
+        {
+            uint handle_InResponse = 0;
+            if (IsMapihttpSession(currentSession, TrafficDirection.Out))
+            {
+                byte[] bytesForHexView;
+                var mapiResponse = ParseHTTPExecuteResponsePayload(currentSession, TrafficDirection.Out, out bytesForHexView);
+                var responseBody = mapiResponse as ExecuteResponseBody;
+                int rgbOutputBufferCount = responseBody.RopBuffer.RgbOutputBuffers.Length;
+
+                for (int i = 0; i < rgbOutputBufferCount; i++)
+                {
+                    var objectTable = responseBody.RopBuffer.RgbOutputBuffers[i].Payload as ROPBufferServerObjectTable;
+                    handle_InResponse = objectTable.ServerObjectHandleTable[outputHandleIndex];
+                }
+            }
+
+            return handle_InResponse;
+        }
+
+        /// <summary>
+        /// Parse special session's response message to MS-OXCROPS layer
+        /// </summary>
+        /// <param name="currentSession">The parsing session.</param>
+        /// <param name="direction">The direction of the traffic.</param>
+        /// <param name="bytes">The bytes provided for MAPI view layer.</param>
+        /// <returns>The object parsed result</returns>
+        public static Block ParseHTTPExecuteResponsePayload(Session currentSession, TrafficDirection direction, out byte[] bytes)
+        {
+            Block objectOut = null;
+            byte[] emptyByte = new byte[0];
+            bytes = emptyByte;
+            string requestType = string.Empty;
+            byte[] bytesFromHTTP = null;
+
+            switch (direction)
+            {
+                case TrafficDirection.In:
+                    bytesFromHTTP = currentSession.requestBodyBytes;
+                    break;
+                case TrafficDirection.Out:
+                    bytesFromHTTP = currentSession.responseBodyBytes;
+                    break;
+                default:
+                    return Block.Create("Invalid traffic direction.");
+            }
+
+            if (bytesFromHTTP == null || bytesFromHTTP.Length == 0 || currentSession.RequestHeaders == null || !currentSession.RequestHeaders.Exists("X-RequestType"))
+            {
+                return null;
+            }
+
+            requestType = currentSession.RequestHeaders["X-RequestType"];
+
+            if (requestType == null)
+            {
+                return null;
+            }
+
+            try
+            {
+                if (direction == TrafficDirection.Out &&
+                    IsFromFiddlerCore(currentSession))
+                {
+                    if (currentSession["Transfer-Encoding"] != null &&
+                        currentSession["Transfer-Encoding"] == "chunked")
+                    {
+                        bytesFromHTTP = Utilities.GetPayloadFromChunkedBody(bytesFromHTTP);
+                        bytes = bytesFromHTTP;
+                    }
+                }
+                else if (direction == TrafficDirection.Out &&
+                    currentSession.ResponseHeaders.Exists("Transfer-Encoding") &&
+                    currentSession.ResponseHeaders["Transfer-Encoding"] == "chunked")
+                {
+                    bytesFromHTTP = Utilities.GetPayloadFromChunkedBody(bytesFromHTTP);
+                    bytes = bytesFromHTTP;
+                }
+                else
+                {
+                    bytes = bytesFromHTTP;
+                }
+
+                var parser = new BinaryParser(bytesFromHTTP);
+                ParsingSession = currentSession;
+
+                if (direction == TrafficDirection.Out &&
+                    requestType == "Execute")
+                {
+                    objectOut = Block.Parse<ExecuteResponseBody>(parser);
+                }
+
+                return objectOut;
+            }
+            catch (Exception ex)
+            {
+                return BlockException.Create("Exception", ex, 0);
+            }
+        }
+
+        /// <summary>
+        /// Method to judge whether a session is MAPIHTTP message or not
+        /// </summary>
+        /// <param name="currentSession">The session to be judged</param>
+        /// <param name="direction">Traffic direction</param>
+        /// <returns>Boole value indicates whether this session is MAPIHTTP layer message</returns>
+        public static bool IsMapihttpSession(Session currentSession, TrafficDirection direction)
+        {
+            if (currentSession != null)
+            {
+                if (direction == TrafficDirection.In)
+                {
+                    return currentSession.RequestHeaders.ExistsAndContains("Content-Type", "application/mapi-http");
+                }
+                else if (direction == TrafficDirection.Out &&
+                    !IsFromFiddlerCore(currentSession))
+                {
+                    if (currentSession.ResponseHeaders.Exists("X-ResponseCode"))
+                    {
+                        string responseCode = currentSession.ResponseHeaders["X-ResponseCode"];
+
+                        if (responseCode == "0")
+                        {
+                            return currentSession.ResponseHeaders.ExistsAndContains("Content-Type", "application/mapi-http");
+                        }
+                        else if (responseCode != string.Empty)
+                        {
+                            return currentSession.ResponseHeaders.ExistsAndContains("Content-Type", "text/html");
+                        }
+                    }
+                }
+                else if (direction == TrafficDirection.Out &&
+                    currentSession["X-ResponseCode"] != null)
+                {
+                    string responseCode = currentSession["X-ResponseCode"];
+                    if (responseCode == "0")
+                    {
+                        return currentSession["Content-Type"] != null &&
+                            currentSession["Content-Type"] == "application/mapi-http";
+                    }
+                    else if (responseCode != string.Empty)
+                    {
+                        return currentSession["Content-Type"] != null &&
+                            currentSession["Content-Type"] == "text/html";
+                    }
+                }
+            }
+
+            return false;
+        }
+
+        public static bool inSafeHandleContextInformation { get; private set; } = false;
+
+        /// <summary>
+        /// SafeHandleContextInformation wraps HandleContextInformation to prevent reentrancy.
+        /// </summary>
+        /// <param name="sourceRopID">The ROP ID missing context information</param>
+        /// <param name="obj">The target object containing the context information</param>
+        /// <param name="bytes">The target byte array provided to HexView</param>
+        /// <param name="parameters">The missing context information ROP related parameters</param>
+        public static void SafeHandleContextInformation(RopIdType sourceRopID, out Block obj, out byte[] bytes, uint[] parameters = null)
+        {
+            if (inSafeHandleContextInformation)
+            {
+                obj = null;
+                bytes = new byte[0];
+                return;
+            }
+
+            try
+            {
+                inSafeHandleContextInformation = true;
+                HandleContextInformation(sourceRopID, out obj, out bytes, parameters);
+            }
+            catch
+            {
+                obj = null;
+                bytes = new byte[0];
+            }
+            finally
+            {
+                inSafeHandleContextInformation = false;
+            }
+        }
+
+        /// <summary>
+        /// This method is used to parse the sessions in advance, which is designed for the related context information ROPs.
+        /// </summary>
+        /// <param name="sourceRopID">The ROP ID missing context information</param>
+        /// <param name="obj">The target object containing the context information</param>
+        /// <param name="bytes">The target byte array provided to HexView</param>
+        /// <param name="parameters">The missing context information ROP related parameters</param>
+        public static void HandleContextInformation(RopIdType sourceRopID, out Block obj, out byte[] bytes, uint[] parameters = null)
+        {
+            byte[] bytesForHexView;
+            string savedResult = string.Empty;
+            object result = new object();
+            Session thisSession = ParsingSession;
+            int thisSessionID = thisSession.id;
+            if (IsFromFiddlerCore(thisSession))
+            {
+                thisSessionID = int.Parse(thisSession["VirtualID"]);
+            }
+            if (sourceRopID == RopIdType.RopLogon)
+            {
+                ParseRequestMessage(thisSession, out bytesForHexView, true);
+                obj = ParseResponseMessage(thisSession, out bytesForHexView, true);
+                bytes = bytesForHexView;
+            }
+            else if (sourceRopID == RopIdType.RopSetMessageReadFlag)
+            {
+                string serverurl = thisSession.RequestHeaders.RequestPath;
+                string processName = thisSession.LocalProcess;
+                string clientInfo = thisSession.RequestHeaders["X-ClientInfo"];
+
+                if (parameters != null &&
+                    parameters.Length > 0)
+                {
+                    // parsing the previous sessions until DecodingContext.LogonFlagMapLogId contains the LogOn Id in this RopSetMessageReadFlag ROP.
+                    var dic = new Dictionary<int, uint>();
+                    var targetDic = new Dictionary<RopIdType, Dictionary<int, uint>>();
+                    dic.Add(thisSessionID, parameters[0]);
+                    targetDic.Add(sourceRopID, dic);
+                    TargetHandle.Push(targetDic);
+
+                    var currentSession = thisSession.Previous();
+                    while (currentSession != null)
+                    {
+                        if (currentSession.RequestHeaders.RequestPath == serverurl &&
+                            currentSession.LocalProcess == processName &&
+                            currentSession.RequestHeaders["X-ClientInfo"] == clientInfo &&
+                            IsMapihttpSession(currentSession, TrafficDirection.In) &&
+                            currentSession.RequestHeaders["X-RequestType"] == "Execute")
+                        {
+                            ParseRequestMessage(currentSession, out bytesForHexView, true);
+                            if (DecodingContext.LogonFlagMapLogId.Count > 0 &&
+                                DecodingContext.LogonFlagMapLogId.TryGetValue(serverurl, out var serverDict) &&
+                                serverDict.TryGetValue(processName, out var processDict) &&
+                                processDict.TryGetValue(clientInfo, out var clientDict) &&
+                                clientDict.ContainsKey((byte)parameters[0]))
+                            {
+                                break;
+                            }
+                        }
+
+                        currentSession = currentSession.Previous();
+                    }
+
+                    if (DecodingContext.LogonFlagMapLogId.ContainsKey(serverurl) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl].ContainsKey(processName) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl][processName].ContainsKey(clientInfo) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo].ContainsKey((byte)parameters[0]))
+                    {
+                        result = DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo][(byte)parameters[0]];
+                    }
+                    else
+                    {
+                        result = $"{sourceRopID} cannot be parsed successfully due to missing the LogOn information for handle {parameters[0]}, check whether the trace is complete.";
+                    }
+
+                    if (TargetHandle.Count == 1)
+                    {
+                        ContextInformation information = new ContextInformation();
+                        information.RopID = sourceRopID;
+                        information.Handle = parameters[0];
+                        information.RelatedInformation = result;
+                        ContextInformationCollection.Add(information);
+
+                        OverwriteOriginalInformation(thisSessionID, serverurl, processName, clientInfo);
+                    }
+
+                    TargetHandle.Pop();
+                }
+
+                if (DecodingContext.LogonFlagMapLogId.ContainsKey(serverurl) &&
+                    DecodingContext.LogonFlagMapLogId[serverurl].ContainsKey(processName) &&
+                    DecodingContext.LogonFlagMapLogId[serverurl][processName].ContainsKey(clientInfo) &&
+                    DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo].ContainsKey((byte)parameters[0]))
+                {
+                    // Add this session id(RopSetMessageReadFlag Rop)in DecodingContext.SessionLogonFlagMapLogId.
+                    if (!(DecodingContext.SessionLogonFlagMapLogId.Count > 0 &&
+                        DecodingContext.SessionLogonFlagMapLogId.ContainsKey(thisSessionID)))
+                    {
+                        DecodingContext.SessionLogonFlagMapLogId.Add(thisSessionID, DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo]);
+                    }
+                }
+
+                // Parsing the request structure of this session.
+                obj = ParseRequestMessage(thisSession, out bytesForHexView, true);
+                bytes = bytesForHexView;
+            }
+            else if (sourceRopID == RopIdType.RopGetPropertiesSpecific)
+            {
+                ParseRequestMessage(thisSession, out bytesForHexView, true);
+                obj = ParseResponseMessage(thisSession, out bytesForHexView, true);
+                bytes = bytesForHexView;
+            }
+            else if (sourceRopID == RopIdType.RopWritePerUserInformation)
+            {
+                var currentSession = thisSession.Previous();
+                string serverurl = thisSession.RequestHeaders.RequestPath;
+                string processName = thisSession.LocalProcess;
+                string clientInfo = thisSession.RequestHeaders["X-ClientInfo"];
+
+                if (parameters != null &&
+                    parameters.Length > 0)
+                {
+                    var dic = new Dictionary<int, uint>();
+                    var targetDic = new Dictionary<RopIdType, Dictionary<int, uint>>();
+                    dic.Add(thisSessionID, parameters[0]);
+                    targetDic.Add(sourceRopID, dic);
+
+                    // Parsing the previous sessions until DecodingContext.LogonFlagMapLogId contains the LogOn Id in this RopWritePerUserInformation ROP.
+                    TargetHandle.Push(targetDic);
+
+                    while (DecodingContext.LogonFlagMapLogId.Count == 0 ||
+                        !(DecodingContext.LogonFlagMapLogId.ContainsKey(serverurl) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl].ContainsKey(processName) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl][processName].ContainsKey(clientInfo) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo].ContainsKey((byte)parameters[0])) &&
+                        currentSession != null)
+                    {
+                        if (currentSession.RequestHeaders.RequestPath == serverurl &&
+                            currentSession["LocalProcess"] == processName &&
+                            currentSession.RequestHeaders["X-ClientInfo"] == clientInfo &&
+                            IsMapihttpSession(currentSession, TrafficDirection.In) &&
+                            currentSession.RequestHeaders["X-RequestType"] == "Execute")
+                        {
+                            ParseRequestMessage(currentSession, out bytesForHexView);
+                        }
+
+                        currentSession = currentSession.Previous();
+                    }
+
+                    if (DecodingContext.LogonFlagMapLogId.ContainsKey(serverurl) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl].ContainsKey(processName) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl][processName].ContainsKey(clientInfo) &&
+                        DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo].ContainsKey((byte)parameters[0]))
+                    {
+                        result = DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo][(byte)parameters[0]];
+                    }
+                    else
+                    {
+                        result = $"{sourceRopID} cannot be parsed successfully due to missing the LogOn information for handle {parameters[0]}, check whether the trace is complete.";
+                    }
+
+                    if (TargetHandle.Count == 1)
+                    {
+                        ContextInformation information = new ContextInformation();
+                        information.RopID = sourceRopID;
+                        information.Handle = parameters[0];
+                        information.RelatedInformation = result;
+                        ContextInformationCollection.Add(information);
+
+                        OverwriteOriginalInformation(thisSessionID, serverurl, processName, clientInfo);
+                    }
+
+                    TargetHandle.Pop();
+                }
+
+                if (DecodingContext.LogonFlagMapLogId.ContainsKey(serverurl) &&
+                    DecodingContext.LogonFlagMapLogId[serverurl].ContainsKey(processName) &&
+                    DecodingContext.LogonFlagMapLogId[serverurl][processName].ContainsKey(clientInfo) &&
+                    DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo].ContainsKey((byte)parameters[0]))
+                {
+                    // Add this session id in DecodingContext.SessionLogonFlagsInLogonRop.
+                    if (!(DecodingContext.SessionLogonFlagMapLogId != null &&
+                        DecodingContext.SessionLogonFlagMapLogId.ContainsKey(thisSessionID)))
+                    {
+                        DecodingContext.SessionLogonFlagMapLogId.Add(thisSessionID, DecodingContext.LogonFlagMapLogId[serverurl][processName][clientInfo]);
+                    }
+                }
+
+                // Parsing the request structure of this session.
+                obj = ParseRequestMessage(thisSession, out bytesForHexView, true);
+                bytes = bytesForHexView;
+            }
+            else if (sourceRopID == RopIdType.RopQueryRows || sourceRopID == RopIdType.RopFindRow || sourceRopID == RopIdType.RopExpandRow)
+            {
+                Session currentSession = thisSession;
+                int currentSessionID = currentSession.id;
+                if (IsFromFiddlerCore(currentSession))
+                {
+                    currentSessionID = int.Parse(currentSession["VirtualID"]);
+                }
+
+                var dic_QueryRows = new Dictionary<int, uint>();
+                var targetDic = new Dictionary<RopIdType, Dictionary<int, uint>>();
+                dic_QueryRows.Add(thisSessionID, parameters[1]);
+                targetDic.Add(sourceRopID, dic_QueryRows);
+                TargetHandle.Push(targetDic);
+                string serverurl = thisSession.RequestHeaders.RequestPath;
+                string processName = thisSession.LocalProcess;
+                string clientInfo = thisSession.RequestHeaders["X-ClientInfo"];
+
+                if (parameters != null &&
+                    parameters.Length > 1)
+                {
+                    // SetColumn_InputHandles_InResponse is only set in this session(and RopSetColumns) response parse, so if SetColumn_InputHandles_InResponse contains this rops outputhandle means that setcolumn and this rop is in the same session.
+                    if (DecodingContext.SetColumn_InputHandles_InResponse.Count > 0 &&
+                        DecodingContext.SetColumn_InputHandles_InResponse.Contains(parameters[1]))
+                    {
+                        ParseRequestMessage(thisSession, out bytesForHexView, true);
+                    }
+                    else
+                    {
+                        currentSession = currentSession.Previous();
+                        while (currentSession != null)
+                        {
+                            if (IsFromFiddlerCore(currentSession))
+                            {
+                                currentSessionID = int.Parse(currentSession["VirtualID"]);
+                            }
+                            else
+                            {
+                                currentSessionID = currentSession.id;
+                            }
+
+                            string currentServerPath = currentSession.RequestHeaders.RequestPath;
+                            string currentProcessName = currentSession.LocalProcess;
+                            string currentClientInfo = currentSession.RequestHeaders["X-ClientInfo"];
+
+                            if (currentServerPath == serverurl &&
+                                currentProcessName == processName &&
+                                currentClientInfo == clientInfo &&
+                                IsMapihttpSession(currentSession, TrafficDirection.In) &&
+                                currentSession.RequestHeaders["X-RequestType"] == "Execute")
+                            {
+                                ParseRequestMessage(currentSession, out bytesForHexView, true);
+                            }
+
+                            if (DecodingContext.RowRops_handlePropertyTags.ContainsKey(parameters[1]) &&
+                                DecodingContext.RowRops_handlePropertyTags[parameters[1]].ContainsKey(currentSessionID) &&
+                                DecodingContext.RowRops_handlePropertyTags[parameters[1]][currentSessionID].Item1 == serverurl &&
+                                DecodingContext.RowRops_handlePropertyTags[parameters[1]][currentSessionID].Item2 == processName &&
+                                DecodingContext.RowRops_handlePropertyTags[parameters[1]][currentSessionID].Item3 == clientInfo)
+                            {
+                                break;
+                            }
+
+                            currentSession = currentSession.Previous();
+                        }
+                    }
+
+                    if (DecodingContext.RowRops_handlePropertyTags.ContainsKey(parameters[1]) &&
+                        DecodingContext.RowRops_handlePropertyTags[parameters[1]].ContainsKey(currentSessionID))
+                    {
+                        result = DecodingContext.RowRops_handlePropertyTags[parameters[1]][currentSessionID].Item4;
+                    }
+                    else
+                    {
+                        result = $"{sourceRopID} cannot be parsed successfully due to missing the PropertyTags for handle {parameters[1]}, check whether the trace is complete.";
+                    }
+                }
+
+                if (TargetHandle.Count == 1)
+                {
+                    ContextInformation information = new ContextInformation();
+                    information.RopID = sourceRopID;
+                    information.Handle = parameters[1];
+                    information.RelatedInformation = result;
+                    ContextInformationCollection.Add(information);
+
+                    OverwriteOriginalInformation(thisSessionID, serverurl, processName, clientInfo);
+                }
+
+                TargetHandle.Pop();
+
+                if (result is PropertyTag[])
+                {
+                    if (currentSession != thisSession)
+                    {
+                        Dictionary<int, Tuple<string, string, string, PropertyTag[]>> sessionTagMap = new Dictionary<int, Tuple<string, string, string, PropertyTag[]>>();
+                        sessionTagMap = DecodingContext.RowRops_handlePropertyTags[parameters[1]];
+                        DecodingContext.RowRops_handlePropertyTags.Remove(parameters[1]);
+                        Tuple<string, string, string, PropertyTag[]> tupleValue = sessionTagMap[currentSessionID];
+                        sessionTagMap.Remove(currentSessionID);
+                        sessionTagMap.Add(thisSessionID, tupleValue);
+                        DecodingContext.RowRops_handlePropertyTags.Add(parameters[1], sessionTagMap);
+                    }
+                }
+
+                obj = ParseResponseMessage(thisSession, out bytesForHexView, true);
+                bytes = bytesForHexView;
+            }
+            else if (sourceRopID == RopIdType.RopNotify)
+            {
+                Session currentSession = thisSession;
+                int currentSessionID = currentSession.id;
+                if (IsFromFiddlerCore(currentSession))
+                {
+                    currentSessionID = int.Parse(currentSession["VirtualID"]);
+                }
+                uint targetSessionID = 0;
+                var dic_Notify = new Dictionary<int, uint>();
+                var targetDic = new Dictionary<RopIdType, Dictionary<int, uint>>();
+                dic_Notify.Add(thisSessionID, parameters[1]);
+                targetDic.Add(sourceRopID, dic_Notify);
+                TargetHandle.Push(targetDic);
+                uint resultTableSessionId = 0;
+                string serverurl = thisSession.RequestHeaders.RequestPath;
+                string processName = thisSession.LocalProcess;
+                string clientInfo = thisSession.RequestHeaders["X-ClientInfo"];
+
+                if (parameters != null &&
+                    parameters.Length > 1)
+                {
+                    // SetColumn_InputHandles_InResponse is only set in this session(and RopSetColumns) response parse, so if SetColumn_InputHandles_InResponse contains this ROP's output handle means the RopSetColumns and this ROP is in the same session.
+                    if (DecodingContext.SetColumn_InputHandles_InResponse.Count > 0 &&
+                        DecodingContext.SetColumn_InputHandles_InResponse.Contains(parameters[1]))
+                    {
+                        ParseRequestMessage(thisSession, out bytesForHexView, true);
+                    }
+                    else
+                    {
+                        currentSession = thisSession.Previous();
+                        if (IsFromFiddlerCore(currentSession))
+                        {
+                            currentSessionID = int.Parse(currentSession["VirtualID"]);
+                        }
+                        else
+                        {
+                            currentSessionID = currentSession.id;
+                        }
+
+                        // isFound used to specify whether the setColumns for this notify has found.
+                        bool isFound = false;
+
+                        while (currentSession != null)
+                        {
+                            if (IsFromFiddlerCore(currentSession))
+                            {
+                                currentSessionID = int.Parse(currentSession["VirtualID"]);
+                            }
+                            else
+                            {
+                                currentSessionID = currentSession.id;
+                            }
+
+                            string currentServerPath = currentSession.RequestHeaders.RequestPath;
+                            string currentProcessName = currentSession.LocalProcess;
+                            string currentClientInfo = currentSession.RequestHeaders["X-ClientInfo"];
+
+                            if (currentServerPath == serverurl &&
+                                currentProcessName == processName &&
+                                currentClientInfo == clientInfo &&
+                                IsMapihttpSession(currentSession, TrafficDirection.Out) &&
+                                currentSession.RequestHeaders["X-RequestType"] == "Execute")
+                            {
+                                IsOnlyGetServerHandle = true;
+                                var resResult = ParseResponseMessage(currentSession, out bytesForHexView, false);
+                                IsOnlyGetServerHandle = false;
+
+                                if (resResult != null &&
+                                    (resResult as ExecuteResponseBody).RopBuffer != null &&
+                                    (resResult as ExecuteResponseBody).RopBuffer.RgbOutputBuffers.Count() != 0)
+                                {
+                                    var tableHandles = ((ROPBufferServerObjectTable)(resResult as ExecuteResponseBody).RopBuffer.RgbOutputBuffers[0].Payload).ServerObjectHandleTable;
+
+                                    if (tableHandles.Contains(parameters[1]) &&
+                                        currentServerPath == serverurl &&
+                                        currentProcessName == processName &&
+                                        currentClientInfo == clientInfo)
+                                    {
+                                        int handleIndex = tableHandles.IndexOf(parameters[1]);
+                                        var requestResult = ParseRequestMessage(currentSession, out bytesForHexView, true);
+
+                                        if (requestResult != null)
+                                        {
+                                            if ((requestResult as ExecuteRequestBody).RopBuffer != null &&
+                                                (requestResult as ExecuteRequestBody).RopBuffer.Buffers.Count() != 0)
+                                            {
+                                                foreach (ExtendedBuffer_Input input in (requestResult as ExecuteRequestBody).RopBuffer.Buffers)
+                                                {
+                                                    if (input.Payload is ROPInputBuffer)
+                                                    {
+                                                        object[] rops = (input.Payload as ROPInputBuffer).RopsList;
+
+                                                        foreach (var rop in rops)
+                                                        {
+                                                            if ((rop is RopGetRulesTableRequest &&
+                                                                ((rop as RopGetRulesTableRequest).OutputHandleIndex == handleIndex)) ||
+                                                            (rop is RopGetAttachmentTableRequest &&
+                                                            ((rop as RopGetAttachmentTableRequest).OutputHandleIndex == handleIndex)) ||
+                                                            (rop is RopGetPermissionsTableRequest &&
+                                                            ((rop as RopGetAttachmentTableRequest).OutputHandleIndex == handleIndex)) ||
+                                                            (rop is RopGetContentsTableRequest &&
+                                                            ((rop as RopGetContentsTableRequest).OutputHandleIndex == handleIndex)) ||
+                                                            (rop is RopGetHierarchyTableRequest &&
+                                                            ((rop as RopGetHierarchyTableRequest).OutputHandleIndex == handleIndex)))
+                                                            {
+                                                                // Update the fourth parameter of Notify_handlePropertyTags
+                                                                if (DecodingContext.Notify_handlePropertyTags.Count > 0)
+                                                                {
+                                                                    List<int> sessions = DecodingContext.Notify_handlePropertyTags[parameters[1]].Keys.ToList();
+                                                                    foreach (int sessionID in sessions)
+                                                                    {
+                                                                        if (sessionID <= thisSessionID &&
+                                                                            sessionID >= currentSessionID)
+                                                                        {
+                                                                            Tuple<string, string, string, PropertyTag[], string> originalTuple = DecodingContext.Notify_handlePropertyTags[parameters[1]][sessionID];
+                                                                            if (originalTuple.Item5 == string.Empty)
+                                                                            {
+                                                                                Tuple<string, string, string, PropertyTag[], string> updatedTuple = new Tuple<string, string, string, PropertyTag[], string>(originalTuple.Item1, originalTuple.Item2, originalTuple.Item3, originalTuple.Item4, rop.GetType().Name);
+                                                                                DecodingContext.Notify_handlePropertyTags[parameters[1]][sessionID] = updatedTuple;
+                                                                            }
+                                                                        }
+                                                                    }
+                                                                }
+                                                            }
+
+                                                            if ((parameters[0] != 0 &&
+                                                                rop is RopGetContentsTableRequest &&
+                                                                (rop as RopGetContentsTableRequest).OutputHandleIndex == handleIndex) ||
+                                                                (parameters[0] == 0 &&
+                                                                rop is RopGetHierarchyTableRequest &&
+                                                                (rop as RopGetHierarchyTableRequest).OutputHandleIndex == handleIndex))
+                                                            {
+                                                                // Break the looper
+                                                                isFound = true;
+                                                                resultTableSessionId = (uint)currentSessionID;
+                                                                break;
+                                                            }
+                                                        }
+
+                                                        if (isFound == true)
+                                                        {
+                                                            break;
+                                                        }
+                                                    }
+                                                }
+
+                                                if (isFound == true)
+                                                {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+
+
+                            currentSession = currentSession.Previous();
+                        }
+                    }
+                }
+
+                if (DecodingContext.Notify_handlePropertyTags.ContainsKey(parameters[1]))
+                {
+                    // Just get a biggest value for the distance for initial
+                    string searchkey = parameters[0] == 0 ? "RopGetHierarchyTableRequest" : "RopGetContentsTableRequest";
+
+                    foreach (uint sessionID in DecodingContext.Notify_handlePropertyTags[parameters[1]].Keys)
+                    {
+                        Tuple<string, string, string, PropertyTag[], string> currentTuple = DecodingContext.Notify_handlePropertyTags[parameters[1]][(int)sessionID];
+                        if ((sessionID >= resultTableSessionId &&
+                            sessionID <= thisSessionID))
+                        {
+                            if (currentTuple.Item1 == serverurl &&
+                                currentTuple.Item2 == processName &&
+                                currentTuple.Item3 == clientInfo)
+                            {
+                                if (currentTuple.Item5.Contains(searchkey) &&
+                                    targetSessionID < sessionID)
+                                {
+                                    targetSessionID = sessionID;
+                                }
+                            }
+                        }
+                    }
+                    if (targetSessionID != 0)
+                    {
+                        result = DecodingContext.Notify_handlePropertyTags[parameters[1]][(int)targetSessionID].Item4;
+                    }
+                    else
+                    {
+                        result = $"RopNotify cannot be parsed successfully due to missing the PropertyTags for handle {parameters[1]}, check whether the trace is complete.";
+                    }
+                }
+                else
+                {
+                    result = $"RopNotify cannot be parsed successfully due to missing the PropertyTags for handle {parameters[1]}, check whether the trace is complete.";
+                }
+
+                if (TargetHandle.Count == 1)
+                {
+                    ContextInformation information = new ContextInformation();
+                    information.RopID = sourceRopID;
+                    information.Handle = parameters[1];
+                    information.RelatedInformation = result;
+                    ContextInformationCollection.Add(information);
+
+                    OverwriteOriginalInformation(thisSessionID, serverurl, processName, clientInfo);
+                }
+
+                TargetHandle.Pop();
+
+                if (result is PropertyTag[])
+                {
+                    if (currentSession != thisSession)
+                    {
+                        Dictionary<int, Tuple<string, string, string, PropertyTag[], string>> sessionTagMap = new Dictionary<int, Tuple<string, string, string, PropertyTag[], string>>();
+                        sessionTagMap = DecodingContext.Notify_handlePropertyTags[parameters[1]];
+                        DecodingContext.Notify_handlePropertyTags.Remove(parameters[1]);
+                        Tuple<string, string, string, PropertyTag[], string> tupleValue = sessionTagMap[(int)targetSessionID];
+                        sessionTagMap.Remove((int)targetSessionID);
+                        sessionTagMap.Add(thisSessionID, tupleValue);
+                        DecodingContext.Notify_handlePropertyTags.Add(parameters[1], sessionTagMap);
+                    }
+                }
+
+                obj = ParseResponseMessage(thisSession, out bytesForHexView, true);
+                bytes = bytesForHexView;
+            }
+            else if (sourceRopID == RopIdType.RopBufferTooSmall)
+            {
+                if (DecodingContext.SessionRequestRemainSize.Count > 0 &&
+                    DecodingContext.SessionRequestRemainSize.ContainsKey(thisSessionID))
+                {
+                    obj = responseDic[thisSessionID];
+                    bytes = responseBytesForHexview[thisSessionID];
+                }
+                else
+                {
+                    ParseRequestMessage(thisSession, out bytesForHexView, true);
+                    obj = ParseResponseMessage(thisSession, out bytesForHexView, true);
+                    bytes = bytesForHexView;
+                }
+            }
+            else
+            {
+                obj = null;
+                bytes = new byte[0];
+            }
+        }
+
+        /// <summary>
+        /// Restore the covered related context information during loop call
+        /// </summary>
+        /// <param name="sessionID">The session ID</param>
+        /// <param name="serverurl">The server URL for this session</param>
+        /// <param name="processName">The process name for this session</param>
+        /// <param name="clientInfo">The clientInfo for this session</param>
+        /// <param name="result">The result for missing related information </param>
+        /// <returns>The result for overwriting.</returns>
+        public static void OverwriteOriginalInformation(int sessionID, string serverurl, string processName, string clientInfo)
+        {
+            if (ContextInformationCollection.Count > 0)
+            {
+                foreach (ContextInformation infor in ContextInformationCollection)
+                {
+                    if (infor.RelatedInformation.GetType() != typeof(string))
+                    {
+                        switch (infor.RopID)
+                        {
+                            case RopIdType.RopFastTransferSourceGetBuffer:
+                                break;
+                            case RopIdType.RopQueryRows:
+                            case RopIdType.RopFindRow:
+                            case RopIdType.RopExpandRow:
+                                if (DecodingContext.RowRops_handlePropertyTags.ContainsKey(infor.Handle) &&
+                                    DecodingContext.RowRops_handlePropertyTags[infor.Handle].ContainsKey(sessionID) &&
+                                    DecodingContext.RowRops_handlePropertyTags[infor.Handle][sessionID].Item1 == serverurl &&
+                                    DecodingContext.RowRops_handlePropertyTags[infor.Handle][sessionID].Item2 == processName)
+                                {
+                                    if (DecodingContext.RowRops_handlePropertyTags[infor.Handle][sessionID].Item4 != (PropertyTag[])infor.RelatedInformation)
+                                    {
+                                        Tuple<string, string, string, PropertyTag[]> value = new Tuple<string, string, string, PropertyTag[]>(serverurl, processName, clientInfo, (PropertyTag[])infor.RelatedInformation);
+                                        DecodingContext.RowRops_handlePropertyTags[infor.Handle][sessionID] = value;
+                                    }
+                                }
+
+                                break;
+                            case RopIdType.RopNotify:
+                                if (DecodingContext.Notify_handlePropertyTags.ContainsKey(infor.Handle) &&
+                                    DecodingContext.Notify_handlePropertyTags[infor.Handle].ContainsKey(sessionID) &&
+                                    DecodingContext.Notify_handlePropertyTags[infor.Handle][sessionID].Item1 == serverurl &&
+                                    DecodingContext.Notify_handlePropertyTags[infor.Handle][sessionID].Item2 == processName)
+                                {
+                                    if (DecodingContext.Notify_handlePropertyTags[infor.Handle][sessionID].Item4 != (PropertyTag[])infor.RelatedInformation)
+                                    {
+                                        Tuple<string, string, string, PropertyTag[], string> value = new Tuple<string, string, string, PropertyTag[], string>(serverurl, processName, clientInfo, (PropertyTag[])infor.RelatedInformation, string.Empty);
+                                        DecodingContext.Notify_handlePropertyTags[infor.Handle][sessionID] = value;
+                                    }
+                                }
+
+                                break;
+                            case RopIdType.RopSetMessageReadFlag:
+                            case RopIdType.RopWritePerUserInformation:
+                            case RopIdType.RopFastTransferDestinationPutBuffer:
+                            case RopIdType.RopFastTransferDestinationPutBufferExtended:
+                                break;
+                        }
+                    }
+                }
+            }
+        }
+
+        /// <summary>
+        /// Parse special session's request message
+        /// </summary>
+        /// <param name="parsingSession">The session to parse</param>
+        /// <param name="hexViewBytes">Byte array for display in RopHexView</param>
+        /// <param name="isLooper">A boolean value indicates if this session is in a loop for parsing context sessions</param>
+        /// <returns>MAPI request object</returns>
+        public static Block ParseRequestMessage(Session parsingSession, out byte[] hexViewBytes, bool isLooper = false)
+        {
+            Block mapiRequest = null;
+            hexViewBytes = new byte[0];
+
+            if (IsMapihttpSession(parsingSession, TrafficDirection.In))
+            {
+                NeedToParseCROPSLayer = isLooper;
+                mapiRequest = ParseHTTPPayload(parsingSession, TrafficDirection.In, out byte[] bytesForHexView);
+                hexViewBytes = bytesForHexView;
+                int parsingSessionID = parsingSession.id;
+                if (IsFromFiddlerCore(parsingSession))
+                {
+                    parsingSessionID = int.Parse(parsingSession["VirtualID"]);
+                }
+
+                if (mapiRequest != null)
+                {
+                    if (parsingSession.requestBodyBytes.Length != 0 &&
+                        mapiRequest.GetType().Name == "ExecuteRequestBody" &&
+                        requestDic != null &&
+                        !requestDic.ContainsKey(parsingSessionID))
+                    {
+                        if (!IsOnlyGetServerHandle)
+                        {
+                            requestDic.Add(parsingSessionID, mapiRequest);
+                            if (!requestBytesForHexview.ContainsKey(parsingSessionID))
+                            {
+                                requestBytesForHexview.Add(parsingSessionID, bytesForHexView);
+                            }
+                        }
+                        else
+                        {
+                            if (!handlePutDic.ContainsKey(parsingSessionID))
+                            {
+                                if ((mapiRequest as ExecuteRequestBody).RopBuffer != null &&
+                                    (mapiRequest as ExecuteRequestBody).RopBuffer.Buffers.Count() != 0)
+                                {
+                                    handlePutDic.Add(parsingSessionID,
+                                        ((ROPBufferServerObjectTable)(mapiRequest as ExecuteRequestBody).RopBuffer.Buffers[0].Payload).ServerObjectHandleTable);
+                                }
+                            }
+                        }
+                    }
+                    else if (parsingSession.requestBodyBytes.Length != 0 &&
+                        mapiRequest.GetType().Name == "ExecuteRequestBody" &&
+                        requestDic != null &&
+                        requestDic.ContainsKey(parsingSessionID) &&
+                        !IsOnlyGetServerHandle)
+                    {
+                        requestDic.Remove(parsingSessionID);
+                        requestDic.Add(parsingSessionID, mapiRequest);
+                    }
+                }
+            }
+
+            if (NeedToParseCROPSLayer)
+            {
+                NeedToParseCROPSLayer = false;
+            }
+
+            return mapiRequest;
+        }
+
+        /// <summary>
+        /// Parse special session's response message
+        /// </summary>
+        /// <param name="currentSession">The session to parse</param>
+        /// <param name="hexViewBytes">Byte array for display in RopHexView</param>
+        /// <param name="isLooper">A boolean value indicates if this session is in a loop for parsing context sessions</param>
+        /// <returns>MAPI response object</returns>
+        public static Block ParseResponseMessage(Session currentSession, out byte[] hexViewBytes, bool isLooper = false)
+        {
+            Block mapiResponse = null;
+            hexViewBytes = new byte[0];
+            if (!IsFromFiddlerCore(currentSession))
+            {
+                if (IsMapihttpSession(currentSession, TrafficDirection.Out) &&
+                    currentSession.ResponseHeaders["X-ResponseCode"] == "0")
+                {
+                    NeedToParseCROPSLayer = isLooper;
+                    mapiResponse = ParseHTTPPayload(currentSession, TrafficDirection.Out, out byte[] bytesForHexView);
+                    hexViewBytes = bytesForHexView;
+                    int parsingSessionID = currentSession.id;
+                    if (IsFromFiddlerCore(currentSession))
+                    {
+                        parsingSessionID = int.Parse(currentSession["VirtualID"]);
+                    }
+                    if (mapiResponse != null)
+                    {
+                        if (currentSession.responseBodyBytes.Length != 0 &&
+                            mapiResponse.GetType().Name == "ExecuteResponseBody" &&
+                            responseDic != null &&
+                            !responseDic.ContainsKey(parsingSessionID))
+                        {
+                            if (!IsOnlyGetServerHandle)
+                            {
+                                responseDic.Add(parsingSessionID, mapiResponse);
+                                if (!responseBytesForHexview.ContainsKey(parsingSessionID))
+                                {
+                                    responseBytesForHexview.Add(parsingSessionID, bytesForHexView);
+                                }
+                            }
+                            else
+                            {
+                                if (!handleGetDic.ContainsKey(parsingSessionID))
+                                {
+                                    if ((mapiResponse as ExecuteResponseBody).RopBuffer != null &&
+                                        (mapiResponse as ExecuteResponseBody).RopBuffer.RgbOutputBuffers.Count() != 0)
+                                    {
+                                        handleGetDic.Add(parsingSessionID, ((ROPBufferServerObjectTable)(mapiResponse as ExecuteResponseBody).RopBuffer.RgbOutputBuffers[0].Payload).ServerObjectHandleTable);
+                                    }
+                                }
+                            }
+                        }
+                        else if (currentSession.responseBodyBytes.Length != 0 &&
+                            mapiResponse.GetType().Name == "ExecuteResponseBody" &&
+                            responseDic != null &&
+                            responseDic.ContainsKey(parsingSessionID) &&
+                            !IsOnlyGetServerHandle)
+                        {
+                            responseDic.Remove(parsingSessionID);
+                            responseDic.Add(parsingSessionID, mapiResponse);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                if (IsMapihttpSession(currentSession, TrafficDirection.Out) &&
+                    currentSession["X-ResponseCode"] == "0")
+                {
+                    NeedToParseCROPSLayer = isLooper;
+                    mapiResponse = ParseHTTPPayload(currentSession, TrafficDirection.Out, out byte[] bytesForHexView);
+                    hexViewBytes = bytesForHexView;
+                    int parsingSessionID = currentSession.id;
+                    if (currentSession.id == 0)
+                    {
+                        parsingSessionID = int.Parse(currentSession["VirtualID"]);
+                    }
+                    if (mapiResponse != null)
+                    {
+                        if (currentSession.responseBodyBytes.Length != 0 &&
+                            mapiResponse.GetType().Name == "ExecuteResponseBody" &&
+                            responseDic != null &&
+                            !responseDic.ContainsKey(parsingSessionID))
+                        {
+                            if (!IsOnlyGetServerHandle)
+                            {
+                                responseDic.Add(parsingSessionID, mapiResponse);
+                                if (!requestBytesForHexview.ContainsKey(parsingSessionID))
+                                {
+                                    requestBytesForHexview.Add(parsingSessionID, bytesForHexView);
+                                }
+                            }
+                            else
+                            {
+                                if (!handleGetDic.ContainsKey(parsingSessionID))
+                                {
+                                    if ((mapiResponse as ExecuteResponseBody).RopBuffer != null &&
+                                        (mapiResponse as ExecuteResponseBody).RopBuffer.RgbOutputBuffers.Count() != 0)
+                                    {
+                                        handleGetDic.Add(parsingSessionID, ((ROPBufferServerObjectTable)(mapiResponse as ExecuteResponseBody).RopBuffer.RgbOutputBuffers[0].Payload).ServerObjectHandleTable);
+                                    }
+                                }
+                            }
+                        }
+                        else if (currentSession.responseBodyBytes.Length != 0 &&
+                            mapiResponse.GetType().Name == "ExecuteResponseBody" &&
+                            responseDic != null &&
+                            responseDic.ContainsKey(parsingSessionID) &&
+                            !IsOnlyGetServerHandle)
+                        {
+                            responseDic.Remove(parsingSessionID);
+                            responseDic.Add(parsingSessionID, mapiResponse);
+                        }
+                    }
+                }
+            }
+
+
+            if (isLooper)
+            {
+                NeedToParseCROPSLayer = false;
+            }
+
+            return mapiResponse;
+        }
+
+        /// <summary>
+        /// Parse the HTTP payload to MAPI message.
+        /// </summary>
+        /// <param name="currentSession">the current session.</param>
+        /// <param name="direction">The direction of the traffic.</param>
+        /// <param name="bytes">The bytes provided for MAPI view layer.</param>
+        /// <returns>The object parsed result</returns>
+        public static Block ParseHTTPPayload(Session currentSession, TrafficDirection direction, out byte[] bytes)
+        {
+            Block objectOut = null;
+            byte[] emptyByte = new byte[0];
+            bytes = emptyByte;
+            string requestType = string.Empty;
+            byte[] bytesFromHTTP = null;
+
+            switch (direction)
+            {
+                case TrafficDirection.In:
+                    bytesFromHTTP = currentSession.requestBodyBytes;
+                    break;
+                case TrafficDirection.Out:
+                    bytesFromHTTP = currentSession.responseBodyBytes;
+                    break;
+                default:
+                    return Block.Create("Invalid traffic direction.");
+            }
+
+            if (bytesFromHTTP == null || bytesFromHTTP.Length == 0)
+            {
+                return Block.Create("Payload length from HTTP layer is 0");
+            }
+            else if (currentSession.RequestHeaders == null || !currentSession.RequestHeaders.Exists("X-RequestType"))
+            {
+                return Block.Create("X-RequestType header does not exist.");
+            }
+
+            requestType = currentSession.RequestHeaders["X-RequestType"];
+
+            if (requestType == null)
+            {
+                return Block.Create("Request type is null");
+            }
+
+            try
+            {
+                if (direction == TrafficDirection.Out &&
+                    IsFromFiddlerCore(currentSession))
+                {
+                    if (currentSession["Transfer-Encoding"] != null &&
+                        currentSession["Transfer-Encoding"] == "chunked")
+                    {
+                        bytesFromHTTP = Utilities.GetPayloadFromChunkedBody(bytesFromHTTP);
+                        bytes = bytesFromHTTP;
+                    }
+                }
+                else if (direction == TrafficDirection.Out &&
+                    currentSession.ResponseHeaders.Exists("Transfer-Encoding") &&
+                    currentSession.ResponseHeaders["Transfer-Encoding"] == "chunked")
+                {
+                    bytesFromHTTP = Utilities.GetPayloadFromChunkedBody(bytesFromHTTP);
+                    bytes = bytesFromHTTP;
+                }
+                else
+                {
+                    bytes = bytesFromHTTP;
+                }
+
+                var parser = new BinaryParser(bytesFromHTTP);
+                ParsingSession = currentSession;
+
+                if (direction == TrafficDirection.In)
+                {
+                    switch (requestType)
+                    {
+                        case "Connect":
+                            objectOut = Block.Parse<ConnectRequestBody>(parser);
+                            break;
+                        case "Execute":
+                            objectOut = Block.Parse<ExecuteRequestBody>(parser);
+                            break;
+                        case "Disconnect":
+                            objectOut = Block.Parse<DisconnectRequestBody>(parser);
+                            break;
+                        case "NotificationWait":
+                            objectOut = Block.Parse<NotificationWaitRequestBody>(parser);
+                            break;
+                        case "Bind":
+                            objectOut = Block.Parse<BindRequest>(parser);
+                            break;
+                        case "Unbind":
+                            objectOut = Block.Parse<UnbindRequest>(parser);
+                            break;
+                        case "CompareMIds":
+                            objectOut = Block.Parse<CompareMinIdsRequest>(parser);
+                            break;
+                        case "DNToMId":
+                            objectOut = Block.Parse<DnToMinIdRequest>(parser);
+                            break;
+                        case "GetMatches":
+                            objectOut = Block.Parse<GetMatchesRequest>(parser);
+                            break;
+                        case "GetPropList":
+                            objectOut = Block.Parse<GetPropListRequest>(parser);
+                            break;
+                        case "GetProps":
+                            objectOut = Block.Parse<GetPropsRequest>(parser);
+                            break;
+                        case "GetSpecialTable":
+                            objectOut = Block.Parse<GetSpecialTableRequest>(parser);
+                            break;
+                        case "GetTemplateInfo":
+                            objectOut = Block.Parse<GetTemplateInfoRequest>(parser);
+                            break;
+                        case "ModLinkAtt":
+                            objectOut = Block.Parse<ModLinkAttRequest>(parser);
+                            break;
+                        case "ModProps":
+                            objectOut = Block.Parse<ModPropsRequest>(parser);
+                            break;
+                        case "QueryRows":
+                            objectOut = Block.Parse<QueryRowsRequest>(parser);
+                            break;
+                        case "QueryColumns":
+                            objectOut = Block.Parse<QueryColumnsRequest>(parser);
+                            break;
+                        case "ResolveNames":
+                            objectOut = Block.Parse<ResolveNamesRequest>(parser);
+                            break;
+                        case "ResortRestriction":
+                            objectOut = Block.Parse<ResortRestrictionRequest>(parser);
+                            break;
+                        case "SeekEntries":
+                            objectOut = Block.Parse<SeekEntriesRequest>(parser);
+                            break;
+                        case "UpdateStat":
+                            objectOut = Block.Parse<UpdateStatRequest>(parser);
+                            break;
+                        case "GetMailboxUrl":
+                            objectOut = Block.Parse<GetMailboxUrlRequest>(parser);
+                            break;
+                        case "GetAddressBookUrl":
+                            objectOut = Block.Parse<GetAddressBookUrlRequest>(parser);
+                            break;
+                        default:
+                            {
+                                objectOut = Block.Create("Unavailable Request Type");
+                                break;
+                            }
+                    }
+                    if (AllRopsList.Count <= 0 || !AllRopsList.Contains(requestType + "Request"))
+                    {
+                        AllRopsList.Add(requestType + "Request");
+                    }
+                }
+                else
+                {
+                    switch (requestType)
+                    {
+                        case "Connect":
+                            objectOut = Block.Parse<ConnectResponseBody>(parser);
+                            break;
+                        case "Execute":
+                            objectOut = Block.Parse<ExecuteResponseBody>(parser);
+                            break;
+                        case "Disconnect":
+                            objectOut = Block.Parse<DisconnectResponseBody>(parser);
+                            break;
+                        case "NotificationWait":
+                            objectOut = Block.Parse<NotificationWaitResponseBody>(parser);
+                            break;
+                        case "Bind":
+                            objectOut = Block.Parse<BindResponse>(parser);
+                            break;
+                        case "Unbind":
+                            objectOut = Block.Parse<UnbindResponse>(parser);
+                            break;
+                        case "CompareMIds":
+                            objectOut = Block.Parse<CompareMinIdsResponse>(parser);
+                            break;
+                        case "DNToMId":
+                            objectOut = Block.Parse<DnToMinIdResponse>(parser);
+                            break;
+                        case "GetMatches":
+                            objectOut = Block.Parse<GetMatchesResponse>(parser);
+                            break;
+                        case "GetPropList":
+                            objectOut = Block.Parse<GetPropListResponse>(parser);
+                            break;
+                        case "GetProps":
+                            objectOut = Block.Parse<GetPropsResponse>(parser);
+                            break;
+                        case "GetSpecialTable":
+                            objectOut = Block.Parse<GetSpecialTableResponse>(parser);
+                            break;
+                        case "GetTemplateInfo":
+                            objectOut = Block.Parse<GetTemplateInfoResponse>(parser);
+                            break;
+                        case "ModLinkAtt":
+                            objectOut = Block.Parse<ModLinkAttResponse>(parser);
+                            break;
+                        case "ModProps":
+                            objectOut = Block.Parse<ModPropsResponse>(parser);
+                            break;
+                        case "QueryRows":
+                            objectOut = Block.Parse<QueryRowsResponse>(parser);
+                            break;
+                        case "QueryColumns":
+                            objectOut = Block.Parse<QueryColumnsResponse>(parser);
+                            break;
+                        case "ResolveNames":
+                            objectOut = Block.Parse<ResolveNamesResponse>(parser);
+                            break;
+                        case "ResortRestriction":
+                            objectOut = Block.Parse<ResortRestrictionResponse>(parser);
+                            break;
+                        case "SeekEntries":
+                            objectOut = Block.Parse<SeekEntriesResponse>(parser);
+                            break;
+                        case "UpdateStat":
+                            objectOut = Block.Parse<UpdateStatResponse>(parser);
+                            break;
+                        case "GetMailboxUrl":
+                            objectOut = Block.Parse<GetMailboxUrlResponse>(parser);
+                            break;
+                        case "GetAddressBookUrl":
+                            objectOut = Block.Parse<GetAddressBookUrlResponse>(parser);
+                            break;
+                        default:
+                            {
+                                objectOut = Block.Create("Unavailable Response Type");
+                                break;
+                            }
+                    }
+                    if (AllRopsList.Count <= 0 || !AllRopsList.Contains(requestType + "Response"))
+                    {
+                        AllRopsList.Add(requestType + "Response");
+                    }
+                }
+
+                return objectOut;
+            }
+            catch (MissingInformationException missingException)
+            {
+                DecodingContext.LogonFlagMapLogId = new Dictionary<string, Dictionary<string, Dictionary<string, Dictionary<byte, LogonFlags>>>>();
+                SafeHandleContextInformation(missingException.RopID, out objectOut, out bytes, missingException.Parameters);
+                return objectOut;
+            }
+            catch (MissingPartialInformationException missingPartialException)
+            {
+                objectOut = Partial.FindPartialInformation(missingPartialException.RopID, missingPartialException.Parameter, out bytes);
+                return objectOut;
+            }
+            catch (Exception ex)
+            {
+                return BlockException.Create("Exception", ex, 0);
+            }
+        }
+
+        /// <summary>
+        /// Clean parsed session related dictionaries
+        /// </summary>
+        public static void ResetHandleInformation()
+        {
+            requestDic = new Dictionary<int, Block>();
+            responseDic = new Dictionary<int, Block>();
+            handleGetDic = new Dictionary<int, List<uint>>();
+            handlePutDic = new Dictionary<int, List<uint>>();
+        }
+
+        /// <summary>
+        /// Reset public parameters.
+        /// </summary>
+        /// <param name="sender">The source of the event</param>
+        /// <param name="e">A EventArgs that contains the event data.</param>
+        public void AfterCallDoImport(object sender, EventArgs e)
+        {
+            ResetHandleInformation();
+            Partial.ResetPartialContextInformation();
+            Partial.ResetPartialParameters();
+        }
+
+        /// <summary>
+        /// Method to judge whether a session is from FiddlerCore or FiddlerExe
+        /// </summary>
+        /// <param name="currentSession">The session to be judged</param>
+        /// <returns>Boole value indicates whether this session is from FiddlerCore or not</returns>
+        public static bool IsFromFiddlerCore(Session session)
+        {
+            bool result = false;
+            if (session.id == 0)
+            {
+                result = true;
+            }
+            return result;
+        }
+
+        /// <summary>
+        /// Method to judge whether a session is MAPIHTTP message or not when Automation Test
+        /// </summary>
+        /// <returns>Boole value indicates whether this session is MAPIHTTP layer message</returns>
+        public static bool IsMapihttpWithoutUI()
+        {
+            if (ParsingSession != null)
+            {
+                return ParsingSession.RequestHeaders.ExistsAndContains("Content-Type", "application/mapi-http");
+            }
+            if (ParsingSession["X-ResponseCode"] != null)
+            {
+                string a = ParsingSession["X-ResponseCode"];
+                if (a == "0")
+                {
+                    return ParsingSession["Content-Type"] != null &&
+                        ParsingSession["Content-Type"] == "application/mapi-http";
+                }
+                if (a != "")
+                {
+                    return ParsingSession["Content-Type"] != null &&
+                        ParsingSession["Content-Type"] == "text/html";
+                }
+            }
+            return false;
+        }
+
+        /// <summary>
+        /// The MAPIFrame Class is used to sealing the parse result.
+        /// </summary>
+        private class MAPIFrame
+        {
+            public int Frame { get; set; }
+            public string Time { get; set; }
+            public string Url { get; set; }
+            public string LocalProcess { get; set; }
+            public string ClientRequestId { get; set; }
+            public string RequestId { get; set; }
+            public Block Request { get; set; }
+            public Block Response { get; set; }
+        }
+
+        /// <summary>
+        /// Parse the sessions from capture file using the MAPI Inspector
+        /// </summary>
+        /// <param name="sessionsFromCore">The sessions which from FiddlerCore to parse</param>
+        /// <param name="fileName">Filepath for the save result file</param>
+        /// <returns>Parse result, true means success</returns>
+        public static bool ParseCaptureFile(Session[] sessionsFromCore, string fileName)
+        {
+            var errorStringList = new List<string>();
+            var JsonResult = new List<string>();
+            bool haveWrittenJson = false;
+            StringBuilder stringBuilder = new StringBuilder();
+            SessionExtensions.AllSessionsNavigator.Init(sessionsFromCore);
+
+            Partial.ResetPartialParameters();
+            Partial.ResetPartialContextInformation();
+            ResetHandleInformation();
+
+            if (File.Exists(fileName))
+            {
+                File.Delete(fileName);
+            }
+
+            string errorPath = Path.Combine(Path.GetDirectoryName(fileName), Path.GetFileNameWithoutExtension(fileName) + ".error" + Path.GetExtension(fileName));
+            if (File.Exists(errorPath))
+            {
+                File.Delete(errorPath);
+            }
+
+            using (StreamWriter streamWriter = File.CreateText(fileName))
+            {
+                streamWriter.WriteLine("[");
+            }
+
+            var JsonConverters = new JsonConverter[] { new Newtonsoft.Json.Converters.StringEnumConverter(), new ByteArrayConverter() };
+
+            int i = 0;
+            foreach (var session in SessionExtensions.AllSessionsNavigator)
+            {
+                if (IsMapihttpSession(session, TrafficDirection.In) || IsMapihttpSession(session, TrafficDirection.Out))
+                {
+                    try
+                    {
+                        IsLooperCall = false;
+                        Partial.ResetPartialParameters();
+                        var requestObj = ParseHTTPPayload(session, TrafficDirection.In, out var bytes);
+                        var responseObj = ParseHTTPPayload(session, TrafficDirection.Out, out var bytes2);
+
+                        var mapiFrame = new MAPIFrame
+                        {
+                            Frame = session.id,
+                            Time = session.Timers.ClientBeginRequest.ToString("yyyy-MM-dd HH:mm:ss.fff"),
+                            Url = session.url,
+                            LocalProcess = session.LocalProcess,
+                            ClientRequestId = session.RequestHeaders["Client-Request-Id"],
+                            RequestId = session.ResponseHeaders["Request-Id"],
+                            Request = requestObj,
+                            Response = responseObj
+                        };
+                        JsonResult.Add(JsonConvert.SerializeObject(mapiFrame, Formatting.Indented, JsonConverters));
+                    }
+                    catch (Exception ex)
+                    {
+                        errorStringList.Add($"{errorStringList.Count + 1}. Error: Frame#{session["VirtualID"]} Error Message:{ex.Message}");
+                    }
+                    finally
+                    {
+                        DecodingContext.Notify_handlePropertyTags = new Dictionary<uint, Dictionary<int, Tuple<string, string, string, PropertyTag[], string>>>();
+                        DecodingContext.RowRops_handlePropertyTags = new Dictionary<uint, Dictionary<int, Tuple<string, string, string, PropertyTag[]>>>();
+                        TargetHandle = new Stack<Dictionary<RopIdType, Dictionary<int, uint>>>();
+                        ContextInformationCollection = new List<ContextInformation>();
+                        IsLooperCall = true;
+                    }
+
+                    // Write out what we've accumulated so far.
+                    if (JsonResult.Count >= 10)
+                    {
+                        using (StreamWriter streamWriter = File.AppendText(fileName))
+                        {
+                            if (haveWrittenJson)
+                            {
+                                streamWriter.WriteLine(",");
+                            }
+
+                            streamWriter.Write(string.Join(",\r\n", JsonResult));
+                        }
+
+                        haveWrittenJson = true;
+                        JsonResult = new List<string>();
+                    }
+                }
+
+                i++;
+            }
+
+            // Write out whatever's left and cap the array
+            using (StreamWriter streamWriter = File.AppendText(fileName))
+            {
+                if (JsonResult.Count != 0)
+                {
+                    if (haveWrittenJson)
+                    {
+                        streamWriter.WriteLine(",");
+                    }
+
+                    streamWriter.WriteLine(string.Join(",\r\n", JsonResult));
+                }
+                else
+                {
+                    streamWriter.WriteLine();
+                }
+
+                streamWriter.WriteLine("]");
+            }
+
+            foreach (string errorString in errorStringList)
+            {
+                stringBuilder.AppendLine(errorString);
+            }
+
+            if (stringBuilder.Length != 0)
+            {
+                File.WriteAllText(errorPath, stringBuilder.ToString());
+                return false;
+            }
+
+            return true;
+        }
+    }
+}

@@ -1,0 +1,21 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>disable</Nullable>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <RestorePackagesWithLockFile>true</RestorePackagesWithLockFile>
+    <!-- Preserve upstream exception rethrows and intentionally unused parser fields. -->
+    <NoWarn>CS0414;CS0649;CS0168;CS0219;CS1717;CA2200</NoWarn>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="Oracle.cs" />
+    <Compile Include="Headless.cs" />
+    <Compile Include="../../../third_party/mapi-inspector/Source/BlockParser/*.cs" />
+    <Compile Include="../../../third_party/mapi-inspector/Source/Parsers/**/*.cs" Exclude="../../../third_party/mapi-inspector/Source/Parsers/BaseStructure.cs" />
+    <Compile Include="../../../third_party/mapi-inspector/Source/SessionExtensions.cs" />
+    <Compile Include="../../../.tools/mapi-build/oracle/*.cs" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,3296 @@
+{
+  "revision": "7a76470574377d14cae612c507f45b34d70e05a0",
+  "blocks": [
+    {
+      "type": "BlockParser.BlockBytes",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "BlockParser.BlockException",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "BlockParser.BlockJunk",
+      "constructors": [
+        [
+          "String"
+        ]
+      ]
+    },
+    {
+      "type": "BlockParser.BlockStringA",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "BlockParser.BlockStringW",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "BlockParser.ScratchBlock",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_CLIENT_CONNECTION_INFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_CLIENT_CONTROL",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_ENDPOINT_CAPABILITIES",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_EXCEPTION_TRACE",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_EXORGINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_HEADER",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_OSVERSIONINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_ACCOUNTINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_CLIENTINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_DEFGC_SUCCESS",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_DEFMDB_SUCCESS",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_FAILURE",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_FAILURE_V2",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_GC_SUCCESS",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_GC_SUCCESS_V2",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_MDB_SUCCESS",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_MDB_SUCCESS_V2",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_PROCESSINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_REQUESTID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_SERVERINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_SESSIONINFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PERF_SESSIONINFO_V2",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_PROTOCOL_DEVICE_IDENTIFICATION",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AUX_SERVER_SESSION_INFO",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ActionBlock",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ActionFlavor_Forward",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ActionFlavor_Reply",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ActionFlavor_Reserved",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookFlaggedPropertyValue",
+      "constructors": [
+        [
+          "PropertyDataType"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookFlaggedPropertyValueWithType",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookPropertyRow",
+      "constructors": [
+        [
+          "LargePropertyTagArray"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookPropertyValue",
+      "constructors": [
+        [
+          "PropertyDataType"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookPropertyValueList",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookTaggedPropertyValue",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressBookTypedPropertyValue",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressEntry",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AddressList",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AndRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.Attachment",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AttachmentContent",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.AuxiliaryBufferPayload",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.BackoffRop",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.BindRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.BindResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.BitMaskRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.BitmaskCommand",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.BlockGuid",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.CN",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.CommentRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.CompareMinIdsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.CompareMinIdsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ComparePropertiesRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ConnectRequestBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ConnectResponseBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ContentRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ContentsSync",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.CountRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.Deletions",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.DisconnectRequestBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.DisconnectResponseBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.DnToMinIdRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.DnToMinIdResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.EmbeddedMessage",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.EndCommand",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.EntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.EphemeralEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ExecuteRequestBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ExecuteResponseBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ExistRestriction",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ExtendedBuffer",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ExtendedBuffer_Input",
+      "constructors": [
+        [
+          "Int32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FixedPropTypePropValue",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FixedPropTypePropValueGetPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FixedPropTypePropValuePutExtendPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FixedPropTypePropValuePutPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FlaggedPropertyValue",
+      "constructors": [
+        [
+          "PropertyDataType",
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FlaggedPropertyValueWithType",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderChange",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderContent",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderContentNoDelProps",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderMessages",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderMessagesNoDelProps",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.FolderReplicaInfo",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GLOBSET",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetAddressBookUrlRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetAddressBookUrlResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetMailboxUrlRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetMailboxUrlResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetMatchesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetMatchesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetPropListRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetPropListResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetPropsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetPropsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetSpecialTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetSpecialTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetTemplateInfoRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GetTemplateInfoResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GroupInfo",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.GroupPropertyName",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.HierarchySync",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.IDSET_REPLGUID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.IDSET_REPLID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.LargePropertyTagArray",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.LogonTime",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.LongTermID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.LongTermId",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.LongTermIdRange",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.Message",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageChange",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageChangeFull",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageChangePartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageChildren",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageContent",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageList",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MessageReadState",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MetaPropValue",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MetaPropValueGetPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MetaPropValuePutExtendPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MetaPropValuePutPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MetaTagFxDelPropMessageList",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MetaTagMessage",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MinimalEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ModLinkAttRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ModLinkAttResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ModPropsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ModPropsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ModifyRecipientRow",
+      "constructors": [
+        [
+          "PropertyTag[]"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ModifyRulesFlags",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MvPropTypePropValue",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MvPropTypePropValueGetPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MvPropTypePropValuePutExtendPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.MvPropTypePropValuePutPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.NamedPropInfo",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.NotRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.NotificationData",
+      "constructors": [
+        [
+          "UInt32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.NotificationFlags",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.NotificationWaitRequestBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.NotificationWaitResponseBody",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_BOUNCE_ActionData",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_DEFER_ACTION",
+      "constructors": [
+        [
+          "Int32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_FORWARD_and_OP_DELEGATE_ActionData",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_MOVE_and_OP_COPY_ActionData_forExtended",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_MOVE_and_OP_COPY_ActionData_forStandard",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_REPLY_and_OP_OOF_REPLY_ActionData_forExtended",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OP_REPLY_and_OP_OOF_REPLY_ActionData_forStandard",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OpenRecipientRow",
+      "constructors": [
+        [
+          "PropertyTag[]"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.OrRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PermanentEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PermissionData",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PopCommand",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PredecessorChangeList",
+      "constructors": [
+        [
+          "Int32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ProgressInformation",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ProgressPerMessage",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ProgressPerMessageChange",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ProgressTotal",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropInfo",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropList",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropValue",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyGroup",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyGroupInfo",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyName",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyProblem",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyRow",
+      "constructors": [
+        [
+          "PropertyTag[]",
+          "PropertyCountContext"
+        ],
+        [
+          "Int32",
+          "PropertyTag[]",
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyTag",
+      "constructors": [
+        [],
+        [
+          "PropertyDataType",
+          "PidTagPropertyEnum"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyTagWithGroupPropertyName",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PropertyValue",
+      "constructors": [
+        [
+          "PropertyDataType",
+          "PropertyCountContext",
+          "Boolean"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypBinary",
+      "constructors": [
+        [
+          "PropertyCountContext",
+          "Boolean"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypBoolean",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypBooleanShort",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypCurrency",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypErrorCode",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypFloating32",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypFloating64",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypFloatingTime",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypGuid",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypInteger16",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypInteger32",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypInteger64",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleBinary",
+      "constructors": [
+        [
+          "PropertyCountContext",
+          "Boolean"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleCurrency",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleFloating32",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleFloating64",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleFloatingTime",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleGuid",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger16",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger32",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleInteger64",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleString",
+      "constructors": [
+        [
+          "Boolean"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleString8",
+      "constructors": [
+        [
+          "Boolean"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypMultipleTime",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypNull",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypObject_Or_PtypEmbeddedTable",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypServerId",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypServerIdStruct",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypString",
+      "constructors": [
+        [],
+        [
+          "Boolean"
+        ],
+        [
+          "Int32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypString8",
+      "constructors": [
+        [],
+        [
+          "Boolean"
+        ],
+        [
+          "Int32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypTime",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PtypUnspecified",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.PushCommand",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.QueryColumnsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.QueryColumnsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.QueryRowsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.QueryRowsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ROPBufferServerObjectTable",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ROPInputBuffer",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ROPOutputBuffer",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RPC_HEADER_EXT",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RangeCommand",
+      "constructors": [
+        [
+          "UInt32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ReadRecipientRow",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ReadStateChanges",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.Recipient",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RecipientBlockData",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RecipientFlags",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RecipientRow",
+      "constructors": [
+        [
+          "PropertyTag[]"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RecipientType",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ResolveNamesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ResolveNamesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ResortRestrictionRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ResortRestrictionResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RestrictionType",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RgbInputBuffer",
+      "constructors": [
+        [
+          "UInt32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RgbOutputBuffer",
+      "constructors": [
+        [
+          "Int32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RgbOutputBufferPack",
+      "constructors": [
+        [
+          "UInt32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopAbortRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopAbortResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopAbortSubmitRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopAbortSubmitResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopBackoffResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopBufferTooSmallResponse",
+      "constructors": [
+        [
+          "UInt32"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCloneStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCloneStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCollapseRowRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCollapseRowResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCommitStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCommitStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyPropertiesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyPropertiesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyToRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyToResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyToStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCopyToStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateAttachmentRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateAttachmentResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateBookmarkRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateBookmarkResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateMessageRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopCreateMessageResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeleteAttachmentRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeleteAttachmentResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeleteFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeleteFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeleteMessagesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeleteMessagesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeletePropertiesNoReplicateRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeletePropertiesNoReplicateResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeletePropertiesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopDeletePropertiesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopEmptyFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopEmptyFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopExpandRowRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopExpandRowResponse",
+      "constructors": [
+        [
+          "PropertyTag[]"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferDestinationConfigureRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferDestinationConfigureResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferDestinationPutBufferExtendedRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferDestinationPutBufferExtendedResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferDestinationPutBufferRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferDestinationPutBufferResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyMessagesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyMessagesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyPropertiesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyPropertiesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyToRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceCopyToResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceGetBufferRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFastTransferSourceGetBufferResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFindRowRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFindRowResponse",
+      "constructors": [
+        [
+          "PropertyTag[]"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFreeBookmarkRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopFreeBookmarkResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetAddressTypesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetAddressTypesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetAttachmentTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetAttachmentTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetCollapseStateRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetCollapseStateResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetContentsTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetContentsTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetHierarchyTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetHierarchyTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetLocalReplicaIdsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetLocalReplicaIdsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetMessageStatusRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetMessageStatusResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetNamesFromPropertyIdsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetNamesFromPropertyIdsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetOwningServersRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetOwningServersResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPerUserGuidRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPerUserGuidResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPerUserLongTermIdsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPerUserLongTermIdsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPermissionsTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPermissionsTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertiesAllRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertiesAllResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertiesListRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertiesListResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertiesSpecificRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertiesSpecificResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertyIdsFromNamesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetPropertyIdsFromNamesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetReceiveFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetReceiveFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetReceiveFolderTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetReceiveFolderTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetRulesTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetRulesTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetSearchCriteriaRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetSearchCriteriaResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetStatusRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetStatusResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetStoreStateRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetStoreStateResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetStreamSizeRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetStreamSizeResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetTransportFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetTransportFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetValidAttachmentsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopGetValidAttachmentsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopHardDeleteMessagesAndSubfoldersRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopHardDeleteMessagesAndSubfoldersResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopHardDeleteMessagesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopHardDeleteMessagesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopIdFromLongTermIdRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopIdFromLongTermIdResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLockRegionStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLockRegionStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLogonRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLogonResponse_PrivateMailboxes",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLogonResponse_PublicFolders",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLongTermIdFromIdRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopLongTermIdFromIdResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopModifyPermissionsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopModifyPermissionsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopModifyRecipientsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopModifyRecipientsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopModifyRulesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopModifyRulesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopMoveCopyMessagesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopMoveCopyMessagesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopMoveFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopMoveFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopNotifyResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenAttachmentRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenAttachmentResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenEmbeddedMessageRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenEmbeddedMessageResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenMessageRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenMessageResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOpenStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOptionsDataRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopOptionsDataResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopPendingResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopProgressRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopProgressResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopPublicFolderIsGhostedRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopPublicFolderIsGhostedResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryColumnsAllRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryColumnsAllResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryNamedPropertiesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryNamedPropertiesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryPositionRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryPositionResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryRowsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopQueryRowsResponse",
+      "constructors": [
+        [
+          "PropertyTag[]"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReadPerUserInformationRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReadPerUserInformationResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReadRecipientsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReadRecipientsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReadStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReadStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopRegisterNotificationRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopRegisterNotificationResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReleaseRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReloadCachedInformationRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopReloadCachedInformationResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopRemoveAllRecipientsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopRemoveAllRecipientsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopResetTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopResetTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopRestrictRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopRestrictResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSaveChangesAttachmentRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSaveChangesAttachmentResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSaveChangesMessageRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSaveChangesMessageResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekRowBookmarkRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekRowBookmarkResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekRowFractionalRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekRowFractionalResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekRowRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekRowResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSeekStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetCollapseStateRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetCollapseStateResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetColumnsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetColumnsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetLocalReplicaMidsetDeletedRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetLocalReplicaMidsetDeletedResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetMessageReadFlagRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetMessageReadFlagResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetMessageStatusRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetMessageStatusResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetPropertiesNoReplicateRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetPropertiesNoReplicateResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetPropertiesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetPropertiesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetReadFlagsRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetReadFlagsResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetReceiveFolderRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetReceiveFolderResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetSearchCriteriaRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetSearchCriteriaResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetSpoolerRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetSpoolerResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetStreamSizeRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSetStreamSizeResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSortTableRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSortTableResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSpoolerLockMessageRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSpoolerLockMessageResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSubmitMessageRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSubmitMessageResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationConfigureRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationConfigureResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationGetTransferStateRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationGetTransferStateResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportDeletesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportDeletesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportHierarchyChangeRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportHierarchyChangeResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportMessageChangeRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportMessageChangeResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportMessageMoveRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportMessageMoveResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportReadStateChangesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationImportReadStateChangesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationOpenCollectorRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationOpenCollectorResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationUploadStateStreamBeginRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationUploadStateStreamBeginResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationUploadStateStreamContinueRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationUploadStateStreamContinueResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationUploadStateStreamEndRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopSynchronizationUploadStateStreamEndResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopTellVersionRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopTellVersionResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopTransportNewMailRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopTransportNewMailResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopTransportSendRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopTransportSendResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopUnlockRegionStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopUnlockRegionStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopUpdateDeferredActionMessagesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopUpdateDeferredActionMessagesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWriteAndCommitStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWriteAndCommitStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWritePerUserInformationRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWritePerUserInformationResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWriteStreamExtendedRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWriteStreamExtendedResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWriteStreamRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RopWriteStreamResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RuleAction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.RuleData",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.STAT",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SeekEntriesRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SeekEntriesResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.ServerEid",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SizeRestriction",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SizedXid",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SortOrder",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SortOrderSet",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.State",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.StoreObjectEntryID",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SubFolder",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SubFolderNoDelProps",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SubObjectRestriction",
+      "constructors": [
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.SyncMessagePartialPropList",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TaggedPropertyValue",
+      "constructors": [
+        [
+          "PropertyCountContext",
+          "PropertyTag"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TopFolder",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TransferGetBufferElement",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TransferPutBufferElement",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TransferPutBufferExtendElement",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TypedPropertyValue",
+      "constructors": [
+        [],
+        [
+          "PropertyCountContext"
+        ]
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.TypedString",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.UnbindRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.UnbindResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.UpdateStatRequest",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.UpdateStatResponse",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.VarPropTypePropValue",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.VarPropTypePropValueGetPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.VarPropTypePropValuePutExtendPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.VarPropTypePropValuePutPartial",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.WStringArray_r",
+      "constructors": [
+        []
+      ]
+    },
+    {
+      "type": "MAPIInspector.Parsers.XID",
+      "constructors": [
+        [
+          "Int32"
+        ]
+      ]
+    }
+  ]
+}
