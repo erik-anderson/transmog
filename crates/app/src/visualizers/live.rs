@@ -17,6 +17,16 @@ use transmog_extensions::{ActiveSubscriptions, BodyAccess, Direction, TrafficPha
 use transmog_session::{CatalogChange, CatalogDelta, SessionCatalog, SubscriptionEvent};
 
 const QUEUE_EVENTS: usize = 32;
+pub(super) fn available(
+    app: &crate::Application,
+    snapshot: &transmog_session::SessionSnapshot,
+    selected: Boundaries,
+    declaration: &Visualizer,
+) -> bool {
+    declaration.live_updates.is_some()
+        && !snapshot.imported
+        && RelatedGuard::new(app, snapshot, selected, declaration).is_some()
+}
 #[cfg(test)]
 mod tests;
 #[derive(Clone, Copy)]

@@ -2,8 +2,9 @@
 use super::DesktopState;
 use tauri::State;
 use transmog_app::{
-    AppError, VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerReadRequest,
-    VisualizerSelection, VisualizerSourcePage, VisualizerView,
+    AppError, VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerLiveStatus,
+    VisualizerLiveUpdate, VisualizerReadRequest, VisualizerSelection, VisualizerSourcePage,
+    VisualizerView,
 };
 
 #[tauri::command]
@@ -45,6 +46,27 @@ pub(super) async fn expand_visualizer(
         .window_application(&window)?
         .expand_visualizer(&handle, token)
         .await
+}
+#[tauri::command]
+pub(super) async fn poll_visualizer_live(
+    handle: VisualizerHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<VisualizerLiveUpdate, AppError> {
+    state
+        .window_application(&window)?
+        .poll_visualizer_live(&handle)
+        .await
+}
+#[tauri::command]
+pub(super) fn stop_visualizer_live(
+    handle: VisualizerHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<VisualizerLiveStatus, AppError> {
+    state
+        .window_application(&window)?
+        .stop_visualizer_live(&handle)
 }
 #[tauri::command]
 pub(super) async fn visualizer_source(

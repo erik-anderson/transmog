@@ -68,6 +68,27 @@ async fn settled(feed: &Feed, id: ExchangeId) {
     .unwrap();
 }
 
+#[test]
+fn live_option_requires_a_declared_retained_conversation() {
+    let app = Application::new(AppConfig::default()).unwrap();
+    let (snapshot, declaration) = live_fixture(&app);
+    let selected = boundaries("client-response").unwrap();
+    let mut composer = snapshot.clone();
+    composer.exchange_id = ExchangeId(999);
+    assert!(!available(&app, &composer, selected, &declaration));
+    let anchor = publish(&app, 99, &snapshot);
+    assert!(available(&app, &anchor, selected, &declaration));
+    let mut imported = anchor.clone();
+    imported.imported = true;
+    assert!(!available(&app, &imported, selected, &declaration));
+    let mut unavailable = anchor.clone();
+    unavailable.request_heads[0].head.headers = HeaderBlock::default();
+    assert!(!available(&app, &unavailable, selected, &declaration));
+    let mut snapshot_only = declaration;
+    snapshot_only.live_updates = None;
+    assert!(!available(&app, &anchor, selected, &snapshot_only));
+}
+
 #[tokio::test]
 async fn native_admission_filters_before_projection_and_unload_clears_the_feed() {
     let app = Application::new(AppConfig::default()).unwrap();

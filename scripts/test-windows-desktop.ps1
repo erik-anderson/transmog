@@ -105,6 +105,7 @@ if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly) {
     $nativeMatches = @(@{direction='request';headers=@(@{direction='request';name='x-example';test=@{op='present'}})},@{direction='response';contentTypes=@('text/plain')})
     $extensionManifest.visualizers += @{id='native-headers';name='Native fields';entry='parser.js';surfaces=@('headers');inputs=$nativeInputs;matches=$nativeMatches}
     $extensionManifest.visualizers += @{id='native-body';name='Native protocol';entry='parser.js';surfaces=@('body');inputs=@{request=@{headers=@();body='none'};response=@{headers=@('content-type');body='required'}};matches=@(@{direction='response';contentTypes=@('text/plain')})}
+    $extensionManifest.visualizers += @{id='native-live';name='Native live protocol';entry='parser.js';surfaces=@('body');inputs=@{request=@{headers=@();body='none'};response=@{headers=@('content-type');body='required'}};matches=@(@{direction='response';contentTypes=@('text/plain')});liveUpdates=@{events=@('response');bodyProgress=$false}}
     $extensionManifest.visualizers += @{id='native-context';name='Native context';entry='context.js';surfaces=@('body');inputs=@{request=@{headers=@('x-example');body='none'};response=@{headers=@('content-type');body='optional'}};matches=$nativeMatches;context=@{headers=@(@{direction='request';name='x-example';test=@{op='present'}});maxExchanges=8;lookAhead=$true}}
     $visualizerTrace = Join-Path $probeRoot 'visualizer-fixture.saz'
     $fixtureBody = 'Synthetic body evidence'

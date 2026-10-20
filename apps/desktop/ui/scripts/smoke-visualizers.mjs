@@ -1,4 +1,5 @@
 import {writeFile} from 'node:fs/promises';
+import {smokeLiveVisualizers} from './smoke-live-visualizers.mjs';
 
 /** Real WebView2 -> native evidence broker -> AppContainer worker -> host renderer. */
 export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
@@ -55,5 +56,6 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     shell.traffic.preferences=globalThis.__visualizerProbe.preferences;delete globalThis.__visualizerProbe;
   })()`);
   await call('Emulation.clearDeviceMetricsOverride');
-  return {...result,unloaded:true};
+  const live=await smokeLiveVisualizers(call,evaluate,screenshotPath);
+  return {...result,unloaded:true,live};
 }

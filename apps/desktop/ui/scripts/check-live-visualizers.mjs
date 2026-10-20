@@ -1,0 +1,115 @@
+import assert from 'node:assert/strict';
+import {resolve} from 'node:path';
+
+export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
+  const live=visualizer.getByRole('checkbox',{name:'Live updates',exact:true});
+  assert.equal(await live.count(),0,'An undeclared live capability was offered');
+  await selector.selectOption('auto');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.visualizerLiveSupported=true;});
+  await selector.selectOption({label:'Protocol structure'});
+  await live.waitFor();assert.equal(await live.isChecked(),false);
+  const idlePolls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live??0);
+  await page.waitForTimeout(600);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live??0),idlePolls,'Snapshot mode polled for traffic');
+  await live.check();
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.visualizerStarts.at(-1).live===true);
+  await page.waitForFunction(()=>Object.values(globalThis.__workspaceFixture.visualizerActive).some(view=>view.live.enabled));
+  await tree.focus();await page.keyboard.press('End');
+  await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).selectOption('text');
+  await tree.focus();
+  const position=await tree.evaluate(element=>({top:element.scrollTop,selected:element.getAttribute('aria-activedescendant')}));
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.roots.at(-1).value={kind:'string',value:'Updated last field'};});
+  await visualizer.locator('pre').filter({hasText:'Updated last field'}).waitFor();
+  assert.deepEqual(await tree.evaluate(element=>({top:element.scrollTop,selected:element.getAttribute('aria-activedescendant')})),position,'Live delivery moved the inspected structure');
+  assert.equal(await tree.evaluate(element=>element.matches(':focus')),true,'Live delivery stole focus');
+  assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'text');
+
+  await tree.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
+  await tree.getByText('Nested text',{exact:true}).waitFor();
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.expandedVisualizerDocument);s.nextLiveDocument.roots[1].children[0].value.value='Updated nested value';});
+  await tree.getByText('Updated nested value',{exact:true}).waitFor();
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);});
+  await tree.getByRole('button',{name:'Expand Field 1',exact:true}).waitFor();
+  await tree.getByRole('button',{name:'Expand Field 1',exact:true}).click();
+  await tree.getByText('Nested text',{exact:true}).waitFor();
+
+  // A new deferred token requires explicit expansion; do not reparse many
+  // expanded structures automatically on every live event.
+  // Off waits for a pending update, then removes admission without reopening.
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdLivePoll=true;});
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishLivePoll);
+  const starts=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
+  await live.uncheck();
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.finishLivePoll();delete s.finishLivePoll;});
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.liveStops?.length>0);
+  const stoppedPolls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live);
+  await page.waitForTimeout(600);
+  assert.equal(await live.isChecked(),false);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live),stoppedPolls,'Live continued polling after Off');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),starts,'Off restarted the worker');
+
+  // Retained immutable bytes keep the user's range and scroll across a document update.
+  await live.check();await page.waitForFunction(()=>Object.values(globalThis.__workspaceFixture.visualizerActive).some(view=>view.live.enabled));
+  await tree.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');
+  if(!await visualizer.locator('.visualizer-ranges').evaluate(element=>element.open))await visualizer.getByText('Source ranges (1)',{exact:true}).click();
+  await visualizer.getByRole('button',{name:'Original response body · offset 9007199254741000 · 8 bytes',exact:true}).click();
+  await visualizer.locator('hex-viewer').getByText('8 bytes selected',{exact:false}).waitFor();
+  const preview=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
+  const polls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live);
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.summary='Updated summary';});
+  await page.waitForFunction(previous=>globalThis.__workspaceFixture.calls.poll_visualizer_live>previous,polls);
+  await page.waitForFunction(()=>!globalThis.__workspaceFixture.nextLiveDocument);
+  assert.deepEqual(await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd})),preview);
+
+  await page.evaluate(()=>{globalThis.__workspaceFixture.liveMissedHints='2';});
+  await visualizer.getByText('Some updates may be missing. Reopen the visualizer to rebuild context.',{exact:true}).waitFor();
+  for(const [width,height] of [[1440,900],[800,600]]){
+    await page.setViewportSize({width,height});
+    assert.equal(await visualizer.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true);
+    await page.screenshot({path:resolve(root,`../../../target/ui-check/visualizer-live-${width}.png`)});
+  }
+  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-live-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
+  await page.setViewportSize({width:1440,height:900});
+  const beforeReopen=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
+  await visualizer.getByRole('button',{name:'Reopen visualizer',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.liveMissedHints='0';});
+  await page.waitForFunction(previous=>globalThis.__workspaceFixture.calls.activate_visualizer>previous,beforeReopen);
+  await live.waitFor();
+  await visualizer.getByText('Some updates may be missing. Reopen the visualizer to rebuild context.',{exact:true}).waitFor({state:'hidden'});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.liveError=true;});
+  await visualizer.getByText('Synthetic live parser failed',{exact:true}).waitFor();
+  await visualizer.getByText('Showing the last result.',{exact:true}).waitFor();
+  assert.equal(await visualizer.locator('.visualizer-heading > strong').count(),1);
+  assert.equal(await visualizer.locator('hex-viewer').count(),0);
+  const failed=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
+  await page.waitForTimeout(600);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),failed,'A failed feed restarted itself');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.liveError=false;});
+  await visualizer.getByRole('button',{name:'Retry visualizer',exact:true}).click();
+  await page.waitForFunction(()=>Object.values(globalThis.__workspaceFixture.visualizerActive).some(view=>view.live.enabled));
+
+  // Navigation reaps the feed; late delivery cannot restore data or restart polling.
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdLivePoll=true;});
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishLivePoll);
+  await page.locator('a[data-view="settings"]').click();
+  await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive).length===0);
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.finishLivePoll();delete s.finishLivePoll;});
+  await page.waitForTimeout(350);
+  assert.equal(await visualizer.locator('.visualizer-heading > strong').count(),0);
+  const hiddenPolls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live);
+  await page.waitForTimeout(350);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live),hiddenPolls);
+  await page.locator('a[data-view="traffic"]').click();
+  await visualizer.getByRole('button',{name:'Open visualizer',exact:true}).click();
+  await live.waitFor();assert.equal(await live.isChecked(),false,'Reopening a hidden pane restored Live without consent');
+
+  await selector.selectOption('auto');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.visualizerLiveAvailable=false;});
+  await selector.selectOption({label:'Protocol structure'});
+  await live.waitFor();assert.equal(await live.isDisabled(),true,'Imported/unavailable traffic offered a live feed');
+  await selector.selectOption('auto');
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;delete s.visualizerLiveAvailable;delete s.visualizerLiveSupported;delete s.liveMissedHints;});
+  await selector.selectOption({label:'Protocol structure'});
+  await visualizer.locator('.visualizer-heading > strong').waitFor();
+  assert.equal(await live.count(),0);
+}

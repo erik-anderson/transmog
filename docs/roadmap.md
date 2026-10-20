@@ -25,8 +25,10 @@ Implementation in progress. The [contract/package foundation](extensions.md) is
 implemented, along with the isolated JavaScript worker/supervisor and shared
 installation/instance registry and selected retained-evidence broker. Desktop
 selection, host rendering, source highlighting and concurrent header/body surfaces
-are implemented, as are Extensions settings and shared management. Context/live
-feeding, transactional development reload and MAPI parity remain below.
+are implemented, as are Extensions settings and shared management. Bounded
+same-origin context reads and opt-in native live feeding, including desktop
+controls and inactive unloading, are implemented. Content decoding,
+transactional development reload and MAPI parity remain below.
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
 capture, selection, and built-in inspection must not load extension code.
@@ -712,7 +714,7 @@ intentional differences. Include upstream MIT notices and dependency attribution
 | --- | --- |
 | 1. Specify and measure | Freeze the parity matrix and synthetic protocol/differential fixtures; settle package/API schemas, context identity, output provenance, and cold/active resource budgets. Inventory upstream parser families and dependencies before estimating the port. |
 | 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker/supervisor, persisted metadata registry and retained-evidence broker implemented. Bounded related-context reads enforce capture, origin, conversation and exact grants. Native opt-in live feeds share a subscription, filter before projection, coalesce bounded metadata queues and report lost hints. HTTP decoding remains. Fixtures exercise activation, projection, byte/context/live continuations, network denial, cancellation, unload and cross-window management. |
-| 3. Host renderer and development | Explicit concurrent request/response/header selection, host tree/table/text/hex rendering, exact source highlighting, deferred expansion and Extensions settings are implemented. Browser/native synthetic flows cover inert output, wide offsets, active lifetimes and shared management. Live updates and transactional hot reload remain. Prove packaged and unpacked forms use the same validation/sandbox. |
+| 3. Host renderer and development | Explicit concurrent request/response/header selection, host tree/table/text/hex rendering, exact source highlighting, deferred expansion, Extensions settings and opt-in live controls are implemented. Browser/native synthetic flows cover inert output, wide offsets, active lifetimes, filtered feeds and shared management. Transactional hot reload remains. Prove packaged and unpacked forms use the same validation/sandbox. |
 | 4. MAPI port | Build shared byte readers/property decoders, transport envelopes, mailbox/NSPI families, ROPs, auxiliary data, compression, FastTransfer and contextual decoding, including incremental request/response handling in live mode. Add differential fixtures as each family lands; no bundled release at partial coverage. |
 | 5. Parity and shipment | Run the full matrix against the pinned reference, qualify hostile inputs, resource/performance behavior, native sandbox and UX, then bundle the ordinary `.tmext` with build-generated metadata and attribution. |
 

@@ -20,3 +20,6 @@ export function expand(token) {
   node.children=[{id:'wide-integer',name:'Exact integer',value:{kind:'integer',value:'9007199254740993'},format:{byteOrder:'little-endian',radix:16},spans:[],children:[]}];
   return parsed;
 }
+export function onTraffic(events) {
+  return events.length?visualize(events[events.length-1].input):(parsed??document([]));
+}

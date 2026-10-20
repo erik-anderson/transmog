@@ -219,8 +219,7 @@ without flushing unrelated body work. Current scope and input rules are checked
 again before creating capabilities. Script and byte continuations use the same
 sandbox, deadlines and aggregate budgets. `stop_visualizer_live` removes admission
 while preserving the active worker for the visible snapshot and expansions;
-an operation already started may finish. The desktop controls and their polling
-lifecycle remain the next integration step.
+an operation already started may finish.
 
 ## Desktop visualizers
 
@@ -250,12 +249,30 @@ the same explicit reopening after the window is restored.
 Losing focus while visible does not suspend it. Extension-management notifications
 check exact activity so an unrelated installation change does not restart a view.
 
+Contributions that declare live updates show a Live updates checkbox beside the
+result title. It starts off on every activation. Imported traffic or a missing
+retained conversation leaves it unavailable. Turning it on opens a fresh worker
+from the selected exchange; turning it off stops admission and polling while
+keeping the last visible result and its expansion capabilities. Polls are
+serialized with expansion and stopping. Updates retain selected fields, expanded
+rows, tree scroll, view mode and unchanged byte selections. A replaced deferred
+branch without materialized children collapses for explicit expansion, keeping
+live delivery from automatically parsing a large set of previously opened
+branches. If delivery falls
+behind, a warning offers an explicit fresh opening to rebuild context. Parser
+failure stops the feed and freezes the last result, revoking byte access until
+an explicit retry succeeds. Hiding the pane clears that result and reaps its
+worker; opening it again returns to snapshot mode.
+
 Browser fixtures cover large trees, concurrent surfaces, deferred expansion,
 wide offsets, derived provenance, late activation and narrow/forced-color layouts.
 The isolated native desktop fixture exercises the same renderer through actual
 AppContainer initialization, retained byte continuations, expansion, denied source
 reads and unloading. These are synthetic host acceptance tests, not MAPI parity
 or validation against real Office captures; that end-to-end pass is deferred.
+The native live fixture also sends controlled HTTP exchanges through the proxy
+to the production sandbox, checking response-body continuation, origin and
+content-type filtering, explicit opt-in, stopping and inactive unloading.
 
 ## Isolated worker
 

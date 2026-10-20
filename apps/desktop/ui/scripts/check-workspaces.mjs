@@ -193,7 +193,9 @@ await page.addInitScript((configuration) => {
           if(state.holdVisualizer){state.holdVisualizer=false;await new Promise(resolve=>state.finishVisualizer=resolve);}
           state.visualizerClosed??={};if(BigInt(state.visualizerClosed[request.slot]??0)>=BigInt(request.generation))throw new Error('Visualizer closed');
           const handle={slot:request.slot,generation:request.generation,pageId:request.pageId,instanceId:'worker-'+state.visualizerStarts.length};
-          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),declaration:{}},document:structuredClone(state.visualizerDocument),sources:structuredClone(state.visualizerSources??[])};
+          const supported=state.visualizerLiveSupported??false,available=supported&&state.visualizerLiveAvailable!==false;
+          if(request.live&&!available)throw new Error('Live updates unavailable');
+          const view={handle,instance:{id:handle.instanceId,extensionId:request.extensionId,visualizerId:request.visualizerId,digest:'a'.repeat(64),declaration:{liveUpdates:supported?{events:['response'],bodyProgress:false}:null}},document:structuredClone(state.visualizerDocument),sources:structuredClone(state.visualizerSources??[]),live:{available,enabled:!!request.live,missedHints:'0'}};
           state.visualizerActive??={};state.visualizerActive[handle.slot]=view;return structuredClone(view);
         }
         case 'deactivate_visualizer': {
@@ -202,6 +204,17 @@ await page.addInitScript((configuration) => {
         }
         case 'visualizer_active': return state.visualizerActive?.[args.handle.slot]?.handle.instanceId===args.handle.instanceId;
         case 'expand_visualizer': {const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');view.document=structuredClone(state.expandedVisualizerDocument);return structuredClone(view);}
+        case 'stop_visualizer_live': {const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');view.live.enabled=false;state.liveStops??=[];state.liveStops.push(structuredClone(args.handle));return structuredClone(view.live);}
+        case 'poll_visualizer_live': {
+          const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
+          if(state.holdLivePoll){state.holdLivePoll=false;await new Promise(resolve=>state.finishLivePoll=resolve);}
+          if(state.liveError){delete state.visualizerActive[args.handle.slot];throw new Error('Synthetic live parser failed');}
+          view.live.missedHints=state.liveMissedHints??'0';
+          if(!state.nextLiveDocument)return {view:null,status:structuredClone(view.live),busy:false};
+          view.document=structuredClone(state.nextLiveDocument);delete state.nextLiveDocument;
+          if(view.live.missedHints!=='0'&&view.document.status==='complete')view.document.status='partial';
+          return {view:structuredClone(view),status:structuredClone(view.live),busy:false};
+        }
         case 'visualizer_source': {
           if(state.visualizerActive?.[args.handle.slot]?.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
           state.visualizerRanges??=[];state.visualizerRanges.push(structuredClone(args));const source=state.visualizerSources.find(source=>source.id===args.request.sourceId);if(!source)throw new Error('Unknown source');

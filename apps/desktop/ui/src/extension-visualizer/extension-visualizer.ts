@@ -3,7 +3,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {describeError} from '../utilities.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
-import {DOCUMENT_NODE,documentNode,formatText,nodeIndex,tablePage,treeRows,valueText,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
+import {DOCUMENT_NODE,documentNode,formatText,nodeIndex,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
 
 let nextGeneration=0n,nextRenderer=0;
 const next=():string=>(++nextGeneration).toString();
@@ -14,6 +14,11 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable choice:VisualizerChoice|null=null;
   @observable visualizerBusy=false;
   @observable visualizerPaused=false;
+  @observable visualizerLiveSupported=false;
+  @observable visualizerLiveAvailable=false;
+  @observable visualizerLive=false;
+  @observable visualizerLiveWarning='';
+  @observable visualizerFrozen=false;
   @observable visualizerError='';
   @observable visualizerTitle='';
   @observable visualizerStatus='';
@@ -51,6 +56,10 @@ export class ExtensionVisualizer extends WebUIElement {
   private resize:ResizeObserver|null=null;
   private listeners:UnlistenFn[]=[];
   private listenerRevision=0;
+  private liveTimer:ReturnType<typeof setTimeout>|null=null;
+  private livePoll:Promise<void>|null=null;
+  private retryLive=false;
+  private liveWanted=false;
   private readonly rendererId='visualizer-'+nextRenderer++;
   private readonly visibility=():void=>{if(!document.hidden)this.suspended=false;this.schedule();};
   activeChanged():void {this.schedule();}
@@ -85,40 +94,94 @@ export class ExtensionVisualizer extends WebUIElement {
     add('extensions-changed',()=>{const handle=this.view?.handle;if(handle)void invoke<boolean>('visualizer_active',{handle}).then(active=>{if(revision===this.listenerRevision&&!active)this.fail('This extension changed or was disabled. Choose an available viewer to continue.');}).catch(()=>{if(revision===this.listenerRevision)this.fail('The visualizer is no longer available.');});});
   }
   private unwatch():void {this.listenerRevision++;for(const unlisten of this.listeners)void Promise.resolve(unlisten()).catch(()=>undefined);this.listeners=[];}
-  private stop():void {
+  private stop(preserveResult=false):void {
     this.revision++;const pending=this.pending;this.pending=null;this.signature='';this.unwatch();
+    this.stopPolling();this.retryLive=false;this.liveWanted=false;
     if(pending)void invoke('deactivate_visualizer',pending).catch(()=>undefined);
-    this.clear();
+    if(preserveResult){this.view=null;this.visualizerHex=null;this.visualizerFrozen=true;this.visualizerLive=false;this.visualizerBusy=false;}
+    else this.clear();
   }
   private clear():void {
     this.view=null;this.root=null;this.nodes.clear();this.allRows=[];this.visualizerRows=[];
     this.visualizerBusy=false;this.visualizerPaused=false;this.visualizerTitle='';this.visualizerStatus='';this.visualizerSummary='';this.visualizerError='';
+    this.visualizerLiveSupported=false;this.visualizerLiveAvailable=false;this.visualizerLive=false;this.visualizerLiveWarning='';this.visualizerFrozen=false;
     this.visualizerSelectedName='';this.visualizerValue='';this.visualizerFormat='';this.visualizerSpans=[];this.visualizerDiagnostics=[];this.visualizerSources=[];this.visualizerSource='';this.visualizerSourceText='';this.visualizerHex=null;this.visualizerCanvasHeight='0px';this.visualizerActiveRow='';
     this.visualizerTable={columns:[],rows:[],text:'',previous:false,next:false,limited:false};
     this.expanded=new Set([DOCUMENT_NODE]);this.selected=DOCUMENT_NODE;this.tableOffset=0;
   }
   private fail(message:string):void {const signature=this.signature;this.stop();this.signature=signature;this.visualizerError=message;}
   private pause():void {this.paused=true;this.visualizerPaused=true;this.visualizerError='Visualizer paused. Open it again to continue with available retained evidence.';}
-  private async start():Promise<void> {
+  private async start(live=false):Promise<void> {
     const selection=this.selection,choice=this.choice;if(!selection||!choice)return;
-    const revision=++this.revision,slot=this.slot,generation=next();this.visualizerBusy=true;this.watch();
+    const revision=++this.revision,slot=this.slot,generation=next();this.visualizerBusy=true;this.liveWanted=live;this.visualizerLive=live;this.watch();
     try {
       const pageId=await invoke<string>('visualizer_page');
       if(revision!==this.revision||!this.visible)return;
       this.pending={slot,generation,pageId};
-      const view=await invoke<VisualizerView>('activate_visualizer',{request:{...this.pending,selection,extensionId:choice.extensionId,visualizerId:choice.visualizerId}});
+      const view=await invoke<VisualizerView>('activate_visualizer',{request:{...this.pending,selection,extensionId:choice.extensionId,visualizerId:choice.visualizerId,live}});
       if(revision!==this.revision||!this.visible){void invoke('deactivate_visualizer',{slot,generation,pageId}).catch(()=>undefined);return;}
       this.accept(view);
-    }catch(error:unknown){if(revision===this.revision)this.fail(describeError(error));}
-    finally {if(revision===this.revision)this.visualizerBusy=false;}
+    }catch(error:unknown){if(revision===this.revision){if(live&&this.root)this.failLive(describeError(error));else this.fail(describeError(error));}}
+    finally {if(revision===this.revision){this.visualizerBusy=false;this.scheduleLive(revision);}}
   }
-  retry():void {this.suspended=false;this.paused=false;this.stop();this.schedule();}
+  retry():void {const live=this.retryLive;this.suspended=false;this.paused=false;if(live&&this.visible){this.reopenLive();return;}this.stop();this.schedule();}
+  private stopPolling():void {if(this.liveTimer!==null)clearTimeout(this.liveTimer);this.liveTimer=null;}
+  private liveStatus(status:LiveStatus):void {
+    if(this.view)this.view.live=status;
+    this.visualizerLiveAvailable=status.available;this.visualizerLive=status.enabled&&this.liveWanted;
+    this.visualizerLiveWarning=status.missedHints!=='0'?'Some updates may be missing. Reopen the visualizer to rebuild context.':'';
+  }
+  private failLive(message:string):void {const signature=this.signature;this.stop(true);this.signature=signature;this.retryLive=true;this.visualizerError=message;}
+  reopenLive():void {
+    if(!this.visible||this.visualizerBusy)return;
+    const signature=this.signature;this.stop(true);this.signature=signature;this.visualizerError='';this.visualizerLiveWarning='';this.retryLive=true;
+    void this.start(true);
+  }
+  async setLive(event:Event):Promise<void> {
+    const target=event.currentTarget as HTMLInputElement;
+    if(!this.view||!this.visualizerLiveAvailable||this.visualizerBusy){target.checked=this.visualizerLive;return;}
+    if(target.checked){this.reopenLive();return;}
+    this.stopPolling();this.liveWanted=false;this.visualizerLive=false;this.retryLive=false;
+    const revision=this.revision,handle=this.view.handle;
+    try {
+      await this.livePoll;
+      if(revision!==this.revision||!this.visible)return;
+      this.liveStatus(await invoke<LiveStatus>('stop_visualizer_live',{handle}));
+    }catch(error:unknown){if(revision===this.revision)this.failLive(describeError(error));}
+  }
+  private scheduleLive(revision:number):void {
+    if(revision!==this.revision||!this.visible||!this.visualizerLive)return;
+    this.stopPolling();
+    this.liveTimer=setTimeout(()=>{
+      this.liveTimer=null;
+      if(revision!==this.revision||!this.visible||!this.visualizerLive)return;
+      if(this.visualizerBusy){this.scheduleLive(revision);return;}
+      const poll=this.pollLive(revision);this.livePoll=poll;
+      void poll.finally(()=>{if(this.livePoll===poll)this.livePoll=null;this.scheduleLive(revision);});
+    },250);
+  }
+  private async pollLive(revision:number):Promise<void> {
+    const handle=this.view?.handle;if(!handle)return;
+    try {
+      const result=await invoke<LiveUpdate>('poll_visualizer_live',{handle});
+      if(revision!==this.revision||!this.visible)return;
+      if(result.view)this.accept(result.view);else this.liveStatus(result.status);
+    }catch(error:unknown){if(revision===this.revision)this.failLive(describeError(error));}
+  }
   private accept(view:VisualizerView):void {
+    const preserveMode=!!this.root;
+    const previous=this.view,hex=this.visualizerHex;
+    const retainHex=!!hex&&previous?.handle.instanceId===view.handle.instanceId&&(
+      view.sources.some(source=>source.id===this.visualizerSource&&previous.sources.some(old=>old.id===source.id&&old.length===source.length&&old.availability===source.availability&&old.name===source.name))||
+      view.document.sources.some(source=>source.id===this.visualizerSource&&previous.document.sources.some(old=>old.id===source.id&&old.bytesBase64===source.bytesBase64&&old.name===source.name&&old.transform===source.transform&&old.exactMapping===source.exactMapping&&JSON.stringify(old.parents)===JSON.stringify(source.parents))));
     this.view=view;this.root=documentNode(view.document);this.nodes=nodeIndex(this.root);
-    if(!this.nodes.has(this.selected))this.selected=DOCUMENT_NODE;
+    this.expanded=new Set([...this.expanded].filter(id=>{const node=this.nodes.get(id);return node&&(!node.childrenToken||node.children.length>0);}));
+    const retained=preserveMode&&this.nodes.has(this.selected);
+    if(!retained){this.selected=DOCUMENT_NODE;this.tableOffset=0;}
+    this.visualizerFrozen=false;this.visualizerLiveSupported=!!view.instance.declaration.liveUpdates;this.liveStatus(view.live);
     this.visualizerTitle=view.document.title;this.visualizerStatus=view.document.status;this.visualizerSummary=view.document.summary??'';this.visualizerDiagnostics=view.document.diagnostics;
     this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:`${source.length} bytes · ${source.availability}`})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
-    this.updateRows();this.describeNode();
+    this.updateRows();this.describeNode(retained,retained&&retainHex);
   }
   private updateRows():void {
     this.allRows=this.root?treeRows(this.root,this.expanded,this.selected,this.rendererId):[];
@@ -133,20 +196,24 @@ export class ExtensionVisualizer extends WebUIElement {
     if(!this.nodes.has(id))return;this.selected=id;this.tableOffset=0;this.updateRows();this.describeNode();
   }
   clickNode(id:string):void {this.selectNode(id);this.treeViewport.focus({preventScroll:true});}
-  private describeNode():void {
+  private describeNode(preserveMode=false,retainHex=false):void {
     const node=this.nodes.get(this.selected);if(!node)return;
+    const sameSpans=JSON.stringify(node.spans)===JSON.stringify(this.visualizerSpans.map(({id:_id,label:_label,...span})=>span));
     this.visualizerSelectedName=node.name;this.visualizerValue=valueText(node.value);this.visualizerFormat=formatText(node.format);
-    this.visualizerMode=node.presentation??this.view?.document.presentation??'tree';
+    if(!preserveMode)this.visualizerMode=node.presentation??this.view?.document.presentation??'tree';
     this.visualizerSpans=node.spans.map((span,i)=>({id:String(i),...span,label:`${this.visualizerSources.find(source=>source.id===span.sourceId)?.name??span.sourceId} · offset ${span.offset} · ${span.length} bytes`}));
-    this.visualizerTable=tablePage(node,this.tableOffset);this.visualizerHex=null;
+    this.visualizerTable=tablePage(node,this.tableOffset);
+    if(retainHex&&sameSpans&&this.visualizerMode==='hex')return;
+    this.visualizerHex=null;
     if(this.visualizerMode==='hex')this.openSpan(node.spans[0]);
   }
   async toggleNode(id:string,event?:Event):Promise<void> {
     event?.stopPropagation();const node=this.nodes.get(id);if(!node)return;
+    if(this.visualizerFrozen&&node.childrenToken)return;
     if(this.expanded.has(id)){this.expanded.delete(id);this.updateRows();return;}
     if(node.childrenToken&&this.view&&!this.visualizerBusy){
       const handle=this.view.handle,revision=this.revision;this.visualizerBusy=true;
-      try {const view=await invoke<VisualizerView>('expand_visualizer',{handle,token:node.childrenToken});if(revision!==this.revision||!this.visible)return;this.expanded.add(id);this.accept(view);}
+      try {await this.livePoll;if(revision!==this.revision||!this.visible)return;const token=this.nodes.get(id)?.childrenToken;if(!token){this.expanded.add(id);this.updateRows();return;}const view=await invoke<VisualizerView>('expand_visualizer',{handle,token});if(revision!==this.revision||!this.visible)return;this.expanded.add(id);this.accept(view);}
       catch(error:unknown){if(revision===this.revision)this.fail(describeError(error));}
       finally {if(revision===this.revision)this.visualizerBusy=false;}
     }else {this.expanded.add(id);this.updateRows();}

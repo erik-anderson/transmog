@@ -476,7 +476,7 @@ impl Application {
                 "The visualizer declaration changed and no longer matches this message",
             ));
         }
-        let live_available = instance.declaration.live_updates.is_some() && !snapshot.imported;
+        let live_available = live::available(self, &snapshot, selected, &instance.declaration);
         let feed = self.start_visualizer_feed(
             request,
             &instance,

@@ -4,6 +4,9 @@ extension-visualizer { display:block; min-height:0; min-width:0; height:100%; ov
 .visualizer-heading,.visualizer-node-heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.3rem .5rem; border-bottom:1px solid var(--line); }
 .visualizer-heading > strong,.visualizer-node-heading > strong { min-width:0; overflow-wrap:anywhere; margin-right:auto; }
 .visualizer-heading details { flex-basis:100%; }
+.visualizer-live { display:inline-flex; align-items:center; gap:.3rem; white-space:nowrap; }
+.visualizer-live-warning { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.3rem .5rem; border-bottom:1px solid var(--line); }
+.visualizer-live-warning p { margin:0; min-width:0; flex:1; overflow-wrap:anywhere; }
 .visualizer-heading details p { margin:.3rem 0; white-space:pre-wrap; overflow-wrap:anywhere; }
 .visualizer-layout { flex:1; display:grid; grid-template-columns:minmax(9rem,1fr) minmax(10rem,1.1fr); min-height:0; overflow:hidden; }
 .visualizer-tree { overflow:auto; min-width:0; min-height:5rem; border-right:1px solid var(--line); background:var(--panel-subtle); }
