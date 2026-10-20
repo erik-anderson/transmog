@@ -181,9 +181,51 @@ the current worker to make space.
 
 Live parsing starts from fresh retained evidence and a new bounded queue; no
 JavaScript heap state transfers. A changed contribution declaration stops live
-delivery in the candidate and requires another explicit opt-in. Hot-reload
-preference is persisted here; file watching and desktop reload controls remain
-pending.
+delivery in the candidate and requires another explicit opt-in. Desktop reload
+controls remain pending; the native commands and source observer are available.
+
+### Active development source notifications
+
+Native `visualizer_reload_status` reports metadata changes only for the exact
+owned active development instance with hot reload enabled. Installed packages
+and inactive developer entries have no watcher. Observation starts before the
+immutable snapshot, and filters to `manifest.json`, declared JavaScript modules
+and their parent directory renames. Optional TypeScript sources and maps remain
+inert. Status polling opens no scripts and evaluates no modules, including while
+an editor holds a changed script exclusively.
+
+Windows watches share one sleeping I/O completion thread, created on demand and
+joined after its last watch closes. All asynchronous issuance runs on that thread,
+so a retiring blocking-pool caller cannot cancel observation. A fixed aligned
+16 KiB buffer and its `OVERLAPPED` remain alive until cancellation completes and
+the exact completion packet is consumed. At most 32 watches, including initializing
+candidates, exist in one observer. The observer reads directory metadata only.
+The isolated `transmog-directory-watch` crate owns this native FFI boundary.
+
+The design was reviewed against [Chromium's Windows watcher](https://chromium.googlesource.com/chromium/src/+/main/base/files/file_path_watcher_win.cc)
+(source blob `a1dbf2a6d017be4dedc6fdbfe2dc6df4f1167231`). Like that implementation,
+it uses completion ownership, prompt rearming and explicit overflow handling.
+Unlike a general-purpose path watcher, developer roots stay pinned against
+replacement, and observation never widens to a parent outside the registered
+root. Child file replacement and nested-directory renames remain observable;
+moving or replacing the root requires turning observation off first. Native
+failures retain the last good visualization and offer manual reload.
+
+Each watch retains one bounded batch of up to 1,024 unique names and 32 KiB of
+name text. The first completion rearms promptly; a second unconsumed completion
+merges names and pauses only that watch until its consumer polls. Coalescing
+duplicate names does not itself report loss or reload unlisted files. Filesystem
+storms cannot accumulate callbacks or repeatedly
+read source contents. Zero-byte overflow, malformed names and lost batches become
+a conservative reload hint for the declared inventory. Relevant changes settle
+for 250 ms, with at least one second between attempts. A reload acknowledges its
+hint when it starts, so invalid edits do not loop. Enabling observation on an
+already active result requests one rebuild for edits that may have been missed.
+
+Turning hot reload off closes all package watches without stopping the visible
+parser. Hide, navigation, disable, uninstall and unloading cancel observation as
+well as the worker and feed. There is no filesystem polling fallback on platforms
+without this notification boundary, and no watcher work on the traffic-list path.
 
 ## Extensions settings
 
@@ -197,8 +239,9 @@ management, without access histories or an auditing subsystem.
 Changes use the shared registry across main and capture-viewer windows. Disabling
 stops ready and starting workers; enabling does not resume them. Bundled entries
 can be disabled, while their files remain owned by the app. Removing an unpacked
-entry leaves its source folder intact. Its hot-reload preference is saved here;
-the active-view watcher remains pending with visualization controls below.
+entry leaves its source folder intact. Its hot-reload preference controls native
+observation only while a development visualizer is active; desktop automatic
+reload controls remain pending.
 
 Inventory reads and enable changes never evaluate source modules. Failed writes
 restore the saved checkbox state. A cleanup failure after a catalog change reads

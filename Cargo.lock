@@ -7238,6 +7238,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-directory-watch"
+version = "0.1.7"
+dependencies = [
+ "tempfile",
+ "windows-sys 0.61.2",
+]
+
+[[package]]
 name = "transmog-dotnet-sample-native"
 version = "0.1.7"
 dependencies = [
@@ -7276,6 +7284,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "transmog-directory-watch",
  "transmog-extension-supervisor",
  "transmog-extensions",
 ]

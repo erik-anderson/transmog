@@ -141,6 +141,24 @@ impl Service {
 }
 
 impl Application {
+    /// Polls native source metadata notifications for one exact visible development result.
+    /// # Errors
+    /// Rejects inactive bindings and unavailable installed entries, without reading captured data.
+    pub async fn visualizer_reload_status(
+        &self,
+        handle: &VisualizerHandle,
+    ) -> Result<transmog_extension_registry::ReloadStatus, AppError> {
+        let ticket = self.visualizers.ticket_binding(handle)?;
+        let registry = self.visualizers.registry.clone();
+        let owner = self.visualizers.owner.clone();
+        let instance = ticket.current()?.id;
+        let status = tokio::task::spawn_blocking(move || registry.reload_status(&owner, &instance))
+            .await
+            .map_err(|_| unavailable())?
+            .map_err(|_| unavailable())?;
+        ticket.current()?;
+        Ok(status)
+    }
     /// Builds a fresh isolated revision and atomically replaces a visible development instance.
     /// # Errors
     /// Preserves the previous result on source, sandbox, parsing, publication or capacity failures.
@@ -174,6 +192,9 @@ impl Application {
         let candidate = self
             .visualizers
             .begin_reload(&request.handle, &request.generation)?;
+        self.visualizers
+            .registry
+            .acknowledge_reload(&self.visualizers.owner, &request.handle.instance_id);
         let result = async {
             let mut view = self
                 .activate_visualizer_ticket(&activation, &candidate)

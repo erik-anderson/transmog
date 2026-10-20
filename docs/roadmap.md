@@ -30,8 +30,9 @@ same-origin context reads and opt-in native live feeding, including desktop
 controls and inactive unloading, are implemented. Declared on-demand HTTP
 decoding preserves separate encoded and decoded capabilities with enclosing
 provenance. Optional static traffic columns use bounded native header matching
-without loading bodies or code. Transactional development reload and MAPI
-parity remain below.
+without loading bodies or code. Native transactional development reload and
+active-only source notifications are implemented; desktop reload controls and
+MAPI parity remain below.
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
 capture, selection, and built-in inspection must not load extension code.
@@ -635,7 +636,8 @@ qualified sandbox.
 
 Register an unpacked local directory containing the same manifest and source
 layout; do not automatically discover arbitrary folders. The host watches that
-registered directory only when Hot reload is enabled. Resolve paths under its
+registered directory only while a development visualizer is active and Hot reload
+is enabled. Resolve paths under its
 root, reject reparse-point escapes, and snapshot exact bytes into an immutable
 revision before execution. A packaging command and local validator produce the
 same normalized manifest/module graph used by production; neither runs install
@@ -646,7 +648,8 @@ applies ordinary revision validation. Packaged manifests require those digests.
 This permits editing source without manually updating hashes after every save.
 
 Debounce changes and invalidate the candidate revision. With no active visualizer,
-file changes update metadata/dirty state without compiling or starting workers.
+release filesystem observation and retain only the cached declaration metadata;
+the next explicit activation snapshots current sources.
 With an explicitly opened development visualization, hot reload validates and
 starts the candidate in a fresh sandbox, then swaps only after success. Failed
 reloads preserve the last good view and identify the failed candidate. Retain

@@ -2464,6 +2464,7 @@ pub fn run() {
                 visualizers::visualizer_choices,
                 visualizers::activate_visualizer,
                 visualizers::reload_visualizer,
+                visualizers::visualizer_reload_status,
                 visualizers::expand_visualizer,
                 visualizers::poll_visualizer_live,
                 visualizers::stop_visualizer_live,

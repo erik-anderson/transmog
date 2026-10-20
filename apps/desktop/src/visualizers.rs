@@ -40,6 +40,17 @@ pub(super) async fn activate_visualizer(
     Ok(view)
 }
 #[tauri::command]
+pub(super) async fn visualizer_reload_status(
+    handle: VisualizerHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::extensions::ReloadStatus, AppError> {
+    state
+        .window_application(&window)?
+        .visualizer_reload_status(&handle)
+        .await
+}
+#[tauri::command]
 pub(super) async fn reload_visualizer(
     request: VisualizerReload,
     window: tauri::WebviewWindow,

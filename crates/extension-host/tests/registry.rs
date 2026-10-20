@@ -9,6 +9,9 @@ use transmog_extension_supervisor::HostConfig;
 use transmog_extensions::{Invocation, Manifest, VisualizationInput, VisualizationStep};
 
 const SOURCE: &str = "export function visualize(){return {kind:'document',document:{title:'View',status:'complete',presentation:'tree',roots:[]}};}";
+// These independent registries deliberately use one package ID. Serialize fixtures
+// so parallel tests cannot consume each other's global per-package worker quota.
+static REGISTRY_TEST: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
 fn manifest() -> Manifest {
     serde_json::from_value(serde_json::json!({
         "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.registry","version":"1.0.0","name":"Example",
@@ -69,6 +72,7 @@ impl Resources {
 }
 #[test]
 fn disabling_from_another_window_stops_workers_and_releases_retained_resources() {
+    let _serial = REGISTRY_TEST.blocking_lock();
     let (_root, registry, _) = setup();
     let first = registry
         .activate("window-one", "example.registry", "view")
@@ -107,6 +111,7 @@ fn disabling_from_another_window_stops_workers_and_releases_retained_resources()
 }
 #[tokio::test]
 async fn source_declarations_publish_only_after_a_validated_document() {
+    let _serial = REGISTRY_TEST.lock().await;
     let (_root, registry, sources) = setup();
     let mut changed = manifest();
     changed.visualizers[0]
@@ -180,6 +185,7 @@ async fn source_declarations_publish_only_after_a_validated_document() {
 
 #[tokio::test]
 async fn failed_or_invalid_documents_preserve_catalog_declarations() {
+    let _serial = REGISTRY_TEST.lock().await;
     let (_root, registry, sources) = setup();
     let before = registry.status().entries[0].catalog.clone();
     let mut changed = manifest();
@@ -208,6 +214,7 @@ async fn failed_or_invalid_documents_preserve_catalog_declarations() {
 
 #[tokio::test]
 async fn a_newer_published_revision_rejects_an_older_windows_staged_document() {
+    let _serial = REGISTRY_TEST.lock().await;
     let (_root, registry, sources) = setup();
     let mut changed = manifest();
     changed.visualizers[0]
@@ -251,6 +258,7 @@ async fn a_newer_published_revision_rejects_an_older_windows_staged_document() {
 
 #[test]
 fn disabling_cancels_pending_initialization_as_well_as_ready_instances() {
+    let _serial = REGISTRY_TEST.blocking_lock();
     let (_root, registry, sources) = setup();
     std::fs::write(sources.join("main.js"), format!("while(true){{}} {SOURCE}")).unwrap();
     let starting = registry.clone();
@@ -265,6 +273,7 @@ fn disabling_cancels_pending_initialization_as_well_as_ready_instances() {
 
 #[test]
 fn two_contributions_from_the_same_development_revision_can_initialize_concurrently() {
+    let _serial = REGISTRY_TEST.blocking_lock();
     let (_root, registry, sources) = setup();
     let mut manifest = manifest();
     let mut second = manifest.visualizers[0].clone();
@@ -286,4 +295,137 @@ fn two_contributions_from_the_same_development_revision_can_initialize_concurren
     registry.deactivate_owner("one");
     assert!(first_worker.is_stopped());
     assert!(!second_worker.is_stopped());
+}
+
+#[tokio::test]
+async fn source_notifications_filter_unlisted_edits_and_never_read_or_execute_changed_scripts() {
+    use std::{
+        io::Write as _,
+        os::windows::fs::OpenOptionsExt as _,
+        time::{Duration, Instant},
+    };
+    let _serial = REGISTRY_TEST.lock().await;
+    let (_root, registry, sources) = setup();
+    let instance = registry
+        .activate("window", "example.registry", "view")
+        .unwrap();
+    let status = registry.reload_status("window", &instance.id).unwrap();
+    assert!(status.available && status.enabled && !status.dirty && status.error.is_none());
+    assert!(registry.reload_status("foreign", &instance.id).is_err());
+    std::fs::write(sources.join("unused.js"), b"unused source").unwrap();
+    let until = Instant::now() + Duration::from_millis(400);
+    while Instant::now() < until {
+        assert!(
+            !registry
+                .reload_status("window", &instance.id)
+                .unwrap()
+                .dirty
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    // An exclusive writer prevents any reader from opening this file. Notifications
+    // must still work, and the existing immutable worker must keep executing old code.
+    let mut exclusive = std::fs::OpenOptions::new()
+        .write(true)
+        .truncate(true)
+        .share_mode(0)
+        .open(sources.join("main.js"))
+        .unwrap();
+    exclusive.write_all(b"throw new Error('Polling must not execute edited modules'); export function visualize(){}").unwrap();
+    exclusive.sync_all().unwrap();
+    let until = Instant::now() + Duration::from_secs(3);
+    loop {
+        let status = registry.reload_status("window", &instance.id).unwrap();
+        assert!(status.error.is_none());
+        if status.dirty {
+            break;
+        }
+        assert!(
+            Instant::now() < until,
+            "Declared script change was not observed"
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let runner = registry.runner("window", &instance.id).unwrap();
+    assert!(matches!(
+        runner.invoke(invocation(&instance.id)).await.unwrap(),
+        VisualizationStep::Document { .. }
+    ));
+    registry.acknowledge_reload("window", &instance.id);
+    assert!(
+        !registry
+            .reload_status("window", &instance.id)
+            .unwrap()
+            .dirty
+    );
+    drop(exclusive);
+    registry.set_hot_reload("example.registry", false).unwrap();
+    assert!(
+        !registry
+            .reload_status("window", &instance.id)
+            .unwrap()
+            .enabled
+    );
+    let moved = sources.with_file_name("moved-sources");
+    assert_eq!(sources.parent(), moved.parent());
+    std::fs::rename(&sources, &moved).unwrap();
+    assert!(
+        !runner.is_stopped(),
+        "Disabling observation stopped the visible parser"
+    );
+    std::fs::rename(&moved, &sources).unwrap();
+    registry.set_hot_reload("example.registry", true).unwrap();
+    assert!(
+        registry
+            .reload_status("window", &instance.id)
+            .unwrap()
+            .dirty,
+        "Late observation lost edits before registration"
+    );
+    registry.deactivate("window", &instance.id);
+    assert!(registry.reload_status("window", &instance.id).is_err());
+    std::fs::rename(&sources, &moved).unwrap();
+}
+
+#[test]
+fn disabling_hot_reload_during_initialization_cannot_register_a_late_watcher() {
+    use std::sync::{atomic::AtomicUsize, mpsc};
+    let _serial = REGISTRY_TEST.blocking_lock();
+    let (_root, registry, sources) = setup();
+    let (ready, opened) = mpsc::sync_channel(1);
+    let (release, proceed) = mpsc::sync_channel(1);
+    let initializing = registry.clone();
+    let worker = std::thread::spawn(move || {
+        let calls = AtomicUsize::new(0);
+        initializing.activate_cancellable("window", "example.registry", "view", || {
+            // The first check precedes source observation; the second occurs in
+            // worker startup, after the watch and immutable snapshot exist.
+            if calls.fetch_add(1, Ordering::SeqCst) == 1 {
+                ready.send(()).unwrap();
+                proceed.recv().unwrap();
+            }
+            false
+        })
+    });
+    opened
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .unwrap();
+    registry.set_hot_reload("example.registry", false).unwrap();
+    release.send(()).unwrap();
+    let instance = worker.join().unwrap().unwrap();
+    assert!(
+        !registry
+            .reload_status("window", &instance.id)
+            .unwrap()
+            .enabled
+    );
+    assert!(
+        !registry
+            .runner("window", &instance.id)
+            .unwrap()
+            .is_stopped()
+    );
+    let moved = sources.with_file_name("moved-sources");
+    assert_eq!(sources.parent(), moved.parent());
+    std::fs::rename(&sources, &moved).unwrap();
 }

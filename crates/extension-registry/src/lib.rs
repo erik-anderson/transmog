@@ -1,5 +1,6 @@
 //! Shared metadata-only extension management; workers belong to explicitly activated instances.
 mod directory;
+mod watch;
 use serde::{Deserialize, Serialize};
 use std::{
     any::Any,
@@ -15,6 +16,7 @@ use transmog_extensions::{
     CatalogEntry, Error, Failure, Origin, Package, Snapshot, Visualizer, sha256, valid_id,
     write_package,
 };
+pub use watch::ReloadStatus;
 
 const MAX_CATALOG_BYTES: u64 = 16 * 1024 * 1024;
 const MAX_INSTALLED: usize = 128;
@@ -62,6 +64,8 @@ pub struct Instance {
     pub visualizer_id: String,
     /// Exact code/declaration revision executing.
     pub digest: String,
+    /// Whether source reload is available; this grants no additional script capabilities.
+    pub development: bool,
     /// Exact executing declaration, including development changes since discovery.
     pub declaration: Visualizer,
 }
@@ -76,6 +80,8 @@ struct Active {
     runner: Arc<Runner>,
     resources: Option<Arc<dyn InstanceResources>>,
     publication: Option<Publication>,
+    watch_files: Vec<String>,
+    watch: Option<watch::ActiveWatch>,
 }
 #[derive(Clone)]
 struct Publication {
@@ -93,6 +99,9 @@ impl Drop for Active {
             resources.stop();
         }
         self.runner.stop();
+        if let Some(watch) = self.watch.take() {
+            watch::stop(&watch);
+        }
     }
 }
 #[derive(Default)]
@@ -355,7 +364,11 @@ impl Registry {
             ));
         }
         entry.hot_reload = enabled;
-        self.publish(entries)
+        self.publish(entries)?;
+        if !enabled {
+            self.stop_watches(id);
+        }
+        Ok(())
     }
     /// Unregisters and unloads an extension; developer source directories are never deleted.
     /// # Errors
@@ -440,9 +453,12 @@ impl Registry {
         if canceled() {
             return Err(management_failure(invalid("Activation was canceled")));
         }
+        let watch = watch::prepare(&entry);
         let snapshot = self.snapshot(id).map_err(management_failure)?;
         let digest = snapshot.digest.clone();
         let manifest = snapshot.manifest.clone();
+        let watch_files = watch::paths(&manifest);
+        watch::update(watch.as_ref(), &watch_files);
         let declaration = manifest
             .visualizers
             .iter()
@@ -476,8 +492,30 @@ impl Registry {
             extension_id: id.into(),
             visualizer_id: visualizer.into(),
             digest,
+            development: entry.catalog.origin == Origin::Development,
             declaration,
         };
+        let active = Active {
+            info: info.clone(),
+            owner: owner.into(),
+            runner,
+            resources: None,
+            watch_files,
+            watch,
+            publication: (entry.catalog.origin == Origin::Development).then_some(Publication {
+                expected: entry.clone(),
+                manifest,
+            }),
+        };
+        self.register_active(&entry, active, canceled)?;
+        Ok(info)
+    }
+    fn register_active(
+        &self,
+        entry: &ExtensionEntry,
+        mut active: Active,
+        canceled: impl Fn() -> bool,
+    ) -> Result<(), Failure> {
         // Serialize the final stale check and staged instance registration with disable,
         // uninstall and replacement; none can race an instance back into the registry.
         let _mutation = self
@@ -493,30 +531,27 @@ impl Registry {
             .state
             .lock()
             .map_err(|_| management_failure(invalid("Extension state is unavailable")))?;
-        if !state
+        let Some(current) = state
             .entries
             .iter()
-            .any(|e| activation_current(e, &entry, &info.digest))
-        {
+            .find(|e| activation_current(e, entry, &active.info.digest))
+        else {
             return Err(Failure::new(
                 transmog_extensions::FailureKind::Unavailable,
                 "Extension changed during activation",
             ));
+        };
+        let stopped_watch = if current.hot_reload {
+            None
+        } else {
+            active.watch.take()
+        };
+        state.active.insert(active.info.id.clone(), active);
+        drop(state);
+        if let Some(watch) = stopped_watch {
+            watch::stop(&watch);
         }
-        state.active.insert(
-            info.id.clone(),
-            Active {
-                info: info.clone(),
-                owner: owner.into(),
-                runner,
-                resources: None,
-                publication: (entry.catalog.origin == Origin::Development).then_some(Publication {
-                    expected: entry,
-                    manifest,
-                }),
-            },
-        );
-        Ok(info)
+        Ok(())
     }
     /// Publishes a staged development declaration only after this worker produced a valid document.
     /// # Errors

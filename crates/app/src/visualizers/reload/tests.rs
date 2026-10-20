@@ -9,6 +9,7 @@ fn instance(id: &str) -> Instance {
         extension_id: "example.evidence".into(),
         visualizer_id: "view".into(),
         digest: "a".repeat(64),
+        development: true,
         declaration: declaration(),
     }
 }

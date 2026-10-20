@@ -18,5 +18,8 @@ transmog-extension-supervisor = { version = "=0.1.7", path = "../extension-super
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "=1.1.5", features = ["fs"] }
 
+[target.'cfg(windows)'.dependencies]
+transmog-directory-watch = { version = "=0.1.7", path = "../directory-watch" }
+
 [lints]
 workspace = true

@@ -192,6 +192,7 @@ fn instance_bindings_cannot_follow_a_replacement_or_another_page() {
             extension_id: "example.evidence".into(),
             visualizer_id: "view".into(),
             digest: "a".repeat(64),
+            development: true,
             declaration: declaration(),
         })
         .unwrap();

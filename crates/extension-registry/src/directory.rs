@@ -7,6 +7,8 @@ use std::{
     sync::Arc,
 };
 use transmog_extensions::{Error, MAX_MANIFEST_BYTES, MAX_PACKAGE_BYTES, Manifest, Snapshot};
+mod watch;
+pub(super) use watch::Watch;
 
 #[cfg(windows)]
 use std::{fs::OpenOptions, path::PathBuf};
