@@ -494,6 +494,14 @@ structure viewport and returns keyboard focus to the tree. Revealing a selection
 never fetches deferred children. Right Arrow expands branches or enters their
 children; it leaves a leaf selected.
 
+Drag the separator between the structure tree and selected data to resize them,
+or focus it and use arrow keys (Shift for larger steps). Home or a double-click
+restores the default. Wide panes split side by side; narrow panes stack vertically.
+Each pane remembers both ratios for this window without storing captured data.
+Choosing Source ranges keeps Hex selected while moving between fields and moves
+the highlight to the new field's first range. A field without a range clears the
+highlight and says so; choosing another representation ends this Hex preference.
+
 Source-range buttons select exact decimal offsets in the existing paged Hex
 viewer. Original sources use the active worker's capability; derived buffers stay
 document-local and show their transform and parent regions. Enclosing provenance

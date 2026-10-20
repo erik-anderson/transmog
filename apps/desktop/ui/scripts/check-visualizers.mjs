@@ -5,6 +5,7 @@ import {checkHttpVisualizers} from './check-http-visualizers.mjs';
 import {checkReloadVisualizers} from './check-reload-visualizers.mjs';
 import {checkVisualizerSelection} from './check-visualizer-selection.mjs';
 import {checkAutomaticVisualizers} from './check-automatic-visualizers.mjs';
+import {checkVisualizerPanes} from './check-visualizer-panes.mjs';
 
 export async function checkVisualizers(page,root) {
   await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
@@ -43,6 +44,7 @@ export async function checkVisualizers(page,root) {
     await visualizer.getByText('9007199254740993',{exact:true}).last().waitFor();
     await visualizer.getByText('Example protocol · little-endian · Base 16',{exact:true}).waitFor();
     await details.waitFor();
+    await checkVisualizerPanes(page,root,visualizer);
     const selected=await tree.getAttribute('aria-activedescendant');
     const inspected=await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId);
     await visualizer.getByRole('button',{name:'Close structure details',exact:true}).click();
@@ -112,6 +114,10 @@ export async function checkVisualizers(page,root) {
     await tree.focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
     await tree.getByText('Nested text',{exact:true}).waitFor();
     await page.keyboard.press('ArrowDown');
+    assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'hex','Selecting a field closed Source ranges Hex');
+    await page.waitForFunction(element=>{const viewer=(element.shadowRoot??element).querySelector('hex-viewer');return viewer?.rangeStart==='1'&&viewer?.rangeEnd==='4';},await visualizer.elementHandle());
+    assert.equal(await visualizer.locator('.visualizer-ranges').evaluate(element=>element.open),true,'Selecting a field collapsed Source ranges');
+    await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).selectOption('text');
     await visualizer.locator('pre').filter({hasText:'<script>capture remains inert</script>'}).waitFor();
     if(!await visualizer.locator('.visualizer-ranges').evaluate(element=>element.open))await visualizer.getByText('Source ranges (1)',{exact:true}).click();
     await visualizer.getByRole('button',{name:'Decoded structure · offset 1 · 4 bytes',exact:true}).click();

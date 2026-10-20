@@ -8,6 +8,7 @@ import {DOCUMENT_NODE,documentNode,formatText,nodeAncestors,nodeIndex,sourceDesc
 
 let nextGeneration=0n,nextRenderer=0;
 const next=():string=>(++nextGeneration).toString();
+const paneSplits = new Map<string, {vertical: number; horizontal: number}>();
 export class ExtensionVisualizer extends WebUIElement {
   @attr slot='visualizer';
   @attr({mode:'boolean'}) active=false;
@@ -31,6 +32,10 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable visualizerCanvasHeight='0px';
   @observable visualizerActiveRow='';
   @observable visualizerDetailsOpen=false;
+  @observable visualizerSplit = '48';
+  @observable visualizerTreeShare = '48%';
+  @observable visualizerOrientation = 'vertical';
+  @observable visualizerInitialSplit = '48';
   @observable visualizerSelectedName='';
   @observable visualizerValue='';
   @observable visualizerFormat='';
@@ -80,13 +85,38 @@ export class ExtensionVisualizer extends WebUIElement {
   automaticChanged():void {this.paused=false;this.schedule();}
   selectionChanged():void {this.schedule();}
   choiceChanged(previous:VisualizerChoice|null|undefined):void {if(previous?.key!==this.choice?.key)this.paused=false;this.schedule();}
-  slotChanged():void {this.schedule();}
+  slotChanged():void {this.updateLayout();this.schedule();}
   protected hydratedCallback():void {
     this.observer=new IntersectionObserver(entries=>{this.inViewport=entries.some(entry=>entry.isIntersecting);this.schedule();});
     this.observer.observe(this);
-    this.resize=new ResizeObserver(()=>this.windowRows());this.resize.observe(this.treeViewport);
+    this.resize=new ResizeObserver(()=>{this.updateLayout();this.windowRows();});
+    this.resize.observe(this);this.resize.observe(this.treeViewport);
+    this.updateLayout();
     document.addEventListener('visibilitychange',this.visibility);
     this.schedule();
+  }
+  private updateLayout(): void {
+    if (!this.isConnected) return;
+    const orientation = this.clientWidth <= 500 ? 'horizontal' : 'vertical';
+    const splits = paneSplits.get(this.slot);
+    const value = splits?.[orientation] ?? (orientation === 'vertical' ? 48 : 40);
+    this.visualizerOrientation = orientation;
+    this.visualizerInitialSplit = orientation === 'vertical' ? '48' : '40';
+    this.visualizerSplit = String(value);
+    this.visualizerTreeShare = value + '%';
+  }
+  resizeStructure(event: CustomEvent<{value: number; committed: boolean}>): void {
+    event.stopPropagation();
+    const splits = paneSplits.get(this.slot) ?? {vertical: 48, horizontal: 40};
+    const value = Math.max(15, Math.min(85, event.detail.value));
+    if (this.visualizerOrientation === 'vertical') splits.vertical = value;
+    else splits.horizontal = value;
+    // Host panes have stable identities. Bound preferences for transient/test panes too.
+    if (!paneSplits.has(this.slot) && paneSplits.size >= 32) paneSplits.delete(paneSplits.keys().next().value!);
+    paneSplits.set(this.slot, splits);
+    this.visualizerSplit = String(value);
+    this.visualizerTreeShare = value + '%';
+    this.windowRows();
   }
   private schedule():void {
     if(this.queued)return;this.queued=true;
@@ -271,7 +301,7 @@ export class ExtensionVisualizer extends WebUIElement {
     this.selected = id;
     this.tableOffset = 0;
     this.updateRows(true);
-    this.describeNode();
+    this.describeNode(this.visualizerMode === 'hex');
     this.scrollSelectedRow();
   }
   private scrollSelectedRow(): void {
@@ -316,6 +346,7 @@ export class ExtensionVisualizer extends WebUIElement {
     if(retainHex&&sameSpans&&this.visualizerMode==='hex')return;
     this.visualizerHex=null;
     if(this.visualizerMode==='hex')this.openSpan(node.spans[0]);
+    if(this.visualizerMode==='hex'&&!node.spans.length)this.visualizerSourceText+=' · No source range for this field.';
   }
   async toggleNode(id: string, event?: Event): Promise<void> {
     event?.stopPropagation();
@@ -329,7 +360,7 @@ export class ExtensionVisualizer extends WebUIElement {
         this.selected = id;
         this.tableOffset = 0;
         this.updateRows();
-        this.describeNode();
+        this.describeNode(this.visualizerMode === 'hex');
       }
       return;
     }
