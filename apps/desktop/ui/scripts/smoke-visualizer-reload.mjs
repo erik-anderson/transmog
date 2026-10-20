@@ -26,13 +26,13 @@ export async function smokeVisualizerReload(evaluate,tracePath) {
     await assert.rejects(()=>reloadStatus(first.handle),'Replaced instance retained source notifications');
     const source=first.document.roots[0].spans[0].sourceId;
     await assert.rejects(()=>invoke('visualizer_source',{handle:first.handle,request:{sourceId:source,offset:'0',maxBytes:1}}));
-    const published=(await invoke('extension_status')).entries[0].catalog.digest;
+    const published=(await invoke('extension_status')).entries.find(entry=>entry.catalog.manifest.id==='test.development').catalog.digest;
     for(const source of ['this is not JavaScript!',"export function visualize(){throw new Error('failed parser');}","export function visualize(){return {kind:'document',document:{title:'Invalid',status:'complete',presentation:'tree',roots:[{id:'broken'}]}};}"]) {
       await writeFile(path,source);
       await assert.rejects(()=>invoke('reload_visualizer',{request:{handle:second.handle,generation:String(++generation)}}));
       assert.equal((await reloadStatus(second.handle)).dirty,false,'Failed source changes were repeatedly scheduled');
       assert.equal(await invoke('visualizer_active',{handle:second.handle}),true,'A failed candidate discarded the current visualization');
-      assert.equal((await invoke('extension_status')).entries[0].catalog.digest,published,'A failed candidate published its declaration');
+      assert.equal((await invoke('extension_status')).entries.find(entry=>entry.catalog.manifest.id==='test.development').catalog.digest,published,'A failed candidate published its declaration');
       const sourceId=second.document.roots[0].spans[0].sourceId;
       assert.equal(Buffer.from((await invoke('visualizer_source',{handle:second.handle,request:{sourceId,offset:'0',maxBytes:8}})).bytesBase64,'base64').toString(),'Syntheti');
     }
@@ -43,7 +43,7 @@ export async function smokeVisualizerReload(evaluate,tracePath) {
     assert.ok(Date.now()-began<3000,'Cancel waited for candidate initialization to time out');
     assert.equal(await invoke('visualizer_active',{handle:second.handle}),false);
     await assert.rejects(()=>reloadStatus(second.handle),'Unloaded instance retained source notifications');
-    assert.equal((await invoke('extension_status')).entries[0].catalog.digest,published,'Canceled initialization published metadata');
+    assert.equal((await invoke('extension_status')).entries.find(entry=>entry.catalog.manifest.id==='test.development').catalog.digest,published,'Canceled initialization published metadata');
     return {freshWorker:true,oldHandlesRevoked:true,failedSourceRetained:true,failedDocumentRetained:true,sourceCapabilitiesRetained:true,canceledStartup:true,sourceNotifications:true,failedEditsAcknowledged:true,unloadedNotificationsDenied:true};
   } finally {
     await writeFile(path,original);

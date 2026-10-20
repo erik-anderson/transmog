@@ -53,3 +53,21 @@ test("declared code pages preserve non-ASCII characters and byte order", () => {
   assert.equal(new BinaryReader([0x80, 0x93, 0xe9], "cp1252").windows1252(3), "€“é");
   assert.equal(new BinaryReader([0x03, 0xa9, 0, 0], "big-endian").utf16(4, false), "Ω\0");
 });
+
+test("UTF-16 rejects unpaired surrogates before crossing the JSON host boundary", () => {
+  for (const bytes of [
+    [0, 0xd8],
+    [0, 0xdc],
+    [0, 0xd8, 65, 0],
+  ]) {
+    assert.throws(
+      () => new BinaryReader(bytes, "wide").utf16(bytes.length),
+      (error) => error.kind === "malformed" && error.message.includes("unpaired surrogate"),
+    );
+    assert.throws(
+      () => new BinaryReader([...bytes, 0, 0], "terminated").terminatedString(true),
+      ParseError,
+    );
+  }
+  assert.equal(new BinaryReader([0x3d, 0xd8, 0x00, 0xde], "pair").utf16(4), "😀");
+});

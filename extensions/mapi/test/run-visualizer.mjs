@@ -6,7 +6,7 @@ import { createInterface } from "node:readline";
 
 const context = vm.createContext({}, { codeGeneration: { strings: false, wasm: false } }),
   modules = new Map(),
-  root = new URL("../dist/", import.meta.url);
+  root = new URL("../dist/runtime/", import.meta.url);
 vm.runInContext("globalThis.Function=undefined;globalThis.eval=undefined;", context);
 async function module(url) {
   if (!url.href.startsWith(root.href) || !url.pathname.endsWith(".js"))
@@ -191,7 +191,7 @@ for await (const line of createInterface({ input: process.stdin, crlfDelay: Infi
         contextReads,
         decodedReads,
         expansions,
-        parserLoaded: [...modules.keys()].some((url) => url.endsWith("/decode.js")),
+        parserLoaded: [...modules.keys()].some((url) => url.endsWith("/body.js")),
       }),
     );
   } catch (error) {

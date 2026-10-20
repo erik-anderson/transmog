@@ -18,8 +18,9 @@ def u32(value): return struct.pack("<I",value)
 
 def main():
     parser=argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--typescript",action="store_true")
-    arguments=parser.parse_args()
+    parser.add_argument("--typescript",action="store_true",default=True,help=argparse.SUPPRESS)
+    parser.parse_args()
+    parity.subprocess.run(["node", str(ROOT / "extensions/mapi/build.mjs")], cwd=ROOT, check=True)
     corpus=parity.corpus
     valid=next(item for item in corpus.cases() if item["name"]=="connect-request-nonzero")
     saved=json.loads((ROOT/"extensions/mapi/test/reference-cases.json").read_text(encoding="utf-8"))
@@ -44,18 +45,14 @@ def main():
     probes.append(too_many)
     fixtures=[]
     for probe in probes:fixtures.extend([probe,valid])
-    runner="run-typescript.mjs" if arguments.typescript else "run-protocol.mjs"
+    runner="run-typescript.mjs"
     results=parity.run(["node","--max-old-space-size=192","--experimental-vm-modules",str(ROOT/"extensions/mapi/test"/runner)],fixtures)
-    if arguments.typescript:
-        specification=importlib.util.spec_from_file_location("typescript_parity",ROOT/"scripts/test-mapi-typescript.py")
-        typescript=importlib.util.module_from_spec(specification);specification.loader.exec_module(typescript)
-        expected=typescript.native_facts(expected,payload)
+    specification=importlib.util.spec_from_file_location("typescript_parity",ROOT/"scripts/test-mapi-typescript.py")
+    typescript=importlib.util.module_from_spec(specification);specification.loader.exec_module(typescript)
+    expected=typescript.native_facts(expected,payload)
     for index,probe in enumerate(probes):
         actual,recovered=results[index*2:index*2+2]
-        if arguments.typescript:
-            recovered_facts=typescript.typescript_facts(recovered["root"])
-        else:
-            recovered_facts=parity.normalize(recovered)
+        recovered_facts=typescript.typescript_facts(recovered["root"])
         if recovered_facts!=expected:
             raise AssertionError("Parser state leaked after "+probe["name"])
         if probe["family"]=="limit":
@@ -63,22 +60,13 @@ def main():
             continue
         if actual and "failure" in actual:continue
         length=len(base64.b64decode(probe["message"]["request"]))
-        if arguments.typescript:
-            for node in typescript.walk_fields(actual["root"]):
-                span=node["range"]
-                if not 0<=span["offset"]<=span["offset"]+span["length"]<=length:
-                    raise AssertionError("Out-of-range TypeScript evidence span after "+probe["name"])
-            if probe is empty and (any(node.get("issue") for node in typescript.walk_fields(actual["root"])) or
-                                   not any(node["name"]=="RopRelease request" for node in typescript.walk_fields(actual["root"]))):
-                raise AssertionError("An empty upload consumed the following ROP")
-            continue
-        for node in parity.nodes(actual):
-            if node.get("sourceId") and not 0<=int(node["offset"])<=int(node["offset"])+int(node["size"])<=length:
-                raise AssertionError("Out-of-range evidence span after "+probe["name"]+": "+str(node)[:300])
-        if probe is empty:
-            types={node["type"] for node in parity.nodes(actual)}
-            if "MAPIInspector.Parsers.RopReleaseRequest" not in types or "BlockParser.BlockException" in types:
-                raise AssertionError("An empty upload consumed the following ROP")
+        for node in typescript.walk_fields(actual["root"]):
+            span=node["range"]
+            if not 0<=span["offset"]<=span["offset"]+span["length"]<=length:
+                raise AssertionError("Out-of-range TypeScript evidence span after "+probe["name"])
+        if probe is empty and (any(node.get("issue") for node in typescript.walk_fields(actual["root"])) or
+                               not any(node["name"]=="RopRelease request" for node in typescript.walk_fields(actual["root"]))):
+            raise AssertionError("An empty upload consumed the following ROP")
     print(f"MAPI robustness: {len(probes)} malformed/boundary probes and {len(probes)} same-worker recovery checks passed")
 
 

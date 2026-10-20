@@ -46,10 +46,15 @@ export async function cargoCredits(repository, metadata) {
   }
   return entries;
 }
+export async function extensionCredits(repository) {
+  const mapi=JSON.parse(await readFile(join(repository,'third_party/mapi-inspector/source.json'),'utf8'));
+  return [{id:'mapi-inspector',name:'Microsoft Office Inspectors for Fiddler (MAPI reference)',version:mapi.revision,license:'MIT',text:await readFile(join(repository,'third_party/mapi-inspector/LICENSE'),'utf8')}];
+}
 export async function buildCredits(uiRoot, output) {
   const repository=resolve(uiRoot,'../../..');
   const metadata=JSON.parse(execFileSync('cargo',['metadata','--format-version','1','--locked','--offline'],{cwd:repository,maxBuffer:32*1024*1024,encoding:'utf8',windowsHide:true}));
   const entries=await cargoCredits(repository,metadata);
+  entries.push(...await extensionCredits(repository));
   const lock=JSON.parse(await readFile(join(uiRoot,'package-lock.json'),'utf8'));
   for(const [path,pkg] of Object.entries(lock.packages)) {
     if(!path||pkg.dev||!pkg.version)continue;
@@ -69,5 +74,5 @@ export async function buildCredits(uiRoot, output) {
     entries.push({id:directory,name,version:String(receipt[versionField]),license,text:await readFile(join(base,'LICENSE'),'utf8')});
   }
   entries.sort((a,b)=>a.name.localeCompare(b.name)||a.version.localeCompare(b.version));
-  await writeFile(output,JSON.stringify({summary:'Transmog includes third-party libraries and bundled native code. Their license and copyright notices are available below.',entries}));
+  await writeFile(output,JSON.stringify({summary:'Transmog includes third-party libraries, native code and visualizer extensions. Their license and copyright notices are available below.',entries}));
 }

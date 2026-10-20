@@ -65,6 +65,9 @@ tauri = { version = "=2.12.4", default-features = false, features = ["test"] }
 transmog-automation = { version = "=0.1.7", path = "../../crates/proxy-automation" }
 transmog-core = { version = "=0.1.7", path = "../../crates/proxy-core" }
 
+[build-dependencies]
+transmog-extensions = { version = "=0.1.7", path = "../../crates/extensions" }
+
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.3", features = [] }
 

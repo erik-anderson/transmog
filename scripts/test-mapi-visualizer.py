@@ -3,6 +3,7 @@ import base64
 import copy
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 ROOT=Path(__file__).resolve().parents[1]
@@ -22,6 +23,7 @@ def run(fixtures,entry="body"):
 
 
 def main():
+    subprocess.run(["node", str(ROOT / "extensions/mapi/build.mjs")], cwd=ROOT, check=True)
     corpus=parity.corpus.cases()
     fixtures=[fixture for fixture in corpus if "type" not in fixture]
     outcomes=run(fixtures)

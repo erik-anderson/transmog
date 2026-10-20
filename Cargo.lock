@@ -7228,6 +7228,7 @@ dependencies = [
  "transmog-automation",
  "transmog-capture",
  "transmog-core",
+ "transmog-extensions",
  "transmog-host-windows",
  "transmog-http",
  "transmog-portable",

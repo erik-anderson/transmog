@@ -148,12 +148,34 @@ export class BinaryReader {
     if (length % 2 !== 0) {
       throw new ParseError("malformed", "UTF-16 has an incomplete code unit", this.range());
     }
+    const start = this.position;
     const characters: string[] = [];
     for (let index = 0; index < length; index += 2) {
       const unit = littleEndian
         ? this.integer("u16")
         : this.integer("u8") * 256 + this.integer("u8");
       characters.push(String.fromCharCode(unit));
+    }
+    return this.utf16Text(characters, start);
+  }
+
+  private utf16Text(characters: string[], start: number): string {
+    for (let index = 0; index < characters.length; index++) {
+      const unit = characters[index]!.charCodeAt(0);
+      if (unit >= 0xd800 && unit <= 0xdbff) {
+        const next = characters[index + 1]?.charCodeAt(0);
+        if (next !== undefined && next >= 0xdc00 && next <= 0xdfff) {
+          index++;
+          continue;
+        }
+      } else if (unit < 0xdc00 || unit > 0xdfff) {
+        continue;
+      }
+      throw new ParseError(
+        "malformed",
+        "UTF-16 has an unpaired surrogate",
+        this.range(start + index * 2, 2),
+      );
     }
     return characters.join("");
   }
@@ -168,11 +190,12 @@ export class BinaryReader {
   }
 
   terminatedString(wide: boolean): string {
+    const start = this.position;
     const characters: string[] = [];
     for (;;) {
       const value = this.integer(wide ? "u16" : "u8");
       if (value === 0) {
-        return characters.join("");
+        return wide ? this.utf16Text(characters, start) : characters.join("");
       }
       characters.push(wide || value < 128 ? String.fromCharCode(value) : "?");
     }

@@ -2170,10 +2170,11 @@ pub fn run() {
         script_workspace_path: Some(state_root.join("scripts-v1")),
         script_host_executable: packaged_script_host(),
         preview_worker_executable: packaged_preview_worker(),
-        extensions: Some(transmog_app::extensions::Registry::load(
+        extensions: Some(transmog_app::extensions::Registry::load_with_bundled(
             state_root.join("extensions-v1"),
             packaged_extension_host()
                 .map(|executable| transmog_app::extensions::HostConfig { executable }),
+            &crate::bundled_extensions::RESOURCES,
         )),
         response_asset_root: Some(state_root.join("response-assets-v1")),
         saved_demo_root: Some(state_root.join("saved-demos-v1")),

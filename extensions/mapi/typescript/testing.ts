@@ -5,6 +5,7 @@ import type { DecodeResult, Direction, Exchange } from "./model.js";
 import { readPropertyTag, readPropertyValue, readRestriction } from "./properties.js";
 import type { RecordReader } from "./record.js";
 import { readRop } from "./rops.js";
+export { base64 } from "./shared.js";
 
 interface FixtureOptions {
   readonly type?: string;

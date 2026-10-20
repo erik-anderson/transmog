@@ -9,7 +9,7 @@
     {
       "id": "body-request",
       "name": "MAPI/HTTP",
-      "entry": "src/body.js",
+      "entry": "dist/runtime/body.js",
       "surfaces": [
         "body"
       ],
@@ -466,7 +466,7 @@
     {
       "id": "body-response",
       "name": "MAPI/HTTP",
-      "entry": "src/body.js",
+      "entry": "dist/runtime/body.js",
       "surfaces": [
         "body"
       ],
@@ -923,7 +923,7 @@
     {
       "id": "headers",
       "name": "MAPI/HTTP headers",
-      "entry": "src/headers.js",
+      "entry": "dist/runtime/headers.js",
       "surfaces": [
         "headers"
       ],
@@ -1022,64 +1022,20 @@
   ],
   "files": [
     {
-      "path": "LICENSES/LINQ-MIT.txt",
-      "bytes": 1097,
-      "sha256": "94390dd90d426e4332d1f4e6ab562417a332f9880cc5367445b8a779710eae3c"
+      "path": "dist/runtime/body.js",
+      "bytes": 0
     },
     {
-      "path": "LICENSES/Long-APACHE-2.0.txt",
-      "bytes": 11358,
-      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
-    },
-    {
-      "path": "LICENSES/Office-MIT.txt",
-      "bytes": 1074,
-      "sha256": "85ae63489b69170ae3d74ade5fe7c4c149c2c9af00b3be4b52888b82e7bdcd16"
-    },
-    {
-      "path": "LICENSES/Transpose-APACHE-2.0.txt",
-      "bytes": 11389,
-      "sha256": "a97d60bb77fb3a88e91b40c55bf513d329e4f6bddbae40acff3b2d3cc35ba71f"
-    },
-    {
-      "path": "LICENSES/decimal-MIT.txt",
-      "bytes": 1104,
-      "sha256": "d93938b1051df8cca3abdebd64cce29d40f8b1f31472509de40e979649b9df2e"
+      "path": "dist/runtime/headers.js",
+      "bytes": 0
     },
     {
       "path": "README.runtime.md",
-      "bytes": 1133,
-      "sha256": "78117ca92f9d97b6270a353b163dd79ad5d871ee8b206b04b5b26e21fbb073ef"
+      "bytes": 0
     },
     {
-      "path": "generated/parser.js",
-      "bytes": 4468721,
-      "sha256": "47cce9fc1153fce60b565d9bf27f7fda9fc2cc25fb36b5887b0731da3a037fa0"
-    },
-    {
-      "path": "src/body.js",
-      "bytes": 10448,
-      "sha256": "e24122aff02d609d95bef90514a417c20eac1bb446f76592524064c4fa16fb5a"
-    },
-    {
-      "path": "src/headers.js",
-      "bytes": 775,
-      "sha256": "a499ff5af1f2e8d0d20529477325472a50e6626267c31f0235709d3e2fd84fde"
-    },
-    {
-      "path": "src/protocol.js",
-      "bytes": 9395,
-      "sha256": "65baddf52af9e17e05be797bae00aa5643f1ff29c1095d3b38f47e117421993a"
-    },
-    {
-      "path": "src/shared.js",
-      "bytes": 1253,
-      "sha256": "d7c9a938f767046a0c746669c2d26eb18b66bf01342eeb116a8cd40bf5397d2a"
-    },
-    {
-      "path": "src/view.js",
-      "bytes": 6339,
-      "sha256": "783c17523cedfe6ef4005e609940ddc03c99845d893e25bc65e0b9d3b2974e97"
+      "path": "LICENSES/Office-MIT.txt",
+      "bytes": 0
     }
   ]
 }

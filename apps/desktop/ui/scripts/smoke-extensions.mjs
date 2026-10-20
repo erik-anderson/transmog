@@ -13,8 +13,11 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       const wait=async(condition)=>{const deadline=Date.now()+10000;while(!condition()){if(Date.now()>deadline)throw new Error('Extensions did not settle');await new Promise(resolve=>setTimeout(resolve,25));}};
       await wait(()=>editor.extensionsLoaded&&!editor.extensionsBusy);
       const original=await window.__TAURI_INTERNALS__.invoke('extension_status');
-      if(original.warning||original.entries.length!==1||original.entries[0].catalog.manifest.id!=='test.development')throw new Error('Native extension fixture was not loaded');
-      const root=editor.shadowRoot??editor,entry=root.querySelector('article');
+      const development=original.entries.find(entry=>entry.catalog.manifest.id==='test.development'),bundled=original.entries.find(entry=>entry.catalog.manifest.id==='com.transmog.mapi');
+      if(original.warning||!development||!bundled||bundled.catalog.origin!=='bundled')throw new Error('Native extension fixture and bundled MAPI were not loaded');
+      const root=editor.shadowRoot??editor,entry=[...root.querySelectorAll('article')].find(entry=>entry.getAttribute('aria-label')==='Development visualizer fixture');
+      const bundledRow=[...root.querySelectorAll('article')].find(entry=>entry.getAttribute('aria-label')==='MAPI/HTTP');
+      if(!bundledRow||[...bundledRow.querySelectorAll('button')].some(button=>!button.hidden&&/Uninstall|Package|Reload/.test(button.textContent)))throw new Error('Bundled MAPI exposes development or file-removal controls');
       const packageButton=entry.querySelector('button[aria-label="Package Development visualizer fixture"]');
       if(!packageButton||packageButton.disabled)throw new Error('Unpacked extension has no available packaging action');
       entry.querySelector('button[aria-label="Reload active visualizers for Development visualizer fixture"]').click();
@@ -24,15 +27,15 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
       const columns=[...entry.querySelectorAll('summary')].find(summary=>summary.textContent==='Traffic columns and header rules');if(!columns)throw new Error('Static column declarations missing');columns.click();
       if(!entry.textContent.includes('Synthetic protocol')||!entry.textContent.includes('request x-example: equals Native header evidence'))throw new Error('Static header rules were not disclosed');
       const enabled=entry.querySelector('input[type="checkbox"]');enabled.focus();enabled.click();
-      await wait(()=>!editor.extensionsBusy&&!editor.extensionsEntries[0].enabled);
+      await wait(()=>!editor.extensionsBusy&&!editor.extensionsEntries.find(entry=>entry.id==='test.development').enabled);
       const disabled=await window.__TAURI_INTERNALS__.invoke('extension_status');
-      if(disabled.entries[0].catalog.enabled)throw new Error('Extension disable was not persisted');
-      enabled.click();await wait(()=>!editor.extensionsBusy&&editor.extensionsEntries[0].enabled);
+      if(disabled.entries.find(entry=>entry.catalog.manifest.id==='test.development').catalog.enabled)throw new Error('Extension disable was not persisted');
+      enabled.click();await wait(()=>!editor.extensionsBusy&&editor.extensionsEntries.find(entry=>entry.id==='test.development').enabled);
       if(!entry.querySelector('details').open)throw new Error('Changing extension enable state collapsed declarations');
       const reload=root.querySelector('input[aria-label="Hot reload Development visualizer fixture"]');reload.click();
-      await wait(()=>!editor.extensionsBusy&&editor.extensionsEntries[0].hotReload);
+      await wait(()=>!editor.extensionsBusy&&editor.extensionsEntries.find(entry=>entry.id==='test.development').hotReload);
       const status=await window.__TAURI_INTERNALS__.invoke('extension_status');
-      if(!status.entries[0].hotReload)throw new Error('Developer hot reload was not persisted');
+      if(!status.entries.find(entry=>entry.catalog.manifest.id==='test.development').hotReload)throw new Error('Developer hot reload was not persisted');
       if(editor.extensionsError)throw new Error(editor.extensionsError);
       return {entries:editor.extensionsEntries.length,headers:root.textContent.includes('x-example'),body:root.textContent.includes('No body access')};
     })()`);
@@ -43,7 +46,7 @@ export async function smokeExtensions(call,evaluate,screenshotPath,visualizerTra
     if(!layout.fits||!layout.button)throw new Error('Native Extensions controls are clipped');
     if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-extensions-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
     const native=visualizerTracePath?await smokeVisualizers(call,evaluate,screenshotPath,visualizerTracePath):null;
-    await evaluate(`(async()=>{const editor=document.querySelector('app-shell').settings.extensionsEditor,root=editor.shadowRoot??editor;root.querySelector('button[aria-label="Uninstall Development visualizer fixture"]').click();const deadline=Date.now()+10000;while(editor.extensionsBusy){if(Date.now()>deadline)throw new Error('Native extension removal timed out');await new Promise(resolve=>setTimeout(resolve,25));}if(editor.extensionsError||editor.extensionsEntries.length)throw new Error('Native extension removal failed');})()`);
+    await evaluate(`(async()=>{const editor=document.querySelector('app-shell').settings.extensionsEditor,root=editor.shadowRoot??editor;root.querySelector('button[aria-label="Uninstall Development visualizer fixture"]').click();const deadline=Date.now()+10000;while(editor.extensionsBusy){if(Date.now()>deadline)throw new Error('Native extension removal timed out');await new Promise(resolve=>setTimeout(resolve,25));}if(editor.extensionsError||editor.extensionsEntries.some(entry=>entry.id==='test.development')||!editor.extensionsEntries.some(entry=>entry.id==='com.transmog.mapi'))throw new Error('Native extension removal failed');})()`);
     return {...result,native,removed:true};
   } finally {
     await call('Emulation.clearDeviceMetricsOverride');

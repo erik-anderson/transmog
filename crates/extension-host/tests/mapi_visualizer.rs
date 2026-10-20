@@ -10,9 +10,24 @@ use transmog_extensions::{
 };
 
 fn snapshot() -> Snapshot {
+    static BUILD: std::sync::Once = std::sync::Once::new();
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../extensions/mapi");
-    let manifest =
-        Manifest::parse(&std::fs::read(root.join("manifest.json")).unwrap(), false).unwrap();
+    BUILD.call_once(|| {
+        let output = std::process::Command::new("node")
+            .arg(root.join("build.mjs"))
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    });
+    let manifest = Manifest::parse(
+        &std::fs::read(root.join("dist/package-manifest.json")).unwrap(),
+        false,
+    )
+    .unwrap();
     let files = manifest
         .files
         .iter()
@@ -24,6 +39,64 @@ fn snapshot() -> Snapshot {
         })
         .collect();
     Snapshot::new(manifest, files).unwrap()
+}
+
+#[tokio::test]
+async fn mapi_loose_folder_package_roundtrip_keeps_only_declared_runtime_files() {
+    use transmog_extension_registry::Registry;
+    let original = snapshot();
+    let temporary = tempfile::tempdir().unwrap();
+    let folder = temporary.path().join("source");
+    std::fs::create_dir_all(&folder).unwrap();
+    for (name, bytes) in &original.files {
+        let path = folder.join(name);
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, bytes).unwrap();
+    }
+    let mut manifest = original.manifest.clone();
+    manifest.id = "test.mapi.roundtrip".into();
+    std::fs::write(
+        folder.join("manifest.json"),
+        serde_json::to_vec(&manifest).unwrap(),
+    )
+    .unwrap();
+    std::fs::write(
+        folder.join("author.ts"),
+        "This unlisted source must not be packaged",
+    )
+    .unwrap();
+    let registry = Registry::load(temporary.path().join("registry"), None);
+    registry.register_directory(&folder, false).unwrap();
+    let archive = temporary.path().join("mapi.tmext");
+    registry
+        .package_directory("test.mapi.roundtrip", &archive)
+        .unwrap();
+    for packaged in [false, true] {
+        if packaged {
+            registry.uninstall("test.mapi.roundtrip").unwrap();
+            registry.install(&archive).unwrap();
+        }
+        let snapshot = registry.snapshot("test.mapi.roundtrip").unwrap();
+        assert_eq!(snapshot.files.len(), 4);
+        assert!(!snapshot.files.contains_key("author.ts"));
+        let runner = Runner::start(
+            &HostConfig {
+                executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+            },
+            snapshot,
+            "body-request",
+        )
+        .unwrap();
+        let document = interpret(&runner, &fixture("connect-request-nonzero"), true).await;
+        assert!(matches!(
+            document.status,
+            transmog_extensions::ParseStatus::Complete
+        ));
+        runner.stop();
+    }
+    registry.uninstall("test.mapi.roundtrip").unwrap();
+    assert!(folder.join("author.ts").exists());
+    assert!(folder.join("dist/runtime/body.js").exists());
 }
 fn start(id: &str) -> Arc<Runner> {
     Runner::start(
@@ -197,7 +270,7 @@ async fn mapi_production_body_visualizers_decode_and_expand_retained_inputs() {
         ),
         (
             "ft-out-of-order-RopFastTransferDestinationPutBufferExtended",
-            Value::String("ic transfer café Ω".into()),
+            Value::String("Synthetic transfer café Ω".into()),
         ),
     ] {
         let fixture = fixture(name);

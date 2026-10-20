@@ -4,7 +4,7 @@ import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { cargoCredits } from './build-credits.mjs';
+import { cargoCredits,extensionCredits } from './build-credits.mjs';
 
 const repository=fileURLToPath(new URL('../../../../',import.meta.url));
 const sources=JSON.parse(await readFile(resolve(repository,'third_party/rust-transport/sources.json'),'utf8'));
@@ -12,6 +12,13 @@ const packages=Object.entries(sources).map(([name,source])=>({
   id:name,name,version:source.version,source:null,license:name==='quiche'?'BSD-2-Clause':'MIT',
   manifest_path:resolve(repository,'third_party/rust-transport/vendor',name,'Cargo.toml'),
 }));
+
+test('credits retain the pinned MAPI reference and its complete license',async()=>{
+  const entries=await extensionCredits(repository);
+  assert.equal(entries.length,1);
+  assert.equal(entries[0].version,'7a76470574377d14cae612c507f45b34d70e05a0');
+  assert.equal(entries[0].text,await readFile(resolve(repository,'third_party/mapi-inspector/LICENSE'),'utf8'));
+});
 
 test('credits retain each vendored transport and its complete upstream license',async()=>{
   const entries=await cargoCredits(repository,{packages:[...packages,{id:'app',name:'transmog-desktop',source:null}]});

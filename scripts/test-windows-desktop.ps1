@@ -135,6 +135,8 @@ if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly) {
             }
         } finally { $fixtureZip.Dispose() }
     }
+    . (Join-Path $PSScriptRoot 'python-tools.ps1')
+    Invoke-TransmogPython 'generate-mapi-native-fixture.py' @((Join-Path $probeRoot 'mapi-fixture.saz'))
     $extensionManifestJson = $extensionManifest | ConvertTo-Json -Depth 16 -Compress
     [IO.File]::WriteAllText((Join-Path $extensionSource 'manifest.json'), $extensionManifestJson)
     $extensionDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($extensionManifestJson))).ToLowerInvariant()

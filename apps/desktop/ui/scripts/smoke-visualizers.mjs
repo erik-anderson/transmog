@@ -4,6 +4,7 @@ import {smokeHttpVisualizers} from './smoke-http-visualizers.mjs';
 import {smokeClassifications} from './smoke-classifications.mjs';
 import {smokeVisualizerReload} from './smoke-visualizer-reload.mjs';
 import {smokeDevelopmentVisualizers} from './smoke-development-visualizers.mjs';
+import {smokeMapi} from './smoke-mapi.mjs';
 
 /** Real WebView2 -> native evidence broker -> AppContainer worker -> host renderer. */
 export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
@@ -66,5 +67,6 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
   const live=await smokeLiveVisualizers(call,evaluate,screenshotPath);
   const http=await smokeHttpVisualizers(call,evaluate,screenshotPath);
   const reload=await smokeVisualizerReload(evaluate,tracePath);
-  return {...result,unloaded:true,live,http,reload,development};
+  const mapi=await smokeMapi(call,evaluate,screenshotPath,tracePath);
+  return {...result,unloaded:true,live,http,reload,development,mapi};
 }

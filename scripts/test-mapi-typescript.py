@@ -3,6 +3,7 @@ import argparse
 import base64
 import importlib.util
 import json
+import subprocess
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -97,8 +98,12 @@ def continuation_evidence(fixture, actual):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--stage", choices=["properties-http", "rops", "all"], default="all")
+    parser.add_argument("--reference", type=Path, default=ROOT / "extensions/mapi/test/reference-cases.json")
     arguments = parser.parse_args()
-    saved = json.loads((ROOT / "extensions/mapi/test/reference-cases.json").read_text(encoding="utf-8"))
+    subprocess.run(["node", str(ROOT / "extensions/mapi/build.mjs")], cwd=ROOT, check=True)
+    saved = json.loads(arguments.reference.read_text(encoding="utf-8"))
+    if [item["fixture"] for item in saved] != parity.corpus.cases():
+        raise SystemExit("Synthetic reference cases are stale")
     if arguments.stage == "properties-http":
         saved = [item for item in saved if
                  (item["fixture"]["message"]["requestType"] != "Execute" or
