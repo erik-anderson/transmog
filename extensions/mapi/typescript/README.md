@@ -27,8 +27,9 @@ shared need. A future authoring library can reuse them without adding host
 capabilities or changing the sandbox contract.
 
 Run `node extensions/mapi/build.mjs` from the repository root to compile with
-the repository's pinned TypeScript dependency. Compiled modules are committed
-for normal app builds. Tests under `test` exercise boundary conditions and the
+the repository's pinned TypeScript dependency. Compiled modules are build
+artifacts and are never checked in. Packaging compiles the project with the
+pinned compiler. Tests under `test` exercise boundary conditions and the
 independent reference corpus.
 
 The replacement is being introduced in phases. Until integration and parity
