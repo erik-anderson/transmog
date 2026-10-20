@@ -4,6 +4,7 @@ import importlib.util
 import json
 from pathlib import Path
 import subprocess
+import tempfile
 
 from mapi_reference import ROOT, WORK, oracle_command
 
@@ -41,8 +42,13 @@ def shift_coordinates(node, delta):
 
 
 def run(command, fixtures):
-    result = subprocess.run(command, input="".join(json.dumps(fixture) + "\n" for fixture in fixtures), cwd=ROOT,
-                            text=True, encoding="utf-8", capture_output=True, check=True, timeout=120)
+    # Windows communicate writes stdin synchronously before honoring its timeout.
+    # Use an inherited file so a stalled parser cannot block the test's input writer.
+    with tempfile.TemporaryFile(mode="w+t",encoding="utf-8",newline="\n") as input_file:
+        for fixture in fixtures:input_file.write(json.dumps(fixture)+"\n")
+        input_file.seek(0)
+        result = subprocess.run(command, stdin=input_file, cwd=ROOT,
+                                text=True, encoding="utf-8", capture_output=True, check=True, timeout=120)
     output = [json.loads(line) for line in result.stdout.splitlines()]
     if len(output) != len(fixtures):
         raise AssertionError("Parity runner lost test results")
@@ -64,7 +70,7 @@ def main():
         reference=[item["tree"] for item in saved]
     else:
         reference = run(oracle_command(), fixtures)
-    javascript = run(["node", "--experimental-vm-modules", str(ROOT / "extensions/mapi/test/run-protocol.mjs")], fixtures)
+    javascript = run(["node", "--max-old-space-size=192", "--experimental-vm-modules", str(ROOT / "extensions/mapi/test/run-protocol.mjs")], fixtures)
     failures = []
     for fixture, expected, actual in zip(fixtures, reference, javascript):
         if "timestamp" in fixture and actual.get("timestamp")!=fixture["timestamp"]:

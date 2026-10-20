@@ -53,10 +53,16 @@ for future GC delays. Scripts receive no timer or other host capability.
 Full semantic parity, retained-input integration and bundling remain the gates
 below. Compilation and compatibility tests alone do not establish protocol parity.
 
-The initial protocol adapter has 60 synthetic differential cases covering nonzero
+The protocol adapter has 610 synthetic differential cases covering nonzero
 mailbox transport, notifications, scalar/property/enum boundaries, Unicode,
 nonempty multivalues, address-book optional values, and plain/XOR/LZ77/combined
-auxiliary buffers. The semantic build explicitly preserves 776 parser-wrapper
+auxiliary buffers. These include 260 minimal ROP parser shapes (128 request and
+132 response shapes, including both Logon variants), all their full Execute
+dispatch paths, and 30 successful nonzero mailbox/table scenarios. The latter
+exercise folder servers, message subjects, stream data, exact wide positions,
+tagged properties and rows with paired or retained SetColumns state. Logon
+dependencies use actual earlier synthetic exchanges and matching handles.
+The semantic build explicitly preserves 776 parser-wrapper
 conversions in branches, switches, arithmetic and counts. Primitive enum reads
 are unboxed as value types, and hexadecimal enum widths preserve native formatting.
 
@@ -67,6 +73,12 @@ Goldens exclude machine-specific exception stacks and local timestamp formatting
 The adapter returns typed scalar records, encoding metadata and source identities;
 it has no capture-discovery or file/network API. Input, structures and derived
 buffers are bounded. Each decode discards its context/session state afterward.
+Enum reads preserve the original underlying bits, including unknown values and
+high-bit HRESULTs. Protocol sub-buffer lengths cannot widen their parent; zero
+length means an empty sub-buffer. The generic parser's omitted-cap sentinel is
+unchanged. A parser work counter bounds repeated block parsing before projection.
+The developer-only native oracle also runs with a 256 MiB GC heap ceiling;
+shape generation isolates each probe with a deadline and file-backed input.
 
 Three intentional presentation corrections are verified separately:
 

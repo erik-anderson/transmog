@@ -92,6 +92,21 @@ sealed class PortableSource(string file, SortedDictionary<string, int> changes) 
     }
     public override SyntaxNode? VisitMethodDeclaration(MethodDeclarationSyntax node)
     {
+        if (file == "BlockParser/BinaryParser.cs")
+        {
+            string? body = node.Identifier.ValueText switch
+            {
+                "CheckSize" => "{return cb >= 0 && Offset >= 0 && Offset <= size && cb <= size - Offset;}",
+                "Advance" => "{long next=(long)Offset+cb; if(next<0 || next>size)throw new ArgumentOutOfRangeException(nameof(cb)); Offset=(int)next;}",
+                "PushCap" => "{if(cap<0 || !CheckSize(cap))throw new ArgumentOutOfRangeException(nameof(cap)); sizes.Push(size); if(cap!=0)size=Offset+cap;}",
+                _ => null
+            };
+            if (body != null)
+            {
+                Count("bounded binary reader");
+                return node.WithExpressionBody(null).WithSemicolonToken(default).WithBody((BlockSyntax)SyntaxFactory.ParseStatement(body));
+            }
+        }
         if (file == "BlockParser/BlockT.cs" && node.Identifier.ValueText == "ReadStruct")
         {
             Count("managed primitive read");
@@ -116,6 +131,11 @@ sealed class PortableSource(string file, SortedDictionary<string, int> changes) 
             return SyntaxFactory.ParseExpression($"PortableEvidence.Shift({member.Expression}, {node.ArgumentList.Arguments.Single()}, isCompressedXOR)").WithTriviaFrom(node);
         }
         var expression = node.Expression.ToString();
+        if (file.StartsWith("Parsers/", StringComparison.Ordinal) && expression == "parser.PushCap")
+        {
+            Count("strict protocol sub-buffer");
+            return ((InvocationExpressionSyntax)base.VisitInvocationExpression(node)!).WithExpression(SyntaxFactory.ParseExpression("parser.PushStrictCap"));
+        }
         string? replacement = null;
         if (file is "BlockParser/BlockT.cs" or "BlockParser/BlockParsers.cs")
         {
@@ -143,6 +163,12 @@ sealed class PortableSource(string file, SortedDictionary<string, int> changes) 
             return SyntaxFactory.ParseExpression("PortableEvidence.Payload(payloadBytes, payloadBlock, isCompressedXOR, (uint)RPCHEADEREXT.Flags.Data)").WithTriviaFrom(node);
         }
         return base.VisitObjectCreationExpression(node);
+    }
+    public override SyntaxNode? VisitClassDeclaration(ClassDeclarationSyntax node)
+    {
+        var visited = (ClassDeclarationSyntax)base.VisitClassDeclaration(node)!;
+        if (file != "BlockParser/BinaryParser.cs" || node.Identifier.ValueText != "BinaryParser") return visited;
+        return visited.AddMembers(SyntaxFactory.ParseMemberDeclaration("public void PushStrictCap(int cap) { if(!CheckSize(cap))throw new ArgumentOutOfRangeException(nameof(cap)); sizes.Push(size); size=Offset+cap; }")!);
     }
 }
 

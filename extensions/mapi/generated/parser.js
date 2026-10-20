@@ -53549,14 +53549,21 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 },
         methods: {
     Advance: function (cb) {
-        this.Offset = Transpose.Int.clip32((this.Offset) + (cb));
+        let next = System.Int64(this.Offset).add(cb);
+        if (next.lt(System.Int64("0")) || next.gt(this.size)) {
+            throw new System.ArgumentOutOfRangeException.$ctor1("cb");
+        }
+        this.Offset = Transpose.Int.clip32(System.Int64.clip32(next));
     },
     Rewind: function () {
         this.Offset = 0;
     },
     PushCap: function (cap) {
+        if (cap < 0 || !this.CheckSize(cap)) {
+            throw new System.ArgumentOutOfRangeException.$ctor1("cap");
+        }
         this.sizes.Push(this.size);
-        if (cap !== 0 && Transpose.Int.clip32(this.Offset + cap) < this.bin.length) {
+        if (cap !== 0) {
             this.size = Transpose.Int.clip32(this.Offset + cap);
         }
     },
@@ -53569,7 +53576,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
     },
     CheckSize: function (cb) {
-        return cb <= this.RemainingBytes;
+        return cb >= 0 && this.Offset >= 0 && this.Offset <= this.size && cb <= Transpose.Int.clip32(this.size - this.Offset);
     },
     ReadBytes: function (cb) {
         if (this.CheckSize(cb)) {
@@ -53591,6 +53598,13 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         let hex = BlockParser.Strings.BinToHexString(_data, 0);
         let text = BlockParser.Strings.BinToTextStringA(_data, true);
         this.Offset = offset;
+    },
+    PushStrictCap: function (cap) {
+        if (!this.CheckSize(cap)) {
+            throw new System.ArgumentOutOfRangeException.$ctor1("cap");
+        }
+        this.sizes.Push(this.size);
+        this.size = Transpose.Int.clip32(this.Offset + cap);
     }
 }
     });
@@ -54225,7 +54239,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
 },
         methods: {
     getItem: function (name) {
-        return (name === "VirtualID" ? Transpose.toString(this.id) : this.ResponseHeaders.getItem(name));
+        return (name === "VirtualID" ? Transpose.toString(this.id) : (name === "LocalProcess" ? this.LocalProcess : this.ResponseHeaders.getItem(name)));
     },
     setItem: function (name, value) {
         this.ResponseHeaders.setItem(name, value);
@@ -59033,7 +59047,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             else {
                 throw new System.NotSupportedException.$ctor1(Transpose.Reflection.getTypeFullName(type));
             }
-            return (Transpose.Reflection.isEnum(type) ? System.Enum.parse(type, Transpose.toString(value)) : value);
+            return value;
         },
         Ascii: function (bytes) {
             let result = System.Array.init(TransposeR.array(bytes.length, 0), System.Char);
@@ -65381,7 +65395,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.TransferDataSize = this.ParseT(System.UInt16);
-        this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferDataSize));
+        this.parser.PushStrictCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferDataSize));
         let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
         while (!this.parser.Empty) {
             let element = this.Parse$1(MAPIInspector.Parsers.TransferPutBufferExtendElement);
@@ -65403,14 +65417,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.TransferDataSize, "TransferDataSize");
         if (this.TransferData != null) {
-            var $e0b53 = TransposeR.getEnumerator(this.TransferData);
+            var $e0b4c = TransposeR.getEnumerator(this.TransferData);
             try {
-                while ($e0b53.moveNext()) {
-                    let transferData = $e0b53.current;
+                while ($e0b4c.moveNext()) {
+                    let transferData = $e0b4c.current;
                     this.AddLabeledChild(transferData, "TransferData");
                 }
             }finally {
-                TransposeR.dispose($e0b53);
+                TransposeR.dispose($e0b4c);
             }
         }
     }
@@ -65481,7 +65495,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.LogonId = this.ParseT(System.Byte);
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.TransferDataSize = this.ParseT(System.UInt16);
-        this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferDataSize));
+        this.parser.PushStrictCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferDataSize));
         let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
         while (!this.parser.Empty) {
             let element = this.Parse$1(MAPIInspector.Parsers.TransferPutBufferElement);
@@ -65503,14 +65517,14 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.AddChildBlockT(System.Byte, this.InputHandleIndex, "InputHandleIndex");
         this.AddChildBlockT(System.UInt16, this.TransferDataSize, "TransferDataSize");
         if (this.TransferData != null) {
-            var $e0b25 = TransposeR.getEnumerator(this.TransferData);
+            var $e0b1e = TransposeR.getEnumerator(this.TransferData);
             try {
-                while ($e0b25.moveNext()) {
-                    let transferData = $e0b25.current;
+                while ($e0b1e.moveNext()) {
+                    let transferData = $e0b1e.current;
                     this.AddLabeledChild(transferData, "TransferData");
                 }
             }finally {
-                TransposeR.dispose($e0b25);
+                TransposeR.dispose($e0b1e);
             }
         }
     }
@@ -65931,7 +65945,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.Reserved = this.ParseT(System.Byte);
         this.TransferBufferSize = this.ParseT(System.UInt16);
         if (BlockParser.PortablePrimitives.Value(MAPIInspector.Parsers.ErrorCodes, this.ReturnValue) === MAPIInspector.Parsers.ErrorCodes.Success) {
-            this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferBufferSize));
+            this.parser.PushStrictCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.TransferBufferSize));
             let transferBufferList = new (System.Collections.Generic.List$1(BlockParser.Block))();
             while (!this.parser.Empty) {
                 let element = this.Parse$1(MAPIInspector.Parsers.TransferGetBufferElement);
@@ -66135,7 +66149,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.SynchronizationFlags = this.ParseT(MAPIInspector.Parsers.SynchronizationFlags);
         this.RestrictionDataSize = this.ParseT(System.UInt16);
         if (BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize) > 0) {
-            this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize));
+            this.parser.PushStrictCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.RestrictionDataSize));
             this.RestrictionData = new MAPIInspector.Parsers.RestrictionType();
             this.RestrictionData.Parse(this.parser);
             this.parser.PopCap();
@@ -66600,7 +66614,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.MessageReadStatesSize = this.ParseT(System.UInt16);
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.MessageReadState))();
-        this.parser.PushCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageReadStatesSize));
+        this.parser.PushStrictCap(BlockParser.PortablePrimitives.Value(System.UInt16, this.MessageReadStatesSize));
         while (!this.parser.Empty) {
             interValue.add(this.Parse$1(MAPIInspector.Parsers.MessageReadState));
         }
@@ -75063,7 +75077,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         this.InputHandleIndex = this.ParseT(System.Byte);
         this.PropertyValueSize = this.ParseT(System.UInt16);
         this.PropertyValueCount = this.ParseT(System.UInt16);
-        this.parser.PushCap(Transpose.Int.clip32(this.PropertyValueSize.Data - 2));
+        this.parser.PushStrictCap(Transpose.Int.clip32(this.PropertyValueSize.Data - 2));
         let interValue = new (System.Collections.Generic.List$1(MAPIInspector.Parsers.TaggedPropertyValue))();
         for (var i = 0; i < BlockParser.PortablePrimitives.Value(System.UInt16, this.PropertyValueCount) && !this.parser.Empty; i = (((i) + 1) | 0)) {
             let value = new MAPIInspector.Parsers.TaggedPropertyValue(MAPIInspector.Parsers.PropertyCountContext.RopBuffers);
@@ -75525,7 +75539,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
             let logonFlagsInLogonRop = new (System.Collections.Generic.Dictionary$2(System.UInt32, MAPIInspector.Parsers.LogonFlags))();
             if (Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2) > 1) {
                 ropRemainSize.add(Transpose.Int.clipu32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - Transpose.Int.clipu32(2)));
-                this.parser.PushCap(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
+                this.parser.PushStrictCap(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
                 do {
                     let currentRop = this.TestParse(MAPIInspector.Parsers.RopIdType);
                     switch (currentRop.Data) {
@@ -75647,28 +75661,28 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
                             let serverRequestPath = MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath;
                             if (MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.containsKey(handle_Release)) {
                                 let sessions = new (System.Collections.Generic.List$1(System.Int32))();
-                                var $e38df = TransposeR.getEnumerator(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(handle_Release));
+                                var $e38d0 = TransposeR.getEnumerator(MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(handle_Release));
                                 try {
-                                    while ($e38df.moveNext()) {
-                                        let ele = $e38df.current;
+                                    while ($e38d0.moveNext()) {
+                                        let ele = $e38d0.current;
                                         if (ele.value.Item1 === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.RequestPath && ele.value.Item2 === MapiInspector.MAPIParser.ParsingSession.LocalProcess && ele.value.Item3 === MapiInspector.MAPIParser.ParsingSession.RequestHeaders.getItem("X-ClientInfo")) {
                                             sessions.add(ele.key);
                                         }
                                     }
                                 }finally {
-                                    TransposeR.dispose($e38df);
+                                    TransposeR.dispose($e38d0);
                                 }
                                 if (sessions.Count > 0) {
                                     let temp = MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.getItem(handle_Release);
                                     MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.remove(handle_Release);
-                                    var $e3d35 = TransposeR.getEnumerator(sessions);
+                                    var $e3d26 = TransposeR.getEnumerator(sessions);
                                     try {
-                                        while ($e3d35.moveNext()) {
-                                            let $var = $e3d35.current;
+                                        while ($e3d26.moveNext()) {
+                                            let $var = $e3d26.current;
                                             temp.remove($var);
                                         }
                                     }finally {
-                                        TransposeR.dispose($e3d35);
+                                        TransposeR.dispose($e3d26);
                                     }
                                     if (temp.Count !== 0) {
                                         MAPIInspector.Parsers.DecodingContext.RowRops_handlePropertyTags.add(handle_Release, temp);
@@ -76234,16 +76248,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         this.RopsList = ropsList.ToArray();
         if (this.RopsList.length !== 0) {
-            var $ef801 = TransposeR.getEnumerator(ropsList);
+            var $ef7f2 = TransposeR.getEnumerator(ropsList);
             try {
-                while ($ef801.moveNext()) {
-                    let obj = $ef801.current;
+                while ($ef7f2.moveNext()) {
+                    let obj = $ef7f2.current;
                     if (MapiInspector.MAPIParser.AllRopsList.Count <= 0 || !MapiInspector.MAPIParser.AllRopsList.contains(Transpose.Reflection.getTypeName(Transpose.getType(obj)))) {
                         MapiInspector.MAPIParser.AllRopsList.add(Transpose.Reflection.getTypeName(Transpose.getType(obj)));
                     }
                 }
             }finally {
-                TransposeR.dispose($ef801);
+                TransposeR.dispose($ef7f2);
             }
         }
         while (this.parser.RemainingBytes >= 4) {
@@ -76304,7 +76318,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         if (!MapiInspector.MAPIParser.IsLooperCall || parseToCROPSResponseLayer || MapiInspector.MAPIParser.NeedToParseCROPSLayer) {
             MAPIInspector.Parsers.DecodingContext.SetColumn_InputHandles_InResponse = new (System.Collections.Generic.List$1(System.UInt32))();
             if (Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2) > 1) {
-                this.parser.PushCap(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
+                this.parser.PushStrictCap(Transpose.Int.clip32(BlockParser.PortablePrimitives.Value(System.UInt16, this.RopSize) - 2));
                 do {
                     let currentRop = BlockParser.Block.TestParse(MAPIInspector.Parsers.RopIdType, this.parser);
                     switch (currentRop.Data) {
@@ -76863,16 +76877,16 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
         }
         this.RopsList = ropsList.ToArray();
         if (this.RopsList.length !== 0) {
-            var $ebc27 = TransposeR.getEnumerator(ropsList);
+            var $ebc19 = TransposeR.getEnumerator(ropsList);
             try {
-                while ($ebc27.moveNext()) {
-                    let obj = $ebc27.current;
+                while ($ebc19.moveNext()) {
+                    let obj = $ebc19.current;
                     if (MapiInspector.MAPIParser.AllRopsList.Count <= 0 || !MapiInspector.MAPIParser.AllRopsList.contains(Transpose.Reflection.getTypeName(Transpose.getType(obj)))) {
                         MapiInspector.MAPIParser.AllRopsList.add(Transpose.Reflection.getTypeName(Transpose.getType(obj)));
                     }
                 }
             }finally {
-                TransposeR.dispose($ebc27);
+                TransposeR.dispose($ebc19);
             }
         }
         while (this.parser.RemainingBytes >= 4) {
@@ -82846,7 +82860,7 @@ Transpose.assembly("TransmogMapi", function ($asm, globals) {
     var $m = Transpose.setMetadata,
         $n = ["System","System.Collections.Generic","BlockParser","Fiddler","MapiInspector","MAPIInspector.Parsers","System.Drawing"];
     $m("BlockParser.IBlockT", function () { return {"att":1048737,"a":2}; }, $n);
-    $m("BlockParser.BinaryParser", function () { return {"att":1048577,"a":2,"m":[{"a":2,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":".ctor","t":1,"p":[System.Array.type($n[0].Byte)],"pi":[{"n":"_bin","pt":System.Array.type($n[0].Byte),"ps":0}],"sn":"$ctor1"},{"a":2,"n":".ctor","t":1,"p":[$n[0].Int32,System.Array.type($n[0].Byte)],"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0},{"n":"_bin","pt":System.Array.type($n[0].Byte),"ps":1}],"sn":"$ctor2"},{"a":2,"n":"Advance","t":8,"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0}],"sn":"Advance","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"CheckSize","t":8,"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0}],"sn":"CheckSize","rt":$n[0].Boolean,"p":[$n[0].Int32],"box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":2,"n":"PeekBytes","t":8,"sn":"PeekBytes","rt":$n[0].String},{"a":2,"n":"PopCap","t":8,"sn":"PopCap","rt":$n[0].Void},{"a":2,"n":"PushCap","t":8,"pi":[{"n":"cap","pt":$n[0].Int32,"ps":0}],"sn":"PushCap","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"ReadBytes","t":8,"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0}],"sn":"ReadBytes","rt":System.Array.type($n[0].Byte),"p":[$n[0].Int32]},{"a":2,"n":"Rewind","t":8,"sn":"Rewind","rt":$n[0].Void},{"a":2,"n":"SampleBytes","t":8,"pi":[{"n":"cb","dv":20,"o":true,"pt":$n[0].Int32,"ps":0}],"sn":"SampleBytes","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"Empty","t":16,"rt":$n[0].Boolean,"g":{"a":2,"n":"get_Empty","t":8,"rt":$n[0].Boolean,"fg":"Empty","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},"fn":"Empty"},{"a":2,"n":"Offset","t":16,"rt":$n[0].Int32,"g":{"a":2,"n":"get_Offset","t":8,"rt":$n[0].Int32,"fg":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},"s":{"a":2,"n":"set_Offset","t":8,"p":[$n[0].Int32],"rt":$n[0].Void,"fs":"Offset"},"fn":"Offset"},{"a":2,"n":"RemainingBytes","t":16,"rt":$n[0].Int32,"g":{"a":2,"n":"get_RemainingBytes","t":8,"rt":$n[0].Int32,"fg":"RemainingBytes","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},"fn":"RemainingBytes"},{"a":1,"n":"bin","t":4,"rt":System.Array.type($n[0].Byte),"sn":"bin","ro":true},{"a":1,"n":"size","t":4,"rt":$n[0].Int32,"sn":"size","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},{"a":1,"n":"sizes","t":4,"rt":$n[1].Stack$1(System.Int32),"sn":"sizes","ro":true},{"a":1,"backing":true,"n":"<Offset>k__BackingField","t":4,"rt":$n[0].Int32,"sn":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int32);}}]}; }, $n);
+    $m("BlockParser.BinaryParser", function () { return {"att":1048577,"a":2,"m":[{"a":2,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":".ctor","t":1,"p":[System.Array.type($n[0].Byte)],"pi":[{"n":"_bin","pt":System.Array.type($n[0].Byte),"ps":0}],"sn":"$ctor1"},{"a":2,"n":".ctor","t":1,"p":[$n[0].Int32,System.Array.type($n[0].Byte)],"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0},{"n":"_bin","pt":System.Array.type($n[0].Byte),"ps":1}],"sn":"$ctor2"},{"a":2,"n":"Advance","t":8,"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0}],"sn":"Advance","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"CheckSize","t":8,"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0}],"sn":"CheckSize","rt":$n[0].Boolean,"p":[$n[0].Int32],"box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":2,"n":"PeekBytes","t":8,"sn":"PeekBytes","rt":$n[0].String},{"a":2,"n":"PopCap","t":8,"sn":"PopCap","rt":$n[0].Void},{"a":2,"n":"PushCap","t":8,"pi":[{"n":"cap","pt":$n[0].Int32,"ps":0}],"sn":"PushCap","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"PushStrictCap","t":8,"pi":[{"n":"cap","pt":$n[0].Int32,"ps":0}],"sn":"PushStrictCap","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"ReadBytes","t":8,"pi":[{"n":"cb","pt":$n[0].Int32,"ps":0}],"sn":"ReadBytes","rt":System.Array.type($n[0].Byte),"p":[$n[0].Int32]},{"a":2,"n":"Rewind","t":8,"sn":"Rewind","rt":$n[0].Void},{"a":2,"n":"SampleBytes","t":8,"pi":[{"n":"cb","dv":20,"o":true,"pt":$n[0].Int32,"ps":0}],"sn":"SampleBytes","rt":$n[0].Void,"p":[$n[0].Int32]},{"a":2,"n":"Empty","t":16,"rt":$n[0].Boolean,"g":{"a":2,"n":"get_Empty","t":8,"rt":$n[0].Boolean,"fg":"Empty","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},"fn":"Empty"},{"a":2,"n":"Offset","t":16,"rt":$n[0].Int32,"g":{"a":2,"n":"get_Offset","t":8,"rt":$n[0].Int32,"fg":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},"s":{"a":2,"n":"set_Offset","t":8,"p":[$n[0].Int32],"rt":$n[0].Void,"fs":"Offset"},"fn":"Offset"},{"a":2,"n":"RemainingBytes","t":16,"rt":$n[0].Int32,"g":{"a":2,"n":"get_RemainingBytes","t":8,"rt":$n[0].Int32,"fg":"RemainingBytes","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},"fn":"RemainingBytes"},{"a":1,"n":"bin","t":4,"rt":System.Array.type($n[0].Byte),"sn":"bin","ro":true},{"a":1,"n":"size","t":4,"rt":$n[0].Int32,"sn":"size","box":function ($v) { return Transpose.box($v, $n[0].Int32);}},{"a":1,"n":"sizes","t":4,"rt":$n[1].Stack$1(System.Int32),"sn":"sizes","ro":true},{"a":1,"backing":true,"n":"<Offset>k__BackingField","t":4,"rt":$n[0].Int32,"sn":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int32);}}]}; }, $n);
     $m("BlockParser.Constants", function () { return {"att":1048961,"a":2,"s":true,"m":[{"a":2,"n":"_MaxBytes","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxBytes","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":2,"n":"_MaxDepth","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxDepth","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":2,"n":"_MaxEID","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxEID","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":2,"n":"_MaxEntriesEnormous","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxEntriesEnormous","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":2,"n":"_MaxEntriesExtraLarge","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxEntriesExtraLarge","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":2,"n":"_MaxEntriesLarge","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxEntriesLarge","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":2,"n":"_MaxEntriesSmall","is":true,"t":4,"rt":$n[0].UInt32,"sn":"_MaxEntriesSmall","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}}]}; }, $n);
     $m("BlockParser.Block", function () { return {"att":1048705,"a":2,"m":[{"a":3,"isSynthetic":true,"n":".ctor","t":1,"sn":"ctor"},{"a":2,"n":"AddChild","t":8,"pi":[{"n":"child","pt":$n[2].Block,"ps":0}],"sn":"AddChild","rt":$n[0].Void,"p":[$n[2].Block]},{"a":2,"n":"AddChild","t":8,"pi":[{"n":"child","pt":$n[2].Block,"ps":0},{"n":"label","pt":$n[0].String,"ps":1}],"sn":"AddChild$1","rt":$n[0].Void,"p":[$n[2].Block,$n[0].String]},{"a":2,"n":"AddChildBlockT","t":8,"pi":[{"n":"child","pt":$n[2].BlockT$1(System.Object),"ps":0},{"n":"label","pt":$n[0].String,"ps":1}],"tpc":1,"tprm":["T"],"sn":"AddChildBlockT","rt":$n[0].Void,"p":[$n[2].BlockT$1(System.Object),$n[0].String]},{"a":2,"n":"AddChildBytes","t":8,"pi":[{"n":"child","pt":$n[2].BlockBytes,"ps":0},{"n":"label","pt":$n[0].String,"ps":1}],"sn":"AddChildBytes","rt":$n[0].Void,"p":[$n[2].BlockBytes,$n[0].String]},{"a":2,"n":"AddChildString","t":8,"pi":[{"n":"child","pt":$n[2].BlockString,"ps":0},{"n":"label","pt":$n[0].String,"ps":1}],"sn":"AddChildString","rt":$n[0].Void,"p":[$n[2].BlockString,$n[0].String]},{"a":2,"n":"AddHeader","t":8,"pi":[{"n":"header","pt":$n[0].String,"ps":0}],"sn":"AddHeader","rt":$n[0].Void,"p":[$n[0].String]},{"a":2,"n":"AddLabeledChild","t":8,"pi":[{"n":"block","pt":$n[2].Block,"ps":0},{"n":"text","pt":$n[0].String,"ps":1}],"sn":"AddLabeledChild","rt":$n[0].Void,"p":[$n[2].Block,$n[0].String]},{"a":2,"n":"AddLabeledChildren","t":8,"pi":[{"n":"blocks","pt":System.Array.type($n[2].Block),"ps":0},{"n":"text","pt":$n[0].String,"ps":1}],"sn":"AddLabeledChildren","rt":$n[0].Void,"p":[System.Array.type($n[2].Block),$n[0].String]},{"a":2,"n":"AddSubHeader","t":8,"pi":[{"n":"header","pt":$n[0].String,"ps":0}],"sn":"AddSubHeader","rt":$n[0].Void,"p":[$n[0].String]},{"a":2,"n":"Create","is":true,"t":8,"sn":"Create","rt":$n[2].Block},{"a":2,"n":"Create","is":true,"t":8,"pi":[{"n":"text","pt":$n[0].String,"ps":0}],"sn":"Create$2","rt":$n[2].Block,"p":[$n[0].String]},{"a":2,"n":"Create","is":true,"t":8,"pi":[{"n":"size","pt":$n[0].Int64,"ps":0},{"n":"offset","pt":$n[0].Int64,"ps":1},{"n":"text","pt":$n[0].String,"ps":2}],"sn":"Create$1","rt":$n[2].Block,"p":[$n[0].Int64,$n[0].Int64,$n[0].String]},{"a":2,"n":"CreateBlock","is":true,"t":8,"pi":[{"n":"data","pt":$n[0].Object,"ps":0},{"n":"size","pt":$n[0].Int64,"ps":1},{"n":"offset","pt":$n[0].Int64,"ps":2}],"tpc":1,"tprm":["T"],"sn":"CreateBlock","rt":$n[2].BlockT$1(System.Object),"p":[$n[0].Object,$n[0].Int64,$n[0].Int64]},{"a":3,"n":"EnsureParsed","t":8,"sn":"EnsureParsed","rt":$n[0].Void},{"a":2,"n":"FullString","t":8,"sn":"FullString","rt":$n[0].String},{"a":2,"n":"InsertChild","t":8,"pi":[{"n":"child","pt":$n[2].Block,"ps":0},{"n":"label","pt":$n[0].String,"ps":1}],"sn":"InsertChild","rt":$n[0].Void,"p":[$n[2].Block,$n[0].String]},{"a":2,"n":"InsertHeader","t":8,"pi":[{"n":"header","pt":$n[0].String,"ps":0}],"sn":"InsertHeader","rt":$n[0].Void,"p":[$n[0].String]},{"ab":true,"a":3,"n":"Parse","t":8,"sn":"Parse$3","rt":$n[0].Void},{"a":2,"n":"Parse","t":8,"pi":[{"n":"enableJunk","dv":false,"o":true,"pt":$n[0].Boolean,"ps":0}],"tpc":1,"tprm":["T"],"sn":"Parse$1","rt":$n[0].Object,"p":[$n[0].Boolean]},{"a":2,"n":"Parse","t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"enableJunk","dv":false,"o":true,"pt":$n[0].Boolean,"ps":1}],"sn":"Parse","rt":$n[0].Void,"p":[$n[2].BinaryParser,$n[0].Boolean]},{"a":2,"n":"Parse","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"enableJunk","dv":false,"o":true,"pt":$n[0].Boolean,"ps":1}],"tpc":1,"tprm":["T"],"sn":"Parse","rt":$n[0].Object,"p":[$n[2].BinaryParser,$n[0].Boolean]},{"a":2,"n":"Parse","t":8,"pi":[{"n":"cbBin","pt":$n[0].Int32,"ps":0},{"n":"enableJunk","dv":false,"o":true,"pt":$n[0].Boolean,"ps":1}],"tpc":1,"tprm":["T"],"sn":"Parse$2","rt":$n[0].Object,"p":[$n[0].Int32,$n[0].Boolean]},{"a":1,"n":"Parse","t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cbBin","pt":$n[0].Int32,"ps":1},{"n":"enableJunk","dv":false,"o":true,"pt":$n[0].Boolean,"ps":2}],"sn":"Parse$4","rt":$n[0].Void,"p":[$n[2].BinaryParser,$n[0].Int32,$n[0].Boolean]},{"a":2,"n":"Parse","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cbBin","pt":$n[0].Int32,"ps":1},{"n":"enableJunk","dv":false,"o":true,"pt":$n[0].Boolean,"ps":2}],"tpc":1,"tprm":["T"],"sn":"Parse$1","rt":$n[0].Object,"p":[$n[2].BinaryParser,$n[0].Int32,$n[0].Boolean]},{"a":2,"n":"ParseAs","t":8,"tpc":2,"tprm":["U","T"],"sn":"ParseAs","rt":$n[2].BlockT$1(System.Object)},{"a":2,"n":"ParseAs","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0}],"tpc":2,"tprm":["U","T"],"sn":"ParseAs","rt":$n[2].BlockT$1(System.Object),"p":[$n[2].BinaryParser]},{"ab":true,"a":3,"n":"ParseBlocks","t":8,"sn":"ParseBlocks","rt":$n[0].Void},{"a":2,"n":"ParseBytes","t":8,"pi":[{"n":"cbBytes","pt":$n[0].Int32,"ps":0},{"n":"cbMaxBytes","dv":-1,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"ParseBytes","rt":$n[2].BlockBytes,"p":[$n[0].Int32,$n[0].Int32]},{"a":2,"n":"ParseBytes","t":8,"pi":[{"n":"cbBytes","pt":$n[0].UInt32,"ps":0},{"n":"cbMaxBytes","dv":-1,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"ParseBytes$1","rt":$n[2].BlockBytes,"p":[$n[0].UInt32,$n[0].Int32]},{"a":2,"n":"ParseBytes","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cbBytes","pt":$n[0].Int32,"ps":1},{"n":"cbMaxBytes","dv":-1,"o":true,"pt":$n[0].Int32,"ps":2}],"sn":"ParseBytes","rt":$n[2].BlockBytes,"p":[$n[2].BinaryParser,$n[0].Int32,$n[0].Int32]},{"a":2,"n":"ParseJunk","t":8,"pi":[{"n":"label","pt":$n[0].String,"ps":0}],"sn":"ParseJunk","rt":$n[2].BlockJunk,"p":[$n[0].String]},{"a":2,"n":"ParseStringA","t":8,"pi":[{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":0}],"sn":"ParseStringA","rt":$n[2].BlockString,"p":[$n[0].Int32]},{"a":2,"n":"ParseStringA","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"ParseStringA","rt":$n[2].BlockString,"p":[$n[2].BinaryParser,$n[0].Int32]},{"a":2,"n":"ParseStringLineA","t":8,"pi":[{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":0}],"sn":"ParseStringLineA","rt":$n[2].BlockString,"p":[$n[0].Int32]},{"a":2,"n":"ParseStringLineA","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"ParseStringLineA","rt":$n[2].BlockString,"p":[$n[2].BinaryParser,$n[0].Int32]},{"a":2,"n":"ParseStringLineW","t":8,"pi":[{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":0}],"sn":"ParseStringLineW","rt":$n[2].BlockString,"p":[$n[0].Int32]},{"a":2,"n":"ParseStringLineW","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"ParseStringLineW","rt":$n[2].BlockString,"p":[$n[2].BinaryParser,$n[0].Int32]},{"a":2,"n":"ParseStringW","t":8,"pi":[{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":0}],"sn":"ParseStringW","rt":$n[2].BlockString,"p":[$n[0].Int32]},{"a":2,"n":"ParseStringW","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0},{"n":"cchChar","dv":-1,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"ParseStringW","rt":$n[2].BlockString,"p":[$n[2].BinaryParser,$n[0].Int32]},{"a":2,"n":"ParseT","t":8,"tpc":1,"tprm":["T"],"sn":"ParseT","rt":$n[2].BlockT$1(System.Object)},{"a":2,"n":"ParseT","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0}],"tpc":1,"tprm":["T"],"sn":"ParseT","rt":$n[2].BlockT$1(System.Object),"p":[$n[2].BinaryParser]},{"a":2,"n":"ReadT","t":8,"tpc":1,"tprm":["T"],"sn":"ReadT","rt":$n[0].Object},{"a":2,"n":"ShiftOffset","t":8,"pi":[{"n":"shift","pt":$n[0].Int64,"ps":0}],"sn":"ShiftOffset","rt":$n[0].Void,"p":[$n[0].Int64]},{"a":2,"n":"TestParse","t":8,"tpc":1,"tprm":["T"],"sn":"TestParse","rt":$n[2].BlockT$1(System.Object)},{"a":2,"n":"TestParse","is":true,"t":8,"pi":[{"n":"parser","pt":$n[2].BinaryParser,"ps":0}],"tpc":1,"tprm":["T"],"sn":"TestParse","rt":$n[2].BlockT$1(System.Object),"p":[$n[2].BinaryParser]},{"ov":true,"a":2,"n":"ToString","t":8,"sn":"toString","rt":$n[0].String},{"a":1,"n":"ToStringsInternal","t":8,"sn":"ToStringsInternal","rt":$n[1].List$1(System.String)},{"v":true,"a":3,"n":"UsePipes","t":8,"sn":"UsePipes","rt":$n[0].Boolean,"box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":2,"n":"Children","t":16,"rt":$n[1].IReadOnlyList$1(BlockParser.Block),"g":{"a":2,"n":"get_Children","t":8,"rt":$n[1].IReadOnlyList$1(BlockParser.Block),"fg":"Children"},"fn":"Children"},{"a":3,"n":"EnableJunk","t":16,"rt":$n[0].Boolean,"g":{"a":3,"n":"get_EnableJunk","t":8,"rt":$n[0].Boolean,"fg":"EnableJunk","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},"s":{"a":3,"n":"set_EnableJunk","t":8,"p":[$n[0].Boolean],"rt":$n[0].Void,"fs":"EnableJunk"},"fn":"EnableJunk"},{"a":2,"n":"HasData","t":16,"rt":$n[0].Boolean,"g":{"a":2,"n":"get_HasData","t":8,"rt":$n[0].Boolean,"fg":"HasData","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},"fn":"HasData"},{"a":2,"n":"IsHeader","t":16,"rt":$n[0].Boolean,"g":{"a":2,"n":"get_IsHeader","t":8,"rt":$n[0].Boolean,"fg":"IsHeader","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},"fn":"IsHeader"},{"a":2,"n":"Offset","t":16,"rt":$n[0].Int64,"g":{"a":2,"n":"get_Offset","t":8,"rt":$n[0].Int64,"fg":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int64);}},"s":{"a":2,"n":"set_Offset","t":8,"p":[$n[0].Int64],"rt":$n[0].Void,"fs":"Offset"},"fn":"Offset"},{"a":2,"n":"Parsed","t":16,"rt":$n[0].Boolean,"g":{"a":2,"n":"get_Parsed","t":8,"rt":$n[0].Boolean,"fg":"Parsed","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},"s":{"a":3,"n":"set_Parsed","t":8,"p":[$n[0].Boolean],"rt":$n[0].Void,"fs":"Parsed"},"fn":"Parsed"},{"a":2,"n":"Size","t":16,"rt":$n[0].Int64,"g":{"a":2,"n":"get_Size","t":8,"rt":$n[0].Int64,"fg":"Size","box":function ($v) { return Transpose.box($v, $n[0].Int64);}},"s":{"a":2,"n":"set_Size","t":8,"p":[$n[0].Int64],"rt":$n[0].Void,"fs":"Size"},"fn":"Size"},{"a":2,"n":"Source","t":16,"rt":$n[0].UInt32,"g":{"a":2,"n":"get_Source","t":8,"rt":$n[0].UInt32,"fg":"Source","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},"s":{"a":2,"n":"set_Source","t":8,"p":[$n[0].UInt32],"rt":$n[0].Void,"fs":"Source"},"fn":"Source"},{"a":2,"n":"Text","t":16,"rt":$n[0].String,"g":{"a":2,"n":"get_Text","t":8,"rt":$n[0].String,"fg":"Text"},"s":{"a":2,"n":"set_Text","t":8,"p":[$n[0].String],"rt":$n[0].Void,"fs":"Text"},"fn":"Text"},{"a":1,"n":"children","t":16,"rt":$n[1].List$1(BlockParser.Block),"g":{"a":1,"n":"get_children","t":8,"rt":$n[1].List$1(BlockParser.Block),"fg":"children"},"fn":"children"},{"a":1,"n":"_source","t":4,"rt":$n[0].UInt32,"sn":"_source","box":function ($v) { return Transpose.box($v, $n[0].UInt32);}},{"a":1,"n":"_text","t":4,"rt":$n[0].String,"sn":"_text"},{"a":3,"n":"parser","t":4,"rt":$n[2].BinaryParser,"sn":"parser"},{"a":1,"backing":true,"n":"<Size>k__BackingField","t":4,"rt":$n[0].Int64,"sn":"Size","box":function ($v) { return Transpose.box($v, $n[0].Int64);}},{"a":1,"backing":true,"n":"<Offset>k__BackingField","t":4,"rt":$n[0].Int64,"sn":"Offset","box":function ($v) { return Transpose.box($v, $n[0].Int64);}},{"a":1,"backing":true,"n":"<Parsed>k__BackingField","t":4,"rt":$n[0].Boolean,"sn":"Parsed","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":1,"backing":true,"n":"<EnableJunk>k__BackingField","t":4,"rt":$n[0].Boolean,"sn":"EnableJunk","box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":1,"backing":true,"n":"<children>k__BackingField","t":4,"rt":$n[1].List$1(BlockParser.Block),"sn":"children"}]}; }, $n);
     $m("BlockParser.Strings", function () { return {"att":1048961,"a":2,"s":true,"m":[{"a":2,"n":"BinToHexString","is":true,"t":8,"pi":[{"n":"bin","pt":System.Array.type($n[0].Byte),"ps":0},{"n":"limit","dv":128,"o":true,"pt":$n[0].Int32,"ps":1}],"sn":"BinToHexString","rt":$n[0].String,"p":[System.Array.type($n[0].Byte),$n[0].Int32]},{"a":2,"n":"BinToTextStringA","is":true,"t":8,"pi":[{"n":"bin","pt":System.Array.type($n[0].Byte),"ps":0},{"n":"multiLine","pt":$n[0].Boolean,"ps":1}],"sn":"BinToTextStringA","rt":$n[0].String,"p":[System.Array.type($n[0].Byte),$n[0].Boolean]},{"a":2,"n":"BinToTextStringW","is":true,"t":8,"pi":[{"n":"bin","pt":System.Array.type($n[0].Byte),"ps":0},{"n":"multiLine","pt":$n[0].Boolean,"ps":1}],"sn":"BinToTextStringW","rt":$n[0].String,"p":[System.Array.type($n[0].Byte),$n[0].Boolean]},{"a":2,"n":"InvalidCharacter","is":true,"t":8,"pi":[{"n":"chr","pt":$n[0].UInt32,"ps":0},{"n":"multiLine","pt":$n[0].Boolean,"ps":1}],"sn":"InvalidCharacter","rt":$n[0].Boolean,"p":[$n[0].UInt32,$n[0].Boolean],"box":function ($v) { return Transpose.box($v, $n[0].Boolean);}},{"a":2,"n":"RemoveInvalidCharacters","is":true,"t":8,"pi":[{"n":"input","pt":$n[0].String,"ps":0}],"sn":"RemoveInvalidCharacters","rt":$n[0].String,"p":[$n[0].String]},{"a":2,"n":"StripCharacter","is":true,"t":8,"pi":[{"n":"input","pt":$n[0].String,"ps":0},{"n":"character","pt":$n[0].Char,"ps":1}],"sn":"StripCharacter","rt":$n[0].String,"p":[$n[0].String,$n[0].Char]},{"a":2,"n":"TabStrings","is":true,"t":8,"pi":[{"n":"elems","pt":$n[1].List$1(System.String),"ps":0},{"n":"usePipes","pt":$n[0].Boolean,"ps":1}],"sn":"TabStrings","rt":$n[1].List$1(System.String),"p":[$n[1].List$1(System.String),$n[0].Boolean]},{"a":2,"n":"TrimWhitespace","is":true,"t":8,"pi":[{"n":"input","pt":$n[0].String,"ps":0}],"sn":"TrimWhitespace","rt":$n[0].String,"p":[$n[0].String]}]}; }, $n);

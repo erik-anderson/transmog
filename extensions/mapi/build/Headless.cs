@@ -29,7 +29,7 @@ namespace Fiddler
         public byte[] responseBodyBytes { get; set; } = Array.Empty<byte>();
         public string this[string name]
         {
-            get => name == "VirtualID" ? id.ToString() : ResponseHeaders[name];
+            get => name == "VirtualID" ? id.ToString() : name == "LocalProcess" ? LocalProcess : ResponseHeaders[name];
             set => ResponseHeaders[name] = value;
         }
     }

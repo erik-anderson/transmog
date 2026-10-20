@@ -1,6 +1,9 @@
 """Synthetic protocol cases, independent of compiler/runtime implementation."""
 import base64
+import json
+from pathlib import Path
 import struct
+import importlib.util
 
 
 def u16(value):
@@ -13,6 +16,45 @@ def u32(value):
 
 def wide(text):
     return (text + "\0").encode("utf-16-le")
+
+
+def rpc(rops, handle=0xffffffff):
+    payload=u16(2+len(rops))+rops+u32(handle)
+    return struct.pack("<HHHH",0,4,len(payload),len(payload))+payload
+
+
+def execute_request(rops, handle=0xffffffff):
+    buffer=rpc(rops,handle)
+    return u32(0)+u32(len(buffer))+buffer+u32(65536)+u32(0)
+
+
+def execute_response(rops, handle=0x12345678):
+    buffer=rpc(rops,handle)
+    return b"DONE\r\n\r\n"+u32(0)*3+u32(len(buffer))+buffer+u32(0)
+
+
+def rop_shapes():
+    shapes=json.loads(Path(__file__).with_name("rop-shapes.json").read_text(encoding="utf-8"))
+    logon=base64.b64decode(shapes["logon"])
+    requests={item["operation"]:base64.b64decode(item["bytes"]) for item in shapes["items"] if item["direction"]=="request"}
+    result=[]
+    for item in shapes["items"]:
+        direction=item["direction"]
+        payload=base64.b64decode(item["bytes"])
+        historical=item["operation"] in ["RopWritePerUserInformation","RopSetMessageReadFlag"]
+        paired=payload if direction=="request" else requests.get(item["operation"],bytes([1,7,0]))
+        incoming=execute_request((b"" if historical else logon)+paired)
+        outgoing=execute_response(payload) if direction=="response" else b""
+        if direction=="request" and item["operation"]=="RopSetColumns":
+            outgoing=execute_response(bytes([item["id"],0])+u32(0x8004010f))
+        context=[{"requestType":"Execute","request":base64.b64encode(execute_request(logon,7)).decode("ascii")} ] if historical else []
+        unit=case("shape-"+item["parser"],"rop-shape","Execute",incoming,outgoing,direction=direction,parser=item["parser"],arguments=item["arguments"])
+        unit.update(prepareRequest=True,context=context,offset=18+(0 if historical else len(logon)) if direction=="request" else 34,count=len(payload))
+        result.append(unit)
+        dispatched=case("dispatch-"+item["parser"],"rop-dispatch","Execute",incoming,outgoing,direction=direction)
+        dispatched["context"]=context
+        result.append(dispatched)
+    return result
 
 
 def case(name, family, operation, request=b"", response=b"", *, direction="request", parser=None, arguments=None):
@@ -85,4 +127,7 @@ def cases():
         fixture["includeDerived"]=True
         fixture["derivedExpectation"]={"bytes":list(payload),"encodedBytes":len(encoded),"transformed":compressed or obfuscated,"exactMapping":not compressed}
         result.append(fixture)
-    return result
+    specification=importlib.util.spec_from_file_location("mapi_scenarios",Path(__file__).with_name("scenarios.py"))
+    scenarios=importlib.util.module_from_spec(specification)
+    specification.loader.exec_module(scenarios)
+    return result+rop_shapes()+scenarios.cases(case,execute_request,execute_response)

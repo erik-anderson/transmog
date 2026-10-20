@@ -1,0 +1,2095 @@
+{
+  "revision": "7a76470574377d14cae612c507f45b34d70e05a0",
+  "kind": "structural-dispatch",
+  "logon": "/gcAAQAAAAAAAAAAIAAvbz1FeGFtcGxlL291PVN5bnRoZXRpYy9jbj1Vc2VyAA==",
+  "items": [
+    {
+      "direction": "request",
+      "operation": "RopLogon",
+      "id": 254,
+      "parser": "RopLogonRequest",
+      "arguments": [],
+      "bytes": "/gcAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetReceiveFolder",
+      "id": 39,
+      "parser": "RopGetReceiveFolderRequest",
+      "arguments": [],
+      "bytes": "JwcAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetReceiveFolder",
+      "id": 38,
+      "parser": "RopSetReceiveFolderRequest",
+      "arguments": [],
+      "bytes": "JgcAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetReceiveFolderTable",
+      "id": 104,
+      "parser": "RopGetReceiveFolderTableRequest",
+      "arguments": [],
+      "bytes": "aAcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetStoreState",
+      "id": 123,
+      "parser": "RopGetStoreStateRequest",
+      "arguments": [],
+      "bytes": "ewcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetOwningServers",
+      "id": 66,
+      "parser": "RopGetOwningServersRequest",
+      "arguments": [],
+      "bytes": "QgcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopPublicFolderIsGhosted",
+      "id": 69,
+      "parser": "RopPublicFolderIsGhostedRequest",
+      "arguments": [],
+      "bytes": "RQcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopLongTermIdFromId",
+      "id": 67,
+      "parser": "RopLongTermIdFromIdRequest",
+      "arguments": [],
+      "bytes": "QwcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopIdFromLongTermId",
+      "id": 68,
+      "parser": "RopIdFromLongTermIdRequest",
+      "arguments": [],
+      "bytes": "RAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPerUserLongTermIds",
+      "id": 96,
+      "parser": "RopGetPerUserLongTermIdsRequest",
+      "arguments": [],
+      "bytes": "YAcAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPerUserGuid",
+      "id": 97,
+      "parser": "RopGetPerUserGuidRequest",
+      "arguments": [],
+      "bytes": "YQcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopReadPerUserInformation",
+      "id": 99,
+      "parser": "RopReadPerUserInformationRequest",
+      "arguments": [],
+      "bytes": "YwcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopWritePerUserInformation",
+      "id": 100,
+      "parser": "RopWritePerUserInformationRequest",
+      "arguments": [],
+      "bytes": "ZAcAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSubmitMessage",
+      "id": 50,
+      "parser": "RopSubmitMessageRequest",
+      "arguments": [],
+      "bytes": "MgcAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopAbortSubmit",
+      "id": 52,
+      "parser": "RopAbortSubmitRequest",
+      "arguments": [],
+      "bytes": "NAcAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetAddressTypes",
+      "id": 73,
+      "parser": "RopGetAddressTypesRequest",
+      "arguments": [],
+      "bytes": "SQcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetSpooler",
+      "id": 71,
+      "parser": "RopSetSpoolerRequest",
+      "arguments": [],
+      "bytes": "RwcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSpoolerLockMessage",
+      "id": 72,
+      "parser": "RopSpoolerLockMessageRequest",
+      "arguments": [],
+      "bytes": "SAcAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopTransportSend",
+      "id": 74,
+      "parser": "RopTransportSendRequest",
+      "arguments": [],
+      "bytes": "SgcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopTransportNewMail",
+      "id": 81,
+      "parser": "RopTransportNewMailRequest",
+      "arguments": [],
+      "bytes": "UQcAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetTransportFolder",
+      "id": 109,
+      "parser": "RopGetTransportFolderRequest",
+      "arguments": [],
+      "bytes": "bQcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopOptionsData",
+      "id": 111,
+      "parser": "RopOptionsDataRequest",
+      "arguments": [],
+      "bytes": "bwcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopRelease",
+      "id": 1,
+      "parser": "RopReleaseRequest",
+      "arguments": [],
+      "bytes": "AQcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetColumns",
+      "id": 18,
+      "parser": "RopSetColumnsRequest",
+      "arguments": [],
+      "bytes": "EgcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSortTable",
+      "id": 19,
+      "parser": "RopSortTableRequest",
+      "arguments": [],
+      "bytes": "EwcAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopRestrict",
+      "id": 20,
+      "parser": "RopRestrictRequest",
+      "arguments": [],
+      "bytes": "FAcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopQueryRows",
+      "id": 21,
+      "parser": "RopQueryRowsRequest",
+      "arguments": [],
+      "bytes": "FQcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopAbort",
+      "id": 56,
+      "parser": "RopAbortRequest",
+      "arguments": [],
+      "bytes": "OAcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetStatus",
+      "id": 22,
+      "parser": "RopGetStatusRequest",
+      "arguments": [],
+      "bytes": "FgcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopQueryPosition",
+      "id": 23,
+      "parser": "RopQueryPositionRequest",
+      "arguments": [],
+      "bytes": "FwcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSeekRow",
+      "id": 24,
+      "parser": "RopSeekRowRequest",
+      "arguments": [],
+      "bytes": "GAcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSeekRowBookmark",
+      "id": 25,
+      "parser": "RopSeekRowBookmarkRequest",
+      "arguments": [],
+      "bytes": "GQcAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSeekRowFractional",
+      "id": 26,
+      "parser": "RopSeekRowFractionalRequest",
+      "arguments": [],
+      "bytes": "GgcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCreateBookmark",
+      "id": 27,
+      "parser": "RopCreateBookmarkRequest",
+      "arguments": [],
+      "bytes": "GwcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopQueryColumnsAll",
+      "id": 55,
+      "parser": "RopQueryColumnsAllRequest",
+      "arguments": [],
+      "bytes": "NwcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFindRow",
+      "id": 79,
+      "parser": "RopFindRowRequest",
+      "arguments": [],
+      "bytes": "TwcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFreeBookmark",
+      "id": 137,
+      "parser": "RopFreeBookmarkRequest",
+      "arguments": [],
+      "bytes": "iQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopResetTable",
+      "id": 129,
+      "parser": "RopResetTableRequest",
+      "arguments": [],
+      "bytes": "gQcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopExpandRow",
+      "id": 89,
+      "parser": "RopExpandRowRequest",
+      "arguments": [],
+      "bytes": "WQcAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCollapseRow",
+      "id": 90,
+      "parser": "RopCollapseRowRequest",
+      "arguments": [],
+      "bytes": "WgcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetCollapseState",
+      "id": 107,
+      "parser": "RopGetCollapseStateRequest",
+      "arguments": [],
+      "bytes": "awcAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetCollapseState",
+      "id": 108,
+      "parser": "RopSetCollapseStateRequest",
+      "arguments": [],
+      "bytes": "bAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopModifyRules",
+      "id": 65,
+      "parser": "RopModifyRulesRequest",
+      "arguments": [],
+      "bytes": "QQcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetRulesTable",
+      "id": 63,
+      "parser": "RopGetRulesTableRequest",
+      "arguments": [],
+      "bytes": "PwcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopUpdateDeferredActionMessages",
+      "id": 87,
+      "parser": "RopUpdateDeferredActionMessagesRequest",
+      "arguments": [],
+      "bytes": "VwcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferSourceCopyProperties",
+      "id": 105,
+      "parser": "RopFastTransferSourceCopyPropertiesRequest",
+      "arguments": [],
+      "bytes": "aQcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferSourceCopyTo",
+      "id": 77,
+      "parser": "RopFastTransferSourceCopyToRequest",
+      "arguments": [],
+      "bytes": "TQcAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferSourceCopyMessages",
+      "id": 75,
+      "parser": "RopFastTransferSourceCopyMessagesRequest",
+      "arguments": [],
+      "bytes": "SwcAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferSourceCopyFolder",
+      "id": 76,
+      "parser": "RopFastTransferSourceCopyFolderRequest",
+      "arguments": [],
+      "bytes": "TAcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferSourceGetBuffer",
+      "id": 78,
+      "parser": "RopFastTransferSourceGetBufferRequest",
+      "arguments": [],
+      "bytes": "TgcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopTellVersion",
+      "id": 134,
+      "parser": "RopTellVersionRequest",
+      "arguments": [],
+      "bytes": "hgcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferDestinationConfigure",
+      "id": 83,
+      "parser": "RopFastTransferDestinationConfigureRequest",
+      "arguments": [],
+      "bytes": "UwcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferDestinationPutBuffer",
+      "id": 84,
+      "parser": "RopFastTransferDestinationPutBufferRequest",
+      "arguments": [],
+      "bytes": "VAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopFastTransferDestinationPutBufferExtended",
+      "id": 157,
+      "parser": "RopFastTransferDestinationPutBufferExtendedRequest",
+      "arguments": [],
+      "bytes": "nQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationConfigure",
+      "id": 112,
+      "parser": "RopSynchronizationConfigureRequest",
+      "arguments": [],
+      "bytes": "cAcAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationGetTransferState",
+      "id": 130,
+      "parser": "RopSynchronizationGetTransferStateRequest",
+      "arguments": [],
+      "bytes": "ggcAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationUploadStateStreamBegin",
+      "id": 117,
+      "parser": "RopSynchronizationUploadStateStreamBeginRequest",
+      "arguments": [],
+      "bytes": "dQcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationUploadStateStreamContinue",
+      "id": 118,
+      "parser": "RopSynchronizationUploadStateStreamContinueRequest",
+      "arguments": [],
+      "bytes": "dgcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationUploadStateStreamEnd",
+      "id": 119,
+      "parser": "RopSynchronizationUploadStateStreamEndRequest",
+      "arguments": [],
+      "bytes": "dwcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationOpenCollector",
+      "id": 126,
+      "parser": "RopSynchronizationOpenCollectorRequest",
+      "arguments": [],
+      "bytes": "fgcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationImportMessageChange",
+      "id": 114,
+      "parser": "RopSynchronizationImportMessageChangeRequest",
+      "arguments": [],
+      "bytes": "cgcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationImportHierarchyChange",
+      "id": 115,
+      "parser": "RopSynchronizationImportHierarchyChangeRequest",
+      "arguments": [],
+      "bytes": "cwcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationImportMessageMove",
+      "id": 120,
+      "parser": "RopSynchronizationImportMessageMoveRequest",
+      "arguments": [],
+      "bytes": "eAcAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationImportDeletes",
+      "id": 116,
+      "parser": "RopSynchronizationImportDeletesRequest",
+      "arguments": [],
+      "bytes": "dAcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSynchronizationImportReadStateChanges",
+      "id": 128,
+      "parser": "RopSynchronizationImportReadStateChangesRequest",
+      "arguments": [],
+      "bytes": "gAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetLocalReplicaIds",
+      "id": 127,
+      "parser": "RopGetLocalReplicaIdsRequest",
+      "arguments": [],
+      "bytes": "fwcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetLocalReplicaMidsetDeleted",
+      "id": 147,
+      "parser": "RopSetLocalReplicaMidsetDeletedRequest",
+      "arguments": [],
+      "bytes": "kwcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPropertiesSpecific",
+      "id": 7,
+      "parser": "RopGetPropertiesSpecificRequest",
+      "arguments": [],
+      "bytes": "BwcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPropertiesAll",
+      "id": 8,
+      "parser": "RopGetPropertiesAllRequest",
+      "arguments": [],
+      "bytes": "CAcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPropertiesList",
+      "id": 9,
+      "parser": "RopGetPropertiesListRequest",
+      "arguments": [],
+      "bytes": "CQcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetProperties",
+      "id": 10,
+      "parser": "RopSetPropertiesRequest",
+      "arguments": [],
+      "bytes": "CgcAAgAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetPropertiesNoReplicate",
+      "id": 121,
+      "parser": "RopSetPropertiesNoReplicateRequest",
+      "arguments": [],
+      "bytes": "eQcAAgAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopDeleteProperties",
+      "id": 11,
+      "parser": "RopDeletePropertiesRequest",
+      "arguments": [],
+      "bytes": "CwcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopDeletePropertiesNoReplicate",
+      "id": 122,
+      "parser": "RopDeletePropertiesNoReplicateRequest",
+      "arguments": [],
+      "bytes": "egcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopQueryNamedProperties",
+      "id": 95,
+      "parser": "RopQueryNamedPropertiesRequest",
+      "arguments": [],
+      "bytes": "XwcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCopyProperties",
+      "id": 103,
+      "parser": "RopCopyPropertiesRequest",
+      "arguments": [],
+      "bytes": "ZwcAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCopyTo",
+      "id": 57,
+      "parser": "RopCopyToRequest",
+      "arguments": [],
+      "bytes": "OQcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPropertyIdsFromNames",
+      "id": 86,
+      "parser": "RopGetPropertyIdsFromNamesRequest",
+      "arguments": [],
+      "bytes": "VgcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetNamesFromPropertyIds",
+      "id": 85,
+      "parser": "RopGetNamesFromPropertyIdsRequest",
+      "arguments": [],
+      "bytes": "VQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopOpenStream",
+      "id": 43,
+      "parser": "RopOpenStreamRequest",
+      "arguments": [],
+      "bytes": "KwcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopReadStream",
+      "id": 44,
+      "parser": "RopReadStreamRequest",
+      "arguments": [],
+      "bytes": "LAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopWriteStream",
+      "id": 45,
+      "parser": "RopWriteStreamRequest",
+      "arguments": [],
+      "bytes": "LQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopWriteStreamExtended",
+      "id": 163,
+      "parser": "RopWriteStreamExtendedRequest",
+      "arguments": [],
+      "bytes": "owcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCommitStream",
+      "id": 93,
+      "parser": "RopCommitStreamRequest",
+      "arguments": [],
+      "bytes": "XQcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetStreamSize",
+      "id": 94,
+      "parser": "RopGetStreamSizeRequest",
+      "arguments": [],
+      "bytes": "XgcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetStreamSize",
+      "id": 47,
+      "parser": "RopSetStreamSizeRequest",
+      "arguments": [],
+      "bytes": "LwcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSeekStream",
+      "id": 46,
+      "parser": "RopSeekStreamRequest",
+      "arguments": [],
+      "bytes": "LgcAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopCopyToStream",
+      "id": 58,
+      "parser": "RopCopyToStreamRequest",
+      "arguments": [],
+      "bytes": "OgcAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopProgress",
+      "id": 80,
+      "parser": "RopProgressRequest",
+      "arguments": [],
+      "bytes": "UAcAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopLockRegionStream",
+      "id": 91,
+      "parser": "RopLockRegionStreamRequest",
+      "arguments": [],
+      "bytes": "WwcAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopUnlockRegionStream",
+      "id": 92,
+      "parser": "RopUnlockRegionStreamRequest",
+      "arguments": [],
+      "bytes": "XAcAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopWriteAndCommitStream",
+      "id": 144,
+      "parser": "RopWriteAndCommitStreamRequest",
+      "arguments": [],
+      "bytes": "kAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCloneStream",
+      "id": 59,
+      "parser": "RopCloneStreamRequest",
+      "arguments": [],
+      "bytes": "OwcAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopOpenFolder",
+      "id": 2,
+      "parser": "RopOpenFolderRequest",
+      "arguments": [],
+      "bytes": "AgcAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCreateFolder",
+      "id": 28,
+      "parser": "RopCreateFolderRequest",
+      "arguments": [],
+      "bytes": "HAcAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopDeleteFolder",
+      "id": 29,
+      "parser": "RopDeleteFolderRequest",
+      "arguments": [],
+      "bytes": "HQcAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetSearchCriteria",
+      "id": 48,
+      "parser": "RopSetSearchCriteriaRequest",
+      "arguments": [],
+      "bytes": "MAcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetSearchCriteria",
+      "id": 49,
+      "parser": "RopGetSearchCriteriaRequest",
+      "arguments": [],
+      "bytes": "MQcAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopMoveCopyMessages",
+      "id": 51,
+      "parser": "RopMoveCopyMessagesRequest",
+      "arguments": [],
+      "bytes": "MwcAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopMoveFolder",
+      "id": 53,
+      "parser": "RopMoveFolderRequest",
+      "arguments": [],
+      "bytes": "NQcAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopCopyFolder",
+      "id": 54,
+      "parser": "RopCopyFolderRequest",
+      "arguments": [],
+      "bytes": "NgcAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopEmptyFolder",
+      "id": 88,
+      "parser": "RopEmptyFolderRequest",
+      "arguments": [],
+      "bytes": "WAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopHardDeleteMessagesAndSubfolders",
+      "id": 146,
+      "parser": "RopHardDeleteMessagesAndSubfoldersRequest",
+      "arguments": [],
+      "bytes": "kgcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopDeleteMessages",
+      "id": 30,
+      "parser": "RopDeleteMessagesRequest",
+      "arguments": [],
+      "bytes": "HgcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopHardDeleteMessages",
+      "id": 145,
+      "parser": "RopHardDeleteMessagesRequest",
+      "arguments": [],
+      "bytes": "kQcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetHierarchyTable",
+      "id": 4,
+      "parser": "RopGetHierarchyTableRequest",
+      "arguments": [],
+      "bytes": "BAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetContentsTable",
+      "id": 5,
+      "parser": "RopGetContentsTableRequest",
+      "arguments": [],
+      "bytes": "BQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopOpenMessage",
+      "id": 3,
+      "parser": "RopOpenMessageRequest",
+      "arguments": [],
+      "bytes": "AwcAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopCreateMessage",
+      "id": 6,
+      "parser": "RopCreateMessageRequest",
+      "arguments": [],
+      "bytes": "BgcAAAAAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopSaveChangesMessage",
+      "id": 12,
+      "parser": "RopSaveChangesMessageRequest",
+      "arguments": [],
+      "bytes": "DAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopRemoveAllRecipients",
+      "id": 13,
+      "parser": "RopRemoveAllRecipientsRequest",
+      "arguments": [],
+      "bytes": "DQcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopModifyRecipients",
+      "id": 14,
+      "parser": "RopModifyRecipientsRequest",
+      "arguments": [],
+      "bytes": "DgcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopReadRecipients",
+      "id": 15,
+      "parser": "RopReadRecipientsRequest",
+      "arguments": [],
+      "bytes": "DwcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopReloadCachedInformation",
+      "id": 16,
+      "parser": "RopReloadCachedInformationRequest",
+      "arguments": [],
+      "bytes": "EAcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetMessageStatus",
+      "id": 32,
+      "parser": "RopSetMessageStatusRequest",
+      "arguments": [],
+      "bytes": "IAcAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetMessageStatus",
+      "id": 31,
+      "parser": "RopGetMessageStatusRequest",
+      "arguments": [],
+      "bytes": "HwcAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetReadFlags",
+      "id": 102,
+      "parser": "RopSetReadFlagsRequest",
+      "arguments": [],
+      "bytes": "ZgcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSetMessageReadFlag",
+      "id": 17,
+      "parser": "RopSetMessageReadFlagRequest",
+      "arguments": [],
+      "bytes": "EQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopOpenAttachment",
+      "id": 34,
+      "parser": "RopOpenAttachmentRequest",
+      "arguments": [],
+      "bytes": "IgcAAAAAAAAA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopCreateAttachment",
+      "id": 35,
+      "parser": "RopCreateAttachmentRequest",
+      "arguments": [],
+      "bytes": "IwcAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopDeleteAttachment",
+      "id": 36,
+      "parser": "RopDeleteAttachmentRequest",
+      "arguments": [],
+      "bytes": "JAcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopSaveChangesAttachment",
+      "id": 37,
+      "parser": "RopSaveChangesAttachmentRequest",
+      "arguments": [],
+      "bytes": "JQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopOpenEmbeddedMessage",
+      "id": 70,
+      "parser": "RopOpenEmbeddedMessageRequest",
+      "arguments": [],
+      "bytes": "RgcAAAAAAA=="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetAttachmentTable",
+      "id": 33,
+      "parser": "RopGetAttachmentTableRequest",
+      "arguments": [],
+      "bytes": "IQcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetValidAttachments",
+      "id": 82,
+      "parser": "RopGetValidAttachmentsRequest",
+      "arguments": [],
+      "bytes": "UgcA"
+    },
+    {
+      "direction": "request",
+      "operation": "RopRegisterNotification",
+      "id": 41,
+      "parser": "RopRegisterNotificationRequest",
+      "arguments": [],
+      "bytes": "KQcAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopGetPermissionsTable",
+      "id": 62,
+      "parser": "RopGetPermissionsTableRequest",
+      "arguments": [],
+      "bytes": "PgcAAAA="
+    },
+    {
+      "direction": "request",
+      "operation": "RopModifyPermissions",
+      "id": 64,
+      "parser": "RopModifyPermissionsRequest",
+      "arguments": [],
+      "bytes": "QAcAAAAA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopLogon",
+      "id": 254,
+      "parser": "RopLogonResponse_PrivateMailboxes",
+      "arguments": [],
+      "bytes": "/gAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopLogon",
+      "id": 254,
+      "parser": "RopLogonResponse_PublicFolders",
+      "arguments": [],
+      "bytes": "/gAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetReceiveFolder",
+      "id": 39,
+      "parser": "RopGetReceiveFolderResponse",
+      "arguments": [],
+      "bytes": "JwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetReceiveFolder",
+      "id": 38,
+      "parser": "RopSetReceiveFolderResponse",
+      "arguments": [],
+      "bytes": "JgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetReceiveFolderTable",
+      "id": 104,
+      "parser": "RopGetReceiveFolderTableResponse",
+      "arguments": [],
+      "bytes": "aAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetStoreState",
+      "id": 123,
+      "parser": "RopGetStoreStateResponse",
+      "arguments": [],
+      "bytes": "ewAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetOwningServers",
+      "id": 66,
+      "parser": "RopGetOwningServersResponse",
+      "arguments": [],
+      "bytes": "QgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopPublicFolderIsGhosted",
+      "id": 69,
+      "parser": "RopPublicFolderIsGhostedResponse",
+      "arguments": [],
+      "bytes": "RQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopLongTermIdFromId",
+      "id": 67,
+      "parser": "RopLongTermIdFromIdResponse",
+      "arguments": [],
+      "bytes": "QwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopIdFromLongTermId",
+      "id": 68,
+      "parser": "RopIdFromLongTermIdResponse",
+      "arguments": [],
+      "bytes": "RAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPerUserLongTermIds",
+      "id": 96,
+      "parser": "RopGetPerUserLongTermIdsResponse",
+      "arguments": [],
+      "bytes": "YAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPerUserGuid",
+      "id": 97,
+      "parser": "RopGetPerUserGuidResponse",
+      "arguments": [],
+      "bytes": "YQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopReadPerUserInformation",
+      "id": 99,
+      "parser": "RopReadPerUserInformationResponse",
+      "arguments": [],
+      "bytes": "YwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopWritePerUserInformation",
+      "id": 100,
+      "parser": "RopWritePerUserInformationResponse",
+      "arguments": [],
+      "bytes": "ZAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSubmitMessage",
+      "id": 50,
+      "parser": "RopSubmitMessageResponse",
+      "arguments": [],
+      "bytes": "MgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopAbortSubmit",
+      "id": 52,
+      "parser": "RopAbortSubmitResponse",
+      "arguments": [],
+      "bytes": "NAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetAddressTypes",
+      "id": 73,
+      "parser": "RopGetAddressTypesResponse",
+      "arguments": [],
+      "bytes": "SQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetSpooler",
+      "id": 71,
+      "parser": "RopSetSpoolerResponse",
+      "arguments": [],
+      "bytes": "RwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSpoolerLockMessage",
+      "id": 72,
+      "parser": "RopSpoolerLockMessageResponse",
+      "arguments": [],
+      "bytes": "SAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopTransportSend",
+      "id": 74,
+      "parser": "RopTransportSendResponse",
+      "arguments": [],
+      "bytes": "SgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopTransportNewMail",
+      "id": 81,
+      "parser": "RopTransportNewMailResponse",
+      "arguments": [],
+      "bytes": "UQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetTransportFolder",
+      "id": 109,
+      "parser": "RopGetTransportFolderResponse",
+      "arguments": [],
+      "bytes": "bQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopOptionsData",
+      "id": 111,
+      "parser": "RopOptionsDataResponse",
+      "arguments": [],
+      "bytes": "bwAPAQSAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopBackoff",
+      "id": 249,
+      "parser": "RopBackoffResponse",
+      "arguments": [],
+      "bytes": "+QfoAwAAAAAA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopBufferTooSmall",
+      "id": 255,
+      "parser": "RopBufferTooSmallResponse",
+      "arguments": [
+        3
+      ],
+      "bytes": "/wACAQcA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetColumns",
+      "id": 18,
+      "parser": "RopSetColumnsResponse",
+      "arguments": [],
+      "bytes": "EgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSortTable",
+      "id": 19,
+      "parser": "RopSortTableResponse",
+      "arguments": [],
+      "bytes": "EwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopRestrict",
+      "id": 20,
+      "parser": "RopRestrictResponse",
+      "arguments": [],
+      "bytes": "FAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopQueryRows",
+      "id": 21,
+      "parser": "RopQueryRowsResponse",
+      "arguments": [
+        null
+      ],
+      "bytes": "FQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopAbort",
+      "id": 56,
+      "parser": "RopAbortResponse",
+      "arguments": [],
+      "bytes": "OAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetStatus",
+      "id": 22,
+      "parser": "RopGetStatusResponse",
+      "arguments": [],
+      "bytes": "FgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopQueryPosition",
+      "id": 23,
+      "parser": "RopQueryPositionResponse",
+      "arguments": [],
+      "bytes": "FwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSeekRow",
+      "id": 24,
+      "parser": "RopSeekRowResponse",
+      "arguments": [],
+      "bytes": "GAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSeekRowBookmark",
+      "id": 25,
+      "parser": "RopSeekRowBookmarkResponse",
+      "arguments": [],
+      "bytes": "GQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSeekRowFractional",
+      "id": 26,
+      "parser": "RopSeekRowFractionalResponse",
+      "arguments": [],
+      "bytes": "GgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCreateBookmark",
+      "id": 27,
+      "parser": "RopCreateBookmarkResponse",
+      "arguments": [],
+      "bytes": "GwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopQueryColumnsAll",
+      "id": 55,
+      "parser": "RopQueryColumnsAllResponse",
+      "arguments": [],
+      "bytes": "NwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFindRow",
+      "id": 79,
+      "parser": "RopFindRowResponse",
+      "arguments": [
+        null
+      ],
+      "bytes": "TwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFreeBookmark",
+      "id": 137,
+      "parser": "RopFreeBookmarkResponse",
+      "arguments": [],
+      "bytes": "iQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopResetTable",
+      "id": 129,
+      "parser": "RopResetTableResponse",
+      "arguments": [],
+      "bytes": "gQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopExpandRow",
+      "id": 89,
+      "parser": "RopExpandRowResponse",
+      "arguments": [
+        null
+      ],
+      "bytes": "WQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCollapseRow",
+      "id": 90,
+      "parser": "RopCollapseRowResponse",
+      "arguments": [],
+      "bytes": "WgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetCollapseState",
+      "id": 107,
+      "parser": "RopGetCollapseStateResponse",
+      "arguments": [],
+      "bytes": "awAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetCollapseState",
+      "id": 108,
+      "parser": "RopSetCollapseStateResponse",
+      "arguments": [],
+      "bytes": "bAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopModifyRules",
+      "id": 65,
+      "parser": "RopModifyRulesResponse",
+      "arguments": [],
+      "bytes": "QQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetRulesTable",
+      "id": 63,
+      "parser": "RopGetRulesTableResponse",
+      "arguments": [],
+      "bytes": "PwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopUpdateDeferredActionMessages",
+      "id": 87,
+      "parser": "RopUpdateDeferredActionMessagesResponse",
+      "arguments": [],
+      "bytes": "VwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferSourceCopyProperties",
+      "id": 105,
+      "parser": "RopFastTransferSourceCopyPropertiesResponse",
+      "arguments": [],
+      "bytes": "aQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferSourceCopyTo",
+      "id": 77,
+      "parser": "RopFastTransferSourceCopyToResponse",
+      "arguments": [],
+      "bytes": "TQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferSourceCopyMessages",
+      "id": 75,
+      "parser": "RopFastTransferSourceCopyMessagesResponse",
+      "arguments": [],
+      "bytes": "SwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferSourceCopyFolder",
+      "id": 76,
+      "parser": "RopFastTransferSourceCopyFolderResponse",
+      "arguments": [],
+      "bytes": "TAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferSourceGetBuffer",
+      "id": 78,
+      "parser": "RopFastTransferSourceGetBufferResponse",
+      "arguments": [],
+      "bytes": "TgAPAQSAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopTellVersion",
+      "id": 134,
+      "parser": "RopTellVersionResponse",
+      "arguments": [],
+      "bytes": "hgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationGetTransferState",
+      "id": 130,
+      "parser": "RopSynchronizationGetTransferStateResponse",
+      "arguments": [],
+      "bytes": "ggAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferDestinationConfigure",
+      "id": 83,
+      "parser": "RopFastTransferDestinationConfigureResponse",
+      "arguments": [],
+      "bytes": "UwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferDestinationPutBuffer",
+      "id": 84,
+      "parser": "RopFastTransferDestinationPutBufferResponse",
+      "arguments": [],
+      "bytes": "VAAPAQSAAAAAAAAAAAAA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopFastTransferDestinationPutBufferExtended",
+      "id": 157,
+      "parser": "RopFastTransferDestinationPutBufferExtendedResponse",
+      "arguments": [],
+      "bytes": "nQAPAQSAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationConfigure",
+      "id": 112,
+      "parser": "RopSynchronizationConfigureResponse",
+      "arguments": [],
+      "bytes": "cAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationUploadStateStreamBegin",
+      "id": 117,
+      "parser": "RopSynchronizationUploadStateStreamBeginResponse",
+      "arguments": [],
+      "bytes": "dQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationUploadStateStreamContinue",
+      "id": 118,
+      "parser": "RopSynchronizationUploadStateStreamContinueResponse",
+      "arguments": [],
+      "bytes": "dgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationUploadStateStreamEnd",
+      "id": 119,
+      "parser": "RopSynchronizationUploadStateStreamEndResponse",
+      "arguments": [],
+      "bytes": "dwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationOpenCollector",
+      "id": 126,
+      "parser": "RopSynchronizationOpenCollectorResponse",
+      "arguments": [],
+      "bytes": "fgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationImportMessageChange",
+      "id": 114,
+      "parser": "RopSynchronizationImportMessageChangeResponse",
+      "arguments": [],
+      "bytes": "cgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationImportHierarchyChange",
+      "id": 115,
+      "parser": "RopSynchronizationImportHierarchyChangeResponse",
+      "arguments": [],
+      "bytes": "cwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationImportMessageMove",
+      "id": 120,
+      "parser": "RopSynchronizationImportMessageMoveResponse",
+      "arguments": [],
+      "bytes": "eAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationImportDeletes",
+      "id": 116,
+      "parser": "RopSynchronizationImportDeletesResponse",
+      "arguments": [],
+      "bytes": "dAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSynchronizationImportReadStateChanges",
+      "id": 128,
+      "parser": "RopSynchronizationImportReadStateChangesResponse",
+      "arguments": [],
+      "bytes": "gAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetLocalReplicaIds",
+      "id": 127,
+      "parser": "RopGetLocalReplicaIdsResponse",
+      "arguments": [],
+      "bytes": "fwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetLocalReplicaMidsetDeleted",
+      "id": 147,
+      "parser": "RopSetLocalReplicaMidsetDeletedResponse",
+      "arguments": [],
+      "bytes": "kwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPropertiesSpecific",
+      "id": 7,
+      "parser": "RopGetPropertiesSpecificResponse",
+      "arguments": [],
+      "bytes": "BwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPropertiesAll",
+      "id": 8,
+      "parser": "RopGetPropertiesAllResponse",
+      "arguments": [],
+      "bytes": "CAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPropertiesList",
+      "id": 9,
+      "parser": "RopGetPropertiesListResponse",
+      "arguments": [],
+      "bytes": "CQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetProperties",
+      "id": 10,
+      "parser": "RopSetPropertiesResponse",
+      "arguments": [],
+      "bytes": "CgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetPropertiesNoReplicate",
+      "id": 121,
+      "parser": "RopSetPropertiesNoReplicateResponse",
+      "arguments": [],
+      "bytes": "eQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopDeleteProperties",
+      "id": 11,
+      "parser": "RopDeletePropertiesResponse",
+      "arguments": [],
+      "bytes": "CwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopDeletePropertiesNoReplicate",
+      "id": 122,
+      "parser": "RopDeletePropertiesNoReplicateResponse",
+      "arguments": [],
+      "bytes": "egAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopQueryNamedProperties",
+      "id": 95,
+      "parser": "RopQueryNamedPropertiesResponse",
+      "arguments": [],
+      "bytes": "XwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCopyProperties",
+      "id": 103,
+      "parser": "RopCopyPropertiesResponse",
+      "arguments": [],
+      "bytes": "ZwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCopyTo",
+      "id": 57,
+      "parser": "RopCopyToResponse",
+      "arguments": [],
+      "bytes": "OQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPropertyIdsFromNames",
+      "id": 86,
+      "parser": "RopGetPropertyIdsFromNamesResponse",
+      "arguments": [],
+      "bytes": "VgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetNamesFromPropertyIds",
+      "id": 85,
+      "parser": "RopGetNamesFromPropertyIdsResponse",
+      "arguments": [],
+      "bytes": "VQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopOpenStream",
+      "id": 43,
+      "parser": "RopOpenStreamResponse",
+      "arguments": [],
+      "bytes": "KwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopReadStream",
+      "id": 44,
+      "parser": "RopReadStreamResponse",
+      "arguments": [],
+      "bytes": "LAAPAQSAAAA="
+    },
+    {
+      "direction": "response",
+      "operation": "RopWriteStream",
+      "id": 45,
+      "parser": "RopWriteStreamResponse",
+      "arguments": [],
+      "bytes": "LQAPAQSAAAA="
+    },
+    {
+      "direction": "response",
+      "operation": "RopWriteStreamExtended",
+      "id": 163,
+      "parser": "RopWriteStreamExtendedResponse",
+      "arguments": [],
+      "bytes": "owAPAQSAAAAAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopCommitStream",
+      "id": 93,
+      "parser": "RopCommitStreamResponse",
+      "arguments": [],
+      "bytes": "XQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetStreamSize",
+      "id": 94,
+      "parser": "RopGetStreamSizeResponse",
+      "arguments": [],
+      "bytes": "XgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetStreamSize",
+      "id": 47,
+      "parser": "RopSetStreamSizeResponse",
+      "arguments": [],
+      "bytes": "LwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSeekStream",
+      "id": 46,
+      "parser": "RopSeekStreamResponse",
+      "arguments": [],
+      "bytes": "LgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCopyToStream",
+      "id": 58,
+      "parser": "RopCopyToStreamResponse",
+      "arguments": [],
+      "bytes": "OgAPAQSAAAAAAAAAAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopProgress",
+      "id": 80,
+      "parser": "RopProgressResponse",
+      "arguments": [],
+      "bytes": "UAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopLockRegionStream",
+      "id": 91,
+      "parser": "RopLockRegionStreamResponse",
+      "arguments": [],
+      "bytes": "WwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopUnlockRegionStream",
+      "id": 92,
+      "parser": "RopUnlockRegionStreamResponse",
+      "arguments": [],
+      "bytes": "XAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopWriteAndCommitStream",
+      "id": 144,
+      "parser": "RopWriteAndCommitStreamResponse",
+      "arguments": [],
+      "bytes": "kAAPAQSAAAA="
+    },
+    {
+      "direction": "response",
+      "operation": "RopCloneStream",
+      "id": 59,
+      "parser": "RopCloneStreamResponse",
+      "arguments": [],
+      "bytes": "OwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopOpenFolder",
+      "id": 2,
+      "parser": "RopOpenFolderResponse",
+      "arguments": [],
+      "bytes": "AgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCreateFolder",
+      "id": 28,
+      "parser": "RopCreateFolderResponse",
+      "arguments": [],
+      "bytes": "HAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopDeleteFolder",
+      "id": 29,
+      "parser": "RopDeleteFolderResponse",
+      "arguments": [],
+      "bytes": "HQAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetSearchCriteria",
+      "id": 48,
+      "parser": "RopSetSearchCriteriaResponse",
+      "arguments": [],
+      "bytes": "MAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetSearchCriteria",
+      "id": 49,
+      "parser": "RopGetSearchCriteriaResponse",
+      "arguments": [],
+      "bytes": "MQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopMoveCopyMessages",
+      "id": 51,
+      "parser": "RopMoveCopyMessagesResponse",
+      "arguments": [],
+      "bytes": "MwAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopMoveFolder",
+      "id": 53,
+      "parser": "RopMoveFolderResponse",
+      "arguments": [],
+      "bytes": "NQAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopCopyFolder",
+      "id": 54,
+      "parser": "RopCopyFolderResponse",
+      "arguments": [],
+      "bytes": "NgAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopEmptyFolder",
+      "id": 88,
+      "parser": "RopEmptyFolderResponse",
+      "arguments": [],
+      "bytes": "WAAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopHardDeleteMessagesAndSubfolders",
+      "id": 146,
+      "parser": "RopHardDeleteMessagesAndSubfoldersResponse",
+      "arguments": [],
+      "bytes": "kgAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopDeleteMessages",
+      "id": 30,
+      "parser": "RopDeleteMessagesResponse",
+      "arguments": [],
+      "bytes": "HgAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopHardDeleteMessages",
+      "id": 145,
+      "parser": "RopHardDeleteMessagesResponse",
+      "arguments": [],
+      "bytes": "kQAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetHierarchyTable",
+      "id": 4,
+      "parser": "RopGetHierarchyTableResponse",
+      "arguments": [],
+      "bytes": "BAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetContentsTable",
+      "id": 5,
+      "parser": "RopGetContentsTableResponse",
+      "arguments": [],
+      "bytes": "BQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopOpenMessage",
+      "id": 3,
+      "parser": "RopOpenMessageResponse",
+      "arguments": [],
+      "bytes": "AwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCreateMessage",
+      "id": 6,
+      "parser": "RopCreateMessageResponse",
+      "arguments": [],
+      "bytes": "BgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSaveChangesMessage",
+      "id": 12,
+      "parser": "RopSaveChangesMessageResponse",
+      "arguments": [],
+      "bytes": "DAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopRemoveAllRecipients",
+      "id": 13,
+      "parser": "RopRemoveAllRecipientsResponse",
+      "arguments": [],
+      "bytes": "DQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopModifyRecipients",
+      "id": 14,
+      "parser": "RopModifyRecipientsResponse",
+      "arguments": [],
+      "bytes": "DgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopReadRecipients",
+      "id": 15,
+      "parser": "RopReadRecipientsResponse",
+      "arguments": [],
+      "bytes": "DwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopReloadCachedInformation",
+      "id": 16,
+      "parser": "RopReloadCachedInformationResponse",
+      "arguments": [],
+      "bytes": "EAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetMessageStatus",
+      "id": 32,
+      "parser": "RopSetMessageStatusResponse",
+      "arguments": [],
+      "bytes": "IAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetMessageStatus",
+      "id": 31,
+      "parser": "RopGetMessageStatusResponse",
+      "arguments": [],
+      "bytes": "HwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetReadFlags",
+      "id": 102,
+      "parser": "RopSetReadFlagsResponse",
+      "arguments": [],
+      "bytes": "ZgAPAQSAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopSetMessageReadFlag",
+      "id": 17,
+      "parser": "RopSetMessageReadFlagResponse",
+      "arguments": [],
+      "bytes": "EQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopOpenAttachment",
+      "id": 34,
+      "parser": "RopOpenAttachmentResponse",
+      "arguments": [],
+      "bytes": "IgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopCreateAttachment",
+      "id": 35,
+      "parser": "RopCreateAttachmentResponse",
+      "arguments": [],
+      "bytes": "IwAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopDeleteAttachment",
+      "id": 36,
+      "parser": "RopDeleteAttachmentResponse",
+      "arguments": [],
+      "bytes": "JAAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopSaveChangesAttachment",
+      "id": 37,
+      "parser": "RopSaveChangesAttachmentResponse",
+      "arguments": [],
+      "bytes": "JQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopOpenEmbeddedMessage",
+      "id": 70,
+      "parser": "RopOpenEmbeddedMessageResponse",
+      "arguments": [],
+      "bytes": "RgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetAttachmentTable",
+      "id": 33,
+      "parser": "RopGetAttachmentTableResponse",
+      "arguments": [],
+      "bytes": "IQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetValidAttachments",
+      "id": 82,
+      "parser": "RopGetValidAttachmentsResponse",
+      "arguments": [],
+      "bytes": "UgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopRegisterNotification",
+      "id": 41,
+      "parser": "RopRegisterNotificationResponse",
+      "arguments": [],
+      "bytes": "KQAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopPending",
+      "id": 110,
+      "parser": "RopPendingResponse",
+      "arguments": [],
+      "bytes": "btIE"
+    },
+    {
+      "direction": "response",
+      "operation": "RopNotify",
+      "id": 42,
+      "parser": "RopNotifyResponse",
+      "arguments": [],
+      "bytes": "KnhWNBIHAAAAAAAAAAAAAA=="
+    },
+    {
+      "direction": "response",
+      "operation": "RopGetPermissionsTable",
+      "id": 62,
+      "parser": "RopGetPermissionsTableResponse",
+      "arguments": [],
+      "bytes": "PgAPAQSA"
+    },
+    {
+      "direction": "response",
+      "operation": "RopModifyPermissions",
+      "id": 64,
+      "parser": "RopModifyPermissionsResponse",
+      "arguments": [],
+      "bytes": "QAAPAQSA"
+    }
+  ]
+}

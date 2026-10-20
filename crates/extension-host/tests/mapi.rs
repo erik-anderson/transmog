@@ -54,6 +54,13 @@ export function visualize() {
   const guid=BlockParser.PortablePrimitives.Read(System.Guid,System.Array.init([51,34,17,0,85,68,119,102,136,153,170,187,204,221,238,255],System.Byte));
   const rpc=BlockParser.Block.Parse(MAPIInspector.Parsers.RPC_HEADER_EXT,new BlockParser.BinaryParser.$ctor1(System.Array.init([0,0,5,0,8,0,8,0],System.Byte)));
   if(!rpc.FullString().includes('Compressed'))throw new Error('Enum mismatch');
+  const error=BlockParser.Block.Parse(BlockParser.BlockT$1(MAPIInspector.Parsers.ErrorCodes),new BlockParser.BinaryParser.$ctor1(System.Array.init([15,1,4,128],System.Byte)));
+  if(!error.Parsed||error.Data!==2147746063||MAPIInspector.Parsers.HelpMethod.FormatErrorCode(error.Data)!=='NotFound = 0x8004010F')throw new Error('High-bit enum mismatch');
+  const unknown=BlockParser.PortablePrimitives.Read(MAPIInspector.Parsers.ErrorCodes,System.Array.init([255,255,255,255],System.Byte));
+  if(unknown!==4294967295)throw new Error('Unknown enum bits lost');
+  const bounded=new BlockParser.BinaryParser.$ctor1(System.Array.init([1,2,3],System.Byte));
+  bounded.PushStrictCap(0);if(!bounded.Empty)throw new Error('Empty protocol buffer widened');bounded.PopCap();
+  let rejected=false;try{bounded.PushStrictCap(4);}catch{rejected=true;}if(!rejected||bounded.CheckSize(-1))throw new Error('Invalid protocol bounds accepted');
   return {kind:'document',document:{title:'MAPI compatibility',status:'complete',presentation:'tree',roots:[
     {id:'wide',name:'Exact integer',value:{kind:'integer',value:wide.toString()}},
     {id:'guid',name:'GUID',value:{kind:'guid',value:guid.toString()}},

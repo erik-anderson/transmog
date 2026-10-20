@@ -56,7 +56,10 @@ namespace BlockParser
             else if (primitive == typeof(char)) value = (char)BitConverter.ToUInt16(bytes, 0);
             else if (primitive == typeof(Guid)) value = new Guid(bytes);
             else throw new NotSupportedException(type.FullName);
-            return type.IsEnum ? Enum.Parse(type, value.ToString()) : value;
+            // Native Marshal reads preserve every underlying enum bit pattern,
+            // including unknown values and high-bit HRESULTs. Enum.Parse in the
+            // authoring BCL incorrectly treats those values as signed Int32.
+            return value;
         }
 
         public static string Ascii(byte[] bytes)

@@ -23,7 +23,7 @@ for await(const line of createInterface({input:process.stdin,crlfDelay:Infinity}
       return {id,requestType:message.requestType,...Object.fromEntries(['request','response'].map(side=>[side,{bytes:Array.from(Buffer.from(message[side]??'','base64')),sourceId:`body.${id}.${side}`}]))};
     });
     context.fixtureMessages=messages;context.fixtureSelected=messages.at(-1).id;context.fixtureDirection=fixture.message.direction;
-    context.fixtureOptions={type:fixture.type,arguments:fixture.arguments};context.decode=entry.namespace.decode;
+    context.fixtureOptions={type:fixture.type,arguments:fixture.arguments,offset:fixture.offset,count:fixture.count,prepareRequest:fixture.prepareRequest};context.decode=entry.namespace.decode;
     const outcome=vm.runInContext('decode(fixtureMessages,fixtureSelected,fixtureDirection,fixtureOptions)',context,{timeout:10000});
     console.log(JSON.stringify(fixture.includeDerived?outcome:outcome.tree));
   }catch(error){console.log(JSON.stringify({failure:error.name,message:error.message}));}

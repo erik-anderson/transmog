@@ -7,6 +7,7 @@ const typeName=type=>Transpose.Reflection.getTypeFullName(type);
 const originalEnsure=BlockParser.Block.prototype.EnsureParsed;
 BlockParser.Block.prototype.EnsureParsed=function(){
   if(active&&this.parser){
+    if(++active.parseSteps>100000)throw new Error('MAPI parser work limit');
     let origin=active.parsers.get(this.parser);
     if(!origin){origin=active.root;active.parsers.set(this.parser,origin);}
     active.blocks.set(this,origin);
@@ -135,17 +136,22 @@ export function decode(messages,selectedId,direction,options={}){
   }
   if(!identities.has(selectedId))throw new Error('Missing selected exchange');
   reset();
-  active={parsers:new WeakMap(),blocks:new WeakMap(),root:origins.get(selectedId)[direction],messages:origins,derived:[],count:0,sourceLookups:0};
+  active={parsers:new WeakMap(),blocks:new WeakMap(),root:origins.get(selectedId)[direction],messages:origins,derived:[],count:0,sourceLookups:0,parseSteps:0};
   try{
     const sessions=messages.map(session),selected=sessions.find(item=>item.id===selectedId);
     MapiInspector.SessionExtensions.AllSessionsNavigator.Init(System.Array.init(sessions,Fiddler.Session));
     MapiInspector.MAPIParser.ParsingSession=selected;
     let result;
     if(options.type){
+      if(options.prepareRequest)MapiInspector.MAPIParser.ParseRequestMessage(selected,{v:null});
+      MapiInspector.MAPIParser.ParsingSession=selected;
       const type=options.type.split('.').reduce((value,key)=>value?.[key],globalThis);
       if(!type)throw new Error('Unknown parser type');
       result=Transpose.createInstance(type,options.arguments??[]);
-      result.Parse(new BlockParser.BinaryParser.$ctor1(direction==='request'?selected.requestBodyBytes:selected.responseBodyBytes));
+      const parser=new BlockParser.BinaryParser.$ctor1(direction==='request'?selected.requestBodyBytes:selected.responseBodyBytes);
+      parser.Offset=options.offset??0;
+      if(options.count)parser.PushCap(options.count);
+      result.Parse(parser);
     }else{
       const output={v:null};
       result=direction==='request'?MapiInspector.MAPIParser.ParseRequestMessage(selected,output):MapiInspector.MAPIParser.ParseResponseMessage(selected,output);

@@ -11,6 +11,7 @@
     <NoWarn>CS0414;CS0649;CS0168;CS0219;CS1717;CA2200</NoWarn>
   </PropertyGroup>
   <ItemGroup>
+    <RuntimeHostConfigurationOption Include="System.GC.HeapHardLimit" Value="268435456" />
     <Compile Include="Oracle.cs" />
     <Compile Include="Headless.cs" />
     <Compile Include="../../../third_party/mapi-inspector/Source/BlockParser/*.cs" />

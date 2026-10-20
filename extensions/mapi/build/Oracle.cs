@@ -12,6 +12,11 @@ internal static class Oracle
     private static readonly JsonSerializerOptions Json = new() { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
     public static int Main(string[] args)
     {
+        if (GC.GetGCMemoryInfo().TotalAvailableMemoryBytes > 256 * 1024 * 1024)
+        {
+            Console.Error.WriteLine("The reference oracle requires its configured 256 MiB GC heap limit");
+            return 2;
+        }
         CultureInfo.CurrentCulture = CultureInfo.InvariantCulture;
         CultureInfo.CurrentUICulture = CultureInfo.InvariantCulture;
         if (args.Length == 1 && args[0] == "--inventory")
@@ -73,9 +78,14 @@ internal static class Oracle
         Block result;
         if (fixture.Type != null)
         {
+            if (fixture.PrepareRequest)
+                MAPIParser.ParseRequestMessage(selected, out _);
+            MAPIParser.ParsingSession = selected;
             var type = typeof(Block).Assembly.GetType(fixture.Type, true);
             result = Construct(type, fixture.Arguments ?? Array.Empty<JsonElement>());
-            result.Parse(new BinaryParser(fixture.Message.Direction == "request" ? selected.requestBodyBytes : selected.responseBodyBytes));
+            var parser = new BinaryParser(fixture.Message.Direction == "request" ? selected.requestBodyBytes : selected.responseBodyBytes) { Offset = fixture.Offset };
+            if (fixture.Count > 0) parser.PushCap(fixture.Count);
+            result.Parse(parser);
         }
         else
         {
@@ -94,6 +104,7 @@ internal static class Oracle
                 var values = constructor.GetParameters().Select((parameter, index) =>
                 {
                     var value = arguments[index];
+                    if (value.ValueKind == JsonValueKind.Null && !parameter.ParameterType.IsValueType) return null;
                     if (parameter.ParameterType == typeof(bool)) return (object)value.GetBoolean();
                     if (parameter.ParameterType.IsEnum) return Enum.ToObject(parameter.ParameterType, value.GetInt64());
                     return Convert.ChangeType(value.GetInt64(), parameter.ParameterType, CultureInfo.InvariantCulture);
@@ -151,6 +162,9 @@ internal static class Oracle
     {
         public string Type { get; set; }
         public JsonElement[] Arguments { get; set; }
+        public int Offset { get; set; }
+        public int Count { get; set; }
+        public bool PrepareRequest { get; set; }
         public Message Message { get; set; }
         public Message[] Context { get; set; }
     }
