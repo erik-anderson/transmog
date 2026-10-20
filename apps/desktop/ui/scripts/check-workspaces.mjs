@@ -232,8 +232,18 @@ await page.addInitScript((configuration) => {
           state.visualizerActive[handle.slot]=view;if(state.reloadEmitsMetadata)state.emitNative('extensions-changed');return structuredClone(view);
         }
         case 'visualizer_active': return state.visualizerActive?.[args.handle.slot]?.handle.instanceId===args.handle.instanceId;
-        case 'expand_visualizer': {const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');view.document=structuredClone(state.expandedVisualizerDocument);return structuredClone(view);}
-        case 'stop_visualizer_live': {const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');view.live.enabled=false;state.liveStops??=[];state.liveStops.push(structuredClone(args.handle));return structuredClone(view.live);}
+        case 'expand_visualizer': {
+          const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
+          if(state.holdVisualizerExpansion){state.holdVisualizerExpansion=false;await new Promise(resolve=>state.finishVisualizerExpansion=resolve);}
+          view.document=structuredClone(state.expandedVisualizerDocument);return structuredClone(view);
+        }
+        case 'stop_visualizer_live': {
+          const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
+          view.live.enabled=false;state.liveStops??=[];state.liveStops.push(structuredClone(args.handle));
+          const status=structuredClone(view.live);
+          if(state.holdLiveStop){state.holdLiveStop=false;await new Promise(resolve=>state.finishLiveStop=resolve);}
+          return status;
+        }
         case 'poll_visualizer_live': {
           const view=state.visualizerActive[args.handle.slot];if(!view||view.handle.instanceId!==args.handle.instanceId)throw new Error('Visualizer closed');
           if(state.holdLivePoll){state.holdLivePoll=false;await new Promise(resolve=>state.finishLivePoll=resolve);}

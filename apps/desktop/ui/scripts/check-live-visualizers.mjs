@@ -62,7 +62,18 @@ export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
   await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);});
   await page.waitForFunction(()=>!globalThis.__workspaceFixture.nextLiveDocument);
 
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdVisualizerExpansion=true;});
   await tree.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishVisualizerExpansion);
+  try {
+    const expanding=await page.evaluate(()=>globalThis.__workspaceFixture.calls.expand_visualizer);
+    await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
+    assert.equal(await tree.getByRole('button',{name:'Expand Field 2',exact:true}).count(),1,'A busy deferred branch was marked expanded without fetching its children');
+    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.expand_visualizer),expanding,'A second deferred expansion ran concurrently');
+    await page.keyboard.press('ArrowUp');
+  } finally {
+    await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.finishVisualizerExpansion();delete s.finishVisualizerExpansion;});
+  }
   await tree.getByText('Nested text',{exact:true}).waitFor();
   await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.expandedVisualizerDocument);s.nextLiveDocument.roots[1].children[0].value.value='Updated nested value';});
   await tree.getByText('Updated nested value',{exact:true}).waitFor();
@@ -85,6 +96,24 @@ export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
   assert.equal(await live.isChecked(),false);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live),stoppedPolls,'Live continued polling after Off');
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),starts,'Off restarted the worker');
+
+  // An old Off reply must not disable a new explicitly opened live worker.
+  await live.check();await live.click({trial:true});
+  const stopping=await visualizer.evaluate(element=>element.view.handle.instanceId);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdLiveStop=true;});
+  await live.uncheck();
+  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishLiveStop);
+  await live.check();await live.click({trial:true});
+  const restarted=await visualizer.evaluate(element=>element.view.handle.instanceId);
+  assert.notEqual(restarted,stopping);
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.finishLiveStop();delete s.finishLiveStop;});
+  await page.waitForTimeout(80);
+  assert.equal(await live.isChecked(),true,'A delayed Off reply disabled a newer live visualization');
+  assert.equal(await visualizer.evaluate(element=>element.view.live.enabled),true,'An old reply overwrote the new worker status');
+  const resumedPolls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live);
+  await page.waitForFunction(previous=>globalThis.__workspaceFixture.calls.poll_visualizer_live>previous,resumedPolls);
+  await live.uncheck();
+  await page.waitForFunction(()=>Object.values(globalThis.__workspaceFixture.visualizerActive).every(view=>!view.live.enabled));
 
   // Retained immutable bytes keep the user's range and scroll across a document update.
   await live.check();await page.waitForFunction(()=>Object.values(globalThis.__workspaceFixture.visualizerActive).some(view=>view.live.enabled));

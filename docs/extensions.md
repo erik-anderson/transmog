@@ -468,8 +468,10 @@ Contributions that declare live updates show a Live updates checkbox beside the
 result title. It starts off on every activation. Imported traffic or a missing
 retained conversation leaves it unavailable. Turning it on opens a fresh worker
 from the selected exchange; turning it off stops admission and polling while
-keeping the last visible result and its expansion capabilities. Polls are
-serialized with expansion and stopping. Updates retain selected fields, expanded
+keeping the last visible result and its expansion capabilities. Late stop replies
+cannot change a newer activation. Polls are serialized with expansion and stopping.
+Deferred branches stay closed while the worker is busy; materialized fields
+remain navigable. Updates retain selected fields, expanded
 rows, tree scroll, view mode and unchanged byte selections. A replaced deferred
 branch without materialized children collapses for explicit expansion, keeping
 live delivery from automatically parsing a large set of previously opened

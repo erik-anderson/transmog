@@ -190,7 +190,8 @@ export class ExtensionVisualizer extends WebUIElement {
     try {
       await this.livePoll;
       if(revision!==this.revision||!this.visible)return;
-      this.liveStatus(await invoke<LiveStatus>('stop_visualizer_live',{handle}));
+      const status = await invoke<LiveStatus>('stop_visualizer_live', {handle});
+      if (revision === this.revision && this.visible) this.liveStatus(status);
     }catch(error:unknown){if(revision===this.revision)this.failLive(describeError(error));}
   }
   private scheduleLive(revision:number):void {
@@ -307,26 +308,48 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerHex=null;
     if(this.visualizerMode==='hex')this.openSpan(node.spans[0]);
   }
-  async toggleNode(id:string,event?:Event):Promise<void> {
-    event?.stopPropagation();const node=this.nodes.get(id);if(!node)return;
-    if(this.visualizerFrozen&&node.childrenToken)return;
-    if(this.expanded.has(id)){
+  async toggleNode(id: string, event?: Event): Promise<void> {
+    event?.stopPropagation();
+    const node = this.nodes.get(id);
+    if (!node) return;
+    if (this.visualizerFrozen && node.childrenToken) return;
+    if (this.expanded.has(id)) {
       this.expanded.delete(id);
       this.updateRows();
-      if(!this.allRows.some(row=>row.id===this.selected)){
-        this.selected=id;
-        this.tableOffset=0;
+      if (!this.allRows.some(row => row.id === this.selected)) {
+        this.selected = id;
+        this.tableOffset = 0;
         this.updateRows();
         this.describeNode();
       }
       return;
     }
-    if(node.childrenToken&&this.view&&!this.visualizerBusy){
-      const handle=this.view.handle,revision=this.revision;this.visualizerBusy=true;
-      try {await this.livePoll;if(revision!==this.revision||!this.visible)return;const token=this.nodes.get(id)?.childrenToken;if(!token){this.expanded.add(id);this.updateRows();return;}const view=await invoke<VisualizerView>('expand_visualizer',{handle,token});if(revision!==this.revision||!this.visible)return;this.expanded.add(id);this.accept(view);}
-      catch(error:unknown){if(revision===this.revision)this.fail(describeError(error));}
-      finally {if(revision===this.revision)this.visualizerBusy=false;}
-    }else {this.expanded.add(id);this.updateRows();}
+    if (node.childrenToken) {
+      if (!this.view || this.visualizerBusy) return;
+      const handle = this.view.handle, revision = this.revision;
+      this.visualizerBusy = true;
+      try {
+        await this.livePoll;
+        if (revision !== this.revision || !this.visible) return;
+        const token = this.nodes.get(id)?.childrenToken;
+        if (!token) {
+          this.expanded.add(id);
+          this.updateRows();
+          return;
+        }
+        const view = await invoke<VisualizerView>('expand_visualizer', {handle, token});
+        if (revision !== this.revision || !this.visible) return;
+        this.expanded.add(id);
+        this.accept(view);
+      } catch (error: unknown) {
+        if (revision === this.revision) this.fail(describeError(error));
+      } finally {
+        if (revision === this.revision) this.visualizerBusy = false;
+      }
+    } else {
+      this.expanded.add(id);
+      this.updateRows();
+    }
   }
   treeKey(event:KeyboardEvent):void {
     const index=this.allRows.findIndex(row=>row.id===this.selected),row=this.allRows[index];if(!row)return;
