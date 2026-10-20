@@ -479,3 +479,30 @@ fn canceling_initialization_terminates_top_level_code_without_waiting_for_startu
     assert!(worker.join().unwrap().is_err());
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
 }
+
+#[test]
+fn cancellation_closes_an_already_ready_workers_idle_queue() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let calls = AtomicUsize::new(0);
+    let started = std::time::Instant::now();
+    let result = Runner::start_cancellable(
+        &HostConfig {
+            executable: env!("CARGO_BIN_EXE_transmog-extension-host").into(),
+        },
+        snapshot(&format!(
+            "export function visualize(){{return {DOCUMENT};}}"
+        )),
+        "view",
+        || {
+            if calls.fetch_add(1, Ordering::Relaxed) == 0 {
+                return false;
+            }
+            // Give the initialized helper time to wait on its work queue before
+            // cancellation reaches the supervisor's readiness check.
+            std::thread::sleep(std::time::Duration::from_millis(500));
+            true
+        },
+    );
+    assert!(result.is_err());
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+}

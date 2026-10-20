@@ -10,7 +10,7 @@ use std::{
 };
 
 use windows_sys::Win32::{
-    Foundation::{CloseHandle, GetLastError, HANDLE},
+    Foundation::{CloseHandle, GetLastError, HANDLE, INVALID_HANDLE_VALUE},
     Security::{
         FreeSid, GetTokenInformation,
         Isolation::{CreateAppContainerProfile, DeleteAppContainerProfile},
@@ -19,21 +19,22 @@ use windows_sys::Win32::{
     System::{
         Console::{GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE},
         JobObjects::{
-            AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
-            JOB_OBJECT_LIMIT_ACTIVE_PROCESS, JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE,
-            JOB_OBJECT_LIMIT_PROCESS_MEMORY, JOB_OBJECT_UILIMIT_DESKTOP,
-            JOB_OBJECT_UILIMIT_DISPLAYSETTINGS, JOB_OBJECT_UILIMIT_EXITWINDOWS,
-            JOB_OBJECT_UILIMIT_GLOBALATOMS, JOB_OBJECT_UILIMIT_HANDLES,
-            JOB_OBJECT_UILIMIT_READCLIPBOARD, JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS,
-            JOB_OBJECT_UILIMIT_WRITECLIPBOARD, JOBOBJECT_BASIC_UI_RESTRICTIONS,
-            JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicUIRestrictions,
-            JobObjectExtendedLimitInformation, SetInformationJobObject,
+            CreateJobObjectW, IsProcessInJob, JOB_OBJECT_LIMIT_ACTIVE_PROCESS,
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_LIMIT_PROCESS_MEMORY,
+            JOB_OBJECT_UILIMIT_DESKTOP, JOB_OBJECT_UILIMIT_DISPLAYSETTINGS,
+            JOB_OBJECT_UILIMIT_EXITWINDOWS, JOB_OBJECT_UILIMIT_GLOBALATOMS,
+            JOB_OBJECT_UILIMIT_HANDLES, JOB_OBJECT_UILIMIT_READCLIPBOARD,
+            JOB_OBJECT_UILIMIT_SYSTEMPARAMETERS, JOB_OBJECT_UILIMIT_WRITECLIPBOARD,
+            JOBOBJECT_BASIC_UI_RESTRICTIONS, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
+            JobObjectBasicUIRestrictions, JobObjectExtendedLimitInformation,
+            SetInformationJobObject,
         },
         SystemInformation::GetWindowsDirectoryW,
         Threading::{
             CREATE_NO_WINDOW, CREATE_SUSPENDED, CREATE_UNICODE_ENVIRONMENT, CreateProcessW,
             DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetCurrentProcess,
             GetExitCodeProcess, INFINITE, InitializeProcThreadAttributeList, OpenProcessToken,
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROC_THREAD_ATTRIBUTE_JOB_LIST,
             PROC_THREAD_ATTRIBUTE_SECURITY_CAPABILITIES, PROCESS_INFORMATION, ResumeThread,
             STARTF_USESTDHANDLES, STARTUPINFOEXW, UpdateProcThreadAttribute, WaitForSingleObject,
         },
@@ -71,13 +72,16 @@ impl Drop for Profile {
 
 struct AttributeList {
     bytes: Vec<usize>,
+    initialized: bool,
 }
 
 impl Drop for AttributeList {
     fn drop(&mut self) {
         // SAFETY: initialization succeeded and the aligned backing allocation
         // remains live for this call.
-        unsafe { DeleteProcThreadAttributeList(self.as_ptr()) };
+        if self.initialized {
+            unsafe { DeleteProcThreadAttributeList(self.as_ptr()) };
+        }
     }
 }
 
@@ -126,22 +130,27 @@ pub(super) fn bootstrap(
         sid,
     };
 
-    let mut attribute_bytes = 0_usize;
-    // SAFETY: the documented sizing call intentionally passes a null buffer.
-    unsafe { InitializeProcThreadAttributeList(null_mut(), 1, 0, &raw mut attribute_bytes) };
-    if attribute_bytes == 0 {
-        return Err("AppContainer attribute sizing failed".to_owned());
-    }
-    let words = attribute_bytes.div_ceil(size_of::<usize>());
-    let mut attributes = AttributeList {
-        bytes: vec![0_usize; words],
+    let job = create_job(process_memory_bytes)?;
+    let job_handles = [job.0];
+    // SAFETY: the bootstrap receives these three handles from its trusted launcher.
+    let standard = unsafe {
+        [
+            GetStdHandle(STD_INPUT_HANDLE),
+            GetStdHandle(STD_OUTPUT_HANDLE),
+            GetStdHandle(STD_ERROR_HANDLE),
+        ]
     };
-    // SAFETY: the aligned allocation has the exact requested byte capacity.
-    if unsafe {
-        InitializeProcThreadAttributeList(attributes.as_ptr(), 1, 0, &raw mut attribute_bytes)
-    } == 0
+    if standard
+        .iter()
+        .any(|handle| handle.is_null() || *handle == INVALID_HANDLE_VALUE)
     {
-        return Err("AppContainer attribute initialization failed".to_owned());
+        return Err("sandbox IPC handles are unavailable".to_owned());
+    }
+    let mut inherited = Vec::new();
+    for handle in standard {
+        if !inherited.contains(&handle) {
+            inherited.push(handle);
+        }
     }
     let capabilities = SECURITY_CAPABILITIES {
         AppContainerSid: sid,
@@ -149,6 +158,26 @@ pub(super) fn bootstrap(
         CapabilityCount: 0,
         Reserved: 0,
     };
+
+    let mut attribute_bytes = 0_usize;
+    // SAFETY: the documented sizing call intentionally passes a null buffer.
+    unsafe { InitializeProcThreadAttributeList(null_mut(), 3, 0, &raw mut attribute_bytes) };
+    if attribute_bytes == 0 {
+        return Err("AppContainer attribute sizing failed".to_owned());
+    }
+    let words = attribute_bytes.div_ceil(size_of::<usize>());
+    let mut attributes = AttributeList {
+        bytes: vec![0_usize; words],
+        initialized: false,
+    };
+    // SAFETY: the aligned allocation has the exact requested byte capacity.
+    if unsafe {
+        InitializeProcThreadAttributeList(attributes.as_ptr(), 3, 0, &raw mut attribute_bytes)
+    } == 0
+    {
+        return Err("AppContainer attribute initialization failed".to_owned());
+    }
+    attributes.initialized = true;
     // SAFETY: the attribute list and capabilities outlive CreateProcessW.
     if unsafe {
         UpdateProcThreadAttribute(
@@ -165,20 +194,46 @@ pub(super) fn bootstrap(
         return Err("AppContainer security capability setup failed".to_owned());
     }
 
-    let job = create_job(process_memory_bytes)?;
+    // Assign containment atomically with creation. A bootstrap killed between
+    // CreateProcessW and a later AssignProcessToJobObject could orphan a suspended
+    // child holding IPC handles, making cancellation wait forever.
+    for (key, pointer, bytes) in [
+        (
+            PROC_THREAD_ATTRIBUTE_JOB_LIST,
+            job_handles.as_ptr().cast::<c_void>(),
+            size_of::<HANDLE>(),
+        ),
+        (
+            PROC_THREAD_ATTRIBUTE_HANDLE_LIST,
+            inherited.as_ptr().cast::<c_void>(),
+            inherited.len() * size_of::<HANDLE>(),
+        ),
+    ] {
+        // SAFETY: both arrays and their handles outlive the attribute list.
+        if unsafe {
+            UpdateProcThreadAttribute(
+                attributes.as_ptr(),
+                0,
+                key as usize,
+                pointer.cast_mut(),
+                bytes,
+                null_mut(),
+                null(),
+            )
+        } == 0
+        {
+            return Err("sandbox process containment setup failed".to_owned());
+        }
+    }
     let executable = std::env::current_exe().map_err(|_| "host executable is unavailable")?;
     let mut command_line = command_line(&executable);
     let mut startup: STARTUPINFOEXW = unsafe { zeroed() };
     startup.StartupInfo.cb =
         u32::try_from(size_of::<STARTUPINFOEXW>()).map_err(|_| "startup structure is invalid")?;
     startup.StartupInfo.dwFlags = STARTF_USESTDHANDLES;
-    // SAFETY: standard handles are inherited from the trusted bootstrap and
-    // are the only IPC authority exposed to the sandbox.
-    unsafe {
-        startup.StartupInfo.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
-        startup.StartupInfo.hStdOutput = GetStdHandle(STD_OUTPUT_HANDLE);
-        startup.StartupInfo.hStdError = GetStdHandle(STD_ERROR_HANDLE);
-    }
+    startup.StartupInfo.hStdInput = standard[0];
+    startup.StartupInfo.hStdOutput = standard[1];
+    startup.StartupInfo.hStdError = standard[2];
     startup.lpAttributeList = attributes.as_ptr();
     let mut process: PROCESS_INFORMATION = unsafe { zeroed() };
     let environment = minimal_environment()?;
@@ -210,10 +265,6 @@ pub(super) fn bootstrap(
     }
     let process_handle = Handle(process.hProcess);
     let thread_handle = Handle(process.hThread);
-    // SAFETY: process_handle names the still-suspended child and job is valid.
-    if unsafe { AssignProcessToJobObject(job.0, process_handle.0) } == 0 {
-        return Err("sandbox Job Object assignment failed".to_owned());
-    }
     // SAFETY: thread_handle is the primary suspended thread.
     if unsafe { ResumeThread(thread_handle.0) } == u32::MAX {
         return Err("sandboxed helper process could not resume".to_owned());

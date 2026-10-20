@@ -177,6 +177,9 @@ impl Runner {
             Err(e) => {
                 failed.store(true, Ordering::Release);
                 kill(&process);
+                // Initialization may have completed concurrently with cancellation.
+                // Close the idle work queue as well as the process before joining.
+                drop(sender);
                 let _ = thread.join();
                 Err(e)
             }

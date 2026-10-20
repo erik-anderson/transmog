@@ -33,9 +33,12 @@ can still contain mistakes or compromised dependencies.
    fail-closed recovery.
    The implemented Windows boundary uses an ephemeral, zero-capability
    AppContainer per host plus a kill-on-close Job Object with one-process,
-   memory, and UI limits. A trusted bootstrap creates the child suspended,
-   assigns the Job Object, clears the environment to the structural Windows
-   variables required by `CreateProcessW`, and only then resumes it. The child
+   memory, and UI limits. A trusted bootstrap creates the child suspended with
+   Job Object membership assigned atomically through the Windows
+   [creation attribute list](https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-updateprocthreadattribute).
+   Cancellation cannot orphan a child before a separate assignment. An explicit
+   handle list permits only the three IPC streams; the environment contains only
+   structural Windows variables. The bootstrap then resumes the child, which
    verifies both boundaries before reading the authenticated pipe.
 6. A script error aborts the affected exchange. An invalid saved revision never
    replaces the last valid active revision. Diagnostics identify the script,
