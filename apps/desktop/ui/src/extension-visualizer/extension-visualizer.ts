@@ -214,6 +214,9 @@ export class ExtensionVisualizer extends WebUIElement {
   private stopPolling():void {if(this.liveTimer!==null)clearTimeout(this.liveTimer);this.liveTimer=null;}
   private liveStatus(status:LiveStatus):void {
     if(this.view)this.view.live=status;
+    if(status.missedHints!=='0'&&this.view?.document.status==='complete'){
+      this.view.document.status='partial';this.visualizerStatus='partial';
+    }
     const supported=!!this.view?.instance.declaration.liveUpdates&&status.available&&this.view.document.updates!=='final';
     if(!supported&&this.liveControl?.matches(':focus'))this.treeViewport.focus({preventScroll:true});
     this.visualizerLiveSupported=supported;

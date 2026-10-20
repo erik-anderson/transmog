@@ -203,6 +203,33 @@ async fn finalized_view_releases_admission_and_preserves_retained_source_access(
 }
 
 #[tokio::test]
+async fn finalization_and_expansion_retain_missed_hints() {
+    let app = Application::new(AppConfig::default()).unwrap();
+    let (snapshot, declaration) = live_fixture(&app);
+    let anchor = publish(&app, 710, &snapshot);
+    let feed = feed(&app, &anchor, &declaration);
+    let resources = resources(&feed);
+    let mut document: transmog_extensions::VisualizationDocument = serde_json::from_value(
+        serde_json::json!({"title":"Final view","status":"complete","presentation":"tree","roots":[]}),
+    ).unwrap();
+    assert_eq!(resources.finish_document(&mut document).missed_hints, "0");
+    assert_eq!(document.status, transmog_extensions::ParseStatus::Complete);
+    // A hint can arrive after parsing, before the host publishes its result.
+    feed.lag(7);
+    document.updates = Some(transmog_extensions::UpdatePolicy::Final);
+    assert_eq!(resources.finish_document(&mut document).missed_hints, "7");
+    assert_eq!(resources.live_status().missed_hints, "7");
+    assert!(!resources.live_status().available);
+    assert_eq!(document.status, transmog_extensions::ParseStatus::Partial);
+    document.updates = None;
+    document.status = transmog_extensions::ParseStatus::Complete;
+    resources.finish_document(&mut document);
+    assert_eq!(document.status, transmog_extensions::ParseStatus::Partial);
+    assert_eq!(resources.live_status().missed_hints, "7");
+    assert!(!feed.enabled());
+}
+
+#[tokio::test]
 async fn one_catalog_subscription_serves_multiple_independent_contributions() {
     let app = Application::new(AppConfig::default()).unwrap();
     let (mut snapshot, contextual) = live_fixture(&app);

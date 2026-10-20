@@ -483,6 +483,8 @@ the worker, source reads and expansion capabilities for inspecting the snapshot.
 Omitting `updates` preserves the instance's policy; later documents cannot undo
 `final`. A new activation or developer reload gets a fresh policy. Extensions
 that omit the field keep the existing optional live behavior.
+Missed-update warnings and the host's Partial status persist after stopping or
+finalizing, including across deferred expansion, until a fresh instance is opened.
 
 ## Desktop visualizers
 
@@ -558,7 +560,8 @@ The bundled MAPI parser reports work, field and nesting limits separately for th
 selected message, paired request and earlier context. Its summaries include input
 and decoded sizes, work categories and the largest operation, without copying
 captured field values. Each phase has a finite work ceiling; exhausting context
-does not consume the selected message's budget. Close or
+does not consume the selected message's budget. Decompression failures reference
+the enclosing encoded bytes and report encoded and declared decoded sizes. Close or
 Escape returns focus to that button. Extensions settings keeps management actions
 visible and folds long matching-rule lists behind a counted disclosure.
 

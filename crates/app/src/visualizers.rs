@@ -615,7 +615,8 @@ impl Application {
         let invocation = Invocation::Visualize {
             input: Box::new(input),
         };
-        let document = self.run_visualizer(ticket, invocation).await?;
+        let mut document = self.run_visualizer(ticket, invocation).await?;
+        let live = resources.finish_document(&mut document);
         if request.automatic && document.status != transmog_extensions::ParseStatus::Complete {
             return Err(invalid("Auto visualization requires a complete parse"));
         }
@@ -625,7 +626,7 @@ impl Application {
             instance,
             document,
             sources: resources.info()?,
-            live: resources.live_status(),
+            live,
         })
     }
 
@@ -642,20 +643,21 @@ impl Application {
             .run_visualizer(&ticket, Invocation::Expand { token })
             .await;
         match result {
-            Ok(document) => {
+            Ok(mut document) => {
                 let instance = ticket.current()?;
                 let resources = self
                     .visualizers
                     .registry
                     .resources::<Resources>(&self.visualizers.owner, &instance.id)
                     .map_err(|_| unavailable())?;
+                let live = resources.finish_document(&mut document);
                 Ok(VisualizerView {
                     metadata_changed: false,
                     handle: handle.clone(),
                     instance,
                     document,
                     sources: resources.info()?,
-                    live: resources.live_status(),
+                    live,
                 })
             }
             Err(error) => {
@@ -717,10 +719,8 @@ impl Application {
                     return Err(unavailable());
                 }
                 match step {
-                    VisualizationStep::Document { document } => {
-                        if document.updates == Some(transmog_extensions::UpdatePolicy::Final) {
-                            resources.finalize_updates();
-                        }
+                    VisualizationStep::Document { mut document } => {
+                        resources.finish_document(&mut document);
                         return Ok(document);
                     }
                     VisualizationStep::NeedInput { reads, token } => {

@@ -79,6 +79,12 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     separator.focus();separator.dispatchEvent(new KeyboardEvent('keydown',{key:viewer.visualizerOrientation==='vertical'?'ArrowRight':'ArrowDown',shiftKey:true,bubbles:true,composed:true,cancelable:true}));
     await wait(()=>viewer.visualizerSplit===nextSplit);
     if(separator.getAttribute('aria-valuenow')!==nextSplit)throw new Error('MAPI divider resize did not update its position');
+    separator.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape',bubbles:true,composed:true,cancelable:true}));
+    await wait(()=>!viewer.visualizerDetailsOpen);
+    if(traffic.selectedSessionId!==response.detail.id)throw new Error('MAPI divider Escape lost the inspected request');
+    if(tree!==tree.getRootNode().activeElement)throw new Error('MAPI divider Escape did not restore tree focus');
+    viewer.selectNode(rowNode.id);
+    await wait(()=>viewer.visualizerDetailsOpen);
     detailRoot.querySelector('button[aria-label="Close structure details"]').click();
     await wait(()=>detailRoot.querySelector('.visualizer-node').hidden);
     const focusedTree=detailRoot.querySelector('.visualizer-tree');
@@ -110,7 +116,7 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     if(infoButton!==infoButton.getRootNode().activeElement)throw new Error('Closing MAPI information lost trigger focus');
 
     globalThis.__mapiProbe.handles=views().map(view=>view.view.handle);
-    const columns=await invoke('classify_traffic_rows',{ids:[traffic.activeId??response.detail.id],columns:['net.transmog.mapi:protocol']});
+    const columns=await invoke('classify_traffic_rows',{ids:[traffic.selectedSessionId],columns:['net.transmog.mapi:protocol']});
     if(!columns.some(row=>row.values['net.transmog.mapi:protocol']?.[0]==='MAPI/HTTP'))throw new Error('Bundled MAPI static classification missing');
     globalThis.__mapiProbe.concurrent=true;
     return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,budget14kb:true,budgetCompressed:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};

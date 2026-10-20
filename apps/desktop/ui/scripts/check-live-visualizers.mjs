@@ -123,13 +123,15 @@ export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
   await visualizer.locator('hex-viewer').getByText('8 bytes selected',{exact:false}).waitFor();
   const preview=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
   const polls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live);
-  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.summary='Updated summary';});
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.status='complete';s.nextLiveDocument.summary='Updated summary';});
   await page.waitForFunction(previous=>globalThis.__workspaceFixture.calls.poll_visualizer_live>previous,polls);
   await page.waitForFunction(()=>!globalThis.__workspaceFixture.nextLiveDocument);
+  assert.equal(await visualizer.evaluate(element=>element.visualizerStatus),'complete');
   assert.deepEqual(await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd})),preview);
 
   await page.evaluate(()=>{globalThis.__workspaceFixture.liveMissedHints='2';});
   await visualizer.getByText('Some updates may be missing. Reopen the visualizer to rebuild context.',{exact:true}).waitFor();
+  assert.equal(await visualizer.evaluate(element=>element.visualizerStatus),'partial','An empty poll reported missed traffic but retained a Complete badge');
   for(const [width,height] of [[1440,900],[800,600]]){
     await page.setViewportSize({width,height});
     assert.equal(await visualizer.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true);
@@ -186,15 +188,19 @@ export async function checkLiveVisualizers(page,root,visualizer,selector,tree) {
   await live.check();
   await page.waitForFunction(()=>Object.values(globalThis.__workspaceFixture.visualizerActive).some(view=>view.live.enabled));
   await live.focus();
-  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.updates='final';});
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.liveMissedHints='2';s.nextLiveDocument=structuredClone(s.visualizerDocument);s.nextLiveDocument.status='complete';s.nextLiveDocument.updates='final';});
   await live.waitFor({state:'detached'});
   assert.equal(await tree.evaluate(element=>element===element.getRootNode().activeElement),true,'Finalization left keyboard focus on a removed Live updates control');
+  await visualizer.getByText('Some updates may be missing. Reopen the visualizer to rebuild context.',{exact:true}).waitFor();
+  assert.equal(await visualizer.evaluate(element=>element.view.document.status),'partial','A finalized result lost the host partial status after missed traffic');
   const finalPolls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live);
   await page.waitForTimeout(600);
   assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.poll_visualizer_live),finalPolls,'A final view kept polling');
+  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.nextExpandedDocument=structuredClone(s.expandedVisualizerDocument);s.nextExpandedDocument.status='complete';});
   await tree.focus();await page.keyboard.press('Home');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
   await tree.getByText('Nested text',{exact:true}).waitFor();
   assert.equal(await live.count(),0,'Deferred expansion resurrected a final view feed');
+  assert.equal(await visualizer.evaluate(element=>element.view.document.status),'partial','Expansion changed a result with missing live data to complete');
   await selector.selectOption('auto');
   await selector.selectOption({label:'Protocol structure'});
   await live.waitFor();

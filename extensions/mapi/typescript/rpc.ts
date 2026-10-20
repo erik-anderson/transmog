@@ -139,7 +139,19 @@ export class RpcDecoder {
       bytes = bytes.map((value) => value ^ 0xa5);
     }
     if ((flags & 1) !== 0) {
-      bytes = decompressLz77(new BinaryReader(bytes, parent.sourceId, reader.budget), actualSize);
+      try {
+        bytes = decompressLz77(new BinaryReader(bytes, parent.sourceId, reader.budget), actualSize);
+      } catch (error) {
+        if (!(error instanceof ParseError)) throw error;
+        // The temporary reader starts at zero and is not a granted source.
+        // Failed decompression can only reference its enclosing encoded bytes.
+        throw new ParseError(
+          error.kind,
+          `${error.message}; RPC payload: ${size} encoded bytes, ${actualSize} declared decoded bytes`,
+          parent,
+          error.reason,
+        );
+      }
     } else if (bytes.length !== actualSize) {
       throw new ParseError("malformed", "XOR payload size differs from RPC header", parent);
     }

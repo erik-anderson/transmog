@@ -108,3 +108,27 @@ test("LZ77 output copying consumes the finite work budget before performing the 
     (error) => error.kind === "limit" && error.message.includes("20/20"));
   assert.equal(budget.report().work, 20);
 });
+
+test("a compressed work-limit issue refers to its enclosing encoded payload", () => {
+  const characters = 30000;
+  const payload = rpcPayload(responseRop(characters));
+  const prefix = payload.slice(0, payload.length - characters * 2 - 6);
+  prefix.push(65, 0);
+  const compressed = [...u32(2 ** (31 - prefix.length)), ...prefix, 15, 0, 15, 255,
+    ...u16(characters * 2 - 5), 0, 0, ...u32(0x12345678)];
+  const count = 12;
+  const buffers = Array.from({length:count}, (_, index) => [
+    ...u16(0), ...u16(index === count - 1 ? 5 : 1), ...u16(compressed.length), ...u16(payload.length), ...compressed,
+  ]).flat();
+  const message = {
+    id:1, requestType:"Execute",
+    request:{sourceId:"request", bytes:execute(plainRpc(Array.from({length:count}, () => requestRop).flat()), false)},
+    response:{sourceId:"response", bytes:execute(buffers, true)},
+  };
+  const result = decode([message], 1, "response");
+  const issue = fields(result.root).find(field => field.type === "Parse issue" && field.issue?.kind === "limit");
+  assert.ok(issue, "Compressed work must remain bounded");
+  const payloadOffset = 18 + (count - 1) * (8 + compressed.length) + 8;
+  assert.deepEqual(issue.range, {sourceId:"response",offset:payloadOffset,length:compressed.length});
+  assert.match(issue.issue.message, /32 encoded bytes, 60020 declared decoded bytes/);
+});

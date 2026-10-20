@@ -717,6 +717,13 @@ try {
   })()`);
   const metrics = await call('Performance.getMetrics');
   const heap = metrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ?? Number.POSITIVE_INFINITY;
+  if(heap>=64*1024*1024){
+    // Diagnostic only: the raw-heap limit below remains unchanged.
+    const collected=await call('HeapProfiler.collectGarbage')
+      .then(()=>call('Performance.getMetrics')).catch(()=>null);
+    const retained=collected?.metrics.find(metric=>metric.name==='JSHeapUsedSize')?.value??null;
+    process.stderr.write(`Heap failure context: ${JSON.stringify({rawHeapBytes:heap,afterCollectionBytes:retained})}\n`);
+  }
   assert(heap < 64 * 1024 * 1024, `bounded status soak exceeded 64 MiB JS heap: ${heap}`);
   result.soak = { ...soak, minutes: soakMinutes, finalHeapBytes: heap };
   assert(browserErrors.length === 0, `browser errors: ${JSON.stringify(browserErrors)}`);

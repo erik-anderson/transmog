@@ -44,6 +44,23 @@ export async function checkVisualizerPanes(page, root, visualizer) {
   await page.keyboard.press('Home');
   assert.equal(await divider.getAttribute('aria-valuenow'), '48');
   assert.equal(await page.evaluate(() => globalThis.__workspaceFixture.calls.activate_visualizer), starts,'Resizing restarted the worker');
+  const inspected = await page.evaluate(() => document.querySelector('app-shell').traffic.selectedSessionId);
+  assert.ok(inspected, 'Divider checks require a selected request');
+  await divider.focus();
+  const cancelGrip = await divider.boundingBox(), cancelBounds = await visualizer.locator('.visualizer-layout').boundingBox();
+  await page.mouse.move(cancelGrip.x + cancelGrip.width / 2, cancelGrip.y + 15);
+  await page.mouse.down();
+  try {
+    await page.mouse.move(cancelBounds.x + cancelBounds.width * .75, cancelGrip.y + 15);
+    await page.keyboard.press('Escape');
+    assert.equal(await divider.getAttribute('aria-valuenow'), '48', 'Escape did not cancel divider dragging');
+    assert.equal(await visualizer.getByRole('region', {name:'Selected structure', exact:true}).isVisible(), true, 'Canceling a resize also closed structure details');
+  } finally { await page.mouse.up(); }
+  await page.keyboard.press('Escape');
+  assert.equal(await page.evaluate(() => document.querySelector('app-shell').traffic.selectedSessionId), inspected, 'Escape on the structure divider cleared the inspected request');
+  assert.equal(await visualizer.getByRole('region', {name:'Selected structure', exact:true}).isVisible(), false, 'Escape on the divider did not close structure details');
+  assert.equal(await tree.evaluate(element => element === element.getRootNode().activeElement), true, 'Closing the divider left keyboard focus on a hidden control');
+  await page.keyboard.press('Enter');
   const button = tree.locator('button:visible').first();
   const previousTheme = await page.locator('app-shell').getAttribute('data-theme');
   try {

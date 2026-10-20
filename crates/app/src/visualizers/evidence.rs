@@ -11,8 +11,9 @@ use std::{
 use transmog_core::{HeaderBlock, intercept::ExchangeId, observe::ExchangeBoundary};
 use transmog_extension_registry::InstanceResources;
 use transmog_extensions::{
-    BodyAccess, BodyReference, BytePage, Direction, Header, InputAccess, MessageInput, ReadRequest,
-    VisualizationInput, Visualizer, decimal, header_source_id, sha256,
+    BodyAccess, BodyReference, BytePage, Direction, Header, InputAccess, MessageInput, ParseStatus,
+    ReadRequest, UpdatePolicy, VisualizationDocument, VisualizationInput, Visualizer, decimal,
+    header_source_id, sha256,
 };
 use transmog_session::SessionSnapshot;
 pub(super) enum Source {
@@ -207,10 +208,27 @@ impl Resources {
             .live
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .take()
+            .as_ref()
         {
             feed.stop();
         }
+    }
+
+    pub(super) fn finish_document(
+        &self,
+        document: &mut VisualizationDocument,
+    ) -> super::VisualizerLiveStatus {
+        if document.updates == Some(UpdatePolicy::Final) && !self.finalized.load(Ordering::Acquire)
+        {
+            self.finalize_updates();
+        }
+        // A stopped feed retains its lost-hint count until the instance is
+        // unloaded. Expansion must not turn incomplete live evidence complete.
+        let status = self.live_status();
+        if document.status == ParseStatus::Complete && status.missed_hints != "0" {
+            document.status = ParseStatus::Partial;
+        }
+        status
     }
 
     pub(super) fn live_status(&self) -> super::VisualizerLiveStatus {

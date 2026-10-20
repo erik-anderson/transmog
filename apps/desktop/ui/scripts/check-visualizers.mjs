@@ -46,7 +46,8 @@ export async function checkVisualizers(page,root) {
     await details.waitFor();
     await checkVisualizerPanes(page,root,visualizer);
     const selected=await tree.getAttribute('aria-activedescendant');
-    const inspected=await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId);
+    const inspected=await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId);
+    assert.ok(inspected,'Visualizer checks require a selected request');
     await visualizer.getByRole('button',{name:'Close structure details',exact:true}).click();
     assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false);
     assert.equal(await tree.evaluate(element=>element===element.getRootNode().activeElement||element===document.activeElement),true,'Closing details lost tree focus');
@@ -56,7 +57,7 @@ export async function checkVisualizers(page,root) {
     await visualizer.locator('.visualizer-value pre').focus();
     await page.keyboard.press('Escape');
     assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false);
-    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId),inspected,'Escape cleared the inspected request');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),inspected,'Escape cleared the inspected request');
     await page.keyboard.press('Enter');await details.waitFor();
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),before+1,'Toggling field details restarted the worker');
 
@@ -89,7 +90,7 @@ export async function checkVisualizers(page,root) {
       await page.keyboard.press('Escape');await about.waitFor({state:'hidden'});
       assert.equal(await aboutButton.evaluate(element=>element===element.getRootNode().activeElement),true,'Closing visualizer information lost trigger focus');
       assert.equal(await details.isVisible(),true,'Closing visualizer information also closed structure details');
-      assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId),inspected,'Closing visualizer information cleared the inspected request');
+      assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),inspected,'Closing visualizer information cleared the inspected request');
       await page.keyboard.press('Enter');await about.waitFor();
       await about.getByRole('button',{name:'Close visualizer information',exact:true}).click();
       await about.waitFor({state:'hidden'});
@@ -110,7 +111,7 @@ export async function checkVisualizers(page,root) {
     await page.keyboard.press('Escape');
     assert.equal(await details.isVisible(),true,'Clearing a byte selection also closed structure details');
     assert.equal(await visualizer.locator('hex-viewer').evaluate(element=>element.rangeStart),'-1');
-    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.activeId),inspected,'Clearing a byte selection cleared the inspected request');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),inspected,'Clearing a byte selection cleared the inspected request');
 
     await page.waitForFunction(()=>globalThis.__workspaceFixture.visualizerRanges?.length>0);
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.visualizerRanges.every(read=>read.handle.instanceId&&read.request.maxBytes<=65536)),true);

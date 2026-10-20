@@ -516,7 +516,7 @@ impl super::Application {
             .registry
             .resources::<super::Resources>(&self.visualizers.owner, &instance.id)
             .map_err(|_| unavailable())?;
-        if let Some(feed) = resources.live.lock().map_err(|_| unavailable())?.take() {
+        if let Some(feed) = resources.live.lock().map_err(|_| unavailable())?.as_ref() {
             feed.stop();
         }
         Ok(resources.live_status())
@@ -604,10 +604,7 @@ impl super::Application {
             )
             .await?;
         ticket.current()?;
-        if feed.missed() != 0 && document.status == transmog_extensions::ParseStatus::Complete {
-            document.status = transmog_extensions::ParseStatus::Partial;
-        }
-        let status = resources.live_status();
+        let status = resources.finish_document(&mut document);
         Ok(super::VisualizerLiveUpdate {
             view: Some(super::VisualizerView {
                 metadata_changed: false,

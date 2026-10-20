@@ -47,8 +47,8 @@ function budgetDiagnostic(report: ParserBudgetReport): Diagnostic {
       `${report.work}/${report.maximumWork} work units; ${report.fields}/${report.maximumFields} fields; ` +
       `peak depth ${report.peakDepth}/${report.maximumDepth}. ` +
       `Work: ${report.reads} reader checks, ${report.loops} loop iterations, ` +
-      `${report.decodedBytes} LZ77 copied bytes. ` +
-      `RPC transforms: ${report.encodedBytes} encoded bytes to ${report.expandedBytes} decoded bytes.` +
+      `${report.decodedBytes} LZ77 copy work units. ` +
+      `Completed RPC transforms: ${report.encodedBytes} encoded bytes to ${report.expandedBytes} decoded bytes.` +
       (largest ? ` Largest operation: ${largest.name} (${largest.work} own work units; ` +
         `source ${largest.range.sourceId}, offset ${largest.range.offset}).` : ""),
   };
