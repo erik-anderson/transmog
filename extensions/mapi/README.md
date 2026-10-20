@@ -53,7 +53,7 @@ for future GC delays. Scripts receive no timer or other host capability.
 Full semantic parity, retained-input integration and bundling remain the gates
 below. Compilation and compatibility tests alone do not establish protocol parity.
 
-The protocol adapter has 610 synthetic differential cases covering nonzero
+The protocol adapter has 675 synthetic differential cases covering nonzero
 mailbox transport, notifications, scalar/property/enum boundaries, Unicode,
 nonempty multivalues, address-book optional values, and plain/XOR/LZ77/combined
 auxiliary buffers. These include 260 minimal ROP parser shapes (128 request and
@@ -62,6 +62,13 @@ dispatch paths, and 30 successful nonzero mailbox/table scenarios. The latter
 exercise folder servers, message subjects, stream data, exact wide positions,
 tagged properties and rows with paired or retained SetColumns state. Logon
 dependencies use actual earlier synthetic exchanges and matching handles.
+All 23 MAPI HTTP operations are covered in both directions. The 19 address-book
+operations include successful populated responses and failed status envelopes,
+nonzero STAT fields, Unicode names, property rows and lists, optional state and
+arrays, signed deltas, named properties, an existence restriction, and both
+permanent and ephemeral entry IDs. The test runner checks dispatcher coverage
+against the pinned source. Eight representative NSPI/context cases also compare
+their full reference trees inside the actual AppContainer worker.
 The semantic build explicitly preserves 776 parser-wrapper
 conversions in branches, switches, arithmetic and counts. Primitive enum reads
 are unboxed as value types, and hexadecimal enum widths preserve native formatting.

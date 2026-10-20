@@ -3,10 +3,11 @@ import argparse
 import importlib.util
 import json
 from pathlib import Path
+import re
 import subprocess
 import tempfile
 
-from mapi_reference import ROOT, WORK, oracle_command
+from mapi_reference import ROOT, VENDOR, WORK, oracle_command
 
 SPEC = importlib.util.spec_from_file_location("mapi_corpus", ROOT / "extensions/mapi/test/corpus.py")
 corpus = importlib.util.module_from_spec(SPEC)
@@ -62,6 +63,12 @@ def main():
     modes.add_argument("--golden-only",action="store_true",help="Use committed reference trees without requiring .NET")
     arguments = parser.parse_args()
     fixtures = corpus.cases()
+    if len({item["name"] for item in fixtures})!=len(fixtures):
+        raise AssertionError("Synthetic fixture names must be unique")
+    dispatched=set(re.findall(r'case "(\w+)":',(VENDOR/"Source/MAPIParser.cs").read_text(encoding="utf-8-sig")))
+    covered={(item["message"]["requestType"],item["message"]["direction"]) for item in fixtures if "type" not in item}
+    if not {(operation,direction) for operation in dispatched for direction in ["request","response"]}<=covered:
+        raise AssertionError("Synthetic corpus no longer covers every MAPI HTTP dispatcher in both directions")
     reference_path=ROOT / "extensions/mapi/test/reference-cases.json"
     if arguments.golden_only:
         saved=json.loads(reference_path.read_text(encoding="utf-8"))

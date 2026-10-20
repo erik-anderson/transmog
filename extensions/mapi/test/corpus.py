@@ -127,7 +127,9 @@ def cases():
         fixture["includeDerived"]=True
         fixture["derivedExpectation"]={"bytes":list(payload),"encodedBytes":len(encoded),"transformed":compressed or obfuscated,"exactMapping":not compressed}
         result.append(fixture)
-    specification=importlib.util.spec_from_file_location("mapi_scenarios",Path(__file__).with_name("scenarios.py"))
-    scenarios=importlib.util.module_from_spec(specification)
-    specification.loader.exec_module(scenarios)
-    return result+rop_shapes()+scenarios.cases(case,execute_request,execute_response)
+    def load(name):
+        specification=importlib.util.spec_from_file_location("mapi_"+name,Path(__file__).with_name(name+".py"))
+        module=importlib.util.module_from_spec(specification)
+        specification.loader.exec_module(module)
+        return module
+    return result+rop_shapes()+load("scenarios").cases(case,execute_request,execute_response)+load("address_book").cases(case)

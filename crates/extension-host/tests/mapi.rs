@@ -147,3 +147,58 @@ export function resume(token,pages) {
     assert_eq!(document.sources[0].parents[0].length, "12");
     assert!(!document.sources[0].exact_mapping);
 }
+
+#[tokio::test]
+async fn mapi_synthetic_address_book_and_retained_context_match_native_reference_in_sandbox() {
+    let corpus: Vec<serde_json::Value> = serde_json::from_str(include_str!(
+        "../../../extensions/mapi/test/reference-cases.json"
+    ))
+    .unwrap();
+    let names = [
+        "nspi-QueryRows-response",
+        "nspi-GetMatches-request",
+        "nspi-ModLinkAtt-request",
+        "nspi-ResolveNames-response",
+        "nspi-UpdateStat-response",
+        "nspi-props-without-values-response",
+        "success-table-retained-columns",
+        "dispatch-RopWritePerUserInformationRequest",
+    ];
+    let selected: Vec<_> = corpus
+        .into_iter()
+        .filter(|item| names.contains(&item["fixture"]["name"].as_str().unwrap()))
+        .collect();
+    assert_eq!(selected.len(), names.len());
+    let entry = r"
+import {decode} from './src/protocol.js';
+const fixtures=__CASES__;
+function normalize(node){return {type:node.type,text:node.text,parsed:node.parsed,offset:node.offset,size:node.size,valueType:node.valueType,raw:node.raw,children:node.children.map(normalize)};}
+export function visualize(){
+  for(const {fixture,tree} of fixtures){
+    const messages=[...(fixture.context??[]),fixture.message].map((message,index)=>{
+      const id=message.order||index+1;
+      return {id,requestType:message.requestType,...Object.fromEntries(['request','response'].map(side=>[side,{sourceId:'body.'+id+'.'+side,bytes:System.Convert.fromBase64String(message[side]??'')}]))};
+    });
+    const actual=decode(messages,messages.at(-1).id,fixture.message.direction).tree;
+    if(JSON.stringify(normalize(actual))!==JSON.stringify(tree))throw new Error('Native parity mismatch: '+fixture.name);
+  }
+  return {kind:'document',document:{title:'MAPI synthetic parity',status:'complete',presentation:'tree',roots:[{id:'cases',name:'Cases passed',value:{kind:'integer',value:String(fixtures.length)}}]}};
+}
+"
+    .replace("__CASES__", &serde_json::to_string(&selected).unwrap());
+    let runner = start(&entry);
+    let input: VisualizationInput = serde_json::from_value(serde_json::json!({
+        "instanceId":"test","exchangeId":"test","requestNumber":"1","generation":"1","direction":"request",
+        "request":{"evidenceId":"test","headers":[],"method":"POST","path":"/mapi/nspi"}
+    })).unwrap();
+    let VisualizationStep::Document { document } = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("Expected native-reference parity result")
+    };
+    assert_eq!(document.roots[0].value, Some(Value::Integer("8".into())));
+}
