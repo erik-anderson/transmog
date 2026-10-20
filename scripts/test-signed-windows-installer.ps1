@@ -49,7 +49,7 @@ foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     if ((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Erik Anderson\Transmog' -Name ($kind + 'Registration')) -ne 1) { throw "$kind choice was not preserved during an in-place install." }
 }
 Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--verify-update-artifact', ('"' + (Resolve-Path -LiteralPath $installer).Path + '"'), ('"' + (Resolve-Path -LiteralPath "$installer.sig").Path + '"'), (ConvertTo-ReleaseSemVer $manifest.Version))
-foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
+foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'uninstall.exe')) {
     if ($name -cne 'uninstall.exe') { Assert-WindowsBinaryTarget -Path (Join-Path $installDirectory $name) -Target $Target }
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }

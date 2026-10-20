@@ -35,7 +35,7 @@ function New-WindowsReleaseSymbolArchive {
         [ValidateSet('x86_64-pc-windows-msvc', 'aarch64-pc-windows-msvc')][string]$Target = 'x86_64-pc-windows-msvc',
         [Parameter(Mandatory)][string]$Version, [Parameter(Mandatory)][string]$Commit, [Parameter(Mandatory)][string]$RunId)
     if (Test-Path -LiteralPath $OutputPath) { throw 'A symbols archive already exists; use a fresh release build.' }
-    $records = @(foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
+    $records = @(foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe')) {
         $pdb = [IO.Path]::GetFileNameWithoutExtension($binary).Replace('-', '_') + '.pdb'
         Get-WindowsSymbolEvidence -Binary (Join-Path $BuildDirectory $binary) -Pdb (Join-Path $BuildDirectory $pdb)
     })
@@ -49,5 +49,5 @@ function New-WindowsReleaseSymbolArchive {
         $writer = [IO.StreamWriter]::new($entry.Open(), [Text.UTF8Encoding]::new($false))
         try { $writer.WriteLine($manifest) } finally { $writer.Dispose() }
     } finally { $archive.Dispose() }
-    Write-Host "Retained matching full PDBs for all four released executables in $([IO.Path]::GetFileName($OutputPath))."
+    Write-Host "Retained matching full PDBs for all five released executables in $([IO.Path]::GetFileName($OutputPath))."
 }

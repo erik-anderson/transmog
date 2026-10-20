@@ -104,7 +104,7 @@ try {
         foreach ($completed in $phases | Where-Object { $_ -cne 'Assemble' }) {
             Copy-Item -LiteralPath (Join-Path $gateRoot "$completed.json") -Destination (Join-Path $payloadRoot 'evidence/gates') -Force
         }
-        foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
+        foreach ($binary in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe')) {
             $sourceBinary = Join-Path $buildResult.BuildDirectory $binary
             Assert-WindowsBinaryTarget -Path $sourceBinary -Target $Target
             if ((Get-AuthenticodeSignature -LiteralPath $sourceBinary).Status -ne 'NotSigned') { throw "Build output is unexpectedly signed: $binary" }

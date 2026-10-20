@@ -2,7 +2,7 @@ param()
 . (Join-Path $PSScriptRoot 'windows-release-common.ps1')
 $fixture = Join-Path ([System.IO.Path]::GetTempPath()) ('transmog-release-test-' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force (Join-Path $fixture 'target\release') | Out-Null
-$files = @(foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe')) {
+$files = @(foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-extension-host.exe', 'transmog-cli.exe')) {
     $path = Join-Path $fixture "target\release\$name"
     'fixture' | Set-Content -LiteralPath $path
     [ordered]@{ Path = "target/release/$name"; Sha256 = (Get-FileHash -LiteralPath $path).Hash }
@@ -66,6 +66,15 @@ try {
 } finally { Pop-Location }
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'different-commit' -RunId '123' } 'a different source commit'
 Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '124' } 'a different workflow run'
+$missingExtension = $baseline | ConvertFrom-Json
+$missingExtension.Files = @($missingExtension.Files | Where-Object { $_.Path -cne 'target/release/transmog-extension-host.exe' })
+$missingExtension | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath
+$extensionPath = Join-Path $fixture 'target/release/transmog-extension-host.exe'
+Remove-Item -LiteralPath $extensionPath
+try {
+    Require-Rejection { Assert-ReleasePayload -PayloadRoot $fixture -Commit 'test-commit' -RunId '123' } 'a missing extension helper payload'
+} finally { 'fixture' | Set-Content -LiteralPath $extensionPath }
+Set-TestManifest
 $missingCli = $baseline | ConvertFrom-Json
 $missingCli.Files = @($missingCli.Files | Where-Object { $_.Path -cne 'target/release/transmog-cli.exe' })
 $missingCli | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $manifestPath

@@ -65,7 +65,7 @@ if (-not $StartupOnly) {
 }
 
 if (-not $SkipReleaseBuild) {
-    cargo build --locked --release -p transmog-desktop
+    cargo build --locked --release -p transmog-desktop -p transmog-script-host -p transmog-preview-worker -p transmog-extension-host
 }
 if (-not (Test-Path -LiteralPath $executable -PathType Leaf)) {
     throw 'Release desktop executable is unavailable.'

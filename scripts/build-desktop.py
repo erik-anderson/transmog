@@ -10,7 +10,7 @@ def main():
     args = parser.parse_args()
     env = development_environment()
     command(["npm", "run", "check"], cwd=ROOT / "apps/desktop/ui", env=env)
-    argv = ["cargo", "build", "-p", "transmog-desktop", "-p", "transmog-script-host", "-p", "transmog-preview-worker"]
+    argv = ["cargo", "build", "-p", "transmog-desktop", "-p", "transmog-script-host", "-p", "transmog-preview-worker", "-p", "transmog-extension-host"]
     if args.configuration == "Release":
         argv.append("--release")
     if args.locked_dependencies:
