@@ -23,6 +23,18 @@ export async function checkExtensions(page,root) {
   const installed=panel.getByRole('article',{name,exact:true});
   await installed.getByRole('heading',{name,exact:true}).waitFor();
   assert.equal(await panel.locator('img,script').count(),0,'Extension metadata produced executable UI');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.warning='A user extension conflicts with a bundled ID. Remove that installation and restart.';globalThis.__workspaceFixture.extensionStatus.managementBlocked=false;});
+  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await installed.getByRole('button',{name:'Uninstall '+name,exact:true}).isEnabled(),true,'A declaration notice blocked its uninstall recovery');
+  assert.equal(await panel.getByRole('button',{name:'Install extension…',exact:true}).isEnabled(),true);
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.warning='Extension settings could not be loaded. Restore the catalog and restart.';delete globalThis.__workspaceFixture.extensionStatus.managementBlocked;});
+  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
+  assert.equal(await installed.getByRole('button',{name:'Uninstall '+name,exact:true}).isDisabled(),true,'A corrupt catalog permitted management');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.warning=null;globalThis.__workspaceFixture.extensionStatus.managementBlocked=false;});
+  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
+  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
   await installed.locator('summary').click();
   await installed.getByText('content-type, x-requesttype',{exact:true}).waitFor();
   assert.equal(await installed.getByText('No headers',{exact:true}).count(),1);

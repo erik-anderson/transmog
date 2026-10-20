@@ -1,8 +1,10 @@
 //! Shared metadata-only extension management; workers belong to explicitly activated instances.
+mod bundled;
 mod directory;
 mod packaging;
 mod reload;
 mod watch;
+pub use bundled::BundledExtension;
 pub use packaging::PackagedExtension;
 pub use reload::ReloadRequest;
 use serde::{Deserialize, Serialize};
@@ -42,8 +44,10 @@ pub struct ExtensionEntry {
 pub struct ExtensionStatus {
     /// All installed declaration summaries.
     pub entries: Vec<ExtensionEntry>,
-    /// Safe storage-recovery explanation; capture remains available.
+    /// Safe storage/declaration explanation; capture remains available.
     pub warning: Option<String>,
+    /// Only corrupt catalog storage blocks management; declaration notices permit recovery.
+    pub management_blocked: bool,
 }
 /// One optional static table column; no executable code or captured values.
 #[derive(Clone, Debug, Serialize)]
@@ -123,6 +127,8 @@ struct Inner {
     mutation: Mutex<()>,
     state: Mutex<State>,
     reload_gate: Arc<tokio::sync::Mutex<()>>,
+    bundled: BTreeMap<String, BundledExtension>,
+    management_blocked: bool,
 }
 /// Cloneable registry shared by all windows; enable state and disable/uninstall are global.
 #[derive(Clone)]
@@ -138,6 +144,8 @@ impl Default for Registry {
                 mutation: Mutex::new(()),
                 state: Mutex::new(State::default()),
                 reload_gate: Arc::default(),
+                bundled: BTreeMap::new(),
+                management_blocked: false,
             }),
         }
     }
@@ -145,10 +153,21 @@ impl Default for Registry {
 impl Registry {
     /// Loads only validated cached metadata; corrupt state does not prevent app startup.
     pub fn load(root: PathBuf, host: Option<HostConfig>) -> Self {
+        Self::load_with_bundled(root, host, &[])
+    }
+    /// Loads cached user metadata and trusted app-owned declarations. Archive callbacks
+    /// are retained without being called until explicit snapshot/visualizer activation.
+    pub fn load_with_bundled(
+        root: PathBuf,
+        host: Option<HostConfig>,
+        resources: &[BundledExtension],
+    ) -> Self {
         let state=match load(&root){
             Ok(entries)=>State{entries,..State::default()},
             Err(_)=>State{warning:Some("Extension settings could not be loaded. Restore the extension catalog before changing installations.".into()),..State::default()},
         };
+        let management_blocked = state.warning.is_some();
+        let (state, bundled) = bundled::merge(state, resources);
         Self {
             inner: Arc::new(Inner {
                 root: Some(root),
@@ -156,6 +175,8 @@ impl Registry {
                 mutation: Mutex::new(()),
                 state: Mutex::new(state),
                 reload_gate: Arc::default(),
+                bundled,
+                management_blocked,
             }),
         }
     }
@@ -169,6 +190,7 @@ impl Registry {
         ExtensionStatus {
             entries: state.entries.clone(),
             warning: state.warning.clone(),
+            management_blocked: self.inner.management_blocked,
         }
     }
     /// Returns enabled contributions for native discovery, without copying package inventories.
@@ -422,9 +444,15 @@ impl Registry {
                     .ok_or_else(|| invalid("Developer directory is unavailable"))?,
             )?
             .snapshot()?,
-            Origin::Installed | Origin::Bundled => {
+            Origin::Installed => {
                 let path = package_path(self.root()?, id, &entry.catalog.digest);
                 Package::open(File::open(path)?)?.snapshot()?
+            }
+            Origin::Bundled => {
+                let resource = self.inner.bundled.get(id).ok_or_else(|| {
+                    invalid("This bundled extension is unavailable in this app version")
+                })?;
+                Package::open(std::io::Cursor::new((resource.archive)()))?.snapshot()?
             }
         };
         if snapshot.manifest.id != id
@@ -779,7 +807,7 @@ impl Registry {
         self.publish(self.replacement(entry)?)
     }
     fn replacement(&self, entry: ExtensionEntry) -> Result<Vec<ExtensionEntry>, Error> {
-        if self.status().warning.is_some() {
+        if self.inner.management_blocked {
             return Err(invalid(
                 "Repair the extension catalog before changing installations",
             ));
@@ -811,7 +839,7 @@ impl Registry {
         entries: Vec<ExtensionEntry>,
         current: impl FnOnce(&State) -> Result<G, Error>,
     ) -> Result<G, Error> {
-        if self.status().warning.is_some() {
+        if self.inner.management_blocked {
             return Err(invalid(
                 "Repair the extension catalog before changing installations",
             ));

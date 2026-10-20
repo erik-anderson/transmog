@@ -47,6 +47,7 @@
   "extensionsText": "",
   "extensionsError": "",
   "extensionsWarning": "",
+  "extensionsBlocked": false,
   "converterMode": false,
   "converterTheme": "system",
   "converterInput": "",

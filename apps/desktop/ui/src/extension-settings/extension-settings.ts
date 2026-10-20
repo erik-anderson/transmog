@@ -29,6 +29,7 @@ export class ExtensionSettings extends WorkspaceElement {
   @observable extensionsText=initialState.extensionsText;
   @observable extensionsError=initialState.extensionsError;
   @observable extensionsWarning=initialState.extensionsWarning;
+  @observable extensionsBlocked=initialState.extensionsBlocked;
   private unlisten:UnlistenFn|undefined;
   private observing=false;
   private listenerGeneration=0;
@@ -45,7 +46,7 @@ export class ExtensionSettings extends WorkspaceElement {
   private unwatch():void {this.listenerGeneration++;this.observing=false;const unlisten=this.unlisten;this.unlisten=undefined;if(unlisten)void Promise.resolve(unlisten()).catch(()=>undefined);}
   disconnectedCallback():void {this.generation++;this.unwatch();super.disconnectedCallback();}
   private refreshQueued():void {if(this.refreshAgain&&this.active){this.refreshAgain=false;void this.refresh();}}
-  private accept(status:ExtensionStatus):void {this.extensionsEntries=status.entries.map(row);this.extensionsWarning=status.warning??'';this.extensionsLoaded=true;}
+  private accept(status:ExtensionStatus):void {this.extensionsEntries=status.entries.map(row);this.extensionsWarning=status.warning??'';this.extensionsBlocked=status.managementBlocked??Boolean(status.warning);this.extensionsLoaded=true;}
   async refresh():Promise<void> {
     if(this.extensionsBusy)return;
     const generation=++this.generation;this.extensionsBusy=true;this.extensionsError='';this.extensionsText='';

@@ -153,6 +153,13 @@ candidate; successful replacement unloads active instances and removes the old
 managed revision. A different provenance cannot silently take over an existing ID.
 Corrupt catalog metadata leaves capture available and reports a recovery warning.
 
+App-owned bundles provide separately generated manifest metadata and a lazy
+ordinary `.tmext` resource. Startup/discovery and enable changes do not open that
+archive or copy it into the user installation store. Explicit activation verifies
+the immutable archive and its payloads. App upgrades refresh trusted declarations
+while preserving the saved enabled choice. Corrupt catalog storage leaves bundles
+disabled; an ID conflict preserves user-owned files and permits uninstall recovery.
+
 Registering an unpacked developer directory reads only its manifest. Activation
 uses pinned local directory handles, rejects reparse points and links, bounds
 every file read and collects an immutable snapshot. Source lengths and digests
@@ -285,6 +292,9 @@ back the authoritative inventory, preserving the actual installation result.
 Leaving and returning to a pending inventory refresh requests fresh metadata and
 rejects the earlier response. The management view releases its event listener
 when hidden.
+Catalog corruption blocks management until recovery. Other declaration notices
+leave recovery controls available; a warning alone does not disable uninstalling
+an installation that conflicts with an app-owned ID.
 
 Production-template browser checks cover keyboard changes, inert markup,
 failed writes, removal cleanup, stale refreshes, compact layouts and forced
