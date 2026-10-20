@@ -9,7 +9,8 @@ export interface Format {protocol?:string|null;charset?:string|null;byteOrder?:s
 export type Value={kind:'string'|'integer'|'timestamp'|'guid';value:string}|{kind:'float';value:number}|{kind:'boolean';value:boolean}|{kind:'enum';value:{name:string;raw:string}}|{kind:'flags';value:{names:string[];raw:string}}|{kind:'bytes'|'object'|'array'};
 export interface VisualizerNode {id:string;name:string;value?:Value|null;format?:Format|null;spans:Span[];children:VisualizerNode[];childrenToken?:string|null;presentation?:Presentation|null;}
 export interface DerivedSource {id:string;name:string;bytesBase64:string;parents:Span[];transform:string;exactMapping:boolean;}
-export interface SourceInfo {id:string;name:string;length:string;availability:string;sessionId:string;boundary:string;}
+export interface SourceInfo {id:string;name:string;length:string;availability:string;sessionId:string;boundary:string;httpDecoded?:{parent:Span;codings:string[]};}
+export const sourceDescription=(source:SourceInfo):string=>`${source.length} bytes · ${source.availability}`+(source.httpDecoded?` · HTTP content decoding (${source.httpDecoded.codings.join(', ')}) · enclosing parent regions only`:'');
 export interface VisualizerDocument {title:string;status:string;presentation:Presentation;summary:string|null;roots:VisualizerNode[];sources:DerivedSource[];diagnostics:Array<{code:string;message:string;nodeId:string|null}>;}
 export interface LiveStatus {available:boolean;enabled:boolean;missedHints:string;}
 export interface LiveUpdate {view:VisualizerView|null;status:LiveStatus;busy:boolean;}

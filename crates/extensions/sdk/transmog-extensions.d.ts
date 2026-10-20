@@ -22,6 +22,8 @@ declare module "transmog:extensions/v1" {
   export interface VisualizationDocument { title: string; status: ParseStatus; presentation: Presentation; summary?: string; roots: Node[]; sources?: DerivedSource[]; diagnostics?: Diagnostic[]; }
   export interface Header { sourceId?: string; index: number; name: string; value?: readonly number[] | null; redacted: boolean; originalBytes?: string | null; }
   export interface BodyReference { sourceId: string; length: string; availability: string; }
+  export interface DecodedBody {body: BodyReference; parent: Span; codings: readonly string[];}
+  export type HttpDecodeResult = {kind: "ready"; decoded: DecodedBody} | {kind: "unavailable"; reason: "incomplete" | "metadataUnavailable" | "unsupported" | "malformed" | "limited"};
   export interface Message { evidenceId: string; headers: readonly Header[]; body?: BodyReference | null; method?: string | null; path?: string | null; status?: number | null; }
   export interface Input { instanceId: string; exchangeId: string; requestNumber: string; generation: string; direction: Direction; request?: Message | null; response?: Message | null; }
   export interface ReadRequest { sourceId: string; offset: string; maxBytes: number; }
@@ -29,7 +31,7 @@ declare module "transmog:extensions/v1" {
   export interface ContextRequest {position: "before" | "after"; cursor?: string | null; limit: number;}
   export interface ContextExchange {order: string; input: Input;}
   export interface ContextPage {anchorOrder: string; exchanges: readonly ContextExchange[]; nextCursor?: string | null; status: "complete" | "more" | "unavailable" | "limited";}
-  export type Step = {kind: "document"; document: VisualizationDocument} | {kind: "needInput"; reads: ReadRequest[]; token: string} | {kind: "needContext"; request: ContextRequest; token: string};
+  export type Step = {kind: "document"; document: VisualizationDocument} | {kind: "needInput"; reads: ReadRequest[]; token: string} | {kind: "needContext"; request: ContextRequest; token: string} | {kind: "needDecoded"; sourceId: string; token: string};
   export interface BytePage { sourceId: string; offset: string; bytes: readonly number[]; }
   export interface TrafficEvent { sequence: string; exchangeId: string; direction: Direction; phase: "head" | "body" | "bodyCompleted" | "ended"; revision: string; input: Input; }
   export interface TrafficBatchInfo {missedHints: string;}
@@ -37,6 +39,11 @@ declare module "transmog:extensions/v1" {
   export function resume(token: string, pages: readonly BytePage[]): Step;
   /** Required when returning needContext; receives only host-filtered, declared input. */
   export function resumeContext(token: string, page: ContextPage): Step;
+  /** Requires decodeHttpContent, content-encoding and body access for the original side.
+   * Encoded work and subsequent decoded pages share the operation input budget.
+   * Failed decoding never substitutes encoded bytes. Inspect the explicit result.
+   */
+  export function resumeDecoded(token: string, result: HttpDecodeResult): Step;
   export function expand(token: string): Step;
   export function onTraffic(batch: readonly TrafficEvent[], info: TrafficBatchInfo): Step;
 }

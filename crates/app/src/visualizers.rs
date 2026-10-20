@@ -16,6 +16,7 @@ use transmog_extensions::{
 };
 mod admission;
 mod context;
+mod decoding;
 mod evidence;
 mod live;
 use admission::Admission;
@@ -142,6 +143,9 @@ pub struct VisualizerSourceInfo {
     pub session_id: String,
     /// Exact message boundary represented by these bytes.
     pub boundary: String,
+    /// Host-owned HTTP transform and enclosing encoded-body provenance, when decoded.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub http_decoded: Option<transmog_extensions::DecodedBody>,
 }
 /// Bounded source bytes for host-owned span highlighting.
 #[derive(Clone, Debug, Serialize)]
@@ -636,6 +640,12 @@ impl Application {
                             .await
                             .map_err(|_| unavailable())??;
                         invocation = Invocation::ResumeContext { token, page };
+                    }
+                    VisualizationStep::NeedDecoded { source_id, token } => {
+                        let result = resources
+                            .decode_http(&source_id, instance.declaration.limits.input_bytes)
+                            .await?;
+                        invocation = Invocation::ResumeDecoded { token, result };
                     }
                 }
             }

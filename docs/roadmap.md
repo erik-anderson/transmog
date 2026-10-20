@@ -27,8 +27,10 @@ installation/instance registry and selected retained-evidence broker. Desktop
 selection, host rendering, source highlighting and concurrent header/body surfaces
 are implemented, as are Extensions settings and shared management. Bounded
 same-origin context reads and opt-in native live feeding, including desktop
-controls and inactive unloading, are implemented. Content decoding,
-transactional development reload and MAPI parity remain below.
+controls and inactive unloading, are implemented. Declared on-demand HTTP
+decoding preserves separate encoded and decoded capabilities with enclosing
+provenance. Metadata classification columns, transactional development reload
+and MAPI parity remain below.
 The user wants to select a retained request or response, choose a matching
 visualizer, and explore its headers/body alongside the source evidence. Ordinary
 capture, selection, and built-in inspection must not load extension code.
@@ -245,6 +247,23 @@ Content-Type a wildcard for all extensions. Evaluate request and response header
 conditions against the named side, with missing/redacted/invalid values explicit.
 The host must not test hidden sensitive values to infer a match that would reveal
 them. Header-only matches work for HEAD/204 responses and captures without bodies.
+
+The same metadata matcher must also support extension-declared traffic columns.
+Each column has a stable package-qualified identity, a display name and fixed
+label values selected by explicit request/response header rules. A rule may
+combine both sides to classify a request, for example as MS-FSSHTTP. Values are
+literal extension metadata, never script results or values copied from captured
+headers. Columns are optional host-owned traffic columns, with finite rule,
+label and value counts. Disabled or unselected contributions add no script,
+body, source-file or per-request callback work.
+
+Classification uses bounded native header metadata access. It must not request
+body capabilities, run extension code, import another capture or materialize a
+whole TMCap trace. Saved-trace evaluation uses existing indexed metadata access
+with bounded paging and caches tied to evidence and declaration revisions;
+sorting/filtering must not turn it into body loading or unbounded retention.
+Missing, redacted or unavailable headers remain explicit and cannot satisfy
+value predicates. Show column declarations and conditions in Extensions settings.
 
 MAPI's main registration is `application/mapi-http`. Request-side registration
 uses the corresponding request media type. Add a narrowly qualified `text/html`
@@ -713,7 +732,7 @@ intentional differences. Include upstream MIT notices and dependency attribution
 | Stage | Deliverable and exit evidence |
 | --- | --- |
 | 1. Specify and measure | Freeze the parity matrix and synthetic protocol/differential fixtures; settle package/API schemas, context identity, output provenance, and cold/active resource budgets. Inventory upstream parser families and dependencies before estimating the port. |
-| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker/supervisor, persisted metadata registry and retained-evidence broker implemented. Bounded related-context reads enforce capture, origin, conversation and exact grants. Native opt-in live feeds share a subscription, filter before projection, coalesce bounded metadata queues and report lost hints. HTTP decoding remains. Fixtures exercise activation, projection, byte/context/live continuations, network denial, cancellation, unload and cross-window management. |
+| 2. Package and runtime | Contract/package primitives, native admission index, closed JavaScript modules, isolated worker/supervisor, persisted metadata registry and retained-evidence broker implemented. Bounded related-context reads enforce capture, origin, conversation and exact grants. Native opt-in live feeds share a subscription, filter before projection, coalesce bounded metadata queues and report lost hints. Declared on-demand HTTP decoding preserves original bytes and bounded derived capabilities. Fixtures exercise activation, projection, byte/context/live/decoding continuations, network denial, cancellation, unload and cross-window management. |
 | 3. Host renderer and development | Explicit concurrent request/response/header selection, host tree/table/text/hex rendering, exact source highlighting, deferred expansion, Extensions settings and opt-in live controls are implemented. Browser/native synthetic flows cover inert output, wide offsets, active lifetimes, filtered feeds and shared management. Transactional hot reload remains. Prove packaged and unpacked forms use the same validation/sandbox. |
 | 4. MAPI port | Build shared byte readers/property decoders, transport envelopes, mailbox/NSPI families, ROPs, auxiliary data, compression, FastTransfer and contextual decoding, including incremental request/response handling in live mode. Add differential fixtures as each family lands; no bundled release at partial coverage. |
 | 5. Parity and shipment | Run the full matrix against the pinned reference, qualify hostile inputs, resource/performance behavior, native sandbox and UX, then bundle the ordinary `.tmext` with build-generated metadata and attribution. |

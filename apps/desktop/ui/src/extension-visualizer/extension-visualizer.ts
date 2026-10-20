@@ -3,7 +3,7 @@ import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {describeError} from '../utilities.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
-import {DOCUMENT_NODE,documentNode,formatText,nodeIndex,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
+import {DOCUMENT_NODE,documentNode,formatText,nodeIndex,sourceDescription,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
 
 let nextGeneration=0n,nextRenderer=0;
 const next=():string=>(++nextGeneration).toString();
@@ -180,7 +180,7 @@ export class ExtensionVisualizer extends WebUIElement {
     if(!retained){this.selected=DOCUMENT_NODE;this.tableOffset=0;}
     this.visualizerFrozen=false;this.visualizerLiveSupported=!!view.instance.declaration.liveUpdates;this.liveStatus(view.live);
     this.visualizerTitle=view.document.title;this.visualizerStatus=view.document.status;this.visualizerSummary=view.document.summary??'';this.visualizerDiagnostics=view.document.diagnostics;
-    this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:`${source.length} bytes · ${source.availability}`})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
+    this.visualizerSources=[...view.sources.map(source=>({id:source.id,name:source.name,description:sourceDescription(source)})),...view.document.sources.map(source=>({id:source.id,name:source.name,description:`Derived · ${source.transform} · ${source.exactMapping?'exact parent mapping':'enclosing parent regions only'}`}))];
     this.updateRows();this.describeNode(retained,retained&&retainHex);
   }
   private updateRows():void {
@@ -248,7 +248,8 @@ export class ExtensionVisualizer extends WebUIElement {
     const derived=this.view.document.sources.find(source=>source.id===chosen.id),original=this.view.sources.find(source=>source.id===chosen.id);
     const key=this.view.handle.instanceId+':'+chosen.id;
     this.visualizerHex={key,bytesBase64:derived?.bytesBase64??'',offset:'0',truncated:false,...(original?{source:{kind:'visualizer' as const,handle:this.view.handle,sourceId:original.id,totalBytes:original.length,readLimit:65536}}:{}),...(span?{selection:{offset:span.offset,length:span.length}}:{})};
-    if(derived)this.visualizerSourceText+=` · Parents: ${derived.parents.map(parent=>`${this.visualizerSources.find(source=>source.id===parent.sourceId)?.name??parent.sourceId}, offset ${parent.offset}, ${parent.length} bytes`).join('; ')}`;
+    const parents=derived?.parents??(original?.httpDecoded?[original.httpDecoded.parent]:[]);
+    if(parents.length)this.visualizerSourceText+=` · Parents: ${parents.map(parent=>`${this.visualizerSources.find(source=>source.id===parent.sourceId)?.name??parent.sourceId}, offset ${parent.offset}, ${parent.length} bytes`).join('; ')}`;
   }
   disconnectedCallback():void {
     this.stop();this.observer?.disconnect();this.resize?.disconnect();this.observer=null;this.resize=null;this.inViewport=false;

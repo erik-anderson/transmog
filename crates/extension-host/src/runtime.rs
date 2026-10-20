@@ -29,6 +29,7 @@ const BOOTSTRAP: &str = r"
     if (call.kind === 'visualize') result = handlers.visualize(call.input);
     else if (call.kind === 'resume') result = handlers.resume(call.token, call.pages);
     else if (call.kind === 'resumeContext') result = handlers.resumeContext(call.token, call.page);
+    else if (call.kind === 'resumeDecoded') result = handlers.resumeDecoded(call.token, call.result);
     else if (call.kind === 'expand') result = handlers.expand(call.token);
     else if (call.kind === 'traffic') result = handlers.onTraffic(call.events, freeze({missedHints:call.missedHints}));
     else throw new Error('Unknown operation');
@@ -268,7 +269,7 @@ fn load_modules(
         if specifier == entry {
             if exports.get("visualize") != Some(&false)
                 || (visualizer.live_updates.is_some() && exports.get("onTraffic") != Some(&false))
-                || ["resume", "expand", "resumeContext"]
+                || ["resume", "expand", "resumeContext", "resumeDecoded"]
                     .iter()
                     .any(|name| exports.get(*name) == Some(&true))
             {
@@ -277,7 +278,7 @@ fn load_modules(
                     "Declare synchronous visualize and optional live handlers",
                 ));
             }
-            javascript.push_str("\nObject.defineProperty(globalThis,'__tmHandlers',{value:Object.freeze({visualize, resume:typeof resume==='function'?resume:undefined, resumeContext:typeof resumeContext==='function'?resumeContext:undefined, expand:typeof expand==='function'?expand:undefined, onTraffic:typeof onTraffic==='function'?onTraffic:undefined})});");
+            javascript.push_str("\nObject.defineProperty(globalThis,'__tmHandlers',{value:Object.freeze({visualize, resume:typeof resume==='function'?resume:undefined, resumeContext:typeof resumeContext==='function'?resumeContext:undefined, resumeDecoded:typeof resumeDecoded==='function'?resumeDecoded:undefined, expand:typeof expand==='function'?expand:undefined, onTraffic:typeof onTraffic==='function'?onTraffic:undefined})});");
         }
         modules.insert(specifier, javascript);
     }

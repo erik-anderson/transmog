@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 import {checkLiveVisualizers} from './check-live-visualizers.mjs';
+import {checkHttpVisualizers} from './check-http-visualizers.mjs';
 
 export async function checkVisualizers(page,root) {
   await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
@@ -57,6 +58,7 @@ export async function checkVisualizers(page,root) {
     await visualizer.getByRole('button',{name:'Next',exact:true}).click();
     await visualizer.getByText('51–100 of 5000 rows',{exact:true}).waitFor();
     await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).selectOption('tree');
+    await checkHttpVisualizers(page,visualizer,selector,tree);
     await checkLiveVisualizers(page,root,visualizer,selector,tree);
     const starts=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
     await page.evaluate(()=>globalThis.__workspaceFixture.emitNative('extensions-changed'));

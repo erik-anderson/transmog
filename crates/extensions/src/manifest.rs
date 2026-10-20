@@ -55,6 +55,9 @@ pub struct InputAccess {
     pub headers: Vec<String>,
     /// No default: authors must explicitly declare body access.
     pub body: BodyAccess,
+    /// Optional on-demand HTTP content decoding; requires body and content-encoding access.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub decode_http_content: bool,
 }
 impl InputAccess {
     /// Whether this exact header name was declared.
@@ -62,6 +65,13 @@ impl InputAccess {
         self.headers.iter().any(|h| h.eq_ignore_ascii_case(name))
     }
     fn validate(&self) -> Result<(), Error> {
+        if self.decode_http_content
+            && (self.body == BodyAccess::None || !self.permits_header("content-encoding"))
+        {
+            return Err(invalid(
+                "HTTP decoding requires body and content-encoding access",
+            ));
+        }
         if self.headers.len() > 64 {
             return Err(Error::Limit);
         }

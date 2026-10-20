@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 /// Same-build worker protocol revision.
-pub const HOST_PROTOCOL_VERSION: u32 = 3;
+pub const HOST_PROTOCOL_VERSION: u32 = 4;
 /// Absolute framing ceiling, checked before allocating any incoming JSON.
 pub const MAX_HOST_FRAME_BYTES: usize = 12 * 1024 * 1024;
 /// Maximum raw payload bytes in one initialization chunk.
@@ -24,6 +24,47 @@ pub struct BodyReference {
     pub length: String,
     /// Complete, capturing, truncated, evicted or another explicit retention state.
     pub availability: String,
+}
+/// Host-owned HTTP decoded source, with enclosing provenance in the encoded body.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DecodedBody {
+    /// Separately granted decoded bytes, or the original capability for identity.
+    pub body: BodyReference,
+    /// Entire frozen encoded entity; compressed offsets are never presented as exact.
+    pub parent: crate::Span,
+    /// Canonical content codings in sender application order; empty means identity.
+    pub codings: Vec<String>,
+}
+/// Finite read-only decode outcomes; no captured bytes or header values in errors.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum DecodeFailure {
+    /// Body retention is incomplete or still in progress.
+    Incomplete,
+    /// Exact content-coding metadata is missing, inconsistent or redacted.
+    MetadataUnavailable,
+    /// The declared coding is unsupported.
+    Unsupported,
+    /// Encoded bytes failed codec validation.
+    Malformed,
+    /// The codec or retained decoded-source budget was exhausted.
+    Limited,
+}
+/// Result resumed into extension code after an explicitly requested HTTP decode.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+pub enum HttpDecodeResult {
+    /// A validated, separately identified representation, with exact lengths.
+    Ready {
+        /// Decoded source and its encoded parent.
+        decoded: DecodedBody,
+    },
+    /// Keep the original encoded representation available and report the reason.
+    Unavailable {
+        /// Stable outcome, distinct from unavailable original bytes.
+        reason: DecodeFailure,
+    },
 }
 /// Projected message input; includes only this contribution's granted headers/body handle.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -217,6 +258,13 @@ pub enum Invocation {
         /// Projected host page within the selected capture/conversation.
         page: ContextPage,
     },
+    /// Resume only an explicitly pending, declared HTTP decode.
+    ResumeDecoded {
+        /// Exact parser continuation token.
+        token: String,
+        /// Host-controlled representation or explicit failure.
+        result: HttpDecodeResult,
+    },
     /// Expand a deferred document node.
     Expand {
         /// Worker-local expansion token.
@@ -232,7 +280,12 @@ pub enum Invocation {
 }
 /// Pure parser output or a finite request for declared retained bytes.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
+#[serde(
+    tag = "kind",
+    rename_all = "camelCase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
 pub enum VisualizationStep {
     /// Complete or explicitly partial host-owned view.
     Document {
@@ -250,6 +303,13 @@ pub enum VisualizationStep {
     NeedContext {
         /// Bounded direction and instance-owned cursor.
         request: ContextRequest,
+        /// Exact parser continuation token.
+        token: String,
+    },
+    /// Decode a granted complete body under its declared content-encoding dependency.
+    NeedDecoded {
+        /// Exact original body capability; never a header or an arbitrary source.
+        source_id: String,
         /// Exact parser continuation token.
         token: String,
     },

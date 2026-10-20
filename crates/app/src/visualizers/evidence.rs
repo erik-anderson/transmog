@@ -28,17 +28,68 @@ pub(super) enum Source {
         exchange: ExchangeId,
         boundary: ExchangeBoundary,
         metadata: Box<StoredBodyMetadata>,
+        decoding: Option<Result<Vec<String>, transmog_extensions::DecodeFailure>>,
+    },
+    Decoded {
+        bytes: Arc<[u8]>,
+        original: Arc<Source>,
     },
 }
 impl Source {
-    fn length(&self) -> u64 {
+    pub(super) fn length(&self) -> u64 {
         match self {
-            Self::Header(bytes) => bytes.len() as u64,
+            Self::Header(bytes) | Self::Decoded { bytes, .. } => bytes.len() as u64,
             Self::Related { source, .. } => source.length(),
             Self::Body { metadata, .. } => metadata.retained_bytes,
         }
     }
-    fn read(&self, offset: u64, count: usize, canceled: &AtomicBool) -> Result<Vec<u8>, AppError> {
+    pub(super) fn authorize(&self, canceled: &AtomicBool) -> Result<(), AppError> {
+        if canceled.load(Ordering::Acquire) {
+            return Err(unavailable());
+        }
+        match self {
+            Self::Header(_) => Ok(()),
+            Self::Related {
+                source,
+                guard,
+                exchange,
+                order,
+            } => {
+                if !guard.allowed(*exchange, *order) {
+                    return Err(unavailable());
+                }
+                source.authorize(canceled)
+            }
+            Self::Decoded { original, .. } => original.authorize(canceled),
+            Self::Body {
+                store,
+                exchange,
+                metadata,
+                ..
+            } => {
+                let current = store
+                    .metadata(*exchange)
+                    .into_iter()
+                    .find(|m| m.boundary == metadata.boundary)
+                    .ok_or_else(unavailable)?;
+                if current.retained_bytes < metadata.retained_bytes
+                    || metadata
+                        .sha256
+                        .as_ref()
+                        .is_some_and(|hash| current.sha256.as_ref() != Some(hash))
+                {
+                    return Err(unavailable());
+                }
+                Ok(())
+            }
+        }
+    }
+    pub(super) fn read(
+        &self,
+        offset: u64,
+        count: usize,
+        canceled: &AtomicBool,
+    ) -> Result<Vec<u8>, AppError> {
         if count == 0
             || count > 64 * 1024
             || offset
@@ -47,6 +98,7 @@ impl Source {
         {
             return Err(invalid("Visualizer source range is invalid"));
         }
+        self.authorize(canceled)?;
         match self {
             Self::Related {
                 source,
@@ -68,25 +120,19 @@ impl Source {
                     usize::try_from(offset).map_err(|_| invalid("Invalid header source offset"))?;
                 Ok(bytes[start..start + count].to_vec())
             }
+            Self::Decoded { bytes, .. } => {
+                let start = usize::try_from(offset)
+                    .map_err(|_| invalid("Invalid decoded source offset"))?;
+                let result = bytes[start..start + count].to_vec();
+                self.authorize(canceled)?;
+                Ok(result)
+            }
             Self::Body {
                 store,
                 exchange,
                 boundary,
-                metadata,
+                ..
             } => {
-                let current = store
-                    .metadata(*exchange)
-                    .into_iter()
-                    .find(|m| m.boundary == metadata.boundary)
-                    .ok_or_else(unavailable)?;
-                if current.retained_bytes < metadata.retained_bytes
-                    || metadata
-                        .sha256
-                        .as_ref()
-                        .is_some_and(|hash| current.sha256.as_ref() != Some(hash))
-                {
-                    return Err(unavailable());
-                }
                 // The store holds its eviction lease only during this bounded read.
                 // A visualizer cannot pin an arbitrarily large capture body while idle.
                 let mut bytes = Vec::with_capacity(count);
@@ -112,9 +158,9 @@ impl Source {
             }
         }
     }
-    fn retained_bytes(&self) -> usize {
+    pub(super) fn retained_bytes(&self) -> usize {
         match self {
-            Self::Header(bytes) => bytes.len(),
+            Self::Header(bytes) | Self::Decoded { bytes, .. } => bytes.len(),
             Self::Related { source, .. } => source.retained_bytes(),
             Self::Body { .. } => 0,
         }
@@ -300,6 +346,7 @@ pub(super) fn project_input(
             )
             .as_bytes(),
         );
+        let decoding = super::decoding::grant(headers, declaration.inputs.side(side));
         let mut headers = project_headers(headers, declaration.inputs.side(side), &mut remaining)?;
         for header in &mut headers {
             if let Some(value) = &header.value {
@@ -365,6 +412,7 @@ pub(super) fn project_input(
                             exchange: snapshot.exchange_id,
                             boundary,
                             metadata: Box::new(metadata),
+                            decoding,
                         },
                     );
                 } else if access == BodyAccess::Required {
@@ -465,6 +513,7 @@ pub(super) fn source_infos(
                     availability: "complete".into(),
                     session_id: session_id.clone(),
                     boundary: boundary_name(boundary).into(),
+                    http_decoded: None,
                 });
             }
         }
@@ -476,6 +525,7 @@ pub(super) fn source_infos(
                 availability: body.availability.clone(),
                 session_id: session_id.clone(),
                 boundary: boundary_name(boundary).into(),
+                http_decoded: None,
             });
         }
     }

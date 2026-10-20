@@ -1,5 +1,7 @@
 use super::*;
-use transmog_extensions::{ContextExchange, ContextPage, Header, Manifest, MessageInput};
+use transmog_extensions::{
+    ContextExchange, ContextPage, ContextPosition, ContextStatus, Header, Manifest, MessageInput,
+};
 fn declaration() -> Visualizer {
     serde_json::from_value::<Manifest>(serde_json::json!({
         "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.context","version":"1.0.0","name":"Context",
@@ -10,6 +12,9 @@ fn declaration() -> Visualizer {
         "files":[{"path":"main.js","bytes":0}]
     })).unwrap().visualizers.remove(0)
 }
+
+mod decoding;
+
 fn step() -> VisualizationStep {
     VisualizationStep::NeedContext {
         token: "context".into(),

@@ -506,3 +506,83 @@ fn cancellation_closes_an_already_ready_workers_idle_queue() {
     assert!(result.is_err());
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
 }
+
+const HTTP_SOURCE: &str = r"
+let decodedId;
+export function visualize(input) { return {kind:'needDecoded',sourceId:input.response.body.sourceId,token:'decode'}; }
+export function resumeDecoded(token,result) {
+  if(token!=='decode'||result.kind!=='ready'||!Object.isFrozen(result)||!Object.isFrozen(result.decoded.body))throw new Error('Invalid decode metadata');
+  decodedId=result.decoded.body.sourceId;
+  return {kind:'needInput',token:'decoded-bytes',reads:[{sourceId:decodedId,offset:'0',maxBytes:3}]};
+}
+export function resume(token,pages) {
+  if(token!=='decoded-bytes'||!Object.isFrozen(pages[0].bytes))throw new Error('Invalid decoded page');
+  return {kind:'document',document:{title:'HTTP decoded',status:'complete',presentation:'tree',roots:[{id:'text',name:'Decoded text',value:{kind:'string',value:String.fromCharCode(...pages[0].bytes)},spans:[{sourceId:decodedId,offset:'0',length:'3'}]}]}};
+}
+";
+#[tokio::test]
+async fn http_decoding_resumes_frozen_metadata_and_grants_only_requested_decoded_pages() {
+    let denied = start(snapshot(HTTP_SOURCE)).unwrap();
+    assert_eq!(
+        denied
+            .invoke(Invocation::Visualize {
+                input: Box::new(input())
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        FailureKind::Validation
+    );
+    denied.stop();
+    let snapshot = snapshot(HTTP_SOURCE);
+    let mut manifest = snapshot.manifest;
+    let access = &mut manifest.visualizers[0].inputs.response;
+    access.headers.push("content-encoding".into());
+    access.decode_http_content = true;
+    let runner = start(Snapshot::new(manifest, snapshot.files).unwrap()).unwrap();
+    let step = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap();
+    assert!(
+        matches!(step,VisualizationStep::NeedDecoded { source_id,.. } if source_id=="response-body")
+    );
+    let decoded = DecodedBody {
+        body: BodyReference {
+            source_id: "decoded-native".into(),
+            length: "3".into(),
+            availability: "complete".into(),
+        },
+        parent: Span {
+            source_id: "response-body".into(),
+            offset: "0".into(),
+            length: "4".into(),
+        },
+        codings: vec!["gzip".into()],
+    };
+    let step = runner
+        .invoke(Invocation::ResumeDecoded {
+            token: "decode".into(),
+            result: HttpDecodeResult::Ready { decoded },
+        })
+        .await
+        .unwrap();
+    assert!(matches!(step, VisualizationStep::NeedInput { .. }));
+    let step = runner
+        .invoke(Invocation::Resume {
+            token: "decoded-bytes".into(),
+            pages: vec![BytePage {
+                source_id: "decoded-native".into(),
+                offset: "0".into(),
+                bytes: b"ABC".to_vec(),
+            }],
+        })
+        .await
+        .unwrap();
+    let VisualizationStep::Document { document } = step else {
+        panic!("document required");
+    };
+    assert_eq!(document.roots[0].value, Some(Value::String("ABC".into())));
+}

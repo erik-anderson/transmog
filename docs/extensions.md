@@ -179,8 +179,27 @@ anchor or unloading the visualizer revokes those capabilities and clears cursors
 The same byte, source-count, deadline and cancellation limits apply throughout.
 
 These APIs parse selected retained snapshots, related context and deferred expansions.
-They do not yet decode HTTP
-Content-Encoding for an extension. Existing built-in inspection remains available.
+HTTP content decoding is separately declared on each input side with
+`decodeHttpContent: true`; that side must also grant a body and the exact
+`content-encoding` header. A script requests `needDecoded` for an original body
+capability and receives `resumeDecoded`. Discovery and ordinary body grants do
+not decode anything. Incomplete, unsupported, malformed, unavailable-metadata
+and over-budget results remain explicit, without substituting encoded bytes.
+
+Decoding uses the host's bounded gzip, deflate, Brotli and Zstandard codecs.
+Encoded work and subsequent decoded byte pages share the operation's input
+budget. Retained decoded buffers also share the instance's input-memory ceiling;
+source count, expansion, decoder window, layer, deadline and cancellation limits
+still apply. The retained content-coding metadata must agree with the declared,
+visible headers. An identity representation reuses its original capability.
+
+A decoded representation has its own host-issued source capability and keeps
+the original bytes accessible. Its parent is the full encoded extent, labeled
+as enclosing provenance rather than an exact byte mapping. Repeated requests
+reuse the immutable representation. Decoded reads recheck the original source,
+including related-evidence capture and origin constraints; retention loss and
+unloading revoke access. The host source selector shows the coding and parent
+region without reading bytes merely to populate the list.
 
 ## Native live-feed broker
 
@@ -300,7 +319,7 @@ closed graph of static package-relative JavaScript modules. External URLs, files
 imports, package imports, traversal and dynamic imports are rejected. Helpers can
 share local parser modules without initializing other contribution entry points.
 
-`visualize`, `resume`, `resumeContext`, `expand` and declared `onTraffic` calls return synchronously
+`visualize`, `resume`, `resumeContext`, `resumeDecoded`, `expand` and declared `onTraffic` calls return synchronously
 through an independently versioned private protocol. Byte access uses bounded
 `needInput` continuations. The supervisor binds replies to exact request IDs and
 continuation tokens, projects headers before IPC, withholds undeclared body

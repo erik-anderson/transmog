@@ -58,6 +58,37 @@ fn missing_access_is_invalid_and_matching_cannot_read_undeclared_headers() {
 }
 
 #[test]
+fn http_decoding_is_explicit_and_requires_both_header_and_body_dependencies() {
+    let original = manifest();
+    let encoded = serde_json::to_value(&original).unwrap();
+    assert!(
+        encoded["visualizers"][0]["inputs"]["response"]
+            .get("decodeHttpContent")
+            .is_none(),
+        "Existing canonical revisions must not change"
+    );
+    let mut candidate = original.clone();
+    candidate.visualizers[0].inputs.response.decode_http_content = true;
+    assert!(candidate.validate(true).is_err());
+    candidate.visualizers[0]
+        .inputs
+        .response
+        .headers
+        .push("Content-Encoding".into());
+    candidate.validate(true).unwrap();
+    candidate.visualizers[0].inputs.response.body = BodyAccess::None;
+    assert!(candidate.validate(true).is_err());
+    let step = VisualizationStep::NeedDecoded {
+        source_id: "body-123".into(),
+        token: "decode".into(),
+    };
+    let value = serde_json::to_value(&step).unwrap();
+    assert_eq!(value["sourceId"], "body-123");
+    assert_eq!(value["kind"], "needDecoded");
+    assert!(!value.as_object().unwrap().contains_key("source_id"));
+}
+
+#[test]
 fn context_requires_declared_correlation_and_finite_opt_in_lookahead() {
     let mut m = manifest();
     m.visualizers[0].context = Some(Context {

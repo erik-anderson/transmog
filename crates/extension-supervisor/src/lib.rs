@@ -1,7 +1,7 @@
 //! Explicit worker activation, exact input grants, authenticated IPC and bounded termination.
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     io::BufReader,
     path::PathBuf,
     process::{Child, ChildStdin, ChildStdout, Command, Stdio},
@@ -13,12 +13,14 @@ use std::{
     time::Duration,
 };
 use transmog_extensions::{
-    BytePage, ContextPosition, ContextRequest, ContextStatus, Direction, Failure, FailureKind,
-    HOST_PROTOCOL_VERSION, HostReply, HostRequest, HostToken, Invocation, PAYLOAD_CHUNK_BYTES,
-    ReadRequest, Snapshot, VisualizationInput, VisualizationStep, Visualizer, check_body_access,
-    decimal, project_headers, read_frame, valid_id, write_frame,
+    BytePage, ContextRequest, Direction, Failure, FailureKind, HOST_PROTOCOL_VERSION, HostReply,
+    HostRequest, HostToken, Invocation, PAYLOAD_CHUNK_BYTES, ReadRequest, Snapshot,
+    VisualizationInput, VisualizationStep, Visualizer, check_body_access, decimal, project_headers,
+    read_frame, valid_id, write_frame,
 };
 const MAX_HOSTS: u64 = 16;
+mod context;
+mod decoding;
 #[cfg(test)]
 mod tests;
 static ACTIVE_HOSTS: AtomicU64 = AtomicU64::new(0);
@@ -387,6 +389,9 @@ struct Pending {
     token: Option<String>,
     reads: Vec<ReadRequest>,
     context: Option<ContextRequest>,
+    decode: Option<String>,
+    decodable: BTreeSet<String>,
+    decoded: BTreeMap<String, transmog_extensions::DecodedBody>,
     context_total: usize,
     traffic_sequence: u64,
 }
@@ -395,6 +400,7 @@ impl Pending {
         self.token = None;
         self.reads.clear();
         self.context = None;
+        self.decode = None;
     }
 }
 fn prepare(
@@ -409,11 +415,13 @@ fn prepare(
         Invocation::Visualize { input } => {
             grants.clear();
             pending.clear();
+            pending.decodable.clear();
+            pending.decoded.clear();
             pending.context_total = 0;
             pending.traffic_sequence = 0;
             *remaining = visualizer.limits.input_bytes;
             *continuations = 0;
-            project(input, visualizer, grants, remaining)?;
+            project(input, visualizer, grants, &mut pending.decodable, remaining)?;
         }
         Invocation::Traffic {
             events,
@@ -431,12 +439,19 @@ fn prepare(
             *continuations = 0;
             for event in events {
                 check_traffic(event, visualizer, &mut pending.traffic_sequence)?;
-                project(&mut event.input, visualizer, grants, remaining)?;
+                project(
+                    &mut event.input,
+                    visualizer,
+                    grants,
+                    &mut pending.decodable,
+                    remaining,
+                )?;
             }
         }
         Invocation::Resume { token, pages } => {
             if pending.token.as_ref() != Some(token)
                 || pending.context.is_some()
+                || pending.decode.is_some()
                 || pages.len() != pending.reads.len()
             {
                 return Err(protocol());
@@ -451,42 +466,25 @@ fn prepare(
             pending.clear();
         }
         Invocation::ResumeContext { token, page } => {
-            let request = pending.context.as_ref().ok_or_else(protocol)?;
-            let context = visualizer.context.as_ref().ok_or_else(protocol)?;
-            if pending.token.as_ref() != Some(token)
-                || page.exchanges.len() > request.limit
-                || decimal(&page.anchor_order).is_err()
-                || page
-                    .next_cursor
-                    .as_ref()
-                    .is_some_and(|cursor| !valid_id(cursor))
-                || page.next_cursor.is_some() != (page.status == ContextStatus::More)
-            {
-                return Err(protocol());
-            }
-            *continuations += 1;
-            pending.context_total = pending
-                .context_total
-                .checked_add(page.exchanges.len())
-                .ok_or_else(protocol)?;
-            if *continuations > 512 || pending.context_total > context.max_exchanges {
-                return Err(fail(FailureKind::Limit, "Related context budget exhausted"));
-            }
-            let anchor = decimal(&page.anchor_order).map_err(|_| protocol())?;
-            let mut prior = None;
-            for exchange in &mut page.exchanges {
-                let order = decimal(&exchange.order).map_err(|_| protocol())?;
-                if prior.is_some_and(|prior| prior >= order)
-                    || match request.position {
-                        ContextPosition::Before => order >= anchor,
-                        ContextPosition::After => order <= anchor,
-                    }
-                {
-                    return Err(protocol());
-                }
-                prior = Some(order);
-                project(&mut exchange.input, visualizer, grants, remaining)?;
-            }
+            context::resume(
+                token,
+                page,
+                visualizer,
+                pending,
+                grants,
+                (remaining, continuations),
+            )?;
+            pending.clear();
+        }
+        Invocation::ResumeDecoded { token, result } => {
+            decoding::resume(
+                token,
+                result,
+                pending,
+                grants,
+                (remaining, continuations),
+                visualizer.limits.input_bytes,
+            )?;
             pending.clear();
         }
         Invocation::Expand { token } => {
@@ -530,6 +528,7 @@ fn project(
     input: &mut VisualizationInput,
     visualizer: &Visualizer,
     grants: &mut BTreeMap<String, u64>,
+    decodable: &mut BTreeSet<String>,
     remaining: &mut usize,
 ) -> Result<(), Failure> {
     if decimal(&input.request_number).is_err()
@@ -591,7 +590,10 @@ fn project(
                 message.body = None;
             }
             if let Some(body) = &message.body {
-                if !valid_id(&body.source_id) || body.source_id.starts_with("header-") {
+                if !valid_id(&body.source_id)
+                    || body.source_id.starts_with("header-")
+                    || body.source_id.starts_with("decoded-")
+                {
                     return Err(protocol());
                 }
                 let length = decimal(&body.length).map_err(|_| protocol())?;
@@ -602,6 +604,9 @@ fn project(
                     return Err(protocol());
                 }
                 grants.insert(body.source_id.clone(), length);
+                if visualizer.inputs.side(side).decode_http_content {
+                    decodable.insert(body.source_id.clone());
+                }
             }
         }
     }
@@ -700,6 +705,27 @@ fn validate_step(
                 .map_err(|_| fail(FailureKind::Validation, "Invalid related context request"))?;
             pending.reads.clear();
             pending.context = Some(request.clone());
+            pending.token = Some(token.clone());
+            Ok(())
+        }
+        VisualizationStep::NeedDecoded { source_id, token } => {
+            if !valid_id(token) || !pending.decodable.contains(source_id) {
+                return Err(fail(
+                    FailureKind::Validation,
+                    "HTTP decoding was not declared for this body",
+                ));
+            }
+            if grants
+                .get(source_id)
+                .is_none_or(|length| *length > remaining as u64)
+            {
+                return Err(fail(
+                    FailureKind::Limit,
+                    "HTTP decode input budget exhausted",
+                ));
+            }
+            pending.clear();
+            pending.decode = Some(source_id.clone());
             pending.token = Some(token.clone());
             Ok(())
         }

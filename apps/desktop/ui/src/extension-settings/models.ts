@@ -1,5 +1,5 @@
 export interface ExtensionStatus {entries:ExtensionEntry[];warning:string|null;}
-export interface ExtensionAccess {headers:string[];body:'none'|'optional'|'required';}
+export interface ExtensionAccess {headers:string[];body:'none'|'optional'|'required';decodeHttpContent?:boolean;}
 export interface ExtensionRule {direction:'request'|'response';contentTypes:string[];methods:string[];pathPrefixes:string[];statuses:number[];headers:Array<{direction:string;name:string;test:{op:string;value?:string}}>;}
 export interface ExtensionContribution {id:string;name:string;entry:string;surfaces:Array<'headers'|'body'>;inputs:{request:ExtensionAccess;response:ExtensionAccess};matches:ExtensionRule[];inputMatches:ExtensionRule[];liveUpdates:{events:string[];bodyProgress:boolean}|null;context:{headers:Array<{direction:string;name:string}>;maxExchanges:number;lookAhead?:boolean}|null;limits:{inputBytes:number;outputBytes:number;heapBytes:number;durationMs:number;nodes:number};}
 export interface ExtensionEntry {catalog:{manifest:{id:string;name:string;version:string;runtime:string;apiVersion:number;visualizers:ExtensionContribution[]};digest:string;enabled:boolean;origin:'bundled'|'installed'|'development'};directory:string|null;hotReload:boolean;}

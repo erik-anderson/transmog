@@ -8,9 +8,10 @@ import type {ContributionRow,ExtensionContribution,ExtensionEntry,ExtensionRow,E
 
 const bodyLabel={none:'No body access',optional:'Optional',required:'Required'};
 const headersLabel=(headers:string[]):string=>headers.length?headers.join(', '):'No headers';
+const bodyAccess=(access:ExtensionContribution['inputs']['request']):string=>bodyLabel[access.body]+(access.decodeHttpContent?' · HTTP decoding on demand':'');
 function contribution(value:ExtensionContribution):ContributionRow {
   return {id:value.id,name:value.name,surfaces:value.surfaces.map(side=>side==='headers'?'Headers':'Body').join(' and '),
-    requestHeaders:headersLabel(value.inputs.request.headers),responseHeaders:headersLabel(value.inputs.response.headers),requestBody:bodyLabel[value.inputs.request.body],responseBody:bodyLabel[value.inputs.response.body],
+    requestHeaders:headersLabel(value.inputs.request.headers),responseHeaders:headersLabel(value.inputs.response.headers),requestBody:bodyAccess(value.inputs.request),responseBody:bodyAccess(value.inputs.response),
     matches:value.matches.map(rule=>[rule.direction==='request'?'Request':'Response',...(rule.contentTypes??[]),...(rule.methods??[]),...(rule.pathPrefixes??[]),...(rule.statuses??[]).map(String),...(rule.headers??[]).map(header=>`${header.direction} ${header.name}: ${header.test.op}${header.test.value===undefined?'':` ${header.test.value}`}`)].join(' · ')),
     live:value.liveUpdates?`Optional ${value.liveUpdates.events.join('/')} updates${value.liveUpdates.bodyProgress?', including body progress':''}`:'Not supported',
     context:value.context?`Up to ${value.context.maxExchanges} ${value.context.lookAhead?'earlier or later':'earlier'} exchanges from the same capture, origin, and conversation; ${value.context.headers.map(header=>`${header.direction} ${header.name}`).join(', ')}`:'Selected exchange only'};
