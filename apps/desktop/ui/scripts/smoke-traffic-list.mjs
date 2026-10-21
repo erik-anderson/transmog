@@ -106,7 +106,7 @@ export async function smokeTrafficList(client,screenshot) {
   // Keep real keyboard cancellation available after a busy Undo button disables.
   await client.evaluate(`${t}.revealCurrent(${JSON.stringify(ids[0])},true)`);await click(ids[0]);
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===19999 && !${t}.removingTraffic`);
-  await client.evaluate(`(()=>{const original=window.__TAURI_INTERNALS__.invoke;globalThis.__trafficUndoInvoke=original;window.__TAURI_INTERNALS__.invoke=async(command,args,options)=>{if(command==='remove_traffic_entries'&&args.restore)await new Promise(resolve=>globalThis.__releaseTrafficUndo=resolve);return original(command,args,options);};})()`);
+  await client.evaluate(`(()=>{const workspace=${t},original=workspace.refreshSessions,owned=Object.hasOwn(workspace,'refreshSessions');globalThis.__trafficUndoRefresh={original,owned};let held=false;workspace.refreshSessions=async function(event,force){if(force&&this.removingTraffic&&!held){held=true;await new Promise(resolve=>globalThis.__releaseTrafficUndo=resolve);}return original.call(this,event,force);};})()`);
   try {
     await client.evaluate(`${t}.trafficUndoButton.focus()`);await key('Enter','Enter',13);
     await wait(`typeof globalThis.__releaseTrafficUndo==='function' && ${t}.trafficUndoButton.disabled`);
@@ -116,7 +116,7 @@ export async function smokeTrafficList(client,screenshot) {
     await client.evaluate('globalThis.__releaseTrafficUndo()');await wait(`${t}.totalMatched===20000 && !${t}.removingTraffic`);
     assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),0,'Native late Undo restored an escaped selection');
   } finally {
-    await client.evaluate('globalThis.__releaseTrafficUndo?.();window.__TAURI_INTERNALS__.invoke=globalThis.__trafficUndoInvoke;delete globalThis.__trafficUndoInvoke;delete globalThis.__releaseTrafficUndo;');
+    await client.evaluate(`(()=>{globalThis.__releaseTrafficUndo?.();const workspace=${t},saved=globalThis.__trafficUndoRefresh;if(saved.owned)workspace.refreshSessions=saved.original;else delete workspace.refreshSessions;delete globalThis.__trafficUndoRefresh;delete globalThis.__releaseTrafficUndo;})()`);
     await wait(`!${t}.removingTraffic`);
   }
   await client.evaluate(`${t}.trafficTable.focus()`);await key('Escape','Escape',27);await key('End','End',35);await wait(`${t}.selectedSessionId===${JSON.stringify(ids[2])}`);
