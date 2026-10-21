@@ -3,6 +3,32 @@ use base64::Engine as _;
 use std::io::Write as _;
 
 #[test]
+fn fractional_time_conditions_do_not_invent_subsecond_capture_ordering() {
+    let token = compact(
+        r#"{"alg":"none","typ":"JWT"}"#,
+        r#"{"exp":1700000000.5}"#,
+        "",
+    );
+    let result = body(
+        "application/json",
+        format!(r#"{{"id_token":"{token}"}}"#).into_bytes(),
+    );
+    assert!(
+        result.findings[0].children[0]
+            .fields
+            .iter()
+            .any(|field| field.name == "exp" && field.note.contains("uncertain"))
+    );
+    let result=body("application/xml",br#"<a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion"><a:Conditions NotOnOrAfter="2023-11-14T22:13:20.500Z"/></a:Assertion>"#.to_vec());
+    assert!(
+        result.findings[0]
+            .fields
+            .iter()
+            .any(|field| field.name.contains("NotOnOrAfter") && field.note.contains("uncertain"))
+    );
+}
+
+#[test]
 fn generic_json_jose_and_context_limited_oauth_errors() {
     let token = compact(
         r#"{"alg":"none","typ":"JWT"}"#,
@@ -24,6 +50,55 @@ fn generic_json_jose_and_context_limited_oauth_errors() {
         br#"{"error":"invalid_grant","error_description":"Synthetic expired grant"}"#.to_vec(),
     );
     assert_eq!(result.findings[0].recognition, "candidate");
+}
+
+#[test]
+fn bounded_extraction_never_reports_unscanned_tail_as_complete() {
+    let form = (0..2050)
+        .map(|index| format!("ignored{index}=value"))
+        .collect::<Vec<_>>()
+        .join("&");
+    let result = body("application/x-www-form-urlencoded", form.into_bytes());
+    assert!(result.findings.is_empty());
+    assert_eq!(
+        result
+            .coverage
+            .iter()
+            .find(|source| source.source == "body")
+            .unwrap()
+            .status,
+        "limited"
+    );
+    let html = "<input type=hidden name=ignored value=x>".repeat(257);
+    let result = body("text/html", html.into_bytes());
+    assert_eq!(
+        result
+            .coverage
+            .iter()
+            .find(|source| source.source == "body")
+            .unwrap()
+            .status,
+        "limited"
+    );
+    let scalar = "x".repeat(MAX_CANDIDATE + 1);
+    let result = body(
+        "application/json",
+        format!(r#"{{"ignored":"{scalar}"}}"#).into_bytes(),
+    );
+    assert_eq!(
+        result
+            .coverage
+            .iter()
+            .find(|source| source.source == "body")
+            .unwrap()
+            .status,
+        "limited"
+    );
+    let result = body(
+        "application/x-www-form-urlencoded",
+        format!("SAMLResponse={scalar}").into_bytes(),
+    );
+    assert_eq!(result.findings[0].status, "limited");
 }
 fn body(mime: &str, bytes: Vec<u8>) -> Inspection {
     inspect(

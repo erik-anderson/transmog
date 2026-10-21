@@ -190,6 +190,7 @@ fn ntlm(context: &mut Context, bytes: &[u8], source: Source) -> Finding {
     let mut finding = Finding::new("NTLM", "mechanism token", source);
     finding.verification = "Not checked".into();
     if !bytes.starts_with(b"NTLMSSP\0") {
+        finding.recognition = "candidate".into();
         finding.issue("malformed", "NTLM signature is missing.");
         return finding;
     }

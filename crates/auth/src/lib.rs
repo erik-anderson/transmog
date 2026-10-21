@@ -278,6 +278,29 @@ impl Context {
         self.result.findings.push(finding);
     }
     pub(crate) fn coverage(&mut self, source: &str, status: &str, detail: &str) {
+        if let Some(current) = self
+            .result
+            .coverage
+            .iter_mut()
+            .find(|coverage| coverage.source == source)
+        {
+            let rank = |status: &str| match status {
+                "complete" => 0,
+                "skipped" => 1,
+                "pending" => 2,
+                "unsupported" => 3,
+                "limited" => 5,
+                "redacted" => 6,
+                _ => 4,
+            };
+            if rank(status) > rank(&current.status) {
+                current.status = status.into();
+            }
+            if !current.detail.contains(detail) {
+                current.detail = clip(&format!("{} {detail}", current.detail), 1024);
+            }
+            return;
+        }
         if self.result.coverage.len() < 16 {
             self.result.coverage.push(Coverage {
                 source: source.into(),
@@ -352,16 +375,20 @@ pub fn inspect_as(mut input: Input, canceled: Arc<AtomicBool>, format: &str) -> 
             .and_then(|raw| saml::xml(&mut context, raw.as_bytes(), source.clone())),
         "ntlm" | "negotiate" => {
             use base64::Engine as _;
-            let bytes = if body.bytes.starts_with(b"NTLMSSP\0") || body.bytes.first() == Some(&0x60)
-            {
-                Some(body.bytes.clone())
-            } else {
-                text.as_ref().and_then(|raw| {
-                    base64::engine::general_purpose::STANDARD
-                        .decode(raw.trim())
-                        .ok()
-                })
-            };
+            let bytes =
+                text.as_ref()
+                    .and_then(|raw| {
+                        base64::engine::general_purpose::STANDARD
+                            .decode(raw.trim())
+                            .ok()
+                    })
+                    .or_else(|| {
+                        (body.bytes.starts_with(b"NTLMSSP\0")
+                            || body.bytes.first().is_some_and(|tag| {
+                                [0x60, 0xa0, 0xa1, 0x6e, 0x6f, 0x7e].contains(tag)
+                            }))
+                        .then(|| body.bytes.clone())
+                    });
             bytes.map(|bytes| {
                 windows::decode(&mut context, &bytes, source.clone(), format == "ntlm")
             })

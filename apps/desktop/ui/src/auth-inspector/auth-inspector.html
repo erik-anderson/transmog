@@ -11,7 +11,7 @@
 
       <for id="auth-finding" each="finding in authFindings">
         <details class="auth-finding" key="{{finding.id}}" open>
-          <summary><strong>{{finding.format}}</strong> <span>{{finding.role}}</span><span class="auth-state">{{finding.status}} · {{finding.verification}}</span></summary>
+          <summary><strong>{{finding.format}}</strong> <span>{{finding.role}}</span><span class="auth-state">{{finding.recognition}} · {{finding.status}} · {{finding.verification}}</span></summary>
           <if condition="finding.summary"><p class="auth-summary">{{finding.summary}}</p></if>
           <div class="auth-source"><span>{{finding.source.label}}</span><button type="button" class="secondary compact-button" @click="{source(finding.id)}">Show original source</button></div>
           <if condition="finding.source.transforms.length"><details class="auth-provenance"><summary>Decoding provenance</summary><ol><for each="transform in finding.source.transforms"><li>{{transform}}</li></for></ol><p>Offsets, when available, refer to the named source. Transformed fields do not claim exact compressed-byte mapping.</p></details></if>

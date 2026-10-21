@@ -36,7 +36,15 @@ fn percent(raw: &str, form: bool) -> Option<String> {
 pub(crate) fn pairs(context: &mut Context, text: &str, source: &Source, form: bool) -> Vec<Pair> {
     let mut offset = 0;
     let mut result = vec![];
-    for (occurrence, part) in text.split('&').enumerate().take(2048) {
+    for (occurrence, part) in text.split('&').enumerate().take(2049) {
+        if occurrence == 2048 {
+            context.coverage(
+                &source.kind,
+                "limited",
+                "Parameter count exceeded the bounded scan; remaining fields were not inspected.",
+            );
+            break;
+        }
         if !context.step() {
             context.limited();
             break;
@@ -235,7 +243,12 @@ pub(crate) fn message(context: &mut Context, input: Input) {
         } else {
             value.into()
         };
-        for item in http::parse(&value) {
+        let envelopes = http::parse(&value);
+        if envelopes.len() == 64 {
+            headers_complete = false;
+            context.limited();
+        }
+        for item in envelopes {
             let mut finding = http::decode(context, item, source.clone(), role);
             if key.ends_with("authentication-info") {
                 finding.source.offset = None;
@@ -244,6 +257,9 @@ pub(crate) fn message(context: &mut Context, input: Input) {
                     "Authentication-Info parameter grammar (no scheme prefix in the original)"
                         .into(),
                 );
+            }
+            if finding.status == "limited" {
+                headers_complete = false;
             }
             context.push(finding);
         }

@@ -218,3 +218,27 @@ fn malformed_asn1_and_randomized_tokens_never_panic() {
         let _ = token(&bytes, "NTLM");
     }
 }
+
+#[test]
+fn explicit_interpretation_accepts_direct_binary_and_base64_spnego() {
+    let init = der(0xa0, &sequence(vec![der(0xa2, &der(4, &ntlm(1)))]));
+    for bytes in [init.clone(), STANDARD.encode(&init).into_bytes()] {
+        let result = inspect_as(
+            Input {
+                headers: vec![],
+                target: None,
+                body: Some(Body {
+                    bytes,
+                    media_type: "application/octet-stream".into(),
+                    transforms: vec![],
+                }),
+                body_status: "complete".into(),
+                captured_at: None,
+            },
+            Arc::new(AtomicBool::new(false)),
+            "negotiate",
+        );
+        assert_eq!(result.findings[0].format, "SPNEGO");
+        assert_eq!(result.findings[0].children[0].format, "NTLM");
+    }
+}

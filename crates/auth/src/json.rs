@@ -242,6 +242,7 @@ pub(crate) fn numeric_date(raw: &str, role: &str, captured: Option<i64>) -> Stri
         |at| {
             #[allow(clippy::cast_precision_loss)]
             let at = at as f64;
+            if (value.floor() - at).abs() < 0.5 { return "At capture: ordering within the recorded time's one-second precision boundary is uncertain.".into(); }
             match role {
                 "exp" if at >= value => "At capture: expiration condition reached.",
                 "nbf" if at < value => "At capture: before not-before condition.",
@@ -251,5 +252,7 @@ pub(crate) fn numeric_date(raw: &str, role: &str, captured: Option<i64>) -> Stri
             .into()
         },
     );
-    format!("{utc}. {condition} Unverified; this does not establish token validity.")
+    format!(
+        "{utc} (UTC shown to whole seconds). {condition} Unverified; this does not establish token validity."
+    )
 }

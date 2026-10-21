@@ -7,6 +7,7 @@ pub(crate) struct Envelope {
     pub token: Option<String>,
     pub params: Vec<(String, String)>,
     pub malformed: bool,
+    pub limited: bool,
     pub start: usize,
     pub end: usize,
 }
@@ -47,6 +48,7 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
             token: None,
             params: vec![],
             malformed: !separated,
+            limited: false,
             start,
             end: at,
         };
@@ -104,7 +106,12 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     }
                     item.params.push((key, val));
                     space(bytes, &mut at);
-                    if bytes.get(at) != Some(&b',') || item.params.len() >= 256 {
+                    if item.params.len() >= 256 && at < bytes.len() {
+                        item.limited = true;
+                        at = bytes.len();
+                        break;
+                    }
+                    if bytes.get(at) != Some(&b',') {
                         break;
                     }
                     let comma = at;
@@ -178,6 +185,12 @@ pub(crate) fn decode(
     );
     if item.malformed {
         finding.issue("malformed", "Malformed HTTP authentication envelope.");
+    }
+    if item.limited {
+        finding.issue(
+            "limited",
+            "Authentication parameter budget reached; remaining envelope data was not interpreted.",
+        );
     }
     for (index, (key, value)) in item.params.iter().enumerate() {
         if item.params[..index]

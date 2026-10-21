@@ -166,6 +166,14 @@ fn json_groups(
             }
         }
         json::Node::Text(value) => {
+            if value.len() > crate::MAX_CANDIDATE {
+                context.coverage(
+                    "body",
+                    "limited",
+                    "A JSON scalar exceeded the auth candidate budget and was not interpreted.",
+                );
+                return;
+            }
             let mut source = source.clone();
             source.label = format!("JSON {}", crate::clip(path, 512));
             source.transforms.push("JSON scalar extraction".into());
@@ -410,6 +418,13 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             delimiter: attr("value").is_some(),
             source: loc,
         });
+    }
+    if result.len() >= 256 && at < bytes.len() {
+        context.coverage(
+            "body",
+            "limited",
+            "HTML hidden-control budget reached; remaining markup was not scanned.",
+        );
     }
     result
 }

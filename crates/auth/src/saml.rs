@@ -9,6 +9,13 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
     source.transforms.push("Base64".into());
     let mut finding = Finding::new("SAML 2.0", &pair.name, source.clone());
     finding.verification = "Not checked".into();
+    if pair.value.len() > crate::MAX_CANDIDATE || pair.original.len() > crate::MAX_CANDIDATE {
+        finding.issue(
+            "limited",
+            "SAML binding value exceeded the encoded candidate budget; decoding was not attempted.",
+        );
+        return finding;
+    }
     context.field(&mut finding, "Original encoded field", &pair.original, true, "Exact binding representation, including original URL/form escaping; signature not checked.");
     if pair.name == "SAMLart" {
         finding.status = "opaque".into();
@@ -284,6 +291,7 @@ fn time_note(raw: &str, name: &str, capture: Option<i64>) -> String {
     capture.map_or_else(
         || "Capture time unavailable; no condition comparison. Unverified.".into(),
         |capture| {
+            if capture == time.unix_timestamp() { return "At capture: ordering within the recorded time's one-second precision boundary is uncertain. Unverified.".into(); }
             let crossed = if name == "NotBefore" {
                 capture < time.unix_timestamp()
             } else {

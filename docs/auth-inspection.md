@@ -52,6 +52,9 @@ available, including fractional or large numbers. Missing claims are not
 automatically invalid, and an expired-at-present token may have been within its
 conditions at capture. All claims remain unverified.
 
+Comparisons use whole-second recorded exchange time. Ordering inside that
+one-second boundary is explicitly uncertain; raw fractional values are preserved.
+
 Passwords, client secrets, tokens/codes/correlation values, PKCE verifiers,
 raw/decoded representations and cryptographic bytes are masked by default.
 **Reveal**, **Hide** and **Copy actual value** act on one authorized retained value.
