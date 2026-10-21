@@ -2066,7 +2066,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch(error:unknown){this.diagnostic='Headers could not be copied: '+describeError(error);}
     finally{this.commandBusy=false;}
   }
-  async resumeLatest():Promise<void> { this.scrollGeneration++;this.inspectionGeneration++;this.followLatest = true; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true);if(this.selectedSessionId&&!this.selectedDetail)await this.refreshInspection(); }
+  async resumeLatest():Promise<void> {
+    this.scrollGeneration++;this.inspectionGeneration++;
+    // Pending scroll events from older navigation must see the new top position
+    // before following starts, including while the refreshed query is loading.
+    this.sessionScroller.scrollTop=0;
+    this.followLatest = true; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true);if(this.selectedSessionId&&!this.selectedDetail)await this.refreshInspection();
+  }
   showUpdates():void {if(this.pendingView)this.applyView(this.pendingView);this.renderSessionState();}
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;

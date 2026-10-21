@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import {resolve} from 'node:path';
 
 export async function checkTrafficShortcuts(page,root) {
+  await page.setViewportSize({width:1440,height:900});
   const traffic=page.locator('traffic-workspace'),table=traffic.locator('.traffic-table');
   const undo=traffic.getByRole('button',{name:'Undo traffic removal',exact:true});
   const redo=traffic.getByRole('button',{name:'Redo traffic removal',exact:true});
@@ -162,7 +163,10 @@ export async function checkTrafficShortcuts(page,root) {
   await page.evaluate(()=>{globalThis.__workspaceFixture.holdCommand='traffic_view_rows';});
   await page.keyboard.press('End');
   await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishHeldCommand==='function');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.queryDelay=80;});
   await page.keyboard.press('F5');
+  // A queued scroll notification from End must not pause the newer F5 command.
+  await page.evaluate(()=>document.querySelector('app-shell').traffic.sessionScroller.dispatchEvent(new Event('scroll')));
   await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.followLatest&&!t.queryPending&&t.sessionScroller.scrollTop===0;});
   await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.rowRequests.size===0);
