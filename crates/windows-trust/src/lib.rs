@@ -9,8 +9,10 @@ use std::{
     time::{Duration, Instant},
 };
 
+mod distrust;
 #[cfg(windows)]
 mod windows;
+pub use distrust::CtlDistrust;
 
 /// Immutable public certificate bytes with their distinct Windows trust roles.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -29,6 +31,8 @@ pub struct LocalCertificates {
     pub trusted_leaves: Vec<Vec<u8>>,
     /// Disallowed entries; explicit distrust for every purpose.
     pub disallowed: Vec<Vec<u8>>,
+    /// Encoded untrusted CTLs, including the cached Windows public distrust list.
+    pub disallowed_ctls: Vec<Vec<u8>>,
 }
 impl LocalCertificates {
     /// Canonicalizes an owned inventory and computes its public provenance.
@@ -41,6 +45,7 @@ impl LocalCertificates {
             &mut self.trusted_leaves,
             &mut self.disallowed,
             &mut self.issuer_roots,
+            &mut self.disallowed_ctls,
         ]
         .into_iter()
         .zip(0_u8..)
@@ -75,6 +80,8 @@ pub enum LocalTrustError {
     },
     /// Public data exceeded allocation or enumeration limits.
     Limit,
+    /// An untrusted CTL's subject algorithm is unsupported on this platform.
+    UnsupportedCtl,
     /// A worker could not be started.
     Worker,
 }
@@ -91,6 +98,9 @@ impl fmt::Display for LocalTrustError {
                 f.write_str("Windows local certificate data exceeds its supported bounds")
             }
             Self::Worker => f.write_str("Windows local certificate monitoring could not start"),
+            Self::UnsupportedCtl => {
+                f.write_str("Windows untrusted CTL subject algorithm is unsupported")
+            }
         }
     }
 }
@@ -212,10 +222,19 @@ impl LocalTrustMonitor {
     /// # Errors
     /// Returns event/worker creation failures; inventory errors are exposed by current.
     pub fn start() -> Result<Self, LocalTrustError> {
+        Self::start_with_os_distrust(true)
+    }
+    /// Starts Chromium's local certificate collections without Windows CTLs.
+    /// # Errors
+    /// Returns event/worker failures; inventory errors are exposed by current.
+    pub fn start_chromium() -> Result<Self, LocalTrustError> {
+        Self::start_with_os_distrust(false)
+    }
+    fn start_with_os_distrust(include_os_distrust: bool) -> Result<Self, LocalTrustError> {
         let state = Arc::new(State::new());
         #[cfg(windows)]
         {
-            let control = windows::start(state.clone())?;
+            let control = windows::start(state.clone(), include_os_distrust)?;
             Ok(Self {
                 state,
                 control: Some(control),
@@ -223,6 +242,7 @@ impl LocalTrustMonitor {
         }
         #[cfg(not(windows))]
         {
+            let _ = include_os_distrust;
             state.publish(Ok(LocalCertificates {
                 generation: 1,
                 ..Default::default()

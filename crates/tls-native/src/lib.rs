@@ -26,8 +26,8 @@ pub use credentials::{
     selected_credential_chain, set_client_chain_and_private_key_method, set_context_chain_and_key,
 };
 pub use trust_anchors::{
-    CertificatePolicy, CompletedVerification, RootConstraint, TrustAnchorOfferError,
-    VerificationInput, certificate_is_ca, configure_available_trust_anchors,
+    CertificateDistrust, CertificatePolicy, CompletedVerification, RootConstraint,
+    TrustAnchorOfferError, VerificationInput, certificate_is_ca, configure_available_trust_anchors,
     configure_context_certificate_policy, configure_context_peer_name,
     configure_context_trust_anchors, configure_ssl_certificate_policy, configure_ssl_peer_name,
     configure_ssl_trust_anchors, enable_async_verification, observe_context_verification,

@@ -1,6 +1,9 @@
 //! Live verification and pool invalidation without changing system certificates.
 #[path = "support/trust_anchors.rs"]
 mod anchors;
+#[cfg(windows)]
+#[path = "../../windows-trust/tests/support/ctl.rs"]
+mod ctl_fixture;
 mod support;
 use boring::{
     pkey::{PKey, Private},
@@ -33,6 +36,133 @@ fn factory(public: &ProxyCa, local: LocalCertificates) -> UpstreamTlsContextFact
         .with_network_profile(NetworkProfileSnapshot::default())
         .unwrap()
         .with_local_trust_monitor(LocalTrustMonitor::fixed(local))
+}
+
+#[tokio::test]
+async fn unavailable_distrust_blocks_https_but_allows_plain_http() {
+    let public = ProxyCa::generate("unavailable distrust fixture", 2).unwrap();
+    let factory = factory(&public, LocalCertificates::default())
+        .with_local_trust_failure(transmog_tls::local_trust::LocalTrustError::Limit);
+    let client = HyperOriginClient::new(&factory).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0; 4096];
+        assert!(socket.read(&mut request).await.unwrap() > 0);
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .unwrap();
+    });
+    let request = support::request(port);
+    assert!(
+        client
+            .execute(
+                request.clone(),
+                HyperEgressMode::Http1Only,
+                1024,
+                Duration::from_secs(3),
+            )
+            .await
+            .is_err()
+    );
+    let mut request = request;
+    request.head.target.scheme = "http".into();
+    assert!(
+        client
+            .execute(
+                request,
+                HyperEgressMode::Http1Only,
+                1024,
+                Duration::from_secs(3),
+            )
+            .await
+            .is_ok()
+    );
+    tokio::time::timeout(Duration::from_secs(3), server)
+        .await
+        .unwrap()
+        .unwrap();
+}
+
+#[tokio::test]
+async fn root_sources_keep_chromium_distrust_separate_from_full_os_distrust() {
+    use transmog_core::network_profile::RootStore;
+    let public = anchors::issuer_root("public distrust fixture");
+    let issuer = anchors::intermediate(&public);
+    let leaf = issuer
+        .issue(
+            transmog_tls::EndpointIdentity::parse("localhost").unwrap(),
+            1,
+        )
+        .unwrap();
+    for roots in [
+        RootStore::ChromiumBundled,
+        RootStore::Os,
+        RootStore::ChromeInstalled,
+        RootStore::Webview2Installed,
+    ] {
+        for local_enabled in [false, true] {
+            let mut profile = NetworkProfileSnapshot::default();
+            profile.settings.root_store = roots;
+            profile.settings.local_certificates = local_enabled;
+            let base = factory(&public, LocalCertificates::default())
+                .with_network_profile(profile)
+                .unwrap();
+            let chain = [issuer.certificate().clone()];
+            let (accepted, evidence) =
+                probe(&base, &leaf.certificate, &leaf.private_key, &chain).await;
+            assert!(
+                accepted,
+                "{roots:?}, local trust {local_enabled}: {evidence:?}"
+            );
+            for certificate in [
+                &leaf.certificate,
+                issuer.certificate(),
+                public.certificate(),
+            ] {
+                let der = certificate.to_der().unwrap();
+                let inventories = vec![(
+                    LocalCertificates {
+                        disallowed: vec![der.clone()],
+                        ..Default::default()
+                    },
+                    false,
+                )];
+                #[cfg(windows)]
+                let inventories = {
+                    let mut values = inventories;
+                    values.push((
+                        LocalCertificates {
+                            disallowed_ctls: vec![ctl_fixture::ctl(
+                                false,
+                                &[
+                                    boring::hash::hash(boring::hash::MessageDigest::sha1(), &der)
+                                        .unwrap()
+                                        .to_vec(),
+                                ],
+                            )],
+                            ..Default::default()
+                        },
+                        !matches!(roots, RootStore::Os | RootStore::ChromiumBundled),
+                    ));
+                    values
+                };
+                for (inventory, expected) in inventories {
+                    let denied = base
+                        .clone()
+                        .with_local_trust_monitor(LocalTrustMonitor::fixed(inventory));
+                    let (accepted, evidence) =
+                        probe(&denied, &leaf.certificate, &leaf.private_key, &chain).await;
+                    assert_eq!(
+                        accepted, expected,
+                        "{roots:?}, local trust {local_enabled}: {evidence:?}"
+                    );
+                }
+            }
+        }
+    }
 }
 fn acceptor(cert: &X509, key: &PKey<Private>, chain: &[X509], h2: bool) -> SslAcceptor {
     let mut context = SslAcceptor::mozilla_intermediate_v5(SslMethod::tls()).unwrap();
@@ -594,15 +724,27 @@ async fn local_removal_retires_h1_h2_pools_and_preserves_admitted_work_and_evide
 
 #[tokio::test]
 async fn cached_tls_session_cannot_bypass_a_local_root_removal() {
-    cached_session_probe(false).await;
+    cached_session_probe(false, None).await;
 }
 
 #[tokio::test]
 async fn cached_tls_session_cannot_bypass_a_crlset_update() {
-    cached_session_probe(true).await;
+    cached_session_probe(true, None).await;
 }
 
-async fn cached_session_probe(use_crlset: bool) {
+#[cfg(windows)]
+#[tokio::test]
+async fn cached_sessions_recheck_os_distrust_with_local_trust_disabled() {
+    use transmog_core::network_profile::RootStore;
+    for roots in [RootStore::Os, RootStore::ChromiumBundled] {
+        cached_session_probe(false, Some(roots)).await;
+    }
+}
+
+async fn cached_session_probe(
+    use_crlset: bool,
+    roots: Option<transmog_core::network_profile::RootStore>,
+) {
     use http_body_util::BodyExt;
     let public = ProxyCa::generate("public root", 2).unwrap();
     let local = ProxyCa::generate("local session root", 2).unwrap();
@@ -616,7 +758,11 @@ async fn cached_session_probe(use_crlset: bool) {
     profile.settings.tls_versions = transmog_core::network_profile::TlsVersions::Tls12Only;
     profile.settings.protocols.http3 = false;
     profile.settings.trust_anchor_ids = false;
-    let mut factory = factory(&public, inventory)
+    if let Some(roots) = roots {
+        profile.settings.root_store = roots;
+        profile.settings.local_certificates = false;
+    }
+    let mut factory = factory(if roots.is_some() { &local } else { &public }, inventory)
         .with_local_trust_monitor(monitor)
         .with_network_profile(profile)
         .unwrap();
@@ -670,6 +816,20 @@ async fn cached_session_probe(use_crlset: bool) {
     if use_crlset {
         publish_crl(directory.path(), 2, Some(local.certificate()));
         data.refresh();
+    } else if roots.is_some() {
+        #[cfg(windows)]
+        publisher.replace(LocalCertificates {
+            disallowed_ctls: vec![ctl_fixture::ctl(
+                false,
+                &[boring::hash::hash(
+                    boring::hash::MessageDigest::sha1(),
+                    &local.certificate().to_der().unwrap(),
+                )
+                .unwrap()
+                .to_vec()],
+            )],
+            ..Default::default()
+        });
     } else {
         publisher.replace(LocalCertificates::default());
     }
@@ -680,6 +840,10 @@ async fn cached_session_probe(use_crlset: bool) {
             .is_err()
     );
     let evidence = captures.lock().unwrap();
+    assert_session_rejection(&evidence, use_crlset);
+}
+
+fn assert_session_rejection(evidence: &[transmog_tls::TlsCapture], use_crlset: bool) {
     assert_eq!(evidence.len(), 3);
     assert!(matches!(
         evidence[2].snapshot().verification,

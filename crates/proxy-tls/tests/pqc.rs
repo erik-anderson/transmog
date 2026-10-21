@@ -405,6 +405,10 @@ fn custom_profile_controls_quic_context_before_capture_callback_reinstallation()
     profile.settings.certificate_compression = false;
     let factory = factory(&ca).with_network_profile(profile.clone()).unwrap();
     let capture = factory.capture(Some("localhost".into()), vec!["h3".into()]);
+    tokio::runtime::Runtime::new()
+        .unwrap()
+        .block_on(factory.prepare_trust())
+        .unwrap();
     let mut client = factory.quiche_context_builder().unwrap();
     capture.attach_context(&mut client).unwrap();
     let (mut client, _) = quic_handshake(quic_config(client), quic_config(server));

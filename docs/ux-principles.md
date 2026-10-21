@@ -139,6 +139,10 @@ when changing the experience.
 
 ## Present evidence and failures honestly
 
+- Local certificate trust controls add trust grants. Disabling them cannot turn
+  off user or enterprise distrust. Public distrust follows the selected policy
+  source rather than silently borrowing another source's rules.
+
 - Distinguish observed behavior from configured intent, and original evidence
   from generated summaries or previews. Opening a capture does not reverify its
   historical connections. Preserve original values when display requires escaping.

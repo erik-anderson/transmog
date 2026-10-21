@@ -16,9 +16,14 @@ use windows_sys::Win32::{
         CERT_SYSTEM_STORE_CURRENT_USER, CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY_ID,
         CERT_SYSTEM_STORE_LOCAL_MACHINE, CERT_SYSTEM_STORE_LOCAL_MACHINE_ENTERPRISE_ID,
         CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY_ID, CERT_SYSTEM_STORE_LOCATION_SHIFT,
-        CTL_USAGE, CertAddStoreToCollection, CertCloseStore, CertControlStore,
-        CertEnumCertificatesInStore, CertFreeCertificateContext, CertGetEnhancedKeyUsage,
-        CertOpenStore, HCERTSTORE,
+        CTL_USAGE, CertAddStoreToCollection, CertCloseStore, CertControlStore, CertEnumCTLsInStore,
+        CertEnumCertificatesInStore, CertFreeCTLContext, CertFreeCertificateContext,
+        CertGetEnhancedKeyUsage, CertOpenStore, HCERTSTORE,
+    },
+    System::Registry::{
+        HKEY, HKEY_CURRENT_USER, HKEY_LOCAL_MACHINE, KEY_READ, KEY_WOW64_64KEY,
+        REG_NOTIFY_CHANGE_LAST_SET, REG_NOTIFY_CHANGE_NAME, REG_NOTIFY_THREAD_AGNOSTIC,
+        RRF_RT_REG_BINARY, RegCloseKey, RegGetValueW, RegNotifyChangeKeyValue, RegOpenKeyExW,
     },
     System::Threading::{
         CreateEventW, INFINITE, ResetEvent, SetEvent, WaitForMultipleObjects, WaitForSingleObject,
@@ -28,7 +33,7 @@ const MAX_CERTS: usize = 8192;
 const MAX_BYTES: usize = 32 * 1024 * 1024;
 const MAX_CERT_BYTES: usize = 1024 * 1024;
 const MAX_PROPERTY_BYTES: usize = 64 * 1024;
-const NOT_FOUND: u32 = u32::from_ne_bytes(CRYPT_E_NOT_FOUND.to_ne_bytes());
+pub(crate) const NOT_FOUND: u32 = u32::from_ne_bytes(CRYPT_E_NOT_FOUND.to_ne_bytes());
 const MACHINE_POLICY: u32 =
     CERT_SYSTEM_STORE_LOCAL_MACHINE_GROUP_POLICY_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT;
 const MACHINE_ENTERPRISE: u32 =
@@ -36,11 +41,141 @@ const MACHINE_ENTERPRISE: u32 =
 const USER_POLICY: u32 =
     CERT_SYSTEM_STORE_CURRENT_USER_GROUP_POLICY_ID << CERT_SYSTEM_STORE_LOCATION_SHIFT;
 
-fn error(operation: &'static str) -> LocalTrustError {
+pub(crate) fn error(operation: &'static str) -> LocalTrustError {
     // SAFETY: reading the calling thread's error immediately after a failed API.
     LocalTrustError::Windows {
         operation,
         code: unsafe { GetLastError() },
+    }
+}
+
+struct CtlRegistry(HKEY, u32);
+impl Drop for CtlRegistry {
+    fn drop(&mut self) {
+        // SAFETY: final owner closes its read-only registry handle.
+        unsafe { RegCloseKey(self.0) };
+    }
+}
+impl CtlRegistry {
+    fn open() -> Result<Self, LocalTrustError> {
+        let mut key = ptr::null_mut();
+        // Watch the existing parent so first-time CTL/store creation is noticed.
+        // SAFETY: terminated path, output pointer, no registry writes.
+        let code = unsafe {
+            RegOpenKeyExW(
+                HKEY_LOCAL_MACHINE,
+                windows_sys::core::w!("SOFTWARE\\Microsoft\\SystemCertificates"),
+                0,
+                KEY_READ | KEY_WOW64_64KEY,
+                &raw mut key,
+            )
+        };
+        if code != 0 {
+            return Err(LocalTrustError::Windows {
+                operation: "untrusted CTL registry open",
+                code,
+            });
+        }
+        Ok(Self(
+            key,
+            REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET,
+        ))
+    }
+    fn watch(location: HKEY, path: &str) -> Result<Self, LocalTrustError> {
+        let mut candidate = path;
+        loop {
+            let name: Vec<u16> = candidate.encode_utf16().chain(Some(0)).collect();
+            let mut key = ptr::null_mut();
+            // SAFETY: read-only open of a terminated path; no creation or writes.
+            let code = unsafe {
+                RegOpenKeyExW(
+                    location,
+                    name.as_ptr(),
+                    0,
+                    KEY_READ | KEY_WOW64_64KEY,
+                    &raw mut key,
+                )
+            };
+            if code == 0 {
+                // An absent store is watched at its nearest existing ancestor.
+                // Only name changes matter there, until the desired key exists.
+                return Ok(Self(
+                    key,
+                    REG_NOTIFY_CHANGE_NAME
+                        | if candidate == path {
+                            REG_NOTIFY_CHANGE_LAST_SET
+                        } else {
+                            0
+                        },
+                ));
+            }
+            if code != ERROR_FILE_NOT_FOUND && code != ERROR_PATH_NOT_FOUND {
+                return Err(LocalTrustError::Windows {
+                    operation: "distrust registry monitoring",
+                    code,
+                });
+            }
+            candidate = candidate
+                .rsplit_once('\\')
+                .ok_or(LocalTrustError::Windows {
+                    operation: "distrust registry monitoring",
+                    code,
+                })?
+                .0;
+        }
+    }
+    fn notify(&self, event: &Event) -> Result<(), LocalTrustError> {
+        // SAFETY: owned key and event outlive the async registration; worker rearms.
+        let code = unsafe {
+            RegNotifyChangeKeyValue(self.0, 1, self.1 | REG_NOTIFY_THREAD_AGNOSTIC, event.0, 1)
+        };
+        if code == 0 {
+            Ok(())
+        } else {
+            Err(LocalTrustError::Windows {
+                operation: "untrusted CTL monitoring",
+                code,
+            })
+        }
+    }
+    fn read(&self) -> Result<Option<Vec<u8>>, LocalTrustError> {
+        let mut length = 0;
+        let read = |data, length| unsafe {
+            // SAFETY: fixed terminated paths and caller-owned size/bounded buffer.
+            RegGetValueW(
+                self.0,
+                windows_sys::core::w!("AuthRoot\\AutoUpdate"),
+                windows_sys::core::w!("DisallowedCertEncodedCtl"),
+                RRF_RT_REG_BINARY,
+                ptr::null_mut(),
+                data,
+                length,
+            )
+        };
+        let code = read(ptr::null_mut(), &raw mut length);
+        if code == ERROR_FILE_NOT_FOUND || code == ERROR_PATH_NOT_FOUND {
+            return Ok(None);
+        }
+        if code != 0 {
+            return Err(LocalTrustError::Windows {
+                operation: "untrusted CTL read",
+                code,
+            });
+        }
+        if length == 0 || length as usize > 16 * 1024 * 1024 {
+            return Err(LocalTrustError::Limit);
+        }
+        let mut bytes = vec![0; length as usize];
+        let code = read(bytes.as_mut_ptr().cast(), &raw mut length);
+        if code != 0 {
+            return Err(LocalTrustError::Windows {
+                operation: "untrusted CTL read",
+                code,
+            });
+        }
+        bytes.truncate(length as usize);
+        crate::CtlDistrust::new(std::slice::from_ref(&bytes))?;
+        Ok(Some(bytes))
     }
 }
 pub(super) struct Event(HANDLE);
@@ -160,14 +295,46 @@ struct Collections {
     intermediates: Store,
     leaves: Store,
     blocked: Store,
+    ctl_registry: Option<CtlRegistry>,
+    watches: Vec<CtlRegistry>,
 }
 impl Collections {
-    fn open() -> Result<Self, LocalTrustError> {
+    fn open(include_os_distrust: bool) -> Result<Self, LocalTrustError> {
         let result = Self {
             roots: Store::collection()?,
             intermediates: Store::collection()?,
             leaves: Store::collection()?,
             blocked: Store::collection()?,
+            ctl_registry: include_os_distrust.then(CtlRegistry::open).transpose()?,
+            watches: [
+                (
+                    HKEY_LOCAL_MACHINE,
+                    "SOFTWARE\\Microsoft\\SystemCertificates",
+                ),
+                (HKEY_CURRENT_USER, "SOFTWARE\\Microsoft\\SystemCertificates"),
+                (
+                    HKEY_CURRENT_USER,
+                    "SOFTWARE\\Policies\\Microsoft\\SystemCertificates",
+                ),
+                (
+                    HKEY_LOCAL_MACHINE,
+                    "SOFTWARE\\Policies\\Microsoft\\SystemCertificates",
+                ),
+                (
+                    HKEY_LOCAL_MACHINE,
+                    "SOFTWARE\\Microsoft\\EnterpriseCertificates",
+                ),
+            ]
+            .into_iter()
+            .map(|(location, path)| {
+                let mut watch = CtlRegistry::watch(location, path)?;
+                // Existing collection watches handle certificate values. These
+                // parent watches only discover newly created stores; Chromium
+                // mode must not refresh for the public CTL's value updates.
+                watch.1 = REG_NOTIFY_CHANGE_NAME;
+                Ok(watch)
+            })
+            .collect::<Result<_, _>>()?,
         };
         for location in [
             CERT_SYSTEM_STORE_LOCAL_MACHINE,
@@ -186,6 +353,16 @@ impl Collections {
         Ok(result)
     }
     fn control(&self, action: u32, event: &Event) -> Result<(), LocalTrustError> {
+        if action == CERT_STORE_CTRL_NOTIFY_CHANGE
+            && let Some(registry) = &self.ctl_registry
+        {
+            registry.notify(event)?;
+        }
+        if action == CERT_STORE_CTRL_NOTIFY_CHANGE {
+            for registry in &self.watches {
+                registry.notify(event)?;
+            }
+        }
         for store in [
             &self.roots,
             &self.intermediates,
@@ -215,6 +392,48 @@ impl Collections {
             (&self.blocked, &mut result.disallowed, false),
         ] {
             enumerate(store, output, check_usage, &mut budget, None)?;
+        }
+        if self.ctl_registry.is_some() {
+            let mut previous = ptr::null();
+            loop {
+                // SAFETY: enumeration consumes the previous context even on failure.
+                let ctl = unsafe { CertEnumCTLsInStore(self.blocked.0, previous) };
+                if ctl.is_null() {
+                    if unsafe { GetLastError() } != NOT_FOUND {
+                        return Err(error("untrusted CTL enumeration"));
+                    }
+                    break;
+                }
+                previous = ctl;
+                // SAFETY: context remains owned by enumeration until its next call.
+                let context = unsafe { &*ctl };
+                budget.bytes = budget
+                    .bytes
+                    .checked_add(context.cbCtlEncoded as usize)
+                    .ok_or(LocalTrustError::Limit)?;
+                if budget.bytes > MAX_BYTES || result.disallowed_ctls.len() >= 128 {
+                    // SAFETY: enumeration is abandoned; release its outstanding context.
+                    unsafe { CertFreeCTLContext(ctl) };
+                    return Err(LocalTrustError::Limit);
+                }
+                // SAFETY: Crypt32 provides the encoded allocation described by the context.
+                result.disallowed_ctls.push(
+                    unsafe {
+                        std::slice::from_raw_parts(
+                            context.pbCtlEncoded,
+                            context.cbCtlEncoded as usize,
+                        )
+                    }
+                    .to_vec(),
+                );
+            }
+            if let Some(registry) = &self.ctl_registry
+                && let Some(bytes) = registry.read()?
+            {
+                result.disallowed_ctls.push(bytes);
+            }
+            // Validate all lists before publishing an inventory as ready.
+            crate::CtlDistrust::new(&result.disallowed_ctls)?;
         }
         Ok(result.canonical())
     }
@@ -344,8 +563,11 @@ fn server_auth(cert: *const CERT_CONTEXT) -> Result<bool, LocalTrustError> {
     Ok(false)
 }
 
-pub(super) fn start(state: Arc<State>) -> Result<Arc<Control>, LocalTrustError> {
-    start_with(state, Collections::open)
+pub(super) fn start(
+    state: Arc<State>,
+    include_os_distrust: bool,
+) -> Result<Arc<Control>, LocalTrustError> {
+    start_with(state, move || Collections::open(include_os_distrust))
 }
 fn start_with(
     state: Arc<State>,
@@ -370,28 +592,23 @@ fn worker(
     stop: &Event,
     open: &impl Fn() -> Result<Collections, LocalTrustError>,
 ) -> Result<(), LocalTrustError> {
-    let mut collections = None;
     loop {
         if stop.is_signaled() {
             return Ok(());
         }
+        let mut collections = None;
         let refresh = (|| {
-            if collections.is_none() {
-                let stores = open()?;
-                stores.control(CERT_STORE_CTRL_NOTIFY_CHANGE, changed)?;
-                collections = Some(stores);
-            }
             state.changed();
             changed.reset()?;
+            let stores = open()?;
+            stores.control(CERT_STORE_CTRL_NOTIFY_CHANGE, changed)?;
+            collections = Some(stores);
             let stores = collections.as_ref().ok_or(LocalTrustError::Worker)?;
             stores.control(CERT_STORE_CTRL_RESYNC, changed)?;
             stores.read(state.epoch.load(Ordering::Acquire))
         })();
         let failed = refresh.is_err();
         state.publish(refresh);
-        if failed {
-            collections = None;
-        }
         let handles = [stop.0, changed.0];
         // SAFETY: worker-owned references keep both event handles alive. Each wait
         // handles one change; resync/rearm occurs before waiting for the next one.
@@ -404,6 +621,10 @@ fn worker(
         if result != WAIT_OBJECT_0 + 1 && result != WAIT_TIMEOUT {
             return Err(error("event wait"));
         }
+        // Reopen collections to include newly created policy/Disallowed stores.
+        // Closing pending registry notifications may signal changed; the next
+        // iteration resets it before registering new watchers.
+        drop(collections);
     }
 }
 

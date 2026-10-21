@@ -19,6 +19,11 @@ unsafe extern "C" {
     fn transmog_pki_certificate_parseable(bytes: *const u8, len: usize) -> bool;
     fn transmog_pki_policy_new() -> *mut c_void;
     fn transmog_pki_policy_free(policy: *mut c_void);
+    fn transmog_pki_policy_distrust(
+        policy: *mut c_void,
+        context: *const c_void,
+        check: unsafe extern "C" fn(*const c_void, *const u8, usize) -> bool,
+    );
     fn transmog_pki_policy_security(policy: *mut c_void, data: *const u8, len: usize) -> bool;
     fn transmog_tls_security(ssl: *const boring_sys::SSL, kind: u32, len: *mut usize) -> *const u8;
     fn transmog_pki_result_security(result: *const c_void, field: u32) -> u32;
@@ -145,7 +150,8 @@ impl Verification {
 }
 
 /// Immutable native parsed trust inputs. Verification creates only local state.
-pub(crate) struct CompiledPolicy(NonNull<c_void>);
+pub(crate) struct CompiledPolicy(NonNull<c_void>, Option<Box<DistrustContext>>);
+struct DistrustContext(Arc<dyn crate::CertificateDistrust>);
 // SAFETY: policy construction finishes before publication. PKI stores and
 // issuer sources perform read-only lookups; each invocation owns its builder,
 // delegate, errors and peer issuer source. No native pointer is exposed.
@@ -158,6 +164,22 @@ impl Drop for CompiledPolicy {
     }
 }
 type CacheEntry = (Weak<CertificatePolicy>, Arc<CompiledPolicy>);
+
+unsafe extern "C" fn check_platform_distrust(
+    context: *const c_void,
+    der: *const u8,
+    len: usize,
+) -> bool {
+    // SAFETY: the compiled policy owns the boxed Arc until after the native
+    // handle is freed; PKI supplies a live borrowed certificate buffer.
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe {
+        let checker = &*context.cast::<DistrustContext>();
+        checker
+            .0
+            .is_distrusted(std::slice::from_raw_parts(der, len))
+    }))
+    .unwrap_or(true)
+}
 
 pub(crate) fn compile(policy: &Arc<CertificatePolicy>) -> Result<Arc<CompiledPolicy>, ErrorStack> {
     static CACHE: OnceLock<Mutex<Vec<CacheEntry>>> = OnceLock::new();
@@ -176,7 +198,22 @@ pub(crate) fn compile(policy: &Arc<CertificatePolicy>) -> Result<Arc<CompiledPol
     // SAFETY: constructor returns a newly owned native handle or null.
     let compiled = CompiledPolicy(
         NonNull::new(unsafe { transmog_pki_policy_new() }).ok_or_else(ErrorStack::get)?,
+        policy
+            .platform_distrust
+            .clone()
+            .map(|checker| Box::new(DistrustContext(checker))),
     );
+    if let Some(checker) = &compiled.1 {
+        // SAFETY: the Box gives the callback a stable address across moves;
+        // its Arc is retained with the native handle for all concurrent readers.
+        unsafe {
+            transmog_pki_policy_distrust(
+                compiled.0.as_ptr(),
+                (&raw const **checker).cast(),
+                check_platform_distrust,
+            );
+        };
+    }
     let add = |bytes: &[u8], kind, expiry, constraints| {
         // SAFETY: unpublished exclusively constructed policy; bytes are copied.
         if unsafe {

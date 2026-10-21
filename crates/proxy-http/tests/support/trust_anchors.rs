@@ -95,6 +95,9 @@ pub fn factory(root: &ProxyCa, metadata: Arc<PkiMetadata>) -> UpstreamTlsContext
     )
     .with_pki_metadata(Arc::new(PkiMetadataProvider::new(metadata, None)))
     .with_private_test_roots()
+    .with_local_trust_monitor(transmog_tls::local_trust::LocalTrustMonitor::fixed(
+        transmog_tls::local_trust::LocalCertificates::default(),
+    ))
     .with_verification_data(Arc::new(
         transmog_tls::verification_data::VerificationDataProvider::new(None, None),
     ))

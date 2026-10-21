@@ -1,6 +1,9 @@
 //! Local trust constraints apply to QUIC as well as TCP TLS verification.
 #[path = "../../proxy-http/tests/support/trust_anchors.rs"]
 mod anchors;
+#[cfg(windows)]
+#[path = "../../windows-trust/tests/support/ctl.rs"]
+mod ctl_fixture;
 #[path = "support/mod.rs"]
 mod quic;
 #[path = "../../proxy-http/tests/support/mod.rs"]
@@ -56,11 +59,21 @@ async fn probe(
     chain: &[X509],
     expected: bool,
 ) {
-    let origin = quic::origin_configs(vec![config(cert, key, chain)], "127.0.0.1:0", true).await;
     let factory = anchors::factory(public, anchors::catalog(&[(public.certificate(), 1)], 42))
         .with_network_profile(NetworkProfileSnapshot::default())
         .unwrap()
         .with_local_trust_monitor(LocalTrustMonitor::fixed(inventory));
+    probe_factory(factory, cert, key, chain, expected).await;
+}
+
+async fn probe_factory(
+    factory: transmog_tls::UpstreamTlsContextFactory,
+    cert: &X509,
+    key: &PKey<Private>,
+    chain: &[X509],
+    expected: bool,
+) {
+    let origin = quic::origin_configs(vec![config(cert, key, chain)], "127.0.0.1:0", true).await;
     let recorder = PerformanceRecorder::new(SystemTime::now(), Instant::now());
     let client = H3OriginClient::new(
         factory,
@@ -98,6 +111,76 @@ async fn probe(
             tls.verification,
             Some(VerificationResult::Rejected { .. })
         ));
+    }
+}
+
+#[tokio::test]
+async fn quic_root_sources_keep_chromium_distrust_separate_from_full_os_distrust() {
+    use transmog_core::network_profile::RootStore;
+    let root = anchors::issuer_root("QUIC public distrust fixture");
+    let issuer = anchors::intermediate(&root);
+    let leaf = issuer
+        .issue(
+            transmog_tls::EndpointIdentity::parse("localhost").unwrap(),
+            1,
+        )
+        .unwrap();
+    for roots in [
+        RootStore::ChromiumBundled,
+        RootStore::Os,
+        RootStore::ChromeInstalled,
+        RootStore::Webview2Installed,
+    ] {
+        let mut profile = NetworkProfileSnapshot::default();
+        profile.settings.root_store = roots;
+        profile.settings.local_certificates = false;
+        let base = anchors::factory(&root, anchors::catalog(&[(root.certificate(), 1)], 42))
+            .with_network_profile(profile)
+            .unwrap()
+            .with_local_trust_monitor(LocalTrustMonitor::fixed(LocalCertificates::default()));
+        let chain = [issuer.certificate().clone()];
+        probe_factory(
+            base.clone(),
+            &leaf.certificate,
+            &leaf.private_key,
+            &chain,
+            true,
+        )
+        .await;
+        for cert in [&leaf.certificate, issuer.certificate(), root.certificate()] {
+            let der = cert.to_der().unwrap();
+            let denied = base
+                .clone()
+                .with_local_trust_monitor(LocalTrustMonitor::fixed(LocalCertificates {
+                    disallowed: vec![der.clone()],
+                    ..Default::default()
+                }));
+            probe_factory(denied, &leaf.certificate, &leaf.private_key, &chain, false).await;
+            #[cfg(windows)]
+            {
+                let denied = base
+                    .clone()
+                    .with_local_trust_monitor(LocalTrustMonitor::fixed(LocalCertificates {
+                        disallowed_ctls: vec![ctl_fixture::ctl(
+                            false,
+                            &[
+                                boring::hash::hash(boring::hash::MessageDigest::sha1(), &der)
+                                    .unwrap()
+                                    .to_vec(),
+                            ],
+                        )],
+                        ..Default::default()
+                    }));
+                probe_factory(
+                    denied,
+                    &leaf.certificate,
+                    &leaf.private_key,
+                    &chain,
+                    !matches!(roots, RootStore::Os | RootStore::ChromiumBundled),
+                )
+                .await;
+            }
+        }
     }
 }
 

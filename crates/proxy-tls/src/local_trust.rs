@@ -21,7 +21,7 @@ pub struct TrustEpoch {
     pub configured: u64,
     /// Public component major version, including OS public-program classification.
     pub public: i64,
-    /// Local notification generation (zero when the overlay is disabled).
+    /// Windows trust/distrust notification generation (zero without a monitor).
     pub local: u64,
 }
 #[derive(Debug)]
@@ -30,6 +30,15 @@ pub(crate) struct EffectiveLocalTrust {
     pub policy: Arc<CertificatePolicy>,
     pub inventory: Arc<LocalCertificates>,
     pub monitored: bool,
+    pub full_os_distrust: bool,
+}
+#[derive(Debug)]
+struct PlatformDistrust(transmog_windows_trust::CtlDistrust);
+impl transmog_tls_native::CertificateDistrust for PlatformDistrust {
+    fn is_distrusted(&self, der: &[u8]) -> bool {
+        // An unreadable distrust match must not authorize a certificate.
+        self.0.contains(der).unwrap_or(true)
+    }
 }
 #[derive(Debug)]
 struct CacheEntry {
@@ -37,6 +46,7 @@ struct CacheEntry {
     public_source: String,
     local_generation: u64,
     local_sha256: String,
+    full_os_distrust: bool,
     snapshot: Arc<EffectiveLocalTrust>,
 }
 type Cache = Option<CacheEntry>;
@@ -46,10 +56,17 @@ pub(crate) struct LocalTrust {
     cache: Mutex<Cache>,
 }
 impl LocalTrust {
-    pub fn automatic() -> Arc<Self> {
-        static VALUE: OnceLock<Arc<LocalTrust>> = OnceLock::new();
-        VALUE
-            .get_or_init(|| Arc::new(Self::new(LocalTrustMonitor::start())))
+    pub fn automatic(full_os_distrust: bool) -> Arc<Self> {
+        static FULL: OnceLock<Arc<LocalTrust>> = OnceLock::new();
+        static CHROMIUM: OnceLock<Arc<LocalTrust>> = OnceLock::new();
+        (if full_os_distrust { &FULL } else { &CHROMIUM })
+            .get_or_init(|| {
+                Arc::new(Self::new(if full_os_distrust {
+                    LocalTrustMonitor::start()
+                } else {
+                    LocalTrustMonitor::start_chromium()
+                }))
+            })
             .clone()
     }
     pub fn new(monitor: Result<LocalTrustMonitor, LocalTrustError>) -> Self {
@@ -76,7 +93,18 @@ impl LocalTrust {
             Err(error) => Err(error.into()),
         }
     }
-    pub fn current(&self, metadata: &PkiMetadata) -> Result<Arc<EffectiveLocalTrust>, TrustError> {
+    pub fn ready_blocking(&self) -> Result<(), TrustError> {
+        self.monitor
+            .as_ref()
+            .map_err(Clone::clone)?
+            .wait_ready(Duration::from_secs(5))?;
+        Ok(())
+    }
+    pub fn current(
+        &self,
+        metadata: &PkiMetadata,
+        full_os_distrust: bool,
+    ) -> Result<Arc<EffectiveLocalTrust>, TrustError> {
         let inventory = self.monitor.as_ref().map_err(Clone::clone)?.current()?;
         let mut cache = self
             .cache
@@ -87,10 +115,11 @@ impl LocalTrust {
             && entry.public_source == metadata.source
             && entry.local_generation == inventory.generation
             && entry.local_sha256 == inventory.sha256
+            && entry.full_os_distrust == full_os_distrust
         {
             return Ok(entry.snapshot.clone());
         }
-        let mut result = build(metadata, &inventory)?;
+        let mut result = build(metadata, &inventory, full_os_distrust)?;
         // Enumeration may become dirty while certificates are parsed into a
         // native store. Do not publish that build as current after a notification.
         let current = self.monitor.as_ref().map_err(Clone::clone)?.current()?;
@@ -107,6 +136,7 @@ impl LocalTrust {
             public_source: metadata.source.clone(),
             local_generation: inventory.generation,
             local_sha256: inventory.sha256.clone(),
+            full_os_distrust,
             snapshot: result.clone(),
         });
         Ok(result)
@@ -115,6 +145,7 @@ impl LocalTrust {
 fn build(
     metadata: &PkiMetadata,
     inventory: &Arc<LocalCertificates>,
+    full_os_distrust: bool,
 ) -> Result<EffectiveLocalTrust, TrustError> {
     let blocked: HashSet<Vec<u8>> = inventory.disallowed.iter().cloned().collect();
     let mut anchors = Vec::new();
@@ -192,6 +223,7 @@ fn build(
         trust: Arc::new(trust),
         inventory: inventory.clone(),
         monitored: false,
+        full_os_distrust,
         policy: Arc::new(CertificatePolicy {
             issuer_source: None,
             unavailable: false,
@@ -211,8 +243,21 @@ fn build(
             local_anchors: Arc::new(inventory.anchors.iter().cloned().collect()),
             trusted_leaves: Arc::new(leaves),
             disallowed: Arc::new(blocked),
+            platform_distrust: platform_distrust(inventory, full_os_distrust)?,
         }),
     })
+}
+
+fn platform_distrust(
+    inventory: &LocalCertificates,
+    full_os_distrust: bool,
+) -> Result<Option<Arc<dyn transmog_tls_native::CertificateDistrust>>, TrustError> {
+    if !full_os_distrust {
+        return Ok(None);
+    }
+    Ok(Some(Arc::new(PlatformDistrust(
+        transmog_windows_trust::CtlDistrust::new(&inventory.disallowed_ctls)?,
+    ))))
 }
 
 fn source_description(source: &str) -> String {
@@ -231,17 +276,32 @@ fn source_description(source: &str) -> String {
 mod tests {
     use super::*;
     #[test]
+    fn chromium_scope_does_not_decode_os_ctls_or_reuse_its_policy_for_full_os_distrust() {
+        let metadata = PkiMetadata::bundled();
+        let local = LocalTrust::new(Ok(LocalTrustMonitor::fixed(LocalCertificates {
+            disallowed_ctls: vec![vec![1, 2, 3]],
+            ..Default::default()
+        })));
+        let chromium = local.current(&metadata, false).unwrap();
+        assert!(chromium.policy.platform_distrust.is_none());
+        assert!(local.current(&metadata, true).is_err());
+        assert!(Arc::ptr_eq(
+            &chromium,
+            &local.current(&metadata, false).unwrap()
+        ));
+    }
+    #[test]
     fn identical_public_bytes_keep_distinct_sources_and_bound_utf8_capture_labels() {
         let metadata = PkiMetadata::bundled();
         let local = LocalTrust::new(Ok(LocalTrustMonitor::fixed(LocalCertificates::default())));
-        let first = local.current(&metadata).unwrap();
+        let first = local.current(&metadata, true).unwrap();
         let mut other = (*metadata).clone();
         other.source = "Installed Chrome root-store fixture".into();
-        let second = local.current(&other).unwrap();
+        let second = local.current(&other, true).unwrap();
         assert!(!Arc::ptr_eq(&first, &second));
         assert!(second.trust.source_description().starts_with(&other.source));
         other.source = "界".repeat(341) + "x";
-        let long = local.current(&other).unwrap();
+        let long = local.current(&other, true).unwrap();
         assert!(long.trust.source_description().len() <= 1024);
         assert!(
             long.trust

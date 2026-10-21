@@ -99,6 +99,7 @@ pub struct NetworkProfileSettings {
     pub root_store: RootStore,
     /// Add Chromium-style local Windows trust to a public Chromium root store.
     /// OS trust already includes local roots. Historical captures had no overlay.
+    /// Windows OS/user/enterprise distrust applies independently of this switch.
     #[serde(default)]
     pub local_certificates: bool,
 }

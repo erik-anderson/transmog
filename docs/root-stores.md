@@ -46,8 +46,23 @@ and its [component ID replacement](https://github.com/chromium/chromium/blob/154
 Local trust follows Chromium's read-only `CERT_STORE_PROV_SYSTEM_REGISTRY_W`
 selection. ROOT, CA and Disallowed use machine/user, group-policy and
 machine-enterprise locations. TrustedPeople uses machine locations only.
-This excludes the aggregate SYSTEM provider and automatically managed AuthRoot
-public roots. An explicitly installed ROOT entry remains a local trust choice,
+Trust grants exclude the aggregate SYSTEM provider and automatically managed
+AuthRoot public roots. Distrust additionally includes CTLs from Disallowed stores
+and the full cached Windows untrusted CTL (`DisallowedCertEncodedCtl`), including
+subject identifiers whose certificates are not installed. Windows computes each
+CTL's subject hash, including signature hashes, from the candidate's DER. CTL
+expiry does not remove explicit distrust. Public OS and bundled Chromium enforce
+these full OS distrust inputs even when local trust is off. Installed Chrome and
+WebView2 use only Chromium's user/enterprise certificate-entry distrust scope,
+not Windows' public untrusted CTL or Disallowed-store CTLs. Their scope stays the
+same when installed roots fall back to the bundle. User/enterprise Disallowed
+certificate entries always apply, independently of local trust grants.
+No additional local roots or TrustedPeople grants are introduced when the local
+trust switch is off. Missing CTL data is an empty list; malformed or unreadable present data
+fails new TLS connections rather than silently dropping distrust. Plain HTTP
+does not depend on certificate trust availability. Windows continues
+to own downloading/updating its CTLs; Transmog only reads the cached data.
+An explicitly installed ROOT entry remains a local trust choice,
 even when its certificate is also public.
 
 ROOT uses Chromium's anchor-or-leaf trust with enforced anchor expiry and
@@ -66,8 +81,11 @@ constraints count non-self-issued intermediate CAs, while allowing self-issued
 key rollovers and direct issuance within the constraint.
 
 A worker owns certificate collections and a shared manual-reset event.
-`CertControlStore(NOTIFY_CHANGE)` registers notifications; reset, `RESYNC` and
-rearming precede enumeration. UI/transport threads never enumerate the registry.
+`CertControlStore(NOTIFY_CHANGE)` registers notifications; a read-only registry
+watch covers CTL updates and creation of new certificate stores. Collections are
+reopened and notifications armed before enumeration. UI/transport threads never
+enumerate the registry. Verification only searches frozen CTLs and computes
+certificate properties, with no registry or network IO.
 A signaled event invalidates trust before refresh. New TLS requests wait
 asynchronously for a current bounded inventory or report a monitoring/read
 failure, without using stale local trust. H1/H2/H3 and extended-CONNECT pools

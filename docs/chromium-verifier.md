@@ -32,7 +32,12 @@ browser parity.
 [Root-source selection](root-stores.md) supplies an immutable `TrustSnapshot`.
 OS roots are enumerated as DER; the operating system does not build upstream
 verification paths. Chromium/WebView2 profiles use public component roots plus
-the optional monitored Windows local-trust overlay.
+optional monitored Windows local trust grants. All Windows root choices enforce
+explicit user/enterprise Disallowed certificates independently of local trust
+grants. Public OS and bundled Chromium additionally enforce the full cached
+Windows untrusted CTL. Installed Chrome/WebView2 preserve Chromium's certificate-
+only Windows distrust scope, even on a bundled-root fallback; their installed
+CRLSet policy remains separate. Chromium's Windows CTL support is unimplemented.
 
 Expected peer names are independent of SNI and capture collection. Embedders
 using raw TCP SSL objects should call `configure_ssl_metadata_for_peer`,
@@ -78,7 +83,10 @@ TLS object and capture publication stay on their owning thread. Low-level
 synchronous embedding contexts retain synchronous verification; `hyper_connector*`
 and async adapters install the worker callback and require a TLS task waker.
 Use `synchronous_connector*` for a blocking TLS stream. Verification rules
-are identical; only execution differs.
+are identical; only execution differs. Blocking connector builders wait for the
+initial monitored Windows snapshot. Raw QUIC context callers must first await
+`prepare_trust`; production asynchronous adapters already prepare trust before
+freezing a physical connection's inputs.
 
 Only intermediates from fully accepted paths enter the bounded cache: up to 256
 certificates and 4 MiB, with seven days of inactivity expiry. Leaf certificates

@@ -482,14 +482,15 @@ impl UpstreamTlsContextFactory {
         };
         self.connection_metadata = None;
         self.connection_local = None;
-        self.local_trust = (profile.settings.local_certificates
-            && profile.settings.root_store != transmog_core::network_profile::RootStore::Os)
-            .then(|| {
-                self.local_trust_override
-                    .clone()
-                    .or_else(|| cfg!(windows).then(crate::local_trust::LocalTrust::automatic))
+        self.local_trust = self.local_trust_override.clone().or_else(|| {
+            cfg!(windows).then(|| {
+                crate::local_trust::LocalTrust::automatic(matches!(
+                    profile.settings.root_store,
+                    transmog_core::network_profile::RootStore::Os
+                        | transmog_core::network_profile::RootStore::ChromiumBundled
+                ))
             })
-            .flatten();
+        });
         self.recovery_ids = None;
         self.policy.minimum_version = match profile.settings.tls_versions {
             TlsVersions::Tls13Only => SslVersion::TLS1_3,
@@ -542,7 +543,7 @@ impl UpstreamTlsContextFactory {
             factory.connection_metadata = Some(self.metadata());
             factory.connection_local = self.local_trust.as_ref().map(|local| {
                 local
-                    .current(&factory.metadata())
+                    .current(&factory.metadata(), factory.uses_full_os_distrust())
                     .map_err(|error| error.to_string())
             });
         }
@@ -579,14 +580,19 @@ impl UpstreamTlsContextFactory {
         self.verification_policy_cache = Arc::default();
         self.local_trust_override =
             Some(Arc::new(crate::local_trust::LocalTrust::new(Ok(monitor))));
-        self.local_trust = self
-            .profile
-            .as_ref()
-            .filter(|p| {
-                p.settings.local_certificates
-                    && p.settings.root_store != transmog_core::network_profile::RootStore::Os
-            })
-            .and(self.local_trust_override.clone());
+        self.local_trust = self.local_trust_override.clone();
+        self.connection_local = None;
+        self.connection_metadata = None;
+        self
+    }
+
+    /// Injects a local inventory failure without reading or changing OS stores.
+    #[cfg(feature = "test-fixtures")]
+    #[must_use]
+    pub fn with_local_trust_failure(mut self, error: crate::local_trust::LocalTrustError) -> Self {
+        self.verification_policy_cache = Arc::default();
+        self.local_trust_override = Some(Arc::new(crate::local_trust::LocalTrust::new(Err(error))));
+        self.local_trust = self.local_trust_override.clone();
         self.connection_local = None;
         self.connection_metadata = None;
         self
@@ -634,7 +640,7 @@ impl UpstreamTlsContextFactory {
             return Ok(policy.clone());
         }
         let policy = match &self.connection_local {
-            Some(Ok(local)) => Ok(local.policy.clone()),
+            Some(Ok(local)) if self.trusts_local_certificates() => Ok(local.policy.clone()),
             Some(Err(_)) if self.bootstrap_trust_failure => {
                 Ok(Arc::new(transmog_tls_native::CertificatePolicy {
                     unavailable: true,
@@ -642,13 +648,13 @@ impl UpstreamTlsContextFactory {
                 }))
             }
             Some(Err(error)) => Err(TrustError::LocalPolicy(error.clone())),
-            None if self.profile.as_ref().is_some_and(|p| {
+            _ if self.profile.as_ref().is_some_and(|p| {
                 p.settings.root_store != transmog_core::network_profile::RootStore::Os
             }) =>
             {
                 Ok(self.metadata().certificate_policy())
             }
-            None => Ok(Arc::new(transmog_tls_native::CertificatePolicy {
+            _ => Ok(Arc::new(transmog_tls_native::CertificatePolicy {
                 known_public_roots: self
                     .metadata()
                     .certificate_policy()
@@ -677,6 +683,12 @@ impl UpstreamTlsContextFactory {
             })),
         }?;
         let mut policy = (*policy).clone();
+        if let Some(Ok(local)) = &self.connection_local {
+            policy.disallowed = local.policy.disallowed.clone();
+            policy
+                .platform_distrust
+                .clone_from(&local.policy.platform_distrust);
+        }
         policy.security = Some(self.verification_data().policy.clone());
         policy.issuer_source = Some(self.issuer_source.clone());
         #[cfg(feature = "test-fixtures")]
@@ -691,7 +703,9 @@ impl UpstreamTlsContextFactory {
     }
 
     fn effective_trust(&self) -> Arc<TrustSnapshot> {
-        if let Some(Ok(local)) = &self.connection_local {
+        if self.trusts_local_certificates()
+            && let Some(Ok(local)) = &self.connection_local
+        {
             return local.trust.clone();
         }
         if self
@@ -703,6 +717,23 @@ impl UpstreamTlsContextFactory {
         } else {
             self.snapshot.clone()
         }
+    }
+
+    fn trusts_local_certificates(&self) -> bool {
+        self.profile.as_ref().is_some_and(|p| {
+            p.settings.local_certificates
+                && p.settings.root_store != transmog_core::network_profile::RootStore::Os
+        })
+    }
+
+    fn uses_full_os_distrust(&self) -> bool {
+        self.profile.as_ref().is_none_or(|p| {
+            matches!(
+                p.settings.root_store,
+                transmog_core::network_profile::RootStore::Os
+                    | transmog_core::network_profile::RootStore::ChromiumBundled
+            )
+        })
     }
 
     fn metadata(&self) -> Arc<crate::trust_anchors::PkiMetadata> {
@@ -920,8 +951,12 @@ impl UpstreamTlsContextFactory {
                 let inventory = &local.inventory;
                 capture.authentication_detail(
                     "Local certificate trust",
-                    if local.monitored {
-                        "Windows registry collections; monitored for changes"
+                    if local.monitored && !local.full_os_distrust {
+                        "Windows user/enterprise certificate collections; monitored for changes"
+                    } else if local.monitored && self.trusts_local_certificates() {
+                        "Windows registry collections and OS distrust; monitored for changes"
+                    } else if local.monitored {
+                        "Configured roots; Windows OS distrust monitored independently of local trust"
                     } else {
                         "Explicit embedding local certificate inventory"
                     },
@@ -931,7 +966,7 @@ impl UpstreamTlsContextFactory {
                     &inventory.generation.to_string(),
                 );
                 capture.authentication_detail("Local trust SHA-256", &inventory.sha256);
-                capture.authentication_detail("Local certificate roles", &format!("{} eligible ROOT entries; {} issuer helpers; {} eligible TrustedPeople entries; {} Disallowed entries", inventory.anchors.len(), inventory.intermediates.len() + inventory.issuer_roots.len(), inventory.trusted_leaves.len(), inventory.disallowed.len()));
+                capture.authentication_detail("Local certificate roles", &format!("{} eligible ROOT entries; {} issuer helpers; {} eligible TrustedPeople entries; {} Disallowed entries; {} untrusted CTLs", inventory.anchors.len(), inventory.intermediates.len() + inventory.issuer_roots.len(), inventory.trusted_leaves.len(), inventory.disallowed.len(), if local.full_os_distrust { inventory.disallowed_ctls.len() } else { 0 }));
             }
             Some(Err(error)) => capture.authentication_detail("Local certificate trust", error),
             None => capture.authentication_detail(
@@ -1061,6 +1096,9 @@ impl UpstreamTlsContextFactory {
         &self,
         alpn: &[u8],
     ) -> Result<SslConnectorBuilder, TrustError> {
+        if let Some(local) = &self.local_trust {
+            local.ready_blocking()?;
+        }
         self.build_hyper_connector(alpn, true)
     }
 
@@ -1083,6 +1121,8 @@ impl UpstreamTlsContextFactory {
     }
 
     /// Creates the context builder passed to quiche.
+    /// Call [`Self::prepare_trust`] before building a raw context with monitored
+    /// Windows inputs; the production async QUIC adapter does this automatically.
     ///
     /// # Errors
     ///

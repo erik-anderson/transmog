@@ -697,7 +697,7 @@ mod tests {
                 anchors: vec![root.to_der().unwrap()],
                 ..Default::default()
             })));
-            let effective = local.current(&metadata).unwrap();
+            let effective = local.current(&metadata, true).unwrap();
             let selected = metadata.recovery_ids(&[1, 3], &effective.policy);
             assert_eq!(selected, if limit == 0 { vec![] } else { vec![1, 3] });
         }
@@ -767,7 +767,7 @@ mod tests {
             trusted_leaves: vec![restricted],
             ..Default::default()
         })));
-        let effective = local.current(&metadata).unwrap();
+        let effective = local.current(&metadata, true).unwrap();
         assert!(
             metadata
                 .recovery_ids(&[2, 1, 2], &effective.policy)

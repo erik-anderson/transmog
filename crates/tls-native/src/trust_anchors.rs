@@ -53,6 +53,11 @@ pub struct RootConstraint {
     /// RFC 5280 DNS permitted subtrees for every DNS SAN.
     pub permitted_dns_names: Vec<String>,
 }
+/// Read-only platform distrust matching over immutable inputs.
+pub trait CertificateDistrust: std::fmt::Debug + Send + Sync {
+    /// Checks only frozen distrust inputs. Must perform no store or network IO.
+    fn is_distrusted(&self, certificate_der: &[u8]) -> bool;
+}
 /// Frozen ordinary verification inputs. Helpers never confer certificate trust.
 #[derive(Clone, Debug, Default)]
 pub struct CertificatePolicy {
@@ -84,6 +89,8 @@ pub struct CertificatePolicy {
     pub trusted_leaves: Issuers,
     /// Exact certificate distrust, regardless of certificate role or TLS usage.
     pub disallowed: Arc<HashSet<Vec<u8>>>,
+    /// Platform CTL matching, independently of positive local trust grants.
+    pub platform_distrust: Option<Arc<dyn CertificateDistrust>>,
 }
 
 struct BoundPolicy {

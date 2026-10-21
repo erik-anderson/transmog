@@ -170,6 +170,8 @@ struct Policy : TrustStore {
   TrustStoreInMemory store;
   CertIssuerSourceStatic helpers;
   std::set<std::string, std::less<>> blocked;
+  const void *distrust_context = nullptr;
+  bool (*distrust_check)(const void *, const uint8_t *, size_t) = nullptr;
   // TrustedPeople is exact leaf trust and is never searched for issuers.
   std::set<std::string, std::less<>> leaf_only;
   std::set<std::string, std::less<>> known_roots;
@@ -181,7 +183,10 @@ struct Policy : TrustStore {
   }
 
   CertificateTrust GetTrust(const ParsedCertificate *cert) override {
-    if (blocked.count(std::string(BytesAsStringView(cert->der_cert())))) {
+    if (blocked.count(std::string(BytesAsStringView(cert->der_cert()))) ||
+        (distrust_check &&
+         distrust_check(distrust_context, cert->der_cert().data(),
+                        cert->der_cert().size()))) {
       return CertificateTrust::ForDistrusted();
     }
     return store.GetTrust(cert);
@@ -528,6 +533,14 @@ bool transmog_pki_policy_constraint_dns(void *pointer, const uint8_t *der,
     return false;
   }
 }
+void transmog_pki_policy_distrust(void *pointer, const void *context,
+                                  bool (*check)(const void *, const uint8_t *,
+                                                size_t)) noexcept {
+  auto *policy = static_cast<Policy *>(pointer);
+  policy->distrust_context = context;
+  policy->distrust_check = check;
+}
+
 // Kind: helper=0, public anchor=1, ROOT=2, TrustedPeople=3, Disallowed=4.
 // The input is copied; no borrowed Rust data survives this call.
 int transmog_pki_policy_add(void *pointer, const uint8_t *data, size_t len,

@@ -163,7 +163,9 @@ where
         let mut alpn = self.offered_protocols.clone();
         Box::pin(async move {
             let https = matches!(uri.scheme_str(), Some("https" | "wss"));
-            factory.prepare_trust().await?;
+            if https {
+                factory.prepare_trust().await?;
+            }
             let host = uri
                 .host()
                 .ok_or("URI missing host")?

@@ -58,8 +58,13 @@ The selection changes actual origin certificate trust independently of the
 Trust Anchor ID switch. Every choice uses the same [verifier](chromium-verifier.md).
 
 **Trust locally installed Windows certificates** sits beside the root selector.
-Turning it off tests the chosen public component alone. OS mode already includes
-local roots, so this switch is disabled. Component discovery does not install
+Turning it off uses only the chosen public roots for trust grants. Windows user
+and enterprise Disallowed certificates still apply. Bundled Chromium and Public
+OS also enforce the full cached Windows untrusted CTL. Installed Chrome and
+WebView2 keep Chromium's certificate-only local distrust scope, including when
+their roots fall back to the bundle; they do not import Windows' public untrusted
+CTL. OS mode already includes local roots, so this switch is disabled.
+Component discovery does not install
 certificates or modify Chrome/WebView2 files. If the selected component has no
 supported IDs, Transmog omits the offer and never borrows another store's IDs.
 

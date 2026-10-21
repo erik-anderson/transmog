@@ -22,6 +22,8 @@ use windows_sys::Win32::Security::Cryptography::{
     X509_ASN_ENCODING,
 };
 use windows_sys::Win32::System::Registry::*;
+#[path = "../../tests/support/ctl.rs"]
+mod ctl_fixture;
 
 struct TemporaryRegistry {
     path: String,
@@ -112,6 +114,9 @@ fn reader(path: &str) -> Result<Store, LocalTrustError> {
     Ok(collection)
 }
 fn certificate() -> Vec<u8> {
+    certificate_with_digest(MessageDigest::sha256())
+}
+fn certificate_with_digest(digest: MessageDigest) -> Vec<u8> {
     let key = PKey::from_ec_key(
         EcKey::generate(&EcGroup::from_curve_name(Nid::X9_62_PRIME256V1).unwrap()).unwrap(),
     )
@@ -135,7 +140,7 @@ fn certificate() -> Vec<u8> {
         .unwrap();
     cert.append_extension(&KeyUsage::new().key_cert_sign().build().unwrap())
         .unwrap();
-    cert.sign(&key, MessageDigest::sha256()).unwrap();
+    cert.sign(&key, digest).unwrap();
     cert.build().to_der().unwrap()
 }
 fn add(store: &Store, der: &[u8]) -> Certificate {
@@ -161,6 +166,54 @@ fn commit(store: &Store) {
         unsafe { CertControlStore(store.0, 0, CERT_STORE_CTRL_COMMIT, ptr::null()) },
         0
     );
+}
+
+#[test]
+fn untrusted_ctls_match_signature_identifiers_and_certificate_hashes_without_der_entries() {
+    use windows_sys::Win32::Security::Cryptography::{
+        CERT_SIGNATURE_HASH_PROP_ID, CertCreateCertificateContext,
+        CertGetCertificateContextProperty,
+    };
+    let der = certificate();
+    let other = certificate();
+    let context = Certificate(unsafe {
+        CertCreateCertificateContext(
+            X509_ASN_ENCODING,
+            der.as_ptr(),
+            u32::try_from(der.len()).unwrap(),
+        )
+    });
+    assert!(!context.0.is_null());
+    let mut signature = vec![0; 128];
+    let mut length = u32::try_from(signature.len()).unwrap();
+    assert_ne!(
+        unsafe {
+            CertGetCertificateContextProperty(
+                context.0,
+                CERT_SIGNATURE_HASH_PROP_ID,
+                signature.as_mut_ptr().cast(),
+                &raw mut length,
+            )
+        },
+        0
+    );
+    signature.truncate(length as usize);
+    for (is_signature, hash) in [
+        (true, signature),
+        (
+            false,
+            boring::hash::hash(MessageDigest::sha1(), &der)
+                .unwrap()
+                .to_vec(),
+        ),
+    ] {
+        let bytes = ctl_fixture::ctl(is_signature, &[hash]);
+        let snapshot = crate::CtlDistrust::new(&[bytes]).unwrap();
+        assert_eq!(snapshot.len(), 1);
+        assert!(snapshot.contains(&der).unwrap());
+        assert!(!snapshot.contains(&other).unwrap());
+    }
+    assert!(crate::CtlDistrust::new(&[vec![1, 2, 3]]).is_err());
 }
 fn await_inventory(
     monitor: &LocalTrustMonitor,
@@ -188,11 +241,13 @@ fn registry_collections_notify_add_remove_property_changes_and_stop_cleanly() {
     let intermediary = TemporaryRegistry::new();
     let people = TemporaryRegistry::new();
     let disallowed = TemporaryRegistry::new();
+    let ctls = TemporaryRegistry::new();
     let paths = [
         root.path.clone(),
         intermediary.path.clone(),
         people.path.clone(),
         disallowed.path.clone(),
+        ctls.path.clone(),
     ];
     let state = Arc::new(State::new());
     let control = start_with(state.clone(), move || {
@@ -201,6 +256,18 @@ fn registry_collections_notify_add_remove_property_changes_and_stop_cleanly() {
             intermediates: reader(&paths[1])?,
             leaves: reader(&paths[2])?,
             blocked: reader(&paths[3])?,
+            ctl_registry: Some({
+                let mut key = ptr::null_mut();
+                let name: Vec<u16> = paths[4].encode_utf16().chain(Some(0)).collect();
+                assert_eq!(
+                    unsafe {
+                        RegOpenKeyExW(HKEY_CURRENT_USER, name.as_ptr(), 0, KEY_READ, &raw mut key)
+                    },
+                    0
+                );
+                CtlRegistry(key, REG_NOTIFY_CHANGE_NAME | REG_NOTIFY_CHANGE_LAST_SET)
+            }),
+            watches: Vec::new(),
         })
     })
     .unwrap();
@@ -237,6 +304,7 @@ fn registry_collections_notify_add_remove_property_changes_and_stop_cleanly() {
     commit(&blocked_writer);
     let denied = await_inventory(&monitor, |s| s.disallowed == [der.clone()]);
     assert!(denied.generation > restricted.generation);
+    exercise_ctl_registry(&ctls, &monitor, &der);
     let owned = cert.0;
     std::mem::forget(cert);
     assert_ne!(unsafe { CertDeleteCertificateFromStore(owned) }, 0);
@@ -262,4 +330,172 @@ fn production_registry_selection_is_read_only_and_monitored() {
     let snapshot = monitor.wait_ready(Duration::from_secs(5)).unwrap();
     assert_eq!(snapshot.sha256.len(), 64);
     assert_eq!(snapshot.generation, monitor.generation());
+    assert!(
+        !crate::CtlDistrust::new(&snapshot.disallowed_ctls)
+            .unwrap()
+            .contains(&certificate())
+            .unwrap()
+    );
+    let chromium = LocalTrustMonitor::start_chromium().unwrap();
+    assert!(
+        chromium
+            .wait_ready(Duration::from_secs(5))
+            .unwrap()
+            .disallowed_ctls
+            .is_empty()
+    );
+}
+
+#[test]
+fn registry_watch_detects_creation_of_a_previously_absent_distrust_store() {
+    let registry = TemporaryRegistry::new();
+    let path = format!("{}\\missing\\Disallowed", registry.path);
+    let event = Event::new().unwrap();
+    let watch = CtlRegistry::watch(HKEY_CURRENT_USER, &path).unwrap();
+    watch.notify(&event).unwrap();
+    let mut key = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            RegCreateKeyExW(
+                registry.key,
+                windows_sys::core::w!("missing\\Disallowed"),
+                0,
+                ptr::null(),
+                0,
+                KEY_ALL_ACCESS,
+                ptr::null(),
+                &raw mut key,
+                ptr::null_mut(),
+            )
+        },
+        0
+    );
+    assert_eq!(unsafe { WaitForSingleObject(event.0, 2000) }, WAIT_OBJECT_0);
+    drop(watch);
+    event.reset().unwrap();
+    let watch = CtlRegistry::watch(HKEY_CURRENT_USER, &path).unwrap();
+    watch.notify(&event).unwrap();
+    assert_eq!(
+        unsafe {
+            RegSetValueExW(
+                key,
+                windows_sys::core::w!("fixture"),
+                0,
+                REG_BINARY,
+                [1_u8].as_ptr(),
+                1,
+            )
+        },
+        0
+    );
+    assert_eq!(unsafe { WaitForSingleObject(event.0, 2000) }, WAIT_OBJECT_0);
+    unsafe { RegCloseKey(key) };
+}
+
+#[test]
+fn signature_ctls_support_sha384_identifiers_without_certificate_thumbprints() {
+    use windows_sys::Win32::Security::Cryptography::{
+        CERT_SIGNATURE_HASH_PROP_ID, CertCreateCertificateContext,
+        CertGetCertificateContextProperty,
+    };
+    let der = certificate_with_digest(MessageDigest::sha384());
+    // CERT_SIGNATURE_HASH_PROP_ID is the digest of the certificate's signed TBS,
+    // not a thumbprint of its complete DER or a hash of its signature bits.
+    let context = Certificate(unsafe {
+        CertCreateCertificateContext(
+            X509_ASN_ENCODING,
+            der.as_ptr(),
+            u32::try_from(der.len()).unwrap(),
+        )
+    });
+    let mut hash = vec![0; 48];
+    let mut length = 48;
+    assert_ne!(
+        unsafe {
+            CertGetCertificateContextProperty(
+                context.0,
+                CERT_SIGNATURE_HASH_PROP_ID,
+                hash.as_mut_ptr().cast(),
+                &raw mut length,
+            )
+        },
+        0
+    );
+    assert_eq!(length, 48);
+    let ctl = crate::CtlDistrust::new(&[ctl_fixture::ctl(true, &[hash])]).unwrap();
+    assert!(ctl.contains(&der).unwrap());
+    assert!(!ctl.contains(&certificate()).unwrap());
+}
+
+fn exercise_ctl_registry(ctls: &TemporaryRegistry, monitor: &LocalTrustMonitor, der: &[u8]) {
+    let mut key = ptr::null_mut();
+    assert_eq!(
+        unsafe {
+            RegCreateKeyExW(
+                ctls.key,
+                windows_sys::core::w!("AuthRoot\\AutoUpdate"),
+                0,
+                ptr::null(),
+                0,
+                KEY_ALL_ACCESS,
+                ptr::null(),
+                &raw mut key,
+                ptr::null_mut(),
+            )
+        },
+        0
+    );
+    let bytes = ctl_fixture::ctl(
+        false,
+        &[boring::hash::hash(MessageDigest::sha1(), der)
+            .unwrap()
+            .to_vec()],
+    );
+    let write = |bytes: &[u8]| {
+        assert_eq!(
+            unsafe {
+                RegSetValueExW(
+                    key,
+                    windows_sys::core::w!("DisallowedCertEncodedCtl"),
+                    0,
+                    REG_BINARY,
+                    bytes.as_ptr(),
+                    u32::try_from(bytes.len()).unwrap(),
+                )
+            },
+            0
+        );
+    };
+    write(&bytes);
+    let ctl_snapshot = await_inventory(monitor, |s| s.disallowed_ctls == [bytes.clone()]);
+    assert!(
+        crate::CtlDistrust::new(&ctl_snapshot.disallowed_ctls)
+            .unwrap()
+            .contains(der)
+            .unwrap()
+    );
+    write(&[1, 2, 3]);
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    while !matches!(
+        monitor.current(),
+        Err(LocalTrustError::Windows {
+            operation: "untrusted CTL decoding",
+            ..
+        })
+    ) {
+        assert!(std::time::Instant::now() < deadline);
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    // Restore valid data before removal, exercising recovery from a failed read.
+    write(&bytes);
+    await_inventory(monitor, |s| {
+        s.generation > ctl_snapshot.generation && s.disallowed_ctls == [bytes.clone()]
+    });
+    assert_eq!(
+        unsafe { RegDeleteValueW(key, windows_sys::core::w!("DisallowedCertEncodedCtl")) },
+        0
+    );
+    unsafe { RegCloseKey(key) };
+    await_inventory(monitor, |s| s.disallowed_ctls.is_empty());
+    assert_eq!(ctl_snapshot.disallowed_ctls, [bytes]);
 }
