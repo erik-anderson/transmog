@@ -1004,13 +1004,22 @@ impl ClientAuthenticationAttempt {
     }
     /// Drives a TCP future while registering wakeups for suspended selection/signing.
     pub async fn drive<F: Future>(&self, future: F) -> F::Output {
+        self.drive_registered(future, None).await
+    }
+    /// Drives a reactor with its readiness waker for suspended selection/signing.
+    /// The future keeps the caller's task context, while certificate work always
+    /// wakes the supplied reactor notification, including between future polls.
+    pub async fn drive_with_waker<F: Future>(&self, future: F, waker: Waker) -> F::Output {
+        self.drive_registered(future, Some(waker)).await
+    }
+    async fn drive_registered<F: Future>(&self, future: F, waker: Option<Waker>) -> F::Output {
         let mut guard = AttemptGuard {
             attempt: self.clone(),
             completed: false,
         };
         let mut future = std::pin::pin!(future);
         let result = std::future::poll_fn(|context| {
-            self.register(context.waker());
+            self.register(waker.as_ref().unwrap_or(context.waker()));
             future.as_mut().poll(context)
         })
         .await;
@@ -1147,6 +1156,52 @@ mod tests {
         ) -> ClientAuthenticationFuture {
             Box::pin(std::future::pending())
         }
+    }
+
+    #[test]
+    fn reactor_waker_survives_repolls_and_is_released_with_its_owner() {
+        #[derive(Default)]
+        struct WakeCount(std::sync::atomic::AtomicUsize);
+        impl std::task::Wake for WakeCount {
+            fn wake(self: Arc<Self>) {
+                self.0.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+        let reactor = Arc::new(WakeCount::default());
+        let reactor_waker = Waker::from(reactor.clone());
+        let attempt = ClientAuthenticationAttempt::new(
+            Arc::new(PendingResolver),
+            ClientAuthenticationContext {
+                host: "localhost".into(),
+                port: 443,
+                caller: "reactor wake regression".into(),
+                generation: 1,
+            },
+            crate::TlsCapture::new(transmog_core::TlsEvidence::default()),
+        );
+        let mut driven =
+            Box::pin(attempt.drive_with_waker(std::future::pending::<()>(), reactor_waker.clone()));
+        for expected in 1..=2 {
+            let task = Arc::new(WakeCount::default());
+            let task_waker = Waker::from(task.clone());
+            assert!(
+                driven
+                    .as_mut()
+                    .poll(&mut Context::from_waker(&task_waker))
+                    .is_pending()
+            );
+            // Use the same registration read by background signing completion.
+            let registered = attempt.0.waker.lock().unwrap().clone().unwrap();
+            assert!(registered.will_wake(&reactor_waker));
+            registered.wake();
+            assert_eq!(reactor.0.load(Ordering::SeqCst), expected);
+            assert_eq!(task.0.load(Ordering::SeqCst), 0);
+        }
+        drop(driven);
+        assert!(attempt.0.cancelled.load(Ordering::Acquire));
+        assert!(attempt.0.waker.lock().unwrap().is_none());
+        assert_eq!(reactor.0.load(Ordering::SeqCst), 3);
+        assert_eq!(Arc::strong_count(&reactor), 2);
     }
 
     #[test]

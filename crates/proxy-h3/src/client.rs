@@ -1,5 +1,6 @@
 use std::{
     collections::{HashMap, VecDeque},
+    future::Future,
     net::SocketAddr,
     num::NonZeroUsize,
     sync::{
@@ -680,8 +681,8 @@ impl ResponseTarget {
     }
 }
 
-struct VerificationWake(Arc<tokio::sync::Notify>);
-impl std::task::Wake for VerificationWake {
+struct HandshakeWake(Arc<tokio::sync::Notify>);
+impl std::task::Wake for HandshakeWake {
     fn wake(self: Arc<Self>) {
         self.0.notify_one();
     }
@@ -689,8 +690,24 @@ impl std::task::Wake for VerificationWake {
         self.0.notify_one();
     }
 }
+
+async fn drive_authenticated_handshake<F: Future>(
+    authentication: Option<&transmog_tls::client_authentication::ClientAuthenticationAttempt>,
+    ready: &Arc<tokio::sync::Notify>,
+    future: F,
+) -> F::Output {
+    if let Some(attempt) = authentication {
+        let waker = std::task::Waker::from(Arc::new(HandshakeWake(ready.clone())));
+        // Certificate completion must notify the reactor throughout each poll,
+        // without a temporary registration of the task waker between polls.
+        attempt.drive_with_waker(future, waker).await
+    } else {
+        future.await
+    }
+}
+
 struct H3ConnectionDriver {
-    verification_ready: Arc<tokio::sync::Notify>,
+    handshake_ready: Arc<tokio::sync::Notify>,
     host: String,
     origin_port: u16,
     authentication: Option<transmog_tls::client_authentication::ClientAuthenticationAttempt>,
@@ -895,11 +912,11 @@ impl H3ConnectionDriver {
         {
             transmog_tls::configure_h3_application_settings(connection.as_mut(), &[])?;
         }
-        let verification_ready = Arc::new(tokio::sync::Notify::new());
+        let handshake_ready = Arc::new(tokio::sync::Notify::new());
         connection
             .as_mut()
-            .set_task_waker(Some(std::task::Waker::from(Arc::new(VerificationWake(
-                verification_ready.clone(),
+            .set_task_waker(Some(std::task::Waker::from(Arc::new(HandshakeWake(
+                handshake_ready.clone(),
             )))));
         if let Some(offer) = &ech {
             if !offer.config.is_empty() {
@@ -928,7 +945,7 @@ impl H3ConnectionDriver {
         }
         Box::pin(
             Self {
-                verification_ready,
+                handshake_ready,
                 host,
                 origin_port,
                 authentication,
@@ -968,11 +985,13 @@ impl H3ConnectionDriver {
         performance: Option<&PerformanceRecorder>,
     ) -> Result<Self, H3OriginError> {
         let authentication = self.authentication.clone();
-        let result = if let Some(attempt) = authentication.as_ref() {
-            attempt.drive(self.establish_inner(setup_begin)).await
-        } else {
-            self.establish_inner(setup_begin).await
-        };
+        let ready = self.handshake_ready.clone();
+        let result = drive_authenticated_handshake(
+            authentication.as_ref(),
+            &ready,
+            self.establish_inner(setup_begin),
+        )
+        .await;
         if let Err(error) = result {
             self.capture.failure(&error.to_string());
             if let Some(error) = self.connection.local_error() {
@@ -1128,7 +1147,7 @@ impl H3ConnectionDriver {
                 .timeout()
                 .unwrap_or(self.limits.idle_timeout);
             tokio::select! {
-                () = self.verification_ready.notified() => {},
+                () = self.handshake_ready.notified() => {},
                 packet = self.socket.recv(&mut recv_buffer) => {
                     let read = packet?;
                     let info = quiche::RecvInfo {
@@ -1141,7 +1160,6 @@ impl H3ConnectionDriver {
                     }
                 }
                 () = sleep(wait) => self.connection.on_timeout(),
-                () = sleep(std::time::Duration::from_millis(5)), if self.authentication.as_ref().is_some_and(transmog_tls::client_authentication::ClientAuthenticationAttempt::is_waiting) => {},
             }
             flush_packets(&self.socket, &mut self.connection, &mut send_buffer).await?;
         }
@@ -2142,6 +2160,64 @@ mod tests {
     };
 
     use super::*;
+
+    #[tokio::test]
+    async fn authentication_cancellation_wakes_quic_before_and_after_parking() {
+        use transmog_tls::client_authentication::{
+            ClientAuthenticationAttempt, ClientAuthenticationContext, ClientAuthenticationFuture,
+            ClientAuthenticationResolver,
+        };
+
+        struct Resolver;
+        impl ClientAuthenticationResolver for Resolver {
+            fn generation(&self) -> u64 {
+                1
+            }
+            fn resolve(
+                &self,
+                _: ClientAuthenticationContext,
+                _: transmog_tls_native::CertificateRequest,
+            ) -> ClientAuthenticationFuture {
+                unreachable!("this probe only exercises the handshake wake registration")
+            }
+        }
+
+        for cancel_before_wait in [true, false] {
+            let attempt = ClientAuthenticationAttempt::new(
+                Arc::new(Resolver),
+                ClientAuthenticationContext {
+                    host: "localhost".into(),
+                    port: 443,
+                    caller: "QUIC wake regression".into(),
+                    generation: 1,
+                },
+                transmog_tls::TlsCapture::new(transmog_core::TlsEvidence::default()),
+            );
+            let owner = attempt.clone();
+            let ready = Arc::new(tokio::sync::Notify::new());
+            let (parked, parking) = oneshot::channel();
+            let task = tokio::spawn(async move {
+                drive_authenticated_handshake(Some(&owner), &ready, async {
+                    if cancel_before_wait {
+                        owner.cancel("cancelled before the QUIC reactor parked");
+                    }
+                    parked.send(()).unwrap();
+                    // No packet or transport timer may rescue a lost wakeup.
+                    ready.notified().await;
+                })
+                .await;
+            });
+            parking.await.unwrap();
+            if !cancel_before_wait {
+                attempt.cancel("cancelled while the QUIC reactor was parked");
+            }
+            timeout(std::time::Duration::from_secs(1), task)
+                .await
+                .expect("certificate cancellation did not wake the QUIC reactor")
+                .unwrap();
+        }
+    }
+
     #[tokio::test]
     #[allow(clippy::too_many_lines)] // One live pool lifecycle retains its original capture.
     async fn local_windows_trust_accepts_h3_then_retires_the_old_pool_on_removal() {
