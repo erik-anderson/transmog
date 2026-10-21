@@ -16,10 +16,10 @@ sha2.workspace = true
 thiserror.workspace = true
 tempfile.workspace = true
 time.workspace = true
-transmog-package-zip = { version = "=0.1.9", path = "../package-zip" }
-transmog-automation = { version = "=0.1.9", path = "../proxy-automation" }
-transmog-core = { version = "=0.1.9", path = "../proxy-core" }
-transmog-capture = { version = "=0.1.9", path = "../proxy-capture" }
+transmog-package-zip = { version = "=0.1.10", path = "../package-zip" }
+transmog-automation = { version = "=0.1.10", path = "../proxy-automation" }
+transmog-core = { version = "=0.1.10", path = "../proxy-core" }
+transmog-capture = { version = "=0.1.10", path = "../proxy-capture" }
 
 [dev-dependencies]
 zip.workspace = true

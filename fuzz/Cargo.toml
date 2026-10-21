@@ -9,16 +9,16 @@ license = "MIT"
 cargo-fuzz = true
 
 [dependencies]
-transmog-auth = { version = "=0.1.9", path = "../crates/auth" }
+transmog-auth = { version = "=0.1.10", path = "../crates/auth" }
 base64 = "0.22.1"
 bytes = "1.11.1"
 libfuzzer-sys = "=0.4.13"
-transmog-content = { version = "=0.1.9", path = "../crates/proxy-content" }
-transmog-core = { version = "=0.1.9", path = "../crates/proxy-core" }
-transmog-websocket = { version = "=0.1.9", path = "../crates/proxy-websocket" }
+transmog-content = { version = "=0.1.10", path = "../crates/proxy-content" }
+transmog-core = { version = "=0.1.10", path = "../crates/proxy-core" }
+transmog-websocket = { version = "=0.1.10", path = "../crates/proxy-websocket" }
 tokio = { version = "1.53.3", features = ["rt", "time"] }
 
-transmog-capture = { version = "=0.1.9", path = "../crates/proxy-capture" }
+transmog-capture = { version = "=0.1.10", path = "../crates/proxy-capture" }
 serde_json = "1.0.154"
 sha2 = "0.10.9"
 crc32fast = "1.5.2"
