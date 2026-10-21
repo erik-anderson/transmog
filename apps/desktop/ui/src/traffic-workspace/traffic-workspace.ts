@@ -5,6 +5,7 @@ import {ActionSubmenu} from '../action-submenu/action-submenu.js';
 import '../traffic-timeline/traffic-timeline.js';
 import type {TrafficTimeline} from '../traffic-timeline/traffic-timeline.js';
 import type {TrafficTimelineRow} from '../models.js';
+import type {MessageInspector} from '../message-inspector/message-inspector.js';
 import type {PortableCase} from '../portable-case/portable-case.js';
 import {bodyEditSummary} from '../text-edit-report.js';
 import { responseEvidence } from '../response-evidence.js';
@@ -40,6 +41,20 @@ const NO_EXTENSION_CELLS:Array<{key:string;text:string;title:string}>=[];
 type PreviewPageChoices={pages:Array<{id:string;url:string;startedAt:number;recordedReferrer:boolean}>;more:boolean};
 
 export class TrafficWorkspace extends WorkspaceElement {
+  requestMessage!:MessageInspector;
+  responseMessage!:MessageInspector;
+  private authNavigation=0;
+  async onAuthTraffic(event:CustomEvent<{id:string;boundary:string;isCurrent:()=>boolean}>):Promise<void> {
+    event.stopPropagation();if(!event.detail.isCurrent()||this.view!=='traffic')return;
+    const {id,boundary}=event.detail,generation=++this.authNavigation;
+    const focus=this.trackNavigationFocus();let admitted=false;
+    const current=():boolean=>this.isConnected&&this.view==='traffic'&&generation===this.authNavigation;
+    try {
+      const found=await this.revealSession(id,()=>focus.unchanged(),()=>{if(!current()||!focus.unchanged())return false;if(!admitted){if(!event.detail.isCurrent())return false;admitted=true;}return true;});
+      if(found&&current()&&this.selectedSessionId===id){this.inspectorSide=boundary.endsWith('request')?'request':'response';this.$flushUpdates();(boundary.endsWith('request')?this.requestMessage:this.responseMessage).showAuthBoundary(boundary);}
+      else if(current())this.diagnostic='Related auth evidence is no longer retained.';
+    } finally {focus.dispose();}
+  }
 
   @observable flagBoundary='request';
   @observable flagStatus='';

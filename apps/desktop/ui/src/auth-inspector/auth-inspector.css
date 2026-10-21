@@ -1,0 +1,25 @@
+auth-inspector { display:block; min-width:0; min-height:0; height:100%; overflow:hidden; }
+.auth-inspector { display:flex; flex-direction:column; height:100%; min-height:0; padding:.4rem .55rem; gap:.4rem; font-size:.76rem; }
+.auth-actions,.auth-source,.auth-field-actions { display:flex; flex-wrap:wrap; align-items:baseline; gap:.35rem .6rem; }
+.auth-inspector p { margin:.2rem 0; overflow-wrap:anywhere; }
+.auth-help,.auth-provenance,.auth-meaning,.auth-coverage p { color:var(--muted); }
+.auth-help { font-size:.72rem; }
+.auth-scroll { flex:1; min-height:3rem; overflow:auto; overscroll-behavior:contain; padding-right:.25rem; }
+.auth-finding { border-top:1px solid var(--line); padding:.5rem 0; min-width:0; }
+.auth-finding > summary { cursor:pointer; overflow-wrap:anywhere; }
+.auth-state { display:block; margin:.2rem 0 .2rem 1rem; color:var(--muted); }
+.auth-source { margin:.3rem 0; overflow-wrap:anywhere; }
+.auth-source > span { flex:1; min-width:8rem; }
+.auth-fields { margin:.4rem 0; }
+.auth-field { display:grid; grid-template-columns:minmax(6rem,28%) minmax(0,1fr); gap:.35rem; padding:.35rem 0; border-bottom:1px solid var(--line); }
+.auth-field dt { font-weight:600; overflow-wrap:anywhere; }
+.auth-field dd { margin:0; min-width:0; }
+.auth-field pre { margin:0 0 .3rem; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:.75rem/1.5 "Cascadia Mono",Consolas,monospace; user-select:text; }
+.auth-meaning { margin-top:.3rem; font-size:.7rem; }
+.auth-meaning summary,.auth-provenance summary,.auth-coverage summary { cursor:pointer; }
+.auth-provenance,.auth-coverage,.auth-related { margin:.5rem 0; }
+.auth-provenance ol,.auth-coverage ul,.auth-related ul { padding-left:1.2rem; }
+.auth-finding .auth-finding { margin-left:.6rem; padding-left:.5rem; border-left:2px solid var(--line); }
+.auth-diagnostic { color:var(--text); background:var(--panel-subtle); padding:.35rem; }
+@container (max-width:360px) { .auth-field { grid-template-columns:minmax(0,1fr); } }
+@media (forced-colors:active) { .auth-finding,.auth-field { border-color:CanvasText; } .auth-help,.auth-state,.auth-meaning { color:CanvasText; } }

@@ -55,6 +55,7 @@ import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import {checkExtensions} from './check-extensions.mjs';
 import {checkVisualizers} from './check-visualizers.mjs';
+import {checkAuth} from './check-auth.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
@@ -206,6 +207,21 @@ await page.addInitScript((configuration) => {
           return rows;
         }
         case 'visualizer_page': return '1';
+        case 'inspect_auth': {
+          const request=structuredClone(args.request);state.authRequests??=[];state.authRequests.push(request);
+          const inspection=structuredClone(state.authInspection??{findings:[],coverage:[{source:'headers',status:'complete',detail:'All retained occurrences.'},{source:'body',status:request.scanBody?'complete':'skipped',detail:'Selected-message body only.'}],diagnostics:[]});
+          const view={handle:{owner:'fixture-owner',slot:request.slot,generation:request.generation,pageId:request.pageId,revision:request.sessionId+':'+request.boundary},inspection};
+          if(state.deferAuth){state.deferAuth=false;await new Promise(resolve=>state.finishAuth=resolve);}
+          return view;
+        }
+        case 'cancel_auth': state.authCancels=(state.authCancels??0)+1;return;
+        case 'auth_value': {
+          const value=state.authValues?.[args.field]??'synthetic-secret';
+          if(state.deferAuthValue){state.deferAuthValue=false;await new Promise(resolve=>state.finishAuthValue=resolve);}
+          return value;
+        }
+        case 'auth_source': return structuredClone(state.authSource??{sessionId:'first',boundary:'client-response',source:{kind:'header',label:'WWW-Authenticate · field 1',occurrence:0,offset:0,length:0,transforms:[]}});
+        case 'related_auth': return structuredClone(state.authRelated??{entries:[],searched:2,limited:false,detail:'Same capture and authority; other bodies were not read. Connection context does not prove authentication.'});
         case 'activate_visualizer': {
           const request=structuredClone(args.request);state.visualizerStarts??=[];state.visualizerStarts.push(request);
           if(state.visualizerError)throw new Error('Synthetic parser failed');
@@ -971,6 +987,7 @@ try {
   if(process.argv.includes('--sets-only')){await checkResponseSetWorkspaces(page,root);await checkResponseSetDraftRegressions(page);await checkResponseSetPendingDialogs(page,root);await checkResponseSetCollectionAdds(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set collection workspaces verified.\n');process.exit(0);}
   if(process.argv.includes('--body-refresh-only')||process.argv.includes('--body-refresh-reproduce')) {await checkBodyRefresh(page,root,{reproduce:process.argv.includes('--body-refresh-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Body refresh lifecycle verified.\n');process.exit(0);}
   if(process.argv.includes('--preview-prerequisites-only')||process.argv.includes('--preview-prerequisites-reproduce')) {await checkPreviewPrerequisites(page,root,{reproduce:process.argv.includes('--preview-prerequisites-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Preview prerequisites verified.\n');process.exit(0);}
+  if(process.argv.includes('--auth-only')){await checkAuth(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Auth masking, reveal/copy, stale replies, coverage, keyboard and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--hex-only')){await page.goto('https://workspace.test/');await page.locator('tr[data-session-id="first"]').click();const inspector=page.locator('traffic-workspace message-inspector[side="response"]');await inspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');await inspector.locator('hex-viewer').waitFor({state:'visible'});await checkHexViewer(page,inspector,resolve(root,'../../../target/ui-check/hex-selection.png'));assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Hex byte navigation, selection, paging and compact reachability verified.\n');process.exit(0);}
   if(process.argv.includes('--traffic-filters-only')){await page.goto('https://workspace.test/');await checkTrafficFilters(page,root);await checkTrafficAdvanced(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic filtering and stream lifetime checks passed.\n');process.exit(0);}
   if(process.argv.includes('--scripts-only')) {await page.goto('https://workspace.test/');await view('automation');await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();await checkScripts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Script draft, activation, discard, async state and responsive layouts verified.\n');process.exit(0);}
@@ -2573,6 +2590,7 @@ try {
   await checkLoopback(page,root);
   await checkClientCertificates(page,root);
   await checkExtensions(page,root);
+  await checkAuth(page,root);
   await checkVisualizers(page,root);
   await page.goto('https://workspace.test/?viewer');
   await page.getByText('Capture viewer',{exact:true}).waitFor();

@@ -340,6 +340,8 @@ pub(crate) fn copy_message_headers_from_snapshot(
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Selected-source hashes include full retained fields, independent of display truncation.
+    pub auth_revisions: std::collections::BTreeMap<String, String>,
     /// Exact workspace admission number.
     pub request_number: String,
     /// Explicit original source number and its format provenance, when recorded.
@@ -728,6 +730,19 @@ pub(crate) fn detail_from_snapshot(
         None => "active".to_owned(),
     };
     Ok(SessionDetail {
+        auth_revisions: [
+            "client-request",
+            "upstream-request",
+            "upstream-response",
+            "client-response",
+        ]
+        .into_iter()
+        .filter_map(|boundary| {
+            crate::auth::revision(snapshot, body_store, boundary)
+                .ok()
+                .map(|revision| (boundary.into(), revision))
+        })
+        .collect(),
         composer_origin: None,
         performance: snapshot.performance.clone(),
         trace_id: None,

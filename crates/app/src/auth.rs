@@ -237,7 +237,7 @@ fn block<'a>(
     }
     Err(unavailable())
 }
-fn revision(
+pub(crate) fn revision(
     snapshot: &SessionSnapshot,
     store: Option<&BodyStore>,
     boundary: &str,

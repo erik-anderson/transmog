@@ -67,6 +67,7 @@ impl WindowWorkspaces {
     }
 }
 
+#[allow(clippy::too_many_lines)] // Keep the viewer's complete command allowlist explicit for authorization review.
 pub(super) fn viewer_command_allowed(command: &str) -> bool {
     matches!(
         command,

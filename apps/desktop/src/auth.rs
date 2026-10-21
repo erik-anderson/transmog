@@ -26,12 +26,10 @@ pub(super) async fn auth_value(
     let app = state.window_application(&window)?;
     tokio::task::spawn_blocking(move || app.auth_value(&handle, &field))
         .await
-        .map_err(|_| {
-            AppError::new(
-                transmog_app::ErrorCategory::Unavailable,
-                "Auth value worker unavailable",
-                false,
-            )
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Auth value worker unavailable".into(),
+            retryable: false,
         })?
 }
 #[tauri::command]
@@ -54,12 +52,10 @@ pub(super) async fn related_auth(
     let app = state.window_application(&window)?;
     tokio::task::spawn_blocking(move || app.related_auth(&handle))
         .await
-        .map_err(|_| {
-            AppError::new(
-                transmog_app::ErrorCategory::Unavailable,
-                "Related auth worker unavailable",
-                false,
-            )
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Related auth worker unavailable".into(),
+            retryable: false,
         })?
 }
 #[tauri::command]
