@@ -64,7 +64,8 @@ fn retained_occurrences_redaction_and_url_fragments() {
     let result = run(headers, Some("/path#access_token=not-transmitted"));
     assert_eq!(result.findings[0].source.occurrence, 520);
     assert_eq!(result.findings[1].status, "redacted");
-    assert_eq!(result.findings.len(), 5);
+    assert_eq!(result.findings.len(), 3);
+    assert_eq!(result.findings[2].status, "incomplete");
     assert!(
         !serde_json::to_string(&result)
             .unwrap()

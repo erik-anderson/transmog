@@ -241,6 +241,11 @@ pub(crate) fn decode(
             }
         } else {
             finding.status = "opaque".into();
+            if name == "Bearer"
+                && let Some(inner) = crate::jose::decode(context, &raw, finding.source.clone())
+            {
+                finding.children.push(inner);
+            }
         }
     }
     finding

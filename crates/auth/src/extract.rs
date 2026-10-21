@@ -77,16 +77,22 @@ pub(crate) fn pairs(context: &mut Context, text: &str, source: &Source, form: bo
     result
 }
 pub(crate) fn parameters(context: &mut Context, items: &[Pair]) {
-    let keys = [
-        "SAMLRequest",
-        "SAMLResponse",
-        "SAMLart",
-        "access_token",
-        "id_token",
-        "refresh_token",
-        "client_assertion",
-    ];
-    for pair in items.iter().filter(|p| keys.contains(&p.name.as_str())) {
+    if let Some(finding) = crate::oauth::decode(context, items) {
+        context.push(finding);
+    }
+    for pair in items
+        .iter()
+        .filter(|p| ["SAMLRequest", "SAMLResponse", "SAMLart"].contains(&p.name.as_str()))
+    {
+        let finding = crate::saml::parameter(context, pair, items);
+        context.push(finding);
+    }
+    if crate::oauth::role(items).is_some() {
+        return;
+    }
+    for pair in items.iter().filter(|p| {
+        ["access_token", "refresh_token", "client_assertion"].contains(&p.name.as_str())
+    }) {
         let mut finding = Finding::new("Auth parameter", &pair.name, pair.source.clone());
         context.field(
             &mut finding,
@@ -107,11 +113,19 @@ pub(crate) fn parameters(context: &mut Context, items: &[Pair]) {
             },
         );
         finding.status = "opaque".into();
+        if let Some(child) = crate::jose::decode(context, &pair.value, pair.source.clone()) {
+            finding.children.push(child);
+        }
         context.push(finding);
     }
 }
 fn url(context: &mut Context, value: &str, source: Source, fragment: bool) {
     if let Some((_, query)) = value.split('#').next().unwrap_or("").split_once('?') {
+        let mut source = source.clone();
+        if fragment {
+            source.kind = "redirect query".into();
+            source.label.push_str(" query");
+        }
         let items = pairs(context, query, &source, true);
         parameters(context, &items);
     }
@@ -247,42 +261,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             );
             return;
         }
-        if body
-            .media_type
-            .split(';')
-            .next()
-            .unwrap_or("")
-            .trim()
-            .eq_ignore_ascii_case("application/x-www-form-urlencoded")
-        {
-            if let Ok(text) = std::str::from_utf8(&body.bytes) {
-                let items = pairs(
-                    context,
-                    text,
-                    &Source {
-                        kind: "body".into(),
-                        label: "Decoded form body".into(),
-                        transforms: body.transforms,
-                        ..Source::default()
-                    },
-                    true,
-                );
-                parameters(context, &items);
-                context.coverage("body", "complete", "Bounded form body scan.");
-            } else {
-                context.coverage(
-                    "body",
-                    "unsupported",
-                    "Body character encoding is not supported.",
-                );
-            }
-        } else {
-            context.coverage(
-                "body",
-                "unsupported",
-                "This body format has no auth extractor.",
-            );
-        }
+        crate::body::scan(context, body);
     } else {
         context.coverage(
             "body",

@@ -1,7 +1,12 @@
 //! Deterministic offline inspection. Decoding never establishes trust or sends traffic.
 #![allow(clippy::missing_errors_doc, clippy::too_many_lines)]
+mod body;
 mod extract;
 mod http;
+mod jose;
+mod json;
+mod oauth;
+mod saml;
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -171,6 +176,7 @@ pub(crate) struct Context {
     canceled: Arc<AtomicBool>,
     bytes_left: usize,
     work_left: usize,
+    captured_at: Option<i64>,
 }
 impl Context {
     fn new(canceled: Arc<AtomicBool>) -> Self {
@@ -179,6 +185,7 @@ impl Context {
             canceled,
             bytes_left: MAX_TOTAL,
             work_left: 100_000,
+            captured_at: None,
         }
     }
     pub(crate) fn step(&mut self) -> bool {
@@ -272,9 +279,12 @@ pub(crate) fn clip(value: &str, limit: usize) -> String {
 /// Inspect one message with cooperative cancellation and aggregate finite budgets.
 pub fn inspect(input: Input, canceled: Arc<AtomicBool>) -> Inspection {
     let mut context = Context::new(canceled);
+    context.captured_at = input.captured_at;
     extract::message(&mut context, input);
     context.result
 }
 
+#[cfg(test)]
+mod protocol_tests;
 #[cfg(test)]
 mod tests;
