@@ -973,6 +973,7 @@ const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
   if(process.argv.includes('--traffic-perf-only')){const index=process.argv.indexOf('--perf-output');await checkTrafficPerformance(page,index>=0?process.argv[index+1]:undefined);assert.deepEqual(errors,[]);await browser.close();process.exit(0);}
+  if(process.argv.includes('--streams-only')){await page.goto('https://workspace.test/');await checkStreams(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Stream inspection and context copying verified.\n');process.exit(0);}
   if(process.argv.includes('--copy-only')){await checkCopy(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Inspection copy menus verified.\n');process.exit(0);}
   if(process.argv.includes('--visualizers-only')){await page.goto('https://workspace.test/');await checkVisualizers(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Host visualizers, bounded structures, exact source spans and inactive cancellation verified.\n');process.exit(0);}
   if(process.argv.includes('--extensions-only')){await page.goto('https://workspace.test/');await checkExtensions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Extension management, declared inputs, inert metadata and async lifetimes verified.\n');process.exit(0);}

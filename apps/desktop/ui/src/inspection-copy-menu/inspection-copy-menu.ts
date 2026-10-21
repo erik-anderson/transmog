@@ -1,5 +1,6 @@
 import {WebUIElement, observable} from '@microsoft/webui-framework';
-import {boundedCopy, CopyError, copyDialog, type CopyRequest} from '../inspection-copy.js';
+import {boundedCopy, CopyError, copyDialog, requestCopy, type CopyRequest} from '../inspection-copy.js';
+import {surfaceCopy} from '../inspection-copy-surface.js';
 import {requestFormatConverter} from '../converter-selection.js';
 
 export class InspectionCopyMenu extends WebUIElement {
@@ -24,12 +25,21 @@ export class InspectionCopyMenu extends WebUIElement {
     this.copyMenuY = Math.max(8, Math.min(pointer ? pointer.clientY : rect.bottom, innerHeight - 290)) + 'px';
     this.copyActions = request.actions.map(action => ({id: action.id, label: action.label, disabled: !!action.disabled}));
     this.copyMenuNote = request.note ?? ''; this.copyMenuStatus = ''; this.$flushUpdates();
-    this.menu.showPopover(); this.buttons()[0]?.focus();
+    this.menu.showPopover({source: request.source}); this.buttons()[0]?.focus();
   };
   protected hydratedCallback(): void {
     document.addEventListener('inspection-copy-request', this.receive);
     document.addEventListener('visibilitychange', this.visibility);
+    document.addEventListener('contextmenu', this.context);
+    document.addEventListener('keydown', this.context);
   }
+  private readonly context = (event: MouseEvent | KeyboardEvent): void => {
+    // Only the menu in the originating modal builds the section snapshot.
+    const target = event.composedPath().find((item): item is HTMLElement => item instanceof HTMLElement);
+    if (!target || copyDialog(target) !== copyDialog(this)) return;
+    const request = surfaceCopy(event);
+    if (request && copyDialog(request.source) === copyDialog(this)) requestCopy(event, request);
+  };
   private readonly visibility = (): void => { if (document.hidden) this.close(false); };
   private buttons(): HTMLButtonElement[] { return [...this.menu.querySelectorAll<HTMLButtonElement>('button:not(:disabled)')]; }
   async execute(id: string): Promise<void> {
@@ -41,6 +51,7 @@ export class InspectionCopyMenu extends WebUIElement {
     this.copyMenuBusy = true; this.copyMenuStatus = 'Preparing copy…';
     try {
       if (!current()) { this.close(false); return; }
+      if (action.perform) { this.close(); await action.perform(); return; }
       const text = boundedCopy(await action.read(current));
       if (!current()) { this.close(false); return; }
       if (action.convert) { this.close(); requestFormatConverter(request.source, text); return; }
@@ -74,6 +85,7 @@ export class InspectionCopyMenu extends WebUIElement {
   disconnectedCallback(): void {
     this.close(false); document.removeEventListener('inspection-copy-request', this.receive);
     document.removeEventListener('visibilitychange', this.visibility); super.disconnectedCallback();
+    document.removeEventListener('contextmenu', this.context); document.removeEventListener('keydown', this.context);
   }
 }
 InspectionCopyMenu.define('inspection-copy-menu');

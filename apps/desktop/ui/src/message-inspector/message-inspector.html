@@ -36,11 +36,11 @@
         <details class="body-facts" ?hidden="{{bodyExtension}}"><summary><strong>{{viewerLabel}}</strong><span>{{bodySummary}}</span></summary><p>{{bodyFacts}}</p></details>
         <div class="body-scroll" ?hidden="{{bodyExtension}}" ?data-hex="{{hexPreview != null}}">
           <if condition="hexPreview != null"><if condition="bodyText"><p class="body-preview body-warning" role="status">{{bodyText}}</p></if><hex-viewer :preview="{{hexPreview}}"></hex-viewer></if>
-          <if condition="hexPreview == null && !imageUrl"><pre class="body-preview" tabindex="0">{{bodyText}}</pre></if>
+          <if condition="hexPreview == null && !imageUrl"><pre data-copy-surface class="body-preview" data-copy-label="Body preview" tabindex="0">{{bodyText}}</pre></if>
           <if condition="imageUrl"><img class="body-image-preview" src="{{imageUrl}}" alt="Response image preview" decoding="async"></if>
         </div>
       </section>
-      <pre class="exchange-details" tabindex="0" ?hidden="{{mode != 'details'}}">{{detailsText}}</pre>
+      <pre data-copy-surface class="exchange-details" data-copy-label="Raw data" tabindex="0" ?hidden="{{mode != 'details'}}">{{detailsText}}</pre>
       </if>
     </div>
   </section>

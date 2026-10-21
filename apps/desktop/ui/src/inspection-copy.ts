@@ -8,6 +8,7 @@ export interface CopyAction {
   disabled?: boolean;
   read: (current: () => boolean) => string | Promise<string>;
   convert?: boolean;
+  perform?: () => void | Promise<void>;
 }
 export interface CopyRequest {
   source: HTMLElement;

@@ -11,5 +11,5 @@
       </table>
     </div>
     <footer><p id="loopback-action-help" class="field-help" role="status">{{loopbackActionText}}</p><div class="actions"><button type="button" aria-describedby="loopback-action-help" ?disabled="{{loopbackBusy || !loopbackCurrent || !loopbackAddCount}}" @click="{apply(true)}">Add selected exemptions ({{loopbackAddCount}})</button><button type="button" class="secondary" aria-describedby="loopback-action-help" ?disabled="{{loopbackBusy || !loopbackCurrent || !loopbackRemoveCount}}" @click="{apply(false)}">Remove selected exemptions ({{loopbackRemoveCount}})</button></div></footer>
-  </dialog>
+  <inspection-copy-menu></inspection-copy-menu></dialog>
 </template>

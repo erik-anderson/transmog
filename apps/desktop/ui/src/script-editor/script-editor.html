@@ -45,13 +45,13 @@
       <label>Body <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>
     </div>
     <div class="actions"><button type="button" class="secondary" @click="{useSelectedTestRequest()}" ?disabled="{{!selection}}">Use selected Traffic request</button><span class="field-help">Copies the URL, method, and nonsensitive headers. Body input is cleared.</span></div>
-    <if condition="testResult"><section class="script-test-result" aria-label="Sandbox result"><p>{{testResult}}<if condition="testOutdated"> · Outdated: source, settings, or input changed</if></p><details><summary>Test input and returned changes</summary><pre>{{testEvidence}}</pre></details></section></if>
+    <if condition="testResult"><section class="script-test-result" aria-label="Sandbox result"><p>{{testResult}}<if condition="testOutdated"> · Outdated: source, settings, or input changed</if></p><details><summary>Test input and returned changes</summary><pre tabindex="0" data-copy-surface>{{testEvidence}}</pre></details></section></if>
   </details>
   <if condition="testResult"><p class="script-test-summary" role="status">{{testResult}}<if condition="testOutdated"> · Outdated</if></p></if>
   <editor-surface label="Active (left) and draft (right)" ?hidden="{{!diffVisible}}">
     <div slot="actions" class="actions"><button type="button" class="secondary" @click="{closeComparison()}">Close comparison</button><if condition="diffStale"><span>Active script or draft changed since this comparison. Compare again to refresh.</span></if></div>
     <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison"></div>
   </editor-surface>
-  <if condition="diffVisible"><details class="script-settings-diff" open><summary>Active and draft settings</summary><div class="script-settings-columns"><section><h3>Active settings</h3><pre>{{activeSettings}}</pre></section><section><h3>Draft settings</h3><pre>{{draftSettings}}</pre></section></div></details></if>
+  <if condition="diffVisible"><details class="script-settings-diff" open><summary>Active and draft settings</summary><div class="script-settings-columns"><section><h3>Active settings</h3><pre tabindex="0" data-copy-surface>{{activeSettings}}</pre></section><section><h3>Draft settings</h3><pre tabindex="0" data-copy-surface>{{draftSettings}}</pre></section></div></details></if>
 </section>
 </template>

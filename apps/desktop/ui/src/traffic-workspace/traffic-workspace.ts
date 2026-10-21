@@ -32,6 +32,8 @@ import type { CertificateInspector } from '../certificate-inspector/certificate-
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport, PreviewRuleSnapshot } from '../models.js';
 
 import {traceMarkers,type MarkerReview,type TraceMarker} from '../markers.js';
+import {copyGesture, copyTree, fieldCopyActions, requestCopy, CopyError} from '../inspection-copy.js';
+import {selectedConverterText} from '../converter-selection.js';
 
 type ContextValue={dimension:TrafficDimension;label:string;value:TrafficFilterValue};
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
@@ -1751,6 +1753,40 @@ export class TrafficWorkspace extends WorkspaceElement {
   openTrafficMenu(session:SessionSummary,event:MouseEvent):void {
     this.prepareContextValues(session);event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectTraffic(session.id,false,()=>this.trafficSelection.focused===session.id&&this.trafficSelection.ids.has(session.id));}
     this.positionTrafficMenu(event);this.trafficMenu.showPopover();
+  }
+  trafficCellContext(session: Row, column: string, event: MouseEvent | KeyboardEvent): void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const source = event.currentTarget as HTMLElement;
+    const cached = this.rowCache.get(session.id), snapshot = JSON.stringify(cached);
+    const current = (): boolean => this.isConnected && source.isConnected && this.view === 'traffic' &&
+      !!cached && this.rowCache.get(session.id) === cached && JSON.stringify(cached) === snapshot;
+    const definition = columnDefinitions.find(item => item.id === column);
+    const extension = session.extensionCells?.find(cell => cell.key === column);
+    const name = definition?.label ?? extension?.title ?? 'Value';
+    const read = async (id: string): Promise<string> => {
+      if (['url','path','host'].includes(id)) {
+        const url = await invoke<string>('copy_message_url', {id: session.id, boundary: 'client-request'});
+        if (id === 'url') return url;
+        const match = /^[a-z][a-z0-9+.-]*:\/\/([^/?#]*)([^#]*)/i.exec(url);
+        if (!match) throw new CopyError('The original URL field is unavailable.');
+        return id === 'host' ? match[1]! : match[2] || '/';
+      }
+      const field = session.extensionCells?.find(cell => cell.key === id);
+      return field ? field.text : cellText(session, id as ColumnId);
+    };
+    requestCopy(event, {source, current, actions: [
+      ...fieldCopyActions(name, () => read(column)),
+      {id: 'row', label: 'Copy row', read: async valid => {
+        const children: Array<{name: string; value: string}> = [];
+        for (const field of this.columns) {
+          if (!valid()) throw new CopyError('The traffic view changed. Open the copy menu again.');
+          children.push({name: field.label, value: await read(field.id)});
+        }
+        for (const field of session.extensionCells ?? []) children.push({name: field.title, value: field.text});
+        return copyTree({name: 'Request ' + (session.requestNumber ?? session.id), children});
+      }},
+      {id: 'actions', label: 'Request actions…', read: () => '', perform: () => this.openTrafficMenu(session, event as MouseEvent)},
+    ]});
   }
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
   addSelectedToResponseSet(inspected=false):void {if(this.viewerMode)return;const ids=inspected&&this.selectedSessionId?[this.selectedSessionId]:Array.from(this.trafficSelection.ids);if(!ids.length)return;this.trafficMenu.hidePopover();this.$emit('response-set-intake-request',{source:'traffic',ids});}

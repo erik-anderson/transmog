@@ -442,6 +442,14 @@ export class ExtensionVisualizer extends WebUIElement {
   }
   changeMode(event:Event):void {this.visualizerMode=(event.currentTarget as HTMLSelectElement).value as Presentation;if(this.visualizerMode==='hex')this.openSpan(this.nodes.get(this.selected)?.spans[0]);else this.visualizerHex=null;}
   copySelected(event: MouseEvent | KeyboardEvent): void { this.copyNode(this.selected, event); }
+  copyCell(cell: {nodeId: string; name: string; full: string | null}, event: MouseEvent | KeyboardEvent): void {
+    if (cell.nodeId) { this.copyNode(cell.nodeId, event); return; }
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const view = this.view, revision = this.revision;
+    requestCopy(event, {source: event.currentTarget as HTMLElement,
+      current: () => this.visible && revision === this.revision && this.view === view,
+      actions: fieldCopyActions(cell.name, cell.full == null ? null : () => cell.full!)});
+  }
   copyNode(id: string, event: MouseEvent | KeyboardEvent): void {
     if (!copyGesture(event) || selectedConverterText(event)) return;
     const node = this.nodes.get(id), revision = this.revision;
