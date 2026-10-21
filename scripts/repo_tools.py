@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import ntpath
 import os
 import platform as host_platform
 from pathlib import Path
@@ -118,7 +119,17 @@ def development_environment(*, root=ROOT, environment=None, platform=None) -> di
         env.setdefault("CXX", "clang++")
         env.setdefault("AR", "llvm-ar")
     separator = ";" if windows else os.pathsep
-    env["PATH"] = separator.join([*map(str, bins), env.get("PATH", "")])
+    path = [*map(str, bins), *env.get("PATH", "").split(separator)]
+    if windows:
+        # PowerShell setup and nested Python commands may configure the same
+        # terminal repeatedly. cmd.exe drops PATH when it exceeds 8,191 chars.
+        # Keep the first occurrence so native-tool precedence stays unchanged.
+        unique = {}
+        for directory in path:
+            key = ntpath.normcase(ntpath.normpath(directory)) if directory else ""
+            unique.setdefault(key, directory)
+        path = list(unique.values())
+    env["PATH"] = separator.join(path)
     required = ["rustc", "cargo", "clang", "cmake", "ninja", "nasm"]
     required += ["clang-cl", "llvm-lib", "link"] if windows else [env["CC"], env["CXX"], env["AR"]]
     for tool in required:

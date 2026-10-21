@@ -1,8 +1,11 @@
 """Behavior checks for portable command execution and graph boundaries."""
 import importlib.util
+import ntpath
+import os
 from pathlib import Path
 import subprocess
 import sys
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -34,6 +37,40 @@ class CommandTests(unittest.TestCase):
         self.assertEqual(environment, {"PATH": "/tools", "CC": "custom-clang", "CXX": "custom-clang++", "AR": "custom-ar"})
         self.assertEqual(configured["CXX"], "custom-clang++")
         self.assertEqual(configured["TRANSMOG_PYTHON"], sys.executable)
+
+    def test_windows_environment_repairs_duplicate_paths_and_repeated_setup_is_stable(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            tool = root / ".tools/llvm/bin"
+            tool.mkdir(parents=True)
+            inherited = ";".join([str(tool).upper().replace("\\", "/") + "/"] * 40 +
+                                 [r"C:\Node", r"C:\Other\bin", r"c:/node/", "", ""])
+            environment = {"PATH": inherited, "ProgramFiles(x86)": str(root / "absent")}
+            with patch.object(repo_tools, "executable", side_effect=lambda name, env: str(root / name)):
+                configured = repo_tools.development_environment(root=root, environment=environment, platform="win32")
+                original = configured["PATH"]
+                for _ in range(32):
+                    configured = repo_tools.development_environment(root=root, environment=configured, platform="win32")
+            self.assertEqual(environment["PATH"], inherited)
+            self.assertEqual(configured["PATH"], original)
+            entries = original.split(";")
+            normalized = [ntpath.normcase(ntpath.normpath(entry)) if entry else "" for entry in entries]
+            self.assertEqual(len(normalized), len(set(normalized)))
+            self.assertEqual(entries[0], str(tool))
+            self.assertLess(entries.index(r"C:\Node"), entries.index(r"C:\Other\bin"))
+            self.assertIn("", entries)
+
+    @unittest.skipUnless(os.name == "nt", "Windows child-shell PATH handling")
+    def test_windows_child_shell_can_resolve_tools_after_repairing_oversized_path(self):
+        environment = dict(os.environ)
+        environment["PATH"] = (str(Path(sys.executable).parent) + ";") * 160 + environment.get("PATH", "")
+        self.assertGreater(len(environment["PATH"]), 8191)
+        configured = repo_tools.development_environment(environment=environment)
+        command = str(Path(os.environ["SystemRoot"]) / "System32/cmd.exe")
+        result = subprocess.run([command, "/d", "/c", "where", Path(sys.executable).name],
+                                env=configured, capture_output=True, text=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(str(Path(sys.executable)), result.stdout)
 
     def test_every_portable_cli_can_show_help_without_build_tools(self):
         for name in ("dev-env", "build-desktop", "build-dotnet-sample", "test", "test-live", "test-load", "test-interop",
