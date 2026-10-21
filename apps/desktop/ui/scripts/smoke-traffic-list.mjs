@@ -25,11 +25,14 @@ export async function smokeTrafficList(client,screenshot) {
     await client.evaluate(`${t}.preferences={...${t}.preferences,columns:${t}.preferences.columns.map(column=>({...column,visible:['request-number','method'].includes(column.id)}))};${t}.$flushUpdates()`);
     await wait(`${t}.trafficTable.getBoundingClientRect().right<${t}.sessionScroller.getBoundingClientRect().right-40`);
     const background=async()=>{
-      const blank=await client.evaluate(`(()=>{const w=${t},r=w.sessionScroller.getBoundingClientRect(),head=w.trafficTable.tHead.getBoundingClientRect();return {x:r.right-30,y:head.bottom+20};})()`);
+      const blank=await client.evaluate(`(()=>{const w=${t},r=w.sessionScroller.getBoundingClientRect(),head=w.trafficTable.tHead.getBoundingClientRect();return {x:(w.trafficTable.getBoundingClientRect().right+r.left+w.sessionScroller.clientWidth)/2,y:head.bottom+20};})()`);
+      assert.equal(await client.evaluate(`${t}.getRootNode().elementFromPoint(${blank.x},${blank.y})===${t}.sessionScroller`),true,'Native blank-space pointer target is outside the list background');
       await client.call('Input.dispatchMouseEvent',{type:'mousePressed',...blank,button:'left',clickCount:1});
       await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',...blank,button:'left',clickCount:1});
       await wait(`${t}.getRootNode().activeElement===${t}.trafficTable && ${t}.selectedTrafficCount===0`);
     };
+    await background();await key(' ','Space',32,2);await wait(`${t}.selectedTrafficCount===1`);
+    assert.equal(await client.evaluate(`${t}.trafficSelection.focused`),ids[0],'Native Ctrl+Space selected an invalid entry from list focus');
     await background();await key('ArrowDown','ArrowDown',40);await wait(`${t}.selectedSessionId===${JSON.stringify(ids[0])} && ${t}.selectedTrafficCount===1`);
     await background();await key('ArrowUp','ArrowUp',38);await wait(`${t}.selectedTrafficCount===1`);
     assert.equal(await client.evaluate(`${t}.trafficSelection.focused`),ids[0],'Native first arrow skipped the first entry');
@@ -89,6 +92,7 @@ export async function smokeTrafficList(client,screenshot) {
   assert.equal(await client.evaluate('getSelection().toString()'),'','Native Shift-click selected row text');
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===14999 && !${t}.removingTraffic`);
   await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===5001 && !${t}.removingTraffic`);
+  assert.equal(await client.evaluate(`${t}.selectedDetail?.id===${t}.trafficSelection.focused`),true,'Native keyboard Undo left the restored inspector loading');
   assert.equal(await client.evaluate(`window.__TAURI_INTERNALS__.invoke('session_detail',{id:${JSON.stringify(numberedId)}}).then(detail=>detail.requestNumber)`),'20000');
   await key('x','KeyX',88,2);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
   await client.evaluate(`${t}.trafficUndoButton.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && !${t}.removingTraffic`);

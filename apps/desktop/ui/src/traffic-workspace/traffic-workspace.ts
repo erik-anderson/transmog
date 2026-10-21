@@ -1724,6 +1724,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private handleTrafficKey(id:string,event:KeyboardEvent):void {
     if(event.defaultPrevented || isTextEditing(event))return;
     const control=event.ctrlKey||event.metaKey,key=event.key.toLowerCase();
+    if(control&&key===' '&&!id){event.preventDefault();id=this.virtualList.ids[0]??'';if(!id)return;}
     if(control&&!event.altKey&&!event.shiftKey&&['x','z','y'].includes(key)) {
       event.preventDefault();if(event.repeat)return;
       if(key==='x'){this.trafficTable.focus({preventScroll:true});void this.clearTraffic();}
@@ -1853,6 +1854,20 @@ export class TrafficWorkspace extends WorkspaceElement {
         return;
       }
       const restoreFocus=mayRestoreFocus();
+      if(redo){
+        const focused=this.trafficSelection.focused??this.trafficSelection.ids.values().next().value;
+        if(focused){this.trafficSelection.focused=focused;this.trafficSelection.anchor??=focused;}
+        this.updateTrafficSelection();const revision=this.trafficSelectionRevision;
+        let generation=this.inspectionGeneration;
+        if(this.selectedSessionId&&removedIds.has(this.selectedSessionId)){
+          if(focused){const pending=this.inspectTraffic(focused,false,()=>this.trafficSelectionRevision===revision);generation=this.inspectionGeneration;await pending;}
+          else {generation=++this.inspectionGeneration;this.selectedSessionId=null;this.selectedDetail=null;this.$emit('selection-changed',null);}
+        }
+        if(restoreFocus&&!returnFocus?.isConnected&&this.trafficSelectionRevision===revision&&this.inspectionGeneration===generation&&mayRestoreFocus()){
+          if(focused)root.getElementById('session-'+focused)?.focus({preventScroll:true});else this.focusTraffic();
+        }
+        return;
+      }
       this.clearTrafficSelection();
       const next=order.slice(index).find(id=>!removedIds.has(id)&&this.virtualList.indexes.has(id))??order.slice(0,index).reverse().find(id=>!removedIds.has(id)&&this.virtualList.indexes.has(id));
       if(next){this.trafficSelection.replace(next);this.updateTrafficSelection();const revision=this.trafficSelectionRevision;await this.inspectTraffic(next,false,()=>this.trafficSelectionRevision===revision);if(restoreFocus&&this.trafficSelectionRevision===revision&&mayRestoreFocus())root.getElementById('session-'+next)?.focus({preventScroll:true});}
@@ -1862,16 +1877,28 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async undoTrafficRemoval():Promise<void> {
     this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
+    const selection=this.trafficSelectionRevision,inspection=this.inspectionGeneration;
+    let focus=this.trackNavigationFocus();
     try {
       const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo=this.trafficUndo.slice(0,-1);this.scheduleTrafficUndoExpiry();if(!this.traceMetadataRows.length)this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);
       if(restored.length)this.trafficRedo=[...this.trafficRedo.slice(-19),{ids:restored}];
       this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':this.trafficRedo.length?'Traffic entries restored.':'';
-      this.trafficSelection.ids=new Set(restored);
-      this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();
-      const id=restored.find(id=>this.virtualList.indexes.has(id));if(id){this.trafficSelection.focused=id;this.trafficSelection.anchor=id;await this.inspectTraffic(id,true);this.updateTrafficSelection();}
+      this.queryRevision++;await this.refreshSessions(undefined,true);
       this.diagnostic=restored.length===action.ids.length?'Traffic entries restored.':`${restored.length} entries restored; others were evicted after removal.`;
+      if(!this.isConnected||selection!==this.trafficSelectionRevision||inspection!==this.inspectionGeneration||!focus.unchanged()){this.updateTrafficSelection();return;}
+      this.trafficSelection.ids=new Set(restored);
+      const id=restored.find(id=>this.virtualList.indexes.has(id));
+      this.trafficSelection.focused=id??null;this.trafficSelection.anchor=id??null;this.updateTrafficSelection();
+      if(id){
+        // Leave the old row before virtualization removes it; keep tracking later focus changes.
+        focus.dispose();if(!this.timelineMode)this.trafficTable.focus({preventScroll:true});focus=this.trackNavigationFocus();
+        const revision=this.trafficSelectionRevision,current=()=>this.trafficSelectionRevision===revision&&this.selectedSessionId===id&&focus.unchanged();
+        const pending=this.inspectTraffic(id,false,current),generation=this.inspectionGeneration;
+        await pending;
+        if(current()&&this.inspectionGeneration===generation){if(this.timelineMode)this.timeline.reveal(id);else (this.getRootNode() as ShadowRoot).getElementById('session-'+id)?.focus({preventScroll:true});}
+      }
     }catch(error:unknown){this.diagnostic='Traffic Undo failed: '+describeError(error);}
-    finally{this.removingTraffic=false;}
+    finally{focus.dispose();this.removingTraffic=false;}
   }
   private async inspectSession(session:SessionSummary,retainSelection=false):Promise<void> {
     if(!retainSelection){this.trafficSelection.replace(session.id);this.updateTrafficSelection();}
@@ -2039,7 +2066,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     catch(error:unknown){this.diagnostic='Headers could not be copied: '+describeError(error);}
     finally{this.commandBusy=false;}
   }
-  async resumeLatest():Promise<void> { this.followLatest = true; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true); }
+  async resumeLatest():Promise<void> { this.scrollGeneration++;this.inspectionGeneration++;this.followLatest = true; this.sort = {column:'started-at',direction:'descending'}; this.sortLabel = 'Newest first'; this.rebuildColumns(); this.queryRevision++; this.renderFollowState(); await this.refreshSessions(undefined,true);if(this.selectedSessionId&&!this.selectedDetail)await this.refreshInspection(); }
   showUpdates():void {if(this.pendingView)this.applyView(this.pendingView);this.renderSessionState();}
   private renderSessionState():void {
     const state = this.pending || this.lifecycle;

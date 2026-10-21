@@ -18,6 +18,44 @@ export async function checkTrafficShortcuts(page,root) {
   };
   const keyWasHandled=async(locator,key,modifiers={})=>locator.evaluate((node,{key,modifiers})=>!node.dispatchEvent(new KeyboardEvent('keydown',{key,bubbles:true,composed:true,cancelable:true,...modifiers})),{key,modifiers});
 
+  await open();await table.focus();await page.keyboard.press('Control+Space');
+  assert.deepEqual(await page.evaluate(()=>[...document.querySelector('app-shell').traffic.trafficSelection.ids]),['shortcut-3'],'Ctrl+Space from list focus selected an invalid entry');
+  await open(0);await table.focus();await page.keyboard.press('Control+Space');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,'Ctrl+Space selected an entry in an empty list');
+
+  await open();await traffic.locator('#session-shortcut-0').click();await page.keyboard.press('Delete');await settled(3);
+  await undo.click();await settled(4);
+  await traffic.locator('#session-shortcut-3').click();await traffic.locator('#session-shortcut-2').click({modifiers:['Control']});
+  await page.keyboard.press('Control+y');await settled(3);
+  assert.deepEqual(await page.evaluate(()=>[...document.querySelector('app-shell').traffic.trafficSelection.ids].sort()),['shortcut-2','shortcut-3'],'Redo collapsed an unrelated selection');
+  await undo.click();await settled(4);
+  await traffic.locator('#session-shortcut-3').click();await traffic.locator('#session-shortcut-0').click({modifiers:['Control']});
+  await page.keyboard.press('Control+y');await settled(3);
+  assert.deepEqual(await page.evaluate(()=>[...document.querySelector('app-shell').traffic.trafficSelection.ids]),['shortcut-3'],'Redo dropped the surviving part of a selection');
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'shortcut-3');
+  await traffic.locator('#session-shortcut-2').click({modifiers:['Shift']});
+  assert.deepEqual(await page.evaluate(()=>[...document.querySelector('app-shell').traffic.trafficSelection.ids].sort()),['shortcut-2','shortcut-3'],'Redo lost the surviving range anchor');
+  await undo.click();await settled(4);await page.keyboard.press('Escape');
+  await page.keyboard.press('Control+y');await settled(3);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,'Redo selected a new request after Escape deselected everything');
+
+  for(const change of ['selection','focus','escape','follow']){
+    await open();await traffic.locator('#session-shortcut-0').click();await page.keyboard.press('Delete');await settled(3);
+    await page.evaluate(()=>{globalThis.__workspaceFixture.holdCommand='remove_traffic_entries';});
+    if(change==='follow'){await table.focus();await page.keyboard.press('Control+z');}else await undo.click();
+    await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishHeldCommand==='function');
+    if(change==='selection'){
+      await traffic.locator('#session-shortcut-3').click();
+      await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='shortcut-3');
+    }else if(change==='focus')await traffic.getByLabel('Filter or search traffic',{exact:true}).focus();
+    else await page.keyboard.press(change==='follow'?'F5':'Escape');
+    const before=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {selected:[...t.trafficSelection.ids],inspected:t.selectedSessionId};});
+    await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await settled(4);
+    assert.deepEqual(await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {selected:[...t.trafficSelection.ids],inspected:t.selectedSessionId};}),before,`Late Undo replaced newer ${change}`);
+    if(change==='focus')assert.equal(await traffic.getByLabel('Filter or search traffic',{exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true,'Late Undo stole focus from a text field');
+    if(change==='follow')assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.followLatest),true,'Late Undo paused newer F5 following');
+  }
+
   await open();
   // Blank space beside and below narrow columns focuses the list without selection.
   await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,columns:t.preferences.columns.map(column=>({...column,visible:column.id==='request-number'||column.id==='method'}))};});
@@ -113,6 +151,24 @@ export async function checkTrafficShortcuts(page,root) {
   await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await settled(2);
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'shortcut-3');
   assert.equal(await traffic.locator('#session-shortcut-3').evaluate(node=>node.getRootNode().activeElement===node),true,'Late Redo stole focus');
+
+  await open(250);await traffic.locator('#session-shortcut-249').click();await page.keyboard.press('Delete');await settled(249);
+  await page.evaluate(()=>document.querySelector('app-shell').traffic.revealCurrent('shortcut-0',true));
+  await traffic.locator('#session-shortcut-0').click();
+  await page.keyboard.press('Control+z');await settled(250);
+  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedDetail?.id),'shortcut-249','Keyboard Undo did not finish inspecting an offscreen restored entry');
+
+  await open(250);await table.focus();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.holdCommand='traffic_view_rows';});
+  await page.keyboard.press('End');
+  await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishHeldCommand==='function');
+  await page.keyboard.press('F5');
+  await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return t.followLatest&&!t.queryPending&&t.sessionScroller.scrollTop===0;});
+  await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.rowRequests.size===0);
+  await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+  assert.equal(await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return t.followLatest&&t.sessionScroller.scrollTop===0;}),true,'A late row navigation canceled F5 following');
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='shortcut-0');
 
   await open(250);
   await traffic.locator('tr[data-session-id]').first().click();

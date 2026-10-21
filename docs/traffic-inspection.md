@@ -417,12 +417,17 @@ Ctrl+X clears the window's traffic when the list is focused. Undo / Ctrl+Z resto
 removed entries while their underlying evidence is retained; Redo / Ctrl+Y removes
 those restored entries again, leaving subsequently captured traffic in place.
 Ctrl+Z and Ctrl+Y also work while the Undo or Redo button is focused. A new removal
-clears Redo history. Text fields retain their ordinary editing shortcuts.
+clears Redo history. Redo preserves unrelated selected entries and leaves an empty
+selection empty. If selection or
+focus changes while Undo is pending, the restored entries appear without replacing
+the newer selection or moving focus. Text fields retain their ordinary editing shortcuts.
 These actions do not delete source capture files or saved responses.
 
 With the traffic list focused, F5 resumes **Follow newest**: newest-first ordering,
 the latest entries in view, and automatic updates as matching requests arrive.
 Existing filters still apply; selecting an entry or scrolling away pauses following.
+Resuming supersedes older row navigation that is still loading, while allowing its
+selected request's inspector to finish without scrolling away from the newest traffic.
 
 Clear and Remove keep open or connecting live WebSockets visible by default. **Settings →
 Preferences → Retention → Terminate open WebSockets when clearing Traffic**
