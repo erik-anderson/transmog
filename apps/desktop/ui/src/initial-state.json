@@ -49,7 +49,14 @@
   "visualizerSpans": [],
   "visualizerDiagnostics": [],
   "visualizerDiagnosticStatus": "",
-  "visualizerTable": {"columns": [], "rows": [], "text": "", "previous": false, "next": false, "limited": false},
+  "visualizerTable": {
+    "columns": [],
+    "rows": [],
+    "text": "",
+    "previous": false,
+    "next": false,
+    "limited": false
+  },
   "visualizerSources": [],
   "visualizerSource": "",
   "visualizerSourceText": "",
@@ -2011,5 +2018,12 @@
   "deleteCompleted": false,
   "timingAutoResponse": null,
   "canCancelRequests": false,
-  "cancelingRequests": false
+  "cancelingRequests": false,
+  "copyActions": [],
+  "copyMenuX": "8px",
+  "copyMenuY": "8px",
+  "copyMenuNote": "",
+  "copyMenuStatus": "",
+  "copyMenuBusy": false,
+  "copyFeedback": ""
 }
