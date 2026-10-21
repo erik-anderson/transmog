@@ -4,6 +4,9 @@ import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {describeError} from '../utilities.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
 import {ReloadObserver} from './reload.js';
+import {copyGesture, fieldCopyActions, requestCopy, CopyError} from '../inspection-copy.js';
+import {selectedConverterText} from '../converter-selection.js';
+import {hasCopyValue, nodeCopyValue, visualizerCopyTree} from './copy.js';
 import {DOCUMENT_NODE,documentNode,formatText,nodeAncestors,nodeIndex,sourceDescription,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
 
 let nextGeneration=0n,nextRenderer=0;
@@ -413,6 +416,7 @@ export class ExtensionVisualizer extends WebUIElement {
     }
   }
   treeKey(event:KeyboardEvent):void {
+    if (copyGesture(event)) { this.copyNode(this.selected, event); return; }
     const index=this.allRows.findIndex(row=>row.id===this.selected),row=this.allRows[index];if(!row)return;
     let target=index;
     switch(event.key){
@@ -437,6 +441,29 @@ export class ExtensionVisualizer extends WebUIElement {
     event.preventDefault();this.selectNode(this.allRows[target]!.id);
   }
   changeMode(event:Event):void {this.visualizerMode=(event.currentTarget as HTMLSelectElement).value as Presentation;if(this.visualizerMode==='hex')this.openSpan(this.nodes.get(this.selected)?.spans[0]);else this.visualizerHex=null;}
+  copySelected(event: MouseEvent | KeyboardEvent): void { this.copyNode(this.selected, event); }
+  copyNode(id: string, event: MouseEvent | KeyboardEvent): void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const node = this.nodes.get(id), revision = this.revision;
+    let view = this.view;
+    if (!node || !view) return;
+    const current = (): boolean => revision === this.revision && view === this.view && this.visible && !this.visualizerFrozen;
+    const read = async (tree: boolean, valid: () => boolean): Promise<string> => {
+      if (this.visualizerBusy) throw new CopyError('The visualizer is busy. Try copying again when it is ready.');
+      this.visualizerBusy = true;
+      try {
+        await this.livePoll;
+        if (!valid() || !current()) throw new CopyError('The inspection changed. Open the copy menu again.');
+        return tree ? await visualizerCopyTree(id, view!, valid, expanded => {
+          const top = this.treeViewport.scrollTop;
+          this.accept(expanded); view = expanded; this.treeViewport.scrollTop = top; this.windowRows();
+        }) : await nodeCopyValue(node, view!, valid);
+      } finally { if (revision === this.revision) this.visualizerBusy = false; }
+    };
+    requestCopy(event, {source: event.currentTarget as HTMLElement, current,
+      actions: [...fieldCopyActions(node.name, hasCopyValue(node) ? valid => read(false, valid) : null),
+        {id: 'subtree', label: 'Copy subtree', read: valid => read(true, valid)}]});
+  }
   tablePage(delta:number):void {const node=this.nodes.get(this.selected);if(node){this.tableOffset=Math.max(0,this.tableOffset+delta);this.visualizerTable=tablePage(node,this.tableOffset);}}
   showSpan(span:Span):void {this.visualizerMode='hex';this.openSpan(span);}
   changeSource(event:Event):void {this.visualizerSource=(event.currentTarget as HTMLSelectElement).value;this.openSpan(undefined);}

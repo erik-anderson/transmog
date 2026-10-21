@@ -55,6 +55,7 @@ import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import {checkExtensions} from './check-extensions.mjs';
 import {checkVisualizers} from './check-visualizers.mjs';
+import {checkCopy} from './check-copy.mjs';
 import {checkAuth} from './check-auth.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
@@ -215,6 +216,7 @@ await page.addInitScript((configuration) => {
           return view;
         }
         case 'cancel_auth': state.authCancels=(state.authCancels??0)+1;return;
+        case 'auth_values': return args.fields.map(field=>state.authValues?.[field]??'synthetic-secret');
         case 'auth_value': {
           const value=state.authValues?.[args.field]??'synthetic-secret';
           if(state.deferAuthValue){state.deferAuthValue=false;await new Promise(resolve=>state.finishAuthValue=resolve);}
@@ -311,6 +313,7 @@ await page.addInitScript((configuration) => {
         }
         case 'open_converter_window': state.converterDraft=structuredClone(args.draft);if(state.converterWindowError)throw new Error('Converter window could not be opened.');return;
         case 'save_converter_output': state.converterSaved=structuredClone(args.input);if(state.converterSaveError)throw new Error('Output could not be saved.');return false;
+        case 'copy_header_field': {const header=(state.fullHeaders??[{name:'Accept',value:'*/*'},{name:'Authorization',value:'[redacted]',sensitive:true}])[args.index];return {name:header.name,value:header.sensitive?null:header.value,binary:false};}
         case 'converter_header_value': {const header=(state.fullHeaders??[{name:'Accept',value:'*/*'},{name:'Authorization',value:'[redacted]',sensitive:true}])[args.index];if(header?.sensitive)throw new Error('This header value was redacted.');return header?.value??'';}
         case 'open_product_website': return;
         case 'open_response_set_live_page': state.livePageArgs=structuredClone(args);if(state.livePageError)throw new Error(state.livePageError);return;
@@ -970,6 +973,7 @@ const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
   if(process.argv.includes('--traffic-perf-only')){const index=process.argv.indexOf('--perf-output');await checkTrafficPerformance(page,index>=0?process.argv[index+1]:undefined);assert.deepEqual(errors,[]);await browser.close();process.exit(0);}
+  if(process.argv.includes('--copy-only')){await checkCopy(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Inspection copy menus verified.\n');process.exit(0);}
   if(process.argv.includes('--visualizers-only')){await page.goto('https://workspace.test/');await checkVisualizers(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Host visualizers, bounded structures, exact source spans and inactive cancellation verified.\n');process.exit(0);}
   if(process.argv.includes('--extensions-only')){await page.goto('https://workspace.test/');await checkExtensions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Extension management, declared inputs, inert metadata and async lifetimes verified.\n');process.exit(0);}
   if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}
@@ -2590,6 +2594,7 @@ try {
   await checkLoopback(page,root);
   await checkClientCertificates(page,root);
   await checkExtensions(page,root);
+  await checkCopy(page,root);
   await checkAuth(page,root);
   await checkVisualizers(page,root);
   await page.goto('https://workspace.test/?viewer');

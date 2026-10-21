@@ -553,6 +553,33 @@ impl Application {
         self.authorized_auth(handle)?;
         Ok(value)
     }
+    /// Read an explicitly requested bounded group for an Auth subtree copy.
+    /// # Errors
+    /// Rejects stale evidence, unknown fields and aggregate output exhaustion.
+    pub fn auth_values(
+        &self,
+        handle: &AuthHandle,
+        fields: &[String],
+    ) -> Result<Vec<String>, AppError> {
+        if fields.len() > 2048 {
+            return Err(unavailable());
+        }
+        let active = self.authorized_auth(handle)?;
+        let mut size = 0;
+        let values = fields
+            .iter()
+            .map(|field| {
+                let value = active.inspection.value(field).ok_or_else(unavailable)?;
+                size += value.len();
+                if size > MAX_TOTAL {
+                    return Err(unavailable());
+                }
+                Ok(value.to_owned())
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        self.authorized_auth(handle)?;
+        Ok(values)
+    }
     /// Resolve a finding into an original retained source navigation action.
     /// # Errors
     /// Rejects stale or unknown findings and cross-workspace capabilities.

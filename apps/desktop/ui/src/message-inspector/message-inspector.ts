@@ -4,6 +4,7 @@ import type { BodyBytePage, BodyInspection, HeaderPage, HeaderSummary, HeadView,
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 import { opaqueConnectTransport } from '../connection-evidence.js';
+import {copyGesture, requestCopy, copyScalar, CopyError} from '../inspection-copy.js';
 import { selectedConverterText } from '../converter-selection.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
@@ -38,14 +39,18 @@ export class MessageInspector extends WebUIElement {
     } finally {document.removeEventListener('pointerdown',interaction,true);document.removeEventListener('keydown',interaction,true);}
   }
   showAuthBoundary(boundary:string):void {if(!this.heads().some(head=>head.boundary===boundary))return;this.boundary=boundary;this.updateMessage();this.showMode('auth');}
-  headerContext(header:{id:string},event:MouseEvent|KeyboardEvent):void {
-    if(event instanceof KeyboardEvent){if(event.key==='Escape')this.headerContextGeneration++;if(event.repeat||!(event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey))return;}
-    if(selectedConverterText(event))return;
-    event.preventDefault();event.stopPropagation();
-    const source=event.currentTarget as HTMLElement,id=this.detail?.id,boundary=this.boundary,generation=++this.headerContextGeneration,headers=this.headerGeneration;source.focus({preventScroll:true});
+  headerContext(header:{id:string;sensitive:boolean},event:MouseEvent|KeyboardEvent):void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const source=event.currentTarget as HTMLElement,id=this.detail?.id,boundary=this.boundary,headers=this.headerGeneration;
     if(!id)return;
-    const send=(text:string,error:string):void=>{if(this.isConnected&&generation===this.headerContextGeneration&&headers===this.headerGeneration&&this.detail?.id===id&&this.boundary===boundary&&source.getRootNode() instanceof ShadowRoot&&(source.getRootNode() as ShadowRoot).activeElement===source)this.$emit('format-converter-header',{event,text,error,source});};
-    void invoke<string>('converter_header_value',{id,boundary,index:Number(header.id)}).then(value=>send(value,'')).catch(error=>send('',describeError(error)));
+    const current=():boolean=>this.isConnected&&headers===this.headerGeneration&&this.detail?.id===id&&this.boundary===boundary;
+    const read=()=>invoke<{name:string;value:string|null;binary:boolean}>('copy_header_field',{id,boundary,index:Number(header.id)});
+    requestCopy(event,{source,current,note:header.sensitive?'The captured value was redacted.':undefined,actions:[
+      {id:'name',label:'Copy name',read:async()=>copyScalar((await read()).name)},
+      {id:'value',label:'Copy value',disabled:header.sensitive,read:async()=>{const field=await read();if(field.value===null)throw new CopyError('The captured value was redacted.');return copyScalar(field.value);}},
+      {id:'pair',label:'Copy name and value',disabled:header.sensitive,read:async()=>{const field=await read();if(field.value===null)throw new CopyError('The captured value was redacted.');return copyScalar(field.name)+': '+copyScalar(field.value);}},
+      {id:'converter',label:'Open in Format converter',disabled:header.sensitive,convert:true,read:()=>invoke<string>('converter_header_value',{id,boundary,index:Number(header.id)})},
+    ]});
   }
   @attr side = 'response';
   @attr split = '35';
@@ -75,7 +80,7 @@ export class MessageInspector extends WebUIElement {
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
   @observable boundary = '';
-  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string;valueSize:string;sizeTitle:string;valueSizeTitle:string}> = [];
+  @observable headerRows: Array<{id:string;name:string;value:string;sensitive:boolean;bytes:number;size:string;valueSize:string;sizeTitle:string;valueSizeTitle:string}> = [];
   @observable headersSummaryTitle='';
   @observable headersSummary = '';
   @observable showHeaderSizes=false;
@@ -221,7 +226,7 @@ export class MessageInspector extends WebUIElement {
   previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
   nextHeaders():void {if(this.headerNextOffset!==null)void this.loadHeaderPage(this.headerNextOffset);}
   private renderHeaders(fields:HeadView['headers'],summary?:HeaderSummary,offset=0):void {
-    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),sizeTitle:exactHeaderBytes(header.fieldBytes)+' · Field name, colon-space, original value and CRLF',valueSizeTitle:exactHeaderBytes(header.valueBytes)+' · Original field value before redaction',valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
+    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),sensitive:header.sensitive,name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),sizeTitle:exactHeaderBytes(header.fieldBytes)+' · Field name, colon-space, original value and CRLF',valueSizeTitle:exactHeaderBytes(header.valueBytes)+' · Original field value before redaction',valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
     const total=summary?.totalFields??fields.length, measured=fields.every(header=>header.fieldBytes!=null);
     const bytes=summary?summary.serializedBytes:measured?this.headerRows.reduce((sum,row)=>sum+row.bytes,2):null;
     this.headersSummaryTitle=exactHeaderBytes(bytes)+' · Sum of original serialized fields and final CRLF, before redaction; HTTP/1 equivalent';

@@ -10,6 +10,7 @@ export class InspectionCopyMenu extends WebUIElement {
   @observable copyMenuStatus = '';
   @observable copyMenuBusy = false;
   @observable copyFeedback = '';
+  @observable copyColorScheme = 'light dark';
   menu!: HTMLDivElement;
   private request: CopyRequest | null = null;
   private revision = 0;
@@ -17,6 +18,7 @@ export class InspectionCopyMenu extends WebUIElement {
     const request = (event as CustomEvent<CopyRequest>).detail;
     if (copyDialog(request.source) !== copyDialog(this)) return;
     this.close(false); this.request = request;
+    this.copyFeedback = ''; this.copyColorScheme = getComputedStyle(request.source).colorScheme;
     const rect = request.source.getBoundingClientRect(), pointer = request.event instanceof MouseEvent ? request.event : null;
     this.copyMenuX = Math.max(8, Math.min(pointer ? pointer.clientX : rect.left, innerWidth - 300)) + 'px';
     this.copyMenuY = Math.max(8, Math.min(pointer ? pointer.clientY : rect.bottom, innerHeight - 290)) + 'px';

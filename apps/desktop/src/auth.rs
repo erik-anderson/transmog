@@ -33,6 +33,22 @@ pub(super) async fn auth_value(
         })?
 }
 #[tauri::command]
+pub(super) async fn auth_values(
+    handle: AuthHandle,
+    fields: Vec<String>,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Vec<String>, AppError> {
+    let app = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || app.auth_values(&handle, &fields))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Auth copy worker unavailable".into(),
+            retryable: false,
+        })?
+}
+#[tauri::command]
 pub(super) fn auth_source(
     handle: AuthHandle,
     finding: String,

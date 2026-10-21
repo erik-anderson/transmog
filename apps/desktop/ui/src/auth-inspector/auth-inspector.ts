@@ -2,6 +2,8 @@ import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {AuthField,AuthFinding,AuthRelated,AuthRelatedEntry,AuthSelection,AuthSourceNavigation,AuthView} from './models.js';
+import {copyGesture, copyTree, fieldCopyActions, requestCopy, CopyError, type CopyTreeNode} from '../inspection-copy.js';
+import {selectedConverterText} from '../converter-selection.js';
 
 let generation=0n;
 const next=():string=>(++generation).toString();
@@ -110,6 +112,41 @@ export class AuthInspector extends WebUIElement {
     const view=this.view;if(!view)return;const revision=this.revision;
     try {const source=await invoke<AuthSourceNavigation>('auth_source',{handle:view.handle,finding:id});if(this.current(revision)&&this.active)this.$emit('auth-source',source);}
     catch {if(this.current(revision))this.authNotice='Original source is no longer available. Retry inspection.';}
+  }
+  fieldContext(id: string, event: MouseEvent | KeyboardEvent): void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const view = this.view, field = this.field(id), revision = this.revision;
+    if (!view || !field) return;
+    requestCopy(event, {source: event.currentTarget as HTMLElement,
+      current: () => this.current(revision) && this.active && this.view === view,
+      note: field.sensitive ? 'Value actions copy the actual retained value, including sensitive material.' : undefined,
+      actions: fieldCopyActions(field.name, field.available ? () => invoke<string>('auth_value', {handle: view.handle, field: id}) : null)});
+  }
+  findingContext(id: string, event: MouseEvent | KeyboardEvent): void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const view = this.view, revision = this.revision;
+    const find = (nodes: AuthFinding[]): AuthFinding | undefined => {
+      for (const node of nodes) { if (node.id === id) return node; const child = find(node.children); if (child) return child; }
+      return undefined;
+    };
+    const finding = find(this.authFindings); if (!view || !finding) return;
+    const subtree = async (secrets: boolean, current: () => boolean): Promise<string> => {
+      const fields: AuthField[] = [];
+      const collect = (node: AuthFinding): void => { fields.push(...node.fields.filter(field => field.available && (secrets || !field.sensitive))); node.children.forEach(collect); };
+      collect(finding);
+      const values = await invoke<string[]>('auth_values', {handle: view.handle, fields: fields.map(field => field.id)});
+      if (!current() || values.length !== fields.length) throw new CopyError('The Auth evidence changed. Open the copy menu again.');
+      const actual = new Map(fields.map((field, index) => [field.id, values[index]!]));
+      const tree = (node: AuthFinding): CopyTreeNode => ({name: node.format + ' · ' + node.role,
+        children: [...node.fields.map(field => ({name: field.name, value: !field.available ? '[unavailable]' :
+          field.sensitive && !secrets ? '[masked]' : actual.get(field.id)!})), ...node.children.map(tree)]});
+      return copyTree(tree(finding));
+    };
+    requestCopy(event, {source: event.currentTarget as HTMLElement,
+      current: () => this.current(revision) && this.active && this.view === view,
+      actions: [...fieldCopyActions(finding.format + ' · ' + finding.role, null),
+        {id: 'subtree', label: 'Copy subtree', read: current => subtree(false, current)},
+        {id: 'secrets', label: 'Copy subtree including secrets', read: current => subtree(true, current)}]});
   }
   async related():Promise<void> {
     const view=this.view;if(!view||this.authRelatedBusy)return;const revision=this.revision;this.authRelatedBusy=true;

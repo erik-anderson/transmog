@@ -73,6 +73,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
         command,
         "app_status"
             | "converter_header_value"
+            | "copy_header_field"
             | "client_certificate_status"
             | "product_state"
             | "save_workspace_preferences"
@@ -132,6 +133,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "inspect_body"
             | "inspect_auth"
             | "auth_value"
+            | "auth_values"
             | "auth_source"
             | "related_auth"
             | "cancel_auth"
@@ -558,6 +560,7 @@ mod tests {
             "read_body_range",
             "inspect_auth",
             "auth_value",
+            "auth_values",
             "auth_source",
             "related_auth",
             "cancel_auth",

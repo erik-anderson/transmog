@@ -14,7 +14,7 @@ export interface CopyRequest {
   event: MouseEvent | KeyboardEvent;
   actions: CopyAction[];
   current: () => boolean;
-  note?: string;
+  note?: string | undefined;
 }
 export function copyGesture(event: MouseEvent | KeyboardEvent): boolean {
   return !event.defaultPrevented && (!(event instanceof KeyboardEvent) ||

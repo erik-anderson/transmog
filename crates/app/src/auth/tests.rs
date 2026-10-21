@@ -74,6 +74,40 @@ fn request(app: &Application, generation: &str) -> AuthRequest {
     }
 }
 #[tokio::test]
+async fn subtree_values_are_bounded_authorized_and_atomic() {
+    let app = application_fixture();
+    let view = app.inspect_auth(request(&app, "1")).await.unwrap();
+    let field = view.inspection.findings[0]
+        .fields
+        .iter()
+        .find(|field| field.name == "Password")
+        .unwrap();
+    assert_eq!(
+        app.auth_values(&view.handle, &[field.id.clone(), field.id.clone()])
+            .unwrap(),
+        ["pass:more", "pass:more"]
+    );
+    assert!(
+        app.auth_values(&view.handle, &[field.id.clone(), "missing".into()])
+            .is_err()
+    );
+    assert!(
+        app.auth_values(&view.handle, &vec![field.id.clone(); 2049])
+            .is_err()
+    );
+    let mut foreign = view.handle.clone();
+    foreign.owner = "other".into();
+    assert!(
+        app.auth_values(&foreign, std::slice::from_ref(&field.id))
+            .is_err()
+    );
+    app.cancel_auth("request-auth", "2", &view.handle.page_id);
+    assert!(
+        app.auth_values(&view.handle, std::slice::from_ref(&field.id))
+            .is_err()
+    );
+}
+#[tokio::test]
 async fn scoped_values_stages_source_and_retention() {
     let app = application_fixture();
     let view = app.inspect_auth(request(&app, "1")).await.unwrap();
