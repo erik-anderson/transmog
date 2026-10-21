@@ -38,6 +38,20 @@ export async function checkTrafficClassifications(page,root) {
     assert.ok((await page.evaluate(()=>globalThis.__workspaceFixture.classificationRequests.length))>pending,'The newest viewport was not retried after stale work');
     assert.equal(await traffic.locator('[data-extension-column="office:protocol"] img').count(),0);
     assert.equal(await traffic.locator('[data-extension-column="office:protocol"]').first().textContent(),'New <img src=x onerror=alert(1)>');
+    await page.evaluate(() => {
+      const s = globalThis.__workspaceFixture, t = document.querySelector('app-shell').traffic;
+      globalThis.__ordinaryCells = t.sessions.map(row => ({id: row.id, cells: row.cells}));
+      t.trafficTable.focus();
+      s.classificationValues = ['Refreshed metadata'];
+      s.emitNative('extensions-changed');
+    });
+    await traffic.locator('[data-extension-column="office:protocol"]').first().getByText('Refreshed metadata', {exact: true}).waitFor();
+    assert.equal(await page.evaluate(() => {
+      const t = document.querySelector('app-shell').traffic;
+      const unchanged = globalThis.__ordinaryCells.every(previous => t.sessions.find(row => row.id === previous.id)?.cells === previous.cells);
+      delete globalThis.__ordinaryCells;
+      return unchanged && t.getRootNode().activeElement === t.trafficTable;
+    }), true, 'Catalog refresh rebuilt ordinary Traffic cells or moved focus');
     const heading=traffic.getByRole('button',{name:'Filter Protocol · Extension: Office tools',exact:true});
     assert.equal(await heading.locator('svg[aria-hidden="true"]').count(),1);
     await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.classificationsById=Object.fromEntries(s.sessions.map((row,index)=>[row.id,{'office:protocol':index===0?['MS-FSSHTTP','Office']:[]}]))});
@@ -59,6 +73,41 @@ export async function checkTrafficClassifications(page,root) {
     await picker.getByRole('checkbox',{name:/No match/}).check();
     await picker.getByRole('button',{name:'Apply filter',exact:true}).click();
     await page.waitForFunction(id=>{const t=document.querySelector('app-shell').traffic;return t.totalMatched>0&&!t.virtualList.indexes.has(id);},firstId);
+    // A catalog change invalidates counts for every field when an extension
+    // filter is active, including when the replacement Traffic query fails.
+    await page.evaluate(() => {
+      const s = globalThis.__workspaceFixture, t = document.querySelector('app-shell').traffic;
+      s.deferFacets = true;
+      t.openFilterPicker('host');
+    });
+    await page.waitForFunction(() => globalThis.__workspaceFixture.facetPending);
+    await page.evaluate(() => {
+      const s = globalThis.__workspaceFixture;
+      s.reviewColumnChoices = s.extensionColumnChoices;
+      s.extensionColumnChoices = [];
+      s.queryError = true;
+      s.facetError = true;
+      s.emitNative('extensions-changed');
+    });
+    await page.waitForFunction(() => document.querySelector('app-shell').traffic.classifications.choices.length === 0);
+    await page.evaluate(async () => {
+      const s = globalThis.__workspaceFixture, t = document.querySelector('app-shell').traffic;
+      await t.queryPending;
+      s.releaseFacets();
+      await t.facetPending;
+    });
+    assert.equal(await page.evaluate(() => document.querySelector('app-shell').traffic.pickerLoading), false, 'Catalog change left an unrelated field loading forever');
+    await picker.getByText(/Counts unavailable:/).waitFor();
+    await page.keyboard.press('Escape');
+    await page.evaluate(() => {
+      const s = globalThis.__workspaceFixture;
+      s.extensionColumnChoices = s.reviewColumnChoices;
+      delete s.reviewColumnChoices;
+      s.queryError = false;
+      s.facetError = false;
+      s.emitNative('extensions-changed');
+    });
+    await page.waitForFunction(() => document.querySelector('app-shell').traffic.extensionTableColumns.length === 1);
     await traffic.getByRole('button',{name:/Remove Protocol · Office tools/}).click();
     await page.evaluate(()=>{delete globalThis.__workspaceFixture.classificationsById;});
     await page.evaluate(async()=>document.querySelector('app-shell').traffic.refreshSessions(undefined,true));
@@ -69,6 +118,7 @@ export async function checkTrafficClassifications(page,root) {
       await page.screenshot({path:resolve(root,`../../../target/ui-check/classification-${width}.png`)});
     }
     await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/classification-contrast.png')});await page.emulateMedia({forcedColors:'none'});
+    await heading.click();await page.keyboard.press('Escape');
     await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.extensionColumnChoices=[];s.emitNative('extensions-changed');});
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.extensionTableColumns.length===0);
     assert.equal(await traffic.locator('[data-extension-column]').count(),0);
@@ -84,7 +134,7 @@ export async function checkTrafficClassifications(page,root) {
     await page.waitForFunction(()=>globalThis.__workspaceFixture.extensionListenerCount()===0);
   } finally {
     await page.emulateMedia({forcedColors:'none'});await page.setViewportSize({width:1280,height:800});
-    await page.evaluate(saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.extensionColumnChoices=saved.choices;s.classificationValues=saved.values;s.deferClassifications=false;s.finishClassifications?.();s.finishExtensionColumns?.();delete s.classificationsById;t.preferences=saved.preferences;t.classifications.invalidate();},saved);
+    await page.evaluate(saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.extensionColumnChoices=saved.choices;s.classificationValues=saved.values;s.deferClassifications=false;s.finishClassifications?.();s.finishExtensionColumns?.();s.releaseFacets?.();delete s.classificationsById;delete s.reviewColumnChoices;s.queryError=false;s.facetError=false;t.preferences=saved.preferences;t.classifications.invalidate();},saved);
     await page.locator('a[data-view="traffic"]').click();
   }
 }

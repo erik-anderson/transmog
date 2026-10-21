@@ -19,7 +19,8 @@ mod tests;
 pub struct ClassificationFilter {
     /// Package-qualified column identity.
     pub column: String,
-    /// Text labels or Unavailable for no matching label. Limited evidence never matches either.
+    /// Text labels or Unavailable for no matching label. Empty means unrestricted.
+    /// Limited evidence never matches a selected alternative.
     pub values: Vec<crate::TrafficFilterValue>,
 }
 
@@ -99,20 +100,49 @@ fn unavailable_column() -> AppError {
     )
 }
 
+struct PreparedFilter<'a> {
+    column: &'a str,
+    literals: BTreeSet<&'a str>,
+    unmatched: bool,
+}
+
 impl ClassificationFilter {
+    fn prepare<'a>(&'a self, declaration: &'a ClassificationColumn) -> PreparedFilter<'a> {
+        let requested = self
+            .values
+            .iter()
+            .filter_map(|value| match value {
+                crate::TrafficFilterValue::Text(text) => Some(text.to_lowercase()),
+                _ => None,
+            })
+            .collect::<BTreeSet<_>>();
+        PreparedFilter {
+            column: &self.column,
+            // Classifications return these exact manifest literals. Resolve case
+            // folding once, rather than allocating for each row and alternative.
+            literals: declaration
+                .values
+                .iter()
+                .filter(|value| requested.contains(&value.value.to_lowercase()))
+                .map(|value| value.value.as_str())
+                .collect(),
+            unmatched: self
+                .values
+                .contains(&crate::TrafficFilterValue::Unavailable),
+        }
+    }
+}
+
+impl PreparedFilter<'_> {
     fn matches(&self, row: &TrafficClassification) -> bool {
         if row.limited {
             return false;
         }
-        let labels = row.values.get(&self.column).map_or(&[][..], Vec::as_slice);
-        self.values.is_empty()
-            || self.values.iter().any(|value| match value {
-                crate::TrafficFilterValue::Text(text) => labels
-                    .iter()
-                    .any(|label| label.to_lowercase() == text.to_lowercase()),
-                crate::TrafficFilterValue::Unavailable => labels.is_empty(),
-                _ => false,
-            })
+        let labels = row.values.get(self.column).map_or(&[][..], Vec::as_slice);
+        (self.unmatched && labels.is_empty())
+            || labels
+                .iter()
+                .any(|label| self.literals.contains(label.as_str()))
     }
 }
 
@@ -210,10 +240,10 @@ impl Budget {
     }
 }
 impl Application {
-    fn prepare_classification_filters(
+    fn classification_filter_columns(
         &self,
         filters: &[ClassificationFilter],
-    ) -> Result<PreparedColumns, AppError> {
+    ) -> Result<Vec<(String, ClassificationColumn)>, AppError> {
         if filters.len() > 8
             || filters
                 .iter()
@@ -249,7 +279,7 @@ impl Application {
         if columns.len() != keys.len() {
             return Err(unavailable_column());
         }
-        Ok(PreparedColumns::new(columns))
+        Ok(columns)
     }
 
     /// Adds only explicitly requested header predicates to an existing metadata scope.
@@ -261,7 +291,27 @@ impl Application {
         if query.extension_filters.is_empty() {
             return Ok(matching);
         }
-        let prepared = self.prepare_classification_filters(&query.extension_filters)?;
+        let columns = self.classification_filter_columns(&query.extension_filters)?;
+        let filters = query
+            .extension_filters
+            .iter()
+            .filter(|filter| !filter.values.is_empty())
+            .collect::<Vec<_>>();
+        if filters.is_empty() {
+            return Ok(matching);
+        }
+        // Empty groups must not project unrelated headers or consume scan budgets.
+        let prepared = PreparedColumns::new(
+            columns
+                .into_iter()
+                .filter(|(key, _)| filters.iter().any(|filter| &filter.column == key))
+                .collect(),
+        );
+        let filters = filters
+            .into_iter()
+            .zip(&prepared.columns)
+            .map(|(filter, (_, column))| filter.prepare(column))
+            .collect::<Vec<_>>();
         let mut base = query.clone();
         base.extension_filters.clear();
         base.cursor = None;
@@ -283,11 +333,7 @@ impl Application {
                     false,
                 ));
             }
-            if query
-                .extension_filters
-                .iter()
-                .all(|filter| filter.matches(&row))
-            {
+            if filters.iter().all(|filter| filter.matches(&row)) {
                 selected.insert(id);
             }
         }
@@ -301,12 +347,13 @@ impl Application {
         &self,
         request: &ClassificationFacetInput,
     ) -> Result<ClassificationFacetPage, AppError> {
-        let prepared = self.prepare_classification_filters(&[ClassificationFilter {
-            column: request.column.clone(),
-            values: Vec::new(),
-        }])?;
+        let prepared =
+            PreparedColumns::new(self.classification_filter_columns(&[ClassificationFilter {
+                column: request.column.clone(),
+                values: Vec::new(),
+            }])?);
         // Validate constraints even when the edited dimension is excluded.
-        self.prepare_classification_filters(&request.query.extension_filters)?;
+        self.classification_filter_columns(&request.query.extension_filters)?;
         let mut query = request.query.clone();
         query
             .extension_filters

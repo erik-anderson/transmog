@@ -238,6 +238,58 @@ fn retained_classifications_use_both_client_heads_without_loading_code_or_bodies
         };
         assert!(app.query_sessions(query).is_err());
     }
+    // Empty alternatives are unrestricted, even if retained headers are too
+    // large to classify. Selecting real alternatives must still report limits.
+    let target = catalog
+        .with_heads(ExchangeId(2), |heads| {
+            heads.request_heads[0].head.target.clone()
+        })
+        .unwrap();
+    catalog.apply(ObserverEvent {
+        exchange_id: ExchangeId(2),
+        sequence: 3,
+        kind: ObserverEventKind::RequestHeadObserved {
+            boundary: ExchangeBoundary::ClientRequest,
+            head: RequestHead {
+                method: "GET".into(),
+                target,
+                headers: HeaderBlock::from_fields(vec![
+                    HeaderField::try_new("x-padding", "x")
+                        .unwrap();
+                    4097
+                ]),
+                source_version: HttpLegVersion::Http1,
+            },
+        },
+    });
+    let empty = crate::SessionQueryInput {
+        extension_filters: vec![ClassificationFilter {
+            values: vec![],
+            ..filter.clone()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(app.query_sessions(empty).unwrap().total_matched, 2);
+    assert!(
+        app.query_sessions(query.clone()).is_err(),
+        "Limited evidence was treated as No match"
+    );
+    let counts = app
+        .extension_traffic_facets(&ClassificationFacetInput {
+            query: crate::SessionQueryInput::default(),
+            column: keys[0].clone(),
+        })
+        .unwrap();
+    assert_eq!(counts.omitted_entries, 1);
+    assert_eq!(
+        counts
+            .options
+            .iter()
+            .find(|option| option.label == "No match")
+            .unwrap()
+            .count,
+        0
+    );
     registry.set_enabled("office", false).unwrap();
     assert!(
         app.query_sessions(query).is_err(),
@@ -326,4 +378,41 @@ fn matching_work_charges_value_bytes_before_parsing_long_content_types() {
     );
     assert!(result.limited);
     assert!(result.values.is_empty());
+}
+
+#[test]
+fn prepared_alternatives_preserve_unicode_or_and_limited_evidence() {
+    let mut column = manifest().traffic_columns.remove(0);
+    column.values[0].value = "Straße".into();
+    column.values[1].value = "STRAẞE".into();
+    let mut values = (0..126)
+        .map(|index| crate::TrafficFilterValue::Text(format!("Unknown {index}")))
+        .collect::<Vec<_>>();
+    values.extend([
+        crate::TrafficFilterValue::Text("straße".into()),
+        crate::TrafficFilterValue::Unavailable,
+    ]);
+    let filter = ClassificationFilter {
+        column: "office:protocol".into(),
+        values,
+    };
+    let prepared = filter.prepare(&column);
+    let row = |labels: Vec<&str>, limited| TrafficClassification {
+        id: "row".into(),
+        values: BTreeMap::from([(
+            "office:protocol".into(),
+            labels.into_iter().map(String::from).collect(),
+        )]),
+        limited,
+    };
+    assert!(prepared.matches(&row(vec!["Straße"], false)));
+    assert!(prepared.matches(&row(vec!["STRAẞE"], false)));
+    assert!(prepared.matches(&row(vec![], false)));
+    assert!(!prepared.matches(&row(vec!["Unrelated"], false)));
+    assert!(!prepared.matches(&row(vec![], true)));
+    let selected = ClassificationFilter {
+        column: filter.column.clone(),
+        values: vec![crate::TrafficFilterValue::Text("straße".into())],
+    };
+    assert!(!selected.prepare(&column).matches(&row(vec![], false)));
 }

@@ -544,22 +544,32 @@ export class TrafficWorkspace extends WorkspaceElement {
     const chosen=this.preferences.extensionColumns??NO_EXTENSION_KEYS,choices=this.classifications.choices,known=new Set(choices.map(column=>column.key));
     this.extensionSettingsColumns=[...choices.map(column=>({key:column.key,label:column.name+' · '+column.extensionName})),...chosen.filter(key=>!known.has(key)).map(key=>({key,label:'Unavailable: '+key}))].map(column=>({...column,checked:chosen.includes(column.key),disabled:!chosen.includes(column.key)&&chosen.length>=8}));
   }
-  private refreshClassificationCells():void {
-    this.extensionColumnError=this.classifications.error;
-    if(!this.extensionTableColumns.length)return;
-    let changed=false;
-    const rows=this.sessions.map(row=>{const cells=this.classifications.cells(row.id);if(cells===row.extensionCells)return row;changed=true;return {...row,extensionCells:cells};});
-    if(changed)this.sessions=rows;
+  private refreshClassificationCells(): void {
+    this.extensionColumnError = this.classifications.error;
+    const hasColumns = this.extensionTableColumns.length > 0;
+    if (!hasColumns && this.sessions.every(row => row.extensionCells === NO_EXTENSION_CELLS)) return;
+    let changed = false;
+    const rows = this.sessions.map(row => {
+      const cells = hasColumns ? this.classifications.cells(row.id) : NO_EXTENSION_CELLS;
+      if (cells === row.extensionCells) return row;
+      changed = true;
+      return {...row, extensionCells: cells};
+    });
+    if (changed) this.sessions = rows;
   }
   private extensionCatalogChanged(): void {
     this.rebuildExtensionColumns();
-    this.rebuildColumns();
-    this.scheduleViewport();
-    if (this.filterGroups.some(group => extensionColumnKey(group.dimension))) {
+    this.updateColumnMetrics();
+    this.refreshClassificationCells();
+    if (this.extensionTableColumns.length) this.classifications.schedule(this.sessions.map(row => row.id));
+    const hasExtensionFilters = this.filterGroups.some(group => extensionColumnKey(group.dimension));
+    if (hasExtensionFilters) {
       this.queryRevision++;
       void this.refreshSessions(undefined, true);
     }
-    if (this.pickerOpen && extensionColumnKey(this.pickerDimension)) {
+    // Counts for ordinary fields also depend on active extension filters. Do
+    // not rely on a successful Traffic query to replace an invalidated reply.
+    if (this.pickerOpen && (hasExtensionFilters || extensionColumnKey(this.pickerDimension))) {
       if (!this.pickerFields.some(field => field.id === this.pickerDimension)) this.closePicker();
       else {
         this.pickerGeneration++;
@@ -1223,9 +1233,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   private rebuildColumns():void {
     this.columns = displayColumns(this.preferences.columns.map(column=>column.id==='request-number'&&column.width===72?{...column,width:Math.max(column.width,this.requestNumberDigits*8+24)}:column)).map((column) => ({...column,sortDirection:this.sort.column === column.id ? this.sort.direction : 'none',sortArrow:this.sort.column === column.id ? this.sort.direction === 'ascending' ? '↑' : '↓' : ''}));
     this.settingsColumns = this.preferences.columns.map((column) => ({...column,label:column.id==='request-number'?'Request order (#)':columnDefinitions.find((definition) => definition.id === column.id)!.label}));
+    this.updateColumnMetrics();
+    this.rebuildRows(this.sessions);
+  }
+  private updateColumnMetrics():void {
     this.trafficColumnCount=this.columns.length+this.extensionTableColumns.length;
     this.tableWidth = (this.columns.reduce((sum,column) => sum+column.width,0)+this.extensionTableColumns.length*180)+'px';
-    this.rebuildRows(this.sessions);
   }
   private rebuildRows(rows:SessionSummary[]):void {
     this.sessions = rows.map((row) => {
