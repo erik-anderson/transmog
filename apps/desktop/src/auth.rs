@@ -1,0 +1,77 @@
+//! Auth commands always resolve evidence through the calling window's application.
+use super::DesktopState;
+use tauri::State;
+use transmog_app::{
+    AppError,
+    auth::{AuthHandle, AuthRequest, AuthSource, AuthView, RelatedAuth},
+};
+#[tauri::command]
+pub(super) async fn inspect_auth(
+    request: AuthRequest,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<AuthView, AppError> {
+    state
+        .window_application(&window)?
+        .inspect_auth(request)
+        .await
+}
+#[tauri::command]
+pub(super) async fn auth_value(
+    handle: AuthHandle,
+    field: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<String, AppError> {
+    let app = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || app.auth_value(&handle, &field))
+        .await
+        .map_err(|_| {
+            AppError::new(
+                transmog_app::ErrorCategory::Unavailable,
+                "Auth value worker unavailable",
+                false,
+            )
+        })?
+}
+#[tauri::command]
+pub(super) fn auth_source(
+    handle: AuthHandle,
+    finding: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<AuthSource, AppError> {
+    state
+        .window_application(&window)?
+        .auth_source(&handle, &finding)
+}
+#[tauri::command]
+pub(super) async fn related_auth(
+    handle: AuthHandle,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<RelatedAuth, AppError> {
+    let app = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || app.related_auth(&handle))
+        .await
+        .map_err(|_| {
+            AppError::new(
+                transmog_app::ErrorCategory::Unavailable,
+                "Related auth worker unavailable",
+                false,
+            )
+        })?
+}
+#[tauri::command]
+pub(super) fn cancel_auth(
+    slot: String,
+    generation: String,
+    page_id: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .cancel_auth(&slot, &generation, &page_id);
+    Ok(())
+}

@@ -146,10 +146,13 @@ impl Parser<'_> {
                     self.at += 1;
                 }
                 let raw = self.bytes.get(start..self.at)?;
-                let scalar = serde_json::from_slice::<serde_json::Value>(raw).ok()?;
-                if scalar.is_object() || scalar.is_array() || scalar.is_string() {
+                if !raw
+                    .first()
+                    .is_some_and(|b| b.is_ascii_digit() || b"-tfn".contains(b))
+                {
                     return None;
                 }
+                serde_json::from_slice::<serde::de::IgnoredAny>(raw).ok()?;
                 Some(Node::Scalar(std::str::from_utf8(raw).ok()?.into()))
             }
         }

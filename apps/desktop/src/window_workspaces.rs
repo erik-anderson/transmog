@@ -129,6 +129,11 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "composer_source"
             | "save_request_body"
             | "inspect_body"
+            | "inspect_auth"
+            | "auth_value"
+            | "auth_source"
+            | "related_auth"
+            | "cancel_auth"
             | "visualizer_page"
             | "visualizer_choices"
             | "activate_visualizer"
@@ -550,6 +555,11 @@ mod tests {
             "execute_composer",
             "request_command",
             "read_body_range",
+            "inspect_auth",
+            "auth_value",
+            "auth_source",
+            "related_auth",
+            "cancel_auth",
             "visualizer_choices",
             "activate_visualizer",
             "reload_visualizer",

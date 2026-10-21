@@ -264,7 +264,7 @@ fn codec_failure(error: &ContentCodecError) -> DecodeFailure {
         _ => DecodeFailure::Malformed,
     }
 }
-async fn decode(
+pub(crate) async fn decode(
     codings: &[String],
     encoded: Vec<u8>,
     budget: usize,

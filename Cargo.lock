@@ -7059,6 +7059,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-boring",
+ "transmog-auth",
  "transmog-automation",
  "transmog-capture",
  "transmog-content",

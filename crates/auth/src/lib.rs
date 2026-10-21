@@ -259,11 +259,18 @@ impl Context {
         });
     }
     pub(crate) fn push(&mut self, mut finding: Finding) {
+        fn name_children(finding: &mut Finding) {
+            for (index, child) in finding.children.iter_mut().enumerate() {
+                child.id = format!("{}.{index}", finding.id);
+                name_children(child);
+            }
+        }
         if self.result.findings.len() >= 64 {
             self.limited();
             return;
         }
         finding.id = format!("f{}", self.result.findings.len());
+        name_children(&mut finding);
         self.result.findings.push(finding);
     }
     pub(crate) fn coverage(&mut self, source: &str, status: &str, detail: &str) {

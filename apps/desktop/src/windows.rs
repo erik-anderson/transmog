@@ -1,5 +1,7 @@
 #![allow(clippy::needless_pass_by_value)] // Tauri commands deserialize owned IPC arguments.
 
+#[path = "auth.rs"]
+mod auth;
 #[path = "captured_preview.rs"]
 mod captured_preview;
 #[path = "comparison.rs"]
@@ -2478,6 +2480,11 @@ pub fn run() {
                 composer_source,
                 save_request_body,
                 inspect_body,
+                auth::inspect_auth,
+                auth::auth_value,
+                auth::auth_source,
+                auth::related_auth,
+                auth::cancel_auth,
                 visualizers::visualizer_page,
                 visualizers::visualizer_choices,
                 visualizers::activate_visualizer,

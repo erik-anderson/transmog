@@ -7,6 +7,8 @@
 //! `WebView` dependency. Portable system information resolves memory budgets.
 
 mod artifacts;
+/// Window-scoped offline authentication evidence inspection.
+pub mod auth;
 mod automation;
 mod autoresponse_batch;
 mod body_ranges;
@@ -395,6 +397,7 @@ pub struct Application {
     comparisons: comparison::ComparisonRegistry,
     export_reviews: export_review::ReviewRegistry,
     visualizers: Arc<visualizers::Service>,
+    auth: Arc<auth::Service>,
 }
 
 impl std::fmt::Debug for Application {
@@ -580,6 +583,7 @@ impl Application {
             comparisons: comparison::ComparisonRegistry::default(),
             export_reviews: export_review::ReviewRegistry::default(),
             visualizers,
+            auth: Arc::new(auth::Service::default()),
         })
     }
 
