@@ -9,6 +9,9 @@ async function key(client,value,modifiers=2) {
 export async function smokeWindowShortcuts(main,viewer,targets,connect,waitFor,closeNative) {
   const shell='document.querySelector("app-shell")',traffic=shell+'.traffic';
   const original=await targets();
+  await main.evaluate(`(async()=>{const w=${traffic};await w.applySort('ascending','started-at');w.trafficTable.focus();})()`);
+  for(const type of ['rawKeyDown','keyUp'])await main.call('Input.dispatchKeyEvent',{type,key:'F5',code:'F5',windowsVirtualKeyCode:116,modifiers:0});
+  await waitFor(()=>main.evaluate(`${traffic}.followLatest && ${traffic}.sort.column==='started-at' && ${traffic}.sort.direction==='descending' && ${traffic}.sessionScroller.scrollTop===0 && !${traffic}.queryPending`),'Native F5 did not resume Follow newest');
   for(const client of [main,viewer]) {
     await client.evaluate(`${traffic}.filesMenuButton.focus()`);
     await key(client,'f');
@@ -30,5 +33,5 @@ export async function smokeWindowShortcuts(main,viewer,targets,connect,waitFor,c
   }
   await key(main,'w');
   assert.equal((await targets()).length,original.length,'Ctrl+W closed the main proxy window');
-  process.stdout.write('Native Ctrl+N, Ctrl+W, Ctrl+F, Ctrl+O and Ctrl+S verified in main and viewer windows.\n');
+  process.stdout.write('Native F5 Follow newest and Ctrl+N, Ctrl+W, Ctrl+F, Ctrl+O and Ctrl+S verified in main and viewer windows.\n');
 }

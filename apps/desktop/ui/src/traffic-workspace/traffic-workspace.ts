@@ -672,6 +672,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private trafficSelectionRevision=0;
   private trafficUndoTimer:number|undefined;
   @observable private trafficUndo:Array<{ids:string[];expiresAt?:number|undefined}>=[];
+  @observable private trafficRedo:Array<{ids:string[]}>=[];
   @observable selectedDetail:SessionDetail | null = null;
   @observable streamPanel=false;
   showStream(value:boolean):void {this.streamPanel=value;}
@@ -1700,6 +1701,18 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.rebuildRows(this.sessions);
   }
   clearTrafficSelection():void {this.trafficSelection.clear();this.updateTrafficSelection();this.trafficMenu.hidePopover();}
+  focusTrafficBackground(event:MouseEvent):void {
+    const target=event.composedPath()[0];
+    if(event.button!==0||event.defaultPrevented||!(target instanceof HTMLElement)||target.closest('thead,tr[data-session-id]'))return;
+    this.clearTrafficSelection();
+    this.trafficTable.focus({preventScroll:true});
+  }
+  trafficKeyboard(event:KeyboardEvent):void {
+    if(event.defaultPrevented||event.key!=='Escape'||isTextEditing(event)||!this.selectedTrafficCount)return;
+    if(this.querySelector('dialog[open],[popover]:popover-open'))return;
+    if(event.composedPath().some(node=>node instanceof HTMLElement&&node.matches('dialog,[popover]')))return;
+    event.preventDefault();this.clearTrafficSelection();
+  }
   selectTraffic(session:SessionSummary,event:MouseEvent):void {
     this.trafficSelection.choose(session.id,this.virtualList.ids,event);this.updateTrafficSelection();
     void this.inspectTraffic(session.id,true,()=>this.trafficSelection.focused===session.id);
@@ -1709,9 +1722,17 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.handleTrafficKey(session.id,event);
   }
   private handleTrafficKey(id:string,event:KeyboardEvent):void {
-    if(isTextEditing(event))return;
+    if(event.defaultPrevented || isTextEditing(event))return;
+    const control=event.ctrlKey||event.metaKey,key=event.key.toLowerCase();
+    if(control&&!event.altKey&&!event.shiftKey&&['x','z','y'].includes(key)) {
+      event.preventDefault();if(event.repeat)return;
+      if(key==='x'){this.trafficTable.focus({preventScroll:true});void this.clearTraffic();}
+      else if(key==='z')void this.undoTrafficRemoval();
+      else void this.redoTrafficRemoval();
+      return;
+    }
+    if(event.key==='F5'&&!control&&!event.altKey&&!event.shiftKey&&!this.viewerMode){event.preventDefault();if(!event.repeat)void this.resumeLatest();return;}
     if(event.key==='Delete') {event.preventDefault();void this.removeSelectedTraffic();return;}
-    if((event.ctrlKey||event.metaKey) && event.key.toLowerCase()==='z') {event.preventDefault();void this.undoTrafficRemoval();return;}
     if(event.key==='PageUp'||event.key==='PageDown'){
       const index=this.virtualList.indexes.get(id)??0,direction=event.key==='PageDown'?1:-1;
       const height=Math.max(1,this.sessionScroller.clientHeight-(this.trafficTable.tHead?.getBoundingClientRect().height??35));
@@ -1738,9 +1759,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     const row=target.closest('tr[data-session-id]');
     if(target!==this.trafficTable&&(!row||!this.trafficTable.contains(row))){
       if(this.trafficTable.contains(target))return;
-      if(!['Delete','Escape'].includes(event.key)&&!((event.ctrlKey||event.metaKey)&&['a','z'].includes(event.key.toLowerCase())))return;
+      if(!['Delete','Escape'].includes(event.key)&&!((event.ctrlKey||event.metaKey)&&['a','z','y'].includes(event.key.toLowerCase())))return;
     }
-    this.handleTrafficKey(this.trafficSelection.focused??this.virtualList.ids[0]??'',event);
+    this.handleTrafficKey(this.trafficSelection.focused??'',event);
   }
   positionTrafficMenu(event:MouseEvent):void {
     if(event.type!=='contextmenu'){const row=this.rowCache.get(this.trafficSelection.focused??this.selectedSessionId??'');if(row)this.prepareContextValues(row);}
@@ -1754,7 +1775,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
   addSelectedToResponseSet(inspected=false):void {if(this.viewerMode)return;const ids=inspected&&this.selectedSessionId?[this.selectedSessionId]:Array.from(this.trafficSelection.ids);if(!ids.length)return;this.trafficMenu.hidePopover();this.$emit('response-set-intake-request',{source:'traffic',ids});}
-  private pushTrafficUndo(action:{ids:string[];expiresAt?:number|undefined}):void {this.trafficUndo=[...this.trafficUndo.slice(-19),action];this.scheduleTrafficUndoExpiry();}
+  private pushTrafficUndo(action:{ids:string[];expiresAt?:number|undefined},resetRedo=true):void {this.trafficUndo=[...this.trafficUndo.slice(-19),action];if(resetRedo)this.trafficRedo=[];this.scheduleTrafficUndoExpiry();}
   @observable canCancelRequests=false;
   @observable cancelingRequests=false;
   async cancelInspectedRequest():Promise<void> {
@@ -1777,7 +1798,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if(this.removingTraffic)return;this.removingTraffic=true;
     try {
       const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null;preservedWebSockets:number}>('clear_traffic');
-      this.trafficUndo=[];this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;this.metadataGeneration++;this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
+      this.trafficUndo=[];this.trafficRedo=[];this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;this.metadataGeneration++;this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
       if(result.undoable&&result.ids.length)this.pushTrafficUndo({ids:result.ids,expiresAt:result.undoSeconds===null?undefined:Date.now()+result.undoSeconds*1000});
 
       this.trafficUndoText=result.ids.length?'Cleared '+result.ids.length.toLocaleString()+' entries.'+(result.undoable?(result.undoSeconds?' Undo expires in 5 minutes.':' Undo is available.'):' Undo is unavailable because 1 GB or more was cleared.'): result.preservedWebSockets?'No entries were cleared.':'Traffic is already empty.';
@@ -1806,16 +1827,23 @@ export class TrafficWorkspace extends WorkspaceElement {
     finally{this.removingTraffic=false;}
   }
   async removeSelectedTraffic():Promise<void> {
-    if(this.removingTraffic || !this.trafficSelection.ids.size)return;this.removingTraffic=true;
-    const ids=[...this.trafficSelection.ids],order=this.virtualList.ids;const index=this.virtualList.indexes.get(this.trafficSelection.focused??'')??0;
+    await this.removeTrafficEntries([...this.trafficSelection.ids]);
+  }
+  async redoTrafficRemoval():Promise<void> {
+    const action=this.trafficRedo.at(-1);if(action)await this.removeTrafficEntries(action.ids,true);
+  }
+  private async removeTrafficEntries(ids:string[],redo=false):Promise<void> {
+    if(this.removingTraffic || !ids.length)return;this.removingTraffic=true;
+    const order=this.virtualList.ids;const index=this.virtualList.indexes.get(this.trafficSelection.focused??'')??0;
     const selection=this.trafficSelectionRevision,inspection=this.inspectionGeneration;
     this.closePopover(this.trafficMenu,this.trafficTable);
     const root=this.getRootNode() as ShadowRoot,returnFocus=root.activeElement;
     const mayRestoreFocus=()=>root.activeElement===returnFocus||!returnFocus?.isConnected&&(!root.activeElement||root.activeElement===this.trafficTable);
     try {
       const removed=await invoke<string[]>('remove_traffic_entries',{ids,restore:false});
+      if(redo)this.trafficRedo=this.trafficRedo.slice(0,-1);
       if(!removed.length){this.diagnostic='No entries were removed. Open or connecting WebSockets were kept. Use Cancel request to stop a selected connection.';return;}
-      this.pushTrafficUndo({ids:removed});
+      this.pushTrafficUndo({ids:removed},!redo);
       this.trafficUndoText=`Removed ${removed.length} ${removed.length===1?'entry':'entries'} from Traffic.`;
       this.queryRevision++;await this.refreshSessions(undefined,true);
       const removedIds=new Set(removed);
@@ -1836,7 +1864,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
     try {
       const restored=await invoke<string[]>('remove_traffic_entries',{ids:action.ids,restore:true});this.trafficUndo=this.trafficUndo.slice(0,-1);this.scheduleTrafficUndoExpiry();if(!this.traceMetadataRows.length)this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list').catch(()=>[]);
-      this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':'';
+      if(restored.length)this.trafficRedo=[...this.trafficRedo.slice(-19),{ids:restored}];
+      this.trafficUndoText=this.trafficUndo.length?'Earlier removals can also be undone.':this.trafficRedo.length?'Traffic entries restored.':'';
       this.trafficSelection.ids=new Set(restored);
       this.queryRevision++;await this.refreshSessions(undefined,true);this.updateTrafficSelection();
       const id=restored.find(id=>this.virtualList.indexes.has(id));if(id){this.trafficSelection.focused=id;this.trafficSelection.anchor=id;await this.inspectTraffic(id,true);this.updateTrafficSelection();}

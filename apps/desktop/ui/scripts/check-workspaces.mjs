@@ -1,6 +1,7 @@
 import {checkResponseSetFollowups} from './check-response-set-followups.mjs';
 import {checkFormatConverter} from './check-format-converter.mjs';
 import {checkRequestControls} from './check-request-controls.mjs';
+import {checkTrafficShortcuts} from './check-traffic-shortcuts.mjs';
 import {checkResponseSetWorkspaces,checkResponseSetDraftRegressions,checkResponseSetPendingDialogs} from './check-response-set-workspaces.mjs';
 import {checkSavedDemos} from './check-saved-demos.mjs';
 import {checkResponseSetLifecycle} from './check-response-set-lifecycle.mjs';
@@ -983,6 +984,7 @@ try {
   if(process.argv.includes('--traffic-presentation-only')){await page.goto('https://workspace.test/');await checkTrafficPresentation(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic presentation and one-click inspector switching verified.\n');process.exit(0);}
   if(process.argv.includes('--classifications-only')){await page.goto('https://workspace.test/');await checkTrafficClassifications(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Static header classifications, bounded windows, stale replies and inactive cleanup verified.\n');process.exit(0);}
   if(process.argv.includes('--request-controls-only')){await checkRequestControls(page);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Request cancellation, uncached selections and delayed removal focus verified.\n');process.exit(0);}
+  if(process.argv.includes('--traffic-shortcuts-only')){await checkTrafficShortcuts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic clear, Undo/Redo and Follow newest shortcuts verified.\n');process.exit(0);}
   if(process.argv.includes('--response-followups-only')){await checkResponseSetFollowups(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response collection, active state, cancellation and Clear regressions verified.\n');process.exit(0);}
   if(process.argv.includes('--saved-demos-only')){await checkSavedDemos(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Durable demo save/review/playback/replace/delete and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--lifecycle-only')){await checkResponseSetLifecycle(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set lifecycle verified.\n');process.exit(0);}
@@ -2836,6 +2838,7 @@ try {
   await checkPreviewPrerequisites(page,root);
   await checkResponseSetFollowups(page,root);
   await checkRequestControls(page);
+  await checkTrafficShortcuts(page,root);
   await checkResponseSetWorkspaces(page,root);
   await checkResponseSetDraftRegressions(page);
   await checkResponseSetPendingDialogs(page,root);

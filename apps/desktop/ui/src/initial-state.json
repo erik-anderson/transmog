@@ -1583,6 +1583,7 @@
   "creditsSummary": "",
   "creditsStatus": "",
   "trafficUndo": [],
+  "trafficRedo": [],
   "saveTraceFormat": "native",
   "rowCount": 2,
   "topSpace": "0px",

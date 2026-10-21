@@ -20,6 +20,21 @@ export async function smokeTrafficList(client,screenshot) {
     await client.call('Input.dispatchKeyEvent',{type:text?'keyDown':'rawKeyDown',key,code,windowsVirtualKeyCode:virtualKey,modifiers,text,unmodifiedText:text});
     await client.call('Input.dispatchKeyEvent',{type:'keyUp',key,code,windowsVirtualKeyCode:virtualKey,modifiers});
   };
+  const originalColumns=await client.evaluate(`${t}.preferences.columns`);
+  try {
+    await client.evaluate(`${t}.preferences={...${t}.preferences,columns:${t}.preferences.columns.map(column=>({...column,visible:['request-number','method'].includes(column.id)}))};${t}.$flushUpdates()`);
+    await wait(`${t}.trafficTable.getBoundingClientRect().right<${t}.sessionScroller.getBoundingClientRect().right-40`);
+    const background=async()=>{
+      const blank=await client.evaluate(`(()=>{const w=${t},r=w.sessionScroller.getBoundingClientRect(),head=w.trafficTable.tHead.getBoundingClientRect();return {x:r.right-30,y:head.bottom+20};})()`);
+      await client.call('Input.dispatchMouseEvent',{type:'mousePressed',...blank,button:'left',clickCount:1});
+      await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',...blank,button:'left',clickCount:1});
+      await wait(`${t}.getRootNode().activeElement===${t}.trafficTable && ${t}.selectedTrafficCount===0`);
+    };
+    await background();await key('ArrowDown','ArrowDown',40);await wait(`${t}.selectedSessionId===${JSON.stringify(ids[0])} && ${t}.selectedTrafficCount===1`);
+    await background();await key('ArrowUp','ArrowUp',38);await wait(`${t}.selectedTrafficCount===1`);
+    assert.equal(await client.evaluate(`${t}.trafficSelection.focused`),ids[0],'Native first arrow skipped the first entry');
+    await key('Escape','Escape',27);assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),0,'Native Escape retained a single selection');
+  }finally{await client.evaluate(`${t}.preferences={...${t}.preferences,columns:${JSON.stringify(originalColumns)}};${t}.$flushUpdates()`);}
   for(const [value,code,virtualKey] of [['Enter','Enter',13],[' ','Space',32]]){
     await client.evaluate(`${t}.trafficTable.tHead.querySelector('.column-trigger').focus()`);
     await key(value,code,virtualKey);await wait(`${t}.columnMenu.matches(':popover-open')`);
@@ -75,6 +90,12 @@ export async function smokeTrafficList(client,screenshot) {
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===14999 && !${t}.removingTraffic`);
   await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===5001 && !${t}.removingTraffic`);
   assert.equal(await client.evaluate(`window.__TAURI_INTERNALS__.invoke('session_detail',{id:${JSON.stringify(numberedId)}}).then(detail=>detail.requestNumber)`),'20000');
+  await key('x','KeyX',88,2);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
+  await client.evaluate(`${t}.trafficUndoButton.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && !${t}.removingTraffic`);
+  await key('y','KeyY',89,2);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
+  await client.evaluate(`${t}.trafficUndoButton.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && !${t}.removingTraffic`);
+  await client.evaluate(`${t}.querySelector('.traffic-undo button:last-child').focus()`);await key('y','KeyY',89,2);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
+  await client.evaluate(`${t}.trafficUndoButton.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && !${t}.removingTraffic`);
   await client.evaluate(`${t}.trafficTable.focus()`);await key('a','KeyA',65,2);await wait(`${t}.selectedTrafficCount===20000`);
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
   await client.evaluate(`${t}.trafficTable.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===20000 && !${t}.removingTraffic`);
@@ -176,9 +197,11 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.preferences={...${t}.preferences,listSplit:65}`);
   if(screenshot)for(const [width,height] of [[1440,900],[960,720],[800,600]]){
     await client.call('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
-    assert.ok(await client.evaluate(`${t}.querySelector('.timeline-viewport').clientHeight>=96`),'Native compact Timeline lost its request rows');
-    assert.ok(await client.evaluate(`(()=>{const a=${t}.querySelector('.timeline-ticks').getBoundingClientRect();return [...${t}.querySelectorAll('.timeline-row>svg')].every(svg=>{const r=svg.getBoundingClientRect();return Math.abs(a.left-r.left)<1&&Math.abs(a.right-r.right)<1;});})()`),'Native bar widths differ from the axis');
+    await client.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    const geometry=await client.evaluate(`(()=>{const v=${t}.querySelector('.timeline-viewport'),rows=v.querySelectorAll('.timeline-row');return {height:v.clientHeight,rowHeight:rows[0]?.getBoundingClientRect().height??0,rows:rows.length};})()`);
     const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-timeline-'+width+'.png'),Buffer.from(image.data,'base64'));
+    assert.ok(geometry.rows>=2&&geometry.rowHeight>0&&geometry.height>=2*geometry.rowHeight,'Native compact Timeline cannot show two complete requests: '+JSON.stringify({width,...geometry}));
+    assert.ok(await client.evaluate(`(()=>{const a=${t}.querySelector('.timeline-ticks').getBoundingClientRect();return [...${t}.querySelectorAll('.timeline-row>svg')].every(svg=>{const r=svg.getBoundingClientRect();return Math.abs(a.left-r.left)<1&&Math.abs(a.right-r.right)<1;});})()`),'Native bar widths differ from the axis');
   }
   await client.call('Emulation.clearDeviceMetricsOverride');
   await client.evaluate(`${t}.preferences=${JSON.stringify(timelinePreferences)}`);
@@ -197,5 +220,5 @@ export async function smokeTrafficList(client,screenshot) {
   }finally{await client.evaluate(`${t}.refreshTimeline=globalThis.__nativeTimelineFocus.original;globalThis.__nativeTimelineFocus.release();delete globalThis.__nativeTimelineFocus`);}
   await client.evaluate(`${t}.setTimeline(false);${t}.clearTrafficSelection()`);
   process.stdout.write('WebView2 timeline: compact toggle, contextual help, full 20,000-row metadata scope, native keyboard range, selected subset and pointer inspection verified.\n');
-  process.stdout.write('WebView2 traffic: 20,000 entries, offscreen range, select all/delete/undo and search reveal verified.\n');
+  process.stdout.write('WebView2 traffic: 20,000 entries, offscreen range, select all/delete/undo, Ctrl+X clear, focused Undo/Redo shortcuts and search reveal verified.\n');
 }

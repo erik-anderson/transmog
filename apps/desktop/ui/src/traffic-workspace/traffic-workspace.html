@@ -1,6 +1,6 @@
 <template>
   <portable-case @case-open-change="{onCaseOpenChange(e)}" @case-review-closed="{processOpenedTraces()}" @case-preview-report-request="{onCasePreviewReport(e)}" @case-preview-opened="{onCasePreview(e)}" w-ref="{portableCase}" ?viewer-mode="{{viewerMode}}" @case-evidence-opened="{onCaseEvidenceOpened(e)}" @case-reference-request="{onCaseReference(e)}"></portable-case>
-  <section @incident-window-request="{onIncidentWindow(e)}" id="traffic" class="app-view traffic-view" aria-labelledby="traffic-heading" ?hidden="{{view != 'traffic'}}" ?data-active="{{view == 'traffic'}}">
+  <section @incident-window-request="{onIncidentWindow(e)}" @keydown="{trafficKeyboard(e)}" id="traffic" class="app-view traffic-view" aria-labelledby="traffic-heading" ?hidden="{{view != 'traffic'}}" ?data-active="{{view == 'traffic'}}">
     <div class="traffic-toolbar-stack"><header class="view-toolbar">
       <div class="view-title"><h1 id="traffic-heading">Traffic</h1></div>
       <form w-ref="{filterForm}" class="filters" @submit="{runContentSearch(e)}">
@@ -11,7 +11,7 @@
       <div class="traffic-tools">
         <if condition="!viewerMode && hasEnabledResponses"><autoresponse-switch :state="{{autoresponseState}}" :busy="{{autoresponsePending}}"></autoresponse-switch></if>
         <button type="button" w-ref="{filesMenuButton}" class="secondary compact-button files-menu-trigger" popovertarget="trace-files-menu">Files</button>
-        <button type="button" class="secondary compact-button" @click="{clearTraffic()}" ?disabled="{{removingTraffic}}" title="Clear entries in this window. Open WebSockets stay visible unless termination on clear is enabled in Settings. Undo expires after 5 minutes for 100 MB or more and is unavailable for 1 GB or more.">Clear all</button>
+        <button type="button" class="secondary compact-button" @click="{clearTraffic()}" ?disabled="{{removingTraffic}}" aria-keyshortcuts="Control+X" title="Clear entries in this window (Ctrl+X while the traffic list is focused). Open WebSockets stay visible unless termination on clear is enabled in Settings. Undo expires after 5 minutes for 100 MB or more and is unavailable for 1 GB or more.">Clear all</button>
         <button type="button" w-ref="{filterButton}" class="secondary compact-button" @click="{openFilters(e)}">Filters <if condition="filterCount">({{filterCount}})</if></button>
         <button type="button" class="secondary compact-button timeline-toggle" aria-label="Timeline" aria-pressed="{{timelineMode}}" title="{{timelineMode ? 'Show request list' : 'Show timeline'}}" @click="{toggleTimeline()}"><svg width="18" height="18" viewBox="0 0 20 20" aria-hidden="true"><path d="M2 4h7M5 10h10M10 16h8" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"></path></svg></button>
         <button type="button" w-ref="{viewMenuButton}" class="secondary compact-button" popovertarget="table-settings">View</button>
@@ -35,7 +35,7 @@
         <div class="timeline-surface" ?hidden="{{!timelineMode}}"><div class="timeline-load-state"><if condition="timelineBusy"><span role="status">Loading timeline…</span></if><if condition="timelineError"><span role="status">{{timelineError}}</span><button type="button" class="secondary compact-button" @click="{refreshTimeline()}">Retry</button></if></div>
 
         <traffic-timeline w-ref="{timeline}" :entries="{{timelineEntries}}" :chosen="{{timelineSelection}}" :sources="{{traceMetadataRows}}" :compact="{{preferences.compactRows}}" :markers="{{markerItems}}" marker-current="{{markerCurrent}}" @timeline-marker="{timelineMarker(e)}" current="{{selectedSessionId}}" @timeline-inspect="{inspectTimeline(e)}" @timeline-clear-selection="{clearTrafficSelection()}" @timeline-refresh="{refreshTimeline()}" @timeline-select="{selectTimeline(e)}"></traffic-timeline></div>
-        <div w-ref="{sessionScroller}" class="table-wrap" ?hidden="{{timelineMode}}" @scroll="{sessionScrolled()}">
+        <div w-ref="{sessionScroller}" class="table-wrap" ?hidden="{{timelineMode}}" @scroll="{sessionScrolled()}" @click="{focusTrafficBackground(e)}">
           <table w-ref="{trafficTable}" class="traffic-table" role="grid" tabindex="0" aria-rowcount="{{rowCount}}" aria-activedescendant="{{activeRowId}}" aria-multiselectable="true" aria-label="Traffic entries" data-width="{{tableWidth}}" ?data-compact="{{preferences.compactRows}}">
             <colgroup><for each="column in columns"><col key="{{column.id}}" data-width="{{column.widthCss}}"></for><for each="column in extensionTableColumns"><col key="{{column.key}}" data-width="180px"></for></colgroup>
             <thead><tr aria-rowindex="1"><for each="column in columns">
@@ -67,12 +67,12 @@
             </tbody>
           </table>
         </div>
-        <div class="traffic-undo" ?hidden="{{!trafficUndoText}}"><span role="status">{{trafficUndoText}}</span><button w-ref="{trafficUndoButton}" type="button" class="secondary compact-button" @click="{undoTrafficRemoval()}" ?hidden="{{!trafficUndo.length}}" ?disabled="{{removingTraffic}}">Undo traffic removal</button></div>
+        <div class="traffic-undo" ?hidden="{{!trafficUndoText}}"><span role="status">{{trafficUndoText}}</span><button w-ref="{trafficUndoButton}" type="button" class="secondary compact-button" @click="{undoTrafficRemoval()}" ?hidden="{{!trafficUndo.length}}" ?disabled="{{removingTraffic}}" title="Undo traffic removal (Ctrl+Z)" aria-keyshortcuts="Control+Z">Undo traffic removal</button><button type="button" class="secondary compact-button" @click="{redoTrafficRemoval()}" ?hidden="{{!trafficRedo.length}}" ?disabled="{{removingTraffic}}" title="Redo traffic removal (Ctrl+Y)" aria-keyshortcuts="Control+Y">Redo traffic removal</button></div>
         <div class="list-footer" ?hidden="{{timelineMode}}">
           <span ?hidden="{{timelineMode}}">{{followText}}</span><span ?hidden="{{!timelineMode}}">Timeline reflects retained traffic · adjusted ranges stay fixed</span>
           <div class="list-footer-actions" ?hidden="{{timelineMode}}">
             <if condition="updatesPending"><button type="button" class="new-traffic-button compact-button" @click="{showUpdates()}"><if condition="newTrafficCount">{{newTrafficCount}} new · </if>Show updates</button></if>
-            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}" title="Show the newest traffic and keep it updated as requests arrive. Selecting an entry pauses this.">Follow newest</button>
+            <button type="button" class="secondary compact-button" ?hidden="{{viewerMode}}" @click="{resumeLatest()}" ?disabled="{{followLatest}}" aria-keyshortcuts="F5" title="Show the newest traffic and keep it updated as requests arrive (F5 while the traffic list is focused). Selecting an entry pauses this.">Follow newest</button>
 
           </div>
         </div>

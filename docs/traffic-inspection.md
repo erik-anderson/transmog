@@ -404,12 +404,25 @@ remain inert text in this view.
 
 Ctrl+click adds entries, Shift selects ranges across the full displayed order,
 even when intermediate rows are offscreen, Shift+arrow extends selection and
-Escape clears it. Selecting or dragging across Traffic rows does not highlight
+Escape clears the selection, including when a Traffic toolbar control is focused,
+so Timeline shows all matching requests again. Editors, menus and dialogs retain
+their own Escape handling. Clicking blank space beside or below the columns also
+clears the selection and focuses the list. With no focused entry, the first Up or
+Down arrow selects the first entry.
+Selecting or dragging across Traffic rows does not highlight
 their text. Headers, bodies, the full URL popover and reports remain selectable
 for copying. **Remove selected entries** / Del and **Remove unselected
-entries** operate across the whole workspace, including hidden rows. Undo / Ctrl+Z
-restores them while their underlying evidence is retained. These actions do not
-delete source capture files or saved responses.
+entries** operate across the whole workspace, including hidden rows. **Clear all** /
+Ctrl+X clears the window's traffic when the list is focused. Undo / Ctrl+Z restores
+removed entries while their underlying evidence is retained; Redo / Ctrl+Y removes
+those restored entries again, leaving subsequently captured traffic in place.
+Ctrl+Z and Ctrl+Y also work while the Undo or Redo button is focused. A new removal
+clears Redo history. Text fields retain their ordinary editing shortcuts.
+These actions do not delete source capture files or saved responses.
+
+With the traffic list focused, F5 resumes **Follow newest**: newest-first ordering,
+the latest entries in view, and automatic updates as matching requests arrive.
+Existing filters still apply; selecting an entry or scrolling away pauses following.
 
 Clear and Remove keep open or connecting live WebSockets visible by default. **Settings →
 Preferences → Retention → Terminate open WebSockets when clearing Traffic**
