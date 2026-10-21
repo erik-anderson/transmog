@@ -29,7 +29,7 @@ pub(crate) fn scan(context: &mut Context, body: Body) {
     };
     source
         .transforms
-        .push("Character decoding to UTF-8 text (UTF-8/ASCII or BOM-selected UTF-16)".into());
+        .push(character_transform(&body.bytes).into());
     source.label = "Character-decoded body".into();
     if mime == "application/x-www-form-urlencoded" {
         let items = extract::pairs(context, &text, &source, true);
@@ -68,6 +68,15 @@ pub(crate) fn scan(context: &mut Context, body: Body) {
         "complete",
         "Bounded selected-message text scan; unknown content remains uninterpreted.",
     );
+}
+pub(crate) fn character_transform(bytes: &[u8]) -> &'static str {
+    if bytes.starts_with(&[0xff, 0xfe]) {
+        "Character decoding: UTF-16LE (BOM) to UTF-8"
+    } else if bytes.starts_with(&[0xfe, 0xff]) {
+        "Character decoding: UTF-16BE (BOM) to UTF-8"
+    } else {
+        "Character decoding: UTF-8 / ASCII"
+    }
 }
 pub(crate) fn text(bytes: &[u8], media: &str) -> Option<String> {
     let charset = media.split(';').skip(1).find_map(|p| {

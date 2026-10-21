@@ -71,6 +71,26 @@ pub(crate) fn parameter(context: &mut Context, pair: &Pair, items: &[Pair]) -> F
         bytes = decoded;
         source.transforms.push("Raw DEFLATE".into());
     }
+    source
+        .transforms
+        .push(crate::body::character_transform(&bytes).into());
+    if bytes.starts_with(&[0xff, 0xfe]) || bytes.starts_with(&[0xfe, 0xff]) {
+        let Some(text) = crate::body::text(&bytes, "application/xml") else {
+            finding.issue(
+                "unsupported",
+                "SAML XML character encoding is malformed or unsupported.",
+            );
+            return finding;
+        };
+        if text.len() > 4 * 1024 * 1024 || !context.charge(text.len()) {
+            finding.issue(
+                "limited",
+                "Character-decoded SAML XML exceeds its decoded budget.",
+            );
+            return finding;
+        }
+        bytes = text.into_bytes();
+    }
     if let Some(decoded) = xml(context, &bytes, source) {
         finding.children.push(decoded);
     } else {
@@ -219,6 +239,34 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
                         true,
                         "Captured CDATA; inert text.",
                     );
+                }
+            }
+            Ok((_, Event::Decl(declaration))) => {
+                let supported = declaration.encoding().is_none_or(|encoding| {
+                    encoding.is_ok_and(|encoding| {
+                        let character_decoding = source
+                            .transforms
+                            .iter()
+                            .rev()
+                            .find(|step| step.starts_with("Character decoding:"))
+                            .map_or("", String::as_str);
+                        let utf16 = character_decoding.contains("UTF-16");
+                        match encoding.to_ascii_lowercase().as_str() {
+                            "utf-8" | "utf8" => !utf16,
+                            "us-ascii" => !utf16 && bytes.is_ascii(),
+                            "utf-16" => utf16,
+                            "utf-16le" => character_decoding.contains("UTF-16LE"),
+                            "utf-16be" => character_decoding.contains("UTF-16BE"),
+                            _ => false,
+                        }
+                    })
+                });
+                if !supported {
+                    failure = Some((
+                        "unsupported",
+                        "XML encoding declaration is unsupported or conflicts with the observed byte encoding.",
+                    ));
+                    break;
                 }
             }
             Ok((_, Event::GeneralRef(reference))) => {

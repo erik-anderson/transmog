@@ -3,6 +3,50 @@ use base64::Engine as _;
 use std::io::Write as _;
 
 #[test]
+fn saml_binding_character_decoding_honors_bom_and_xml_declaration() {
+    let xml = r#"<?xml version="1.0" encoding="UTF-16"?><a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion"><a:Issuer>synthetic</a:Issuer></a:Assertion>"#;
+    let mut bytes = vec![0xff, 0xfe];
+    for word in xml.encode_utf16() {
+        bytes.extend(word.to_le_bytes());
+    }
+    let encoded = base64::engine::general_purpose::STANDARD
+        .encode(bytes)
+        .replace('+', "%2B");
+    let result = body(
+        "application/x-www-form-urlencoded",
+        format!("SAMLResponse={encoded}").into_bytes(),
+    );
+    assert_eq!(result.findings[0].children[0].format, "SAML 2.0 XML");
+    assert!(
+        result.findings[0].children[0]
+            .source
+            .transforms
+            .iter()
+            .any(|step| step.contains("UTF-16LE"))
+    );
+    let inner = base64::engine::general_purpose::STANDARD.encode(
+        br#"<?xml version="1.0" encoding="UTF-8"?><a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion"/>"#,
+    );
+    let mut outer = vec![0xff, 0xfe];
+    for word in format!("SAMLResponse={}", inner.replace('+', "%2B")).encode_utf16() {
+        outer.extend(word.to_le_bytes());
+    }
+    let result = body("application/x-www-form-urlencoded; charset=utf-16", outer);
+    assert_eq!(result.findings[0].children[0].format, "SAML 2.0 XML");
+    assert_eq!(result.findings[0].children[0].status, "decoded");
+    let result=body("application/xml",br#"<?xml version="1.0" encoding="ISO-8859-1"?><a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion"/>"#.to_vec());
+    assert_eq!(
+        result
+            .coverage
+            .iter()
+            .find(|source| source.source == "body")
+            .unwrap()
+            .status,
+        "unsupported"
+    );
+}
+
+#[test]
 fn fractional_time_conditions_do_not_invent_subsecond_capture_ordering() {
     let token = compact(
         r#"{"alg":"none","typ":"JWT"}"#,

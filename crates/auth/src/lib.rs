@@ -366,6 +366,11 @@ pub fn inspect_as(mut input: Input, canceled: Arc<AtomicBool>, format: &str) -> 
         .transforms
         .push("Explicit user interpretation; no automatic classification implied".into());
     let text = body::text(&body.bytes, &body.media_type);
+    if text.is_some() && ["saml", "jose"].contains(&format) {
+        source
+            .transforms
+            .push(body::character_transform(&body.bytes).into());
+    }
     let finding = match format {
         "jose" => text
             .as_ref()
