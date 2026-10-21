@@ -16,6 +16,7 @@ fn header(name: &str, value: &str) -> Header {
         name: name.into(),
         value: value.as_bytes().into(),
         redacted: false,
+        limited: false,
     }
 }
 #[test]
@@ -55,6 +56,7 @@ fn retained_occurrences_redaction_and_url_fragments() {
     headers.push(header("aUtHoRiZaTiOn", "Bearer private-token"));
     headers.push(Header {
         redacted: true,
+        limited: false,
         ..header("Authorization", "Basic dXNlcjpwYXNz")
     });
     headers.push(header(
@@ -98,4 +100,30 @@ fn malformed_and_canceled_inputs_are_bounded() {
         Arc::new(AtomicBool::new(true)),
     );
     assert!(result.findings.is_empty());
+}
+
+#[test]
+fn non_ascii_challenges_and_authentication_info_provenance() {
+    let result = run(
+        vec![
+            header(
+                "WWW-Authenticate",
+                "Digest realm=\"café\", nonce=\"secret\"",
+            ),
+            header(
+                "Authentication-Info",
+                "nextnonce=\"private-next\", qop=auth",
+            ),
+            header("Authorization", "Basic"),
+        ],
+        None,
+    );
+    assert_eq!(result.findings[0].fields[1].value, "café");
+    assert!(result.findings[1].source.offset.is_none());
+    assert_eq!(result.findings[2].status, "malformed");
+    assert!(
+        !serde_json::to_string(&result)
+            .unwrap()
+            .contains("private-next")
+    );
 }

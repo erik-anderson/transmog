@@ -15,6 +15,7 @@
     <if condition="authSourceNotice"><p class="auth-source-notice" role="status">{{authSourceNotice}}</p></if>
     <div class="message-content" data-mode="{{mode}}" data-header-share="{{headerShare}}">
       <auth-inspector slot="{{pane}}-auth" ?hidden="{{mode != 'auth'}}" ?active="{{mode == 'auth'}}" ?visible="{{authVisible}}" :selection="{{authSelection}}" @auth-count="{onAuthCount(e)}" @auth-source="{showAuthSource(e)}"></auth-inspector>
+      <if condition="mode != 'auth'">
       <section class="headers-view" ?hidden="{{mode != 'headers' && mode != 'split'}}">
         <div class="inspector-actions"><label class="header-viewer" ?hidden="{{!headerChoices.length}}">View <select aria-label="Headers viewer" @change="{changeHeaderViewer(e)}"><option value="raw" ?selected="{{headerViewer == 'raw'}}">Raw headers</option><for each="choice in headerChoices"><option key="{{choice.key}}" value="{{choice.key}}" ?selected="{{choice.key == headerViewer}}">{{choice.name}}</option></for></select></label><button type="button" class="secondary compact-button" @click="{copyUrl()}" ?disabled="{{!detail}}">Copy URL</button><button type="button" class="secondary compact-button" @click="{copyHeaders()}" ?disabled="{{!headerRows.length}}">Copy headers</button><details class="header-options" ?hidden="{{headerChoice}}"><summary>Header options</summary><div class="header-options-panel"><label class="checkbox-label"><input type="checkbox" ?checked="{{showHeaderSizes}}" @change="{toggleHeaderSizes(e)}"> Show byte sizes</label><button type="button" class="secondary compact-button" @click="{toggleHeaderOrder()}" ?disabled="{{!headerRows.length}}" aria-pressed="{{largestFirst}}">Largest first</button><span class="field-help" title="{{headersSummaryTitle}}">{{headersSummary}}</span><if condition="authorizationPresent"><span class="status-badge" title="Authorization header was present">AUTH</span></if><if condition="proxyAuthorizationPresent"><span class="status-badge" title="Proxy-Authorization header was present">PROXY AUTH</span></if><p>Authorization: {{authorizationState}} · Proxy-Authorization: {{proxyAuthorizationState}}</p><if condition="sourceIp"><span class="field-help">Client {{sourceIp}}</span></if></div></details></div>
         <if condition="headerChoice"><extension-visualizer slot="{{headerSlot}}" ?active="{{mode == 'headers' || mode == 'split'}}" :selection="{{headerSelection}}" :choice="{{headerChoice}}"></extension-visualizer></if>
@@ -40,6 +41,7 @@
         </div>
       </section>
       <pre class="exchange-details" tabindex="0" ?hidden="{{mode != 'details'}}">{{detailsText}}</pre>
+      </if>
     </div>
   </section>
 </template>

@@ -260,7 +260,7 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
     }
     if !recognized {
         if let Some((status, detail)) = failure {
-            context.coverage("body", status, detail);
+            context.coverage(&source.kind, status, detail);
         }
         return None;
     }

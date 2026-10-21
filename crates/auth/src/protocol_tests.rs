@@ -1,6 +1,30 @@
 use super::*;
 use base64::Engine as _;
 use std::io::Write as _;
+
+#[test]
+fn generic_json_jose_and_context_limited_oauth_errors() {
+    let token = compact(
+        r#"{"alg":"none","typ":"JWT"}"#,
+        r#"{"sub":"synthetic"}"#,
+        "",
+    );
+    let result = body(
+        "application/json",
+        format!(r#"{{"token":"{token}"}}"#).into_bytes(),
+    );
+    assert_eq!(result.findings[0].format, "JWT / JWS");
+    assert!(
+        body("application/json", br#"{"token":"a.b.c"}"#.to_vec())
+            .findings
+            .is_empty()
+    );
+    let result = body(
+        "application/json",
+        br#"{"error":"invalid_grant","error_description":"Synthetic expired grant"}"#.to_vec(),
+    );
+    assert_eq!(result.findings[0].recognition, "candidate");
+}
 fn body(mime: &str, bytes: Vec<u8>) -> Inspection {
     inspect(
         Input {
@@ -151,4 +175,98 @@ fn inert_hidden_html_and_unicode_are_bounded() {
     for bytes in [vec![0xff, 0xfe, 0], b"{\"x\": [".to_vec(), vec![b'['; 4096]] {
         let _ = body("application/json", bytes);
     }
+}
+
+#[test]
+fn explicit_interpretation_is_bounded_masked_and_does_not_invent_success() {
+    let input = || Input {
+        headers: vec![],
+        target: None,
+        body: Some(Body {
+            bytes: compact(
+                r#"{"alg":"none","typ":"JWT"}"#,
+                r#"{"sub":"synthetic"}"#,
+                "",
+            )
+            .into_bytes(),
+            media_type: "text/plain".into(),
+            transforms: vec![],
+        }),
+        body_status: "complete".into(),
+        captured_at: None,
+    };
+    let result = inspect_as(input(), Arc::new(AtomicBool::new(false)), "jose");
+    assert_eq!(result.findings[0].format, "JWT / JWS");
+    assert_eq!(result.findings[0].verification, "Not checked");
+    let result = inspect_as(input(), Arc::new(AtomicBool::new(false)), "saml");
+    assert_eq!(result.findings[0].recognition, "candidate");
+    assert_eq!(result.findings[0].status, "malformed");
+}
+
+#[test]
+fn redirect_header_parent_occurrence_survives_nested_query_decoding() {
+    let result = inspect(
+        Input {
+            headers: vec![
+                Header {
+                    name: "x-unrelated".into(),
+                    value: vec![],
+                    redacted: false,
+                    limited: false,
+                },
+                Header {
+                    name: "Location".into(),
+                    value: b"/callback?other=1&access_token=private&access_token=again".to_vec(),
+                    redacted: false,
+                    limited: false,
+                },
+            ],
+            target: None,
+            body: None,
+            body_status: "skipped".into(),
+            captured_at: None,
+        },
+        Arc::new(AtomicBool::new(false)),
+    );
+    assert_eq!(result.findings[0].source.header_index, Some(1));
+    assert_eq!(result.findings[0].source.occurrence, 1);
+}
+#[test]
+fn aggregate_nodes_compression_bombs_and_nested_prefixes_are_finite() {
+    let mut compressor =
+        flate2::write::DeflateEncoder::new(Vec::new(), flate2::Compression::fast());
+    compressor
+        .write_all(&vec![b'A'; 4 * 1024 * 1024 + 1])
+        .unwrap();
+    let encoded = base64::engine::general_purpose::STANDARD.encode(compressor.finish().unwrap());
+    let result = inspect(
+        Input {
+            headers: vec![],
+            target: Some(format!("/?SAMLResponse={}", encoded.replace('+', "%2B"))),
+            body: None,
+            body_status: "skipped".into(),
+            captured_at: None,
+        },
+        Arc::new(AtomicBool::new(false)),
+    );
+    assert_eq!(result.findings[0].status, "limited");
+    let fields = std::iter::once("grant_type=client_credentials".into())
+        .chain((0..4096).map(|n| format!("extra{n}=private")))
+        .collect::<Vec<_>>()
+        .join("&");
+    let result = body("application/x-www-form-urlencoded", fields.into_bytes());
+    assert!(!result.diagnostics.is_empty());
+    assert!(result.values.len() <= MAX_FIELDS);
+    let xml = br#"<p:AuthnRequest xmlns:p="urn:oasis:names:tc:SAML:2.0:protocol" ID="synthetic"/>"#;
+    for end in 0..xml.len() {
+        let _ = body("application/xml", xml[..end].to_vec());
+    }
+    let mut value =
+        br#"{"id_token":"opaque","nested":[{"grant_type":"client_credentials"}]}"#.to_vec();
+    for end in 0..value.len() {
+        let _ = body("application/json", value[..end].to_vec());
+    }
+    value = vec![b'['; MAX_DEPTH + 10];
+    value.extend(vec![b']'; MAX_DEPTH + 10]);
+    assert!(body("application/json", value).findings.is_empty());
 }

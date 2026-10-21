@@ -19,6 +19,9 @@ pub use related::{RelatedAuth, RelatedEntry};
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct AuthRequest {
+    /// Explicit selected-body interpretation, or auto discovery by media type.
+    #[serde(default = "automatic")]
+    pub interpretation: String,
     /// Stable pane name, with at most eight panes per application.
     pub slot: String,
     /// Monotonically increasing canonical decimal generation.
@@ -32,6 +35,9 @@ pub struct AuthRequest {
     /// Selected visible body scanning; false is metadata-only discovery.
     #[serde(default)]
     pub scan_body: bool,
+}
+fn automatic() -> String {
+    "auto".into()
 }
 /// Capability binding for explicit value/source/related operations.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -206,7 +212,7 @@ fn unavailable() -> AppError {
 fn block<'a>(
     snapshot: &'a SessionSnapshot,
     boundary: &str,
-) -> Result<(&'a HeaderBlock, Option<String>), AppError> {
+) -> Result<(&'a HeaderBlock, Option<&'a transmog_core::Target>), AppError> {
     let stage = inspector::parse_boundary(boundary)?;
     if let Some(head) = snapshot
         .request_heads
@@ -214,18 +220,7 @@ fn block<'a>(
         .rev()
         .find(|h| h.boundary == stage)
     {
-        let target = &head.head.target;
-        return Ok((
-            &head.head.headers,
-            Some(format!(
-                "{}{}",
-                target.path,
-                target
-                    .query
-                    .as_ref()
-                    .map_or_else(String::new, |q| format!("?{q}"))
-            )),
-        ));
+        return Ok((&head.head.headers, Some(&head.head.target)));
     }
     if let Some(head) = snapshot
         .response_heads
@@ -252,7 +247,12 @@ pub(crate) fn revision(
         hash.update(header.value());
     }
     if let Some(target) = target {
-        hash.update(target.as_bytes());
+        hash.update((target.path.len() as u64).to_le_bytes());
+        hash.update(target.path.as_bytes());
+        hash.update([u8::from(target.query.is_some())]);
+        if let Some(query) = &target.query {
+            hash.update(query.as_bytes());
+        }
     }
     if let Some(metadata) = store.and_then(|store| {
         store
@@ -273,9 +273,29 @@ async fn input(
     canceled: Arc<AtomicBool>,
 ) -> Result<Input, AppError> {
     let (headers, target) = block(&snapshot, &request.boundary)?;
+    let target = target.map(|target| {
+        if target
+            .path
+            .len()
+            .saturating_add(target.query.as_ref().map_or(0, String::len))
+            > transmog_auth::MAX_CANDIDATE
+        {
+            // A bounded over-budget marker reaches core coverage without copying a huge retained target.
+            " ".repeat(transmog_auth::MAX_CANDIDATE + 1)
+        } else {
+            format!(
+                "{}{}",
+                target.path,
+                target
+                    .query
+                    .as_ref()
+                    .map_or_else(String::new, |query| format!("?{query}"))
+            )
+        }
+    });
     let mut used = target.as_ref().map_or(0, String::len);
     let mut retained = vec![];
-    for field in headers.iter() {
+    for (ordinal, field) in headers.iter().enumerate().take(100_001) {
         // Preserve original ordinals even for unrelated headers; do not duplicate their large values.
         let relevant = [
             "authorization",
@@ -288,15 +308,28 @@ async fn input(
         ]
         .iter()
         .any(|name| field.name_eq(name));
-        let value = if relevant { field.value() } else { &[] };
-        used = used.saturating_add(field.name().len() + value.len());
-        if used > MAX_TOTAL || canceled.load(Ordering::Acquire) {
+        let limited = ordinal == 100_000
+            || relevant
+                && (field.value().len() > transmog_auth::MAX_CANDIDATE
+                    || field.value().len() > MAX_TOTAL.saturating_sub(used));
+        let value = if relevant && !limited {
+            field.value()
+        } else {
+            &[]
+        };
+        used = used.saturating_add(value.len());
+        if canceled.load(Ordering::Acquire) {
             return Err(unavailable());
         }
         retained.push(Header {
-            name: String::from_utf8_lossy(field.name()).into_owned(),
+            name: if relevant {
+                String::from_utf8_lossy(field.name()).into_owned()
+            } else {
+                String::new()
+            },
             value: value.into(),
             redacted: field.is_redacted(),
+            limited,
         });
     }
     let mut input = Input {
@@ -347,12 +380,13 @@ async fn input(
         return Ok(input);
     }
     let mime = metadata.media_type.clone().unwrap_or_default();
-    if !(mime == "application/x-www-form-urlencoded"
-        || mime == "application/json"
-        || mime.ends_with("+json")
-        || mime.ends_with("/xml")
-        || mime.ends_with("+xml")
-        || mime == "text/html")
+    if request.interpretation == "auto"
+        && !(mime == "application/x-www-form-urlencoded"
+            || mime == "application/json"
+            || mime.ends_with("+json")
+            || mime.ends_with("/xml")
+            || mime.ends_with("+xml")
+            || mime == "text/html")
     {
         input.body_status = "unsupported".into();
         return Ok(input);
@@ -362,6 +396,26 @@ async fn input(
         .any(|h| (h.name_eq("content-type") || h.name_eq("content-encoding")) && h.is_redacted())
     {
         input.body_status = "redacted".into();
+        return Ok(input);
+    }
+    let content_types: Vec<_> = headers.values("content-type").collect();
+    if content_types.windows(2).any(|pair| pair[0] != pair[1]) {
+        input.body_status = "unsupported".into();
+        return Ok(input);
+    }
+    let stack = transmog_content::ContentCodingStack::from_headers(
+        headers,
+        transmog_content::ContentLimits::default().max_coding_layers(),
+    );
+    if stack.as_ref().is_err()
+        || stack.as_ref().is_ok_and(|stack| {
+            !stack
+                .encode_order()
+                .map(transmog_content::ContentCoding::as_str)
+                .eq(metadata.content_codings.iter().map(String::as_str))
+        })
+    {
+        input.body_status = "unsupported".into();
         return Ok(input);
     }
     let boundary = inspector::parse_boundary(&request.boundary)?;
@@ -424,6 +478,10 @@ impl Application {
     /// # Errors
     /// Rejects stale generations, other-window identifiers, unavailable evidence and finite limits.
     pub async fn inspect_auth(&self, request: AuthRequest) -> Result<AuthView, AppError> {
+        if !["auto", "jose", "saml", "ntlm", "negotiate"].contains(&request.interpretation.as_str())
+        {
+            return Err(unavailable());
+        }
         if request.page_id != self.visualizer_page() {
             return Err(unavailable());
         }
@@ -435,10 +493,13 @@ impl Application {
         let before = revision(&snapshot, store.as_ref(), &request.boundary)?;
         let input = input(snapshot, store, request.clone(), Arc::clone(&canceled)).await?;
         let worker = Arc::clone(&canceled);
+        let interpretation = request.interpretation.clone();
         let inspection = Arc::new(
-            tokio::task::spawn_blocking(move || transmog_auth::inspect(input, worker))
-                .await
-                .map_err(|_| unavailable())?,
+            tokio::task::spawn_blocking(move || {
+                transmog_auth::inspect_as(input, worker, &interpretation)
+            })
+            .await
+            .map_err(|_| unavailable())?,
         );
         let (snapshot, store) = self.visualizer_evidence(&request.session_id)?;
         if request.page_id != self.visualizer_page()

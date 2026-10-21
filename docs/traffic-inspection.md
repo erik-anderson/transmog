@@ -1,5 +1,10 @@
 # Inspect and search traffic
 
+The per-message **Auth** view explains captured authentication formats, nested
+tokens, masking and source coverage alongside Headers and Body. See
+[authentication inspection](auth-inspection.md) for formats, reveal/copy, time
+interpretation, related traffic and limits.
+
 Traffic uses one selected-item inspector for live requests and imported captures.
 Selection and scroll position remain stable while new traffic arrives. Inspect
 request and response together in a wide pane or use the Request/Response pill

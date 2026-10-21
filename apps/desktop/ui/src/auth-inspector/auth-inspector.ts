@@ -1,5 +1,6 @@
 import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
+import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {AuthField,AuthFinding,AuthRelated,AuthRelatedEntry,AuthSelection,AuthSourceNavigation,AuthView} from './models.js';
 
 let generation=0n;
@@ -23,26 +24,34 @@ export class AuthInspector extends WebUIElement {
   @observable authDiagnostics:string[]=[];
   @observable authRelated:AuthRelated|null=null;
   @observable authRelatedBusy=false;
+  @observable authInterpretation='auto';
   private view:AuthView|null=null;
   private pending:{slot:string;generation:string;pageId:string}|null=null;
   private key='';
   private revision=0;
   private queued=false;
   private ready=false;
+  private suspended=false;
+  private nativeUnlisten:UnlistenFn|null=null;
+  private nativeListener=0;
   private timer:ReturnType<typeof setTimeout>|null=null;
-  private readonly visibility=():void=>this.schedule();
-  selectionChanged():void {this.schedule();}
-  activeChanged():void {this.schedule();}
+  private readonly visibility=():void=>{if(!document.hidden)this.suspended=false;this.schedule();};
+  selectionChanged(previous:AuthSelection|null|undefined):void {if(previous?.sessionId!==this.selection?.sessionId||previous?.boundary!==this.selection?.boundary)this.authInterpretation='auto';this.schedule();}
+  activeChanged():void {if(this.active)this.suspended=false;this.schedule();}
   visibleChanged():void {this.schedule();}
   slotChanged():void {this.schedule();}
-  protected hydratedCallback():void {this.ready=true;document.addEventListener('visibilitychange',this.visibility);this.schedule();}
+  protected hydratedCallback():void {
+    this.ready=true;document.addEventListener('visibilitychange',this.visibility);const listener=++this.nativeListener;
+    void listen('visualizers-suspended',()=>{this.suspended=true;this.stop();this.key='';this.authError='Auth inspection paused while the window was hidden. Retry inspection.';}).then(unlisten=>{if(this.isConnected&&listener===this.nativeListener)this.nativeUnlisten=unlisten;else void Promise.resolve(unlisten()).catch(()=>undefined);}).catch(()=>undefined);
+    this.schedule();
+  }
   private schedule():void {
     if(!this.ready||this.queued)return;this.queued=true;
     queueMicrotask(()=>{this.queued=false;this.reconcile();});
   }
   private reconcile():void {
     const selection=this.selection;
-    const key=this.isConnected&&this.visible&&!document.hidden&&selection?JSON.stringify([this.slot,selection.key,selection.sessionId,selection.boundary,this.active]):'';
+    const key=this.isConnected&&this.visible&&!document.hidden&&!this.suspended&&selection?JSON.stringify([this.slot,selection.key,selection.sessionId,selection.boundary,this.active,this.authInterpretation]):'';
     if(this.key===key)return;
     this.stop();this.key=key;
     if(!key||!selection)return;
@@ -62,7 +71,7 @@ export class AuthInspector extends WebUIElement {
     try {
       const pageId=await invoke<string>('visualizer_page');
       if(!this.current(revision))return;
-      const request={slot:this.slot,generation:next(),pageId,sessionId:selection.sessionId,boundary:selection.boundary,scanBody:this.active};
+      const request={slot:this.slot,generation:next(),pageId,sessionId:selection.sessionId,boundary:selection.boundary,scanBody:this.active,interpretation:this.active?this.authInterpretation:'auto'};
       this.pending=request;
       const view=await invoke<AuthView>('inspect_auth',{request});
       if(!this.current(revision)||this.pending?.generation!==request.generation)return;
@@ -71,7 +80,8 @@ export class AuthInspector extends WebUIElement {
     } catch {if(this.current(revision)){this.authError='Auth evidence could not be inspected or changed while loading. Retry the current selection.';this.view=null;}}
     finally {if(this.current(revision))this.authBusy=false;}
   }
-  retry():void {this.key='';this.reconcile();}
+  retry():void {this.suspended=false;this.key='';this.reconcile();}
+  changeInterpretation(event:Event):void {this.authInterpretation=(event.currentTarget as HTMLSelectElement).value;this.key='';this.reconcile();}
   private field(id:string,findings=this.authFindings):AuthField|undefined {for(const finding of findings){const field=finding.fields.find(field=>field.id===id);if(field)return field;const child=this.field(id,finding.children);if(child)return child;}return undefined;}
   private changeField(id:string,change:Partial<AuthField>):void {
     const update=(findings:AuthFinding[]):AuthFinding[]=>findings.map(finding=>({...finding,fields:finding.fields.map(field=>field.id===id?{...field,...change}:field),children:update(finding.children)}));
@@ -108,6 +118,6 @@ export class AuthInspector extends WebUIElement {
     finally {if(this.current(revision))this.authRelatedBusy=false;}
   }
   navigate(entry:AuthRelatedEntry):void {const revision=this.revision;if(!this.view||!this.current(revision))return;this.$emit('auth-traffic-request',{id:entry.sessionId,boundary:entry.boundary,isCurrent:()=>this.current(revision)});}
-  disconnectedCallback():void {this.ready=false;document.removeEventListener('visibilitychange',this.visibility);this.stop();this.key='';super.disconnectedCallback();}
+  disconnectedCallback():void {this.ready=false;this.nativeListener++;const unlisten=this.nativeUnlisten;this.nativeUnlisten=null;if(unlisten)void Promise.resolve(unlisten()).catch(()=>undefined);document.removeEventListener('visibilitychange',this.visibility);this.stop();this.key='';super.disconnectedCallback();}
 }
 AuthInspector.define('auth-inspector');

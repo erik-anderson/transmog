@@ -6,6 +6,12 @@ Linux with the pinned nightly toolchain; it is not a Windows build prerequisite.
 
 ## Targets and oracles
 
+- `auth_evidence` feeds bounded arbitrary challenge grammar, Windows mechanism
+  tokens, layered SAML Redirect values and JSON/XML/HTML bodies into the offline
+  core. It checks finite output and serialization with input limited to 8 KiB.
+  Deterministic auth tests separately cover every-prefix truncation, aggregate
+  limits and decompression bombs. No credential/network operation occurs.
+
 - `content_encoding` combines raw malformed values with structured synthesis.
   The structured seed can generate sixteen fields and near-16-KiB values from a
   tiny input. Successful parses must canonicalize and reparse identically;

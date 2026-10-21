@@ -600,6 +600,27 @@ fn kerberos(context: &mut Context, bytes: &[u8], source: Source) -> Finding {
                     false,
                     "DER BIT STRING including unused-bit count; options are unverified.",
                 );
+                if value.bytes.len() != 5 || value.bytes[0] != 0 {
+                    finding.issue(
+                        "malformed",
+                        "Kerberos AP options do not have the supported 32-bit BIT STRING shape.",
+                    );
+                } else {
+                    context.field(
+                        &mut finding,
+                        "Use session key",
+                        (value.bytes[1] & 0x40 != 0).to_string(),
+                        false,
+                        "Observed AP option; no encrypted ticket/session key is recovered.",
+                    );
+                    context.field(
+                        &mut finding,
+                        "Mutual authentication required",
+                        (value.bytes[1] & 0x20 != 0).to_string(),
+                        false,
+                        "Requested option, not proof that mutual authentication completed.",
+                    );
+                }
             }
             if let Some(ticket) = context_field(&items, 0xa3)
                 .and_then(tlv)
@@ -849,9 +870,11 @@ pub(crate) fn decode(
     source: Source,
     explicit_ntlm: bool,
 ) -> Finding {
-    if explicit_ntlm {
+    let mut finding = if explicit_ntlm {
         ntlm(context, bytes, source)
     } else {
         negotiate(context, bytes, source, 0)
-    }
+    };
+    context.field(&mut finding, "Decoded mechanism bytes (hex prefix)", hex(&bytes[..bytes.len().min(4096)]), true, "At most the first 4 KiB of decoded mechanism bytes; full encoded material remains in the enclosing credential/source. Includes sensitive cryptographic data.");
+    finding
 }

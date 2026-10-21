@@ -44,7 +44,10 @@ pub(crate) fn pairs(context: &mut Context, text: &str, source: &Source, form: bo
         let (key, value) = part.split_once('=').unwrap_or((part, ""));
         if let (Some(name), Some(value)) = (
             percent(key, form),
-            percent(value, form && key != "SAMLRequest" && key != "SAMLResponse"),
+            percent(
+                value,
+                form && (source.kind == "body" || key != "SAMLRequest" && key != "SAMLResponse"),
+            ),
         ) {
             let mut loc = source.clone();
             loc.occurrence = occurrence;
@@ -144,6 +147,24 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             headers_complete = false;
             break;
         }
+        if header.limited {
+            headers_complete = false;
+            let mut finding = Finding::new(
+                "Auth source budget",
+                "retained header coverage",
+                Source {
+                    kind: "header".into(),
+                    label: format!("Retained header field {}", index + 1),
+                    occurrence: index,
+                    header_index: Some(index),
+                    ..Source::default()
+                },
+            );
+            finding.recognition = "candidate".into();
+            finding.issue("limited", "Header bytes or remaining fields exceeded native source admission limits; other admitted sources remain inspectable.");
+            context.push(finding);
+            continue;
+        }
         let key = header.name.to_ascii_lowercase();
         if ![
             "authorization",
@@ -162,8 +183,9 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             kind: "header".into(),
             label: format!("{} · field {}", crate::clip(&header.name, 128), index + 1),
             occurrence: index,
+            header_index: Some(index),
             offset: Some(0),
-            length: Some(header.value.len()),
+            length: (!header.redacted).then_some(header.value.len()),
             transforms: vec![],
         };
         if header.redacted {
@@ -214,7 +236,15 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             value.into()
         };
         for item in http::parse(&value) {
-            let finding = http::decode(context, item, source.clone(), role);
+            let mut finding = http::decode(context, item, source.clone(), role);
+            if key.ends_with("authentication-info") {
+                finding.source.offset = None;
+                finding.source.length = None;
+                finding.source.transforms.push(
+                    "Authentication-Info parameter grammar (no scheme prefix in the original)"
+                        .into(),
+                );
+            }
             context.push(finding);
         }
     }
@@ -262,6 +292,16 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             return;
         }
         crate::body::scan(context, body);
+        if context.result.findings.iter().any(|finding| {
+            finding.format == "OAuth / OpenID Connect" && finding.role == "token request"
+        }) {
+            for finding in &mut context.result.findings {
+                if finding.format == "Basic" && finding.role == "origin credential" {
+                    finding.role = "Basic credential in OAuth token-request context".into();
+                    finding.diagnostics.push("Client authentication is a contextual interpretation; no credentials are validated or sent.".into());
+                }
+            }
+        }
     } else {
         context.coverage(
             "body",

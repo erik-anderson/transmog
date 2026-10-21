@@ -36,6 +36,8 @@ pub struct Source {
     pub label: String,
     /// Original field index, independent of header display pagination.
     pub occurrence: usize,
+    /// Enclosing original header ordinal, independent of a nested parameter occurrence.
+    pub header_index: Option<usize>,
     /// Exact byte start within the named source, if available.
     pub offset: Option<usize>,
     /// Exact byte length, if available.
@@ -155,6 +157,8 @@ impl Inspection {
 }
 /// Original retained header, never a display preview.
 pub struct Header {
+    /// Source bytes omitted by native candidate/aggregate admission limits.
+    pub limited: bool,
     /// Original header name.
     pub name: String,
     /// Exact retained bytes.
@@ -301,6 +305,78 @@ pub fn inspect(input: Input, canceled: Arc<AtomicBool>) -> Inspection {
     let mut context = Context::new(canceled);
     context.captured_at = input.captured_at;
     extract::message(&mut context, input);
+    context.result
+}
+
+/// Explicit bounded interpretation of the selected decoded body, retaining normal header/query findings.
+/// Unknown or malformed values remain candidates; this does not verify a credential.
+pub fn inspect_as(mut input: Input, canceled: Arc<AtomicBool>, format: &str) -> Inspection {
+    if format == "auto" {
+        return inspect(input, canceled);
+    }
+    let mut context = Context::new(canceled);
+    context.captured_at = input.captured_at;
+    let body = input.body.take();
+    extract::message(&mut context, input);
+    let Some(body) = body else {
+        return context.result;
+    };
+    context
+        .result
+        .coverage
+        .retain(|source| source.source != "body");
+    if body.bytes.len() > MAX_CANDIDATE || !context.charge(body.bytes.len()) {
+        context.coverage(
+            "body",
+            "limited",
+            "Explicit auth interpretation exceeds the candidate budget.",
+        );
+        return context.result;
+    }
+    let mut source = Source {
+        kind: "body".into(),
+        label: "Selected decoded body · explicit interpretation".into(),
+        transforms: body.transforms.clone(),
+        ..Source::default()
+    };
+    source
+        .transforms
+        .push("Explicit user interpretation; no automatic classification implied".into());
+    let text = body::text(&body.bytes, &body.media_type);
+    let finding = match format {
+        "jose" => text
+            .as_ref()
+            .and_then(|raw| jose::decode(&mut context, raw.trim(), source.clone())),
+        "saml" => text
+            .as_ref()
+            .and_then(|raw| saml::xml(&mut context, raw.as_bytes(), source.clone())),
+        "ntlm" | "negotiate" => {
+            use base64::Engine as _;
+            let bytes = if body.bytes.starts_with(b"NTLMSSP\0") || body.bytes.first() == Some(&0x60)
+            {
+                Some(body.bytes.clone())
+            } else {
+                text.as_ref().and_then(|raw| {
+                    base64::engine::general_purpose::STANDARD
+                        .decode(raw.trim())
+                        .ok()
+                })
+            };
+            bytes.map(|bytes| {
+                windows::decode(&mut context, &bytes, source.clone(), format == "ntlm")
+            })
+        }
+        _ => None,
+    };
+    if let Some(finding) = finding {
+        context.push(finding);
+    } else {
+        let mut candidate = Finding::new("Explicit auth interpretation", format, source);
+        candidate.recognition = "candidate".into();
+        candidate.issue("malformed", "Selected body is not the requested supported format, or exceeds structural/text limits.");
+        context.push(candidate);
+    }
+    context.coverage("body", "complete", "Explicit bounded interpretation of the selected retained body; all values remain unverified.");
     context.result
 }
 

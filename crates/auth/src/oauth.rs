@@ -6,17 +6,7 @@ pub(crate) fn role(items: &[Pair]) -> Option<&'static str> {
     if has("client_id") && has("response_type") {
         return Some("authorization request");
     }
-    if has("grant_type")
-        && [
-            "client_id",
-            "code",
-            "refresh_token",
-            "client_assertion",
-            "username",
-        ]
-        .iter()
-        .any(|key| has(key))
-    {
+    if has("grant_type") {
         return Some("token request");
     }
     if has("access_token") && has("token_type") || has("id_token") {
@@ -27,6 +17,28 @@ pub(crate) fn role(items: &[Pair]) -> Option<&'static str> {
         || has("redirect_uri");
     if callback_context && has("state") && (has("code") || has("error") || has("access_token")) {
         return Some("authorization callback");
+    }
+    if has("error_description")
+        && items.iter().any(|pair| {
+            pair.name == "error"
+                && [
+                    "invalid_request",
+                    "invalid_client",
+                    "invalid_grant",
+                    "unauthorized_client",
+                    "unsupported_grant_type",
+                    "invalid_scope",
+                    "access_denied",
+                    "server_error",
+                    "temporarily_unavailable",
+                    "interaction_required",
+                    "login_required",
+                    "consent_required",
+                ]
+                .contains(&pair.value.as_str())
+        })
+    {
+        return Some("candidate error response");
     }
     None
 }
@@ -94,6 +106,10 @@ pub(crate) fn decode(context: &mut Context, items: &[Pair]) -> Option<Finding> {
     );
     finding.source.offset = None;
     finding.source.length = None;
+    if role.starts_with("candidate") {
+        finding.recognition = "candidate".into();
+        finding.diagnostics.push("Known OAuth/OIDC error fields were observed without enough context to establish an OAuth endpoint.".into());
+    }
     for (index, pair) in items.iter().enumerate() {
         if !context.step() {
             context.limited();

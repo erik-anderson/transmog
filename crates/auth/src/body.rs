@@ -21,12 +21,16 @@ pub(crate) fn scan(context: &mut Context, body: Body) {
         );
         return;
     };
-    let source = Source {
+    let mut source = Source {
         kind: "body".into(),
         label: "Decoded body".into(),
         transforms: body.transforms,
         ..Source::default()
     };
+    source
+        .transforms
+        .push("Character decoding to UTF-8 text (UTF-8/ASCII or BOM-selected UTF-16)".into());
+    source.label = "Character-decoded body".into();
     if mime == "application/x-www-form-urlencoded" {
         let items = extract::pairs(context, &text, &source, true);
         extract::parameters(context, &items);
@@ -65,7 +69,7 @@ pub(crate) fn scan(context: &mut Context, body: Body) {
         "Bounded selected-message text scan; unknown content remains uninterpreted.",
     );
 }
-fn text(bytes: &[u8], media: &str) -> Option<String> {
+pub(crate) fn text(bytes: &[u8], media: &str) -> Option<String> {
     let charset = media.split(';').skip(1).find_map(|p| {
         p.trim()
             .split_once('=')
@@ -75,6 +79,11 @@ fn text(bytes: &[u8], media: &str) -> Option<String> {
     let little = bytes.starts_with(&[0xff, 0xfe]);
     let big = bytes.starts_with(&[0xfe, 0xff]);
     if little || big {
+        if little && charset.as_deref() == Some("utf-16be")
+            || big && charset.as_deref() == Some("utf-16le")
+        {
+            return None;
+        }
         if charset
             .as_deref()
             .is_some_and(|v| !["utf-16", "utf-16le", "utf-16be"].contains(&v))
@@ -139,6 +148,9 @@ fn json_groups(
                 .collect();
             extract::parameters(context, &items);
             for (key, value) in values {
+                if ["access_token", "id_token", "client_assertion"].contains(&key.as_str()) {
+                    continue;
+                }
                 json_groups(context, value, &format!("{path}.{key}"), source, depth + 1);
             }
         }
@@ -153,7 +165,16 @@ fn json_groups(
                 );
             }
         }
-        json::Node::Scalar(_) | json::Node::Text(_) => {}
+        json::Node::Text(value) => {
+            let mut source = source.clone();
+            source.label = format!("JSON {}", crate::clip(path, 512));
+            source.transforms.push("JSON scalar extraction".into());
+            if let Some(mut finding) = crate::jose::decode(context, value, source) {
+                finding.role = "Compact JOSE structure in JSON scalar".into();
+                context.push(finding);
+            }
+        }
+        json::Node::Scalar(_) => {}
     }
 }
 fn entities(value: &str) -> String {
@@ -189,6 +210,37 @@ fn entities(value: &str) -> String {
                     let prefix = tail.len() - number.len();
                     let length =
                         prefix + digits + usize::from(number.as_bytes().get(digits) == Some(&b';'));
+                    let code = match code {
+                        0 => 0xfffd,
+                        0x80 => 0x20ac,
+                        0x82 => 0x201a,
+                        0x83 => 0x0192,
+                        0x84 => 0x201e,
+                        0x85 => 0x2026,
+                        0x86 => 0x2020,
+                        0x87 => 0x2021,
+                        0x88 => 0x02c6,
+                        0x89 => 0x2030,
+                        0x8a => 0x0160,
+                        0x8b => 0x2039,
+                        0x8c => 0x0152,
+                        0x8e => 0x017d,
+                        0x91 => 0x2018,
+                        0x92 => 0x2019,
+                        0x93 => 0x201c,
+                        0x94 => 0x201d,
+                        0x95 => 0x2022,
+                        0x96 => 0x2013,
+                        0x97 => 0x2014,
+                        0x98 => 0x02dc,
+                        0x99 => 0x2122,
+                        0x9a => 0x0161,
+                        0x9b => 0x203a,
+                        0x9c => 0x0153,
+                        0x9e => 0x017e,
+                        0x9f => 0x0178,
+                        _ => code,
+                    };
                     matched = Some((
                         length,
                         char::from_u32(code).unwrap_or('\u{fffd}').to_string(),
@@ -314,8 +366,23 @@ fn html(context: &mut Context, text: &str, source: &Source) -> Vec<Pair> {
             attributes.push((key, entities(value)));
         }
         at = (at + 1).min(bytes.len());
+        if attributes.len() >= 128 {
+            context.coverage(
+                "body",
+                "limited",
+                "HTML attribute budget exceeded; the remainder was not scanned.",
+            );
+            break;
+        }
         if tag != "input" {
             continue;
+        }
+        if attributes
+            .iter()
+            .enumerate()
+            .any(|(index, (name, _))| attributes[..index].iter().any(|(other, _)| other == name))
+        {
+            context.coverage("body", "incomplete", "Duplicate hidden-control attributes were retained in the original source; HTML first-attribute behavior was used.");
         }
         let attr = |name: &str| {
             attributes

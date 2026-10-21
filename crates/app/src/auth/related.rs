@@ -94,6 +94,14 @@ impl Application {
         let namespace = self.traces.context_source_id(&active.request.session_id);
         let original = anchor.metadata.original_target.as_target();
         let absolute = |target: &transmog_core::Target| {
+            if target
+                .path
+                .len()
+                .saturating_add(target.query.as_ref().map_or(0, String::len))
+                > transmog_auth::MAX_CANDIDATE
+            {
+                return None;
+            }
             url::Url::parse(&format!(
                 "{}://{}{}{}",
                 target.scheme,
@@ -222,8 +230,19 @@ impl Application {
                                     name: name.into_owned(),
                                     value: field.value().into(),
                                     redacted: false,
+                                    limited: false,
                                 });
                             }
+                        }
+                        if target.is_some_and(|target| {
+                            target
+                                .path
+                                .len()
+                                .saturating_add(target.query.as_ref().map_or(0, String::len))
+                                > bytes_left
+                        }) {
+                            bytes_left = 0;
+                            return None;
                         }
                         let target = target.map(|t| {
                             format!(
@@ -285,6 +304,11 @@ impl Application {
                         },
                         Arc::new(AtomicBool::new(false)),
                     );
+                    result.limited |= inspected
+                        .coverage
+                        .iter()
+                        .any(|source| source.status == "limited")
+                        || !inspected.diagnostics.is_empty();
                     correlation(&active.inspection, &inspected)
                 };
                 if let Some(reason) = reason {

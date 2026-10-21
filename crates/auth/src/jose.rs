@@ -71,7 +71,7 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
         return Some(finding);
     }
     if parts.len() == 5 {
-        if header.get("enc").and_then(json::Node::text).is_none() {
+        if header.get("enc").and_then(json::Node::string).is_none() {
             finding.issue(
                 "malformed",
                 "Compact JWE protected header has no unambiguous enc member.",
@@ -87,13 +87,23 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
         .zip(&parts[1..])
         {
             match URL_SAFE_NO_PAD.decode(part) {
-                Ok(bytes) => context.field(
-                    &mut finding,
-                    &format!("{name} length"),
-                    bytes.len().to_string(),
-                    false,
-                    "Exposed component length; encrypted contents cannot be read.",
-                ),
+                Ok(bytes) => {
+                    if ["Initialization vector", "Authentication tag"].contains(name)
+                        && bytes.is_empty()
+                    {
+                        finding.issue(
+                            "malformed",
+                            "Compact JWE has an empty initialization vector or authentication tag.",
+                        );
+                    }
+                    context.field(
+                        &mut finding,
+                        &format!("{name} length"),
+                        bytes.len().to_string(),
+                        false,
+                        "Exposed component length; encrypted contents cannot be read.",
+                    );
+                }
                 Err(_) => finding.issue("malformed", "Invalid compact JWE Base64url component."),
             }
         }

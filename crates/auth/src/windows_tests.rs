@@ -7,6 +7,7 @@ fn token(bytes: &[u8], scheme: &str) -> Inspection {
                 name: "WWW-Authenticate".into(),
                 value: format!("{scheme} {}", STANDARD.encode(bytes)).into_bytes(),
                 redacted: false,
+                limited: false,
             }],
             target: None,
             body: None,

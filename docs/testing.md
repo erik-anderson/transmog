@@ -110,6 +110,22 @@ in [CI](../ci/README.md).
 
 ## Desktop and capture workflows
 
+Auth fixtures run with `cargo test -p transmog-auth` and the application auth
+tests. The ordinary browser gate includes masking, reveal/copy, stale replies,
+coverage, keyboard access and populated responsive layouts; isolate it with
+`node apps/desktop/ui/scripts/check-workspaces.mjs --auth-only` after building UI.
+The native imported-evidence gate uses a fresh profile and changes no proxy or
+certificate settings:
+
+```powershell
+python scripts/dev-env.py --run cargo build --locked -p transmog-desktop
+./scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath ./target/debug/transmog.exe -AuthChecks
+```
+
+It retains screenshots and native command/accessibility evidence in its isolated
+profile folder. The `auth_evidence` [fuzz target](../fuzz/README.md) supplements
+deterministic truncation, hostile ASN.1/XML/JSON, duplicate and decompression tests.
+
 Production browser checks exercise templates and fixture commands under CSP and
 Trusted Types. Native WebView2 checks verify the actual application origin,
 commands, accessibility, theme/forced colors, scaling, compact layouts and

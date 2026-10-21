@@ -64,6 +64,7 @@ fn application_fixture() -> Application {
 }
 fn request(app: &Application, generation: &str) -> AuthRequest {
     AuthRequest {
+        interpretation: "auto".into(),
         slot: "request-auth".into(),
         generation: generation.into(),
         page_id: app.visualizer_page(),
@@ -135,6 +136,38 @@ fn late_cancel_cannot_close_newer_generation() {
     service.cancel("request-auth", "3");
     assert!(two.load(Ordering::Acquire));
     assert!(service.begin(&request(&application, "2")).is_err());
+}
+
+#[tokio::test]
+async fn an_oversized_header_does_not_suppress_valid_siblings() {
+    let app = application_fixture();
+    let snapshot = app.service.catalog().get(ExchangeId(1)).unwrap();
+    let mut head = snapshot.request_heads[0].head.clone();
+    head.headers = HeaderBlock::from_fields(vec![
+        HeaderField::try_new(
+            "Authorization",
+            vec![b'A'; transmog_auth::MAX_CANDIDATE + 1],
+        )
+        .unwrap(),
+        HeaderField::try_new("Authorization", "Basic dXNlcjpwYXNz").unwrap(),
+    ]);
+    app.service.catalog().apply(ObserverEvent {
+        exchange_id: ExchangeId(1),
+        sequence: 4,
+        kind: ObserverEventKind::RequestHeadObserved {
+            boundary: ExchangeBoundary::ClientRequest,
+            head,
+        },
+    });
+    let view = app.inspect_auth(request(&app, "1")).await.unwrap();
+    assert_eq!(view.inspection.findings[0].status, "limited");
+    assert!(
+        view.inspection
+            .findings
+            .iter()
+            .any(|finding| finding.format == "Basic")
+    );
+    assert_eq!(view.inspection.coverage[0].status, "limited");
 }
 
 #[tokio::test]

@@ -72,10 +72,11 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                     }
                     at += 1;
                     space(bytes, &mut at);
-                    let mut val = String::new();
+                    let val;
                     if bytes.get(at) == Some(&b'"') {
                         at += 1;
                         let mut closed = false;
+                        let mut quoted = Vec::new();
                         while at < bytes.len() {
                             let b = bytes[at];
                             at += 1;
@@ -87,13 +88,14 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                                 if at == bytes.len() {
                                     break;
                                 }
-                                val.push(char::from(bytes[at]));
+                                quoted.push(bytes[at]);
                                 at += 1;
                             } else {
-                                val.push(char::from(b));
+                                quoted.push(b);
                             }
                         }
                         item.malformed |= !closed;
+                        val = String::from_utf8_lossy(&quoted).into_owned();
                     } else {
                         val = word(bytes, &mut at);
                         if val.is_empty() {
@@ -161,6 +163,12 @@ pub(crate) fn decode(
         _ => "Unknown HTTP auth scheme",
     };
     let mut finding = Finding::new(name, role, source);
+    if item.token.is_none() && item.params.is_empty() && role.ends_with("credential") {
+        finding.issue(
+            "malformed",
+            "A credential-bearing header advertised a scheme without credentials.",
+        );
+    }
     context.field(
         &mut finding,
         "Scheme",

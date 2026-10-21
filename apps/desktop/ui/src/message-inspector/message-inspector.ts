@@ -24,11 +24,18 @@ export class MessageInspector extends WebUIElement {
     if(source.sessionId!==this.detail?.id||source.boundary!==this.boundary)return;
     const body=source.source.kind==='body';
     this.authSourceNotice='Original retained source may contain secrets. '+source.source.label+(source.source.transforms.length?' · '+source.source.transforms.join(' → '):'');
-    this.showMode(body?'body':'headers');
-    if(body){this.viewer='original-text';await this.inspectBody();return;}
-    const offset=Math.floor(source.source.occurrence/512)*512;
-    if((this.heads().find(head=>head.boundary===this.boundary)?.summary?.totalFields??0)>512)await this.loadHeaderPage(offset);
-    this.$flushUpdates();const root=this.getRootNode();if(root instanceof ShadowRoot)root.getElementById(this.pane+'-header-'+source.source.occurrence)?.focus({preventScroll:false});
+    if(body)this.viewer='original-text';else {this.headerViewer='raw';this.largestFirst=false;}
+    this.setChoices();this.sortHeaders();this.showMode(body?'body':'headers');
+    if(body)return;
+    if(source.source.kind==='query')return;
+    const index=source.source.headerIndex??source.source.occurrence;
+    const offset=Math.floor(index/512)*512;
+    let moved=false;const interaction=():void=>{moved=true;};document.addEventListener('pointerdown',interaction,true);document.addEventListener('keydown',interaction,true);
+    try {
+      if((this.heads().find(head=>head.boundary===this.boundary)?.summary?.totalFields??0)>512)await this.loadHeaderPage(offset);
+      if(moved||!this.isConnected||source.sessionId!==this.detail?.id||source.boundary!==this.boundary)return;
+      this.$flushUpdates();const root=this.getRootNode();if(root instanceof ShadowRoot)root.getElementById(this.pane+'-header-'+index)?.focus({preventScroll:false});
+    } finally {document.removeEventListener('pointerdown',interaction,true);document.removeEventListener('keydown',interaction,true);}
   }
   showAuthBoundary(boundary:string):void {if(!this.heads().some(head=>head.boundary===boundary))return;this.boundary=boundary;this.updateMessage();this.showMode('auth');}
   headerContext(header:{id:string},event:MouseEvent|KeyboardEvent):void {
