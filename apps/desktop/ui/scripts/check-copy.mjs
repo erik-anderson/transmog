@@ -33,6 +33,9 @@ export async function checkCopy(page,root) {
   await row('Bytes').click({button:'right'});await menu.getByRole('menuitem',{name:'Copy value',exact:true}).click();
   await page.waitForFunction(()=>globalThis.__copied==='00 0A FF');
   assert.equal(await visualizer.getByRole('tree').getAttribute('aria-activedescendant'),selected);
+  await row('Long').click({button:'right'});
+  assert.equal(await menu.getByRole('menuitem',{name:'Copy subtree',exact:true}).count(),0,'Leaf offered a subtree action');
+  await page.keyboard.press('Escape');
   await row('Long').click({button:'right'});await menu.getByRole('menuitem',{name:'Copy value',exact:true}).click();
   await page.waitForFunction(()=>globalThis.__copied==='full-'.repeat(200));
   await row('Branch').click({button:'right'});
@@ -76,6 +79,12 @@ export async function checkCopy(page,root) {
   await menu.getByText('Copy failed. The clipboard or retained value is unavailable.',{exact:true}).waitFor();
   assert.equal(await menu.getByText('private-native-error',{exact:true}).count(),0);
   await page.keyboard.press('Escape');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.authInspection.findings[0].fields.pop();});
+  await auth.getByRole('button',{name:'Retry inspection',exact:true}).click();
+  await auth.getByText('full public',{exact:true}).waitFor();
+  await summary.click({button:'right'});
+  assert.equal(await menu.getByRole('menuitem',{name:'Copy subtree including secrets',exact:true}).count(),0,'Public-only finding offered a secret-inclusive copy');
+  await page.keyboard.press('Escape');
   await page.screenshot({path:resolve(root,'../../../target/ui-check/copy-auth.png')});
   await page.goto('https://workspace.test/');
   await page.evaluate(()=>Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{globalThis.__copied=text;}}}));
@@ -85,7 +94,7 @@ export async function checkCopy(page,root) {
   await menu.getByRole('menuitem',{name:'Copy value',exact:true}).click();
   await page.waitForFunction(()=>globalThis.__copied==='/second');
   assert.equal(await traffic.locator('tr[data-session-id="first"]').getAttribute('aria-selected'),'true','Copying an unselected traffic cell changed selection');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.savedTiming={'ClientBeginRequest':'2026-10-20T00:00:00Z'};});
+  await page.evaluate(()=>{globalThis.__workspaceFixture.savedTiming={'ClientBeginRequest':'2026-10-20T00:00:00Z','ClientDoneResponse':'2026-10-20T00:00:01Z'};});
   await traffic.getByRole('button',{name:'Details…',exact:true}).click();
   const dialog=traffic.locator('dialog[open]');
   const detail=dialog.locator('dd:visible').first();await detail.waitFor();

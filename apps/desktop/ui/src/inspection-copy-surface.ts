@@ -22,7 +22,7 @@ export function surfaceCopy(event: MouseEvent | KeyboardEvent): Omit<CopyRequest
       const section = {name: sectionName(dl), children: [...dl.querySelectorAll('dt')]
         .filter(dt => dt.closest('dl') === dl).map(dt => definitionPair(dt)).filter((pair): pair is {name: string; value: string} => !!pair)};
       const original = dl.textContent;
-      actions.push({id: 'section', label: 'Copy section', read: () => copyTree(section)});
+      if (section.children.length > 1) actions.push({id: 'section', label: 'Copy section', read: () => copyTree(section)});
       return {source, actions, current: () => current() && dl.textContent === original};
     }
     return {source, actions, current};
@@ -44,8 +44,10 @@ export function surfaceCopy(event: MouseEvent | KeyboardEvent): Omit<CopyRequest
   const label = source.getAttribute('data-copy-label') || source.getAttribute('aria-label') || 'Text';
   return {source, current, actions: [
     {id: 'text', label: source.getAttribute('data-copy-label') ? 'Copy ' + label.toLowerCase() : 'Copy text', read: () => value},
-    {id: 'name', label: 'Copy name', read: () => copyScalar(label)},
-    {id: 'pair', label: 'Copy name and value', read: () => copyScalar(label) + ': ' + copyScalar(value)},
+    ...(label !== 'Text' ? [
+      {id: 'name', label: 'Copy name', read: () => copyScalar(label)},
+      {id: 'pair', label: 'Copy name and value', read: () => copyScalar(label) + ': ' + copyScalar(value)},
+    ] : []),
   ]};
 }
 function definitionPair(element: HTMLElement): {name: string; value: string} | null {

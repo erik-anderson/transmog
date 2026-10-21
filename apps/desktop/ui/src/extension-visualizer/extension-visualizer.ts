@@ -448,6 +448,7 @@ export class ExtensionVisualizer extends WebUIElement {
     const view = this.view, revision = this.revision;
     requestCopy(event, {source: event.currentTarget as HTMLElement,
       current: () => this.visible && revision === this.revision && this.view === view,
+      note: cell.full == null ? 'No value is present in this row.' : undefined,
       actions: fieldCopyActions(cell.name, cell.full == null ? null : () => cell.full!)});
   }
   copyNode(id: string, event: MouseEvent | KeyboardEvent): void {
@@ -470,7 +471,7 @@ export class ExtensionVisualizer extends WebUIElement {
     };
     requestCopy(event, {source: event.currentTarget as HTMLElement, current,
       actions: [...fieldCopyActions(node.name, hasCopyValue(node) ? valid => read(false, valid) : null),
-        {id: 'subtree', label: 'Copy subtree', read: valid => read(true, valid)}]});
+        ...(node.children.length || node.childrenToken ? [{id: 'subtree', label: 'Copy subtree', read: (valid: () => boolean) => read(true, valid)}] : [])]});
   }
   tablePage(delta:number):void {const node=this.nodes.get(this.selected);if(node){this.tableOffset=Math.max(0,this.tableOffset+delta);this.visualizerTable=tablePage(node,this.tableOffset);}}
   showSpan(span:Span):void {this.visualizerMode='hex';this.openSpan(span);}

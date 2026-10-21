@@ -119,7 +119,7 @@ export class AuthInspector extends WebUIElement {
     if (!view || !field) return;
     requestCopy(event, {source: event.currentTarget as HTMLElement,
       current: () => this.current(revision) && this.active && this.view === view,
-      note: field.sensitive ? 'Value actions copy the actual retained value, including sensitive material.' : undefined,
+      note: !field.available ? 'The value was not retained or was redacted.' : field.sensitive ? 'Value actions copy the actual retained value, including sensitive material.' : undefined,
       actions: fieldCopyActions(field.name, field.available ? () => invoke<string>('auth_value', {handle: view.handle, field: id}) : null)});
   }
   findingContext(id: string, event: MouseEvent | KeyboardEvent): void {
@@ -130,6 +130,7 @@ export class AuthInspector extends WebUIElement {
       return undefined;
     };
     const finding = find(this.authFindings); if (!view || !finding) return;
+    const hasSecrets = (node: AuthFinding): boolean => node.fields.some(field => field.available && field.sensitive) || node.children.some(hasSecrets);
     const subtree = async (secrets: boolean, current: () => boolean): Promise<string> => {
       const fields: AuthField[] = [];
       const collect = (node: AuthFinding): void => { fields.push(...node.fields.filter(field => field.available && (secrets || !field.sensitive))); node.children.forEach(collect); };
@@ -145,8 +146,8 @@ export class AuthInspector extends WebUIElement {
     requestCopy(event, {source: event.currentTarget as HTMLElement,
       current: () => this.current(revision) && this.active && this.view === view,
       actions: [...fieldCopyActions(finding.format + ' · ' + finding.role, null),
-        {id: 'subtree', label: 'Copy subtree', read: current => subtree(false, current)},
-        {id: 'secrets', label: 'Copy subtree including secrets', read: current => subtree(true, current)}]});
+        ...(finding.fields.length || finding.children.length ? [{id: 'subtree', label: 'Copy subtree', read: (current: () => boolean) => subtree(false, current)}] : []),
+        ...(hasSecrets(finding) ? [{id: 'secrets', label: 'Copy subtree including secrets', read: (current: () => boolean) => subtree(true, current)}] : [])]});
   }
   async related():Promise<void> {
     const view=this.view;if(!view||this.authRelatedBusy)return;const revision=this.revision;this.authRelatedBusy=true;
