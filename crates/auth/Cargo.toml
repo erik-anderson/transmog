@@ -1,0 +1,20 @@
+[package]
+name = "transmog-auth"
+description = "Bounded, offline authentication evidence inspection"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+base64.workspace = true
+flate2.workspace = true
+quick-xml.workspace = true
+serde.workspace = true
+serde_json = { workspace = true, features = ["arbitrary_precision"] }
+time.workspace = true
+web_atoms = "=0.2.6"
+
+[lints]
+workspace = true

@@ -7102,6 +7102,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-auth"
+version = "0.1.8"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "time",
+ "web_atoms",
+]
+
+[[package]]
 name = "transmog-automation"
 version = "0.1.8"
 dependencies = [
