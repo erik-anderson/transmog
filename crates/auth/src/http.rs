@@ -241,6 +241,25 @@ pub(crate) fn decode(
             }
         } else {
             finding.status = "opaque".into();
+            if name == "NTLM" || name == "Negotiate" {
+                match STANDARD.decode(&raw) {
+                    Ok(bytes) => {
+                        if context.charge(bytes.len()) {
+                            let mut source = finding.source.clone();
+                            source.transforms.push("Base64".into());
+                            let child =
+                                crate::windows::decode(context, &bytes, source, name == "NTLM");
+                            finding.children.push(child);
+                        } else {
+                            finding.status = "limited".into();
+                        }
+                    }
+                    Err(_) => finding.issue(
+                        "malformed",
+                        "Invalid Base64 in Windows authentication token.",
+                    ),
+                }
+            }
             if name == "Bearer"
                 && let Some(inner) = crate::jose::decode(context, &raw, finding.source.clone())
             {

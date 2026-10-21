@@ -7,6 +7,7 @@ mod jose;
 mod json;
 mod oauth;
 mod saml;
+mod windows;
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -100,7 +101,19 @@ impl Finding {
         }
     }
     pub(crate) fn issue(&mut self, status: &str, note: &str) {
-        self.status = status.into();
+        let rank = |status: &str| match status {
+            "limited" => 8,
+            "redacted" => 7,
+            "malformed" => 6,
+            "unsupported" => 5,
+            "incomplete" => 4,
+            "encrypted" => 3,
+            "opaque" => 2,
+            _ => 1,
+        };
+        if rank(status) >= rank(&self.status) {
+            self.status = status.into();
+        }
         if self.diagnostics.len() < 16 {
             self.diagnostics.push(note.into());
         }
@@ -288,3 +301,5 @@ pub fn inspect(input: Input, canceled: Arc<AtomicBool>) -> Inspection {
 mod protocol_tests;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod windows_tests;
