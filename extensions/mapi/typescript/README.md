@@ -54,8 +54,9 @@ variable multivalues follow the protocol's lexical grammar, independently of the
 reference's null-terminated multivalue helper.
 See Microsoft's [FastTransfer lexical structure](https://learn.microsoft.com/en-us/openspecs/exchange_server_protocols/ms-oxcfxics/bafa8ce0-ff31-4c36-b464-8e8852d22a10).
 
-The production manifest selects the compiled body and header bundles. Explicit
-synchronous export wrappers preserve API 1 handler names through minification.
+The production manifest selects the compiled body and header ES module bundles.
+Native named exports preserve API 1 handler names, including bundler aliases;
+no CommonJS interop helpers or export wrappers are needed.
 The build rejects binary-parser dependencies in the header bundle. The separate
 `testing.ts` reference bridge is never imported by production or packaged.
 See [qualification and developer commands](../README.md).

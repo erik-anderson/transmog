@@ -20,7 +20,8 @@ node extensions/mapi/build.mjs --development --watch
 
 The build uses the repository's pinned TypeScript and esbuild dependencies.
 It type-checks before publishing replacement runtime files and emits ordinary
-ES2022. All JavaScript under `dist/` is ignored build output; do not commit it.
+ES2022 modules with native named exports and no CommonJS wrapper. All JavaScript
+under `dist/` is ignored build output; do not commit it.
 The app's build compiles and embeds an ordinary stored ZIP64 `.tmext`, plus a
 small metadata sidecar used for discovery without loading the scripts.
 

@@ -1,7 +1,10 @@
 use deno_ast::{
     MediaType, ParseParams, parse_module,
     swc::{
-        ast::{CallExpr, Callee, Decl, Expr, ModuleDecl, ModuleItem, NewExpr},
+        ast::{
+            CallExpr, Callee, Decl, ExportSpecifier, Expr, Module, ModuleDecl, ModuleExportName,
+            ModuleItem, NewExpr, Stmt,
+        },
         ecma_visit::{Visit, VisitWith},
     },
 };
@@ -237,7 +240,6 @@ fn load_modules(
             maybe_syntax: None,
         })
         .map_err(|_| fail(FailureKind::Validation, "JavaScript parsing failed"))?;
-        let mut exports = BTreeMap::new();
         for item in &parsed.program_ref().unwrap_module().body {
             let dependency = match item {
                 ModuleItem::ModuleDecl(ModuleDecl::Import(i)) if i.type_only => None,
@@ -251,15 +253,6 @@ fn load_modules(
                     .src
                     .as_ref()
                     .map(|s| s.value.to_string_lossy().into_owned()),
-                ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(e)) => {
-                    if let Decl::Fn(f) = &e.decl {
-                        exports.insert(
-                            f.ident.sym.to_string(),
-                            f.function.is_async || f.function.is_generator,
-                        );
-                    }
-                    None
-                }
                 _ => None,
             };
             if let Some(dependency) = dependency {
@@ -296,23 +289,81 @@ fn load_modules(
         }
         let mut javascript = source.to_string();
         if specifier == entry {
-            if exports.get("visualize") != Some(&false)
-                || (visualizer.live_updates.is_some() && exports.get("onTraffic") != Some(&false))
-                || ["resume", "expand", "resumeContext", "resumeDecoded"]
-                    .iter()
-                    .any(|name| exports.get(*name) == Some(&true))
-            {
-                return Err(fail(
-                    FailureKind::Validation,
-                    "Declare synchronous visualize and optional live handlers",
-                ));
-            }
-            javascript.push_str("\nObject.defineProperty(globalThis,'__tmHandlers',{value:Object.freeze({visualize, resume:typeof resume==='function'?resume:undefined, resumeContext:typeof resumeContext==='function'?resumeContext:undefined, resumeDecoded:typeof resumeDecoded==='function'?resumeDecoded:undefined, expand:typeof expand==='function'?expand:undefined, onTraffic:typeof onTraffic==='function'?onTraffic:undefined})});");
+            javascript.push_str(&entry_handlers(
+                parsed.program_ref().unwrap_module(),
+                visualizer.live_updates.is_some(),
+            )?);
         }
         modules.insert(specifier, javascript);
     }
     Ok((entry, modules))
 }
+
+fn entry_handlers(module: &Module, live_updates: bool) -> Result<String, Failure> {
+    let mut functions = BTreeMap::new();
+    let mut exports = BTreeMap::new();
+    for item in &module.body {
+        match item {
+            ModuleItem::Stmt(Stmt::Decl(Decl::Fn(function))) => {
+                functions.insert(function.ident.sym.to_string(), &function.function);
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportDecl(export)) => {
+                if let Decl::Fn(function) = &export.decl {
+                    let name = function.ident.sym.to_string();
+                    functions.insert(name.clone(), &function.function);
+                    exports.insert(name.clone(), name);
+                }
+            }
+            ModuleItem::ModuleDecl(ModuleDecl::ExportNamed(export))
+                if export.src.is_none() && !export.type_only =>
+            {
+                for specifier in &export.specifiers {
+                    if let ExportSpecifier::Named(specifier) = specifier
+                        && !specifier.is_type_only
+                        && let ModuleExportName::Ident(local) = &specifier.orig
+                    {
+                        let name = specifier.exported.as_ref().unwrap_or(&specifier.orig);
+                        exports.insert(name.atom().to_string(), local.sym.to_string());
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut handlers = Vec::new();
+    for name in [
+        "visualize",
+        "resume",
+        "resumeContext",
+        "resumeDecoded",
+        "expand",
+        "onTraffic",
+    ] {
+        if let Some(local) = exports.get(name) {
+            if !functions
+                .get(local)
+                .is_some_and(|function| !function.is_async && !function.is_generator)
+            {
+                return Err(fail(
+                    FailureKind::Validation,
+                    "Export handlers as synchronous local function declarations",
+                ));
+            }
+            // Resolve the public export to its local binding, including bundler aliases.
+            handlers.push(format!("{name}:{local}"));
+        } else if name == "visualize" || (name == "onTraffic" && live_updates) {
+            return Err(fail(
+                FailureKind::Validation,
+                "Declare synchronous visualize and optional live handlers",
+            ));
+        }
+    }
+    Ok(format!(
+        "\nObject.defineProperty(globalThis,'__tmHandlers',{{value:Object.freeze({{{}}})}});",
+        handlers.join(",")
+    ))
+}
+
 #[derive(Default)]
 struct Forbidden(bool);
 impl Visit for Forbidden {

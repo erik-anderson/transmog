@@ -51,8 +51,7 @@ async function build() {
     entryPoints: { body: "typescript/body.ts", headers: "typescript/headers.ts" },
     outdir: "dist/runtime",
     bundle: true,
-    format: "iife",
-    globalName: "mapiImplementation",
+    format: "esm",
     target: "es2022",
     minify: false,
     charset: "ascii",
@@ -70,20 +69,10 @@ async function build() {
   ) {
     throw new Error("The header contribution acquired a binary-parser dependency");
   }
-  // API 1 requires explicit synchronous declarations. Keep those stable while
-  // allowing the implementation's private names to be minified by the bundler.
   const outputs = new Map(
     result.outputFiles.map((file) => {
       const path = relative(root, file.path).replaceAll("\\", "/");
-      const handlers = path.endsWith("/headers.js")
-        ? ["visualize"]
-        : ["visualize", "resume", "resumeContext", "resumeDecoded", "expand", "onTraffic"];
-      const wrappers = handlers
-        .map(
-          (name) => `export function ${name}(...args){return mapiImplementation.${name}(...args);}`,
-        )
-        .join("\n");
-      return [path, Buffer.from(file.text + "\n" + wrappers + "\n")];
+      return [path, Buffer.from(file.contents)];
     }),
   );
   const manifest = JSON.parse(await readFile(resolve(root, "manifest.json"), "utf8"));

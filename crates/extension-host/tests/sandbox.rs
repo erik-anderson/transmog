@@ -82,14 +82,19 @@ const DOCUMENT: &str =
 #[tokio::test]
 async fn live_batches_use_frozen_projected_inputs_and_bounded_source_continuations() {
     let source = r"
-export function visualize() {return {kind:'document',document:{title:'Snapshot',status:'complete',presentation:'tree',roots:[]}};}
-export function onTraffic(events,info) {
+function render() {return {kind:'document',document:{title:'Snapshot',status:'complete',presentation:'tree',roots:[]}};}
+function traffic(events,info) {
   if (!Object.isFrozen(events) || !Object.isFrozen(events[0].input) || !Object.isFrozen(info) || info.missedHints !== '3') throw new Error('unbounded live input');
   const event=events[0];
   if(event.exchangeId !== event.input.exchangeId || event.phase !== 'bodyCompleted' || event.input.request.headers.length || event.input.request.body) throw new Error('invalid live projection');
   return {kind:'needInput',token:'live-bytes',reads:[{sourceId:event.input.response.body.sourceId,offset:'0',maxBytes:4}]};
 }
-export function resume(token,pages) {return {kind:'document',document:{title:'Live bytes',status:'complete',presentation:'tree',roots:[{id:'live',name:'Live value',value:{kind:'integer',value:String(pages[0].bytes[0])},spans:[{sourceId:pages[0].sourceId,offset:'0',length:'4'}]}]}};}
+function finish(token,pages) {return {kind:'document',document:{title:'Live bytes',status:'complete',presentation:'tree',roots:[{id:'live',name:'Live value',value:{kind:'integer',value:String(pages[0].bytes[0])},spans:[{sourceId:pages[0].sourceId,offset:'0',length:'4'}]}]}};}
+// Private names must not shadow the public aliases used for dispatch.
+function visualize() {throw new Error('private visualize');}
+function onTraffic() {throw new Error('private onTraffic');}
+function resume() {throw new Error('private resume');}
+export {render as visualize, traffic as onTraffic, finish as resume};
 ";
     let original = snapshot(source);
     let mut manifest = original.manifest.clone();
@@ -246,7 +251,8 @@ async fn relative_javascript_modules_execute_after_capability_restrictions_and_p
     let source = r"
 import {title} from './helper.mjs';
 if (typeof Deno !== 'undefined' || typeof fetch !== 'undefined' || typeof WebSocket !== 'undefined' || typeof WebAssembly !== 'undefined' || typeof setTimeout !== 'undefined') throw new Error('ambient authority');
-export function visualize(input) {
+export {visualize};
+function visualize(input) {
   const value = input;
   if (value.request.headers.length || value.request.body != null) throw new Error('undeclared input');
   let denied = false;
@@ -268,6 +274,27 @@ export function visualize(input) {
     assert_eq!(document.title, "Structured view");
     runner.stop();
     assert!(runner.is_stopped());
+}
+#[test]
+fn commonjs_and_non_synchronous_named_handlers_are_rejected() {
+    for source in [
+        "module.exports = {visualize() {}};",
+        "exports.visualize = function() {};",
+        "function visualize() {}",
+        "async function render() {} export {render as visualize};",
+        "function* render() {} export {render as visualize};",
+        "const render = () => ({}); export {render as visualize};",
+        "function visualize() {} async function next() {} export {visualize, next as resume};",
+        "export function visualize() {} function* next() {} export {next as expand};",
+        "export function visualize() {} async function next() {} export {next as onTraffic};",
+        "export {title as visualize} from './helper.mjs';",
+    ] {
+        assert_eq!(
+            start(snapshot(source)).err().unwrap().kind,
+            FailureKind::Validation,
+            "accepted unsupported handlers: {source}"
+        );
+    }
 }
 #[tokio::test]
 async fn byte_continuations_are_authorized_and_their_results_are_host_validated() {

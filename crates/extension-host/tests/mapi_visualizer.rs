@@ -46,6 +46,10 @@ fn snapshot() -> Snapshot {
 async fn mapi_loose_folder_package_roundtrip_keeps_only_declared_runtime_files() {
     use transmog_extension_registry::Registry;
     let original = snapshot();
+    for path in ["dist/runtime/body.js", "dist/runtime/headers.js"] {
+        let source = std::str::from_utf8(&original.files[path]).unwrap();
+        assert!(!source.contains("__toCommonJS"), "CommonJS wrapper: {path}");
+    }
     let temporary = tempfile::tempdir().unwrap();
     let folder = temporary.path().join("source");
     std::fs::create_dir_all(&folder).unwrap();

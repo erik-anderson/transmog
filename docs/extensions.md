@@ -615,6 +615,13 @@ closed graph of static package-relative JavaScript modules. External URLs, files
 imports, package imports, traversal and dynamic imports are rejected. Helpers can
 share local parser modules without initializing other contribution entry points.
 
+Entry handlers use synchronous local function declarations, exported directly
+(`export function visualize(...) { ... }`) or through a named export list
+(`function render(...) { ... }; export { render as visualize };`). Named export
+lists support bundler output without wrapper functions. Handler re-exports and
+function expressions are not supported. CommonJS `require`, `module.exports` and
+`exports` are not provided; `.tmext` uses ES modules.
+
 `visualize`, `resume`, `resumeContext`, `resumeDecoded`, `expand` and declared `onTraffic` calls return synchronously
 through an independently versioned private protocol. Byte access uses bounded
 `needInput` continuations. The supervisor binds replies to exact request IDs and
