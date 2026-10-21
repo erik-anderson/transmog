@@ -57,8 +57,9 @@ one-second boundary is explicitly uncertain; raw fractional values are preserved
 
 Passwords, client secrets, tokens/codes/correlation values, PKCE verifiers,
 raw/decoded representations and cryptographic bytes are masked by default.
-**Reveal**, **Hide** and **Copy actual value** act on one authorized retained value.
-Copy can copy a masked field's real contents. Raw/decoded material has a separate
+The eye button beside a value reveals or hides that field. Right-click or use
+Shift+F10 for **Copy value**, which copies the actual authorized retained contents
+even when masked. Raw/decoded material has a separate
 disclosure and still requires reveal. User/domain/workstation and ordinary claim
 metadata are readable diagnostic evidence and may contain personal data. Reveals
 reset on selection, stage/evidence changes, hide, disconnect or workspace change;

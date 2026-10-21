@@ -1,6 +1,6 @@
 auth-inspector { display:block; min-width:0; min-height:0; height:100%; overflow:hidden; }
 .auth-inspector { display:flex; flex-direction:column; height:100%; min-height:0; padding:.4rem .55rem; gap:.4rem; font-size:.76rem; }
-.auth-actions,.auth-source,.auth-field-actions { display:flex; flex-wrap:wrap; align-items:baseline; gap:.35rem .6rem; }
+.auth-actions,.auth-source { display:flex; flex-wrap:wrap; align-items:baseline; gap:.35rem .6rem; }
 .auth-inspector p { margin:.2rem 0; overflow-wrap:anywhere; }
 .auth-help,.auth-provenance,.auth-meaning,.auth-coverage p { color:var(--muted); }
 .auth-help { font-size:.72rem; }
@@ -16,7 +16,7 @@ auth-inspector { display:block; min-width:0; min-height:0; height:100%; overflow
 .auth-field { display:grid; grid-template-columns:minmax(6rem,28%) minmax(0,1fr); gap:.35rem; padding:.35rem 0; border-bottom:1px solid var(--line); }
 .auth-field dt { font-weight:600; overflow-wrap:anywhere; }
 .auth-field dd { margin:0; min-width:0; }
-.auth-field pre { margin:0 0 .3rem; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:.75rem/1.5 "Cascadia Mono",Consolas,monospace; user-select:text; }
+.auth-field pre { flex:1; min-width:0; margin:0; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:.75rem/1.5 "Cascadia Mono",Consolas,monospace; user-select:text; }
 .auth-meaning { margin-top:.3rem; font-size:.7rem; }
 .auth-meaning summary,.auth-provenance summary,.auth-coverage summary { cursor:pointer; }
 .auth-provenance,.auth-coverage,.auth-related { margin:.5rem 0; }
@@ -25,3 +25,11 @@ auth-inspector { display:block; min-width:0; min-height:0; height:100%; overflow
 .auth-diagnostic { color:var(--text); background:var(--panel-subtle); padding:.35rem; }
 @container (max-width:360px) { .auth-field { grid-template-columns:minmax(0,1fr); } }
 @media (forced-colors:active) { .auth-finding,.auth-field { border-color:CanvasText; } .auth-help,.auth-state,.auth-meaning { color:CanvasText; } }
+
+.auth-value { display:flex; align-items:flex-start; gap:.25rem; min-width:0; }
+.auth-reveal { display:inline-grid; place-items:center; flex:none; width:1.5rem; height:1.5rem; min-height:0; margin-top:-.15rem; padding:.2rem; border:0; border-radius:.2rem; color:var(--muted); background:transparent; cursor:pointer; }
+.auth-reveal:hover:not(:disabled) { color:var(--text); background:var(--panel-subtle); }
+.auth-reveal:focus-visible { outline:2px solid var(--focus,Highlight); outline-offset:1px; }
+.auth-reveal:disabled { opacity:.5; cursor:default; }
+.auth-eye { width:1rem; height:1rem; fill:none; stroke:currentColor; stroke-width:1.7; stroke-linecap:round; stroke-linejoin:round; }
+@media (forced-colors:active) { .auth-reveal { color:ButtonText; } }

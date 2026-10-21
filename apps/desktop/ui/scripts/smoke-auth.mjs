@@ -34,9 +34,10 @@ try {
   assert.equal(await auth.evaluate(element=>element.outerHTML.includes('native-private-password')),false);
   assert.equal(await request.evaluate(element=>element.outerHTML.includes(btoa('synthetic-user:native-private-password'))),false,'Hidden raw headers leaked the masked credential');
   const reveal=auth.getByRole('button',{name:'Reveal or hide Password',exact:true});await reveal.focus();await page.keyboard.press('Enter');await auth.getByText('native-private-password',{exact:true}).waitFor();await reveal.click();
-  await auth.getByRole('button',{name:'Copy actual value for Password',exact:true}).click();await auth.getByText('Value copied, including any sensitive material.',{exact:true}).waitFor();
-  const handle=await auth.evaluate(element=>element.view.handle);
   const menu=page.getByRole('menu',{name:'Copy inspection value',exact:true});
+  await auth.locator('.auth-field').filter({has:page.locator('dt',{hasText:'Password'})}).click({button:'right'});await menu.getByRole('menuitem',{name:'Copy value',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__nativeCopied==='native-private-password');
+  const handle=await auth.evaluate(element=>element.view.handle);
   const heading=auth.locator('.auth-finding > summary').first();
   await heading.click({button:'right'});await menu.getByRole('menuitem',{name:'Copy subtree',exact:true}).click();
   await page.waitForFunction(()=>globalThis.__nativeCopied.includes('Password: [masked]'));

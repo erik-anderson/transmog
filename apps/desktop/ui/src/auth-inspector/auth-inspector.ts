@@ -9,8 +9,9 @@ let generation=0n;
 const next=():string=>(++generation).toString();
 const group=(finding:AuthFinding):AuthFinding=>{
   const children=finding.children.map(group);
+  const fields=finding.fields.map(field=>({...field,revealed:!!field.revealed,visibilityLabel:(field.revealed?'Hide ':'Reveal ')+field.name}));
   const summary=finding.fields.filter(field=>!field.sensitive&&/^(iss|aud|Username|Domain|Target name|Ticket realm|Service principal|client_id|scope|response_type)/.test(field.name)).slice(0,4).map(field=>field.name+': '+field.value.slice(0,180)).join(' · ')||children.find(child=>child.summary)?.summary||'';
-  return {...finding,summary,readableFields:finding.fields.filter(field=>!technical(field)),technicalFields:finding.fields.filter(technical),children};
+  return {...finding,fields,summary,readableFields:fields.filter(field=>!technical(field)),technicalFields:fields.filter(technical),children};
 };
 const technical=(field:AuthField):boolean=>/^(Original |Decoded |Compact token)/.test(field.name)||field.name.includes(' · original field');
 export class AuthInspector extends WebUIElement {
@@ -95,17 +96,6 @@ export class AuthInspector extends WebUIElement {
     const revision=this.revision;this.changeField(id,{busy:true,error:''});
     try {const value=await invoke<string>('auth_value',{handle:view.handle,field:id});if(this.current(revision)&&this.active&&this.view===view)this.changeField(id,{value,revealed:true});}
     catch {if(this.current(revision))this.changeField(id,{error:'Value is unavailable or the evidence changed. Retry inspection.'});}
-    finally {if(this.current(revision))this.changeField(id,{busy:false});}
-  }
-  async copy(id:string):Promise<void> {
-    const view=this.view,field=this.field(id);if(!view||!field||field.busy)return;
-    const revision=this.revision;this.changeField(id,{busy:true,error:''});
-    try {
-      const value=await invoke<string>('auth_value',{handle:view.handle,field:id});
-      if(!this.current(revision)||!this.active||this.view!==view)return;
-      await navigator.clipboard.writeText(value);
-      if(this.current(revision))this.authNotice='Value copied, including any sensitive material.';
-    } catch {if(this.current(revision))this.changeField(id,{error:'Copy failed. The clipboard or retained value is unavailable.'});}
     finally {if(this.current(revision))this.changeField(id,{busy:false});}
   }
   async source(id:string):Promise<void> {
