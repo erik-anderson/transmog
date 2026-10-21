@@ -479,7 +479,7 @@ Transmog includes the following third-party software.
 | rustls-pki-types | 1.15.1 | MIT OR Apache-2.0 | https://github.com/rustls/pki-types |
 | rustls-platform-verifier | 0.7.1 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
 | rustls-platform-verifier-android | 0.2.0 | MIT OR Apache-2.0 | https://github.com/rustls/rustls-platform-verifier |
-| rustls-webpki | 0.103.15 | ISC | https://github.com/rustls/webpki |
+| rustls-webpki | 0.103.16 | ISC | https://github.com/rustls/webpki |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | https://github.com/dtolnay/rustversion |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://github.com/dtolnay/ryu |
 | ryu-js | 1.0.3 | Apache-2.0 OR BSL-1.0 | https://github.com/boa-dev/ryu-js |
