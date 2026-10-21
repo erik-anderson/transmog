@@ -65,6 +65,11 @@ reset on selection, stage/evidence changes, hide, disconnect or workspace change
 neither reveal state nor values become preferences or diagnostic history.
 Redacted values cannot be reconstructed.
 
+Right-click fields for name/value actions and finding headings for subtree actions.
+Copy subtree masks sensitive fields regardless of reveal state. Copy subtree
+including secrets explicitly includes available actual values. See
+[copying inspection values](copying-inspection-values.md).
+
 **Show original source** opens the original header occurrence or enclosing body,
 which can contain unmasked secrets. Provenance records HTTP, URL/form, character,
 Base64, DEFLATE and protocol transformations. Derived XML regions do not claim

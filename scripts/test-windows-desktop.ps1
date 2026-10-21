@@ -300,9 +300,12 @@ try {
         throw "WebView2 DevTools endpoint did not become ready (exited=$exited, exit=$exitCode); startup diagnostics were retained."
     }
     if ($AuthChecks) {
+        $mapiCopyFixture = Join-Path $probeRoot 'mapi-copy.saz'
+        . (Join-Path $PSScriptRoot 'python-tools.ps1')
+        Invoke-TransmogPython 'generate-mapi-native-fixture.py' @($mapiCopyFixture)
         Push-Location $desktopUi
         try {
-            & node scripts/smoke-auth.mjs --port "$DevToolsPort" --output $probeRoot
+            & node scripts/smoke-auth.mjs --port "$DevToolsPort" --output $probeRoot --mapi $mapiCopyFixture
             if ($LASTEXITCODE -ne 0) { throw 'Native auth inspection checks failed.' }
         } finally { Pop-Location }
         return [pscustomobject]@{ AuthInspectionVerified = $true; EvidenceRoot = $probeRoot }

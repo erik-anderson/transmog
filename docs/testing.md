@@ -123,7 +123,12 @@ python scripts/dev-env.py --run cargo build --locked -p transmog-desktop
 ```
 
 It retains screenshots and native command/accessibility evidence in its isolated
-profile folder. The `auth_evidence` [fuzz target](../fuzz/README.md) supplements
+profile folder. This flow also verifies context-menu clipboard writes, masked and
+secret-inclusive Auth subtrees, original headers and the bundled MAPI tree through
+the real native commands. Copy-specific browser checks can be isolated with
+`node apps/desktop/ui/scripts/check-workspaces.mjs --copy-only`; retained stream
+message copying is included in `--streams-only` and the ordinary workspace gate.
+The `auth_evidence` [fuzz target](../fuzz/README.md) supplements
 deterministic truncation, hostile ASN.1/XML/JSON, duplicate and decompression tests.
 
 Production browser checks exercise templates and fixture commands under CSP and

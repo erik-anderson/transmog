@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import {createRequire} from 'node:module';
-import {writeFile} from 'node:fs/promises';
+import {readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {deflateRawSync} from 'node:zlib';
 const {chromium}=createRequire(new URL('../../../../e2e/playwright/package.json',import.meta.url))('playwright');
@@ -21,6 +21,12 @@ const browser=await chromium.connectOverCDP('http://127.0.0.1:'+argument('--port
 const pages=browser.contexts()[0].pages();const page=pages.find(page=>page.url().includes('transmog-ui'))??pages[0];const errors=[];page.on('pageerror',error=>errors.push(error.message));
 try {
   await page.waitForFunction(()=>document.querySelector('app-shell')?.traffic?.isConnected);
+  const cdp=await browser.contexts()[0].newCDPSession(page);
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
+  await page.evaluate(()=>{
+    const original=navigator.clipboard;
+    Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>{await original.writeText(text);globalThis.__nativeCopied=text;}}});
+  });
   await page.evaluate(async path=>{const shell=document.querySelector('app-shell');await shell.activateView('traffic');await shell.traffic.importTrace(path);const row=shell.traffic.sessions.find(row=>row.path==='/token');if(!row)throw new Error('Auth fixture did not import');await shell.traffic.inspectSession(row);},fixture);
   const request=page.locator('message-inspector[side="request"]'),response=page.locator('message-inspector[side="response"]');
   await request.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
@@ -30,6 +36,19 @@ try {
   const reveal=auth.getByRole('button',{name:'Reveal or hide Password',exact:true});await reveal.focus();await page.keyboard.press('Enter');await auth.getByText('native-private-password',{exact:true}).waitFor();await reveal.click();
   await auth.getByRole('button',{name:'Copy actual value for Password',exact:true}).click();await auth.getByText('Value copied, including any sensitive material.',{exact:true}).waitFor();
   const handle=await auth.evaluate(element=>element.view.handle);
+  const menu=page.getByRole('menu',{name:'Copy inspection value',exact:true});
+  const heading=auth.locator('.auth-finding > summary').first();
+  await heading.click({button:'right'});await menu.getByRole('menuitem',{name:'Copy subtree',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__nativeCopied.includes('Password: [masked]'));
+  assert.equal(await page.evaluate(()=>globalThis.__nativeCopied.includes('native-private-password')),false);
+  await heading.click({button:'right'});await menu.getByRole('menuitem',{name:'Copy subtree including secrets',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__nativeCopied.includes('Password: native-private-password'));
+  assert.equal(await auth.getByText('native-private-password',{exact:true}).count(),0);
+  await request.locator('.message-tabs').getByRole('button',{name:'Headers',exact:true}).click();
+  await request.locator('.headers-table tbody tr').first().click({button:'right'});
+  await menu.getByRole('menuitem',{name:'Copy name and value',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__nativeCopied.startsWith('Authorization: Basic '));
+  await request.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
   const denied=await page.evaluate(async handle=>{try{await window.__TAURI_INTERNALS__.invoke('auth_value',{handle:{...handle,owner:'another-workspace'},field:'v1'});return false;}catch{return true;}},handle);assert.equal(denied,true);
   await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
   await response.getByText('JWT / JWS',{exact:true}).waitFor();await response.getByText('NTLM',{exact:true}).waitFor();
@@ -41,11 +60,57 @@ try {
   await response.getByText('Kerberos V5',{exact:true}).waitFor();await response.getByText('AP-REP',{exact:true}).waitFor();
   await response.locator('auth-inspector').getByRole('button',{name:'Related traffic',exact:true}).click();await response.getByText(/connection metadata is missing/).waitFor();
   const stale=await page.evaluate(async handle=>{try{await window.__TAURI_INTERNALS__.invoke('auth_value',{handle,field:'v1'});return false;}catch{return true;}},handle);assert.equal(stale,true);
-  const cdp=await browser.contexts()[0].newCDPSession(page);
   for(const [width,height] of [[960,720],[800,600]]){await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});const switcher=page.getByRole('button',{name:'Response',exact:true});if(await switcher.count()&&await switcher.first().isVisible())await switcher.first().click();await page.screenshot({path:resolve(output,`auth-native-${width}.png`)});}
   await cdp.send('Emulation.clearDeviceMetricsOverride');
   const ax=await cdp.send('Accessibility.getFullAXTree');assert.ok(ax.nodes.some(node=>node.name?.value==='Auth inspection'));
+  if(process.argv.includes('--mapi')){
+    const mapi=resolve(argument('--mapi')),spec=JSON.parse(await readFile(mapi.replace(/\.saz$/i,'.json'),'utf8'));
+    const expected=spec.cases.find(item=>item.name==='properties');
+    await page.evaluate(async({mapi,expected})=>{
+      const traffic=document.querySelector('app-shell').traffic;
+      traffic.preferences={...traffic.preferences,layout:'stacked',listSplit:25};
+      await traffic.importTrace(mapi);
+      const rows=(await window.__TAURI_INTERNALS__.invoke('query_sessions',{query:{search:'/mapi/emsmdb',limit:100,offset:0}})).sessions;
+      const row=rows.find(row=>row.requestBytes===expected.requestBytes&&row.responseBytes===expected.responseBytes&&row.host===expected.host);
+      if(!row)throw new Error('MAPI copy fixture is missing');
+      await traffic.revealSession(row.id);
+    },{mapi,expected});
+    const traffic=page.locator('traffic-workspace');
+    const inspected=await traffic.evaluate(element=>element.selectedSessionId);
+    const otherRow=traffic.locator('.traffic-table tr[data-session-id]:not([aria-selected="true"])').first();
+    const target=await otherRow.getAttribute('data-session-id');
+    await otherRow.click({button:'right'});
+    const requestMenu=traffic.locator('#traffic-entry-menu');
+    await requestMenu.getByRole('button',{name:'Edit and replay',exact:true}).waitFor();
+    assert.equal(await menu.isVisible(),false,'Traffic request menu was replaced');
+    assert.equal(await traffic.evaluate((element,id)=>element.selectedSessionId===id,target),true);
+    const expectedUrl=await page.evaluate(id=>window.__TAURI_INTERNALS__.invoke('copy_message_url',{id,boundary:'client-request'}),target);
+    await page.screenshot({path:resolve(output,'copy-native-traffic-menu.png')});
+    await requestMenu.locator('action-submenu[label="Copy"]').getByRole('button',{name:'Copy',exact:true}).click();
+    await requestMenu.getByRole('button',{name:'Copy URL',exact:true}).click();
+    await page.waitForFunction(expected=>globalThis.__nativeCopied===expected,expectedUrl);
+    await traffic.evaluate(async(element,id)=>element.revealSession(id),inspected);
+    await response.locator('.message-tabs').getByRole('button',{name:'Body',exact:true}).click();
+    const selector=response.getByLabel('Body viewer',{exact:true});
+    await selector.locator('option[value="extension:net.transmog.mapi:body-response"]').waitFor({state:'attached'});
+    await selector.selectOption('extension:net.transmog.mapi:body-response');
+    const viewer=response.locator('extension-visualizer[slot$="body"]');
+    await viewer.getByRole('treeitem').nth(1).waitFor();
+    await viewer.getByRole('treeitem').nth(1).click();
+    const selected=await viewer.getByRole('tree').getAttribute('aria-activedescendant');
+    await viewer.getByRole('treeitem').first().click({button:'right'});
+    assert.equal(await menu.getByRole('menuitem',{name:'Copy value',exact:true}).isDisabled(),true);
+    await page.screenshot({path:resolve(output,'copy-native-mapi-menu.png')});
+    await menu.getByRole('menuitem',{name:'Copy subtree',exact:true}).click();
+    await page.waitForFunction(()=>globalThis.__nativeCopied.includes('9007199254740993'));
+    assert.match(await page.evaluate(()=>globalThis.__nativeCopied),/\n  \S/);
+    assert.equal(await viewer.getByRole('tree').getAttribute('aria-activedescendant'),selected);
+    await page.screenshot({path:resolve(output,'copy-native-mapi.png')});
+  }
   await cdp.detach();assert.deepEqual(errors,[]);
-  await writeFile(resolve(output,'auth-native.json'),JSON.stringify({masked:true,revealCopy:true,ownerAuthorization:true,staleRejection:true,jwtSamlNtlmKerberos:true,accessibility:true},null,2));
+  await writeFile(resolve(output,'auth-native.json'),JSON.stringify({masked:true,revealCopy:true,ownerAuthorization:true,staleRejection:true,jwtSamlNtlmKerberos:true,accessibility:true,copyMenus:true,mapiSubtree:process.argv.includes('--mapi'),trafficContext:process.argv.includes('--mapi')},null,2));
   console.log('Native Auth parsing, masking, clipboard, authorization, accessibility and layouts verified.');
+} catch(error) {
+  await page.screenshot({path:resolve(output,'copy-native-failure.png')}).catch(()=>undefined);
+  throw error;
 } finally {await browser.close();}

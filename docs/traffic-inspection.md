@@ -1,5 +1,10 @@
 # Inspect and search traffic
 
+Right-click read-only fields and structured evidence to copy names,
+complete values, pairs or subtrees without changing selection. See
+[copying inspection values](copying-inspection-values.md) for formats, context
+menus, Auth masking and limits.
+
 The per-message **Auth** view explains captured authentication formats, nested
 tokens, masking and source coverage alongside Headers and Body. See
 [authentication inspection](auth-inspection.md) for formats, reveal/copy, time
