@@ -17,6 +17,37 @@ export async function checkAuth(page,root) {
   await page.locator('tr[data-session-id="first"]').click();
   await page.waitForFunction(()=>{const inspector=document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]');return inspector?.authCount===0&&inspector.mode==='body';});
   assert.equal(await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).count(),0,'Empty message retained the prior Auth view');
+  await page.evaluate(()=>{
+    const item=(format,recognition='recognized')=>({findings:[{id:'body-format',format,role:'Whole body',recognition,status:'decoded',verification:'Not checked',source:{kind:'body',label:'Retained body',transforms:[]},fields:[],children:[],diagnostics:[]}],coverage:[{source:'body',status:'complete',detail:'Complete body.'}],diagnostics:[]});
+    globalThis.__workspaceFixture.authBodyInspections={jose:item('Explicit auth interpretation','candidate'),saml:item('SAML XML'),ntlm:item('NTLM'),negotiate:item('SPNEGO')};
+  });
+  const bodyViewer=response.getByLabel('Body viewer',{exact:true}),bodyAuth=response.locator('auth-inspector');
+  await bodyViewer.selectOption('auth:jose');
+  await bodyAuth.getByText('No JWT / JWS / JWE recognized in this body.',{exact:true}).waitFor();
+  assert.equal(await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).evaluate(node=>node===node.getRootNode().activeElement),true,'Opening a body format lost keyboard focus');
+  assert.equal(await bodyAuth.locator('.auth-finding').count(),0,'Unmatched body produced an empty generic finding');
+  assert.equal(await bodyAuth.getByText('View body as auth…',{exact:true}).count(),0);
+  await bodyAuth.getByRole('button',{name:'Back to body',exact:true}).click();
+  assert.equal(await bodyViewer.evaluate(node=>node===node.getRootNode().activeElement),true,'Returning from a body format lost keyboard focus');
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]')?.authCount===0);
+  for(const [format,label] of [['saml','SAML XML'],['ntlm','NTLM'],['negotiate','Negotiate']]){
+    await bodyViewer.selectOption('auth:'+format);
+    await bodyAuth.getByText('Body inspected as '+label+'. Review the decoded fields and status below.',{exact:true}).waitFor();
+    assert.equal(await page.evaluate(format=>globalThis.__workspaceFixture.authRequests.some(request=>request.interpretation===format&&request.scanBody),format),true);
+    if(format==='saml')await page.screenshot({path:resolve(root,'../../../target/ui-check/auth-body-format.png')});
+    await bodyAuth.getByRole('button',{name:'Back to body',exact:true}).click();
+  }
+  await bodyViewer.selectOption('auth:ntlm');await bodyAuth.getByText('Body as NTLM',{exact:true}).waitFor();
+  await page.locator('tr[data-session-id="second"]').click();
+  await page.waitForFunction(()=>{const inspector=document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]');return inspector.authInterpretation==='auto'&&inspector.authCount===0&&inspector.mode==='body';});
+  await response.evaluate(element=>{element.detail={...element.detail,storedBodies:element.detail.storedBodies.map(body=>({...body,availability:'disabled'}))};});
+  assert.equal(await bodyViewer.locator('option[value="auth:jose"]').isDisabled(),true,'Missing body enabled an interpretation action');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.failAuth=true;});
+  await response.evaluate(element=>{element.detail={...element.detail,authRevisions:{...element.detail.authRevisions,[element.boundary]:'failed-discovery'}};});
+  const unavailable=response.locator('.message-tabs').getByRole('button',{name:'Auth unavailable',exact:true});
+  await unavailable.waitFor();await unavailable.click();
+  await bodyAuth.getByText('Auth evidence could not be inspected or changed while loading. Retry the current selection.',{exact:true}).waitFor();
+  await bodyAuth.getByRole('button',{name:'Retry inspection',exact:true}).waitFor();
   await page.goto('https://workspace.test/');
   const source={kind:'header',label:'Authorization · field 521',occurrence:520,offset:0,length:100,transforms:['Base64','SPNEGO mechanism OCTET STRING']};
   const field=(id,name,value,sensitive=false)=>({id,name,value,available:true,sensitive,note:'Captured evidence; unverified. No authentication decision is made.'});
@@ -30,11 +61,6 @@ export async function checkAuth(page,root) {
   await tab.focus();await page.keyboard.press('Enter');
   await auth.getByText('JWT / JWS',{exact:true}).waitFor();
   await auth.getByText('Kerberos V5',{exact:true}).waitFor();
-  await auth.getByText('View body as auth…',{exact:true}).click();
-  await auth.getByLabel('Auth body interpretation',{exact:true}).selectOption('jose');
-  await page.waitForFunction(()=>globalThis.__workspaceFixture.authRequests.some(request=>request.interpretation==='jose'&&request.scanBody));
-  await auth.getByLabel('Auth body interpretation',{exact:true}).selectOption('auto');
-  await auth.getByText('JWT / JWS',{exact:true}).waitFor();
   const beforeRefresh=await page.evaluate(()=>globalThis.__workspaceFixture.authRequests.length);
   await inspector.evaluate(element=>{element.detail=structuredClone(element.detail);});
   await page.waitForTimeout(150);

@@ -2,6 +2,7 @@ import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {AuthField,AuthFinding,AuthRelated,AuthRelatedEntry,AuthSelection,AuthSourceNavigation,AuthView} from './models.js';
+import {authBodyFormats} from './models.js';
 import {copyGesture, copyTree, fieldCopyActions, requestCopy, CopyError, type CopyTreeNode} from '../inspection-copy.js';
 import {selectedConverterText} from '../converter-selection.js';
 
@@ -27,7 +28,10 @@ export class AuthInspector extends WebUIElement {
   @observable authDiagnostics:string[]=[];
   @observable authRelated:AuthRelated|null=null;
   @observable authRelatedBusy=false;
-  @observable authInterpretation='auto';
+  @observable interpretation='auto';
+  @observable authBodyFormat='';
+  @observable authBodyHint='';
+  @observable authBodyResult='';
   private view:AuthView|null=null;
   private pending:{slot:string;generation:string;pageId:string}|null=null;
   private key='';
@@ -40,7 +44,13 @@ export class AuthInspector extends WebUIElement {
   private nativeListener=0;
   private timer:ReturnType<typeof setTimeout>|null=null;
   private readonly visibility=():void=>{if(!document.hidden)this.suspended=false;this.schedule();};
-  selectionChanged(previous:AuthSelection|null|undefined):void {if(previous?.sessionId!==this.selection?.sessionId||previous?.boundary!==this.selection?.boundary)this.authInterpretation='auto';this.schedule();}
+  selectionChanged():void {this.schedule();}
+  interpretationChanged():void {
+    const format=authBodyFormats[this.interpretation];
+    this.authBodyFormat=format?.label??'';
+    this.authBodyHint=format?'This viewer expects the entire decoded body to be '+format.expected+'. Auth fields inside JSON, forms or HTML are detected automatically.':'';
+    this.schedule();
+  }
   activeChanged():void {if(this.active)this.suspended=false;this.schedule();}
   visibleChanged():void {this.schedule();}
   slotChanged():void {this.schedule();}
@@ -55,7 +65,7 @@ export class AuthInspector extends WebUIElement {
   }
   private reconcile():void {
     const selection=this.selection;
-    const evidenceKey=selection?JSON.stringify([this.slot,selection.key,selection.sessionId,selection.boundary,this.active?this.authInterpretation:'auto']):'';
+    const evidenceKey=selection?JSON.stringify([this.slot,selection.key,selection.sessionId,selection.boundary,this.active?this.interpretation:'auto']):'';
     const key=this.isConnected&&this.visible&&!document.hidden&&!this.suspended&&selection?JSON.stringify([evidenceKey,this.active]):'';
     if(this.key===key)return;
     this.stop(!key||evidenceKey!==this.evidenceKey);this.key=key;this.evidenceKey=evidenceKey;
@@ -68,7 +78,7 @@ export class AuthInspector extends WebUIElement {
     this.revision++;if(this.timer!==null){clearTimeout(this.timer);this.timer=null;}
     const pending=this.pending;this.pending=null;
     if(pending)void invoke('cancel_auth',{slot:pending.slot,generation:next(),pageId:pending.pageId}).catch(()=>undefined);
-    this.view=null;this.authFindings=[];this.authCoverage=[];this.authDiagnostics=[];this.authRelated=null;this.authBusy=false;this.authRelatedBusy=false;this.authError='';this.authNotice='';
+    this.view=null;this.authFindings=[];this.authCoverage=[];this.authDiagnostics=[];this.authRelated=null;this.authBusy=false;this.authRelatedBusy=false;this.authError='';this.authNotice='';this.authBodyResult='';
     if(resetCount)this.$emit('auth-count',{count:null});
   }
   private current(revision:number):boolean {return this.isConnected&&this.visible&&!document.hidden&&revision===this.revision;}
@@ -76,17 +86,23 @@ export class AuthInspector extends WebUIElement {
     try {
       const pageId=await invoke<string>('visualizer_page');
       if(!this.current(revision))return;
-      const request={slot:this.slot,generation:next(),pageId,sessionId:selection.sessionId,boundary:selection.boundary,scanBody:true,interpretation:this.active?this.authInterpretation:'auto'};
+      const request={slot:this.slot,generation:next(),pageId,sessionId:selection.sessionId,boundary:selection.boundary,scanBody:true,interpretation:this.active?this.interpretation:'auto'};
       this.pending=request;
       const view=await invoke<AuthView>('inspect_auth',{request});
       if(!this.current(revision)||this.pending?.generation!==request.generation)return;
-      this.view=view;this.authFindings=view.inspection.findings.map(group);this.authCoverage=view.inspection.coverage;this.authDiagnostics=view.inspection.diagnostics;
+      const format=authBodyFormats[request.interpretation];
+      const body=view.inspection.findings.filter(finding=>finding.source.kind==='body');
+      const rejected=(finding:AuthFinding):boolean=>!!format&&finding.source.kind==='body'&&finding.format==='Explicit auth interpretation';
+      this.view=view;this.authFindings=view.inspection.findings.filter(finding=>!rejected(finding)).map(group);this.authCoverage=view.inspection.coverage;this.authDiagnostics=view.inspection.diagnostics;
+      if(format)this.authBodyResult=body.some(rejected)?'No '+format.label+' recognized in this body.':
+        body.length?'Body inspected as '+format.label+'. Review the decoded fields and status below.':
+          'Body could not be interpreted as '+format.label+'. '+(this.authCoverage.find(source=>source.source==='body')?.detail??'No retained body was available.');
       this.$emit('auth-count',{count:this.authFindings.length,complete:this.authCoverage.every(source=>source.status==='complete')});
-    } catch {if(this.current(revision)){this.authError='Auth evidence could not be inspected or changed while loading. Retry the current selection.';this.view=null;}}
+    } catch {if(this.current(revision)){this.authError='Auth evidence could not be inspected or changed while loading. Retry the current selection.';this.view=null;this.$emit('auth-count',{count:null,failed:true});}}
     finally {if(this.current(revision))this.authBusy=false;}
   }
   retry():void {this.suspended=false;this.key='';this.reconcile();}
-  changeInterpretation(event:Event):void {this.authInterpretation=(event.currentTarget as HTMLSelectElement).value;this.key='';this.reconcile();}
+  closeBody():void {this.$emit('auth-body-close',null);}
   private field(id:string,findings=this.authFindings):AuthField|undefined {for(const finding of findings){const field=finding.fields.find(field=>field.id===id);if(field)return field;const child=this.field(id,finding.children);if(child)return child;}return undefined;}
   private changeField(id:string,change:Partial<AuthField>):void {
     const update=(findings:AuthFinding[]):AuthFinding[]=>findings.map(finding=>({...finding,fields:finding.fields.map(field=>field.id===id?{...field,...change}:field),children:update(finding.children)}));

@@ -1,12 +1,12 @@
 <template>
   <section class="auth-inspector" aria-label="Auth inspection">
     <div class="auth-actions"><button type="button" class="secondary compact-button" @click="{retry()}" ?disabled="{{authBusy || !selection}}">Retry inspection</button><button type="button" class="secondary compact-button" @click="{related()}" ?disabled="{{authBusy || !authFindings.length || authRelatedBusy}}">Related traffic</button></div>
-    <if condition="authBusy"><p role="status">Inspecting retained auth evidence…</p></if>
+    <if condition="authBusy"><p role="status"><if condition="interpretation == 'auto'">Inspecting retained auth evidence…</if><if condition="interpretation != 'auto'">Interpreting body as {{authBodyFormat}}…</if></p></if>
     <if condition="authError"><p role="alert">{{authError}}</p></if>
     <if condition="authNotice"><p role="status">{{authNotice}}</p></if>
     <if condition="!selection"><p>Select an exchange to inspect authentication.</p></if>
     <div class="auth-scroll">
-    <details class="auth-provenance"><summary>View body as auth…</summary><label>Interpret selected body <select aria-label="Auth body interpretation" @change="{changeInterpretation(e)}"><option value="auto" ?selected="{{authInterpretation == 'auto'}}">Auto by media type</option><option value="jose" ?selected="{{authInterpretation == 'jose'}}">Compact JWT / JWS / JWE</option><option value="saml" ?selected="{{authInterpretation == 'saml'}}">SAML XML</option><option value="ntlm" ?selected="{{authInterpretation == 'ntlm'}}">NTLM token (Base64 or binary)</option><option value="negotiate" ?selected="{{authInterpretation == 'negotiate'}}">Negotiate token (Base64 or binary)</option></select></label><p>Explicit interpretation uses the same retention, masking and finite limits. It does not authenticate the value.</p></details>
+    <if condition="interpretation != 'auto'"><div class="auth-body-format"><strong>Body as {{authBodyFormat}}</strong><button type="button" class="secondary compact-button" @click="{closeBody()}">Back to body</button></div><if condition="authBodyResult"><p class="auth-diagnostic" role="status">{{authBodyResult}}</p></if><details class="auth-help"><summary>About this body viewer</summary><p>{{authBodyHint}}</p></details></if>
     <details class="auth-help"><summary>Masking and interpretation</summary><p>Decoded evidence is unverified. Reveal and Copy value include sensitive material. Show original source opens retained traffic that may contain secrets.</p></details>
 
       <for id="auth-finding" each="finding in authFindings">
@@ -21,7 +21,7 @@
           <for id="auth-finding" each="finding in finding.children" />
         </details>
       </for>
-      <if condition="!authBusy && !authError && !authFindings.length"><p>No auth detected in the completed scanned sources. Coverage below shows sources that were skipped, unavailable or limited.</p></if>
+      <if condition="!authBusy && !authError && !authFindings.length && interpretation == 'auto'"><p>No auth detected in the completed scanned sources. Coverage below shows sources that were skipped, unavailable or limited.</p></if>
       <details class="auth-coverage" open><summary>Source coverage</summary><ul><for each="coverage in authCoverage"><li><strong>{{coverage.source}} · {{coverage.status}}</strong><p>{{coverage.detail}}</p></li></for></ul></details>
       <for each="diagnostic in authDiagnostics"><p class="auth-diagnostic">{{diagnostic}}</p></for>
       <if condition="authRelated"><section class="auth-related" aria-label="Related auth traffic"><h4>Related traffic</h4><p>{{authRelated.searched}} retained entries considered. <if condition="authRelated.limited">Search limited.</if></p><p>{{authRelated.detail}}</p><if condition="!authRelated.entries.length"><p>No related traffic found in this searched scope.</p></if><ul><for each="entry in authRelated.entries"><li><button type="button" class="secondary compact-button" @click="{navigate(entry)}">{{entry.label}} · {{entry.boundary}}</button><p>{{entry.reason}}</p></li></for></ul></section></if>

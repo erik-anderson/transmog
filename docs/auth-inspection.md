@@ -7,20 +7,33 @@ or malformed ones; nested decoders do not inflate it. The tab appears when the
 selected message has findings and stays hidden when automatic detection finds
 nothing. Discovery never selects Auth or moves focus. An inherited Auth view
 returns to Headers or Body when the next message has no findings.
+If discovery fails, **Auth unavailable** stays available for a retry; an error
+is not reported as an empty result.
 
 ## Sources and interpretation
 
-Cheap discovery uses complete retained headers and request targets, including
+Discovery uses complete retained headers and request targets, including
 duplicates and fields beyond the displayed page. Captured Location queries and
 fragments are eligible; browser fragments absent from HTTP requests cannot be
 recovered. Live and imported traffic use the same native analysis path.
 
 Automatic detection also scans an eligible complete retained body in each visible
 selected message. Other rows and routine list refreshes do not read bodies.
-**Retry inspection** repeats the selected
-analysis. **View body as auth…** explicitly interprets that decoded body as JOSE,
-SAML XML or Base64/binary NTLM/Negotiate. It resets on exchange/stage changes and
-uses the same retention, masking and resource limits.
+**Retry inspection** repeats the selected analysis.
+
+For a body that is itself a standalone token or SAML document, choose **Body**,
+then select JWT/JWS/JWE, SAML XML, NTLM or Negotiate from the **Authentication ·
+entire body** group in the body viewer menu. These choices interpret the complete
+decoded body, rather than selected text or a token embedded in a JSON response.
+JSON/form/HTML auth fields are detected automatically.
+
+The Auth view identifies the requested format and reports a recognized body,
+no match, or the retention/decoding reason it could not read the body. Header and
+URL findings stay visible. **Back to body** restores the body viewer and automatic
+detection. Leaving Auth or changing exchanges/stages also resets the explicit
+format. Unavailable or incomplete bodies disable these format choices. Explicit
+interpretation retains the same masking and resource limits and verifies no
+credentials or signatures.
 
 | Evidence | Readable interpretation |
 | --- | --- |

@@ -16,7 +16,7 @@ const encrypted=sequence([der(0xa0,der(2,[18])),der(0xa1,der(2,[3])),der(0xa2,de
 const kerberos=der(0x6f,sequence([der(0xa0,der(2,[5])),der(0xa1,der(2,[15])),der(0xa2,encrypted)]));
 const entry=(path,headers,mime,text,responseHeaders=[])=>({startedDateTime:'2023-11-14T22:13:20Z',time:1,request:{method:'GET',url:'https://auth.invalid/'+path,httpVersion:'HTTP/1.1',headers,queryString:[],cookies:[],headersSize:-1,bodySize:0},response:{status:200,statusText:'OK',httpVersion:'HTTP/1.1',headers:[{name:'Content-Type',value:mime},...responseHeaders],cookies:[],content:{size:Buffer.byteLength(text),mimeType:mime,text},redirectURL:'',headersSize:-1,bodySize:Buffer.byteLength(text)},cache:{},timings:{send:0,wait:1,receive:0}});
 const fixture=resolve(output,'auth.har');
-await writeFile(fixture,JSON.stringify({log:{version:'1.2',creator:{name:'Synthetic Auth check',version:'1'},entries:[entry('token',[{name:'Authorization',value:'Basic '+Buffer.from('synthetic-user:native-private-password').toString('base64')}],'application/json',JSON.stringify({access_token:jwt,token_type:'Bearer'}),[{name:'WWW-Authenticate',value:'Negotiate '+ntlm.toString('base64')}]),entry('saml?SAMLResponse='+encodeURIComponent(deflateRawSync(xml).toString('base64')),[],'text/html','<input type="hidden" name="SAMLResponse" value="'+Buffer.from(xml).toString('base64')+'">'),entry('kerberos',[],'text/plain','uninterpreted',[{name:'WWW-Authenticate',value:'Negotiate '+kerberos.toString('base64')}]) ]}}));
+await writeFile(fixture,JSON.stringify({log:{version:'1.2',creator:{name:'Synthetic Auth check',version:'1'},entries:[entry('token',[{name:'Authorization',value:'Basic '+Buffer.from('synthetic-user:native-private-password').toString('base64')}],'application/json',JSON.stringify({access_token:jwt,token_type:'Bearer'}),[{name:'WWW-Authenticate',value:'Negotiate '+ntlm.toString('base64')}]),entry('saml?SAMLResponse='+encodeURIComponent(deflateRawSync(xml).toString('base64')),[],'text/html','<input type="hidden" name="SAMLResponse" value="'+Buffer.from(xml).toString('base64')+'">'),entry('kerberos',[],'text/plain','uninterpreted',[{name:'WWW-Authenticate',value:'Negotiate '+kerberos.toString('base64')}]),entry('standalone',[],'text/plain',jwt) ]}}));
 const browser=await chromium.connectOverCDP('http://127.0.0.1:'+argument('--port'));
 const pages=browser.contexts()[0].pages();const page=pages.find(page=>page.url().includes('transmog-ui'))??pages[0];const errors=[];page.on('pageerror',error=>errors.push(error.message));
 try {
@@ -29,11 +29,13 @@ try {
   });
   await page.evaluate(async path=>{const shell=document.querySelector('app-shell');await shell.activateView('traffic');await shell.traffic.importTrace(path);const row=shell.traffic.sessions.find(row=>row.path==='/token');if(!row)throw new Error('Auth fixture did not import');await shell.traffic.inspectSession(row);},fixture);
   const request=page.locator('message-inspector[side="request"]'),response=page.locator('message-inspector[side="response"]');
+  await response.locator('auth-inspector').getByText('JWT / JWS',{exact:true}).waitFor({state:'attached'});
   await request.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
   const auth=request.locator('auth-inspector');await auth.locator('.auth-finding > summary > strong').filter({hasText:/^Basic$/}).waitFor();
   assert.equal(await auth.evaluate(element=>element.outerHTML.includes('native-private-password')),false);
   assert.equal(await request.evaluate(element=>element.outerHTML.includes(btoa('synthetic-user:native-private-password'))),false,'Hidden raw headers leaked the masked credential');
   const reveal=auth.getByRole('button',{name:'Reveal or hide Password',exact:true});await reveal.focus();await page.keyboard.press('Enter');await auth.getByText('native-private-password',{exact:true}).waitFor();await reveal.click();
+  await page.screenshot({path:resolve(output,'auth-native-eye.png')});
   const menu=page.getByRole('menu',{name:'Copy inspection value',exact:true});
   await auth.locator('.auth-field').filter({has:page.locator('dt',{hasText:'Password'})}).click({button:'right'});await menu.getByRole('menuitem',{name:'Copy value',exact:true}).click();
   await page.waitForFunction(()=>globalThis.__nativeCopied==='native-private-password');
@@ -64,6 +66,19 @@ try {
   for(const [width,height] of [[960,720],[800,600]]){await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});const switcher=page.getByRole('button',{name:'Response',exact:true});if(await switcher.count()&&await switcher.first().isVisible())await switcher.first().click();await page.screenshot({path:resolve(output,`auth-native-${width}.png`)});}
   await cdp.send('Emulation.clearDeviceMetricsOverride');
   const ax=await cdp.send('Accessibility.getFullAXTree');assert.ok(ax.nodes.some(node=>node.name?.value==='Auth inspection'));
+  await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').traffic;await traffic.inspectSession(traffic.sessions.find(row=>row.path==='/standalone'));});
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]')?.authCount===0);
+  assert.equal(await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).count(),0);
+  await response.getByLabel('Body viewer',{exact:true}).selectOption('auth:jose');
+  await response.getByText('Body inspected as JWT / JWS / JWE. Review the decoded fields and status below.',{exact:true}).waitFor();
+  await response.getByText('JWT / JWS',{exact:true}).waitFor();
+  assert.equal(await response.getByText('native-private-nonce',{exact:true}).count(),0);
+  await page.screenshot({path:resolve(output,'auth-native-body-format.png')});
+  await response.getByRole('button',{name:'Back to body',exact:true}).click();
+  await response.getByLabel('Body viewer',{exact:true}).selectOption('auth:saml');
+  await response.getByText('No SAML XML recognized in this body.',{exact:true}).waitFor();
+  await page.screenshot({path:resolve(output,'auth-native-no-match.png')});
+  await response.getByRole('button',{name:'Back to body',exact:true}).click();
   if(process.argv.includes('--mapi')){
     const mapi=resolve(argument('--mapi')),spec=JSON.parse(await readFile(mapi.replace(/\.saz$/i,'.json'),'utf8'));
     const expected=spec.cases.find(item=>item.name==='properties');

@@ -10,6 +10,7 @@ import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {VisualizerChoice,VisualizerSelection} from '../extension-visualizer/models.js';
 import type {AuthSelection,AuthSourceNavigation} from '../auth-inspector/models.js';
+import {authBodyFormats} from '../auth-inspector/models.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
@@ -19,10 +20,15 @@ export class MessageInspector extends WebUIElement {
   @observable authSelection:AuthSelection|null=null;
   @observable authBadge='';
   @observable authCount=-1;
+  @observable authScanFailed=false;
+  @observable authInterpretation='auto';
   @observable authSourceNotice='';
   private authRequestedKey='';
-  onAuthCount(event:CustomEvent<{count:number|null;complete?:boolean}>):void {
-    event.stopPropagation();this.authCount=event.detail.count??-1;this.authBadge=this.authCount<0?'':'('+this.authCount+')';
+  authTab!:HTMLButtonElement;
+  bodyViewerControl!:HTMLSelectElement;
+  closeAuthBody():void {this.authInterpretation='auto';this.showMode('body');this.$flushUpdates();this.bodyViewerControl?.focus();}
+  onAuthCount(event:CustomEvent<{count:number|null;complete?:boolean;failed?:boolean}>):void {
+    event.stopPropagation();this.authCount=event.detail.count??-1;this.authScanFailed=!!event.detail.failed;this.authBadge=this.authScanFailed?'unavailable':this.authCount<0?'':'('+this.authCount+')';
     if(this.authCount===0&&this.mode==='auth'&&this.authRequestedKey!==this.authSelection?.key)this.showMode(this.side==='request'?'headers':'body');
   }
   async showAuthSource(event:CustomEvent<AuthSourceNavigation>):Promise<void> {
@@ -212,6 +218,7 @@ export class MessageInspector extends WebUIElement {
     this.headerSelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,surface:'headers'}:null;
     this.bodySelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,surface:'body'}:null;
     const authKey=JSON.stringify([this.detail?.id,this.boundary,this.detail?.authRevisions?.[this.boundary]??head,this.bodyMetadata]);
+    if(this.authSelection?.sessionId!==this.detail?.id||this.authSelection?.boundary!==this.boundary)this.authInterpretation='auto';
     this.authSelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,key:authKey}:null;
     void this.refreshChoices();
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody(false);
@@ -220,7 +227,7 @@ export class MessageInspector extends WebUIElement {
       this.bodyText='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
     }
   }
-  showMode(mode:string): void { if(mode==='auth'){this.authSourceNotice='';this.authRequestedKey=this.authSelection?.key??'';}this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
+  showMode(mode:string): void { if(mode==='auth'){this.authSourceNotice='';this.authRequestedKey=this.authSelection?.key??'';}else this.authInterpretation='auto';this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
   private resetViewers():void {
     this.viewer='auto';this.headerViewer='raw';this.headerChoice=null;this.bodyChoice=null;this.bodyExtension=false;
     this.headerChoices=[];this.bodyChoices=[];this.choiceKey='';this.choiceGeneration++;this.rejectedAutomatic.clear();
@@ -249,7 +256,9 @@ export class MessageInspector extends WebUIElement {
   }
   private sortHeaders():void {this.headerRows=[...this.headerRows].sort(this.largestFirst?(a,b)=>b.bytes-a.bytes:(a,b)=>Number(a.id)-Number(b.id));}
   changeViewer(event:Event): void {
-    this.viewer = (event.currentTarget as HTMLSelectElement).value;
+    const value=(event.currentTarget as HTMLSelectElement).value;
+    if(value.startsWith('auth:')&&authBodyFormats[value.slice(5)]){this.authInterpretation=value.slice(5);this.showMode('auth');this.$flushUpdates();this.authTab?.focus();return;}
+    this.viewer = value;
     if (this.viewer === 'auto') this.rejectedAutomatic.clear();
     this.setChoices();this.rememberView();void this.inspectBody();
   }

@@ -147,6 +147,9 @@ when changing the experience.
   capture-time observations and cryptographic verification. Mask credentials
   and raw representations by default; explicit reveal/copy resets with its
   owning evidence. Disclose that original retained sources can contain secrets.
+  Surface Auth when selected-message discovery finds evidence. Put explicit
+  whole-body format choices with body viewers and show their result clearly.
+  Keep value reveal controls inline and copying in the inspection context menu.
   See [Auth inspection](auth-inspection.md).
 
 - Local certificate trust controls add trust grants. Disabling them cannot turn

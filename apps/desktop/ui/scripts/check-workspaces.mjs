@@ -210,7 +210,8 @@ await page.addInitScript((configuration) => {
         case 'visualizer_page': return '1';
         case 'inspect_auth': {
           const request=structuredClone(args.request);state.authRequests??=[];state.authRequests.push(request);
-          const inspection=structuredClone(state.authInspection??{findings:[],coverage:[{source:'headers',status:'complete',detail:'All retained occurrences.'},{source:'body',status:request.scanBody?'complete':'skipped',detail:'Selected-message body only.'}],diagnostics:[]});
+          if(state.failAuth)throw new Error('Synthetic native inspection failure');
+          const inspection=structuredClone(state.authBodyInspections?.[request.interpretation]??state.authInspection??{findings:[],coverage:[{source:'headers',status:'complete',detail:'All retained occurrences.'},{source:'body',status:request.scanBody?'complete':'skipped',detail:'Selected-message body only.'}],diagnostics:[]});
           const view={handle:{owner:'fixture-owner',slot:request.slot,generation:request.generation,pageId:request.pageId,revision:request.sessionId+':'+request.boundary},inspection};
           if(state.deferAuth){state.deferAuth=false;await new Promise(resolve=>state.finishAuth=resolve);}
           return view;

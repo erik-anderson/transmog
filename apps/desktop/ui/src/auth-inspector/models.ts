@@ -7,3 +7,9 @@ export interface AuthView { handle:AuthHandle;inspection:{findings:AuthFinding[]
 export interface AuthRelatedEntry { sessionId:string;boundary:string;label:string;reason:string }
 export interface AuthRelated { entries:AuthRelatedEntry[];searched:number;limited:boolean;detail:string }
 export interface AuthSourceNavigation { sessionId:string;boundary:string;source:AuthSource }
+export const authBodyFormats:Record<string,{label:string;expected:string}>={
+  jose:{label:'JWT / JWS / JWE',expected:'a single compact JWT, JWS or JWE token'},
+  saml:{label:'SAML XML',expected:'a SAML XML document'},
+  ntlm:{label:'NTLM',expected:'a single NTLM token, as Base64 text or binary'},
+  negotiate:{label:'Negotiate',expected:'a single Negotiate token, as Base64 text or binary'},
+};
