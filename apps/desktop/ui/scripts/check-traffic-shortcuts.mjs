@@ -66,7 +66,7 @@ export async function checkTrafficShortcuts(page,root) {
 
   await open();
   // Blank space beside and below narrow columns focuses the list without selection.
-  await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.preferences={...t.preferences,columns:t.preferences.columns.map(column=>({...column,visible:column.id==='request-number'||column.id==='method'}))};});
+  await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.patchPreferences({columns:t.preferences.columns.map(column=>({...column,visible:column.id==='request-number'||column.id==='method'}))},false);});
   const blank=async beside=>{
     const point=await traffic.locator('.table-wrap').evaluate((node,beside)=>{const r=node.getBoundingClientRect(),table=node.querySelector('table').getBoundingClientRect();return {x:r.right-30,y:beside?table.top+65:Math.min(r.bottom-20,table.bottom+15)};},beside);
     await page.mouse.click(point.x,point.y);

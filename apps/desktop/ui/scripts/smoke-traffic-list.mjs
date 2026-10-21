@@ -22,11 +22,17 @@ export async function smokeTrafficList(client,screenshot) {
   };
   const originalColumns=await client.evaluate(`${t}.preferences.columns`);
   try {
-    await client.evaluate(`${t}.preferences={...${t}.preferences,columns:${t}.preferences.columns.map(column=>({...column,visible:['request-number','method'].includes(column.id)}))};${t}.$flushUpdates()`);
+    await client.evaluate(`${t}.patchPreferences({columns:${t}.preferences.columns.map(column=>({...column,visible:['request-number','method'].includes(column.id)}))},false);${t}.$flushUpdates()`);
     await wait(`${t}.trafficTable.getBoundingClientRect().right<${t}.sessionScroller.getBoundingClientRect().right-40`);
     const background=async()=>{
-      const blank=await client.evaluate(`(()=>{const w=${t},r=w.sessionScroller.getBoundingClientRect(),head=w.trafficTable.tHead.getBoundingClientRect();return {x:(w.trafficTable.getBoundingClientRect().right+r.left+w.sessionScroller.clientWidth)/2,y:head.bottom+20};})()`);
-      assert.equal(await client.evaluate(`${t}.getRootNode().elementFromPoint(${blank.x},${blank.y})===${t}.sessionScroller`),true,'Native blank-space pointer target is outside the list background');
+      await wait(`!${t}.selectedSessionId || ${t}.selectedDetail?.id===${t}.selectedSessionId`);
+      await client.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+      // Inspect the visible scrollport after selection layout settles. The thead
+      // itself can scroll away while its sticky column headers remain onscreen.
+      const layout=await client.evaluate(`(()=>{const w=${t},r=w.sessionScroller.getBoundingClientRect(),table=w.trafficTable.getBoundingClientRect(),right=r.left+w.sessionScroller.clientLeft+w.sessionScroller.clientWidth,bottom=r.top+w.sessionScroller.clientTop+w.sessionScroller.clientHeight,headBottom=Math.max(r.top,...[...w.trafficTable.tHead.querySelectorAll('th')].map(cell=>cell.getBoundingClientRect().bottom)),point={x:(table.right+right)/2,y:(headBottom+bottom)/2},hit=w.getRootNode().elementFromPoint(point.x,point.y);return {point,background:hit===w.sessionScroller,hit:hit?.outerHTML.slice(0,300),scroller:r.toJSON(),headBottom,table:table.toJSON(),scroll:w.sessionScroller.scrollTop,detail:w.selectedDetail?.id};})()`);
+      if(!layout.background&&screenshot){const image=await client.call('Page.captureScreenshot',{format:'png'});await writeFile(screenshot.replace('.png','-blank-space-failure.png'),Buffer.from(image.data,'base64'));await writeFile(screenshot.replace('.png','-blank-space-failure.json'),JSON.stringify(layout,null,2)+'\n');}
+      assert.equal(layout.background,true,'Native blank-space pointer target is outside the list background: '+JSON.stringify(layout));
+      const blank=layout.point;
       await client.call('Input.dispatchMouseEvent',{type:'mousePressed',...blank,button:'left',clickCount:1});
       await client.call('Input.dispatchMouseEvent',{type:'mouseReleased',...blank,button:'left',clickCount:1});
       await wait(`${t}.getRootNode().activeElement===${t}.trafficTable && ${t}.selectedTrafficCount===0`);
@@ -37,7 +43,7 @@ export async function smokeTrafficList(client,screenshot) {
     await background();await key('ArrowUp','ArrowUp',38);await wait(`${t}.selectedTrafficCount===1`);
     assert.equal(await client.evaluate(`${t}.trafficSelection.focused`),ids[0],'Native first arrow skipped the first entry');
     await key('Escape','Escape',27);assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),0,'Native Escape retained a single selection');
-  }finally{await client.evaluate(`${t}.preferences={...${t}.preferences,columns:${JSON.stringify(originalColumns)}};${t}.$flushUpdates()`);}
+  }finally{await client.evaluate(`${t}.patchPreferences({columns:${JSON.stringify(originalColumns)}},false);${t}.$flushUpdates()`);}
   for(const [value,code,virtualKey] of [['Enter','Enter',13],[' ','Space',32]]){
     await client.evaluate(`${t}.trafficTable.tHead.querySelector('.column-trigger').focus()`);
     await key(value,code,virtualKey);await wait(`${t}.columnMenu.matches(':popover-open')`);
