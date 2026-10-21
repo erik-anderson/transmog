@@ -52,7 +52,7 @@
               <for each="session in sessions">
                 <tr key="{{session.id}}" id="session-{{session.id}}" tabindex="-1" aria-rowindex="{{session.rowIndex}}" aria-busy="{{session.loading}}" aria-label="{{session.rowLabel}}" data-session-id="{{session.id}}" data-loading="{{session.loading}}" data-tone="{{session.tone}}" ?data-current="{{session.id == selectedSessionId}}" ?data-selected="{{session.selectionState == 'true'}}" aria-selected="{{session.selectionState}}" @click="{selectTraffic(session,e)}" @keydown="{selectWithKeyboard(session,e)}" @contextmenu="{openTrafficMenu(session,e)}">
                   <for each="cell in session.cells">
-                    <td key="{{cell.id}}" tabindex="-1" @contextmenu="{trafficCellContext(session,cell.id,e)}" @keydown="{trafficCellContext(session,cell.id,e)}" data-column-id="{{cell.id}}" data-offset="{{cell.offsetCss}}" ?data-pinned="{{cell.pinned}}" ?data-numeric="{{cell.numeric}}" title="{{cell.title}}">
+                    <td key="{{cell.id}}" data-column-id="{{cell.id}}" data-offset="{{cell.offsetCss}}" ?data-pinned="{{cell.pinned}}" ?data-numeric="{{cell.numeric}}" title="{{cell.title}}">
                       <if condition="session.markerLabel && cell.id == 'request-number'"><span class="request-marker-flag" aria-label="Flagged" title="Flagged">⚑</span></if><if condition="session.topLevelNavigation && cell.id == 'path'"><span class="navigation-badge" title="Top-level navigation" aria-label="Top-level navigation">Page</span></if>
                       <if condition="cell.id == 'method'"><button type="button" class="session-link" @click="{selectWithButton(session,e)}">{{cell.text}}</button></if>
                       <if condition="cell.id != 'method' && cell.id != 'protocol'"><span class="cell-value" data-tone="{{cell.tone}}">{{cell.text}}</span></if>
@@ -60,7 +60,7 @@
                       <if condition="session.autoResponse && cell.id == 'status'"><span class="auto-badge" title="Served by an auto-response rule">AUTO</span></if>
                       <if condition="session.loss && cell.id == 'state'"><span title="Some exchange evidence was omitted"> · loss</span></if>
                     </td>
-                  </for><for each="cell in session.extensionCells"><td key="{{cell.key}}" tabindex="-1" @contextmenu="{trafficCellContext(session,cell.key,e)}" @keydown="{trafficCellContext(session,cell.key,e)}" data-extension-column="{{cell.key}}" title="{{cell.title}}"><span class="cell-value">{{cell.text}}</span></td></for>
+                  </for><for each="cell in session.extensionCells"><td key="{{cell.key}}" data-extension-column="{{cell.key}}" title="{{cell.title}}"><span class="cell-value">{{cell.text}}</span></td></for>
                 </tr>
               </for>
               <tr class="traffic-spacer" aria-hidden="true" role="presentation"><td colspan="{{trafficColumnCount}}"><div data-size="{{bottomSpace}}"></div></td></tr>

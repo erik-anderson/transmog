@@ -91,9 +91,13 @@ export async function checkCopy(page,root) {
   await page.locator('tr[data-session-id="first"]').click();
   const traffic=page.locator('traffic-workspace');
   await traffic.locator('tr[data-session-id="second"] td[data-column-id="path"]').click({button:'right'});
-  await menu.getByRole('menuitem',{name:'Copy value',exact:true}).click();
-  await page.waitForFunction(()=>globalThis.__copied==='/second');
-  assert.equal(await traffic.locator('tr[data-session-id="first"]').getAttribute('aria-selected'),'true','Copying an unselected traffic cell changed selection');
+  const requestMenu=traffic.locator('#traffic-entry-menu');
+  await requestMenu.getByRole('button',{name:'Edit and replay',exact:true}).waitFor();
+  assert.equal(await menu.isVisible(),false,'Traffic context menu was replaced by an inspection copy menu');
+  assert.equal(await traffic.locator('tr[data-session-id="second"]').getAttribute('aria-selected'),'true','Traffic actions did not target the row under the pointer');
+  await requestMenu.locator('action-submenu[label="Copy"]').getByRole('button',{name:'Copy',exact:true}).click();
+  await requestMenu.getByRole('button',{name:'Copy URL',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__copied==='http://example.test/second');
   await page.evaluate(()=>{globalThis.__workspaceFixture.savedTiming={'ClientBeginRequest':'2026-10-20T00:00:00Z','ClientDoneResponse':'2026-10-20T00:00:01Z'};});
   await traffic.getByRole('button',{name:'Details…',exact:true}).click();
   const dialog=traffic.locator('dialog[open]');

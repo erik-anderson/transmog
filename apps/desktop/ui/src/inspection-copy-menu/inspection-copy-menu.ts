@@ -47,11 +47,11 @@ export class InspectionCopyMenu extends WebUIElement {
     if (!request || !action || action.disabled || this.copyMenuBusy) return;
     const revision = this.revision;
     const current = (): boolean => revision === this.revision && this.request === request &&
-      this.isConnected && !document.hidden && request.source.isConnected && request.current() && this.menu.matches(':popover-open');
+      this.isConnected && !document.hidden && request.source.isConnected && request.source.getClientRects().length > 0 &&
+      request.current() && this.menu.matches(':popover-open');
     this.copyMenuBusy = true; this.copyMenuStatus = 'Preparing copy…';
     try {
       if (!current()) { this.close(false); return; }
-      if (action.perform) { this.close(); await action.perform(); return; }
       const text = boundedCopy(await action.read(current));
       if (!current()) { this.close(false); return; }
       if (action.convert) { this.close(); requestFormatConverter(request.source, text); return; }
