@@ -61,7 +61,8 @@ export function treeRows(root:VisualizerNode,expanded:Set<string>,selected:strin
     if(open)node.children.forEach((child,i)=>visit(child,node.id,level+1,i+1,node.children.length));
   };visit(root,'',1,1,1);return rows;
 }
-export interface TableRow {id:string;name:string;cells:string[];}
+export interface TableCopyCell {nodeId:string;name:string;value:string;full:string|null;}
+export interface TableRow {id:string;name:string;cells:string[];copyCells:TableCopyCell[];}
 export function tablePage(node:VisualizerNode,page:number):{columns:Array<{id:string;name:string}>;rows:TableRow[];text:string;previous:boolean;next:boolean;limited:boolean} {
   const structured=node.children.some(child=>child.children.length);
   const columns:Array<{id:string;name:string}>=[];
@@ -72,9 +73,13 @@ export function tablePage(node:VisualizerNode,page:number):{columns:Array<{id:st
   }else columns.push({id:'value',name:'Value'},{id:'format',name:'Format'});
   const offset=Math.max(0,Math.min(page,Math.max(0,Math.ceil(node.children.length/50)-1)))*50;
   const rows=node.children.slice(offset,offset+50).map(row=>{
-    const values=new Map<string,string>(),counts=new Map<string,number>();
-    for(const field of row.children){const ordinal=counts.get(field.name)??0;counts.set(field.name,ordinal+1);values.set(JSON.stringify([field.name,ordinal]),valueText(field.value));}
-    return {id:row.id,name:row.name,cells:structured?columns.map(column=>(values.get(column.id)??'').slice(0,512)):[valueText(row.value).slice(0,512),formatText(row.format)]};
+    const values=new Map<string,VisualizerNode>(),counts=new Map<string,number>();
+    for(const field of row.children){const ordinal=counts.get(field.name)??0;counts.set(field.name,ordinal+1);values.set(JSON.stringify([field.name,ordinal]),field);}
+    const copyCells:TableCopyCell[]=structured?columns.map(column=>{const field=values.get(column.id);return {nodeId:field?.id??'',name:column.name,value:valueText(field?.value).slice(0,512),full:null};}):[
+      {nodeId:row.id,name:row.name,value:valueText(row.value).slice(0,512),full:null},
+      {nodeId:'',name:'Format',value:formatText(row.format),full:formatText(row.format)},
+    ];
+    return {id:row.id,name:row.name,cells:copyCells.map(cell=>cell.value),copyCells};
   });
   return {columns,rows,text:node.children.length?`${offset+1}–${offset+rows.length} of ${node.children.length} rows`:'No child rows',previous:offset>0,next:offset+50<node.children.length,limited};
 }

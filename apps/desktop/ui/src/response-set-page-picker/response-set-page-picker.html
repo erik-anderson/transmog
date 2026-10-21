@@ -11,5 +11,5 @@
   <p role="status" class="field-error" ?hidden="{{!error}}">{{error}}</p><p role="status" ?hidden="{{!saving}}">Saving page association…</p>
   <p role="status" ?hidden="{{!pageSaved}}">Page association saved. Close this dialog, then preview the saved page.</p>
   <footer><button type="button" @pointerdown="{usePointerDown(e)}" @click="{usePage()}" ?disabled="{{!selectedId || pageSaved}}" aria-disabled="{{saving || pageSaved}}" aria-busy="{{saving}}">Use page</button><button type="button" class="secondary" @click="{goToTraffic()}" ?disabled="{{saving}}">Go to Traffic</button><button type="button" class="secondary" @click="{cancel()}">Close</button></footer>
-</dialog>
+<inspection-copy-menu></inspection-copy-menu></dialog>
 </template>

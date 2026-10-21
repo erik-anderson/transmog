@@ -186,6 +186,39 @@ pub(crate) fn converter_header_from_snapshot(
     stage: &str,
     index: usize,
 ) -> Result<String, AppError> {
+    let field = copy_header_from_snapshot(snapshot, stage, index)?;
+    if field.binary {
+        return Err(AppError::new(
+            ErrorCategory::Unavailable,
+            "This header contains binary bytes. Select an explicit byte representation instead.",
+            false,
+        ));
+    }
+    field.value.ok_or_else(|| {
+        AppError::new(
+            ErrorCategory::Unavailable,
+            "This header value was redacted.",
+            false,
+        )
+    })
+}
+
+/// Complete retained header text, with binary values represented as hexadecimal.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HeaderCopy {
+    /// Full original field name.
+    pub name: String,
+    /// Full value, or unavailable because it was redacted.
+    pub value: Option<String>,
+    /// The value is hexadecimal rather than Unicode text.
+    pub binary: bool,
+}
+pub(crate) fn copy_header_from_snapshot(
+    snapshot: &SessionSnapshot,
+    stage: &str,
+    index: usize,
+) -> Result<HeaderCopy, AppError> {
     let unavailable = || {
         AppError::new(
             ErrorCategory::Unavailable,
@@ -207,21 +240,42 @@ pub(crate) fn converter_header_from_snapshot(
         })
         .ok_or_else(unavailable)?;
     let field = block.iter().nth(index).ok_or_else(unavailable)?;
-    if field.is_redacted() {
-        return Err(AppError::new(
-            ErrorCategory::Unavailable,
-            "This header value was redacted.",
-            false,
-        ));
-    }
-    if field.value().len() > crate::format_converter::MAX_INPUT {
+    if field.value().len() > crate::format_converter::MAX_INPUT || field.name().len() > 65536 {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
             "Header value exceeds the converter's 8 MiB input limit.",
             false,
         ));
     }
-    std::str::from_utf8(field.value()).map(str::to_owned).map_err(|_| AppError::new(ErrorCategory::Unavailable,"This header contains binary bytes. Select an explicit byte representation instead.",false))
+    let text = std::str::from_utf8(field.value());
+    if text.is_err() && field.value().len() > (16 * 1024 * 1024) / 3 {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "The header exceeds the clipboard text limit.",
+            false,
+        ));
+    }
+    let value = if field.is_redacted() {
+        None
+    } else if let Ok(value) = text {
+        Some(value.to_owned())
+    } else {
+        let mut hex = String::with_capacity(field.value().len() * 3);
+        for (index, byte) in field.value().iter().enumerate() {
+            if index > 0 {
+                hex.push(' ');
+            }
+            let _ = write!(hex, "{byte:02X}");
+        }
+        Some(hex)
+    };
+    Ok(HeaderCopy {
+        name: std::str::from_utf8(field.name())
+            .map(str::to_owned)
+            .map_err(|_| unavailable())?,
+        value,
+        binary: text.is_err(),
+    })
 }
 
 pub(crate) fn copy_message_url(
@@ -340,6 +394,8 @@ pub(crate) fn copy_message_headers_from_snapshot(
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionDetail {
+    /// Selected-source hashes include full retained fields, independent of display truncation.
+    pub auth_revisions: std::collections::BTreeMap<String, String>,
     /// Exact workspace admission number.
     pub request_number: String,
     /// Explicit original source number and its format provenance, when recorded.
@@ -728,6 +784,19 @@ pub(crate) fn detail_from_snapshot(
         None => "active".to_owned(),
     };
     Ok(SessionDetail {
+        auth_revisions: [
+            "client-request",
+            "upstream-request",
+            "upstream-response",
+            "client-response",
+        ]
+        .into_iter()
+        .filter_map(|boundary| {
+            crate::auth::revision(snapshot, body_store, boundary)
+                .ok()
+                .map(|revision| (boundary.into(), revision))
+        })
+        .collect(),
         composer_origin: None,
         performance: snapshot.performance.clone(),
         trace_id: None,
@@ -1605,12 +1674,29 @@ mod tests {
     }
 
     fn assert_converter_headers(snapshot: &SessionSnapshot) {
+        let copied = copy_header_from_snapshot(snapshot, "client-request", 700).unwrap();
+        assert_eq!(copied.name, "Cookie");
+        assert_eq!(copied.value.unwrap(), "a".repeat(5000));
         assert_eq!(
             converter_header_from_snapshot(snapshot, "client-request", 700).unwrap(),
             "a".repeat(5000)
         );
         assert!(converter_header_from_snapshot(snapshot, "client-response", 700).is_err());
         assert!(converter_header_from_snapshot(snapshot, "client-request", 999).is_err());
+        let mut changed = snapshot.clone();
+        changed.request_heads[0].head.headers = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("X-Binary", [0x80, 0xff]).unwrap(),
+        ]);
+        let binary = copy_header_from_snapshot(&changed, "client-request", 0).unwrap();
+        assert!(binary.binary);
+        assert_eq!(binary.value.as_deref(), Some("80 FF"));
+        changed.request_heads[0].head.headers = HeaderBlock::from_fields(vec![
+            HeaderField::try_new("Authorization", "secret").unwrap(),
+        ]);
+        changed.request_heads[0].head.headers.redact_sensitive();
+        let redacted = copy_header_from_snapshot(&changed, "client-request", 0).unwrap();
+        assert_eq!(redacted.name, "Authorization");
+        assert!(redacted.value.is_none());
     }
 
     #[tokio::test]

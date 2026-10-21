@@ -73,6 +73,6 @@
       </div>
       <footer class="profile-editor-footer"><p class="field-help">New requests use fresh pools. Active requests and streams finish with their original recipe.</p><div class="actions"><button type="submit" ?disabled="{{networkBusy || networkValidation}}">Save and use</button><button type="button" class="secondary" @click="{saveEditor(e,false)}" ?disabled="{{networkBusy || networkValidation}}">Save only</button><button type="button" class="secondary" @click="{discard()}" ?disabled="{{networkBusy}}">Discard draft</button><span role="status" ?hidden="{{!networkBusy}}">Saving…</span></div></footer>
     </form>
-  </dialog>
+  <inspection-copy-menu></inspection-copy-menu></dialog>
 </section>
 </template>

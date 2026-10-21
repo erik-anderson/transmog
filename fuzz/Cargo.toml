@@ -9,6 +9,8 @@ license = "MIT"
 cargo-fuzz = true
 
 [dependencies]
+transmog-auth = { version = "=0.1.9", path = "../crates/auth" }
+base64 = "0.22.1"
 bytes = "1.11.1"
 libfuzzer-sys = "=0.4.13"
 transmog-content = { version = "=0.1.9", path = "../crates/proxy-content" }
@@ -23,6 +25,13 @@ crc32fast = "1.5.2"
 zstd = { version = "=0.14.3", default-features = false }
 
 [workspace]
+
+[[bin]]
+name = "auth_evidence"
+path = "fuzz_targets/auth_evidence.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "content_encoding"

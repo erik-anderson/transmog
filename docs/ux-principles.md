@@ -91,6 +91,10 @@ when changing the experience.
 - Application chrome and selectable lists do not select text during pointer or
   range selection. Editors and inspection evidence, including headers, bodies,
   full URLs and reports, retain ordinary text selection and copying.
+- Read-only inspection copy menus target the item under the pointer independently
+  of selection. Use complete underlying evidence for field values; name previews
+  accurately. Offer only actions supported by the context and preserve masking in
+  ordinary Auth subtree copies. See [copying inspection values](copying-inspection-values.md).
 - Removing Traffic keeps open live WebSockets inspectable unless the user has
   explicitly enabled termination on clear. Cancellation stops selected live work
   while preserving its evidence; Undo never reconnects a terminated connection.
@@ -139,6 +143,12 @@ when changing the experience.
 
 ## Present evidence and failures honestly
 
+- Auth inspection separates structural decoding, encrypted/opaque coverage,
+  capture-time observations and cryptographic verification. Mask credentials
+  and raw representations by default; explicit reveal/copy resets with its
+  owning evidence. Disclose that original retained sources can contain secrets.
+  See [Auth inspection](auth-inspection.md).
+
 - Local certificate trust controls add trust grants. Disabling them cannot turn
   off user or enterprise distrust. Public distrust follows the selected policy
   source rather than silently borrowing another source's rules.
@@ -163,7 +173,8 @@ when changing the experience.
   repeatedly interrupt work, and stale state must not turn a failure into success.
 - Copying commands never sends traffic. Captured markup stays inert in the
   workbench; explicit preview flows must retain their documented isolation.
-  Private keys, passwords and session secrets never become inspection evidence.
+  Host private keys and TLS session secrets never become inspection evidence.
+  Captured HTTP credentials follow the Auth view's masking and explicit-value rules.
 
 ## Keep product contracts in their topic guides
 
@@ -174,6 +185,8 @@ other guides rather than repeated inventories.
 | Contract | Owning guide |
 | --- | --- |
 | Traffic layout, selection, body viewers and Composer | [Traffic inspection](traffic-inspection.md) |
+| Contextual inspection copying and serialization | [Copying inspection values](copying-inspection-values.md) |
+| Captured auth formats, masking and interpretation | [Auth inspection](auth-inspection.md) |
 | Stream lifetime and retained messages | [Stream inspection](stream-inspection.md) |
 | Timing interpretation | [Request timings](request-timings.md) |
 | Profile choices and activation | [Network profiles](network-profiles.md) |

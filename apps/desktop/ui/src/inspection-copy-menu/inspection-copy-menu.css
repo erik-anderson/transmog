@@ -1,0 +1,13 @@
+:host { display:contents; color:var(--text,light-dark(#20242b,#edf0f4)); font:12px "Segoe UI Variable","Segoe UI",sans-serif; color-scheme:light dark; }
+.copy-menu { position:fixed; inset:auto; top:attr(data-y type(<length>),8px); left:attr(data-x type(<length>),8px); margin:0; width:min(18rem,calc(100vw - 16px)); max-height:calc(100dvh - 16px); overflow:auto; box-sizing:border-box; padding:.3rem; color:inherit; background:var(--panel,light-dark(#fff,#20242a)); border:1px solid var(--line,light-dark(#d8dce3,#505862)); border-radius:.35rem; box-shadow:0 .4rem 1rem #0003; }
+.copy-menu:popover-open { display:grid; }
+.copy-menu[data-scheme="dark"] { color-scheme:dark; color:#edf0f4; }
+.copy-menu[data-scheme="light"] { color-scheme:light; color:#20242b; }
+button { font:inherit; color:inherit; background:transparent; border:0; border-radius:.2rem; min-height:1.9rem; padding:.35rem .5rem; text-align:left; cursor:pointer; }
+button:hover:not(:disabled) { background:var(--row-hover,light-dark(#f0f5f4,#29332f)); }
+button:disabled { opacity:.5; cursor:default; }
+button:focus-visible { outline:2px solid var(--focus,Highlight); outline-offset:-2px; }
+p { margin:.2rem .5rem; overflow-wrap:anywhere; line-height:1.4; }
+p:empty { display:none; }
+.copy-feedback { position:fixed; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+@media(forced-colors:active) { .copy-menu { background:Canvas; color:CanvasText; border-color:ButtonText; } }

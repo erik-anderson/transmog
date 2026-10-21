@@ -16,7 +16,7 @@ use transmog_extensions::{
 };
 mod admission;
 mod context;
-mod decoding;
+pub(crate) mod decoding;
 mod evidence;
 mod live;
 mod reload;
@@ -806,10 +806,12 @@ impl Application {
     }
     /// Invalidates the prior `WebView` document's workers, queued starts and source capabilities.
     pub fn reset_visualizer_document(&self) {
+        self.auth.reset(None);
         self.visualizers.reset_document();
     }
     /// Native visibility gate. Hiding/minimizing stops all workers; focus changes alone do not.
     pub fn set_visualizers_visible(&self, visible: bool) {
+        self.auth.reset(Some(visible));
         self.visualizers.visible(visible);
     }
     /// Whether an exact visible binding still owns a ready worker.
@@ -828,10 +830,11 @@ impl Application {
     }
     /// Unloads every visible or starting instance when this application/window closes.
     pub fn deactivate_visualizers(&self) {
+        self.auth.reset(Some(false));
         self.visualizers.cancel_all();
     }
 
-    fn visualizer_evidence(
+    pub(crate) fn visualizer_evidence(
         &self,
         id: &str,
     ) -> Result<(SessionSnapshot, Option<BodyStore>), AppError> {

@@ -508,6 +508,9 @@ values, format metadata, paginated tables, text and Hex. Table previews shorten
 cells and bound columns; the structure preserves access to every field. Nested
 presentation hints choose the selected structure's initial view. Captured names,
 values, diagnostics and transform descriptions remain inert text.
+Right-click copy actions operate on full typed values and bounded deferred
+subtrees without changing the selected field. Byte values use their declared
+source ranges. See [copying inspection values](copying-inspection-values.md).
 Selecting a table row reveals its existing ancestors, scrolls it into the
 structure viewport and returns keyboard focus to the tree. Revealing a selection
 never fetches deferred children. Right Arrow expands branches or enters their

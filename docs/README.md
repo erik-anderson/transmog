@@ -13,6 +13,8 @@ contains remaining work; Git history holds completed plans and migration notes.
 ## Traffic and automation
 
 - [Traffic inspection](traffic-inspection.md): headers, bodies, search, selection and replay.
+- [Copying inspection values](copying-inspection-values.md): contextual field, subtree, row and report copying.
+- [Auth inspection](auth-inspection.md): HTTP/OAuth/JOSE/SAML and Windows auth evidence, masking and interpretation limits.
 - [Format converter](format-converter.md): temporary text/byte conversions and independent scratch windows.
 - [Extension contracts](extensions.md): sandboxed visualizers, declared inputs, host rendering, `.tmext` packaging, development reload and bundled MAPI/HTTP.
 - [Request timings](request-timings.md): waterfalls and shared transport evidence.

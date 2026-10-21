@@ -86,6 +86,12 @@ cannot participate in proxy shutdown or host restoration.
 
 ## Retention and privacy
 
+The [Auth inspector](auth-inspection.md) masks secret fields and requires explicit
+reveal/copy. This display masking does not change retained traffic, rewrite
+captures or expand capture/export redaction to URLs or bodies. Original source
+navigation can show unmasked values. Active auth values and reveal state are
+ephemeral, outside preferences and diagnostic history.
+
 Captured-page previews use fresh InPrivate browser sessions for each run. Reload
 keeps that run's state and frozen responses; updated previews start fresh. Profile
 cleanup and InPrivate do not guarantee removal of plaintext preview response files

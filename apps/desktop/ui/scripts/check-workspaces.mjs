@@ -55,6 +55,8 @@ import {checkNetworkProfiles} from './check-network-profiles.mjs';
 import {checkClientCertificates} from './check-client-certificates.mjs';
 import {checkExtensions} from './check-extensions.mjs';
 import {checkVisualizers} from './check-visualizers.mjs';
+import {checkCopy} from './check-copy.mjs';
+import {checkAuth} from './check-auth.mjs';
 import { checkCertificates } from './check-certificates.mjs';
 import { checkConnectTunnels } from './check-connect-tunnels.mjs';
 import { checkUserAgentOverrides } from './check-user-agent-overrides.mjs';
@@ -206,6 +208,22 @@ await page.addInitScript((configuration) => {
           return rows;
         }
         case 'visualizer_page': return '1';
+        case 'inspect_auth': {
+          const request=structuredClone(args.request);state.authRequests??=[];state.authRequests.push(request);
+          const inspection=structuredClone(state.authInspection??{findings:[],coverage:[{source:'headers',status:'complete',detail:'All retained occurrences.'},{source:'body',status:request.scanBody?'complete':'skipped',detail:'Selected-message body only.'}],diagnostics:[]});
+          const view={handle:{owner:'fixture-owner',slot:request.slot,generation:request.generation,pageId:request.pageId,revision:request.sessionId+':'+request.boundary},inspection};
+          if(state.deferAuth){state.deferAuth=false;await new Promise(resolve=>state.finishAuth=resolve);}
+          return view;
+        }
+        case 'cancel_auth': state.authCancels=(state.authCancels??0)+1;return;
+        case 'auth_values': return args.fields.map(field=>state.authValues?.[field]??'synthetic-secret');
+        case 'auth_value': {
+          const value=state.authValues?.[args.field]??'synthetic-secret';
+          if(state.deferAuthValue){state.deferAuthValue=false;await new Promise(resolve=>state.finishAuthValue=resolve);}
+          return value;
+        }
+        case 'auth_source': return structuredClone(state.authSource??{sessionId:'first',boundary:'client-response',source:{kind:'header',label:'WWW-Authenticate · field 1',occurrence:0,offset:0,length:0,transforms:[]}});
+        case 'related_auth': return structuredClone(state.authRelated??{entries:[],searched:2,limited:false,detail:'Same capture and authority; other bodies were not read. Connection context does not prove authentication.'});
         case 'activate_visualizer': {
           const request=structuredClone(args.request);state.visualizerStarts??=[];state.visualizerStarts.push(request);
           if(state.visualizerError)throw new Error('Synthetic parser failed');
@@ -295,6 +313,7 @@ await page.addInitScript((configuration) => {
         }
         case 'open_converter_window': state.converterDraft=structuredClone(args.draft);if(state.converterWindowError)throw new Error('Converter window could not be opened.');return;
         case 'save_converter_output': state.converterSaved=structuredClone(args.input);if(state.converterSaveError)throw new Error('Output could not be saved.');return false;
+        case 'copy_header_field': {const header=(state.fullHeaders??[{name:'Accept',value:'*/*'},{name:'Authorization',value:'[redacted]',sensitive:true}])[args.index];return {name:header.name,value:header.sensitive?null:header.value,binary:false};}
         case 'converter_header_value': {const header=(state.fullHeaders??[{name:'Accept',value:'*/*'},{name:'Authorization',value:'[redacted]',sensitive:true}])[args.index];if(header?.sensitive)throw new Error('This header value was redacted.');return header?.value??'';}
         case 'open_product_website': return;
         case 'open_response_set_live_page': state.livePageArgs=structuredClone(args);if(state.livePageError)throw new Error(state.livePageError);return;
@@ -954,6 +973,8 @@ const savedProperties=async()=>{await page.waitForFunction(()=>{const workspace=
 const cancelRule=async()=>{await page.locator('.auto-response-editor').getByRole('button',{name:'Cancel',exact:true}).first().click();await discardIfAsked();};
 try {
   if(process.argv.includes('--traffic-perf-only')){const index=process.argv.indexOf('--perf-output');await checkTrafficPerformance(page,index>=0?process.argv[index+1]:undefined);assert.deepEqual(errors,[]);await browser.close();process.exit(0);}
+  if(process.argv.includes('--streams-only')){await page.goto('https://workspace.test/');await checkStreams(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Stream inspection and context copying verified.\n');process.exit(0);}
+  if(process.argv.includes('--copy-only')){await checkCopy(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Inspection copy menus verified.\n');process.exit(0);}
   if(process.argv.includes('--visualizers-only')){await page.goto('https://workspace.test/');await checkVisualizers(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Host visualizers, bounded structures, exact source spans and inactive cancellation verified.\n');process.exit(0);}
   if(process.argv.includes('--extensions-only')){await page.goto('https://workspace.test/');await checkExtensions(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Extension management, declared inputs, inert metadata and async lifetimes verified.\n');process.exit(0);}
   if(process.argv.includes('--converter-only')){await checkFormatConverter(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Converter flyout, edits, races, context actions, handoff and layouts verified.\n');process.exit(0);}
@@ -971,6 +992,7 @@ try {
   if(process.argv.includes('--sets-only')){await checkResponseSetWorkspaces(page,root);await checkResponseSetDraftRegressions(page);await checkResponseSetPendingDialogs(page,root);await checkResponseSetCollectionAdds(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Response set collection workspaces verified.\n');process.exit(0);}
   if(process.argv.includes('--body-refresh-only')||process.argv.includes('--body-refresh-reproduce')) {await checkBodyRefresh(page,root,{reproduce:process.argv.includes('--body-refresh-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Body refresh lifecycle verified.\n');process.exit(0);}
   if(process.argv.includes('--preview-prerequisites-only')||process.argv.includes('--preview-prerequisites-reproduce')) {await checkPreviewPrerequisites(page,root,{reproduce:process.argv.includes('--preview-prerequisites-reproduce')});assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Preview prerequisites verified.\n');process.exit(0);}
+  if(process.argv.includes('--auth-only')){await checkAuth(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Auth masking, reveal/copy, stale replies, coverage, keyboard and layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--hex-only')){await page.goto('https://workspace.test/');await page.locator('tr[data-session-id="first"]').click();const inspector=page.locator('traffic-workspace message-inspector[side="response"]');await inspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');await inspector.locator('hex-viewer').waitFor({state:'visible'});await checkHexViewer(page,inspector,resolve(root,'../../../target/ui-check/hex-selection.png'));assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Hex byte navigation, selection, paging and compact reachability verified.\n');process.exit(0);}
   if(process.argv.includes('--traffic-filters-only')){await page.goto('https://workspace.test/');await checkTrafficFilters(page,root);await checkTrafficAdvanced(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic filtering and stream lifetime checks passed.\n');process.exit(0);}
   if(process.argv.includes('--scripts-only')) {await page.goto('https://workspace.test/');await view('automation');await page.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();await checkScripts(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Script draft, activation, discard, async state and responsive layouts verified.\n');process.exit(0);}
@@ -979,6 +1001,7 @@ try {
   if(process.argv.includes('--browser-headers-only')) {await page.goto('https://workspace.test/');await view('automation');await checkUserAgentOverrides(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Browser header authoring, presets, ordering, drafts and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--rules-only')) {await checkUnifiedRules(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Unified rule creation, direction/search filters, pause scope, drafts and responsive layouts verified.\n');process.exit(0);}
   if(process.argv.includes('--actions-only')) {await checkActionMenus(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Actions submenus, keyboard focus, copying and responsive layouts verified.\n');process.exit(0);}
+  if(process.argv.includes('--navigation-only')) {await page.goto('https://workspace.test/');await page.waitForFunction(()=>document.querySelector('app-shell')?.traffic?.queryLoaded);await checkTrafficNavigation(page);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Traffic navigation verified.\n');process.exit(0);}
   if(process.argv.includes('--timeline-only')) {await page.goto('https://workspace.test/');await checkTrafficTimeline(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timeline scope, dragging, keyboard, live updates, races, failures and virtualization verified.\n');process.exit(0);}
   if(process.argv.includes('--timing-labels-only')) {await page.goto('https://workspace.test/');await checkTimingLabels(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('Timing names, values and reports verified.\n');process.exit(0);}
   if(process.argv.includes('--selection-only')) {await page.goto('https://workspace.test/');await checkAppSelection(page,root);assert.deepEqual(errors,[]);await browser.close();process.stdout.write('App selection and selectable evidence verified.\n');process.exit(0);}
@@ -2573,6 +2596,8 @@ try {
   await checkLoopback(page,root);
   await checkClientCertificates(page,root);
   await checkExtensions(page,root);
+  await checkCopy(page,root);
+  await checkAuth(page,root);
   await checkVisualizers(page,root);
   await page.goto('https://workspace.test/?viewer');
   await page.getByText('Capture viewer',{exact:true}).waitFor();

@@ -88,13 +88,13 @@
       <p ?hidden="{{!previewLookupFailed}}">Captured pages could not be checked. Try again, or select a page in Traffic.</p>
       <p id="preview-prerequisite-message">Page previews need a captured HTML page. In Traffic, start the proxy and visit the page through it, or import saved traffic containing the page. Select its HTML response, then return here and retry.</p>
       <div class="actions"><button type="button" data-traffic @click="{previewGoToTraffic()}">Go to Traffic</button><button type="button" data-close class="secondary" autofocus @click="{closePreviewPrerequisite()}">Close</button></div>
-    </dialog>
+    <inspection-copy-menu></inspection-copy-menu></dialog>
     <dialog w-ref="{errorDialog}" class="operation-error-dialog" role="alertdialog" aria-labelledby="operation-error-title" aria-describedby="operation-error-message" @close="{operationErrorClosed()}">
       <h2 id="operation-error-title">{{errorTitle}}</h2>
       <p id="operation-error-message">{{errorMessage}}</p>
       <div class="actions"><button type="button" autofocus @click="{closeOperationError()}">Close</button></div>
-    </dialog>
-    <dialog w-ref="{updateDraftDialog}" class="update-drafts-dialog" aria-labelledby="update-drafts-heading" @cancel="{cancelUpdateDrafts(e)}"><h2 id="update-drafts-heading">Unsaved work</h2><p>{{updateDraftSummary}}</p><div class="actions"><button type="button" class="secondary" autofocus @click="{resolveUpdateDraftsChoice(false)}">Keep working</button><button type="button" @click="{resolveUpdateDraftsChoice(true)}">Discard drafts and update</button></div></dialog>
+    <inspection-copy-menu></inspection-copy-menu></dialog>
+    <dialog w-ref="{updateDraftDialog}" class="update-drafts-dialog" aria-labelledby="update-drafts-heading" @cancel="{cancelUpdateDrafts(e)}"><h2 id="update-drafts-heading">Unsaved work</h2><p>{{updateDraftSummary}}</p><div class="actions"><button type="button" class="secondary" autofocus @click="{resolveUpdateDraftsChoice(false)}">Keep working</button><button type="button" @click="{resolveUpdateDraftsChoice(true)}">Discard drafts and update</button></div><inspection-copy-menu></inspection-copy-menu></dialog>
     <dialog w-ref="{passwordDialog}" class="trace-password-dialog" aria-labelledby="trace-password-title" @close="{tracePasswordClosed()}">
       <h2 id="trace-password-title">{{passwordTitle}}</h2>
       <form w-ref="{passwordForm}" @submit="{submitTracePassword(e)}">
@@ -106,7 +106,7 @@
         <p class="field-error" role="status" ?hidden="{{!passwordError}}">{{passwordError}}</p>
         <footer class="actions"><button type="submit">Continue</button><button type="button" class="secondary" @click="{cancelTracePassword()}">Cancel</button></footer>
       </form>
-    </dialog>
-    <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p class="full-value">{{listener}}</p><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
+    <inspection-copy-menu></inspection-copy-menu></dialog>
+    <div id="proxy-status-tools" class="table-popover proxy-status-popover" popover="auto"><strong class="popover-title">{{lifecycleLabel}}</strong><p data-copy-text data-copy-surface tabindex="0" class="full-value">{{listener}}</p><button type="button" @click="{refreshStatus()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Refresh status</button><button type="button" @click="{openConnectionSettings()}" popovertarget="proxy-status-tools" popovertargetaction="hide">Connection settings</button></div>
   </div>
 </template>

@@ -8,6 +8,7 @@ param(
     [string]$ExecutablePath,
     [switch]$StartupOnly,
     [switch]$FormatConverterChecks,
+    [switch]$AuthChecks,
     [switch]$WindowGeometryChecks,
     [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
@@ -28,6 +29,7 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if ($AuthChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $FormatConverterChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'AuthChecks is an isolated read-only imported-evidence flow.' }
 if ($FormatConverterChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'FormatConverterChecks is an isolated converter-window flow.' }
 if ($WindowGeometryChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'WindowGeometryChecks is an isolated close/reopen flow.' }
 if ($PortableCaseChecks -and ($StartupOnly -or $ViewerChecks -or $SoakMinutes)) { throw 'PortableCaseChecks is an isolated main-window flow.' }
@@ -90,7 +92,7 @@ New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out
 $env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
 $extensionSource = $null
 $visualizerTrace = $null
-if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly) {
+if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly -and -not $AuthChecks) {
     $extensionSource = Join-Path $probeRoot 'extension-source'
     $extensionRegistry = Join-Path $env:LOCALAPPDATA 'Transmog/extensions-v1'
     New-Item -ItemType Directory -Force -Path $extensionSource, $extensionRegistry | Out-Null
@@ -296,6 +298,17 @@ try {
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
         Get-Content -LiteralPath (Join-Path $probeRoot 'stderr.txt') -Tail 30 | ForEach-Object { Write-Host $_ }
         throw "WebView2 DevTools endpoint did not become ready (exited=$exited, exit=$exitCode); startup diagnostics were retained."
+    }
+    if ($AuthChecks) {
+        $mapiCopyFixture = Join-Path $probeRoot 'mapi-copy.saz'
+        . (Join-Path $PSScriptRoot 'python-tools.ps1')
+        Invoke-TransmogPython 'generate-mapi-native-fixture.py' @($mapiCopyFixture)
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-auth.mjs --port "$DevToolsPort" --output $probeRoot --mapi $mapiCopyFixture
+            if ($LASTEXITCODE -ne 0) { throw 'Native auth inspection checks failed.' }
+        } finally { Pop-Location }
+        return [pscustomobject]@{ AuthInspectionVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($PortableCaseChecks) {
         Push-Location $desktopUi

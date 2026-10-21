@@ -28,6 +28,12 @@ export async function checkStreams(page,root) {
   await inspector.getByLabel('Message payload viewer').selectOption('json');
   assert.match(await inspector.locator('pre').textContent(),/"index": 1199/);
   assert.equal(await inspector.locator('[aria-selected="true"]').count(),1);
+  const selectedMessage=await inspector.evaluate(element=>element.streamSelected);
+  const otherMessage=inspector.locator('.stream-row').first();
+  await otherMessage.click({button:'right'});
+  await page.getByRole('menu',{name:'Copy inspection value',exact:true}).getByRole('menuitem',{name:'Copy value',exact:true}).click();
+  assert.equal(await inspector.evaluate(element=>element.streamSelected),selectedMessage,'Copying another retained message changed selection');
+  assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/"index":/);
   await inspector.getByRole('button',{name:'Copy text',exact:true}).click();
   assert.match(await page.evaluate(()=>navigator.clipboard.readText()),/"index": 1199/);
   await inspector.getByRole('button',{name:'Save retained message…',exact:true}).click();

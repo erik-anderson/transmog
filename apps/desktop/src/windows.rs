@@ -1,5 +1,7 @@
 #![allow(clippy::needless_pass_by_value)] // Tauri commands deserialize owned IPC arguments.
 
+#[path = "auth.rs"]
+mod auth;
 #[path = "captured_preview.rs"]
 mod captured_preview;
 #[path = "comparison.rs"]
@@ -1560,6 +1562,20 @@ async fn converter_header_value(
 }
 
 #[tauri::command]
+async fn copy_header_field(
+    id: String,
+    boundary: String,
+    index: usize,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::HeaderCopy, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || application.copy_header_field(&id, &boundary, index))
+        .await
+        .map_err(|_| request_action_error())?
+}
+
+#[tauri::command]
 fn copy_message_url(
     id: String,
     boundary: String,
@@ -2471,6 +2487,7 @@ pub fn run() {
                 inspect_certificates,
                 inspect_headers,
                 converter_header_value,
+                copy_header_field,
                 copy_message_headers,
                 copy_message_url,
                 request_command,
@@ -2478,6 +2495,12 @@ pub fn run() {
                 composer_source,
                 save_request_body,
                 inspect_body,
+                auth::inspect_auth,
+                auth::auth_value,
+                auth::auth_values,
+                auth::auth_source,
+                auth::related_auth,
+                auth::cancel_auth,
                 visualizers::visualizer_page,
                 visualizers::visualizer_choices,
                 visualizers::activate_visualizer,

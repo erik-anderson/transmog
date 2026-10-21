@@ -5,6 +5,8 @@ import type { SessionDetail, StreamMessage, StreamPage, StreamRow, StreamSummary
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 import { describeError } from '../utilities.js';
 import {formatDuration,lifetimeDescription, formatBytes } from '../table-model.js';
+import {COPY_TEXT_BYTES, CopyError, copyGesture, copyTree, fieldCopyActions, requestCopy} from '../inspection-copy.js';
+import {selectedConverterText} from '../converter-selection.js';
 
 interface Row extends StreamRow { time:string; size:string; label:string; selected:string; tabIndex:number; }
 export class StreamInspector extends WorkspaceElement {
@@ -111,6 +113,7 @@ export class StreamInspector extends WorkspaceElement {
     } catch(error:unknown){if(generation===this.payloadGeneration)this.streamText=describeError(error);}
   }
   key(event:KeyboardEvent,row:StreamRow):void {
+    if (copyGesture(event)) { this.messageContext(row,event); return; }
     if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;event.preventDefault();
     const index=this.offset+this.streamRows.findIndex(item=>item.sequence===row.sequence);
     const target=event.key==='Home'?0:event.key==='End'?this.streamTotal-1:Math.max(0,Math.min(this.streamTotal-1,index+(event.key==='ArrowDown'?1:-1)));
@@ -120,6 +123,36 @@ export class StreamInspector extends WorkspaceElement {
   }
 
   viewer(event:Event):void {this.streamView=(event.currentTarget as HTMLSelectElement).value;this.renderPayload();}
+  messageContext(row: StreamRow, event: MouseEvent | KeyboardEvent): void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const id = this.sessionId, generation = this.generation, source = event.currentTarget as HTMLElement;
+    const read = (): Promise<StreamMessage> => invoke('stream_message', {id, sequence: row.sequence});
+    const hex = (message: StreamMessage): string => {
+      if (message.payload.length * 3 > COPY_TEXT_BYTES) throw new CopyError('The retained message exceeds the clipboard text limit.');
+      return message.payload.map(byte => byte.toString(16).padStart(2, '0').toUpperCase()).join(' ');
+    };
+    const value = (message: StreamMessage): string => {
+      if (message.kind === 'binary') return hex(message);
+      try { return new TextDecoder('utf-8', {fatal: true}).decode(new Uint8Array(message.payload)); }
+      catch { return hex(message); }
+    };
+    requestCopy(event, {source, current: () => this.isConnected && id === this.sessionId && generation === this.generation,
+      note: row.message.truncated ? 'Only the retained message prefix is available.' : undefined,
+      actions: [...fieldCopyActions('Message ' + row.sequence + ' payload', async () => value(await read())),
+        {id: 'bytes', label: 'Copy retained bytes as hex', read: async () => hex(await read())},
+        {id: 'message', label: 'Copy message details', read: async () => {
+          const message = await read();
+          return copyTree({name: 'Message ' + row.sequence, children: [
+            {name: 'Sender', value: message.sender}, {name: 'Kind', value: message.kind},
+            {name: 'Recorded time (Unix ms)', value: String(message.atMillis)},
+            {name: 'Observed bytes', value: String(message.byteCount)},
+            {name: 'Coverage', value: message.truncated ? 'Retained prefix' : 'Complete retained message'},
+            {name: 'Payload', value: value(message)},
+            ...(message.event == null ? [] : [{name: 'Event', value: message.event}]),
+            ...(message.eventId == null ? [] : [{name: 'Event ID', value: message.eventId}]),
+          ]});
+        }}]});
+  }
   private renderPayload():void {
     const message=this.streamPayload;if(!message)return;
     const bytes=new Uint8Array(message.payload);let text=new TextDecoder().decode(bytes);this.streamHex=null;

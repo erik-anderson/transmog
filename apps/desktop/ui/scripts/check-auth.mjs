@@ -1,0 +1,81 @@
+import assert from 'node:assert/strict';
+import {resolve} from 'node:path';
+
+export async function checkAuth(page,root) {
+  await page.goto('https://workspace.test/');
+  const source={kind:'header',label:'Authorization · field 521',occurrence:520,offset:0,length:100,transforms:['Base64','SPNEGO mechanism OCTET STRING']};
+  const field=(id,name,value,sensitive=false)=>({id,name,value,available:true,sensitive,note:'Captured evidence; unverified. No authentication decision is made.'});
+  const finding=(id,format,fields,children=[],status='decoded')=>({id,format,role:'Synthetic retained message',recognition:'recognized',status,verification:'Not checked',source,fields,children,diagnostics:[]});
+  const inspection={findings:[finding('f0','Bearer',[field('v0','Original credential','••••••••',true)],[finding('f0.0','JWT / JWS',[field('v1','iss','https://issuer.example.invalid'),field('v2','aud[0]','workbench'),field('v3','exp','1700000100'),field('v4','Decoded JSON payload','••••••••',true)])]),finding('f1','SAML 2.0 XML',[field('v5','NameID','••••••••',true),field('v6','Decoded XML','••••••••',true)]),finding('f2','NTLM',[field('v7','Username','synthetic-user'),field('v8','NT response','••••••••',true)]),finding('f3','Kerberos V5',[field('v9','Ticket realm','EXAMPLE.TEST'),field('v10','Service principal[0]','HTTP'),field('v11','Ticket · encryption type','18')],[],'encrypted')],coverage:[{source:'headers',status:'complete',detail:'All retained header fields, including fields beyond the display page.'},{source:'body',status:'unsupported',detail:'Multipart parts are not scanned.'}],diagnostics:[]};
+  await page.evaluate(inspection=>{const state=globalThis.__workspaceFixture;state.authInspection=inspection;state.authValues={v0:'private-bearer-value',v4:'{"nonce":"private-claim"}',v5:'private-name-id',v6:'<Assertion>private-xml</Assertion>',v8:'private-response'};},inspection);
+  await page.locator('tr[data-session-id="first"]').click();
+  const inspector=page.locator('traffic-workspace message-inspector[side="response"]');
+  const auth=inspector.locator('auth-inspector');
+  const tab=inspector.locator('.message-tabs').getByRole('button',{name:/^Auth/});
+  await tab.focus();await page.keyboard.press('Enter');
+  await auth.getByText('JWT / JWS',{exact:true}).waitFor();
+  await auth.getByText('Kerberos V5',{exact:true}).waitFor();
+  await auth.getByText('View body as auth…',{exact:true}).click();
+  await auth.getByLabel('Auth body interpretation',{exact:true}).selectOption('jose');
+  await page.waitForFunction(()=>globalThis.__workspaceFixture.authRequests.some(request=>request.interpretation==='jose'&&request.scanBody));
+  await auth.getByLabel('Auth body interpretation',{exact:true}).selectOption('auto');
+  await auth.getByText('JWT / JWS',{exact:true}).waitFor();
+  const beforeRefresh=await page.evaluate(()=>globalThis.__workspaceFixture.authRequests.length);
+  await inspector.evaluate(element=>{element.detail=structuredClone(element.detail);});
+  await page.waitForTimeout(150);
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.authRequests.length),beforeRefresh,'Unrelated detail refresh repeated auth parsing');
+  assert.equal(await auth.locator('img,script,a').count(),0,'Captured markup or URLs became executable UI');
+  const secrets=['private-bearer-value','private-claim','private-name-id','private-xml','private-response'];
+  for(const secret of secrets)assert.equal(await auth.evaluate((element,secret)=>element.outerHTML.includes(secret),secret),false,'Masked material leaked through DOM or attributes');
+  await auth.locator('.auth-technical').first().locator('summary').first().click();
+  const reveal=auth.getByRole('button',{name:'Reveal or hide Original credential',exact:true});
+  await reveal.focus();await page.keyboard.press('Enter');await auth.getByText('private-bearer-value',{exact:true}).waitFor();
+  await reveal.click();assert.equal(await auth.getByText('private-bearer-value',{exact:true}).count(),0);
+  await reveal.click();await auth.getByText('private-bearer-value',{exact:true}).waitFor();
+  await page.evaluate(()=>globalThis.__workspaceFixture.emitNative('visualizers-suspended'));
+  await auth.getByText('Auth inspection paused while the window was hidden. Retry inspection.',{exact:true}).waitFor();
+  assert.equal(await auth.getByText('private-bearer-value',{exact:true}).count(),0,'Native hide retained a reveal');
+  await auth.getByRole('button',{name:'Retry inspection',exact:true}).click();await auth.getByText('JWT / JWS',{exact:true}).waitFor();
+  await auth.locator('.auth-technical').first().locator('summary').first().click();
+  await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async value=>{globalThis.__authClipboard=value;}}});});
+  await auth.getByRole('button',{name:'Copy actual value for Original credential',exact:true}).click();
+  await page.waitForFunction(()=>globalThis.__authClipboard==='private-bearer-value');
+  assert.equal(await auth.getByText('private-bearer-value',{exact:true}).count(),0,'Copy revealed a masked value in the DOM');
+  await page.evaluate(()=>{Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async()=>{throw new Error('Synthetic clipboard failure');}}});});
+  await auth.getByRole('button',{name:'Copy actual value for Original credential',exact:true}).click();await auth.getByText('Copy failed. The clipboard or retained value is unavailable.',{exact:true}).waitFor();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferAuthValue=true;});
+  await reveal.click();await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishAuthValue==='function');
+  await inspector.locator('.message-tabs').getByRole('button',{name:'Headers',exact:true}).click();
+  await page.evaluate(()=>globalThis.__workspaceFixture.finishAuthValue());
+  await tab.click();await auth.getByText('JWT / JWS',{exact:true}).waitFor();
+  assert.equal(await auth.getByText('private-bearer-value',{exact:true}).count(),0,'Late reveal restored a hidden view');
+  await auth.getByRole('button',{name:'Related traffic',exact:true}).click();await auth.getByRole('region',{name:'Related auth traffic'}).waitFor();
+  await auth.getByText('No related traffic found in this searched scope.',{exact:true}).waitFor();
+  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.authSource={sessionId:'first',boundary:'client-response',source:{kind:'header',label:'WWW-Authenticate · field 1',occurrence:0,offset:0,length:20,transforms:[]}};});
+  await auth.getByRole('button',{name:'Show original source',exact:true}).first().click();
+  await inspector.getByText(/Original retained source may contain secrets/).waitFor();
+  await tab.click();
+  for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
+    await page.setViewportSize({width,height});
+    // Narrow Traffic retains its existing request/response switch; select Response when present.
+    const response=page.getByRole('button',{name:'Response',exact:true});if(await response.count()&&await response.first().isVisible())await response.first().click();
+    await auth.getByText('JWT / JWS',{exact:true}).waitFor();
+    assert.equal(await auth.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true,'Auth viewport overflows horizontally');
+    await page.screenshot({path:resolve(root,`../../../target/ui-check/auth-${width}.png`)});
+  }
+  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/auth-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
+  await page.setViewportSize({width:1440,height:900});
+  await page.emulateMedia({colorScheme:'dark'});await page.screenshot({path:resolve(root,'../../../target/ui-check/auth-dark.png')});await page.emulateMedia({colorScheme:'light'});
+  await page.evaluate(()=>document.documentElement.style.zoom='1.25');await page.screenshot({path:resolve(root,'../../../target/ui-check/auth-zoom.png')});await page.evaluate(()=>document.documentElement.style.zoom='');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.deferAuth=true;});
+  await auth.getByRole('button',{name:'Retry inspection',exact:true}).click();
+  await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishAuth==='function');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.authInspection={findings:[{id:'f0',format:'Newest selection',role:'Selected second request',status:'opaque',verification:'Not checked',source:{kind:'header',label:'Current source',occurrence:0,transforms:[]},fields:[],children:[],diagnostics:[]}],coverage:[],diagnostics:[]};});
+  await page.locator('tr[data-session-id="second"]').click();await auth.getByText('Newest selection',{exact:true}).waitFor();
+  await page.evaluate(()=>globalThis.__workspaceFixture.finishAuth());await page.waitForTimeout(100);
+  assert.equal(await auth.getByText('JWT / JWS',{exact:true}).count(),0,'Late analysis overwrote a newer selection');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.authInspection=null;});
+  await inspector.locator('.message-tabs').getByRole('button',{name:'Headers',exact:true}).click();
+  // Reset the page so clipboard test doubles, delayed replies and fixture data cannot affect the next feature check.
+  await page.goto('https://workspace.test/');
+}

@@ -7,6 +7,8 @@
 //! `WebView` dependency. Portable system information resolves memory budgets.
 
 mod artifacts;
+/// Window-scoped offline authentication evidence inspection.
+pub mod auth;
 mod automation;
 mod autoresponse_batch;
 mod body_ranges;
@@ -137,7 +139,7 @@ pub use diagnostics::{
 pub use experiment_pages::{ExperimentPreviewPage, ExperimentPreviewPages};
 pub use inspector::{
     AutoResponseMatchView, BodyEditView, BodyInspection, BodyInspectionRequest, BodyRepresentation,
-    BodyView, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
+    BodyView, HeaderCopy, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
 };
 pub use lifecycle::{
     CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,
@@ -395,6 +397,7 @@ pub struct Application {
     comparisons: comparison::ComparisonRegistry,
     export_reviews: export_review::ReviewRegistry,
     visualizers: Arc<visualizers::Service>,
+    auth: Arc<auth::Service>,
 }
 
 impl std::fmt::Debug for Application {
@@ -580,6 +583,7 @@ impl Application {
             comparisons: comparison::ComparisonRegistry::default(),
             export_reviews: export_review::ReviewRegistry::default(),
             visualizers,
+            auth: Arc::new(auth::Service::default()),
         })
     }
 
@@ -1892,6 +1896,34 @@ impl Application {
                 )
             })?;
         inspector::converter_header_from_snapshot(&snapshot, boundary, index)
+    }
+
+    /// Read a complete original header occurrence for explicit clipboard actions.
+    /// # Errors
+    /// Rejects unavailable stages, missing fields and excessive value sizes.
+    pub fn copy_header_field(
+        &self,
+        id: &str,
+        boundary: &str,
+        index: usize,
+    ) -> Result<HeaderCopy, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return inspector::copy_header_from_snapshot(&response.snapshot, boundary, index);
+        }
+        let snapshot = self
+            .service
+            .catalog()
+            .get(transmog_core::intercept::ExchangeId(
+                inspector::parse_session_id(id)?,
+            ))
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Request is no longer retained",
+                    false,
+                )
+            })?;
+        inspector::copy_header_from_snapshot(&snapshot, boundary, index)
     }
 
     /// Copies the complete corresponding request URL without display truncation.

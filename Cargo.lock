@@ -7059,6 +7059,7 @@ dependencies = [
  "time",
  "tokio",
  "tokio-boring",
+ "transmog-auth",
  "transmog-automation",
  "transmog-capture",
  "transmog-content",
@@ -7099,6 +7100,19 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "transmog-app",
+]
+
+[[package]]
+name = "transmog-auth"
+version = "0.1.9"
+dependencies = [
+ "base64 0.22.1",
+ "flate2",
+ "quick-xml",
+ "serde",
+ "serde_json",
+ "time",
+ "web_atoms",
 ]
 
 [[package]]

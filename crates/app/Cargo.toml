@@ -8,6 +8,7 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+transmog-auth = { version = "=0.1.9", path = "../auth" }
 boring.workspace = true
 sysinfo.workspace = true
 url = "=2.5.8"

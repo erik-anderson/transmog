@@ -4,23 +4,53 @@ import type { BodyBytePage, BodyInspection, HeaderPage, HeaderSummary, HeadView,
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 import { opaqueConnectTransport } from '../connection-evidence.js';
+import {copyGesture, requestCopy, copyScalar, CopyError} from '../inspection-copy.js';
 import { selectedConverterText } from '../converter-selection.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {VisualizerChoice,VisualizerSelection} from '../extension-visualizer/models.js';
+import type {AuthSelection,AuthSourceNavigation} from '../auth-inspector/models.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
 const exactHeaderBytes=(value:number|null|undefined):string=>value==null?'Size unavailable':value.toLocaleString()+(value===1?' byte':' bytes');
 export class MessageInspector extends WebUIElement {
-  headerContext(header:{id:string},event:MouseEvent|KeyboardEvent):void {
-    if(event instanceof KeyboardEvent){if(event.key==='Escape')this.headerContextGeneration++;if(event.repeat||!(event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey))return;}
-    if(selectedConverterText(event))return;
-    event.preventDefault();event.stopPropagation();
-    const source=event.currentTarget as HTMLElement,id=this.detail?.id,boundary=this.boundary,generation=++this.headerContextGeneration,headers=this.headerGeneration;source.focus({preventScroll:true});
+  @observable authVisible=false;
+  @observable authSelection:AuthSelection|null=null;
+  @observable authBadge='';
+  @observable authSourceNotice='';
+  onAuthCount(event:CustomEvent<{count:number|null;complete?:boolean}>):void {event.stopPropagation();this.authBadge=event.detail.count===null?'':event.detail.count===0&&!event.detail.complete?'(?)':'('+event.detail.count+')';}
+  async showAuthSource(event:CustomEvent<AuthSourceNavigation>):Promise<void> {
+    event.stopPropagation();const source=event.detail;
+    if(source.sessionId!==this.detail?.id||source.boundary!==this.boundary)return;
+    const body=source.source.kind==='body';
+    this.authSourceNotice='Original retained source may contain secrets. '+source.source.label+(source.source.transforms.length?' · '+source.source.transforms.join(' → '):'');
+    if(body)this.viewer='original-text';else {this.headerViewer='raw';this.largestFirst=false;}
+    this.setChoices();this.sortHeaders();this.showMode(body?'body':'headers');
+    if(body)return;
+    if(source.source.kind==='query')return;
+    const index=source.source.headerIndex??source.source.occurrence;
+    const offset=Math.floor(index/512)*512;
+    let moved=false;const interaction=():void=>{moved=true;};document.addEventListener('pointerdown',interaction,true);document.addEventListener('keydown',interaction,true);
+    try {
+      if((this.heads().find(head=>head.boundary===this.boundary)?.summary?.totalFields??0)>512)await this.loadHeaderPage(offset);
+      if(moved||!this.isConnected||source.sessionId!==this.detail?.id||source.boundary!==this.boundary)return;
+      this.$flushUpdates();const root=this.getRootNode();if(root instanceof ShadowRoot)root.getElementById(this.pane+'-header-'+index)?.focus({preventScroll:false});
+    } finally {document.removeEventListener('pointerdown',interaction,true);document.removeEventListener('keydown',interaction,true);}
+  }
+  showAuthBoundary(boundary:string):void {if(!this.heads().some(head=>head.boundary===boundary))return;this.boundary=boundary;this.updateMessage();this.showMode('auth');}
+  headerContext(header:{id:string;sensitive:boolean},event:MouseEvent|KeyboardEvent):void {
+    if (!copyGesture(event) || selectedConverterText(event)) return;
+    const source=event.currentTarget as HTMLElement,id=this.detail?.id,boundary=this.boundary,headers=this.headerGeneration;
     if(!id)return;
-    const send=(text:string,error:string):void=>{if(this.isConnected&&generation===this.headerContextGeneration&&headers===this.headerGeneration&&this.detail?.id===id&&this.boundary===boundary&&source.getRootNode() instanceof ShadowRoot&&(source.getRootNode() as ShadowRoot).activeElement===source)this.$emit('format-converter-header',{event,text,error,source});};
-    void invoke<string>('converter_header_value',{id,boundary,index:Number(header.id)}).then(value=>send(value,'')).catch(error=>send('',describeError(error)));
+    const current=():boolean=>this.isConnected&&headers===this.headerGeneration&&this.detail?.id===id&&this.boundary===boundary;
+    const read=()=>invoke<{name:string;value:string|null;binary:boolean}>('copy_header_field',{id,boundary,index:Number(header.id)});
+    requestCopy(event,{source,current,note:header.sensitive?'The captured value was redacted.':undefined,actions:[
+      {id:'name',label:'Copy name',read:async()=>copyScalar((await read()).name)},
+      {id:'value',label:'Copy value',disabled:header.sensitive,read:async()=>{const field=await read();if(field.value===null)throw new CopyError('The captured value was redacted.');return copyScalar(field.value);}},
+      {id:'pair',label:'Copy name and value',disabled:header.sensitive,read:async()=>{const field=await read();if(field.value===null)throw new CopyError('The captured value was redacted.');return copyScalar(field.name)+': '+copyScalar(field.value);}},
+      {id:'converter',label:'Open in Format converter',disabled:header.sensitive,convert:true,read:()=>invoke<string>('converter_header_value',{id,boundary,index:Number(header.id)})},
+    ]});
   }
   @attr side = 'response';
   @attr split = '35';
@@ -50,7 +80,7 @@ export class MessageInspector extends WebUIElement {
   @observable mode = 'body';
   @observable boundaries: Array<{id:string;label:string}> = [];
   @observable boundary = '';
-  @observable headerRows: Array<{id:string;name:string;value:string;bytes:number;size:string;valueSize:string;sizeTitle:string;valueSizeTitle:string}> = [];
+  @observable headerRows: Array<{id:string;name:string;value:string;sensitive:boolean;bytes:number;size:string;valueSize:string;sizeTitle:string;valueSizeTitle:string}> = [];
   @observable headersSummaryTitle='';
   @observable headersSummary = '';
   @observable showHeaderSizes=false;
@@ -95,7 +125,7 @@ export class MessageInspector extends WebUIElement {
   }
   paneChanged():void {this.headerSlot=this.pane+'-headers';this.bodySlot=this.pane+'-body';}
   protected hydratedCallback():void {
-    this.choiceObserver=new IntersectionObserver(entries=>{const visible=entries.some(entry=>entry.isIntersecting);if(this.choiceVisible===visible)return;this.choiceVisible=visible;if(visible){this.watchChoices();void this.refreshChoices();}else {this.choiceGeneration++;this.choiceKey='';this.unwatchChoices();}});this.choiceObserver.observe(this);
+    this.choiceObserver=new IntersectionObserver(entries=>{const visible=entries.some(entry=>entry.isIntersecting);this.authVisible=visible;if(this.choiceVisible===visible)return;this.choiceVisible=visible;if(visible){this.watchChoices();void this.refreshChoices();}else {this.choiceGeneration++;this.choiceKey='';this.unwatchChoices();}});this.choiceObserver.observe(this);
   }
   private watchChoices():void {
     const generation=++this.choiceListenerGeneration;
@@ -156,7 +186,7 @@ export class MessageInspector extends WebUIElement {
   changeHeaderViewer(event:Event):void {this.headerViewer=(event.currentTarget as HTMLSelectElement).value;this.setChoices();this.rememberView();}
   splitChanged(): void { this.headerShare = this.split+'%'; }
   detailChanged(): void {
-    if (this.detail?.id !== this.previousId) { this.previousId = this.detail?.id ?? null; this.headerOffset=0;this.headersBusy=false;this.headerGeneration++; this.resetViewers(); this.boundary = ''; this.imageUrl = ''; }
+    if (this.detail?.id !== this.previousId) { this.authSourceNotice=''; this.previousId = this.detail?.id ?? null; this.headerOffset=0;this.headersBusy=false;this.headerGeneration++; this.resetViewers(); this.boundary = ''; this.imageUrl = ''; }
     this.updateMessage();
   }
   private heads(): HeadView[] { return this.side === 'request' ? this.detail?.requests ?? [] : this.detail?.responses ?? []; }
@@ -176,6 +206,8 @@ export class MessageInspector extends WebUIElement {
     this.detailsText = this.detail ? JSON.stringify({terminal:this.detail.terminal,route:this.detail.routeSelection,attempts:this.detail.routeAttempts,hookEffects:this.detail.hookEffects,diagnostics:this.detail.diagnostics,sequenceLoss:this.detail.sequenceLoss,...(this.detail.composerOrigin?{composerSource:this.detail.composerOrigin}:{})},null,2) : 'No exchange selected.';
     this.headerSelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,surface:'headers'}:null;
     this.bodySelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,surface:'body'}:null;
+    const authKey=JSON.stringify([this.detail?.id,this.boundary,this.detail?.authRevisions?.[this.boundary]??head,this.bodyMetadata]);
+    this.authSelection=this.detail?{sessionId:this.detail.id,boundary:this.boundary,key:authKey}:null;
     void this.refreshChoices();
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody(false);
     else if (!this.detail || this.bodyInspectionKey() !== this.inspectedBodyKey) {
@@ -183,18 +215,18 @@ export class MessageInspector extends WebUIElement {
       this.bodyText='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
     }
   }
-  showMode(mode:string): void { this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
+  showMode(mode:string): void { if(mode==='auth')this.authSourceNotice='';this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
   private resetViewers():void {
     this.viewer='auto';this.headerViewer='raw';this.headerChoice=null;this.bodyChoice=null;this.bodyExtension=false;
     this.headerChoices=[];this.bodyChoices=[];this.choiceKey='';this.choiceGeneration++;this.rejectedAutomatic.clear();
     this.mode=this.preferredProtocol?(this.side==='request'?'headers':'body'):this.preferredMode||this.mode;
   }
-  changeBoundary(event:Event): void { this.headerOffset=0; this.resetViewers();this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
+  changeBoundary(event:Event): void { this.authSourceNotice=''; this.headerOffset=0; this.resetViewers();this.boundary = (event.currentTarget as HTMLSelectElement).value; this.updateMessage(); }
   toggleHeaderOrder():void {this.largestFirst=!this.largestFirst;this.headerOffset=0;const head=this.heads().find(head=>head.boundary===this.boundary);if((head?.summary?.totalFields??0)>512)void this.loadHeaderPage(0);else this.sortHeaders();}
   previousHeaders():void {void this.loadHeaderPage(Math.max(0,this.headerOffset-512));}
   nextHeaders():void {if(this.headerNextOffset!==null)void this.loadHeaderPage(this.headerNextOffset);}
   private renderHeaders(fields:HeadView['headers'],summary?:HeaderSummary,offset=0):void {
-    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),sizeTitle:exactHeaderBytes(header.fieldBytes)+' · Field name, colon-space, original value and CRLF',valueSizeTitle:exactHeaderBytes(header.valueBytes)+' · Original field value before redaction',valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
+    this.headerRows=fields.map((header,index)=>({id:String(header.index??offset+index),sensitive:header.sensitive,name:header.name,value:header.sensitive?'[redacted]':header.value,bytes:header.fieldBytes??0,size:header.fieldBytes==null?'Unavailable':formatBytes(header.fieldBytes),sizeTitle:exactHeaderBytes(header.fieldBytes)+' · Field name, colon-space, original value and CRLF',valueSizeTitle:exactHeaderBytes(header.valueBytes)+' · Original field value before redaction',valueSize:header.valueBytes==null?'Unavailable':formatBytes(header.valueBytes)}));
     const total=summary?.totalFields??fields.length, measured=fields.every(header=>header.fieldBytes!=null);
     const bytes=summary?summary.serializedBytes:measured?this.headerRows.reduce((sum,row)=>sum+row.bytes,2):null;
     this.headersSummaryTitle=exactHeaderBytes(bytes)+' · Sum of original serialized fields and final CRLF, before redaction; HTTP/1 equivalent';
