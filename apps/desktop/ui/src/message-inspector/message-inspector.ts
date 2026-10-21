@@ -18,8 +18,13 @@ export class MessageInspector extends WebUIElement {
   @observable authVisible=false;
   @observable authSelection:AuthSelection|null=null;
   @observable authBadge='';
+  @observable authCount=-1;
   @observable authSourceNotice='';
-  onAuthCount(event:CustomEvent<{count:number|null;complete?:boolean}>):void {event.stopPropagation();this.authBadge=event.detail.count===null?'':event.detail.count===0&&!event.detail.complete?'(?)':'('+event.detail.count+')';}
+  private authRequestedKey='';
+  onAuthCount(event:CustomEvent<{count:number|null;complete?:boolean}>):void {
+    event.stopPropagation();this.authCount=event.detail.count??-1;this.authBadge=this.authCount<0?'':'('+this.authCount+')';
+    if(this.authCount===0&&this.mode==='auth'&&this.authRequestedKey!==this.authSelection?.key)this.showMode(this.side==='request'?'headers':'body');
+  }
   async showAuthSource(event:CustomEvent<AuthSourceNavigation>):Promise<void> {
     event.stopPropagation();const source=event.detail;
     if(source.sessionId!==this.detail?.id||source.boundary!==this.boundary)return;
@@ -215,7 +220,7 @@ export class MessageInspector extends WebUIElement {
       this.bodyText='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
     }
   }
-  showMode(mode:string): void { if(mode==='auth')this.authSourceNotice='';this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
+  showMode(mode:string): void { if(mode==='auth'){this.authSourceNotice='';this.authRequestedKey=this.authSelection?.key??'';}this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
   private resetViewers():void {
     this.viewer='auto';this.headerViewer='raw';this.headerChoice=null;this.bodyChoice=null;this.bodyExtension=false;
     this.headerChoices=[];this.bodyChoices=[];this.choiceKey='';this.choiceGeneration++;this.rejectedAutomatic.clear();

@@ -61,6 +61,7 @@ export async function checkCopy(page,root) {
     state.authValues={public:'full public',secret:'private-value'};
     state.authInspection={findings:[{id:'f0',format:'Basic',role:'Credential',status:'decoded',recognition:'recognized',verification:'Not checked',source:{label:'Header',transforms:[]},diagnostics:[],children:[],fields:[{id:'public',name:'User',value:'full public',available:true,sensitive:false,note:''},{id:'secret',name:'Password',value:'••••••••',available:true,sensitive:true,note:''}]}],coverage:[],diagnostics:[]};
   });
+  await inspector.evaluate(element=>{element.detail={...element.detail,authRevisions:{...element.detail.authRevisions,[element.boundary]:'copy-auth-fixture'}};});
   await inspector.getByRole('button',{name:/^Auth/}).click();
   const auth=inspector.locator('auth-inspector'),summary=auth.locator('.auth-finding > summary').first();
   await summary.click({button:'right'});await menu.getByRole('menuitem',{name:'Copy subtree',exact:true}).click();

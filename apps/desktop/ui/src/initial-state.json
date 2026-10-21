@@ -2,6 +2,7 @@
   "authVisible": false,
   "authSelection": null,
   "authBadge": "",
+  "authCount": -1,
   "authSourceNotice": "",
   "authBusy": false,
   "authInterpretation": "auto",

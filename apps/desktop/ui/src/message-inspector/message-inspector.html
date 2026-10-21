@@ -5,7 +5,7 @@
       <button type="button" ?data-selected="{{mode == 'headers'}}" @click="{showMode('headers')}">Headers</button>
       <button type="button" ?data-selected="{{mode == 'body'}}" @click="{showMode('body')}">Body</button>
       <button type="button" ?data-selected="{{mode == 'split'}}" @click="{showMode('split')}">Split</button>
-      <button type="button" ?data-selected="{{mode == 'auth'}}" @click="{showMode('auth')}">Auth <span>{{authBadge}}</span></button>
+      <if condition="authCount > 0 || mode == 'auth'"><button type="button" ?data-selected="{{mode == 'auth'}}" @click="{showMode('auth')}">Auth <span>{{authBadge}}</span></button></if>
       <button type="button" ?data-selected="{{mode == 'details'}}" @click="{showMode('details')}">Raw data</button>
     </header>
     <div class="message-stage" ?hidden="{{boundaries.length <= 1}}">

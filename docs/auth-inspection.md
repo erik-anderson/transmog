@@ -3,8 +3,10 @@
 Choose **Auth** beside Headers, Body, Split and Raw data on the selected request
 or response. Each side remembers its view independently and follows its selected
 original/effective stage. The badge counts top-level artifacts, including opaque
-or malformed ones; nested decoders do not inflate it. **(?)** means completed
-coverage has not established a zero. Auth never selects itself or moves focus.
+or malformed ones; nested decoders do not inflate it. The tab appears when the
+selected message has findings and stays hidden when automatic detection finds
+nothing. Discovery never selects Auth or moves focus. An inherited Auth view
+returns to Headers or Body when the next message has no findings.
 
 ## Sources and interpretation
 
@@ -13,8 +15,9 @@ duplicates and fields beyond the displayed page. Captured Location queries and
 fragments are eligible; browser fragments absent from HTTP requests cannot be
 recovered. Live and imported traffic use the same native analysis path.
 
-Opening Auth scans an eligible complete retained body. Other rows and routine
-list refreshes do not read bodies. **Retry inspection** repeats the selected
+Automatic detection also scans an eligible complete retained body in each visible
+selected message. Other rows and routine list refreshes do not read bodies.
+**Retry inspection** repeats the selected
 analysis. **View body as auth…** explicitly interprets that decoded body as JOSE,
 SAML XML or Base64/binary NTLM/Negotiate. It resets on exchange/stage changes and
 uses the same retention, masking and resource limits.

@@ -3,6 +3,21 @@ import {resolve} from 'node:path';
 
 export async function checkAuth(page,root) {
   await page.goto('https://workspace.test/');
+  const response=page.locator('traffic-workspace message-inspector[side="response"]');
+  await page.locator('tr[data-session-id="first"]').click();
+  await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]')?.authCount===0);
+  assert.equal(await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).count(),0,'Empty message exposed an Auth tab');
+  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.authRequests.some(request=>request.scanBody)),true,'Automatic discovery skipped the selected body');
+  await page.evaluate(()=>{globalThis.__workspaceFixture.authInspection={findings:[{id:'body-only',format:'Body-only token',role:'Response',recognition:'recognized',status:'decoded',verification:'Not checked',source:{kind:'body',label:'JSON response',transforms:[]},fields:[],children:[],diagnostics:[]}],coverage:[],diagnostics:[]};});
+  await page.locator('tr[data-session-id="second"]').click();
+  await response.locator('.message-tabs').getByRole('button',{name:'Auth (1)',exact:true}).waitFor();
+  assert.equal(await response.evaluate(element=>element.mode),'body','Discovery selected Auth automatically');
+  await response.locator('.message-tabs').getByRole('button',{name:'Auth (1)',exact:true}).click();
+  await page.evaluate(()=>{globalThis.__workspaceFixture.authInspection=null;});
+  await page.locator('tr[data-session-id="first"]').click();
+  await page.waitForFunction(()=>{const inspector=document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]');return inspector?.authCount===0&&inspector.mode==='body';});
+  assert.equal(await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).count(),0,'Empty message retained the prior Auth view');
+  await page.goto('https://workspace.test/');
   const source={kind:'header',label:'Authorization · field 521',occurrence:520,offset:0,length:100,transforms:['Base64','SPNEGO mechanism OCTET STRING']};
   const field=(id,name,value,sensitive=false)=>({id,name,value,available:true,sensitive,note:'Captured evidence; unverified. No authentication decision is made.'});
   const finding=(id,format,fields,children=[],status='decoded')=>({id,format,role:'Synthetic retained message',recognition:'recognized',status,verification:'Not checked',source,fields,children,diagnostics:[]});

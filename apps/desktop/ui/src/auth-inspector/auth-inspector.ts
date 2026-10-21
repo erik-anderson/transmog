@@ -31,6 +31,7 @@ export class AuthInspector extends WebUIElement {
   private view:AuthView|null=null;
   private pending:{slot:string;generation:string;pageId:string}|null=null;
   private key='';
+  private evidenceKey='';
   private revision=0;
   private queued=false;
   private ready=false;
@@ -54,27 +55,28 @@ export class AuthInspector extends WebUIElement {
   }
   private reconcile():void {
     const selection=this.selection;
-    const key=this.isConnected&&this.visible&&!document.hidden&&!this.suspended&&selection?JSON.stringify([this.slot,selection.key,selection.sessionId,selection.boundary,this.active,this.authInterpretation]):'';
+    const evidenceKey=selection?JSON.stringify([this.slot,selection.key,selection.sessionId,selection.boundary,this.active?this.authInterpretation:'auto']):'';
+    const key=this.isConnected&&this.visible&&!document.hidden&&!this.suspended&&selection?JSON.stringify([evidenceKey,this.active]):'';
     if(this.key===key)return;
-    this.stop();this.key=key;
+    this.stop(!key||evidenceKey!==this.evidenceKey);this.key=key;this.evidenceKey=evidenceKey;
     if(!key||!selection)return;
     // Coalesce live body/head updates before admitting any source work.
     this.authBusy=true;const revision=this.revision;
     this.timer=setTimeout(()=>{this.timer=null;void this.inspect(selection,revision);},60);
   }
-  private stop():void {
+  private stop(resetCount=true):void {
     this.revision++;if(this.timer!==null){clearTimeout(this.timer);this.timer=null;}
     const pending=this.pending;this.pending=null;
     if(pending)void invoke('cancel_auth',{slot:pending.slot,generation:next(),pageId:pending.pageId}).catch(()=>undefined);
     this.view=null;this.authFindings=[];this.authCoverage=[];this.authDiagnostics=[];this.authRelated=null;this.authBusy=false;this.authRelatedBusy=false;this.authError='';this.authNotice='';
-    this.$emit('auth-count',{count:null});
+    if(resetCount)this.$emit('auth-count',{count:null});
   }
   private current(revision:number):boolean {return this.isConnected&&this.visible&&!document.hidden&&revision===this.revision;}
   private async inspect(selection:AuthSelection,revision:number):Promise<void> {
     try {
       const pageId=await invoke<string>('visualizer_page');
       if(!this.current(revision))return;
-      const request={slot:this.slot,generation:next(),pageId,sessionId:selection.sessionId,boundary:selection.boundary,scanBody:this.active,interpretation:this.active?this.authInterpretation:'auto'};
+      const request={slot:this.slot,generation:next(),pageId,sessionId:selection.sessionId,boundary:selection.boundary,scanBody:true,interpretation:this.active?this.authInterpretation:'auto'};
       this.pending=request;
       const view=await invoke<AuthView>('inspect_auth',{request});
       if(!this.current(revision)||this.pending?.generation!==request.generation)return;
