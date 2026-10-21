@@ -72,7 +72,7 @@ def build():
     green = obj(b"h1 { color: green; }\n", "response-body", "text/css")
     blue = obj(b"h1 { color: blue; }\n", "response-body", "text/css")
     script = b'globalThis.portableFixture = "synthetic";\n'
-    coded = bytearray(gzip.compress(script, mtime=0))
+    coded = bytearray(gzip.compress(script, compresslevel=9, mtime=0))
     coded[9] = 255  # Normalize gzip OS marker across supported Python hosts.
     compressed = obj(bytes(coded), "response-body", "text/javascript")
     source = captures["source-a.tmcap"]
