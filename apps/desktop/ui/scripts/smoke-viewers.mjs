@@ -423,7 +423,7 @@ try{
   await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('open_main_window')`);
   const reopenedTarget=await waitFor(async()=>{const all=await targets();return all.find(target=>target.url.includes('transmog-ui')&&!beforeReopen.includes(target.id));},'Main window did not reopen from the viewer');
   const reopened=await connect(reopenedTarget);
-  await waitFor(()=>reopened.evaluate(`${traffic}?.queryLoaded && ${traffic}.sessions.length===0`),'Reopened main window retained ephemeral traffic');
+  await waitFor(()=>reopened.evaluate(`(()=>{const workspace=${root}?.shadowRoot?.querySelector('traffic-workspace');return workspace?.queryLoaded&&workspace.sessions.length===0;})()`),'Reopened main window retained ephemeral traffic');
   assert.equal(await reopened.evaluate(`window.__TAURI_INTERNALS__.invoke('app_status').then(status=>status.lifecycle)`),'stopped');
   if(pageSource)await smokeResponseSetPages({main:reopened,waitFor,directory:join(dirname(screenshot??pageSource),'response-set-native'),restart:true});
   process.stdout.write(JSON.stringify({viewerLaunch:true,mainChoice:true,isolatedCatalogs:true,proxyPermissionDenied:true,additionalViewer:true,traceMetadata:true,nativeCapture:!!nativeSource,traceSave})+'\n');

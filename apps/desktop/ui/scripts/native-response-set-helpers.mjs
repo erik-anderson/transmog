@@ -7,7 +7,13 @@ export function nativeResponseSetContext({main,waitFor}) {
   const invoke=(command,args={})=>main.evaluate(`window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`);
   const wait=expression=>waitFor(()=>main.evaluate(`!!(${expression})`),expression);
   const button=(container,text)=>`[...${container}.querySelectorAll('button')].find(node=>node.textContent.trim()===${JSON.stringify(text)}&&node.getClientRects().length)`;
-  const pointer=async expression=>{await wait(`(()=>{const n=${expression};return n&&n.getClientRects().length&&!n.disabled;})()`);await main.evaluate(`${expression}.scrollIntoView({block:'center'})`);const point=await main.evaluate(`(()=>{const r=${expression}.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);for(const type of ['mouseMoved','mousePressed','mouseReleased'])await main.call('Input.dispatchMouseEvent',{type,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1,...point});};
+  const pointer=async expression=>{
+    await wait(`(()=>{const n=${expression};return n&&n.getClientRects().length&&!n.disabled;})()`);
+    // Viewport restoration and scrolling must render before native hit testing.
+    await main.evaluate(`(async()=>{${expression}.scrollIntoView({block:'center'});await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));})()`);
+    const point=await main.evaluate(`(()=>{const r=${expression}.getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2};})()`);
+    for(const type of ['mouseMoved','mousePressed','mouseReleased'])await main.call('Input.dispatchMouseEvent',{type,button:'left',buttons:type==='mousePressed'?1:0,clickCount:1,...point});
+  };
   const key=async(key,code=key,vk=key==='Escape'?27:key==='Enter'?13:key==='Tab'?9:0,modifiers=0)=>{for(const type of ['keyDown','keyUp'])await main.call('Input.dispatchKeyEvent',{type,key,code,windowsVirtualKeyCode:vk,modifiers,...(key==='Enter'&&type==='keyDown'?{text:'\r',unmodifiedText:'\r'}:{})});await main.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');};
   const input=async(expression,text)=>{await pointer(expression);await key('a','KeyA',65,2);await main.call('Input.insertText',{text});};
   const openSet=async(status,id)=>{await main.evaluate(`(async()=>{await ${shell}.activateView('automation');${a}.renderAutomation(${JSON.stringify(status)});await ${a}.openResponseSet(new CustomEvent('set-open',{detail:{id:${JSON.stringify(id)}}}));})()`);await wait(`${sets}.setId===${JSON.stringify(id)}&&${a}.collectionOpen`);};
