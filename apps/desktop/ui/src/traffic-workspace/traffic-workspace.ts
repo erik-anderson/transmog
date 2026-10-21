@@ -667,7 +667,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   private commandSourceId='';
   private commandFormat:RequestCommandFormat='curl';
   trafficMenu!:HTMLElement;
+  trafficClearButton!:HTMLButtonElement;
   trafficUndoButton!:HTMLButtonElement;
+  trafficRedoButton!:HTMLButtonElement;
   private trafficSelection=new ListSelection();
   private trafficSelectionRevision=0;
   private trafficUndoTimer:number|undefined;
@@ -1796,7 +1798,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   async clearTraffic():Promise<void> {
 
 
-    if(this.removingTraffic)return;this.removingTraffic=true;
+    if(this.removingTraffic)return;this.beginTrafficRemoval();
     try {
       const result=await invoke<{ids:string[];bytes:number;undoable:boolean;undoSeconds:number|null;preservedWebSockets:number}>('clear_traffic');
       this.trafficUndo=[];this.trafficRedo=[];this.incidentWindow=null;this.incidentWindowLabel="";this.incidentReturn=null;this.metadataGeneration++;this.traceMetadataRows=await invoke<TraceMetadata[]>('trace_metadata_list');await this.refreshMarkers();this.metadataContext='';this.metadataNetworkContext='';this.metadataNetworkTitle='';this.metadataNetworkSummary='';this.metadataNotes=[];this.metadataSummary='';this.metadataTraceId='';this.metadataTraceName='';this.metadataBusy=false;
@@ -1815,7 +1817,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     if(Number.isFinite(expiry))this.trafficUndoTimer=window.setTimeout(()=>{this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());this.trafficUndoText='Clear Undo expired; retained data was released.';this.scheduleTrafficUndoExpiry();},Math.max(0,expiry-Date.now()));
   }
   async removeUnselectedTraffic():Promise<void> {
-    if(this.removingTraffic)return;this.removingTraffic=true;
+    if(this.removingTraffic)return;this.beginTrafficRemoval();
     this.closePopover(this.trafficMenu,this.trafficTable);
     try {
       const removed=await invoke<string[]>('remove_unselected_traffic_entries',{ids:[...this.trafficSelection.ids]});
@@ -1833,8 +1835,15 @@ export class TrafficWorkspace extends WorkspaceElement {
   async redoTrafficRemoval():Promise<void> {
     const action=this.trafficRedo.at(-1);if(action)await this.removeTrafficEntries(action.ids,true);
   }
+  private beginTrafficRemoval():void {
+    const active=(this.getRootNode() as ShadowRoot).activeElement;
+    // Disabling a focused button drops keyboard events outside Traffic. Keep
+    // Escape and newer navigation available while its command is pending.
+    if(active===this.trafficClearButton||active===this.trafficUndoButton||active===this.trafficRedoButton)this.focusTraffic();
+    this.removingTraffic=true;
+  }
   private async removeTrafficEntries(ids:string[],redo=false):Promise<void> {
-    if(this.removingTraffic || !ids.length)return;this.removingTraffic=true;
+    if(this.removingTraffic || !ids.length)return;this.beginTrafficRemoval();
     const order=this.virtualList.ids;const index=this.virtualList.indexes.get(this.trafficSelection.focused??'')??0;
     const selection=this.trafficSelectionRevision,inspection=this.inspectionGeneration;
     this.closePopover(this.trafficMenu,this.trafficTable);
@@ -1876,7 +1885,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     finally{this.removingTraffic=false;}
   }
   async undoTrafficRemoval():Promise<void> {
-    this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.removingTraffic=true;
+    this.trafficUndo=this.trafficUndo.filter(action=>!action.expiresAt||action.expiresAt>Date.now());const action=this.trafficUndo.at(-1);if(!action || this.removingTraffic)return;this.beginTrafficRemoval();
     const selection=this.trafficSelectionRevision,inspection=this.inspectionGeneration;
     let focus=this.trackNavigationFocus();
     try {

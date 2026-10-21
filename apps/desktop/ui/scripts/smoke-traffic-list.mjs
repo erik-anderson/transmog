@@ -103,6 +103,22 @@ export async function smokeTrafficList(client,screenshot) {
   await client.evaluate(`${t}.trafficTable.focus()`);await key('a','KeyA',65,2);await wait(`${t}.selectedTrafficCount===20000`);
   await key('Delete','Delete',46);await wait(`${t}.totalMatched===0 && !${t}.removingTraffic`);
   await client.evaluate(`${t}.trafficTable.focus()`);await key('z','KeyZ',90,2);await wait(`${t}.totalMatched===20000 && ${t}.selectedTrafficCount===20000 && !${t}.removingTraffic`);
+  // Keep real keyboard cancellation available after a busy Undo button disables.
+  await client.evaluate(`${t}.revealCurrent(${JSON.stringify(ids[0])},true)`);await click(ids[0]);
+  await key('Delete','Delete',46);await wait(`${t}.totalMatched===19999 && !${t}.removingTraffic`);
+  await client.evaluate(`(()=>{const original=window.__TAURI_INTERNALS__.invoke;globalThis.__trafficUndoInvoke=original;window.__TAURI_INTERNALS__.invoke=async(command,args,options)=>{if(command==='remove_traffic_entries'&&args.restore)await new Promise(resolve=>globalThis.__releaseTrafficUndo=resolve);return original(command,args,options);};})()`);
+  try {
+    await client.evaluate(`${t}.trafficUndoButton.focus()`);await key('Enter','Enter',13);
+    await wait(`typeof globalThis.__releaseTrafficUndo==='function' && ${t}.trafficUndoButton.disabled`);
+    await client.evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
+    assert.equal(await client.evaluate(`${t}.getRootNode().activeElement===${t}.trafficTable`),true,'Native pending Undo dropped list focus');
+    await key('Escape','Escape',27);await wait(`${t}.selectedTrafficCount===0`);
+    await client.evaluate('globalThis.__releaseTrafficUndo()');await wait(`${t}.totalMatched===20000 && !${t}.removingTraffic`);
+    assert.equal(await client.evaluate(`${t}.selectedTrafficCount`),0,'Native late Undo restored an escaped selection');
+  } finally {
+    await client.evaluate('globalThis.__releaseTrafficUndo?.();window.__TAURI_INTERNALS__.invoke=globalThis.__trafficUndoInvoke;delete globalThis.__trafficUndoInvoke;delete globalThis.__releaseTrafficUndo;');
+    await wait(`!${t}.removingTraffic`);
+  }
   await client.evaluate(`${t}.trafficTable.focus()`);await key('Escape','Escape',27);await key('End','End',35);await wait(`${t}.selectedSessionId===${JSON.stringify(ids[2])}`);
   await key('PageUp','PageUp',33);await wait(`${t}.virtualList.indexes.get(${t}.trafficSelection.focused)<19998 && ${t}.selectedDetail?.id===${t}.trafficSelection.focused`);
   await key('End','End',35);await wait(`${t}.selectedSessionId===${JSON.stringify(ids[2])}`);

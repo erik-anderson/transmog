@@ -40,16 +40,23 @@ export async function checkTrafficShortcuts(page,root) {
   await page.keyboard.press('Control+y');await settled(3);
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,'Redo selected a new request after Escape deselected everything');
 
-  for(const change of ['selection','focus','escape','follow']){
+  for(const change of ['selection','focus','escape','timeline-escape','follow']){
     await open();await traffic.locator('#session-shortcut-0').click();await page.keyboard.press('Delete');await settled(3);
+    if(change==='timeline-escape'){
+      await traffic.getByRole('button',{name:'Timeline',exact:true}).click();
+      await page.waitForFunction(()=>{const t=document.querySelector('app-shell').traffic;return !t.timelineBusy&&t.timeline.timelineDisplay.rows.length===t.selectedTrafficCount;});
+    }
     await page.evaluate(()=>{globalThis.__workspaceFixture.holdCommand='remove_traffic_entries';});
     if(change==='follow'){await table.focus();await page.keyboard.press('Control+z');}else await undo.click();
     await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishHeldCommand==='function');
+    // Let the busy button render as disabled, including the browser's focus update.
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
     if(change==='selection'){
       await traffic.locator('#session-shortcut-3').click();
       await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id==='shortcut-3');
     }else if(change==='focus')await traffic.getByLabel('Filter or search traffic',{exact:true}).focus();
     else await page.keyboard.press(change==='follow'?'F5':'Escape');
+    if(change.endsWith('escape'))assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,`Escape did not clear ${change==='escape'?'list':'Timeline'} selection while Undo was pending`);
     const before=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {selected:[...t.trafficSelection.ids],inspected:t.selectedSessionId};});
     await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await settled(4);
     assert.deepEqual(await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {selected:[...t.trafficSelection.ids],inspected:t.selectedSessionId};}),before,`Late Undo replaced newer ${change}`);
@@ -152,6 +159,23 @@ export async function checkTrafficShortcuts(page,root) {
   await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await settled(2);
   assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),'shortcut-3');
   assert.equal(await traffic.locator('#session-shortcut-3').evaluate(node=>node.getRootNode().activeElement===node),true,'Late Redo stole focus');
+
+  // Busy history and Clear buttons must leave keyboard focus inside Traffic.
+  for(const operation of ['redo','clear']){
+    await open();await traffic.locator('#session-shortcut-0').click();
+    if(operation==='redo'){
+      await page.keyboard.press('Delete');await settled(3);await undo.click();await settled(4);
+    }
+    await page.evaluate(command=>{globalThis.__workspaceFixture.holdCommand=command;},operation==='redo'?'remove_traffic_entries':'clear_traffic');
+    await (operation==='redo'?redo:traffic.getByRole('button',{name:'Clear all',exact:true})).click();
+    await page.waitForFunction(()=>typeof globalThis.__workspaceFixture.finishHeldCommand==='function');
+    await page.evaluate(()=>new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve))));
+    assert.equal(await table.evaluate(node=>node.getRootNode().activeElement===node),true,`Pending ${operation} dropped list focus`);
+    await page.keyboard.press('Escape');
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,`Escape did not clear selection while ${operation} was pending`);
+    await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await settled(operation==='redo'?3:0);
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedTrafficCount),0,`Late ${operation} restored cleared selection`);
+  }
 
   await open(250);await traffic.locator('#session-shortcut-249').click();await page.keyboard.press('Delete');await settled(249);
   await page.evaluate(()=>document.querySelector('app-shell').traffic.revealCurrent('shortcut-0',true));
