@@ -60,7 +60,11 @@ complete display order; leaving the rendered window never deselects an entry.
 **View → List columns → Extension columns** optionally adds fixed protocol labels
 from installed extensions. Their request/response header rules run natively on
 bounded visible-row metadata, without starting extension code or reading bodies.
-Choose up to eight; disabling an extension removes its columns. A **Limited**
+Choose up to eight; disabling an extension removes its columns. Column choices
+update automatically when extensions change. A small extension icon distinguishes
+their headings; click one to filter its fixed labels or **No match**. These
+filters combine with ordinary Traffic filters and use bounded retained headers
+across matching entries, without opening bodies. A **Limited**
 cell means its header classification exceeded the metadata budget. Manage their
 declared header names and conditions in [Extensions settings](extensions.md).
 

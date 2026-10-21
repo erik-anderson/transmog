@@ -59,6 +59,8 @@ pub struct ClassificationChoice {
     pub name: String,
     /// Package name for disambiguating headings in View settings.
     pub extension_name: String,
+    /// Fixed filter alternatives; no capture scan is needed to discover them.
+    pub values: Vec<String>,
 }
 /// Exact active contribution identity, separate from its package and UI owner.
 #[derive(Clone, Debug, Serialize)]
@@ -267,6 +269,11 @@ impl Registry {
                         ),
                         name: column.name.clone(),
                         extension_name: entry.catalog.manifest.name.clone(),
+                        values: column
+                            .values
+                            .iter()
+                            .map(|value| value.value.clone())
+                            .collect(),
                     })
             })
             .collect()

@@ -117,6 +117,8 @@ await page.addInitScript((configuration) => {
   const otherValue=(dimension,candidate)=>candidate!=null&&candidate!=='Unavailable'&&(dimension==='status'?candidate<100||candidate>=600:!!configuration.filterCatalog[dimension]&&!configuration.filterCatalog[dimension].some(option=>option.value===String(candidate).toLowerCase()));
   const trafficKey=(row,column)=>({'request-number':row.requestNumber??'0',method:row.method==='—'?null:row.method,status:row.status,process:row.caller.processName,pid:row.caller.processId,host:row.host,path:row.path,url:row.url,protocol:row.protocol==='Unavailable'?row.protocol:canonicalProtocol(row.protocol),duration:row.durationMs,'http-duration':row.httpDurationMs,'response-bytes':row.responseBytes,'request-bytes':row.requestBytes,state:row.terminal,'content-type':row.contentType,'started-at':row.startedAt>0?row.startedAt:null,'stream-sent':row.streamSent,'stream-received':row.streamReceived,'traffic-type':row.streamProtocol==='web-socket'?'websocket':row.streamProtocol==='sse'?'sse':'http','fetch-destination':row.fetchDestination})[column];
   const numericColumns=new Set(['request-number','status','pid','duration','http-duration','response-bytes','request-bytes','started-at','stream-sent','stream-received']);
+  const classificationLabels=(id,key)=>state.classificationsById?.[id]?.[key]??state.classificationValues??['MS-FSSHTTP'];
+  const matchesClassifications=(row,query,exclude)=>(query.extensionFilters??[]).filter(filter=>filter.column!==exclude).every(filter=>!filter.values.length||filter.values.some(value=>value.kind==='unavailable'?classificationLabels(row.id,filter.column).length===0:value.kind==='text'&&classificationLabels(row.id,filter.column).some(label=>label.toLowerCase()===value.value.toLowerCase())));
   const trafficRows=(query={},exclude=null)=>{
     const snapshot=query.searchResultId?new Set(state.searchResults?.find(result=>result.id===query.searchResultId)?.ids??[]):null;
     const dismissed=new Set(state.dismissedIds??[]);
@@ -124,7 +126,7 @@ await page.addInitScript((configuration) => {
     let rows=structuredClone(state.sessions).map(row=>{
       if(row.streamLifetime?.live&&row.quietStartedAt!=null){const duration=Date.now()-row.quietStartedAt;row.durationMs=duration;row.streamLifetime.durationMs=duration;}
       return row;
-    }).filter(row=>!dismissed.has(row.id)&&(!snapshot||snapshot.has(row.id))&&(!query.search||(row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(query.search.toLowerCase())));
+    }).filter(row=>matchesClassifications(row,query,exclude)&&!dismissed.has(row.id)&&(!snapshot||snapshot.has(row.id))&&(!query.search||(row.url+' '+row.caller.processName+' '+row.caller.processId).toLowerCase().includes(query.search.toLowerCase())));
     if(query.incidentWindow){const w=query.incidentWindow,intake=state.incidentIntakes?.[w.traceId],marker=intake?.markers.find(m=>m.id===w.markerId);rows=rows.filter(row=>row.traceId===w.traceId&&(!w.markerId||!!marker&&row.startedAt>=marker.unixMillis-w.beforeSeconds*1000&&row.startedAt<=marker.unixMillis+w.afterSeconds*1000)&&(!w.relevantHostsOnly||intake?.profile?.relevantHosts.some(h=>row.host===h.host||h.includeSubdomains&&row.host.endsWith('.'+h.host))));}
     if(exclude!=='fetch-destination'&&query.fetchDestinations?.length)rows=rows.filter(row=>query.fetchDestinations.includes(row.fetchDestination));
     for(const filter of query.filters??[]){if(filter.column===exclude)continue;rows=rows.filter(row=>{const value=trafficKey(row,filter.column);return filter.operator==='minimum'?value!=null&&number(value)>=number(filter.value):filter.operator==='maximum'?value!=null&&number(value)<=number(filter.value):filter.operator==='equals'?String(value).toLowerCase()===filter.value.toLowerCase():String(value).toLowerCase().includes(filter.value.toLowerCase());});}
@@ -192,7 +194,11 @@ await page.addInitScript((configuration) => {
         case 'plugin:event|listen': {const id=++nativeEventId;nativeEvents.set(id,{event:args.event,handler:args.handler});return id;}
         case 'plugin:event|unlisten': nativeEvents.delete(args.eventId);return;
         case 'visualizer_choices': return structuredClone((state.visualizerChoicesBySession?.[args.selection.sessionId]??state.visualizerChoices)?.[args.selection.surface]??[]);
-        case 'extension_traffic_columns': return structuredClone(state.extensionColumnChoices??[]);
+        case 'extension_traffic_columns': {
+          const choices=structuredClone(state.extensionColumnChoices??[]);
+          if(state.deferExtensionColumns){state.deferExtensionColumns=false;await new Promise(resolve=>state.finishExtensionColumns=()=>{state.finishExtensionColumns=null;resolve();});}
+          return choices;
+        }
         case 'classify_traffic_rows': {
           state.classificationRequests??=[];state.classificationRequests.push(structuredClone(args));
           const rows=args.ids.map(id=>({id,values:Object.fromEntries(args.columns.map(key=>[key,state.classificationValues??['MS-FSSHTTP']])),limited:!!state.classificationLimited}));
@@ -530,6 +536,15 @@ await page.addInitScript((configuration) => {
         case 'traffic_search_entry': return {entryId:args.id,moreMatches:false,matches:[{boundary:'client-response',field:'Decoded text body',startUtf16:3,endUtf16:7,before:'😀 ',matched:'Café',after:' marker <script>globalThis.matchUnsafe=true</script>',shortened:false},{boundary:'client-response',field:'Decoded text body',startUtf16:10,endUtf16:15,before:'Café / ',matched:'Café',after:' again',shortened:false}]};
         case 'cancel_traffic_search': state.searchCanceled=true;return;
         case 'matching_traffic_ids': return trafficRows(args.query).map(row=>row.id);
+        case 'extension_traffic_facets': {
+          const {query,column}=args.request,choice=state.extensionColumnChoices.find(choice=>choice.key===column);
+          if(!choice)throw new Error('Extension column unavailable');
+          const rows=trafficRows(query,column),labels=new Map((choice.values??[]).map(label=>[label.toLowerCase(),label]));
+          const options=Array.from(labels,([value,label])=>({key:'text:'+value,label,value:{kind:'text',value},count:rows.filter(row=>classificationLabels(row.id,column).some(label=>label.toLowerCase()===value)).length}));
+          options.push({key:'unavailable',label:'No match',value:{kind:'unavailable'},count:rows.filter(row=>!classificationLabels(row.id,column).length).length});
+          state.extensionFacetRequests??=[];state.extensionFacetRequests.push(structuredClone(args.request));
+          return {options,matchingEntries:rows.length,omittedEntries:0};
+        }
         case 'traffic_facets': {
           const request=structuredClone(args.request);
           if(state.deferFacets){state.deferFacets=false;state.facetPending=true;await new Promise(resolve=>state.releaseFacets=resolve);state.facetPending=false;}

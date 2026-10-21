@@ -19,7 +19,9 @@ mod captured_page_report;
 mod certificates;
 mod classifications;
 mod client_certificates;
-pub use classifications::TrafficClassification;
+pub use classifications::{
+    ClassificationFacetInput, ClassificationFacetPage, ClassificationFilter, TrafficClassification,
+};
 pub mod comparison;
 mod composer;
 mod composer_response;
@@ -1468,6 +1470,7 @@ impl Application {
             query.incident_window.as_ref(),
             self.searches.resolve(query.search_result_id.as_deref())?,
         )?;
+        let matching = self.restrict_classifications(&query, matching)?;
         sessions::query_sessions_with_traces(
             &self.service,
             &self.cursors,
@@ -1487,6 +1490,7 @@ impl Application {
             query.incident_window.as_ref(),
             self.searches.resolve(query.search_result_id.as_deref())?,
         )?;
+        let matching = self.restrict_classifications(query, matching)?;
         sessions::matching_ids(&self.service, query, &self.traces, matching.as_deref())
     }
 
@@ -1498,12 +1502,13 @@ impl Application {
         &self,
         request: &TrafficFacetInput,
     ) -> Result<TrafficFacetPage, AppError> {
-        let query = &request.query;
+        let query = sessions::unrestricted_query(request);
         let matching = incidents::restrict(
             self,
             query.incident_window.as_ref(),
             self.searches.resolve(query.search_result_id.as_deref())?,
         )?;
+        let matching = self.restrict_classifications(&query, matching)?;
         sessions::facet_counts(&self.service, request, &self.traces, matching.as_deref())
     }
 
@@ -1517,6 +1522,7 @@ impl Application {
             query.incident_window.as_ref(),
             self.searches.resolve(query.search_result_id.as_deref())?,
         )?;
+        let matching = self.restrict_classifications(query, matching)?;
         sessions::traffic_view(
             &self.service,
             &self.traffic_views,

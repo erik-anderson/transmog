@@ -16,11 +16,11 @@ use transmog_session::{
 use crate::workspace::TrafficColumn;
 mod facets;
 use crate::{AppError, AutoResponseMatchView, ErrorCategory, inspector::auto_response_match};
-pub(crate) use facets::facet_counts;
 pub use facets::{
     TrafficDimension, TrafficFacet, TrafficFacetInput, TrafficFacetOption, TrafficFacetPage,
     TrafficFilterGroup, TrafficFilterValue,
 };
+pub(crate) use facets::{facet_counts, unrestricted_query};
 
 /// Direction of a retained-traffic metadata sort.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -130,6 +130,9 @@ pub struct SessionQueryInput {
     /// Exact alternatives OR within each dimension, AND across dimensions and constraints.
     #[serde(default)]
     pub filter_groups: Vec<TrafficFilterGroup>,
+    /// Header-only extension classifications, evaluated only when explicitly filtered.
+    #[serde(default)]
+    pub extension_filters: Vec<crate::ClassificationFilter>,
     /// Original client fetch destinations, combined with OR within this group.
     #[serde(default)]
     pub fetch_destinations: Vec<String>,

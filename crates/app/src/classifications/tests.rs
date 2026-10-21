@@ -76,7 +76,7 @@ fn retained_classifications_use_both_client_heads_without_loading_code_or_bodies
         exchange_id: ExchangeId(1),
         sequence: 1,
         kind: ObserverEventKind::ExchangeStarted {
-            metadata: Arc::new(metadata),
+            metadata: Arc::new(metadata.clone()),
         },
     });
     catalog.apply(ObserverEvent {
@@ -86,7 +86,7 @@ fn retained_classifications_use_both_client_heads_without_loading_code_or_bodies
             boundary: ExchangeBoundary::ClientRequest,
             head: RequestHead {
                 method: "POST".into(),
-                target,
+                target: target.clone(),
                 headers: HeaderBlock::from_fields(vec![
                     HeaderField::try_new("SOAPAction", "CellStorageService").unwrap(),
                 ]),
@@ -143,7 +143,106 @@ fn retained_classifications_use_both_client_heads_without_loading_code_or_bodies
         app.classify_traffic_rows(&vec![ids[0].clone(); 513], &keys)
             .is_err()
     );
+    // A second retained exchange has no matching headers. Its saved body must
+    // remain untouched while list and facet queries scan retained headers.
+    let mut second_metadata = metadata;
+    second_metadata.exchange_id = ExchangeId(2);
+    catalog.apply(ObserverEvent {
+        exchange_id: ExchangeId(2),
+        sequence: 1,
+        kind: ObserverEventKind::ExchangeStarted {
+            metadata: Arc::new(second_metadata),
+        },
+    });
+    catalog.apply(ObserverEvent {
+        exchange_id: ExchangeId(2),
+        sequence: 2,
+        kind: ObserverEventKind::RequestHeadObserved {
+            boundary: ExchangeBoundary::ClientRequest,
+            head: RequestHead {
+                method: "GET".into(),
+                target,
+                headers: HeaderBlock::default(),
+                source_version: HttpLegVersion::Http1,
+            },
+        },
+    });
+    let filter = ClassificationFilter {
+        column: keys[0].clone(),
+        values: vec![crate::TrafficFilterValue::Text("ms-fsshttp".into())],
+    };
+    let query = crate::SessionQueryInput {
+        extension_filters: vec![filter.clone()],
+        limit: Some(1),
+        ..Default::default()
+    };
+    let page = app.query_sessions(query.clone()).unwrap();
+    assert_eq!(page.total_matched, 1);
+    assert_eq!(page.retained_count, 2);
+    assert_eq!(page.sessions[0].id, ids[0]);
+    assert_eq!(app.matching_traffic_ids(&query).unwrap(), ids);
+    let view = app.query_traffic_view(&query).unwrap();
+    assert_eq!(view.ids, ids);
+    app.release_traffic_view(&view.id);
+    let counts = app
+        .extension_traffic_facets(&ClassificationFacetInput {
+            query: query.clone(),
+            column: keys[0].clone(),
+        })
+        .unwrap();
+    assert_eq!(counts.matching_entries, 2);
+    assert_eq!(counts.omitted_entries, 0);
+    assert_eq!(
+        counts
+            .options
+            .iter()
+            .map(|option| (option.label.as_str(), option.count))
+            .collect::<Vec<_>>(),
+        vec![("MS-FSSHTTP", 1), ("Office", 1), ("No match", 1)]
+    );
+    let unmatched = crate::SessionQueryInput {
+        extension_filters: vec![ClassificationFilter {
+            values: vec![crate::TrafficFilterValue::Unavailable],
+            ..filter.clone()
+        }],
+        ..Default::default()
+    };
+    assert_eq!(
+        app.query_sessions(unmatched).unwrap().sessions[0].id,
+        format!("{:032x}", 2)
+    );
+    let host_request = crate::TrafficFacetInput {
+        query: crate::SessionQueryInput {
+            host: Some("other.invalid".into()),
+            ..query.clone()
+        },
+        dimension: crate::TrafficDimension::Column(crate::workspace::TrafficColumn::Host),
+        search: None,
+        include_values: vec![],
+        offset: 0,
+        limit: None,
+    };
+    let hosts = app.traffic_facets(&host_request).unwrap();
+    assert_eq!(
+        hosts.matching_entries, 1,
+        "Header scan incorrectly included the edited host restriction"
+    );
+    assert_eq!(hosts.options[0].label, "office.invalid");
+    for column in ["not-a-qualified-key", "missing:column"] {
+        let query = crate::SessionQueryInput {
+            extension_filters: vec![ClassificationFilter {
+                column: column.into(),
+                ..filter.clone()
+            }],
+            ..Default::default()
+        };
+        assert!(app.query_sessions(query).is_err());
+    }
     registry.set_enabled("office", false).unwrap();
+    assert!(
+        app.query_sessions(query).is_err(),
+        "Unavailable filters must not silently broaden Traffic"
+    );
     assert!(app.extension_traffic_columns().is_empty());
     assert!(app.classify_traffic_rows(&ids, &keys).unwrap().is_empty());
     assert_eq!(

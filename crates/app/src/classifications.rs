@@ -1,9 +1,10 @@
 //! Bounded visible-row classifications from cached declarations and borrowed client headers.
 use crate::{AppError, Application, ErrorCategory};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::{
     cell::Cell,
-    collections::{BTreeMap, BTreeSet},
+    collections::{BTreeMap, BTreeSet, HashSet},
+    sync::Arc,
 };
 use transmog_core::{HeaderField, observe::ExchangeBoundary};
 use transmog_extensions::{
@@ -11,6 +12,109 @@ use transmog_extensions::{
 };
 #[cfg(test)]
 mod tests;
+
+/// Exact fixed-label alternatives for one extension column (OR within, AND across columns).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClassificationFilter {
+    /// Package-qualified column identity.
+    pub column: String,
+    /// Text labels or Unavailable for no matching label. Limited evidence never matches either.
+    pub values: Vec<crate::TrafficFilterValue>,
+}
+
+/// Counts for an extension column, excluding that column's own filter.
+#[derive(Clone, Debug, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ClassificationFacetInput {
+    /// Complete traffic scope.
+    pub query: crate::SessionQueryInput,
+    /// Package-qualified enabled column identity.
+    pub column: String,
+}
+
+/// Bounded declared alternatives and contextual entry counts, without body access.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClassificationFacetPage {
+    /// One count per distinct declared label, plus no-match.
+    pub options: Vec<crate::TrafficFacetOption>,
+    /// Candidate entries with this column unrestricted.
+    pub matching_entries: usize,
+    /// Entries that could not be classified within metadata limits.
+    pub omitted_entries: usize,
+}
+
+struct PreparedColumns {
+    columns: Vec<(String, ClassificationColumn)>,
+    names: [BTreeSet<String>; 2],
+}
+
+impl PreparedColumns {
+    fn new(columns: Vec<(String, ClassificationColumn)>) -> Self {
+        let mut names = [BTreeSet::new(), BTreeSet::new()];
+        for (_, column) in &columns {
+            for (index, access) in [&column.inputs.request, &column.inputs.response]
+                .into_iter()
+                .enumerate()
+            {
+                names[index].extend(access.headers.iter().map(|name| name.to_ascii_lowercase()));
+            }
+        }
+        Self { columns, names }
+    }
+
+    fn row(
+        &self,
+        app: &Application,
+        id: &str,
+        budget: &mut Budget,
+    ) -> Option<TrafficClassification> {
+        let exchange = crate::response_assets::parse_exchange_id(id).ok()?;
+        app.service.catalog().with_heads(exchange, |heads| {
+            let request = heads
+                .request_heads
+                .iter()
+                .find(|head| head.boundary == ExchangeBoundary::ClientRequest)
+                .map(|head| head.head.headers.fields());
+            let response = heads
+                .response_heads
+                .iter()
+                .rev()
+                .find(|head| {
+                    head.boundary == ExchangeBoundary::ClientResponse
+                        && (head.head.status >= 200 || head.head.status == 101)
+                })
+                .map(|head| head.head.headers.fields());
+            classify(id, request, response, &self.columns, &self.names, budget)
+        })
+    }
+}
+
+fn unavailable_column() -> AppError {
+    AppError::new(
+        ErrorCategory::Unavailable,
+        "An extension column is unavailable. Remove its filter or enable the extension in Settings.",
+        false,
+    )
+}
+
+impl ClassificationFilter {
+    fn matches(&self, row: &TrafficClassification) -> bool {
+        if row.limited {
+            return false;
+        }
+        let labels = row.values.get(&self.column).map_or(&[][..], Vec::as_slice);
+        self.values.is_empty()
+            || self.values.iter().any(|value| match value {
+                crate::TrafficFilterValue::Text(text) => labels
+                    .iter()
+                    .any(|label| label.to_lowercase() == text.to_lowercase()),
+                crate::TrafficFilterValue::Unavailable => labels.is_empty(),
+                _ => false,
+            })
+    }
+}
 
 /// Header-derived labels for one retained row. Values always originate in the manifest.
 #[derive(Clone, Debug, Serialize)]
@@ -77,6 +181,14 @@ impl Default for Budget {
     }
 }
 impl Budget {
+    // Whole-catalog work is opt-in and bounded independently of viewport batches.
+    fn scan() -> Self {
+        Self {
+            bytes: 64 * 1024 * 1024,
+            output: 16 * 1024 * 1024,
+            work: Cell::new(8 * 1024 * 1024),
+        }
+    }
     fn fields<'a>(
         &mut self,
         fields: &'a [HeaderField],
@@ -98,6 +210,164 @@ impl Budget {
     }
 }
 impl Application {
+    fn prepare_classification_filters(
+        &self,
+        filters: &[ClassificationFilter],
+    ) -> Result<PreparedColumns, AppError> {
+        if filters.len() > 8
+            || filters
+                .iter()
+                .map(|filter| &filter.column)
+                .collect::<BTreeSet<_>>()
+                .len()
+                != filters.len()
+            || filters.iter().any(|filter| {
+                !transmog_extensions::valid_classification_key(&filter.column)
+                    || filter.values.len() > 128
+                    || filter.values.iter().any(|value| match value {
+                        crate::TrafficFilterValue::Text(text) => {
+                            text.is_empty()
+                                || text.chars().count() > 255
+                                || text.chars().any(char::is_control)
+                        }
+                        crate::TrafficFilterValue::Unavailable => false,
+                        _ => true,
+                    })
+            })
+        {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "Choose up to 8 extension column filters with bounded exact labels",
+                false,
+            ));
+        }
+        let keys = filters
+            .iter()
+            .map(|filter| filter.column.clone())
+            .collect::<Vec<_>>();
+        let columns = self.extensions().classification_columns(&keys);
+        if columns.len() != keys.len() {
+            return Err(unavailable_column());
+        }
+        Ok(PreparedColumns::new(columns))
+    }
+
+    /// Adds only explicitly requested header predicates to an existing metadata scope.
+    pub(crate) fn restrict_classifications(
+        &self,
+        query: &crate::SessionQueryInput,
+        matching: Option<Arc<HashSet<String>>>,
+    ) -> Result<Option<Arc<HashSet<String>>>, AppError> {
+        if query.extension_filters.is_empty() {
+            return Ok(matching);
+        }
+        let prepared = self.prepare_classification_filters(&query.extension_filters)?;
+        let mut base = query.clone();
+        base.extension_filters.clear();
+        base.cursor = None;
+        base.sort = None;
+        base.offset = None;
+        base.focus_id = None;
+        let ids =
+            crate::sessions::matching_ids(&self.service, &base, &self.traces, matching.as_deref())?;
+        let mut budget = Budget::scan();
+        let mut selected = HashSet::new();
+        for id in ids {
+            let Some(row) = prepared.row(self, &id, &mut budget) else {
+                continue;
+            };
+            if row.limited {
+                return Err(AppError::new(
+                    ErrorCategory::Limit,
+                    "Extension filtering exceeded its header metadata limit. Narrow Traffic with other filters first.",
+                    false,
+                ));
+            }
+            if query
+                .extension_filters
+                .iter()
+                .all(|filter| filter.matches(&row))
+            {
+                selected.insert(id);
+            }
+        }
+        Ok(Some(Arc::new(selected)))
+    }
+
+    /// Counts fixed labels across retained headers; never opens body sources or extension code.
+    /// # Errors
+    /// Returns invalid filters, unavailable declarations or expired traffic scope.
+    pub fn extension_traffic_facets(
+        &self,
+        request: &ClassificationFacetInput,
+    ) -> Result<ClassificationFacetPage, AppError> {
+        let prepared = self.prepare_classification_filters(&[ClassificationFilter {
+            column: request.column.clone(),
+            values: Vec::new(),
+        }])?;
+        // Validate constraints even when the edited dimension is excluded.
+        self.prepare_classification_filters(&request.query.extension_filters)?;
+        let mut query = request.query.clone();
+        query
+            .extension_filters
+            .retain(|filter| filter.column != request.column);
+        query.offset = None;
+        query.focus_id = None;
+        query.sort = None;
+        let ids = self.matching_traffic_ids(&query)?;
+        let mut counts = BTreeMap::<String, (String, usize)>::new();
+        for value in &prepared.columns[0].1.values {
+            counts
+                .entry(value.value.to_lowercase())
+                .or_insert((value.value.clone(), 0));
+        }
+        let mut unmatched = 0;
+        let mut omitted_entries = 0;
+        let mut budget = Budget::scan();
+        for id in &ids {
+            let Some(row) = prepared.row(self, id, &mut budget) else {
+                omitted_entries += 1;
+                continue;
+            };
+            if row.limited {
+                omitted_entries += 1;
+                continue;
+            }
+            let labels = &row.values[&request.column];
+            if labels.is_empty() {
+                unmatched += 1;
+            }
+            for key in labels
+                .iter()
+                .map(|value| value.to_lowercase())
+                .collect::<BTreeSet<_>>()
+            {
+                if let Some((_, count)) = counts.get_mut(&key) {
+                    *count += 1;
+                }
+            }
+        }
+        let mut options = counts
+            .into_iter()
+            .map(|(key, (label, count))| crate::TrafficFacetOption {
+                key: format!("text:{key}"),
+                label,
+                value: crate::TrafficFilterValue::Text(key),
+                count,
+            })
+            .collect::<Vec<_>>();
+        options.push(crate::TrafficFacetOption {
+            key: "unavailable".into(),
+            label: "No match".into(),
+            value: crate::TrafficFilterValue::Unavailable,
+            count: unmatched,
+        });
+        Ok(ClassificationFacetPage {
+            options,
+            matching_entries: ids.len(),
+            omitted_entries,
+        })
+    }
     /// Lists enabled static traffic column headings; never reads a capture or runs code.
     pub fn extension_traffic_columns(
         &self,
@@ -123,53 +393,17 @@ impl Application {
         {
             return Err(invalid());
         }
-        let exchanges = ids
-            .iter()
-            .map(|id| crate::response_assets::parse_exchange_id(id))
-            .collect::<Result<Vec<_>, _>>()?;
-        let declarations = self.extensions().classification_columns(columns);
-        if declarations.is_empty() {
-            return Ok(Vec::new());
+        for id in ids {
+            crate::response_assets::parse_exchange_id(id)?;
         }
-        let mut names = [BTreeSet::new(), BTreeSet::new()];
-        for (_, column) in &declarations {
-            for (index, access) in [&column.inputs.request, &column.inputs.response]
-                .into_iter()
-                .enumerate()
-            {
-                names[index].extend(access.headers.iter().map(|name| name.to_ascii_lowercase()));
-            }
+        let prepared = PreparedColumns::new(self.extensions().classification_columns(columns));
+        if prepared.columns.is_empty() {
+            return Ok(Vec::new());
         }
         let mut budget = Budget::default();
         Ok(ids
             .iter()
-            .zip(exchanges)
-            .filter_map(|(id, exchange)| {
-                self.service.catalog().with_heads(exchange, |heads| {
-                    let request = heads
-                        .request_heads
-                        .iter()
-                        .find(|head| head.boundary == ExchangeBoundary::ClientRequest)
-                        .map(|head| &head.head.headers);
-                    let response = heads
-                        .response_heads
-                        .iter()
-                        .rev()
-                        .find(|head| {
-                            head.boundary == ExchangeBoundary::ClientResponse
-                                && (head.head.status >= 200 || head.head.status == 101)
-                        })
-                        .map(|head| &head.head.headers);
-                    classify(
-                        id,
-                        request.map(transmog_core::HeaderBlock::fields),
-                        response.map(transmog_core::HeaderBlock::fields),
-                        &declarations,
-                        &names,
-                        &mut budget,
-                    )
-                })
-            })
+            .filter_map(|id| prepared.row(self, id, &mut budget))
             .collect())
     }
 }

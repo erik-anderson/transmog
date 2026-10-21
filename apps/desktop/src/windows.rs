@@ -1421,6 +1421,22 @@ fn traffic_view_rows(
 }
 
 #[tauri::command]
+async fn extension_traffic_facets(
+    request: transmog_app::ClassificationFacetInput,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ClassificationFacetPage, AppError> {
+    let application = state.window_application(&window)?;
+    tauri::async_runtime::spawn_blocking(move || application.extension_traffic_facets(&request))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Internal,
+            message: "Extension filter counts could not be read".into(),
+            retryable: true,
+        })?
+}
+
+#[tauri::command]
 fn extension_traffic_columns(
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
@@ -2445,6 +2461,7 @@ pub fn run() {
                 traffic_timeline_rows,
                 traffic_view_rows,
                 extension_traffic_columns,
+                extension_traffic_facets,
                 classify_traffic_rows,
                 release_traffic_view,
                 session_detail,

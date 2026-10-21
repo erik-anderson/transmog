@@ -6,10 +6,18 @@ export async function checkTrafficClassifications(page,root) {
   const saved=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic,s=globalThis.__workspaceFixture;return {preferences:t.preferences,choices:s.extensionColumnChoices,values:s.classificationValues,starts:s.calls.activate_visualizer??0};});
   try {
     await page.locator('a[data-view="traffic"]').click();
-    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.extensionColumnChoices=[{key:'office:protocol',name:'Office protocol',extensionName:'Office tools'}];document.querySelector('app-shell').traffic.refreshExtensionColumns();});
+    await page.evaluate(async()=>{const s=globalThis.__workspaceFixture;s.extensionColumnChoices=[{key:'office:protocol',name:'Protocol',extensionName:'Office tools',values:['MS-FSSHTTP','Office']}];s.deferExtensionColumns=true;s.emitNative('extensions-changed');});
+    await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishExtensionColumns);
+    // Ordinary capture updates used to discard an in-flight discovery reply.
+    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.classifications.invalidate(t.sessions.map(row=>row.id));globalThis.__workspaceFixture.finishExtensionColumns();});
+    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.classifications.choices.length===1);
     await view.click();await traffic.locator('.list-column-settings summary').click();
-    const check=traffic.getByRole('checkbox',{name:'Office protocol · Office tools',exact:true});
+    const check=traffic.getByRole('checkbox',{name:'Protocol · Office tools',exact:true});
     await check.waitFor();assert.equal(await check.isChecked(),false);
+    assert.equal(await traffic.locator('.extension-column-options legend svg.extension-column-icon').count(),1);
+    assert.equal(await traffic.locator('.extension-column-options label svg').count(),0);
+    await traffic.locator('.extension-column-options legend').scrollIntoViewIfNeeded();
+    await page.screenshot({path:resolve(root,'../../../target/ui-check/classification-chooser.png')});
     const before=await page.evaluate(()=>globalThis.__workspaceFixture.calls.classify_traffic_rows??0);
     await check.check();await page.keyboard.press('Escape');
     await traffic.locator('[data-extension-column="office:protocol"]').first().getByText('MS-FSSHTTP',{exact:true}).waitFor();
@@ -30,6 +38,31 @@ export async function checkTrafficClassifications(page,root) {
     assert.ok((await page.evaluate(()=>globalThis.__workspaceFixture.classificationRequests.length))>pending,'The newest viewport was not retried after stale work');
     assert.equal(await traffic.locator('[data-extension-column="office:protocol"] img').count(),0);
     assert.equal(await traffic.locator('[data-extension-column="office:protocol"]').first().textContent(),'New <img src=x onerror=alert(1)>');
+    const heading=traffic.getByRole('button',{name:'Filter Protocol · Extension: Office tools',exact:true});
+    assert.equal(await heading.locator('svg[aria-hidden="true"]').count(),1);
+    await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.classificationsById=Object.fromEntries(s.sessions.map((row,index)=>[row.id,{'office:protocol':index===0?['MS-FSSHTTP','Office']:[]}]))});
+    const firstId=await page.evaluate(()=>globalThis.__workspaceFixture.sessions[0].id);
+    await heading.click();
+    const picker=traffic.locator('#traffic-filter-picker');
+    await picker.getByRole('checkbox',{name:/MS-FSSHTTP/}).waitFor();
+    await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.pickerLoading);
+    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.pickerCounts.get('text:ms-fsshttp')),1);
+    await page.screenshot({path:resolve(root,'../../../target/ui-check/classification-filter.png')});
+    await picker.getByRole('checkbox',{name:/MS-FSSHTTP/}).check();
+    await picker.getByRole('button',{name:'Apply filter',exact:true}).click();
+    await page.waitForFunction(id=>{const t=document.querySelector('app-shell').traffic;return t.totalMatched===1&&t.virtualList.ids[0]===id;},firstId);
+    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.lastQuery.filterGroups.length),0,'Dynamic keys leaked into built-in dimensions');
+    assert.equal(await traffic.locator('.filter-chip').filter({hasText:'Protocol · Office tools'}).count(),1);
+    await heading.click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.pickerLoading);
+    assert.ok((await page.evaluate(()=>document.querySelector('app-shell').traffic.pickerCounts.get('unavailable')))>0,'Own filter constrained No match counts');
+    await picker.getByRole('checkbox',{name:/MS-FSSHTTP/}).uncheck();
+    await picker.getByRole('checkbox',{name:/No match/}).check();
+    await picker.getByRole('button',{name:'Apply filter',exact:true}).click();
+    await page.waitForFunction(id=>{const t=document.querySelector('app-shell').traffic;return t.totalMatched>0&&!t.virtualList.indexes.has(id);},firstId);
+    await traffic.getByRole('button',{name:/Remove Protocol · Office tools/}).click();
+    await page.evaluate(()=>{delete globalThis.__workspaceFixture.classificationsById;});
+    await page.evaluate(async()=>document.querySelector('app-shell').traffic.refreshSessions(undefined,true));
+
     for(const width of [1440,800]) {
       await page.setViewportSize({width,height:720});
       await traffic.locator('.table-wrap').evaluate(element=>element.scrollLeft=element.scrollWidth);
@@ -39,6 +72,9 @@ export async function checkTrafficClassifications(page,root) {
     await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.extensionColumnChoices=[];s.emitNative('extensions-changed');});
     await page.waitForFunction(()=>document.querySelector('app-shell').traffic.extensionTableColumns.length===0);
     assert.equal(await traffic.locator('[data-extension-column]').count(),0);
+    await page.evaluate(()=>document.querySelector('app-shell').traffic.openFilters(new Event('click')));
+    assert.equal(await traffic.getByRole('combobox',{name:'Filter field',exact:true}).inputValue(),'traffic-type','Removed extension left Filters on a missing field');
+    await page.keyboard.press('Escape');
     const listeners=await page.evaluate(()=>globalThis.__workspaceFixture.extensionListenerCount());
     await page.evaluate(()=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;t.classifications.disconnect();s.holdCommand='plugin:event|listen';void t.classifications.connect();});
     await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishHeldCommand);
@@ -48,7 +84,7 @@ export async function checkTrafficClassifications(page,root) {
     await page.waitForFunction(()=>globalThis.__workspaceFixture.extensionListenerCount()===0);
   } finally {
     await page.emulateMedia({forcedColors:'none'});await page.setViewportSize({width:1280,height:800});
-    await page.evaluate(saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.extensionColumnChoices=saved.choices;s.classificationValues=saved.values;s.deferClassifications=false;s.finishClassifications?.();t.preferences=saved.preferences;t.classifications.invalidate();},saved);
+    await page.evaluate(saved=>{const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;s.extensionColumnChoices=saved.choices;s.classificationValues=saved.values;s.deferClassifications=false;s.finishClassifications?.();s.finishExtensionColumns?.();delete s.classificationsById;t.preferences=saved.preferences;t.classifications.invalidate();},saved);
     await page.locator('a[data-view="traffic"]').click();
   }
 }

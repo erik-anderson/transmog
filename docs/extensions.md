@@ -109,14 +109,22 @@ exact protocol action values applicable to their classifier:
 
 **Traffic → View → List columns → Extension columns** offers enabled declarations.
 All start hidden; choose up to eight. Labels appear after ordinary columns in
-declaration order, once per matching literal. These initial classification
-columns display labels without adding sort/filter actions. Their package-qualified
-identities persist as layout preferences, independently of traffic values.
+declaration order, once per matching literal. A small extension icon distinguishes
+these headings from built-in columns.
+Click a heading or choose its field in Filters to select fixed labels or **No
+match**. Alternatives combine with OR within a column and AND with other filters.
+Counts exclude the edited column's own filter. Limited header evidence is reported
+separately and never treated as No match. Filtering runs only when requested,
+with bounded native header work; narrow Traffic first if that limit is reached.
+Column choices and labels update automatically after extension changes. Their
+package-qualified identities persist as layout preferences, independently of traffic values.
 Disabled or removed entries disappear from the table; unavailable selected
 identities can still be unchecked in View. Extensions settings shows their
-header names, literal values and rules.
+header names, literal values and rules. An active filter on a disabled or removed
+column remains removable and reports its unavailable declaration rather than
+silently broadening Traffic.
 
-Classification receives at most 512 existing retained identities per native
+Viewport classification receives at most 512 existing retained identities per native
 call; the desktop requests at most 100 rows near the viewport and caches at
 most 1,024 results. Only selected declarations and matching header names are
 projected, with borrowed values and finite metadata, comparison and output
@@ -125,7 +133,7 @@ redacted values cannot produce a value match. Changed row evidence, declarations
 selection or visibility invalidate pending results; hidden workspaces release
 the cache and metadata listener.
 
-Column labels load on idle time, separately from traffic queries and row loading.
+Cell labels load on idle time, separately from traffic queries and row loading.
 Only one bounded label request may be in flight per workspace; scrolling coalesces
 to its newest viewport. Installed headings are indexed once, and optional column
 controls are created only while their settings are open. With no columns selected,

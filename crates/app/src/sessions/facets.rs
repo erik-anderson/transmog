@@ -370,26 +370,7 @@ pub(crate) fn facet_counts(
     if !(1..=512).contains(&limit) {
         return Err(invalid("Request between 1 and 512 facet options"));
     }
-    let mut query = request.query.clone();
-    query
-        .filter_groups
-        .retain(|group| group.dimension != request.dimension);
-    if let TrafficDimension::Column(column) = request.dimension {
-        query.filters.retain(|filter| filter.column != column);
-        match column {
-            TrafficColumn::Method => query.method = None,
-            TrafficColumn::Host => query.host = None,
-            TrafficColumn::State => query.terminal = None,
-            _ => {}
-        }
-    }
-    if request.dimension == TrafficDimension::Facet(TrafficFacet::FetchDestination) {
-        query.fetch_destinations.clear();
-    }
-    // Offset, focus, sorting and latest are presentation details, never count restrictions.
-    query.offset = None;
-    query.focus_id = None;
-    query.sort = None;
+    let query = unrestricted_query(request);
     let (rows, _) = ordered_rows(service, &query, traces, matching)?;
     let mut counts = BTreeMap::<TrafficFilterValue, usize>::new();
     let mut omitted_entries = 0;
@@ -477,4 +458,29 @@ fn option_presentation(
             (format!("text:{text}"), label)
         }
     }
+}
+
+/// Scope for contextual counts, excluding the edited dimension.
+pub(crate) fn unrestricted_query(request: &TrafficFacetInput) -> SessionQueryInput {
+    let mut query = request.query.clone();
+    query
+        .filter_groups
+        .retain(|group| group.dimension != request.dimension);
+    if let TrafficDimension::Column(column) = request.dimension {
+        query.filters.retain(|filter| filter.column != column);
+        match column {
+            TrafficColumn::Method => query.method = None,
+            TrafficColumn::Host => query.host = None,
+            TrafficColumn::State => query.terminal = None,
+            _ => {}
+        }
+    }
+    if request.dimension == TrafficDimension::Facet(TrafficFacet::FetchDestination) {
+        query.fetch_destinations.clear();
+    }
+    // Offset, focus, sorting and latest are presentation details, never count restrictions.
+    query.offset = None;
+    query.focus_id = None;
+    query.sort = None;
+    query
 }

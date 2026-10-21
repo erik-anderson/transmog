@@ -110,9 +110,11 @@ when changing the experience.
   declarations together in [Extensions settings](extensions.md), without access histories.
   Keep development reload actions in those settings and apply them only to active
   instances across windows, preserving each last good result on replacement failure.
-  Optional classification columns read bounded header metadata after primary row
-  rendering; their results must not delay traffic queries, rebuild ordinary cells
-  or mount installed-extension controls while those settings are closed.
+  Optional column cells read bounded header metadata after primary row rendering;
+  their results must not delay unfiltered traffic queries, rebuild ordinary cells
+  or mount installed-extension controls while those settings are closed. Explicit
+  extension column filters match retained headers natively before paging, with
+  bounded work and no body reads or extension scripts.
 
 ## Preserve work across changes
 

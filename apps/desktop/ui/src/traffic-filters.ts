@@ -4,6 +4,9 @@ import {localDateTime} from './traffic-ranges.js';
 import catalog from '../../../../crates/app/src/sessions/filter-catalog.json';
 
 export interface FilterChoice {key:string;label:string;value:TrafficFilterValue;}
+export function extensionColumnKey(dimension:TrafficDimension):string|null {
+  return dimension.startsWith('extension:') ? dimension.slice('extension:'.length) : null;
+}
 export const filterDimensions:Array<{id:TrafficDimension;label:string;numeric:boolean;placeholder:string}>= [
   {id:'traffic-type',label:'Traffic type',numeric:false,placeholder:'HTTP, WebSocket or SSE'},
   ...['method','status','state','protocol'].map(id=>columnDefinitions.find(column=>column.id===id)!),
@@ -34,6 +37,7 @@ export function fixedFilterChoices(dimension:TrafficDimension):FilterChoice[] {
   }
 }
 export function valueLabel(dimension:TrafficDimension,value:TrafficFilterValue):string {
+  if(extensionColumnKey(dimension)&&value.kind==='unavailable')return 'No match';
   value=canonicalFilterValue(dimension,value);
   const fixed=fixedFilterChoices(dimension).find(choice=>choice.key===filterValueKey(value));
   if(fixed)return fixed.label;
@@ -41,8 +45,8 @@ export function valueLabel(dimension:TrafficDimension,value:TrafficFilterValue):
   return value.kind==='other'?'Other':value.kind==='unavailable'?'Unavailable':value.kind==='status-family'?value.value+'xx':['method','protocol'].includes(dimension)?String(value.value).toUpperCase():String(value.value);
 }
 export interface FilterChip {dimension:TrafficDimension;label:string;}
-export function trafficFilterChips(filters:TrafficFilter[],groups:TrafficFilterGroup[],destinations:string[]):FilterChip[] {
-  return filterDimensions.flatMap(field=>{
+export function trafficFilterChips(filters:TrafficFilter[],groups:TrafficFilterGroup[],destinations:string[],fields=filterDimensions):FilterChip[] {
+  return fields.flatMap(field=>{
     const parts=[...groups.filter(group=>group.dimension===field.id).flatMap(group=>group.values.length?[group.values.map(value=>valueLabel(field.id,value)).join(' or ')]:[]),...filters.filter(filter=>filter.column===field.id).map(filter=>({contains:'contains',equals:'=',minimum:'≥',maximum:'≤'}[filter.operator])+' '+(field.id==='started-at'?(localDateTime(filter.value).replace('T',' ')||filter.value+' Unix ms'):filter.value+(['duration','http-duration'].includes(field.id)?' ms':['request-bytes','response-bytes','stream-sent','stream-received'].includes(field.id)?' B':'')))];
     if(field.id==='fetch-destination'&&destinations.length)parts.push(destinations.map(value=>valueLabel(field.id,{kind:'text',value})).join(' or '));
     return parts.length?[{dimension:field.id,label:field.label+': '+parts.join(' · ')}]:[];

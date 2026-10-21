@@ -242,17 +242,17 @@ export interface WorkspacePreferences {
   columns: ColumnPreference[];
   extensionColumns: string[];
 }
-export interface ExtensionTrafficColumn {key:string;name:string;extensionName:string;}
+export interface ExtensionTrafficColumn {key:string;name:string;extensionName:string;values:string[];}
 export interface TrafficClassification {id:string;values:Record<string,string[]>;limited:boolean;}
 export type ResponseSetGuideHistory = 'not-offered' | 'offered' | 'started';
 export interface ResponseSetGuideUpdate {history:ResponseSetGuideHistory;offered:boolean;}
 export interface TrafficSort { column: ColumnId; direction: 'ascending' | 'descending'; }
-export type TrafficDimension = ColumnId | 'traffic-type' | 'fetch-destination';
+export type TrafficDimension = ColumnId | 'traffic-type' | 'fetch-destination' | `extension:${string}`;
 export type TrafficFilterValue = {kind:'text';value:string}|{kind:'number';value:string}|{kind:'status-family';value:number}|{kind:'unavailable'}|{kind:'other'};
 export interface TrafficFilterGroup {dimension:TrafficDimension;values:TrafficFilterValue[];}
 export interface TrafficFacetOption {key:string;label:string;value:TrafficFilterValue;count:number;}
 export interface TrafficFacetPage {dimension:TrafficDimension;options:TrafficFacetOption[];includedOptions:TrafficFacetOption[];matchingEntries:number;omittedEntries:number;totalOptions:number;nextOffset:number|null;}
-export interface TrafficQuery {incidentWindow:unknown;search:string;searchResultId:string|null;sort:TrafficSort;fetchDestinations:string[];filters:Array<Pick<TrafficFilter,'column'|'operator'|'value'>>;filterGroups:TrafficFilterGroup[];}
+export interface TrafficQuery {incidentWindow:unknown;search:string;searchResultId:string|null;sort:TrafficSort;fetchDestinations:string[];filters:Array<Pick<TrafficFilter,'column'|'operator'|'value'>>;filterGroups:TrafficFilterGroup[];extensionFilters:Array<{column:string;values:TrafficFilterValue[]}>;}
 export interface TrafficFilter { column: ColumnId; operator: 'contains' | 'equals' | 'minimum' | 'maximum'; value: string; label: string; }
 export interface AutomationCandidate { candidateId: string; ruleCount: number; registrationCount: number; }
 export interface RawHeaderField {name:number[];value:number[];}

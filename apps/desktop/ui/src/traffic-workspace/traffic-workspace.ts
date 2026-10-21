@@ -19,7 +19,7 @@ import { WorkspaceElement } from '../workspace-element.js';
 import type { TrafficRuleKind,TrafficRuleRequest,SelectedResponse, ResponsePreviewIntent, AutomationStatus, ColumnId, Lifecycle, SessionSummary, SessionPage, TrafficView, SessionHint, SessionDetail, TrafficFilter, TrafficSort, WorkspacePreferences, RequestCommand, RequestCommandFormat } from '../models.js';
 import { describeError, loadSessionDetail, clientResponseSource, autoResponseUnavailableReason } from '../utilities.js';
 import {rangeKind,rangeUnits,inclusiveRange,localDateTime} from '../traffic-ranges.js';
-import {filterDimensions,fixedFilterChoices,filterValueKey,filterLabel,valueLabel,trafficFilterChips,columnDimension,canonicalFilterValue,hasFilterPresets,type FilterChoice,type FilterChip} from '../traffic-filters.js';
+import {extensionColumnKey,filterDimensions,fixedFilterChoices,filterValueKey,valueLabel,trafficFilterChips,columnDimension,canonicalFilterValue,hasFilterPresets,type FilterChoice,type FilterChip} from '../traffic-filters.js';
 import type {TrafficDimension,TrafficFilterGroup,TrafficFilterValue,TrafficFacetPage,TrafficQuery} from '../models.js';
 import {formatDuration,lifetimeDescription, cellText, columnDefinitions, defaultWorkspace, displayColumns, stateText, statusText, statusTone } from '../table-model.js';
 import {ListSelection,isTextEditing} from '../list-selection.js';
@@ -524,14 +524,14 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable autoresponsePending=false;
   @observable sessions:Row[] = [];
   @observable columns:Column[] = [];
-  @observable extensionTableColumns:Array<{key:string;name:string;title:string}>=[];
+  @observable extensionTableColumns:Array<{key:string;name:string;title:string;dimension:TrafficDimension}>=[];
   @observable extensionSettingsColumns:Array<{key:string;label:string;checked:boolean;disabled:boolean}>=[];
   @observable extensionColumnError='';
   @observable trafficColumnCount=0;
   @observable extensionColumnSettingsVisible=false;
   private columnSettingsOpen=false;
   private extensionSelection:string[]|undefined;
-  private classifications=new TrafficClassifications(()=>this.preferences.extensionColumns??NO_EXTENSION_KEYS,()=>{this.rebuildExtensionColumns();this.rebuildColumns();this.scheduleViewport();},()=>this.refreshClassificationCells());
+  private classifications=new TrafficClassifications(()=>this.preferences.extensionColumns??NO_EXTENSION_KEYS,()=>this.extensionCatalogChanged(),()=>this.refreshClassificationCells());
   extensionSettingsToggled(event:Event):void {
     if(event.target instanceof HTMLDetailsElement)this.columnSettingsOpen=event.target.open;
     const visible=this.columnSettingsOpen&&!!this.viewMenu?.matches(':popover-open');
@@ -551,13 +551,69 @@ export class TrafficWorkspace extends WorkspaceElement {
     const rows=this.sessions.map(row=>{const cells=this.classifications.cells(row.id);if(cells===row.extensionCells)return row;changed=true;return {...row,extensionCells:cells};});
     if(changed)this.sessions=rows;
   }
-  private rebuildExtensionColumns():void {
-    this.extensionSelection=this.preferences.extensionColumns??NO_EXTENSION_KEYS;
-    this.extensionTableColumns=this.classifications.columns.map(column=>({...column,title:column.name+' · '+column.extensionName+' · Header classification'}));
-    this.extensionColumnError=this.classifications.error;
+  private extensionCatalogChanged(): void {
+    this.rebuildExtensionColumns();
+    this.rebuildColumns();
+    this.scheduleViewport();
+    if (this.filterGroups.some(group => extensionColumnKey(group.dimension))) {
+      this.queryRevision++;
+      void this.refreshSessions(undefined, true);
+    }
+    if (this.pickerOpen && extensionColumnKey(this.pickerDimension)) {
+      if (!this.pickerFields.some(field => field.id === this.pickerDimension)) this.closePicker();
+      else {
+        this.pickerGeneration++;
+        this.pickerLoading = true;
+        this.rebuildPickerOptions();
+        void this.loadFacets();
+      }
+    }
+  }
+  private rebuildExtensionColumns(): void {
+    this.extensionSelection = this.preferences.extensionColumns ?? NO_EXTENSION_KEYS;
+    this.extensionTableColumns = this.classifications.columns.map(column => ({
+      ...column,
+      dimension: `extension:${column.key}` as const,
+      title: column.name + ' · Extension: ' + column.extensionName,
+    }));
+    const fields = this.classifications.columns.map(column => ({
+      id: `extension:${column.key}` as const,
+      label: column.name + ' · ' + column.extensionName,
+      numeric: false,
+      placeholder: '',
+    }));
+    // Keep an unavailable or hidden filter removable instead of silently changing
+    // the user's query when an extension is disabled or a column is hidden.
+    for (const group of this.filterGroups) {
+      const key = extensionColumnKey(group.dimension);
+      if (!key || fields.some(field => field.id === group.dimension)) continue;
+      const column = this.classifications.choices.find(choice => choice.key === key);
+      fields.push({
+        id: `extension:${key}`,
+        label: column ? column.name + ' · ' + column.extensionName : 'Unavailable extension: ' + key,
+        numeric: false,
+        placeholder: '',
+      });
+    }
+    this.pickerFields = [...filterDimensions, ...fields];
+    this.refreshChips();
+    this.extensionColumnError = this.classifications.error;
     this.rebuildExtensionOptions();
   }
-  refreshExtensionColumns():void {void this.classifications.refresh();}
+  private pickerChoices(dimension = this.pickerDimension): FilterChoice[] {
+    const key = extensionColumnKey(dimension);
+    if (!key) return fixedFilterChoices(dimension);
+    const column = this.classifications.choices.find(choice => choice.key === key);
+    const labels = new Map((column?.values ?? []).map(label => [label.toLowerCase(), label]));
+    return [
+      ...Array.from(labels, ([value, label]) => ({key: 'text:' + value, label, value: {kind: 'text' as const, value: label}})),
+      {key: 'unavailable', label: 'No match', value: {kind: 'unavailable'}},
+    ];
+  }
+  refreshExtensionColumns(): void {
+    this.classifications.disconnect();
+    void this.classifications.connect();
+  }
   setExtensionColumn(key:string,event:Event):void {
     const checked=(event.currentTarget as HTMLInputElement).checked,previous=this.preferences.extensionColumns??[];
     if(checked&&previous.length>=8){(event.currentTarget as HTMLInputElement).checked=false;return;}
@@ -703,18 +759,33 @@ export class TrafficWorkspace extends WorkspaceElement {
   streamTypeButton!:HTMLButtonElement;
   private disclosedStream:SessionSummary|null=null;
   private streamReturn:HTMLElement|null=null;
-  trafficQuery(overrides:Partial<TrafficQuery>={}):TrafficQuery {
-    return {incidentWindow:this.incidentWindow,search:this.liveFilter,searchResultId:this.searchResultId,sort:this.sort,fetchDestinations:[...this.fetchDestinations],filters:this.filters.map(({column,operator,value})=>({column,operator,value})),filterGroups:structuredClone(this.filterGroups),...overrides};
+  trafficQuery(overrides: Partial<TrafficQuery> = {}): TrafficQuery {
+    return {
+      incidentWindow: this.incidentWindow,
+      search: this.liveFilter,
+      searchResultId: this.searchResultId,
+      sort: this.sort,
+      fetchDestinations: [...this.fetchDestinations],
+      filters: this.filters.map(({column, operator, value}) => ({column, operator, value})),
+      filterGroups: structuredClone(this.filterGroups.filter(group => !extensionColumnKey(group.dimension))),
+      extensionFilters: this.filterGroups.flatMap(group => {
+        const column = extensionColumnKey(group.dimension);
+        return column ? [{column, values: structuredClone(group.values)}] : [];
+      }),
+      ...overrides,
+    };
   }
   openFilters(event:Event):void {this.openFilterPicker(this.pickerDimension,event);}
   openFilterPicker(dimension:TrafficDimension,event?:Event):void {
+    if (!this.pickerFields.some(field => field.id === dimension)) dimension = 'traffic-type';
     this.pickerReturn=dimension===this.menuColumn.id&&this.columnMenu.matches(':popover-open')?(this.getRootNode() as ShadowRoot).getElementById('header-'+dimension)?.querySelector('button')??this.filterButton:event?.currentTarget as HTMLElement??this.filterButton;
     this.closeMenu();this.pickerOpen=true;this.resetPicker(dimension);this.$flushUpdates();
     this.filterPicker.showPopover();this.fitFilterPicker();this.filterField.focus({preventScroll:true});void this.loadFacets();
   }
   private resetPicker(dimension:TrafficDimension):void {
-    this.pickerGeneration++;this.pickerDimension=dimension;this.pickerLabel=filterLabel(dimension);
-    const field=filterDimensions.find(field=>field.id===dimension)!;
+    this.pickerGeneration++;this.pickerDimension=dimension;
+    const field=this.pickerFields.find(field=>field.id===dimension)!;
+    this.pickerLabel=field.label;
     this.pickerObserved=['host','process','content-type'].includes(dimension)||hasFilterPresets(dimension)&&dimension!=='traffic-type';this.pickerSearch='';this.pickerNextOffset=null;this.pickerObservedShown=0;this.pickerObservedTotal=0;this.pickerCanMore=false;this.pickerSuggestionHint='';this.facetMore=false;window.clearTimeout(this.facetSearchTimer);
     const kind=rangeKind(dimension);this.pickerRangeKind=kind;this.pickerRange=!!kind;this.pickerTime=kind==='time';this.pickerRangeInput=this.pickerTime?'datetime-local':'text';this.pickerRangeUnits=rangeUnits(kind);this.pickerRangeUnit=this.pickerRangeUnits[0]!.value;
     this.pickerPresets=kind==='duration'?[{value:'second',label:'At least 1 second'},{value:'ten-seconds',label:'At least 10 seconds'}]:kind==='bytes'?[{value:'kib',label:'At least 1 KiB'},{value:'mib',label:'At least 1 MiB'}]:kind==='time'?[{value:'five-minutes',label:'Since 5 minutes ago'},{value:'hour',label:'Since 1 hour ago'},{value:'today',label:'Since local midnight'}]:[];
@@ -736,7 +807,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   private rebuildPickerOptions():void {
     const focused=(this.getRootNode() as ShadowRoot).activeElement as HTMLElement|null;
     const restore=focused?.matches('.filter-options input')?focused.id:'';
-    const choices=fixedFilterChoices(this.pickerDimension).filter(choice=>choice.value.kind!=='other'||(this.pickerCounts.get(choice.key)??0)>0||this.pickerValues.some(value=>value.kind==='other'));
+    const choices=this.pickerChoices().filter(choice=>choice.value.kind!=='other'||(this.pickerCounts.get(choice.key)??0)>0||this.pickerValues.some(value=>value.kind==='other'));
     if(this.pickerObserved)for(const option of this.pickerCountOptions)if(!choices.some(item=>item.key===option.key))choices.push({...option,label:valueLabel(this.pickerDimension,option.value)});
     if(this.pickerDimension==='status')for(const option of this.pickerCountOptions)if((option.value.kind==='number'||option.value.kind==='other')&&!choices.some(item=>item.key===option.key))choices.push(option);
     for(const value of this.pickerValues)if(!choices.some(option=>option.key===filterValueKey(value)))choices.push({key:filterValueKey(value),label:valueLabel(this.pickerDimension,value),value});
@@ -812,10 +883,15 @@ export class TrafficWorkspace extends WorkspaceElement {
       const captureRevision=this.trafficRevision,query=this.trafficQuery(),observed=this.pickerObserved;
       const append=observed&&this.facetMore&&this.pickerNextOffset!==null;this.facetMore=false;
       const current=()=>this.isConnected&&this.pickerOpen&&generation===this.pickerGeneration&&revision===this.queryRevision;
-      const required=[...new Map([...fixedFilterChoices(dimension).map(option=>option.value),...this.pickerValues].map(value=>[filterValueKey(value),value])).values()];
+      const required=[...new Map([...this.pickerChoices(dimension).map(option=>option.value),...this.pickerValues].map(value=>[filterValueKey(value),value])).values()];
       try {
         const offset=append?this.pickerNextOffset!:0,limit=observed?(append?Math.min(50,200-this.pickerObservedShown):Math.max(50,this.pickerObservedShown)):512;
-        let page=await invoke<TrafficFacetPage>('traffic_facets',{request:{query,dimension,search,offset,limit,includeValues:required}});
+        const extensionKey = extensionColumnKey(dimension);
+        let page: TrafficFacetPage;
+        if (extensionKey) {
+          const counts = await invoke<Pick<TrafficFacetPage, 'options' | 'matchingEntries' | 'omittedEntries'>>('extension_traffic_facets', {request: {query, column: extensionKey}});
+          page = {...counts, dimension, includedOptions: [], totalOptions: counts.options.length, nextOffset: null};
+        } else page=await invoke<TrafficFacetPage>('traffic_facets',{request:{query,dimension,search,offset,limit,includeValues:required}});
         const options=[...page.options];const included=page.includedOptions;
         const paged=dimension==='status'&&page.nextOffset!==null;
         while(dimension==='status'&&page.nextOffset!==null&&current()&&captureRevision===this.trafficRevision){page=await invoke<TrafficFacetPage>('traffic_facets',{request:{query,dimension,search,offset:page.nextOffset,limit:512,includeValues:required}});options.push(...page.options);}
@@ -827,6 +903,7 @@ export class TrafficWorkspace extends WorkspaceElement {
         this.pickerNextOffset=observed?page.nextOffset:null;this.pickerObservedTotal=page.totalOptions;this.pickerObservedShown=this.pickerCountOptions.length;this.pickerCanMore=observed&&page.nextOffset!==null&&this.pickerObservedShown<200;
         this.pickerSuggestionHint=observed?'Showing '+this.pickerObservedShown+' of '+page.totalOptions+(hasFilterPresets(dimension)?' matching choices.':' observed values.')+(this.pickerObservedShown>=200&&page.nextOffset!==null?' Search to narrow the remaining values.':''):'';
         this.pickerLoading=false;this.pickerError='';this.pickerOmission=page.omittedEntries?`${page.omittedEntries.toLocaleString()} ${page.omittedEntries===1?'entry has a value':'entries have values'} outside exact filter limits.`+(this.pickerCustom?' Use a custom contains match.':''):'';
+        if(extensionKey&&page.omittedEntries)this.pickerOmission=page.omittedEntries.toLocaleString()+' entries could not be classified within header metadata limits.';
         this.pickerScope=page.matchingEntries.toLocaleString()+' entries with this field unrestricted. Counts include other filters.'+((this.pickerCounts.get('other')??0)>0||this.pickerValues.some(value=>value.kind==='other')?(dimension==='status'?' Other includes codes outside 100–599.':' Other includes values outside the common choices; missing evidence is separate.'):'');this.rebuildPickerOptions();
       }catch(error:unknown){if(current()){this.pickerLoading=false;this.pickerError='Counts unavailable: '+describeError(error);this.rebuildPickerOptions();}}
     }})();
@@ -865,8 +942,8 @@ export class TrafficWorkspace extends WorkspaceElement {
     else {this.pickerValues=[option.value];this.pickerConstraints=[];this.pickerCounts.clear();this.rebuildPickerOptions();void this.loadFacets();}
     this.pickerReturn=inspector?this.actionsButton:this.trafficTable;
   }
-  private refreshChips():void {this.filterChips=trafficFilterChips(this.filters,this.filterGroups,this.fetchDestinations);this.filterCount=this.filterChips.length;}
-  filterGroupsChanged():void {this.refreshChips();}
+  private refreshChips():void {this.filterChips=trafficFilterChips(this.filters,this.filterGroups,this.fetchDestinations,this.pickerFields);this.filterCount=this.filterChips.length;}
+  filterGroupsChanged():void {this.rebuildExtensionColumns();}
   private clearDimension(dimension:TrafficDimension):void {this.filters=this.filters.filter(filter=>filter.column!==dimension);this.filterGroups=this.filterGroups.filter(group=>group.dimension!==dimension);if(dimension==='fetch-destination')this.fetchDestinations=[];}
   async removeFilterDimension(dimension:TrafficDimension):Promise<void> {this.clearDimension(dimension);this.queryRevision++;await this.refreshSessions(undefined,true);}
   private scheduleTrafficClock():void {

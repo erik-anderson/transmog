@@ -319,5 +319,7 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
   .auto-response-notice { flex-basis:100%; }
 }
 
-.extension-column-heading {padding:.5rem .65rem;overflow-wrap:anywhere;}
+.extension-column-trigger { cursor:pointer; touch-action:auto; }
+.extension-column-icon { flex:none; color:currentColor; }
+.extension-column-options legend { display:flex; align-items:center; gap:.3rem; }
 .extension-column-options {border:0;border-top:1px solid var(--line);padding:.4rem 0;margin:.4rem 0;}
