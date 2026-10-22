@@ -126,7 +126,7 @@ fn crl_headers_maps_and_truncated_serial_records() {
     let parsed = decode_crl(&bytes).unwrap();
     assert_eq!(parsed.blocked_spkis, vec![[3; 32]]);
     assert_eq!(parsed.interception_spkis, vec![[3; 32]]);
-    assert!(parsed.subjects[0].allowed_spkis.is_empty());
+    assert_eq!(parsed.subjects[0].allowed_spkis, [] as [[u8; 32]; 0]);
     for invalid in [b"".as_slice(), b"\x31\x00{}", &[0; 10]] {
         assert!(decode_crl(invalid).is_err());
     }

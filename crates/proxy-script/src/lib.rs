@@ -1336,7 +1336,7 @@ mod tests {
             compile_typescript(manifest(source, &[ScriptHandler::RequestHead]), source).unwrap();
         assert!(compiled.javascript.contains("function onRequestHead"));
         assert!(!compiled.javascript.contains(": string"));
-        assert!(!compiled.source_map.is_empty());
+        assert_ne!(compiled.source_map, [] as [u8; 0]);
 
         let async_source =
             "export async function onRequestHead() { return { action: 'continue' }; }";

@@ -264,10 +264,9 @@ fn native_admission_borrows_values_and_does_not_confuse_redaction_or_boundaries(
         active.admitted(&scope, metadata, Direction::Request),
         ["worker"]
     );
-    assert!(
-        active
-            .admitted(&scope, metadata, Direction::Response)
-            .is_empty()
+    assert_eq!(
+        active.admitted(&scope, metadata, Direction::Response),
+        [] as [&str; 0]
     );
     snapshot.response_heads[0].head.headers = HeaderBlock::from_fields(vec![
         HeaderField::try_new("Content-Type", "Application/Example; charset=utf-8").unwrap(),

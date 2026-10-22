@@ -7,7 +7,7 @@ from repo_tools import ROOT, command, main_guard, write_json
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default="transmog-linux-tools:rust-1.97.1-nightly-2026-10-01")
+    parser.add_argument("--image", default="transmog-linux-tools:rust-1.99.1-nightly-2026-10-01")
     args = parser.parse_args()
     docker = build_image(args.image)
     reports = ROOT / ".local/sdk-linux-qualification"
@@ -25,7 +25,7 @@ def main():
         f"type=bind,source={reports},target=/qualification",
     )
     argv = container_arguments(docker, image, mounts=mounts,
-        environment=("CFLAGS=", "CXXFLAGS=", "RUSTUP_TOOLCHAIN=1.97.1", "PYTHONUNBUFFERED=1",
+        environment=("CFLAGS=", "CXXFLAGS=", "RUSTUP_TOOLCHAIN=1.99.1", "PYTHONUNBUFFERED=1",
                      "CARGO_TARGET_DIR=/work/.local/sdk/rust-target", "CARGO_BUILD_JOBS=4",
                      "CMAKE_BUILD_PARALLEL_LEVEL=4", "DOTNET_CLI_TELEMETRY_OPTOUT=1",
                      "DOTNET_SKIP_FIRST_TIME_EXPERIENCE=1", "GIT_OPTIONAL_LOCKS=0"))

@@ -260,10 +260,9 @@ fn native_index_delivers_only_matching_active_instances_in_the_exact_scope() {
         response: Some(response),
     };
     let mut index = ActiveSubscriptions::default();
-    assert!(
-        index
-            .admitted(&scope, exchange, Direction::Response)
-            .is_empty()
+    assert_eq!(
+        index.admitted(&scope, exchange, Direction::Response),
+        [] as [&str; 0]
     );
     index
         .subscribe(
@@ -284,10 +283,9 @@ fn native_index_delivers_only_matching_active_instances_in_the_exact_scope() {
         vec!["instance-a"]
     );
     index.unsubscribe("instance-a");
-    assert!(
-        index
-            .admitted(&scope, exchange, Direction::Response)
-            .is_empty()
+    assert_eq!(
+        index.admitted(&scope, exchange, Direction::Response),
+        [] as [&str; 0]
     );
     assert_eq!(
         index.admitted(&other, exchange, Direction::Response),
@@ -304,10 +302,9 @@ fn native_index_delivers_only_matching_active_instances_in_the_exact_scope() {
         }),
         ..exchange
     };
-    assert!(
-        index
-            .admitted(&other, exchange, Direction::Response)
-            .is_empty()
+    assert_eq!(
+        index.admitted(&other, exchange, Direction::Response),
+        [] as [&str; 0]
     );
 }
 

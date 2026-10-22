@@ -299,7 +299,10 @@ async fn mapi_header_contribution_uses_no_body_capability() {
     fixture["message"]["request"] = serde_json::json!("");
     let document = interpret(&runner, &fixture, false).await;
     assert!(values(&document.roots).contains(&&Value::String("Connect".into())));
-    assert!(document.sources.is_empty());
+    assert_eq!(
+        document.sources,
+        [] as [transmog_extensions::DerivedSource; 0]
+    );
 }
 
 #[tokio::test]

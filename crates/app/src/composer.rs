@@ -1082,7 +1082,9 @@ fn parse_hex(value: &str) -> Result<Vec<u8>, AppError> {
         ));
     }
     compact
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| {
             std::str::from_utf8(pair)
                 .ok()
@@ -1575,7 +1577,7 @@ mod tests {
             .await
             .unwrap_err();
         assert!(error.to_string().contains("does not support file bodies"));
-        assert!(manager.history().is_empty());
+        assert_eq!(manager.history(), [] as [crate::ComposerSnapshot; 0]);
     }
 
     #[test]

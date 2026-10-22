@@ -20,7 +20,7 @@ pub use transmog_tls_native::{IssuerRequest, IssuerSource};
 const MAX_RESPONSE: usize = 65536;
 const MAX_ENCODED_RESPONSE: usize = 256 * 1024;
 const MAX_CACHE_BYTES: usize = 4 * 1024 * 1024;
-const CACHE_LIFETIME: Duration = Duration::from_secs(7 * 24 * 3600);
+const CACHE_LIFETIME: Duration = Duration::from_hours(168);
 #[derive(Debug)]
 struct Entry {
     der: Vec<u8>,
@@ -339,7 +339,7 @@ mod tests {
             let worker = tokio::task::spawn_blocking(move || {
                 let source = HttpIssuerSource::default();
                 let mut request = source.start(&[url], Duration::from_millis(150), cancelled);
-                assert!(request.next().unwrap().is_empty());
+                assert_eq!(request.next().unwrap(), [] as [u8; 0]);
             });
             tokio::time::timeout(Duration::from_secs(2), started.notified())
                 .await

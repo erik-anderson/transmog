@@ -282,7 +282,10 @@ mod tests {
         }
         assert_eq!(messages.len(), 1, "events must arrive before finish");
         assert_eq!(messages[0].payload, "compressed");
-        assert!(decoder.finish().await.unwrap().is_empty());
+        assert_eq!(
+            decoder.finish().await.unwrap(),
+            [] as [transmog_core::stream::StreamMessage; 0]
+        );
     }
     #[test]
     fn carriage_return_dispatches_without_waiting_for_another_chunk() {

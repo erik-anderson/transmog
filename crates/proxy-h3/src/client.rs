@@ -2772,7 +2772,10 @@ mod tests {
         assert_eq!(result.response.head.source_version, HttpLegVersion::Http3);
         assert_eq!(result.telemetry.alpn, "h3");
         assert_eq!(result.telemetry.trust_generation, 41);
-        assert!(!result.telemetry.peer_chain_sha256.is_empty());
+        assert_ne!(
+            result.telemetry.peer_chain_sha256,
+            [] as [std::string::String; 0]
+        );
         assert_eq!(
             result.response.body,
             vec![BodyFrame::Data(Bytes::from_static(b"h3-ok"))]
@@ -2877,7 +2880,10 @@ mod tests {
             .iter()
             .find_map(|transport| transport.tls.as_ref())
             .expect("failed H3 certificate evidence");
-        assert!(!tls.server_chain.is_empty());
+        assert_ne!(
+            tls.server_chain,
+            [] as [transmog_core::PublicCertificate; 0]
+        );
         assert!(!tls.server_chain[0].der.is_empty());
         assert!(matches!(
             tls.verification,

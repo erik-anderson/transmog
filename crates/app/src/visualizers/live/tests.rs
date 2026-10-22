@@ -326,10 +326,9 @@ fn changed_input_rules_are_rechecked_before_projection() {
         },
     });
     let resources = resources(&feed);
-    assert!(
-        project_batch(app.service.catalog(), &feed, &resources, "worker")
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        project_batch(app.service.catalog(), &feed, &resources, "worker").unwrap(),
+        [] as [transmog_extensions::TrafficEvent; 0]
     );
     assert!(resources.sources.lock().unwrap().is_empty());
     resources.stop();
@@ -466,10 +465,9 @@ async fn final_updates_wait_for_admitted_retention_metadata_without_flushing_unr
         phase: TrafficPhase::BodyCompleted,
         ready_since: std::time::Instant::now(),
     });
-    assert!(
-        project_batch(app.service.catalog(), &feed, &resources, "worker")
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        project_batch(app.service.catalog(), &feed, &resources, "worker").unwrap(),
+        [] as [transmog_extensions::TrafficEvent; 0]
     );
     assert!(resources.sources.lock().unwrap().is_empty());
     let mut kinds = vec![ObserverEventKind::ExchangeStarted {
@@ -536,10 +534,9 @@ async fn final_updates_wait_for_admitted_retention_metadata_without_flushing_unr
         phase: TrafficPhase::Ended,
         ready_since: std::time::Instant::now(),
     });
-    assert!(
-        project_batch(app.service.catalog(), &feed, &resources, "worker")
-            .unwrap()
-            .is_empty()
+    assert_eq!(
+        project_batch(app.service.catalog(), &feed, &resources, "worker").unwrap(),
+        [] as [transmog_extensions::TrafficEvent; 0]
     );
     store.on_event(ended).await.unwrap();
     store.flush().unwrap();

@@ -75,7 +75,7 @@ its fingerprint together with its artifacts lets Cargo rebuild coherently.
 The supported profile is named **Windows LLVM/Ninja**. It uses LLVM for all
 native compilation and Rust's official Windows ABI target:
 
-- Rust 1.97.1, target `x86_64-pc-windows-msvc` on x64 or
+- Rust 1.99.1, target `x86_64-pc-windows-msvc` on x64 or
   `aarch64-pc-windows-msvc` on ARM64;
 - LLVM/Clang 22.1.4 or newer (`clang-cl` and `llvm-lib`; `lld-link` is retained
   for diagnostics but is not Cargo's final PE linker);
@@ -313,7 +313,7 @@ application deliberately refuses an unprotected-key fallback.
 
 ## Linux
 
-Install Rust 1.97.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard
+Install Rust 1.99.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard
 library development package, and normal libc development headers. Then run:
 
 ```sh
@@ -345,7 +345,7 @@ Content fuzzing is optional and has its own nightly Rust and `cargo-fuzz`
 
 ## macOS
 
-Install Rust 1.97.1+, Xcode Command Line Tools, CMake, Ninja, and NASM. Apple
+Install Rust 1.99.1+, Xcode Command Line Tools, CMake, Ninja, and NASM. Apple
 Clang is supported; upstream LLVM may be selected explicitly when matching CI.
 
 ```sh

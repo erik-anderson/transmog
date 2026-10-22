@@ -213,7 +213,7 @@ async fn clear_delete_undo_and_marker_only_exports_keep_the_review_available() {
         )
         .unwrap();
     assert_eq!(cleared.markers.len(), 1);
-    assert!(cleared.markers[0].note.is_empty());
+    assert_eq!(cleared.markers[0].note, "");
     let deleted = app
         .change_trace_marker(
             &source,
@@ -223,13 +223,16 @@ async fn clear_delete_undo_and_marker_only_exports_keep_the_review_available() {
             },
         )
         .unwrap();
-    assert!(deleted.markers.is_empty());
+    assert_eq!(
+        deleted.markers,
+        [] as [transmog_capture::support::IncidentMarker; 0]
+    );
     assert_eq!(deleted.deleted_markers, 1);
     let restored = app
         .change_trace_marker(&source, deleted.revision, MarkerChange::Undo)
         .unwrap();
     assert_eq!(restored.markers.len(), 1);
-    assert!(restored.markers[0].note.is_empty());
+    assert_eq!(restored.markers[0].note, "");
     let original = app
         .change_trace_marker(&source, restored.revision, MarkerChange::Undo)
         .unwrap();
@@ -470,7 +473,7 @@ async fn flagging_live_requests_keeps_live_scopes_and_exports_their_markers() {
     let reviews = reopened.trace_marker_reviews().unwrap();
     let source = reviews.iter().find(|r| !r.markers.is_empty()).unwrap();
     assert_eq!(source.marker_entries.len(), 1);
-    assert!(source.markers[0].note.is_empty());
+    assert_eq!(source.markers[0].note, "");
 }
 #[tokio::test]
 async fn intake_uses_original_source_and_filters_before_virtual_paging() {

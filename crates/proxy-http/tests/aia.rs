@@ -154,7 +154,7 @@ async fn failed_hostname_does_not_populate_intermediate_cache() {
         false,
     )
     .await;
-    assert!(cache.cached_issuers().is_empty());
+    assert_eq!(cache.cached_issuers(), [] as [std::vec::Vec<u8>; 0]);
 }
 
 #[tokio::test]

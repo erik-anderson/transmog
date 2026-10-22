@@ -262,7 +262,9 @@ fn property_text(key: NCRYPT_HANDLE, name: *const u16) -> Result<String, Certifi
         return Err(CertificateError);
     }
     let units = bytes
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|x| u16::from_le_bytes([x[0], x[1]]))
         .collect::<Vec<_>>();
     String::from_utf16(units.strip_suffix(&[0]).ok_or(CertificateError)?)

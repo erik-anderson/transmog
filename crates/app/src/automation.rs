@@ -923,7 +923,10 @@ mod tests {
         let mut legacy = document("Transmog/1.0");
         legacy.rules[0].id = "desktop-user-agent".into();
         migrate_user_agent_override(&mut legacy);
-        assert!(legacy.rules[0].request.headers.is_empty());
+        assert_eq!(
+            legacy.rules[0].request.headers,
+            [] as [transmog_automation::HeaderOperation; 0]
+        );
         assert_eq!(
             legacy.rules[0]
                 .request
@@ -1048,7 +1051,10 @@ mod tests {
             ]
         );
         assert_eq!(registry.status().generation, 0);
-        assert!(registry.status().rules.is_empty());
+        assert_eq!(
+            registry.status().rules,
+            [] as [transmog_automation::Rule; 0]
+        );
     }
 
     #[test]

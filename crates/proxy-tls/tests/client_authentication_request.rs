@@ -86,7 +86,7 @@ impl ClientAuthenticationResolver for TestResolver {
             request.tls_version,
             Some(SslVersion::TLS1_2 | SslVersion::TLS1_3)
         ));
-        assert!(!request.signature_algorithms.is_empty());
+        assert_ne!(request.signature_algorithms, [] as [u16; 0]);
         self.calls.fetch_add(1, Ordering::SeqCst);
         self.notice.notify_one();
         self.decision
@@ -710,7 +710,10 @@ async fn embedding_decision_and_background_signer_are_verified_by_live_server() 
                     observed.unwrap().to_der().unwrap()
                 );
             } else {
-                assert!(evidence.client_chain.is_empty());
+                assert_eq!(
+                    evidence.client_chain,
+                    [] as [transmog_core::PublicCertificate; 0]
+                );
                 assert!(!evidence.details.contains_key("Client certificate"));
             }
         }
@@ -1350,7 +1353,10 @@ async fn oversized_request_constraints_decline_identity_and_still_attempt_connec
     assert_eq!(key.signatures.load(Ordering::SeqCst), 0);
     assert!(server.join().unwrap().is_none());
     let evidence = attempt.evidence();
-    assert!(evidence.client_chain.is_empty());
+    assert_eq!(
+        evidence.client_chain,
+        [] as [transmog_core::PublicCertificate; 0]
+    );
     assert!(evidence.details["Client certificate request"].contains("exceed supported limits"));
 }
 
@@ -1387,7 +1393,10 @@ async fn required_client_authentication_is_only_confirmed_by_explicit_server_ale
         }
         assert!(server.join().unwrap().is_none());
         let evidence = attempt.evidence();
-        assert!(evidence.client_chain.is_empty());
+        assert_eq!(
+            evidence.client_chain,
+            [] as [transmog_core::PublicCertificate; 0]
+        );
         if version == SslVersion::TLS1_3 {
             assert_eq!(
                 evidence.details.get("Peer TLS alert").map(String::as_str),
@@ -1654,7 +1663,10 @@ async fn unicode_decision_reason_keeps_live_capture_evidence_valid() {
             evidence.details["Client certificate decision"],
             "a".repeat(2047)
         );
-        assert!(evidence.client_chain.is_empty());
+        assert_eq!(
+            evidence.client_chain,
+            [] as [transmog_core::PublicCertificate; 0]
+        );
     }
 }
 
@@ -1872,7 +1884,10 @@ async fn check_reentrant_cancellation(version: SslVersion, phase: CancellationPh
     assert_eq!(drops.load(Ordering::SeqCst), 1);
     let evidence = attempt.evidence();
     assert!(evidence.valid());
-    assert!(evidence.client_chain.is_empty());
+    assert_eq!(
+        evidence.client_chain,
+        [] as [transmog_core::PublicCertificate; 0]
+    );
     assert!(evidence.details["Client certificate"].starts_with("Cancelled:"));
     let target = resolver.target.lock().unwrap().take();
     drop(target);
@@ -1982,7 +1997,10 @@ async fn cleanup_panic_cannot_strand_cancellation_or_panic_owner_abort() {
             assert_eq!(drops.load(Ordering::SeqCst), 1);
             let evidence = attempt.evidence();
             assert!(evidence.valid());
-            assert!(evidence.client_chain.is_empty());
+            assert_eq!(
+                evidence.client_chain,
+                [] as [transmog_core::PublicCertificate; 0]
+            );
             assert!(evidence.details["Client certificate"].starts_with("Cancelled:"));
             assert_eq!(
                 evidence.details["Client certificate cleanup"],

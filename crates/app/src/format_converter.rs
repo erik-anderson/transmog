@@ -363,7 +363,9 @@ fn decode_text(bytes: &[u8], encoding: TextEncoding) -> Result<String, String> {
                 return Err("UTF-16 requires complete two-byte units.".into());
             }
             let units: Vec<_> = bytes
-                .chunks_exact(2)
+                .as_chunks::<2>()
+                .0
+                .iter()
                 .map(|pair| {
                     if matches!(encoding, TextEncoding::Utf16le) {
                         u16::from_le_bytes([pair[0], pair[1]])

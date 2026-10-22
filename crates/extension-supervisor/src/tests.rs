@@ -227,7 +227,10 @@ fn live_delivery_requires_declared_interests_and_strict_native_sequences() {
     let Invocation::Traffic { events, .. } = invocation else {
         panic!("traffic expected")
     };
-    assert!(events[0].input.request.as_ref().unwrap().headers.is_empty());
+    assert_eq!(
+        events[0].input.request.as_ref().unwrap().headers,
+        [] as [transmog_extensions::Header; 0]
+    );
     assert!(events[0].input.request.as_ref().unwrap().body.is_none());
     assert!(
         prepare(

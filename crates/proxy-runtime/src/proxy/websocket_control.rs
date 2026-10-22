@@ -89,6 +89,9 @@ mod tests {
         assert!(!other.signals.cancel.is_cancelled());
         drop(first);
         assert_eq!(terminating.await.unwrap(), vec![ExchangeId(1)]);
-        assert!(registry.terminate(&[ExchangeId(1)]).await.is_empty());
+        assert_eq!(
+            registry.terminate(&[ExchangeId(1)]).await,
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
     }
 }

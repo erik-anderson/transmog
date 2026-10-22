@@ -374,7 +374,7 @@ fn aggregate_nodes_compression_bombs_and_nested_prefixes_are_finite() {
         .collect::<Vec<_>>()
         .join("&");
     let result = body("application/x-www-form-urlencoded", fields.into_bytes());
-    assert!(!result.diagnostics.is_empty());
+    assert_ne!(result.diagnostics, [] as [std::string::String; 0]);
     assert!(result.values.len() <= MAX_FIELDS);
     let xml = br#"<p:AuthnRequest xmlns:p="urn:oasis:names:tc:SAML:2.0:protocol" ID="synthetic"/>"#;
     for end in 0..xml.len() {

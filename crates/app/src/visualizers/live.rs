@@ -98,7 +98,7 @@ impl Feed {
     fn lag(&self, count: u64) {
         let _ = self
             .missed
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |prior| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |prior| {
                 Some(prior.saturating_add(count))
             });
     }

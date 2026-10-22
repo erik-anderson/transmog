@@ -18,7 +18,7 @@ RUN apt-get update \
 
 RUN rustup toolchain install nightly-2026-10-01 --profile minimal \
     && rustup component add llvm-tools-preview --toolchain nightly-2026-10-01 \
-    && rustup toolchain install 1.97.1 --profile minimal \
+    && rustup toolchain install 1.99.1 --profile minimal \
         --component clippy,rustfmt \
     && cargo +nightly-2026-10-01 install cargo-fuzz --version 0.13.2 --locked
 

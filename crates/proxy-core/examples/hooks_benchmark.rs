@@ -176,7 +176,10 @@ async fn measure_transform() {
             .await
             .unwrap();
         assert!(matches!(&output[0], BodyFrame::Data(data) if data.len() == 4097));
-        assert!(pipeline.finish().await.unwrap().is_empty());
+        assert_eq!(
+            pipeline.finish().await.unwrap(),
+            [] as [transmog_core::BodyFrame; 0]
+        );
     }
     let nanos = started.elapsed().as_nanos() / u128::from(ITERATIONS);
     println!("one 4 KiB streaming transform: {nanos} ns/exchange");

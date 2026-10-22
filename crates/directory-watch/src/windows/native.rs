@@ -146,7 +146,9 @@ pub(super) fn parse(bytes: &[u8]) -> Notifications {
             break;
         }
         let name: Vec<u16> = bytes[offset + 12..offset + 12 + length]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
             .collect();
         match String::from_utf16(&name) {

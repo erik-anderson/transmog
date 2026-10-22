@@ -156,7 +156,10 @@ fn forty_ordinary_saves_replace_current_without_history_or_live_changes() {
         let status = save(&registry, vec![rule.clone()]);
         assert_eq!(status.rules, live.rules);
         assert!(!status.autoresponses_enabled);
-        assert!(status.response_sets[0].versions.is_empty());
+        assert_eq!(
+            status.response_sets[0].versions,
+            [] as [crate::ResponseSetVersion; 0]
+        );
         assert_eq!(status.response_sets[0].rules, vec![rule.clone()]);
     }
     assert_eq!(admitted.compiled.registrations().len(), 1);
@@ -204,14 +207,20 @@ fn versions_restore_and_delete_independently_from_applied_snapshot() {
         registry.status().response_sets[0].applied,
         second.response_sets[0].applied
     );
-    assert!(registry.status().response_sets[0].versions.is_empty());
+    assert_eq!(
+        registry.status().response_sets[0].versions,
+        [] as [crate::ResponseSetVersion; 0]
+    );
 }
 
 #[test]
 fn empty_sets_and_versions_work_without_baseline_and_stale_selectors_fail() {
     let (registry, rule, _assets) = setup(None);
     let empty = create(&registry, Vec::new());
-    assert!(empty.response_sets[0].versions.is_empty());
+    assert_eq!(
+        empty.response_sets[0].versions,
+        [] as [crate::ResponseSetVersion; 0]
+    );
     let selection = empty.response_sets[0].current_selection();
     version(&registry, "empty");
     save(&registry, vec![rule]);
@@ -233,8 +242,11 @@ fn empty_sets_and_versions_work_without_baseline_and_stale_selectors_fail() {
             version_id: "empty".into(),
         },
     );
-    assert!(registry.status().response_sets[0].rules.is_empty());
-    assert!(apply(&registry).rules.is_empty());
+    assert_eq!(
+        registry.status().response_sets[0].rules,
+        [] as [transmog_automation::Rule; 0]
+    );
+    assert_eq!(apply(&registry).rules, [] as [transmog_automation::Rule; 0]);
 }
 
 #[test]
@@ -418,7 +430,7 @@ fn apply_and_resume_undo_restores_exact_applied_content_pause_and_page_metadata(
             .is_err()
     );
     let stopped = change(&registry, ResponseSetChange::Stop { id: "set".into() });
-    assert!(stopped.rules.is_empty());
+    assert_eq!(stopped.rules, [] as [transmog_automation::Rule; 0]);
     assert!(stopped.response_sets[0].undo_apply.is_some());
     change(
         &registry,
@@ -604,6 +616,6 @@ fn concurrent_current_saves_accept_one_complete_collection() {
         saved.name.replace("Writer ", ""),
         saved.notes.replace("Complete notes ", "")
     );
-    assert!(saved.rules.is_empty());
-    assert!(saved.versions.is_empty());
+    assert_eq!(saved.rules, [] as [transmog_automation::Rule; 0]);
+    assert_eq!(saved.versions, [] as [crate::ResponseSetVersion; 0]);
 }

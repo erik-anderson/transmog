@@ -1,4 +1,4 @@
-ARG BASE_IMAGE=transmog-linux-tools:rust-1.97.1-nightly-2026-10-01
+ARG BASE_IMAGE=transmog-linux-tools:rust-1.99.1-nightly-2026-10-01
 FROM node:24-bookworm-slim AS node-runtime
 FROM ${BASE_IMAGE}
 

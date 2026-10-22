@@ -12,7 +12,7 @@ Packaging and compatibility across SDK builds remain deferred.
 
 ## Build and consume
 
-Install the repository prerequisites, Python 3.11+, Rust 1.97.1, and Git.
+Install the repository prerequisites, Python 3.11+, Rust 1.99.1, and Git.
 The managed example also needs .NET 10.
 
 ```sh

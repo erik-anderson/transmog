@@ -86,7 +86,7 @@ impl AltSvcCache {
             return Err(AltSvcError::InvalidPort);
         }
 
-        let mut max_age = Duration::from_secs(86_400);
+        let mut max_age = Duration::from_hours(24);
         for parameter in parts {
             if let Some(value) = parameter.strip_prefix("ma=") {
                 let seconds = value

@@ -72,9 +72,7 @@ unsafe extern "C" fn valid_url(bytes: *const u8, len: usize) -> bool {
     std::panic::catch_unwind(|| {
         // SAFETY: PKI borrows the AIA URI for this call only.
         let bytes = unsafe { std::slice::from_raw_parts(bytes, len) };
-        std::str::from_utf8(bytes)
-            .ok()
-            .is_some_and(|url| url::Url::parse(url).is_ok())
+        std::str::from_utf8(bytes).is_ok_and(|url| url::Url::parse(url).is_ok())
     })
     .unwrap_or(false)
 }

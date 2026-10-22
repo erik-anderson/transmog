@@ -8603,7 +8603,7 @@ mod tests {
             .position(|window| window == b"\r\n\r\n")
             .unwrap()
             + 4;
-        assert!(head_response[body_offset..].is_empty());
+        assert_eq!(head_response[body_offset..], *b"");
 
         shutdown_tx.send(()).unwrap();
         proxy_task.await.unwrap().unwrap();

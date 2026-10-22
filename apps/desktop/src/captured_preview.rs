@@ -676,7 +676,7 @@ mod tests {
             client.write_all(request).unwrap();
             let mut bytes = Vec::new();
             client.read_to_end(&mut bytes).unwrap();
-            assert!(bytes.is_empty());
+            assert_eq!(bytes, [] as [u8; 0]);
         }
     }
 }

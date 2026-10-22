@@ -292,7 +292,7 @@ impl UpdateCoordinator {
                     return Err(inner.status.message.clone());
                 }
                 // Checking is bounded separately from an explicitly requested installer download.
-                update.timeout = Some(Duration::from_secs(15 * 60));
+                update.timeout = Some(Duration::from_mins(15));
                 inner.status.last_checked_unix_ms = now_ms();
                 inner.status.phase = "available";
                 inner.status.version = Some(update.version.clone());

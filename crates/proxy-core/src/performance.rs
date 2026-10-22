@@ -710,10 +710,8 @@ mod tests {
     #[test]
     fn negative_connection_times_and_submillisecond_duration_use_one_clock() {
         let start = Instant::now();
-        let recorder = PerformanceRecorder::new(
-            UNIX_EPOCH + std::time::Duration::from_secs(1_800_000_000),
-            start,
-        );
+        let recorder =
+            PerformanceRecorder::new(UNIX_EPOCH + std::time::Duration::from_hours(500_000), start);
         recorder.mark_at(
             Milestone::ClientConnected,
             start

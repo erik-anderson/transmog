@@ -1138,7 +1138,7 @@ impl PrivateKeyMethod for BackgroundSigner {
 }
 
 /// Maximum time an explicit prompt may retain a physical handshake.
-pub const CLIENT_CERTIFICATE_DECISION_TIMEOUT: Duration = Duration::from_secs(60);
+pub const CLIENT_CERTIFICATE_DECISION_TIMEOUT: Duration = Duration::from_mins(1);
 
 #[cfg(test)]
 mod tests {

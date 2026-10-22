@@ -1167,7 +1167,7 @@ mod tests {
     async fn empty_representations_are_valid_for_enabled_codings() {
         for coding in enabled_codings() {
             let encoded = encode_with_chunks(coding, b"", 1).await;
-            assert!(!encoded.is_empty());
+            assert_ne!(encoded, [] as [u8; 0]);
             assert_eq!(
                 decode_with_chunks(coding, &encoded, 1, generous_limits())
                     .await
@@ -1193,12 +1193,12 @@ mod tests {
                     .iter()
                     .all(|frame| matches!(frame, BodyFrame::Data(_)))
             );
-            assert!(
+            assert_eq!(
                 encoder
                     .on_frame(BodyFrame::Trailers(trailers.clone()))
                     .await
-                    .unwrap()
-                    .is_empty()
+                    .unwrap(),
+                [] as [transmog_core::BodyFrame; 0]
             );
             let final_frames = encoder.finish().await.unwrap();
             assert!(

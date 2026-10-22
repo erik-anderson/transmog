@@ -221,7 +221,7 @@ export function onResponseBody(_context: unknown, _request: unknown, _response: 
             assert!(!String::from_utf8_lossy(&output.body).contains("patch"));
         }
         if outcome.is_empty() {
-            assert!(detail.body_edits.is_empty());
+            assert_eq!(detail.body_edits, [] as [transmog_app::BodyEditView; 0]);
             assert_header(&output, "ETag", "\"fresh-origin\"");
         } else {
             assert_eq!(detail.body_edits[0].report.outcome, outcome);
@@ -547,7 +547,7 @@ export function onResponseHead() {
         local.header_effects.is_empty(),
         "local response entered later native/script hooks"
     );
-    assert!(local.route_attempts.is_empty());
+    assert_eq!(local.route_attempts, [] as [std::string::String; 0]);
     application.stop_capture().await.unwrap();
     let saved = workspace.root.join("header-saved.tmcap");
     application
@@ -573,7 +573,10 @@ export function onResponseHead() {
             )
             .await
             .unwrap();
-        assert!(imported.automation_status().rules.is_empty());
+        assert_eq!(
+            imported.automation_status().rules,
+            [] as [transmog_automation::Rule; 0]
+        );
         let rows = imported
             .query_sessions(SessionQueryInput {
                 limit: Some(100),
@@ -961,7 +964,7 @@ async fn linked_snapshot_history_survives_external_edits_and_native_save() {
             .unwrap();
         assert_eq!(captured.sha256.as_deref(), Some(snapshot.sha256.as_str()));
         assert_eq!(snapshot.body_bytes, body.len() as u64);
-        assert!(detail.route_attempts.is_empty());
+        assert_eq!(detail.route_attempts, [] as [std::string::String; 0]);
         results.push(detail);
     }
     assert_ne!(
@@ -1165,7 +1168,7 @@ async fn linked_response_streams_compression_and_recovers_after_a_missing_file()
         .unwrap();
     assert_eq!(captured.sha256.as_deref(), Some(selected.sha256.as_str()));
     assert_eq!(selected.content_codings, ["gzip"]);
-    assert!(detail.route_attempts.is_empty());
+    assert_eq!(detail.route_attempts, [] as [std::string::String; 0]);
     application.shutdown().await.unwrap();
     drop(application);
     std::fs::remove_file(&path).unwrap();
@@ -1182,7 +1185,7 @@ async fn linked_response_streams_compression_and_recovers_after_a_missing_file()
     .await;
     assert_ne!(missing.status, 200);
     let detail = wait_for_session(&restarted, "/auto/linked/missing", "failed").await;
-    assert!(detail.route_attempts.is_empty());
+    assert_eq!(detail.route_attempts, [] as [std::string::String; 0]);
     assert!(
         detail
             .responses
@@ -1272,11 +1275,11 @@ async fn explicit_file_copy_above_old_cutoff_serves_saved_bytes() {
     assert_eq!(response.body.len() as u64, size);
     assert!(response.body.iter().all(|byte| *byte == 0));
     assert_header(&response, "content-length", &size.to_string());
-    assert!(
+    assert_eq!(
         wait_for_session(&application, "/auto/copied/one", "completed")
             .await
-            .route_attempts
-            .is_empty()
+            .route_attempts,
+        [] as [std::string::String; 0]
     );
     application.shutdown().await.unwrap();
     drop(application);
@@ -1294,11 +1297,11 @@ async fn explicit_file_copy_above_old_cutoff_serves_saved_bytes() {
     assert_success(&response);
     assert_eq!(response.body.len() as u64, size);
     assert!(response.body.iter().all(|byte| *byte == 0));
-    assert!(
+    assert_eq!(
         wait_for_session(&restarted, "/auto/copied/two", "completed")
             .await
-            .route_attempts
-            .is_empty()
+            .route_attempts,
+        [] as [std::string::String; 0]
     );
     restarted.shutdown().await.unwrap();
 }
@@ -1571,7 +1574,10 @@ async fn full_product_workflow_operates_headlessly_and_survives_restart() {
     let retained_evidence = application
         .session_detail(&native_detail.id)
         .expect("eviction must retain session evidence");
-    assert!(!retained_evidence.hook_effects.is_empty());
+    assert_ne!(
+        retained_evidence.hook_effects,
+        [] as [std::string::String; 0]
+    );
 
     application.stop_capture().await.unwrap();
     let json = application

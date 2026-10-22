@@ -129,7 +129,7 @@ async fn copying_preserves_full_definitions_bytes_inclusion_and_original_order()
     assert_eq!(result.added_count, 2);
     let set = &result.status.response_sets[0];
     assert!(set.applied.is_none());
-    assert!(set.versions.is_empty());
+    assert_eq!(set.versions, [] as [crate::ResponseSetVersion; 0]);
     assert_eq!(set.notes, "Keep the task context");
     assert_definition_preserved(&set.rules[0], &first);
     assert_definition_preserved(&set.rules[1], &second);
@@ -214,7 +214,7 @@ async fn failed_move_write_keeps_originals_and_destination_in_memory_and_on_disk
     assert_eq!(after.response_sets, before.response_sets);
     let restarted = configured(root.path()).automation_status();
     assert_eq!(restarted.rules, before.rules);
-    assert!(restarted.response_sets.is_empty());
+    assert_eq!(restarted.response_sets, [] as [crate::ResponseSet; 0]);
 }
 
 #[tokio::test]
@@ -282,7 +282,10 @@ async fn overlapping_responses_require_explicit_review_and_never_replace() {
     let review = app.review_response_set_intake(&input).unwrap();
     assert_eq!(review.warnings.len(), 1);
     assert!(app.collect_response_set(input.clone()).await.is_err());
-    assert!(app.automation_status().response_sets.is_empty());
+    assert_eq!(
+        app.automation_status().response_sets,
+        [] as [crate::ResponseSet; 0]
+    );
     let result = app
         .collect_response_set(ResponseSetIntakeInput {
             acknowledge_overlaps: true,
@@ -327,7 +330,7 @@ async fn linked_and_copied_file_sources_remain_explicit_and_unchanged() {
     assert!(review.rows[0].body_source.starts_with("Copied file:"));
     assert!(review.rows[1].body_source.starts_with("Linked file:"));
     let result = app.collect_response_set(input).await.unwrap();
-    assert!(result.status.rules.is_empty());
+    assert_eq!(result.status.rules, [] as [transmog_automation::Rule; 0]);
     for (actual, original) in result.status.response_sets[0].rules.iter().zip(&rules) {
         assert_definition_preserved(actual, original);
     }
@@ -380,10 +383,13 @@ async fn traffic_copies_complete_binary_bytes_and_cleans_assets_after_failed_com
         app.response_assets().is_empty(),
         "Failed admission leaked asset references"
     );
-    assert!(app.automation_status().response_sets.is_empty());
+    assert_eq!(
+        app.automation_status().response_sets,
+        [] as [crate::ResponseSet; 0]
+    );
     app.automation.path = original_path;
     let result = app.collect_response_set(input).await.unwrap();
-    assert!(result.status.rules.is_empty());
+    assert_eq!(result.status.rules, [] as [transmog_automation::Rule; 0]);
     let rule = &result.status.response_sets[0].rules[0];
     assert_eq!(rule.matcher.method.as_deref(), Some("POST"));
     let asset = app

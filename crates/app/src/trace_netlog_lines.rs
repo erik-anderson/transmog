@@ -84,7 +84,7 @@ mod tests {
     fn typed_records_preserve_constants_events_polled_data_and_end() {
         let input=b"{\"type\":\"constants\",\"constants\":{\"logFormatVersion\":1}}\r\n\n{\"type\":\"event\",\"event\":{\"source\":{\"id\":12},\"type\":4}}\n{\"type\":\"polledData\",\"polledData\":{\"network\":\"placeholder\"}}\n{\"type\":\"end\"}\n";
         let (document, notes) = read(input.as_slice(), &AtomicBool::new(false)).unwrap();
-        assert!(notes.is_empty());
+        assert_eq!(notes, [] as [std::string::String; 0]);
         assert_eq!(document["constants"]["logFormatVersion"], 1);
         assert_eq!(document["events"][0]["source"]["id"], 12);
         assert_eq!(document["polledData"]["network"], "placeholder");

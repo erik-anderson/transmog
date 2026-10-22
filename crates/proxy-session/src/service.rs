@@ -1315,7 +1315,7 @@ mod tests {
             self.restored.lock().unwrap().push(token);
             if self
                 .restore_failures
-                .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
+                .try_update(Ordering::Relaxed, Ordering::Relaxed, |remaining| {
                     remaining.checked_sub(1)
                 })
                 .is_ok()
@@ -1426,7 +1426,7 @@ mod tests {
         let server = ProxyServer::bind_with_components(
             ProxyConfig {
                 limits: RuntimeLimits {
-                    shutdown_timeout: Duration::from_secs(60),
+                    shutdown_timeout: Duration::from_mins(1),
                     ..RuntimeLimits::default()
                 },
                 ..ProxyConfig::default()

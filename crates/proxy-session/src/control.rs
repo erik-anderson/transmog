@@ -855,12 +855,12 @@ mod tests {
                 ))
                 .unwrap();
         });
-        assert!(
+        assert_eq!(
             pipeline
                 .process(BodyFrame::Data(Bytes::from_static(b"before")))
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [transmog_core::BodyFrame; 0]
         );
         assert_eq!(
             pipeline.finish().await.unwrap(),

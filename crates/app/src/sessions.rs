@@ -1399,7 +1399,7 @@ mod tests {
         service.stop().await.unwrap();
         let snapshot = service.catalog().get(ExchangeId(1)).unwrap();
         let now = SystemTime::now();
-        let later = now + std::time::Duration::from_secs(3600);
+        let later = now + std::time::Duration::from_hours(1);
         let traces = crate::traces::TraceRegistry::default();
         assert_eq!(summarize(&snapshot, now, false).terminal, "failed");
         assert!(summarize(&snapshot, now, false).duration_ms.is_some());
@@ -2624,7 +2624,7 @@ mod tests {
         empty.query.search = Some("no such host".into());
         let zero = facet_counts(&service, &empty, &traces, None).unwrap();
         assert_eq!(zero.matching_entries, 0);
-        assert!(zero.options.is_empty());
+        assert_eq!(zero.options, [] as [crate::TrafficFacetOption; 0]);
         let mut paged = request;
         paged.dimension = TrafficDimension::Column(TrafficColumn::Path);
         paged.query.filters.clear();
@@ -2678,10 +2678,9 @@ mod tests {
             350
         );
         zero.filter_groups[0].values = vec![TrafficFilterValue::Unavailable];
-        assert!(
-            matching_ids(&service, &zero, &traces, None)
-                .unwrap()
-                .is_empty()
+        assert_eq!(
+            matching_ids(&service, &zero, &traces, None).unwrap(),
+            [] as [std::string::String; 0]
         );
         zero.filter_groups[0] = exact_group(
             TrafficColumn::ContentType,
@@ -2859,7 +2858,7 @@ mod tests {
             .duration_micros,
             Some(5750)
         );
-        let later = SystemTime::now() + std::time::Duration::from_secs(60 * 60 * 24 * 365);
+        let later = SystemTime::now() + std::time::Duration::from_hours(24 * 365);
         assert_eq!(summarize(&snapshot, later, false).duration_ms, Some(5000));
         for status in [
             StreamStatus::Closed,
@@ -2981,7 +2980,7 @@ mod tests {
             ],
         };
         let page = facet_counts(&service, &request, &traces, None).unwrap();
-        assert!(page.options.is_empty());
+        assert_eq!(page.options, [] as [crate::TrafficFacetOption; 0]);
         assert_eq!(page.matching_entries, 175);
         assert!(
             page.included_options

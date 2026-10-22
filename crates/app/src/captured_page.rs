@@ -1718,7 +1718,7 @@ mod tests {
         let head = missing
             .resolve("HEAD", "https://absent.invalid/", Some(&[]), None, false)
             .unwrap();
-        assert!(std::fs::read(head.body_path).unwrap().is_empty());
+        assert_eq!(std::fs::read(head.body_path).unwrap(), [] as [u8; 0]);
         assert!(
             missing
                 .resolve("GET", "https://unknown.invalid/", None, None, false)

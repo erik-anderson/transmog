@@ -38,7 +38,7 @@ impl Slot {
             ));
         }
         ACTIVE_HOSTS
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| {
                 (n < MAX_HOSTS).then_some(n + 1)
             })
             .map_err(|_| fail(FailureKind::Limit, "All visualizer worker slots are in use"))?;

@@ -404,7 +404,7 @@ impl VerificationDataProvider {
                             };
                             provider.refresh();
                         }
-                        std::thread::sleep(Duration::from_secs(60));
+                        std::thread::sleep(Duration::from_mins(1));
                     }
                 });
             provider

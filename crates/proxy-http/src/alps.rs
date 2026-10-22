@@ -54,7 +54,7 @@ pub(crate) fn bootstrap(data: &[u8]) -> io::Result<Option<Bytes>> {
                     return Err(invalid("invalid HTTP/2 ALPS SETTINGS frame"));
                 }
                 received_settings = true;
-                for parameter in payload.chunks_exact(6) {
+                for parameter in payload.as_chunks::<6>().0 {
                     let id = usize::from(u16::from_be_bytes(
                         parameter[..2].try_into().expect("setting id"),
                     ));

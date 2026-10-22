@@ -459,7 +459,10 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.category, ErrorCategory::Unavailable);
         assert!(!application.paused_exchanges().enabled);
-        assert!(application.paused_exchanges().paused.is_empty());
+        assert_eq!(
+            application.paused_exchanges().paused,
+            [] as [crate::PausedExchange; 0]
+        );
         assert!(application.breakpoints.lock().worker.is_none());
 
         let runtime = tokio::runtime::Builder::new_current_thread()
@@ -532,7 +535,10 @@ mod tests {
             waiting.await.unwrap(),
             Err(transmog_control_transport::TransportError::Cancelled)
         );
-        assert!(application.breakpoints.status().paused.is_empty());
+        assert_eq!(
+            application.breakpoints.status().paused,
+            [] as [crate::PausedExchange; 0]
+        );
         application.shutdown().await.unwrap();
     }
 

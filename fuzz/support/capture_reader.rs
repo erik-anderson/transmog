@@ -261,7 +261,7 @@ fn mutate_bytes(mut bytes: Vec<u8>, data: &[u8]) -> Vec<u8> {
     let block_size =
         u32::from_le_bytes(bytes[13 + length..17 + length].try_into().unwrap()) as usize;
     let start = 13 + length + 4 + 512;
-    for patch in data.chunks_exact(3) {
+    for patch in data.as_chunks::<3>().0 {
         let position =
             start + u16::from_le_bytes([patch[0], patch[1]]) as usize % (bytes.len() - start);
         bytes[position] ^= patch[2];

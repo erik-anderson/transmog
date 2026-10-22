@@ -164,7 +164,7 @@ fn decode(raw: &[u8]) -> AlpsContents {
 }
 
 fn settings(view: &mut AlpsContents, payload: &[u8], offset: usize) {
-    for (index, parameter) in payload.chunks_exact(6).enumerate() {
+    for (index, parameter) in payload.as_chunks::<6>().0.iter().enumerate() {
         if view.full() {
             return;
         }
@@ -409,7 +409,7 @@ mod tests {
         raw.extend(frame(0x89, &entry));
         raw.extend(frame(0xfa, &[1, 2, 3]));
         let view = decode(&raw);
-        assert!(view.notes.is_empty());
+        assert_eq!(view.notes, [] as [std::string::String; 0]);
         assert_eq!(STANDARD.decode(&view.payload_base64).unwrap(), raw);
         assert_eq!(
             view.fields
@@ -489,7 +489,7 @@ mod tests {
             frame(0, &[1]),
         ] {
             let view = decode(&raw);
-            assert!(!view.notes.is_empty());
+            assert_ne!(view.notes, [] as [std::string::String; 0]);
             assert_eq!(STANDARD.decode(&view.payload_base64).unwrap(), raw);
         }
         let raw = frame(4, &[0, 1, 0, 0, 0, 1].repeat(1000));

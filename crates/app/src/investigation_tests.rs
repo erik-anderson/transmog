@@ -402,7 +402,10 @@ async fn colliding_sources_open_inertly_with_distinct_links_and_pinned_body_life
         value.sources[0].artifact_sha256
     );
     assert_eq!(app.automation_status().generation, 0);
-    assert!(app.automation_status().rules.is_empty());
+    assert_eq!(
+        app.automation_status().rules,
+        [] as [transmog_automation::Rule; 0]
+    );
     drop(case);
     let bytes = app
         .body_store
@@ -627,7 +630,10 @@ async fn locked_or_canceled_case_opening_never_adds_partial_traffic() {
         .await
         .unwrap_err();
     assert_eq!(error.category, ErrorCategory::PasswordRequired);
-    assert!(app.service.catalog().project_retained(|_| ()).is_empty());
+    assert_eq!(
+        app.service.catalog().project_retained(|_| ()),
+        [] as [(); 0]
+    );
     let error = app
         .open_investigation_evidence(
             &case,
@@ -668,8 +674,14 @@ fn explicit_plaintext_review_and_selection_are_required_without_implicit_traffic
     let case = app
         .prepare_investigation(&options, stage.path(), &AtomicBool::new(false))
         .unwrap();
-    assert!(case.manifest().objects.is_empty());
-    assert!(case.manifest().sources.is_empty());
+    assert_eq!(
+        case.manifest().objects,
+        [] as [transmog_portable::Object; 0]
+    );
+    assert_eq!(
+        case.manifest().sources,
+        [] as [transmog_portable::CaseSource; 0]
+    );
     options.notes = vec![CaseNoteInput {
         id: "outside".into(),
         text: "Missing selection".into(),
@@ -679,7 +691,10 @@ fn explicit_plaintext_review_and_selection_are_required_without_implicit_traffic
         app.prepare_investigation(&options, stage.path(), &AtomicBool::new(false))
             .is_err()
     );
-    assert!(app.automation_status().rules.is_empty());
+    assert_eq!(
+        app.automation_status().rules,
+        [] as [transmog_automation::Rule; 0]
+    );
     assert_eq!(app.automation_status().generation, 0);
 }
 

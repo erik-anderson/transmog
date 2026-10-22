@@ -85,7 +85,7 @@ impl OutboundProtocolPolicy {
     pub fn set(&self, allowed: AllowedHttpProtocols) {
         let _ = self
             .0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 Some((current & REUSE_CONNECTIONS) | allowed.bits())
             });
     }

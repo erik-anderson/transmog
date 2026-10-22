@@ -6,7 +6,7 @@ from repo_tools import command, main_guard
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--image", default="transmog-linux-tools:rust-1.97.1-nightly-2026-10-01")
+    parser.add_argument("--image", default="transmog-linux-tools:rust-1.99.1-nightly-2026-10-01")
     args = parser.parse_args()
     docker = build_image(args.image)
     argv = container_arguments(docker, args.image,

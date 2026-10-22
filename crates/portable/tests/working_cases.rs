@@ -209,7 +209,7 @@ fn working_copy_saves_history_rejects_stale_writers_and_pins_owned_objects() {
     );
     assert_eq!(std::fs::read(path.join("manifest.json")).unwrap(), hash);
     first.prune_history(&["1".into()]).unwrap();
-    assert!(first.history().is_empty());
+    assert_eq!(first.history(), [] as [String; 0]);
     assert!(
         WorkingCase::create(
             prepare(&manifest("simple-css"), stage.path()),
@@ -275,7 +275,7 @@ fn owned_staging_remnants_are_reported_without_becoming_a_manifest() {
     assert_eq!(reopened.prepared().manifest().revision, "1");
     std::fs::create_dir(path.join("history/1")).unwrap();
     let recovered = WorkingCase::open(&path, stage.path(), &AtomicBool::new(false)).unwrap();
-    assert!(recovered.history().is_empty());
+    assert_eq!(recovered.history(), [] as [String; 0]);
     assert_eq!(recovered.recovery_artifacts(), 2);
     std::fs::write(
         path.join("history/1/manifest.json"),

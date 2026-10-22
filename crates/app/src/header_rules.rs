@@ -611,7 +611,10 @@ mod tests {
             )
             .unwrap();
         assert!(save(&registry, rule("headers"), Some(2)).is_err());
-        assert!(registry.status().rules.is_empty());
+        assert_eq!(
+            registry.status().rules,
+            [] as [transmog_automation::Rule; 0]
+        );
     }
     #[test]
     fn order_changes_and_generation_checked_undo_do_not_rewrite_unrelated_rules() {

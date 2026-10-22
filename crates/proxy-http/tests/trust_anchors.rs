@@ -126,7 +126,7 @@ async fn newer_webview2_catalog_without_ids_keeps_roots_and_omits_the_offer() {
     .unwrap();
     provider.refresh();
     assert_eq!(provider.current().version, 43);
-    assert!(provider.current().requested_ids().is_empty());
+    assert_eq!(provider.current().requested_ids(), b"");
     let mut inherited = frozen_connector
         .configure()
         .unwrap()

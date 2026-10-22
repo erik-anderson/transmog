@@ -779,17 +779,17 @@ mod tests {
         );
         app.discard_traffic().unwrap();
         assert!(app.traces.list().is_empty());
-        assert!(
+        assert_eq!(
             app.body_store()
                 .unwrap()
-                .metadata(ExchangeId(u128::from_str_radix(&id, 16).unwrap()))
-                .is_empty()
+                .metadata(ExchangeId(u128::from_str_radix(&id, 16).unwrap())),
+            [] as [crate::StoredBodyMetadata; 0]
         );
-        assert!(
+        assert_eq!(
             app.session_service()
                 .catalog()
-                .project_retained(|s| s.exchange_id)
-                .is_empty()
+                .project_retained(|s| s.exchange_id),
+            [] as [transmog_core::intercept::ExchangeId; 0]
         );
         assert!(
             path.exists(),
@@ -881,7 +881,10 @@ mod tests {
         let detail = app.session_detail(&id).unwrap();
         assert_eq!(detail.requests[0].method.as_deref(), Some("GET"));
         assert_eq!(detail.responses[0].status, Some(200));
-        assert!(detail.performance.points.is_empty());
+        assert_eq!(
+            detail.performance.points,
+            [] as [transmog_core::performance::TimingPoint; 0]
+        );
         assert_eq!(detail.saved_evidence["NetLog elapsed (ms)"], "4");
         assert_eq!(detail.bodies[1].observed_bytes, 4);
     }
@@ -965,7 +968,7 @@ mod tests {
         let connection = &view.connections[0];
         assert!(connection.title.starts_with("Browser → server · "));
         assert_eq!(connection.server_chain.len(), 2);
-        assert!(connection.client_chain.is_empty());
+        assert_eq!(connection.client_chain, [] as [std::string::String; 0]);
         assert!(
             connection
                 .diagnostic_fields

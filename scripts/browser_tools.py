@@ -7,7 +7,7 @@ from repo_tools import ROOT, command
 
 
 def build_browser_image(image="transmog-pqc-browser", *, refresh=False):
-    docker = build_image("transmog-linux-tools:rust-1.97.1-nightly-2026-10-01")
+    docker = build_image("transmog-linux-tools:rust-1.99.1-nightly-2026-10-01")
     with tempfile.TemporaryDirectory(prefix="transmog-browser-image-") as temporary:
         context = Path(temporary)
         shutil.copyfile(ROOT / "e2e/pqc/Dockerfile", context / "Dockerfile")

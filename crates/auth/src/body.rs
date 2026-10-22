@@ -101,7 +101,9 @@ pub(crate) fn text(bytes: &[u8], media: &str) -> Option<String> {
             return None;
         }
         let words: Vec<_> = bytes[2..]
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .map(|b| {
                 if little {
                     u16::from_le_bytes([b[0], b[1]])

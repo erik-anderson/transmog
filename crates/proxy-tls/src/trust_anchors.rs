@@ -617,7 +617,7 @@ impl PkiMetadataProvider {
                     };
                     provider.refresh();
                     drop(provider);
-                    std::thread::sleep(Duration::from_secs(60));
+                    std::thread::sleep(Duration::from_mins(1));
                 }
             });
         provider
@@ -768,10 +768,9 @@ mod tests {
             ..Default::default()
         })));
         let effective = local.current(&metadata, true).unwrap();
-        assert!(
-            metadata
-                .recovery_ids(&[2, 1, 2], &effective.policy)
-                .is_empty()
+        assert_eq!(
+            metadata.recovery_ids(&[2, 1, 2], &effective.policy),
+            [] as [u8; 0]
         );
     }
     fn encoded(version: i64) -> Vec<u8> {

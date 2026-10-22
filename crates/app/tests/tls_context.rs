@@ -429,7 +429,7 @@ fn assert_inspection(
             assert_eq!(connection.alps.is_some(), alps.negotiated);
             if let Some(contents) = &connection.alps {
                 assert_eq!(contents.peer_bytes, alps.peer_settings.len());
-                assert!(contents.notes.is_empty());
+                assert_eq!(contents.notes, [] as [std::string::String; 0]);
                 if state == 0 {
                     assert!(
                         contents
@@ -695,9 +695,9 @@ async fn certificate_inspection_prefers_complete_later_references() {
     let inspection = app.inspect_certificates(&only_id(&app)).unwrap();
     assert_eq!(inspection.certificates.len(), 2);
     for certificate in &inspection.certificates {
-        assert!(!certificate.der_base64.is_empty());
+        assert_ne!(certificate.der_base64, "");
         assert!(certificate.pem.starts_with("-----BEGIN CERTIFICATE-----"));
-        assert!(certificate.unavailable.is_empty());
+        assert_eq!(certificate.unavailable, "");
     }
 }
 

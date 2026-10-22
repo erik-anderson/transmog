@@ -2901,11 +2901,17 @@ mod tests {
                 completed(1, 4),
             ],
         );
-        assert!(!store.metadata(ExchangeId(1)).is_empty());
+        assert_ne!(
+            store.metadata(ExchangeId(1)),
+            [] as [crate::StoredBodyMetadata; 0]
+        );
         store.inner.sender.send(WorkerCommand::Shutdown).unwrap();
         assert!(store.flush().is_err());
         assert!(store.forget_entries(&[ExchangeId(1)]).is_err());
-        assert!(store.metadata(ExchangeId(1)).is_empty());
+        assert_eq!(
+            store.metadata(ExchangeId(1)),
+            [] as [crate::StoredBodyMetadata; 0]
+        );
         assert_eq!(store.counters().retained_bytes, 0);
         drop(store);
         fs::remove_dir_all(root).unwrap();

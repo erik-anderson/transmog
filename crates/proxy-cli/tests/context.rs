@@ -33,7 +33,7 @@ fn success(output: Output) -> Value {
 }
 fn failure(output: Output) -> String {
     assert_eq!(output.status.code(), Some(2));
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, [] as [u8; 0]);
     String::from_utf8(output.stderr).unwrap()
 }
 fn network() -> Value {
@@ -132,7 +132,7 @@ fn list_and_extract_keep_source_time_issues_unicode_and_crlf() {
         ],
     );
     assert!(result.status.success());
-    assert!(result.stdout.is_empty());
+    assert_eq!(result.stdout, [] as [u8; 0]);
     assert_eq!(
         serde_json::from_slice::<Value>(&fs::read(&output).unwrap()).unwrap(),
         network()
@@ -402,7 +402,7 @@ fn standalone_binary_and_shell_quoted_passwords() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert!(output.stdout.is_empty());
+    assert_eq!(output.stdout, [] as [u8; 0]);
     assert!(!String::from_utf8_lossy(&output.stderr).contains(PASSWORD));
     assert_eq!(
         serde_json::from_slice::<Value>(

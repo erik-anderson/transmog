@@ -152,7 +152,7 @@ fn parse_alps_flags(
         if encoded.len() != expected * 2 || !encoded.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return None;
         }
-        for pair in encoded.as_bytes().chunks_exact(2) {
+        for pair in encoded.as_bytes().as_chunks::<2>().0 {
             let text = std::str::from_utf8(pair).ok()?;
             raw.push(u8::from_str_radix(text, 16).ok()?);
         }

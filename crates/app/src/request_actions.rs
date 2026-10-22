@@ -965,7 +965,7 @@ mod tests {
         assert!(!result.body_file_available);
         assert!(result.text.contains("REPLACE_REDACTED_VALUE"));
         assert!(!result.text.contains("secret"));
-        assert!(!result.notices.is_empty());
+        assert_ne!(result.notices, [] as [std::string::String; 0]);
     }
 
     #[test]

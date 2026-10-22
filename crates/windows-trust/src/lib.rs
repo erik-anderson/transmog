@@ -347,7 +347,10 @@ mod tests {
             ..Default::default()
         }
         .canonical()));
-        assert!(state.current().unwrap().anchors.is_empty());
+        assert_eq!(
+            state.current().unwrap().anchors,
+            [] as [std::vec::Vec<u8>; 0]
+        );
         assert_eq!(old.anchors, [vec![1]]);
     }
     #[test]

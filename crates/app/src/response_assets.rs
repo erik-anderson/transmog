@@ -2527,7 +2527,7 @@ mod tests {
             HeaderField::try_new("content-length", "1").unwrap(),
         ]);
         let (headers, body) = returned_body(&store, &empty).await;
-        assert!(body.is_empty());
+        assert_eq!(body, [] as [u8; 0]);
         assert!(headers.values("content-encoding").next().is_none());
         assert_eq!(headers.values("content-length").next(), Some(&b"0"[..]));
     }

@@ -914,7 +914,7 @@ mod tests {
             .iter()
             .filter(|record| matches!(record.kind, CaptureRecordKind::Loss { .. }))
             .collect::<Vec<_>>();
-        assert!(loss.is_empty());
+        assert_eq!(loss, [] as [&transmog_capture::CaptureRecord; 0]);
         assert_eq!(pending, 0);
         std::fs::remove_file(path).unwrap();
     }

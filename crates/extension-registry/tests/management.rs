@@ -88,7 +88,10 @@ fn install_persists_inert_metadata_and_enable_never_requires_a_runtime() {
     assert_eq!(registry.enabled_visualizers()[0].0, "example.headers");
     registry.set_enabled("example.headers", false).unwrap();
     assert!(!registry.status().entries[0].catalog.enabled);
-    assert!(registry.enabled_visualizers().is_empty());
+    assert_eq!(
+        registry.enabled_visualizers(),
+        [] as [(std::string::String, transmog_extensions::Visualizer); 0]
+    );
     let reopened = Registry::load(store, None);
     assert!(!reopened.status().entries[0].catalog.enabled);
     reopened.set_enabled("example.headers", true).unwrap();
@@ -100,7 +103,10 @@ fn install_persists_inert_metadata_and_enable_never_requires_a_runtime() {
             .is_err()
     );
     reopened.uninstall("example.headers").unwrap();
-    assert!(reopened.status().entries.is_empty());
+    assert_eq!(
+        reopened.status().entries,
+        [] as [transmog_extension_registry::ExtensionEntry; 0]
+    );
     assert!(source.is_file());
 }
 #[test]

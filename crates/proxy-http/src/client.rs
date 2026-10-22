@@ -1154,14 +1154,17 @@ mod tests {
             );
             assert_eq!(tls.trust_generation, Some(123));
             assert_eq!(tls.server_name.as_deref(), Some("127.0.0.1"));
-            assert!(!tls.errors.is_empty());
+            assert_ne!(tls.errors, [] as [std::string::String; 0]);
             assert!(
                 tls.offered_ciphers
                     .iter()
                     .any(|cipher| cipher == "ECDHE-ECDSA-AES256-GCM-SHA384")
             );
             if !cipher_mismatch {
-                assert!(!tls.server_chain.is_empty());
+                assert_ne!(
+                    tls.server_chain,
+                    [] as [transmog_core::PublicCertificate; 0]
+                );
                 assert!(!tls.server_chain[0].der.is_empty());
                 assert!(matches!(
                     tls.verification,

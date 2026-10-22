@@ -59,7 +59,14 @@ mod tests {
         );
         registry.set_enabled("net.transmog.mapi", false).unwrap();
         let reopened = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
-        assert!(reopened.enabled_visualizers().is_empty());
+        assert_eq!(
+            reopened
+                .enabled_visualizers()
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect::<Vec<_>>(),
+            [] as [String; 0]
+        );
         assert!(!reopened.status().entries[0].catalog.enabled);
     }
 }

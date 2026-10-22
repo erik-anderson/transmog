@@ -111,7 +111,7 @@ mod tests {
             assert_eq!(head.status, get.status);
             assert_eq!(head.content_type, get.content_type);
             assert_eq!(head.cache_control, get.cache_control);
-            assert!(head.body.is_empty());
+            assert_eq!(head.body, [] as [u8; 0]);
             assert_eq!(renderer.respond("POST", path, &view).unwrap().status, 405);
         }
     }

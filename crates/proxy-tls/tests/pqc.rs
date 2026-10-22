@@ -234,8 +234,10 @@ fn recorded_hello(written: &[u8]) -> RecordedHello {
     cursor += 1 + usize::from(hello[cursor]);
     let cipher_length = usize::from(u16_be(&hello[cursor..]));
     let ciphers = hello[cursor + 2..cursor + 2 + cipher_length]
-        .chunks_exact(2)
-        .map(u16_be)
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16_be(chunk))
         .collect();
     cursor += 2 + cipher_length;
     cursor += 1 + usize::from(hello[cursor]);
@@ -261,7 +263,12 @@ fn recorded_hello(written: &[u8]) -> RecordedHello {
 fn signature_algorithms(extension: &[u8]) -> Vec<u16> {
     assert_eq!(usize::from(u16_be(extension)), extension.len() - 2);
     assert_eq!(extension.len() % 2, 0);
-    extension[2..].chunks_exact(2).map(u16_be).collect()
+    extension[2..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16_be(chunk))
+        .collect()
 }
 
 fn is_grease(value: u16) -> bool {
@@ -481,7 +488,7 @@ fn production_tcp_general_grease_preserves_real_preferences() {
             assert!(is_grease(hello.ciphers[0]));
             assert_eq!(&hello.ciphers[1..], expected.ciphers);
             assert!(is_grease(hello.extensions[0].0));
-            assert!(hello.extensions[0].1.is_empty());
+            assert_eq!(hello.extensions[0].1, [] as [u8; 0]);
             let last = hello.extensions.last().unwrap();
             assert!(is_grease(last.0));
             assert_eq!(last.1, [0]);
@@ -523,7 +530,7 @@ fn production_tcp_general_grease_preserves_real_preferences() {
             };
             assert_eq!(shape(&shares[7..]), shape(&expected_extensions[&51][2..]));
             assert_eq!(real[&5], [1, 0, 0, 0, 0]);
-            assert!(real[&18].is_empty());
+            assert_eq!(real[&18], [] as [u8; 0]);
             assert_eq!(real[&27], [2, 0, 2]);
             assert_ech_grease(&real[&0xfe0d]);
             assert!(capture.snapshot().valid());
@@ -585,7 +592,12 @@ fn boringssl_supports_chromium_hybrid_exchange_and_initial_shares() {
     assert_eq!(tls.ssl().curve(), Some(HYBRID_GROUP));
     assert_eq!(server_group, Some(HYBRID_GROUP));
     let extensions = hello_extensions(&tls.get_ref().written);
-    let groups: Vec<_> = extensions[&10][2..].chunks_exact(2).map(u16_be).collect();
+    let groups: Vec<_> = extensions[&10][2..]
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|chunk| u16_be(chunk))
+        .collect();
     assert_eq!(groups, [HYBRID_GROUP, 29, 23, 24]);
     let mut shares = extensions[&51][2..].as_ref();
     let mut share_groups = Vec::new();
@@ -716,7 +728,7 @@ fn webview2_catalog_without_ids_omits_the_extension_over_tcp_and_quic() {
         )
         .unwrap(),
     );
-    assert!(metadata.requested_ids().is_empty());
+    assert_eq!(metadata.requested_ids(), b"");
     let mut profile = transmog_core::network_profile::NetworkProfileSnapshot::default();
     profile.settings.local_certificates = false;
     let factory = factory(&ca)

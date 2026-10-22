@@ -235,6 +235,9 @@ fn bundled_missing_or_mismatched_archive_fails_only_explicit_snapshot() {
     assert!(mismatch.snapshot("example.bundled").is_err());
     mismatch.set_enabled("example.bundled", true).unwrap();
     let absent = Registry::load(root.path().into(), None);
-    assert!(absent.enabled_visualizers().is_empty());
+    assert_eq!(
+        absent.enabled_visualizers(),
+        [] as [(std::string::String, transmog_extensions::Visualizer); 0]
+    );
     assert!(absent.snapshot("example.bundled").is_err());
 }

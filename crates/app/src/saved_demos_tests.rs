@@ -568,12 +568,12 @@ async fn application_review_commits_linked_snapshot_after_edit_and_restarts_with
     fs::remove_file(external).unwrap();
     fs::remove_file(path).unwrap();
     let restarted = Application::new(config()).unwrap();
-    assert!(
+    assert_eq!(
         restarted
             .query_sessions(SessionQueryInput::default())
             .unwrap()
-            .sessions
-            .is_empty()
+            .sessions,
+        [] as [crate::SessionSummary; 0]
     );
     let page = restarted
         .prepare_saved_demo(
@@ -839,12 +839,12 @@ fn damaged_catalog_startup_preserves_data_and_owner_delete_and_strict_repair_wor
             .contains("preserved")
     );
     assert_eq!(fs::read(&current_path).unwrap(), b"damaged catalog");
-    assert!(
+    assert_eq!(
         restarted
             .query_sessions(crate::SessionQueryInput::default())
             .unwrap()
-            .sessions
-            .is_empty()
+            .sessions,
+        [] as [crate::SessionSummary; 0]
     );
     create_demo_owner(&restarted, "unrelated-work");
     fs::write(&older_path, &older_bytes).unwrap();

@@ -1004,12 +1004,12 @@ mod tests {
         input.response_headers = true;
         input.response_bodies = false;
         input.request_headers = false;
-        assert!(
+        assert_eq!(
             app.search_traffic(input.clone(), Arc::new(|_| {}))
                 .await
                 .unwrap()
-                .ids
-                .is_empty()
+                .ids,
+            [] as [std::string::String; 0]
         );
         input.request_headers = true;
         input.response_headers = false;

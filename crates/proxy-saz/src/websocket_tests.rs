@@ -245,7 +245,10 @@ fn incomplete_websocket_observations_are_disclosed_and_invalid_frames_rejected()
         SazMode::Strict,
         None,
     );
-    assert!(frames(&member(&bytes, "raw/1_w.txt", None)).is_empty());
+    assert_eq!(
+        frames(&member(&bytes, "raw/1_w.txt", None)),
+        [] as [(u64, bool, transmog_websocket::Frame); 0]
+    );
     assert!(
         String::from_utf8(member(&bytes, "raw/1_m.xml", None))
             .unwrap()

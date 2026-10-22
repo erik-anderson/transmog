@@ -3213,12 +3213,12 @@ mod tests {
             if format == "native" {
                 assert_eq!(metadata.context["networkContext"], "original machine");
             }
-            assert!(
+            assert_eq!(
                 workspace
                     .query_sessions(SessionQueryInput::default())
                     .unwrap()
-                    .sessions
-                    .is_empty()
+                    .sessions,
+                [] as [crate::SessionSummary; 0]
             );
             assert!(workspace.trace_metadata_list().is_empty());
         }
@@ -3707,7 +3707,10 @@ mod tests {
             .catalog()
             .project_retained(Clone::clone);
         assert_eq!(snapshots.len(), 1);
-        assert!(snapshots[0].response_heads.is_empty());
+        assert_eq!(
+            snapshots[0].response_heads,
+            [] as [transmog_session::ObservedResponseHead; 0]
+        );
         assert_eq!(
             snapshots[0]
                 .performance
@@ -5319,12 +5322,12 @@ mod tests {
             .await
             .unwrap_err();
         assert!(rejected.message.contains("combined trace index limit"));
-        assert!(
+        assert_eq!(
             application
                 .query_sessions(SessionQueryInput::default())
                 .unwrap()
-                .sessions
-                .is_empty()
+                .sessions,
+            [] as [crate::SessionSummary; 0]
         );
         assert!(application.trace_metadata_list().is_empty());
     }
@@ -5346,7 +5349,7 @@ mod tests {
             .sessions;
         let source = app.composer_source(&rows[0].id).unwrap();
         assert!(source.body_available && source.body_streamed);
-        assert!(source.body.is_empty());
+        assert_eq!(source.body, "");
         assert_eq!(source.body_bytes, Some(count as u64));
         let (mut file, length) = app
             .prepare_request_file(&rows[0].id)
@@ -5455,12 +5458,12 @@ mod tests {
                 .await
                 .is_err()
         );
-        assert!(
+        assert_eq!(
             reopened
                 .query_sessions(crate::SessionQueryInput::default())
                 .unwrap()
-                .sessions
-                .is_empty()
+                .sessions,
+            [] as [crate::SessionSummary; 0]
         );
         let mut input = request(encrypted, "correct-password");
         input.password = Some(password);
@@ -5606,11 +5609,11 @@ mod tests {
             .is_err()
         );
         assert!(app.trace_metadata_list().is_empty());
-        assert!(
+        assert_eq!(
             app.query_sessions(SessionQueryInput::default())
                 .unwrap()
-                .sessions
-                .is_empty()
+                .sessions,
+            [] as [crate::SessionSummary; 0]
         );
         let mut bytes = std::fs::read(&path).unwrap();
         let end = bytes.len() - 1;

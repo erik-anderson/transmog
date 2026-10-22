@@ -313,7 +313,7 @@ impl<R: Read + Seek> ArtifactReader<R> {
         let mut chunks = vec![];
         let mut logical = 0_u64;
         let mut offset = 0_u64;
-        for entry in index[4 + json_len..].chunks_exact(ENTRY) {
+        for entry in index[4 + json_len..].as_chunks::<ENTRY>().0 {
             let chunk = Chunk {
                 logical: u64::from_le_bytes(entry[..8].try_into().map_err(|_| invalid())?),
                 offset: u64::from_le_bytes(entry[8..16].try_into().map_err(|_| invalid())?),

@@ -761,7 +761,10 @@ mod tests {
         });
         let mut decoder =
             MessageDecoder::new(Direction::ClientToServer, FrameLimits::default(), None).unwrap();
-        assert!(decoder.push(&first).unwrap().is_empty());
+        assert_eq!(
+            decoder.push(&first).unwrap(),
+            [] as [crate::MessageEvent; 0]
+        );
         assert_eq!(
             decoder.push(&ping).unwrap(),
             [MessageEvent::Control(ControlFrame::Ping(

@@ -214,7 +214,7 @@ mod tests {
     #[test]
     fn current_process_name_is_a_file_name() {
         let name = process_name(std::process::id()).expect("current process is queryable");
-        assert!(!name.is_empty());
+        assert_ne!(name, "");
         assert!(!name.contains(['\\', '/']));
     }
 }

@@ -276,7 +276,7 @@ fn registry_collections_notify_add_remove_property_changes_and_stop_cleanly() {
         control: Some(control),
     };
     let initial = monitor.wait_ready(Duration::from_secs(5)).unwrap();
-    assert!(initial.anchors.is_empty());
+    assert_eq!(initial.anchors, [] as [std::vec::Vec<u8>; 0]);
     let writer = root.writer();
     let der = certificate();
     let cert = add(&writer, &der);
@@ -337,12 +337,12 @@ fn production_registry_selection_is_read_only_and_monitored() {
             .unwrap()
     );
     let chromium = LocalTrustMonitor::start_chromium().unwrap();
-    assert!(
+    assert_eq!(
         chromium
             .wait_ready(Duration::from_secs(5))
             .unwrap()
-            .disallowed_ctls
-            .is_empty()
+            .disallowed_ctls,
+        [] as [std::vec::Vec<u8>; 0]
     );
 }
 

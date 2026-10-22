@@ -1111,7 +1111,10 @@ mod tests {
             pipeline.finish().await.unwrap(),
             [BodyFrame::Data(Bytes::from_static(b"BA!"))]
         );
-        assert!(pipeline.finish().await.unwrap().is_empty());
+        assert_eq!(
+            pipeline.finish().await.unwrap(),
+            [] as [crate::BodyFrame; 0]
+        );
     }
 
     #[tokio::test]
@@ -1121,12 +1124,12 @@ mod tests {
                 limit: NonZeroUsize::new(4).unwrap(),
                 handler: Box::new(IdentityBuffer),
             }]);
-            assert!(
+            assert_eq!(
                 pipeline
                     .process(BodyFrame::Data(Bytes::from(vec![b'x'; size])))
                     .await
-                    .unwrap()
-                    .is_empty()
+                    .unwrap(),
+                [] as [crate::BodyFrame; 0]
             );
             let output = pipeline.finish().await.unwrap();
             assert_eq!(output, [BodyFrame::Data(Bytes::from(vec![b'x'; size]))]);
@@ -1158,12 +1161,12 @@ mod tests {
         )
         .unwrap();
         let mut replacement_pipeline = pipeline(vec![BodyPlan::Replace(replacement)]);
-        assert!(
+        assert_eq!(
             replacement_pipeline
                 .process(BodyFrame::Data(Bytes::from_static(b"original")))
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [crate::BodyFrame; 0]
         );
         assert_eq!(
             replacement_pipeline.finish().await.unwrap(),
@@ -1174,14 +1177,17 @@ mod tests {
         );
 
         let mut discard_pipeline = pipeline(vec![BodyPlan::Discard]);
-        assert!(
+        assert_eq!(
             discard_pipeline
                 .process(BodyFrame::Data(Bytes::from_static(b"discarded")))
                 .await
-                .unwrap()
-                .is_empty()
+                .unwrap(),
+            [] as [crate::BodyFrame; 0]
         );
-        assert!(discard_pipeline.finish().await.unwrap().is_empty());
+        assert_eq!(
+            discard_pipeline.finish().await.unwrap(),
+            [] as [crate::BodyFrame; 0]
+        );
     }
 
     #[tokio::test]

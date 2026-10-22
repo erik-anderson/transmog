@@ -43,7 +43,7 @@ jobs:
           python-version: '3.13'
       - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.97.1
+          toolchain: 1.99.1
           components: rustfmt, clippy
       - uses: actions/setup-dotnet@v4
         with:

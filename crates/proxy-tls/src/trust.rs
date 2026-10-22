@@ -1312,7 +1312,7 @@ mod tests {
         let loaded = composite.load().unwrap();
         assert_eq!(loaded.certificates_der.len(), 2);
         assert_eq!(loaded.source_description, "test composite");
-        assert!(loaded.diagnostics.is_empty());
+        assert_eq!(loaded.diagnostics, [] as [std::string::String; 0]);
         assert_eq!(TrustSnapshot::load(&composite, 7).unwrap().root_count(), 2);
     }
 

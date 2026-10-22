@@ -515,7 +515,10 @@ async fn manual_cancel_stops_an_idle_download_after_headers_and_retains_terminal
         .expect("download did not stop")
         .unwrap();
     assert!(remainder.len() < 1_000_000);
-    assert!(control.cancel_requests(&[id]).await.is_empty());
+    assert_eq!(
+        control.cancel_requests(&[id]).await,
+        [] as [transmog_core::intercept::ExchangeId; 0]
+    );
     shutdown_tx.send(()).unwrap();
     timeout(Duration::from_secs(3), server)
         .await

@@ -64,7 +64,7 @@ fn parse_endpoint(value: &str, ipv6: bool) -> Option<SocketAddr> {
             return None;
         }
         let mut octets = [0_u8; 16];
-        for (word_index, chunk) in address.as_bytes().chunks_exact(8).enumerate() {
+        for (word_index, chunk) in address.as_bytes().as_chunks::<8>().0.iter().enumerate() {
             let chunk = std::str::from_utf8(chunk).ok()?;
             let word = u32::from_str_radix(chunk, 16).ok()?;
             octets[word_index * 4..word_index * 4 + 4].copy_from_slice(&word.to_le_bytes());
@@ -93,10 +93,7 @@ fn find_process_with_socket(inode: u64) -> Option<u32> {
             continue;
         };
         for descriptor in descriptors.take(MAX_FDS_PER_PROCESS).flatten() {
-            if fs::read_link(descriptor.path())
-                .ok()
-                .is_some_and(|target| target == Path::new(&needle))
-            {
+            if fs::read_link(descriptor.path()).is_ok_and(|target| target == Path::new(&needle)) {
                 return Some(pid);
             }
         }

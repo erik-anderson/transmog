@@ -1298,7 +1298,10 @@ mod tests {
         invalid.window.width = 1;
         assert!(store.save(invalid).is_err());
         store.remember(PathBuf::from("secret.tmcap"), ArtifactKind::NativeCapture);
-        assert!(store.snapshot().recent_artifacts.is_empty());
+        assert_eq!(
+            store.snapshot().recent_artifacts,
+            [] as [crate::RecentArtifact; 0]
+        );
     }
 
     #[test]

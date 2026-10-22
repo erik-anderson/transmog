@@ -218,7 +218,10 @@ fn empty_and_leaf_only_client_paths_are_safe_and_invalid_keys_are_rejected() {
     let context = factory.synchronous_connector().unwrap();
     let capture = factory.capture(None, vec![]);
     capture.completed(&Ssl::new(context.context()).unwrap(), false);
-    assert!(capture.snapshot().client_chain.is_empty());
+    assert_eq!(
+        capture.snapshot().client_chain,
+        [] as [transmog_core::PublicCertificate; 0]
+    );
     let leaf = ca
         .issue(EndpointIdentity::parse("localhost").unwrap(), 1)
         .unwrap();

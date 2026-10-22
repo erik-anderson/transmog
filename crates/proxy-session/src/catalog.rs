@@ -1701,8 +1701,14 @@ mod tests {
             catalog.ordered_ids(Some(1), Some(3), false, 2),
             [(2, ExchangeId(2))]
         );
-        assert!(catalog.ordered_ids(Some(3), Some(3), false, 2).is_empty());
-        assert!(catalog.ordered_ids(None, None, false, 0).is_empty());
+        assert_eq!(
+            catalog.ordered_ids(Some(3), Some(3), false, 2),
+            [] as [(u64, transmog_core::intercept::ExchangeId); 0]
+        );
+        assert_eq!(
+            catalog.ordered_ids(None, None, false, 0),
+            [] as [(u64, transmog_core::intercept::ExchangeId); 0]
+        );
         assert_eq!(
             catalog.with_heads(ExchangeId(90), |heads| (
                 heads.request_number,
@@ -1731,7 +1737,10 @@ mod tests {
             Err(CatalogError::RequestNumberExhausted)
         );
         assert_eq!(catalog.lock_state().next_admission, u64::MAX - 1);
-        assert!(catalog.project_retained(|row| row.exchange_id).is_empty());
+        assert_eq!(
+            catalog.project_retained(|row| row.exchange_id),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
         assert_eq!(
             catalog.try_import_sessions_with(vec![batch[0].clone()], || Err(
                 CatalogError::ImportCanceled
@@ -1784,7 +1793,10 @@ mod tests {
         catalog.dismiss(&[ExchangeId(1)], &[]);
         let old = catalog.dismissal_versions(&[ExchangeId(1)]);
         assert_eq!(catalog.dismiss_all(&[]).len(), 2);
-        assert!(catalog.forget_dismissed_versions(&old).is_empty());
+        assert_eq!(
+            catalog.forget_dismissed_versions(&old),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
         let clear = catalog.dismissal_versions(&[ExchangeId(1), ExchangeId(2)]);
         catalog.restore_dismissed(&[ExchangeId(1)]);
         catalog.dismiss(&[ExchangeId(1)], &[]);
@@ -1861,18 +1873,23 @@ mod tests {
             },
         ));
         start(&catalog, 2, "ordinary.test");
-        assert!(catalog.dismiss(&[ExchangeId(1)], &[]).is_empty());
-        assert!(
-            catalog
-                .dismiss_unselected(&HashSet::from([ExchangeId(2)]), &[])
-                .is_empty()
+        assert_eq!(
+            catalog.dismiss(&[ExchangeId(1)], &[]),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
+        assert_eq!(
+            catalog.dismiss_unselected(&HashSet::from([ExchangeId(2)]), &[]),
+            [] as [transmog_core::intercept::ExchangeId; 0]
         );
         let removed = catalog.dismiss_all(&[]);
         assert_eq!(removed, vec![ExchangeId(2)]);
         let expiry = catalog.dismissal_versions(&removed);
         // Non-undoable Clear and expired Undo use these same permanent release paths.
         assert_eq!(catalog.forget_dismissed(&removed), vec![ExchangeId(2)]);
-        assert!(catalog.forget_dismissed_versions(&expiry).is_empty());
+        assert_eq!(
+            catalog.forget_dismissed_versions(&expiry),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
         assert!(catalog.get(ExchangeId(1)).is_some());
         assert_eq!(catalog.live_websocket_count(), 1);
         start(&catalog, 3, "later.test");
@@ -1992,7 +2009,10 @@ mod tests {
         catalog.dismiss(&[ExchangeId(1)], &[]);
         start(&catalog, 3, "three.test");
         assert_eq!(catalog.get(ExchangeId(3)).unwrap().request_number, 3);
-        assert!(catalog.restore_dismissed(&[ExchangeId(1)]).is_empty());
+        assert_eq!(
+            catalog.restore_dismissed(&[ExchangeId(1)]),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
         assert!(catalog.lock_state().dismissed.is_empty());
     }
 
@@ -2671,7 +2691,7 @@ mod tests {
             .unwrap();
         assert!(credential.is_redacted());
         assert_eq!(credential.value_bytes(), b"Bearer secret".len());
-        assert!(credential.value().is_empty());
+        assert_eq!(credential.value(), b"");
         assert!(headers.iter().any(|field| field.name() == b"x-safe"));
     }
 
@@ -2907,7 +2927,7 @@ mod tests {
             let state = catalog.lock_state();
             let history = &state.by_id[&ExchangeId(1)].stream_history;
             let later = std::time::Instant::now()
-                .checked_add(std::time::Duration::from_secs(60))
+                .checked_add(std::time::Duration::from_mins(1))
                 .unwrap();
             assert_eq!(
                 history

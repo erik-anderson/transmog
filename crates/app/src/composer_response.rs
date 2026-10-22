@@ -294,11 +294,11 @@ mod tests {
             result.detail.stored_bodies[0].retained_bytes,
             bytes.len() as u64
         );
-        assert!(
+        assert_eq!(
             app.query_sessions(crate::SessionQueryInput::default())
                 .unwrap()
-                .sessions
-                .is_empty()
+                .sessions,
+            [] as [crate::SessionSummary; 0]
         );
         assert_eq!(
             app.copy_message_url(id, "client-response").unwrap(),

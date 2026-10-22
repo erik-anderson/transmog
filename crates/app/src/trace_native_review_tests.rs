@@ -460,7 +460,10 @@ fn native_metadata_growth_enforces_budget_before_retention() {
         )
         .is_err()
     );
-    assert!(row.requests.is_empty());
+    assert_eq!(
+        row.requests,
+        [] as [transmog_session::ObservedRequestHead; 0]
+    );
 }
 
 fn app(root: &Path) -> crate::Application {
@@ -473,13 +476,16 @@ fn app(root: &Path) -> crate::Application {
 
 fn assert_empty(app: &crate::Application, id: ExchangeId) {
     assert!(app.trace_metadata_list().is_empty());
-    assert!(
+    assert_eq!(
         app.query_sessions(crate::SessionQueryInput::default())
             .unwrap()
-            .sessions
-            .is_empty()
+            .sessions,
+        [] as [crate::SessionSummary; 0]
     );
-    assert!(app.body_store().unwrap().metadata(id).is_empty());
+    assert_eq!(
+        app.body_store().unwrap().metadata(id),
+        [] as [crate::StoredBodyMetadata; 0]
+    );
     assert_eq!(app.traces.retained_index_bytes(), 0);
 }
 

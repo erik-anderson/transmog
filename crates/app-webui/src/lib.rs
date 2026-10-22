@@ -304,12 +304,9 @@ mod tests {
             404
         );
         assert_eq!(renderer.respond("POST", "/", &view).unwrap().status, 405);
-        assert!(
-            renderer
-                .respond("HEAD", "/", &view)
-                .unwrap()
-                .body
-                .is_empty()
+        assert_eq!(
+            renderer.respond("HEAD", "/", &view).unwrap().body,
+            [] as [u8; 0]
         );
     }
 

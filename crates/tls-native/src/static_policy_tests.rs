@@ -35,7 +35,7 @@ fn missing_peer_rejects_before_consulting_cached_or_network_issuers() {
     });
     let result = verify(&compile(&policy).unwrap(), &policy, &[], false);
     assert!(!result.accepted);
-    assert!(result.path.is_empty());
+    assert_eq!(result.path, [] as [std::vec::Vec<u8>; 0]);
     assert_eq!(result.diagnostic, "No peer certificate");
 }
 

@@ -206,7 +206,7 @@ fn response_set_round_trip_preserves_current_identity_in_both_orders_and_named_o
         let status = recipient
             .import_rule_collection(review, &AtomicBool::new(false))
             .unwrap();
-        assert!(status.rules.is_empty());
+        assert_eq!(status.rules, [] as [transmog_automation::Rule; 0]);
         let imported = &status.response_sets[0];
         assert_eq!(imported.notes, set.notes);
         assert!(imported.paused);
@@ -221,7 +221,7 @@ fn response_set_round_trip_preserves_current_identity_in_both_orders_and_named_o
                 b"current"
             );
         } else {
-            assert!(imported.rules.is_empty());
+            assert_eq!(imported.rules, [] as [transmog_automation::Rule; 0]);
         }
         assert_eq!(imported.versions.len(), 1);
         assert_eq!(imported.versions[0].name, "Milestone");
@@ -344,15 +344,15 @@ fn large_response_sets_export_package_and_import_current_and_named_content() {
                 )
                 .unwrap();
             let status = recipient.import_rule_collection(review, &canceled).unwrap();
-            assert!(status.rules.is_empty());
+            assert_eq!(status.rules, [] as [transmog_automation::Rule; 0]);
             let imported = &status.response_sets[0];
             assert!(imported.paused);
             assert!(imported.applied.is_none());
             let restored = if current {
-                assert!(imported.versions.is_empty());
+                assert_eq!(imported.versions, [] as [crate::ResponseSetVersion; 0]);
                 &imported.rules
             } else {
-                assert!(imported.rules.is_empty());
+                assert_eq!(imported.rules, [] as [transmog_automation::Rule; 0]);
                 &imported.versions[0].rules
             };
             assert_eq!(restored.len(), count);
@@ -406,14 +406,14 @@ fn reviewed_import_is_disabled_atomic_and_survives_restart_with_exact_asset_byte
     assert_eq!(import.review().activation, "disabled");
     assert!(import.review().source.experiments[0].variants[1].revisions[0].rules[0].enabled_intent);
     assert_eq!(app.automation_status().generation, before.generation);
-    assert!(app.response_assets().is_empty());
+    assert_eq!(app.response_assets(), [] as [crate::ResponseAsset; 0]);
     let status = app
         .import_rule_collection(import, &AtomicBool::new(false))
         .unwrap();
     assert_eq!(status.rules, before.rules);
     assert!(!status.autoresponses_enabled);
     assert_eq!(status.candidate_count, 1);
-    assert!(!candidate.candidate_id.is_empty());
+    assert_ne!(candidate.candidate_id, "");
     assert_eq!(registrations(&app), hooks);
     assert_eq!(status.response_sets.len(), 1);
     assert!(status.response_sets[0].paused);
@@ -535,12 +535,12 @@ fn stale_canceled_and_failed_persistence_imports_preserve_live_and_saved_state()
     );
     assert_eq!(app.automation_status().generation, before.generation);
     assert_eq!(app.automation_status().rules, before.rules);
-    assert!(app.response_assets().is_empty());
+    assert_eq!(app.response_assets(), [] as [crate::ResponseAsset; 0]);
     assert_eq!(registrations(&app), hooks);
     drop(app);
     let reopened = Application::new(config(root.path())).unwrap();
     assert_eq!(reopened.automation_status().rules, before.rules);
-    assert!(reopened.response_assets().is_empty());
+    assert_eq!(reopened.response_assets(), [] as [crate::ResponseAsset; 0]);
     assert_eq!(std::fs::read_dir(stage.path()).unwrap().count(), 0);
 }
 
@@ -616,7 +616,7 @@ fn import_flat_header_and_literal_rules_keeps_authored_intent_but_never_installs
         .unwrap();
     assert_eq!(status.rules.len(), 2);
     assert!(status.rules.iter().all(|r| !r.enabled));
-    assert!(registrations(&app).is_empty());
+    assert_eq!(registrations(&app), [] as [std::string::String; 0]);
     let document = app.automation.active.read().unwrap();
     assert!(
         document.document.portable_imports[0]
@@ -715,7 +715,7 @@ fn selected_export_is_passive_preserves_bytes_and_freezes_linked_files_without_p
             .contains("author-private-name")
     );
     assert_eq!(app.automation_status().generation, before.generation);
-    assert!(registrations(&app).is_empty());
+    assert_eq!(registrations(&app), [] as [std::string::String; 0]);
     std::fs::remove_file(path).unwrap();
     assert!(
         app.export_rule_collection(
@@ -770,7 +770,10 @@ fn unrelated_asset_writes_do_not_duplicate_import_catalog_and_export_omits_other
         .export_rule_collection(&request, stage.path(), &AtomicBool::new(false))
         .unwrap();
     assert!(export.manifest().extensions.is_empty());
-    assert!(export.manifest().objects.is_empty());
+    assert_eq!(
+        export.manifest().objects,
+        [] as [transmog_portable::Object; 0]
+    );
     drop(app);
     let reopened = Application::new(config(root.path())).unwrap();
     assert_eq!(reopened.response_assets().len(), 2);
@@ -800,14 +803,14 @@ fn authored_active_archived_and_large_revision_intent_is_retained_without_activa
     let imported = &active_document.document.response_sets[0];
     assert!(imported.paused);
     assert!(imported.applied.is_none());
-    assert!(imported.rules.is_empty());
+    assert_eq!(imported.rules, [] as [transmog_automation::Rule; 0]);
     assert_eq!(imported.versions.len(), 1);
     assert_eq!(imported.versions[0].name, "Blue");
     assert_eq!(
         imported.versions[0].rules[0].revision,
         9_007_199_254_740_993
     );
-    assert!(registrations(&app).is_empty());
+    assert_eq!(registrations(&app), [] as [std::string::String; 0]);
 }
 
 #[test]
@@ -902,7 +905,7 @@ fn review_is_bound_to_its_workspace_even_when_generations_match() {
             .is_err()
     );
     assert_eq!(target.automation_status().generation, 0);
-    assert!(target.response_assets().is_empty());
+    assert_eq!(target.response_assets(), [] as [crate::ResponseAsset; 0]);
 }
 
 #[test]
@@ -960,8 +963,11 @@ fn in_memory_workspaces_enforce_the_same_import_capacity_before_publication() {
         ErrorCategory::Limit
     );
     assert_eq!(app.automation_status().generation, 0);
-    assert!(app.response_assets().is_empty());
-    assert!(app.automation_status().response_sets.is_empty());
+    assert_eq!(app.response_assets(), [] as [crate::ResponseAsset; 0]);
+    assert_eq!(
+        app.automation_status().response_sets,
+        [] as [crate::ResponseSet; 0]
+    );
     assert_eq!(std::fs::read_dir(stage.path()).unwrap().count(), 0);
 }
 
@@ -988,8 +994,11 @@ fn corrupted_import_catalog_falls_back_as_a_whole_to_the_previous_commit() {
     let reopened = Application::new(config(root.path())).unwrap();
     assert_eq!(reopened.automation_status().generation, generation - 1);
     assert_eq!(reopened.automation_status().rules, vec![ordinary()]);
-    assert!(reopened.response_assets().is_empty());
-    assert!(reopened.automation_status().response_sets.is_empty());
+    assert_eq!(reopened.response_assets(), [] as [crate::ResponseAsset; 0]);
+    assert_eq!(
+        reopened.automation_status().response_sets,
+        [] as [crate::ResponseSet; 0]
+    );
 }
 
 #[cfg(windows)]
@@ -1022,13 +1031,13 @@ fn blocked_atomic_publication_preserves_both_existing_recovery_slots() {
     );
     assert_eq!(std::fs::read(&destination).unwrap(), original);
     assert_eq!(app.automation_status().generation, generation);
-    assert!(app.response_assets().is_empty());
+    assert_eq!(app.response_assets(), [] as [crate::ResponseAsset; 0]);
     drop(held);
     drop(app);
     let reopened = Application::new(config(root.path())).unwrap();
     assert_eq!(reopened.automation_status().generation, generation);
     assert_eq!(reopened.automation_status().rules, vec![ordinary()]);
-    assert!(reopened.response_assets().is_empty());
+    assert_eq!(reopened.response_assets(), [] as [crate::ResponseAsset; 0]);
     assert!(std::fs::read_dir(root.path()).unwrap().all(|entry| {
         !entry
             .unwrap()

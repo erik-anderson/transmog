@@ -1637,7 +1637,10 @@ mod tests {
                 if recorded == &target && changes.target_changed
         ));
         assert_eq!(chain.take_unpublished_hook_effects(), effects);
-        assert!(chain.take_unpublished_hook_effects().is_empty());
+        assert_eq!(
+            chain.take_unpublished_hook_effects(),
+            [] as [crate::intercept::HookEffect; 0]
+        );
         assert_eq!(chain.hook_effects(), effects);
     }
 
