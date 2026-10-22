@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche"]
+exclude = ["sdk", "third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche"]
 resolver = "2"
 members = [
     "crates/auth",
@@ -41,7 +41,6 @@ members = [
     "crates/proxy-websocket",
     "crates/proxy-session",
     "crates/proxy-cli",
-    "examples/dotnet-embedding/native",
 ]
 
 [workspace.package]

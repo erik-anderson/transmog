@@ -22,6 +22,17 @@ def load(name):
 
 
 class CommandTests(unittest.TestCase):
+    def test_dev_environment_forwards_child_separator_and_flags_literally(self):
+        module = load("dev-env")
+        child = ["cargo", "clippy", "--all-targets", "--", "-D", "warnings"]
+        with patch.object(sys, "argv", ["dev-env.py", "--run", *child]), \
+             patch.object(module, "development_environment", return_value={}), \
+             patch.object(module, "command", return_value=subprocess.CompletedProcess(child, 0)) as run:
+            with self.assertRaises(SystemExit) as completed:
+                module.main()
+        self.assertEqual(completed.exception.code, 0)
+        run.assert_called_once_with(child, env={}, check=False)
+
     def test_arguments_are_literal_and_nonzero_exit_stops_the_caller(self):
         text = 'spaces & $() `echo` "quotes" ; Unicode: \u00e9'
         # Match command()'s UTF-8 decoder even on Windows without PYTHONUTF8.

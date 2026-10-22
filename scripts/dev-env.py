@@ -11,7 +11,15 @@ def main():
     parser.add_argument("--check", action="store_true")
     parser.add_argument("--emit-env", action="store_true")
     parser.add_argument("--run", nargs=argparse.REMAINDER)
-    args = parser.parse_args()
+    # Python 3.11 argparse may split an option's REMAINDER at a literal --.
+    # Once --run appears, its entire suffix belongs to the child command.
+    argv = sys.argv[1:]
+    if "--run" in argv:
+        index = argv.index("--run")
+        args = parser.parse_args(argv[:index])
+        args.run = argv[index + 1:]
+    else:
+        args = parser.parse_args(argv)
     if args.run is not None and not args.run:
         parser.error("--run requires a command")
     env = development_environment()

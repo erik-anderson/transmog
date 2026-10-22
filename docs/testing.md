@@ -108,6 +108,18 @@ Cargo/target data in named volumes. It does not qualify a native Linux desktop.
 Hosted release gates and deliberately inactive broader workflows are described
 in [CI](../ci/README.md).
 
+The opt-in native SDK has its own Linux gate, including C++, C, and .NET
+consumers in Debug and Release:
+
+```powershell
+python ./scripts/test-sdk-linux-docker.py
+```
+
+It supports Docker Desktop's WSL2 Linux engine and keeps SDK tools/build caches
+separate from Windows outputs. Logs, source/toolchain provenance, and staged SDK
+archives go to `.local/sdk-linux-qualification/`. See
+[the SDK guide](../sdk/README.md#verification) for scope and prerequisites.
+
 ## Desktop and capture workflows
 
 Auth fixtures run with `cargo test -p transmog-auth` and the application auth

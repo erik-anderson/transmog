@@ -1,5 +1,8 @@
 /target/
 /fuzz/target/
+/sdk/target/
+/sdk/tests/managed-body-reader/bin/
+/sdk/tests/managed-body-reader/obj/
 /fuzz/artifacts/
 /fuzz/coverage/
 /fuzz/coverage-summary.txt

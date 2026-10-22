@@ -1,11 +1,17 @@
 # Embedding Transmog
 
-The [educational .NET 10 sample](../examples/dotnet-embedding/README.md) shows a
-C# console application calling the canonical engine in-process through a narrow
-native C ABI. The bridge is intentionally same-build and is not a stable managed
-SDK, but it demonstrates foreign-language ownership, bounded result transfer,
-system trust, bounded origin connection racing, and an allowed-protocol policy
-with HTTP/1.1 and HTTP/2 selected through ALPN plus an explicit HTTP/3 attempt.
+The experimental [native SDK](../sdk/README.md) provides a no-throw C++ ABI and
+a C compatibility surface binding the same `transmog_app::Application` facade
+used by the desktop. Its opt-in build is
+isolated from the desktop and CLI. Crubit is a private SDK build tool; consuming
+the staged headers/library needs no Rust or Crubit installation. The
+[.NET 10 sample](../examples/dotnet-embedding/README.md) calls the SDK's C exports,
+which use the public C++ implementation. This intentionally same-build interface
+demonstrates application ownership, existing product-state and error models,
+proxy start, ordered traffic views and inspection, session-update callbacks,
+bounded body reads and live streaming, reversible drain/resume,
+and final shutdown. The host generates HTTP traffic through the proxy;
+the SDK has no separate fetch implementation.
 
 The examples in this repository share its pinned BoringSSL dependency graph.
 An independent Cargo workspace must repeat the root manifest's full

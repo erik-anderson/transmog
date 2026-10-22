@@ -1,0 +1,11 @@
+cmake_minimum_required(VERSION 3.24)
+project(TransmogEmbedding LANGUAGES C CXX)
+find_package(Transmog CONFIG REQUIRED)
+include(CTest)
+add_executable(transmog_cpp_embedding main.cpp c_header.c)
+target_link_libraries(transmog_cpp_embedding PRIVATE Transmog::SDK)
+if(WIN32)
+  add_custom_command(TARGET transmog_cpp_embedding POST_BUILD COMMAND ${CMAKE_COMMAND} -E copy_if_different
+    $<TARGET_FILE:Transmog::SDK> $<TARGET_FILE_DIR:transmog_cpp_embedding>)
+endif()
+add_test(NAME installed_sdk_consumer COMMAND transmog_cpp_embedding --self-test)

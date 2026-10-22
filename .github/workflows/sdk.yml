@@ -1,0 +1,67 @@
+name: Native SDK
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - 'sdk/**'
+      - 'examples/cpp-embedding/**'
+      - 'examples/dotnet-embedding/**'
+      - 'e2e/sdk-linux/**'
+      - 'scripts/*sdk*'
+      - 'scripts/tests/test_sdk_tools.py'
+      - 'scripts/build-dotnet-sample.py'
+      - 'scripts/repo_tools.py'
+      - 'scripts/dev-env.py'
+      - 'scripts/tls_dependencies.py'
+      - 'scripts/transport_dependencies.py'
+      - 'Cargo.toml'
+      - 'Cargo.lock'
+      - 'rust-toolchain.toml'
+      - 'crates/**'
+      - 'third_party/**'
+      - '.github/workflows/sdk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  sdk:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2025, ubuntu-24.04]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    env:
+      PYTHONUTF8: '1'
+      CARGO_TARGET_DIR: .local/sdk/rust-target
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.97.1
+          components: rustfmt, clippy
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: llvm/actions/setup-clang@v1
+      - uses: seanmiddleditch/gha-setup-ninja@v5
+      - uses: ilammy/setup-nasm@v1
+      - name: Check environment
+        run: python scripts/dev-env.py --check
+      - name: Format SDK
+        run: python scripts/dev-env.py --run cargo fmt --manifest-path sdk/Cargo.toml --all -- --check
+      - name: Verify application isolation
+        run: python scripts/check-sdk-isolation.py
+      - name: Check SDK bootstrap recovery
+        run: python -m unittest discover -s scripts/tests -p test_sdk_tools.py
+      - name: Build and exercise all consumers
+        run: python scripts/test-sdk.py
+      - name: Check handwritten Rust
+        run: python scripts/dev-env.py --run cargo clippy --manifest-path sdk/Cargo.toml --locked -p transmog-sdk-engine -p transmog-sdk-facade --all-targets -- -D warnings
+      - name: Application binding parity tests
+        run: python scripts/dev-env.py --run cargo test --manifest-path sdk/Cargo.toml --locked -p transmog-sdk-engine -p transmog-sdk-facade

@@ -1,4 +1,8 @@
+using System.Diagnostics;
+using System.Net;
+using System.Security.Cryptography;
 using System.Text.Json;
+using System.Text.Json.Nodes;
 
 namespace Transmog.Embedding.Sample;
 
@@ -8,188 +12,203 @@ internal static class Program
     {
         try
         {
-            if (args.Contains("--help", StringComparer.OrdinalIgnoreCase) || args.Length == 0)
+            if (args.Length == 0 || args.Contains("--help"))
             {
-                PrintUsage();
+                Console.WriteLine("Transmog application embedding example\n" +
+                    "Usage: --url <http-url> --output <path> [--overwrite]\n" +
+                    "Starts a loopback proxy, sends host HTTP traffic through it, inspects the exchange, and shuts down.");
                 return args.Length == 0 ? 2 : 0;
             }
+            var options = Options.Parse(args);
+            if (!options.Overwrite && File.Exists(options.Output))
+                throw new ArgumentException("Output file exists; pass --overwrite to replace it.");
 
-            Options options = Options.Parse(args);
-            FileMode outputMode = options.Overwrite ? FileMode.Create : FileMode.CreateNew;
-            if (!options.Overwrite && File.Exists(options.OutputPath))
-            {
-                throw new ArgumentException(
-                    $"Output file already exists: {options.OutputPath}. Pass --overwrite to replace it.");
-            }
-
-            var nativeRequest = new
-            {
-                url = options.Url.AbsoluteUri,
-                protocols = options.Protocols,
-                maxResponseBytes = options.MaxResponseBytes,
-                timeoutMilliseconds = checked(options.TimeoutSeconds * 1000)
-            };
-            NativeFetchResponse response = NativeTransmog.Fetch(nativeRequest);
-
-            await using (var output = new FileStream(
-                options.OutputPath,
-                outputMode,
-                FileAccess.Write,
-                FileShare.None,
-                bufferSize: 64 * 1024,
-                useAsync: true))
-            {
-                await output.WriteAsync(response.Body);
-            }
-
-            using JsonDocument metadata = JsonDocument.Parse(response.MetadataJson);
-            string protocol = metadata.RootElement.GetProperty("protocol").GetString() ?? "unknown";
-            Console.WriteLine(
-                $"HTTP {response.StatusCode} over {protocol}; wrote {response.Body.Length} bytes to {options.OutputPath}");
-            Console.WriteLine(response.MetadataJson);
-            return 0;
+            // This directory belongs only to this invocation. Native owners are
+            // disposed before removing it; product buffer preferences choose storage.
+            DirectoryInfo cache = Directory.CreateTempSubdirectory("transmog-embedding-");
+            try { return await RunAsync(options, cache.FullName); }
+            finally { cache.Delete(recursive: true); }
         }
-        catch (Exception error) when (
-            error is ArgumentException
-                or IOException
-                or InvalidOperationException
-                or JsonException
-                or DllNotFoundException
-                or EntryPointNotFoundException)
+        catch (Exception error) when (error is ArgumentException or IOException or InvalidOperationException
+            or JsonException or DllNotFoundException or EntryPointNotFoundException or HttpRequestException
+            or OperationCanceledException)
         {
             Console.Error.WriteLine($"error: {error.Message}");
             return 1;
         }
     }
 
-    private static void PrintUsage()
+    private static async Task<int> RunAsync(Options options, string cacheDirectory)
     {
-        Console.WriteLine(
-            """
-            Transmog .NET 10 embedding sample
+        using var app = new NativeApplication(cacheDirectory);
+        // These are the app's existing ProductState/ProxyStartRequest models.
+        // Change the same preferences the desktop changes; no SDK-specific proxy settings.
+        JsonNode state = JsonNode.Parse(app.ProductState().GetRawText())!;
+        state["preferences"]!["decryptHttps"] = false;
+        state["preferences"]!["configureSystemProxy"] = false;
+        state["privacy"]!["retainResponseBodies"] = true;
+        state["privacy"]!["bufferLimit"] = new JsonObject { ["mode"] = "custom", ["bytes"] = 64 * 1024 * 1024 };
+        _ = app.SaveProductState(state.ToJsonString());
+        string startRequest = JsonSerializer.Serialize(new
+        {
+            caCertificatePath = "",
+            caPrivateKeyPath = "",
+            listen = "127.0.0.1:0",
+            route = "http1",
+            allowRemoteClients = false,
+            recordingOnly = false
+        });
+        JsonElement started = app.StartProxy(startRequest);
+        string listener = started.GetProperty("listener").GetString()!;
+        Console.WriteLine($"Proxy listening on {listener}");
+        using var changed = new SemaphoreSlim(0, 1);
+        int notifications = 0;
+        using var updates = app.SubscribeSessionUpdates(hint =>
+        {
+            // SessionHint signals a refresh, including when its lagged flag
+            // is set. Read authoritative rows rather than applying deltas.
+            _ = hint.GetProperty("lagged").GetBoolean();
+            Interlocked.Increment(ref notifications);
+            if (changed.CurrentCount == 0) changed.Release();
+        });
+        using var cancellation = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        CancellationToken token = cancellation.Token;
 
-            Usage:
-              dotnet run --no-build --project examples/dotnet-embedding/Transmog.Embedding.Sample -- \
-                --url <http-or-https-url> --output <path> [options]
+        // The host sends traffic. The SDK exposes the application that observes it.
+        using (var handler = new HttpClientHandler
+        {
+            Proxy = new WebProxy($"http://{listener}"),
+            UseProxy = true,
+            AllowAutoRedirect = false,
+            AutomaticDecompression = DecompressionMethods.None
+        })
+        using (var client = new HttpClient(handler) { Timeout = TimeSpan.FromSeconds(15) })
+        using (HttpResponseMessage response = await client.GetAsync(
+            options.Url, HttpCompletionOption.ResponseHeadersRead, token))
+        {
+            // Drain/hash the client response concurrently so native capture
+            // can advance while the host pulls captured byte pages.
+            Task<(long Bytes, byte[] Hash)> host = HashHostBodyAsync(response, token);
+            try
+            {
+                if (!await changed.WaitAsync(TimeSpan.FromSeconds(10), token))
+                    throw new InvalidOperationException("No native session update notification arrived.");
+                string id = await FindSessionAsync(app, options.Url, changed, token);
+                await using var output = new FileStream(options.Output,
+                    options.Overwrite ? FileMode.Create : FileMode.CreateNew,
+                    FileAccess.Write, FileShare.Read, 64 * 1024, useAsync: true);
+                using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+                long bytes = 0;
+                int chunks = 0;
+                await foreach (ReadOnlyMemory<byte> chunk in app.ReadBodyChunksAsync(
+                    id, "client-response", cancellationToken: token))
+                {
+                    bytes = checked(bytes + chunk.Length);
+                    if (bytes > 16 * 1024 * 1024)
+                        throw new InvalidOperationException("Example response exceeds 16 MiB.");
+                    hash.AppendData(chunk.Span);
+                    await output.WriteAsync(chunk, token);
+                    if (++chunks == 1)
+                    {
+                        await output.FlushAsync(token);
+                        Console.WriteLine("Native body streaming started.");
+                    }
+                }
+                var received = await host;
+                if (received.Bytes != bytes || !CryptographicOperations.FixedTimeEquals(received.Hash, hash.GetHashAndReset()))
+                    throw new IOException("Captured body bytes did not match the host response.");
+                if (updates.CallbackError is not null)
+                    throw new InvalidOperationException("The session update callback failed.", updates.CallbackError);
+                Console.WriteLine($"HTTP {(int)response.StatusCode}; wrote {bytes} captured bytes to {options.Output}");
+                Console.WriteLine($"Captured body: {bytes} bytes in {chunks} chunks; SHA-256 matches host response.");
+                Console.WriteLine($"Session updates received: {Volatile.Read(ref notifications)}");
+                Console.WriteLine(app.SessionDetail(id).GetRawText());
+            }
+            finally
+            {
+                cancellation.Cancel();
+                try { _ = await host; }
+                catch (Exception error) when (error is IOException or HttpRequestException or OperationCanceledException) { }
+            }
+        }
+        _ = app.StopProxy();
+        _ = app.Shutdown();
+        return 0;
+    }
 
-            Options:
-              --protocols <list>         Allowed h1,h2,h3 protocols (default: h1,h2)
-              --max-response-bytes <n>   Response limit (default: 16777216; max: 268435456)
-              --timeout-seconds <n>      Per-attempt/head and body deadline (default: 30; max: 300)
-              --overwrite                Replace an existing output file
-              --help                     Show this help
-            """);
+    private static async Task<string> FindSessionAsync(
+        NativeApplication app, Uri url, SemaphoreSlim changed, CancellationToken token)
+    {
+        // Use the same ordering snapshot and bounded row reads as the desktop.
+        string query = JsonSerializer.Serialize(new
+        {
+            method = "GET",
+            host = url.Host,
+            sort = new { column = "started-at", direction = "descending" }
+        });
+        var wait = Stopwatch.StartNew();
+        string? id = null;
+        while (wait.Elapsed < TimeSpan.FromSeconds(10))
+        {
+            token.ThrowIfCancellationRequested();
+            JsonElement view = await Task.Run(() => app.QueryTrafficView(query), token);
+            string viewId = view.GetProperty("id").GetString()!;
+            try
+            {
+                JsonElement rows = await Task.Run(() => app.TrafficViewRows(viewId, 0, 100), token);
+                foreach (JsonElement session in rows.EnumerateArray())
+                    if (session.GetProperty("path").GetString() == url.PathAndQuery)
+                        id = session.GetProperty("id").GetString();
+            }
+            finally { _ = app.ReleaseTrafficView(viewId); }
+            if (id is not null) break;
+            // A periodic refresh also covers coalesced/lost refresh hints.
+            _ = await changed.WaitAsync(TimeSpan.FromMilliseconds(100), token);
+        }
+        if (id is null) throw new InvalidOperationException("The captured exchange did not become available.");
+        return id;
+    }
+
+    private static async Task<(long Bytes, byte[] Hash)> HashHostBodyAsync(
+        HttpResponseMessage response, CancellationToken token)
+    {
+        await using Stream body = await response.Content.ReadAsStreamAsync(token);
+        using var hash = IncrementalHash.CreateHash(HashAlgorithmName.SHA256);
+        byte[] chunk = new byte[64 * 1024];
+        long bytes = 0;
+        while (true)
+        {
+            int count = await body.ReadAsync(chunk, token);
+            if (count == 0) break;
+            bytes += count;
+            if (bytes > 16 * 1024 * 1024)
+                throw new InvalidOperationException("Example response exceeds 16 MiB.");
+            hash.AppendData(chunk, 0, count);
+        }
+        return (bytes, hash.GetHashAndReset());
     }
 }
-
-internal sealed record Options(
-    Uri Url,
-    string[] Protocols,
-    string OutputPath,
-    int MaxResponseBytes,
-    int TimeoutSeconds,
-    bool Overwrite)
+internal sealed record Options(Uri Url, string Output, bool Overwrite)
 {
-    private const int DefaultMaxResponseBytes = 16 * 1024 * 1024;
-    private const int MaximumResponseBytes = 256 * 1024 * 1024;
-    private const int DefaultTimeoutSeconds = 30;
-    private const int MaximumTimeoutSeconds = 300;
-
     public static Options Parse(string[] args)
     {
-        string? urlText = null;
-        string? outputPath = null;
-        string protocolsText = "h1,h2";
-        int maxResponseBytes = DefaultMaxResponseBytes;
-        int timeoutSeconds = DefaultTimeoutSeconds;
+        string? url = null, output = null;
         bool overwrite = false;
-
         for (int index = 0; index < args.Length; index++)
         {
             string argument = args[index];
-            switch (argument)
-            {
-                case "--url":
-                    urlText = NextValue(args, ref index, argument);
-                    break;
-                case "--output":
-                    outputPath = NextValue(args, ref index, argument);
-                    break;
-                case "--protocols":
-                    protocolsText = NextValue(args, ref index, argument);
-                    break;
-                case "--max-response-bytes":
-                    maxResponseBytes = ParseBoundedPositiveInt(
-                        NextValue(args, ref index, argument),
-                        argument,
-                        MaximumResponseBytes);
-                    break;
-                case "--timeout-seconds":
-                    timeoutSeconds = ParseBoundedPositiveInt(
-                        NextValue(args, ref index, argument),
-                        argument,
-                        MaximumTimeoutSeconds);
-                    break;
-                case "--overwrite":
-                    overwrite = true;
-                    break;
-                default:
-                    throw new ArgumentException($"Unknown argument: {argument}");
-            }
+            if (argument == "--overwrite") { overwrite = true; continue; }
+            if (argument is not ("--url" or "--output"))
+                throw new ArgumentException($"Unknown argument: {argument}");
+            if (++index == args.Length || args[index].StartsWith("--"))
+                throw new ArgumentException($"{argument} requires a value.");
+            if (argument == "--url") url = args[index]; else output = args[index];
         }
-
-        if (!Uri.TryCreate(urlText, UriKind.Absolute, out Uri? url)
-            || (url.Scheme != Uri.UriSchemeHttp && url.Scheme != Uri.UriSchemeHttps)
-            || string.IsNullOrEmpty(url.Host)
-            || !string.IsNullOrEmpty(url.UserInfo))
-        {
-            throw new ArgumentException("--url must be an absolute HTTP or HTTPS URL without user information.");
-        }
-        if (string.IsNullOrWhiteSpace(outputPath))
-        {
-            throw new ArgumentException("--output is required.");
-        }
-
-        string[] requestedProtocols = protocolsText
-            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Select(value => value.ToLowerInvariant())
-            .ToArray();
-        if (requestedProtocols.Length == 0
-            || requestedProtocols.Any(value => value is not ("h1" or "h2" or "h3"))
-            || requestedProtocols.Distinct(StringComparer.Ordinal).Count() != requestedProtocols.Length)
-        {
-            throw new ArgumentException(
-                "--protocols must be a non-empty, duplicate-free comma-separated list of h1, h2, and h3.");
-        }
-        string[] protocols = requestedProtocols
-            .OrderBy(value => value, StringComparer.Ordinal)
-            .ToArray();
-
-        return new Options(
-            url,
-            protocols,
-            Path.GetFullPath(outputPath),
-            maxResponseBytes,
-            timeoutSeconds,
-            overwrite);
-    }
-
-    private static string NextValue(string[] args, ref int index, string option)
-    {
-        index++;
-        if (index >= args.Length || args[index].StartsWith("--", StringComparison.Ordinal))
-        {
-            throw new ArgumentException($"{option} requires a value.");
-        }
-        return args[index];
-    }
-
-    private static int ParseBoundedPositiveInt(string value, string option, int maximum)
-    {
-        if (!int.TryParse(value, out int parsed) || parsed <= 0 || parsed > maximum)
-        {
-            throw new ArgumentException($"{option} must be between 1 and {maximum}.");
-        }
-        return parsed;
+        if (!Uri.TryCreate(url, UriKind.Absolute, out Uri? parsed) ||
+            parsed.Scheme != Uri.UriSchemeHttp || string.IsNullOrEmpty(parsed.Host) ||
+            !string.IsNullOrEmpty(parsed.UserInfo))
+            throw new ArgumentException("--url must be an absolute HTTP URL without user information.");
+        if (string.IsNullOrWhiteSpace(output)) throw new ArgumentException("--output is required.");
+        return new Options(parsed, Path.GetFullPath(output), overwrite);
     }
 }

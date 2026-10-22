@@ -1,94 +1,137 @@
-# .NET 10 embedding sample
+# .NET application embedding example
 
-This educational sample demonstrates a .NET console application calling
-Transmog in-process. It is deliberately small: the managed app accepts one URL,
-a set of allowed HTTP protocols, finite response/time limits, and an output
-path. It performs a `GET`, writes the raw response body to that path, and prints
-status, negotiated protocol, headers, trailers, and attempt evidence as JSON.
+This .NET 10 console example embeds the same `transmog_app::Application` used by
+the desktop. It configures a loopback proxy, generates traffic with HttpClient,
+finds the exchange through an ordered traffic view, streams its captured native
+response body to a file, prints session detail, and shuts down.
 
-The sample is a feasibility demonstration, not a stable managed SDK. Its native
-C ABI is revisioned but remains a same-build interface that may change with the
-repository. It does not launch the Transmog CLI or communicate with a separate
-proxy process.
+`NativeApplication.cs` adapts P/Invoke and SafeHandle ownership. C exports use the
+public no-throw C++ SDK, with private Crubit/Rust adapters underneath. Request,
+result, and error JSON retain the existing Application schemas. See the
+[SDK guide](../../sdk/README.md) for the full API, build prerequisites, and ABI
+contract.
 
-## How it is layered
+## Build and run
 
-```text
-.NET 10 console application
-        | P/Invoke: bounded JSON request + opaque result handle
-        v
-transmog-dotnet-sample-native (Rust cdylib)
-        | canonical Target, RequestHead, BodyStream, UpstreamPlan
-        v
-transmog-core UpstreamExecutor
-        |
-        +-- transmog-http (HTTP/1.1 or HTTP/2)
-        +-- transmog-h3   (HTTP/3)
-        |
-        v
-transmog-tls system-trust snapshot and BoringSSL policy
-```
+Install the repository prerequisites, Python 3.11+, and .NET 10:
 
-Rust owns the async runtime, protocol pools, TLS state, response bounds, and all
-native allocations. C# copies body and metadata bytes while the opaque result
-handle is live and then releases the handle exactly once.
-
-## Build
-
-Install the normal Transmog platform prerequisites plus the .NET 10 SDK. From
-the repository root, build the Rust dynamic library and managed application and
-copy the native library beside the managed executable:
-
-```powershell
+```sh
 python scripts/dev-env.py --check
-python scripts/build-dotnet-sample.py
+python scripts/build-dotnet-sample.py --configuration Debug
+dotnet run --no-build --configuration Debug --project examples/dotnet-embedding/Transmog.Embedding.Sample -- --url http://example.com/ --output response.bin
 ```
 
-Use `--configuration Release` for optimized binaries. On Windows the script
-enters the repository's LLVM/Ninja environment automatically. Linux uses the
-active Clang/LLVM toolchain. macOS remains unqualified even though the build
-script recognizes its dynamic-library naming convention.
+Use `--configuration Release` for both commands to run an optimized build.
+Building the SDK from this repository uses pinned Crubit and an SDK-local Rust
+compiler. A consumer of the staged library needs neither. To reuse an existing
+installation:
 
-## Run
-
-```powershell
-dotnet run --no-build `
-  --project ./examples/dotnet-embedding/Transmog.Embedding.Sample `
-  -- `
-  --url https://example.com/ `
-  --protocols h1,h2 `
-  --output ./example-response.bin
+```sh
+python scripts/build-dotnet-sample.py --configuration Debug --sdk-output <SDK_OUTPUT>
 ```
 
-Protocol values are `h1`, `h2`, and `h3`; their order has no meaning. When both
-`h1` and `h2` are allowed, Transmog offers `h2` and `http/1.1` together in the
-TLS ALPN handshake and uses the protocol selected by the origin. A singleton
-`h1` or `h2` set advertises only that protocol.
+The build copies the platform library beside the managed executable. Locally
+qualified configurations are Windows x64 Clang/LLVM (MSVC ABI) and Linux x64
+Debian 12/Clang 14, both Debug and Release. Linux qualification runs through
+Docker Desktop's WSL2 backend; Ubuntu CI remains a separate, unverified check.
 
-HTTP/3 uses QUIC and therefore cannot participate in the same TCP/TLS ALPN
-handshake. In this one-shot sample, allowing `h3` causes one direct HTTP/3
-attempt before the HTTP/2-and-HTTP/1.1 ALPN connection, regardless of the list
-order. HTTP/3 requires HTTPS. The default is `h1,h2`, so an origin without QUIC
-does not incur an HTTP/3 timeout.
+The demo accepts HTTP URLs, follows no redirects, and preserves binary and
+content-encoded bytes. It limits the response to 16 MiB and requires
+`--overwrite` to replace an existing output. It disables HTTPS decryption and
+system proxy configuration; only its HttpClient uses the listener.
+An owned temporary body-cache directory and a 64 MiB product buffer limit bound
+the evaluation. The directory is removed after native owners are disposed.
+A failed/canceled run can leave a partial output file.
 
-Additional options:
+## Capture and streaming contract
 
-- `--max-response-bytes`: one to 268,435,456 bytes; default 16 MiB;
-- `--timeout-seconds`: one to 300 seconds; default 30; and
-- `--overwrite`: replace an existing output file instead of failing safely.
+HttpClient generates traffic and drains/hashes its response concurrently.
+**The output file is written from native captured pages.** Success requires
+the native byte count and SHA-256 to match the host response.
 
-The sample makes one GET, does not follow redirects, and writes the response
-body exactly as delivered by the origin. It does not decode content encodings.
-TLS uses a snapshot of the operating system's trust roots and retains normal
-certificate and endpoint verification. Origin connections use the same bounded
-Happy Eyeballs implementation and default policy as the desktop proxy; the
-sample does not carry a second managed implementation.
+```mermaid
+sequenceDiagram
+    participant Host as .NET host
+    participant SDK as Native Application
+    participant Origin
+    Host->>SDK: Create with body cache, save ProductState, start_proxy
+    SDK-->>Host: Bound listener
+    Host->>SDK: Subscribe to session updates
+    Host->>SDK: HttpClient GET through listener
+    SDK->>Origin: Forward GET
+    Origin-->>SDK: Response headers and first bytes
+    SDK-->>Host: HTTP response plus lossy refresh hint
+    Note over Host,SDK: Host drains HTTP response while reading captured pages
+    Host->>SDK: Query traffic view, read rows, release view
+    SDK-->>Host: Captured session ID
+    Host->>SDK: session_detail and bounded read_body_range
+    SDK-->>Host: First captured chunk
+    Note over Host: Write/hash chunk, host HTTP drain continues
+    Host->>SDK: session_detail at the current offset
+    SDK-->>Host: capturing, no more retained bytes yet
+    Note over Host: Wait for a hint or periodic refresh
+    Origin-->>SDK: Response tail and completion
+    SDK-->>Host: Remaining HTTP bytes and refresh hints
+    loop Consumer requests remaining chunks
+        Host->>SDK: session_detail and bounded read_body_range
+        SDK-->>Host: Captured chunk
+    end
+    Host->>SDK: session_detail at the final offset
+    SDK-->>Host: complete, offset equals retainedBytes
+    Note over Host: Finish both reads and compare count plus SHA-256
+    Host->>SDK: stop_proxy, shutdown, dispose owners
+```
 
-## Why the bridge is narrow
+[`BodyReader.ReadBodyChunksAsync`](Transmog.Embedding.Sample/BodyReader.cs)
+returns `IAsyncEnumerable<ReadOnlyMemory<byte>>`:
 
-The native layer exposes no Rust layout, allocator, async future, Hyper type, or
-quiche type to managed code. A production managed package would likely add a
-long-lived runtime handle, cancellation, streaming callbacks or managed streams,
-structured configuration/result types, package-specific ABI compatibility, and
-RID-specific native assets. This sample intentionally proves only the basic
-embedding shape before those product decisions are made.
+```csharp
+await foreach (ReadOnlyMemory<byte> chunk in app.ReadBodyChunksAsync(
+    sessionId, "client-response", cancellationToken: token))
+{
+    await output.WriteAsync(chunk, token);
+}
+```
+
+Each chunk owns its bytes; pages default to 64 KiB. The consumer requests the
+next page only when ready. This paces SDK reads, without slowing network capture
+or reserving storage. Range calls hold no eviction lease between reads.
+A `capturing` prefix is not EOF: the adapter waits using session-update hints
+and a 100 ms refresh fallback. Only `complete` at the retained length ends
+successfully, including an empty complete body. Disabled, truncated, lost,
+quota-omitted, or evicted retention raises an error.
+
+Native calls block and run on worker threads in the iterator. Cancellation is
+observed after each bounded call and during waits; it cannot interrupt a native
+call already running. Breaking enumeration, completion, failure, and cancellation
+dispose the iterator's subscription. Keep Application alive until enumeration
+and its in-flight calls have finished.
+
+## Notifications and ownership
+
+Callbacks carry lossy, coalesced `SessionHint` JSON; re-query authoritative rows
+rather than applying deltas. Callbacks run on a native delivery thread, so signal
+a host queue and marshal UI work. `SessionUpdates` owns the native subscription
+and managed callback root, copies JSON before delivery, and exposes caught
+callback exceptions through `CallbackError`.
+
+Dispose the subscription before its callback state. Disposal waits for an
+in-flight callback; do not make that callback wait on the disposing thread.
+SafeHandles own native applications/results/subscriptions; the adapter copies
+result JSON before releasing each result. Explicit `Shutdown()` exposes final
+shutdown errors; disposal performs best-effort cleanup. See the SDK guide's
+[traffic contract](../../sdk/README.md#traffic-views-and-notifications)
+for the subscribe/refresh/release sequence.
+
+## Verification and scope
+
+`python scripts/test-sdk.py --configuration Debug` builds and runs the native
+contracts and this example against a local origin. It withholds a response tail
+until the example writes a captured prefix, proving that streaming begins before
+origin completion. It also checks binary, empty, compressed, and incomplete
+responses, output overwrite protection, and deterministic iterator cancellation
+and retention failures.
+
+This is a same-build demonstration, ABI revision 2. General AppConfig, host
+integration callbacks, interception, replay, and package distribution remain
+deferred. The app and CLI continue using their Rust API directly.
