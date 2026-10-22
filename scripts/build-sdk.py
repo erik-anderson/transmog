@@ -53,7 +53,9 @@ def main():
                  "shutdown", "query_sessions", "query_traffic_view", "traffic_view_rows",
                  "release_traffic_view", "subscribe_session_updates", "session_updates_valid",
                  "session_updates_status", "session_updates_release", "session_detail", "read_body_range", "release", "succeeded",
-                 "result_json", "result_json_length", "result_error", "result_error_length"):
+                 "result_json", "result_json_length", "result_error", "result_error_length",
+                 "body_page_succeeded", "body_page_release", "body_page_number", "body_page_data",
+                 "body_page_data_length", "body_page_coding", "body_page_coding_length"):
         if not re.search(rf"\b{name}\s*\(", errors):
             raise ValueError(f"Crubit omitted required SDK operation {name}: inspect {header}")
     env["TRANSMOG_SDK_GLUE"] = str(glue)

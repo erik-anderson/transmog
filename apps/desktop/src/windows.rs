@@ -1722,11 +1722,12 @@ async fn read_body_range(
     request: transmog_app::BodyRangeRequest,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
-) -> Result<transmog_app::BodyBytePage, AppError> {
-    state
+) -> Result<tauri::ipc::Response, AppError> {
+    let page = state
         .window_application(&window)?
         .read_body_range(request)
-        .await
+        .await?;
+    Ok(tauri::ipc::Response::new(crate::body_page::encode(&page)?))
 }
 
 #[tauri::command]

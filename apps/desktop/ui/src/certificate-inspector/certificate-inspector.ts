@@ -1,6 +1,7 @@
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utilities.js';
+import {decodeBytes} from '../hex-viewer/hex-formats.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 
 interface Field { label:string; value:string; displayValue?:string; displayNote?:string; }
@@ -76,7 +77,7 @@ export class CertificateInspector extends WebUIElement {
   private selectAlps(alps:AlpsContents|null):void {
     this.alpsRecorded=!!alps;this.alpsPeerBytes=alps?.peerBytes??0;
     this.alpsFields=this.displayFields(alps?.fields??[]);this.alpsNotes=(alps?.notes??[]).map((text,id)=>({id,text}));
-    this.alpsHex=alps?.payloadBase64?{key:'alps:'+this.connectionId,bytesBase64:alps.payloadBase64,offset:0,truncated:false}:null;
+    this.alpsHex=alps?.payloadBase64?{key:'alps:'+this.connectionId,bytes:decodeBytes(alps.payloadBase64),offset:0,truncated:false}:null;
     this.alpsHexOpen=false;
   }
   toggleAlpsHex(event:Event):void {this.alpsHexOpen=(event.currentTarget as HTMLDetailsElement).open;}
@@ -90,7 +91,7 @@ export class CertificateInspector extends WebUIElement {
     if(!certificate)return;
     this.certificateSubject=this.displaySubject(certificate);this.certificateFields=this.displayFields(certificate.fields);this.certificatePem=certificate.pem;
     this.certificateUnavailable=certificate.unavailable;this.certificateHasBytes=!!certificate.derBase64;
-    this.certificateHex=certificate.derBase64?{key:certificate.sha256,bytesBase64:certificate.derBase64,offset:0,truncated:false}:null;
+    this.certificateHex=certificate.derBase64?{key:certificate.sha256,bytes:decodeBytes(certificate.derBase64),offset:0,truncated:false}:null;
   }
   private displayFields(fields:Field[]):DisplayField[] {return fields.map((field,id)=>({...field,id,displayValue:field.displayValue??field.value}));}
   private displaySubject(certificate:Certificate):string {return certificate.fields.find(field=>field.label==='Subject')?.displayValue??certificate.subject;}

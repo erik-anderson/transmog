@@ -6,8 +6,9 @@ finds the exchange through an ordered traffic view, streams its captured native
 response body to a file, prints session detail, and shuts down.
 
 `NativeApplication.cs` adapts P/Invoke and SafeHandle ownership. C exports use the
-public no-throw C++ SDK, with private Crubit/Rust adapters underneath. Request,
-result, and error JSON retain the existing Application schemas. See the
+public no-throw C++ SDK, with private Crubit/Rust adapters underneath. Body reads
+use typed numeric arguments, raw bytes, metadata, and errors; other operations
+retain the existing Application JSON schemas. See the
 [SDK guide](../../sdk/README.md) for the full API, build prerequisites, and ABI
 contract.
 
@@ -65,7 +66,7 @@ sequenceDiagram
     Host->>SDK: Query traffic view, read rows, release view
     SDK-->>Host: Captured session ID
     Host->>SDK: session_detail and bounded read_body_range
-    SDK-->>Host: First captured chunk
+    SDK-->>Host: Owned raw byte page and typed metadata
     Note over Host: Write/hash chunk, host HTTP drain continues
     Host->>SDK: session_detail at the current offset
     SDK-->>Host: capturing, no more retained bytes yet
@@ -101,6 +102,16 @@ and a 100 ms refresh fallback. Only `complete` at the retained length ends
 successfully, including an empty complete body. Disabled, truncated, lost,
 quota-omitted, or evicted retention raises an error.
 
+`NativeApplication.ReadBodyRange(sessionId, boundary, offset, maxBytes)` returns
+a typed `BodyPage`: `byte[] Bytes`, `ulong Offset`/`TotalBytes`, `ReadLimit`, and
+`BodyMetadata`. The adapter copies native bytes, strings, optional fields, and
+content-coding tokens before releasing the page's SafeHandle. Body pages and
+their errors cross no JSON/base64 boundary. Session discovery and live-prefix
+waiting still use the existing session-detail JSON and refresh notifications.
+The desktop uses the same raw result through a Tauri `ArrayBuffer` response;
+its hex viewer consumes `Uint8Array` pages. Transport adaptation stays outside
+the shared body operation.
+
 Native calls block and run on worker threads in the iterator. Cancellation is
 observed after each bounded call and during waits; it cannot interrupt a native
 call already running. Breaking enumeration, completion, failure, and cancellation
@@ -132,6 +143,6 @@ origin completion. It also checks binary, empty, compressed, and incomplete
 responses, output overwrite protection, and deterministic iterator cancellation
 and retention failures.
 
-This is a same-build demonstration, ABI revision 2. General AppConfig, host
+This is a same-build demonstration, ABI revision 3. General AppConfig, host
 integration callbacks, interception, replay, and package distribution remain
 deferred. The app and CLI continue using their Rust API directly.

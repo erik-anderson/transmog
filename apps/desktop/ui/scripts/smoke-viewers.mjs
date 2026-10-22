@@ -267,8 +267,9 @@ try{
     await waitFor(()=>viewer.evaluate(`${composerResponse}.querySelector('[data-byte="${composerBinary.length-1}"][data-column=hex]')?.textContent==='10'`),'Composer did not expose bytes beyond its legacy text preview');
     const binaryResult=await viewer.evaluate(`({total:${composerResponse}.hexPreview.source.totalBytes,rows:${composerResponse}.querySelectorAll('.hex-data-row').length,legacyTruncated:${composer}.composerResult.truncated,text:${composer}.composerText,detail:${composer}.composerResult.detail.id})`);
     assert.equal(binaryResult.total,String(composerBinary.length));assert.ok(binaryResult.rows<100&&binaryResult.legacyTruncated);assert.doesNotMatch(binaryResult.text,/truncated/);
-    const bytePage=await viewer.evaluate(`window.__TAURI_INTERNALS__.invoke('read_body_range',{request:{sessionId:${JSON.stringify(binaryResult.detail)},boundary:'client-response',offset:'1048576',maxBytes:17}})`);
-    assert.deepEqual(Buffer.from(bytePage.bytesBase64,'base64'),composerBinary.subarray(1048576));
+    const bytePage=await viewer.evaluate(`(async()=>{const buffer=await window.__TAURI_INTERNALS__.invoke('read_body_range',{request:{sessionId:${JSON.stringify(binaryResult.detail)},boundary:'client-response',offset:'1048576',maxBytes:17}});if(!(buffer instanceof ArrayBuffer))throw new Error('Body IPC did not return an ArrayBuffer');const length=new DataView(buffer).getUint32(0,true);return {header:JSON.parse(new TextDecoder().decode(new Uint8Array(buffer,4,length))),bytes:Array.from(new Uint8Array(buffer,4+length))};})()`);
+    assert.equal(bytePage.header.offset,'1048576');assert.equal(bytePage.header.totalBytes,String(composerBinary.length));
+    assert.deepEqual(Buffer.from(bytePage.bytes),composerBinary.subarray(1048576));
     process.stdout.write('Native Composer shared text, safe image preview and complete paged binary response verified.\n');
     await viewer.evaluate(`(async()=>{const workspace=${composer};workspace.composerPane='request';const details=workspace.shadowRoot?.querySelector('.composer-history')??workspace.querySelector('.composer-history');details.open=true;await workspace.refreshHistory();})()`);
     await waitFor(()=>viewer.evaluate(`${composer}.composerHistory.length>0 && !${composer}.composerHistoryBusy`),'Latest Composer history refresh did not complete');

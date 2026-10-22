@@ -10,7 +10,7 @@ export async function smokeHexViewer(evaluate, call) {
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>globalThis.__hexSmoke.copied=text}});
       traffic.selectedSessionId='hex-smoke';traffic.inspectorSide='response';traffic.$flushUpdates();
       inspector.mode='body'; inspector.bodyText='';
-      inspector.hexPreview={key:'webview-hex-check',bytesBase64:'AUcBVwFbAWU=',offset:16,truncated:true};
+      inspector.hexPreview={key:'webview-hex-check',bytes:new Uint8Array([1,71,1,87,1,91,1,101]),offset:16,truncated:true};
       inspector.$flushUpdates();
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
       const viewer=inspector.querySelector('hex-viewer');

@@ -8,5 +8,6 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../../examples/dotnet-embedding/Transmog.Embedding.Sample/BodyReader.cs" Link="BodyReader.cs" />
+    <Compile Include="../../../examples/dotnet-embedding/Transmog.Embedding.Sample/BodyPage.cs" Link="BodyPage.cs" />
   </ItemGroup>
 </Project>

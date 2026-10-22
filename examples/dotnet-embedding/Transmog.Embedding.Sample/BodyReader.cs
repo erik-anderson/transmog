@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Runtime.CompilerServices;
 using System.Text.Json;
 
@@ -38,19 +37,13 @@ internal static class BodyReader
                     throw new IOException("The retained body changed while it was being read.");
                 if (offset < length)
                 {
-                    string request = JsonSerializer.Serialize(new
-                    {
-                        sessionId,
-                        boundary,
-                        offset = offset.ToString(CultureInfo.InvariantCulture),
-                        maxBytes = chunkSize
-                    });
-                    JsonElement page = await Task.Run(() => app.ReadBodyRange(request), cancellationToken);
+                    BodyPage page = await Task.Run(() => app.ReadBodyRange(sessionId, boundary, offset, (nuint)chunkSize), cancellationToken);
                     cancellationToken.ThrowIfCancellationRequested();
-                    RequireReadable(page.GetProperty("metadata").GetProperty("availability").GetString());
-                    if (page.GetProperty("offset").GetString() != offset.ToString(CultureInfo.InvariantCulture))
+                    if (page.Metadata.Availability is not (BodyAvailability.Capturing or BodyAvailability.Complete))
+                        throw new IOException($"The retained body is {page.Metadata.Availability}; a complete read is unavailable.");
+                    if (page.Offset != offset)
                         throw new IOException("The body page returned a different offset.");
-                    byte[] bytes = Convert.FromBase64String(page.GetProperty("bytesBase64").GetString()!);
+                    byte[] bytes = page.Bytes;
                     if (bytes.Length == 0 || bytes.Length > chunkSize)
                         throw new IOException("The body page returned an invalid byte count.");
                     offset = checked(offset + (ulong)bytes.Length);

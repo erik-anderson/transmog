@@ -1,11 +1,13 @@
 import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { convertFileSrc, invoke } from '@tauri-apps/api/core';
-import type { BodyBytePage, BodyInspection, HeaderPage, HeaderSummary, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
+import type { BodyInspection, HeaderPage, HeaderSummary, HeadView, SessionDetail, StoredBodyMetadata } from '../models.js';
 import { describeError } from '../utilities.js';
 import { formatBytes } from '../table-model.js';
 import { opaqueConnectTransport } from '../connection-evidence.js';
 import {copyGesture, requestCopy, copyScalar, CopyError} from '../inspection-copy.js';
 import { selectedConverterText } from '../converter-selection.js';
+import {readBodyRange} from '../body-range.js';
+import {decodeBytes} from '../hex-viewer/hex-formats.js';
 import type { HexPreview } from '../hex-viewer/hex-viewer.js';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {VisualizerChoice,VisualizerSelection} from '../extension-visualizer/models.js';
@@ -316,7 +318,7 @@ export class MessageInspector extends WebUIElement {
       if (inspection.representation === 'bytes' && inspection.bytesBase64 !== null) {
         if(!inspection.decoded) await this.inspectRawHex(previewKey,generation,inspection.warning??'');
         else {
-          this.hexPreview = { key: previewKey, bytesBase64: inspection.bytesBase64, offset: inspection.byteOffset,truncated: inspection.truncated };
+          this.hexPreview = { key: previewKey, bytes: decodeBytes(inspection.bytesBase64), offset: inspection.byteOffset,truncated: inspection.truncated };
           this.bodyText = inspection.warning ?? '';
         }
       } else {
@@ -333,13 +335,13 @@ export class MessageInspector extends WebUIElement {
   private async inspectRawHex(key:string,generation:number,warning=''):Promise<void> {
     if(!this.detail)return;
     const sessionId=this.detail.id,boundary=this.boundary;
-    const page=await invoke<BodyBytePage>('read_body_range',{request:{sessionId,boundary,offset:'0',maxBytes:65536}});
+    const page=await readBodyRange(sessionId,boundary,'0',65536);
     if(generation!==this.generation||!this.isConnected)return;
     this.bodyMetadata=page.metadata;this.pagedHex=true;
     this.viewerLabel=(this.viewer==='auto'?'Auto · ':'')+'Hex';
     this.bodySummary=formatBytes(page.metadata.retainedBytes)+' · '+page.metadata.availability;
     this.bodyFacts=this.retentionFacts(page.metadata)+' · All retained bytes available, loaded in pages · raw bytes';
-    this.hexPreview={key,bytesBase64:page.bytesBase64,offset:'0',truncated:false,source:{sessionId,boundary,totalBytes:page.totalBytes,readLimit:page.readLimit}};
+    this.hexPreview={key,bytes:page.bytes,offset:'0',truncated:false,source:{sessionId,boundary,totalBytes:page.totalBytes,readLimit:page.readLimit}};
     this.bodyText=warning;
     if(page.metadata.availability!=='complete')this.bodyText=this.retentionReason(page.metadata)+'\n\n'+this.bodyText;
   }

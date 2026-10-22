@@ -56,6 +56,98 @@ Bytes Result::error_json() const noexcept {
         R"({"category":"invalid-input","message":"Empty or moved-from SDK handle","retryable":false})");
   }
 }
+BodyPage::BodyPage() noexcept : handle_(nullptr), failure_(Status::no_result) {}
+BodyPage::BodyPage(std::uint8_t *handle, Status failure) noexcept
+    : handle_(handle), failure_(failure) {}
+BodyPage::~BodyPage() noexcept {
+  if (handle_)
+    transmog_sdk_rust::body_page_release(handle_);
+}
+BodyPage::BodyPage(BodyPage &&other) noexcept
+    : handle_(std::exchange(other.handle_, nullptr)),
+      failure_(std::exchange(other.failure_, Status::no_result)) {}
+BodyPage &BodyPage::operator=(BodyPage &&other) noexcept {
+  if (this != &other) {
+    if (handle_)
+      transmog_sdk_rust::body_page_release(handle_);
+    handle_ = std::exchange(other.handle_, nullptr);
+    failure_ = std::exchange(other.failure_, Status::no_result);
+  }
+  return *this;
+}
+Status BodyPage::status() const noexcept {
+  return handle_ ? (transmog_sdk_rust::body_page_succeeded(handle_) == 1
+                        ? Status::success
+                        : Status::operation_failed)
+                 : failure_;
+}
+bool BodyPage::succeeded() const noexcept {
+  return status() == Status::success;
+}
+namespace {
+// Private projection field IDs match engine/src/body.rs. Only primitive
+// accessors cross Crubit, so no generated/Rust layout becomes public ABI.
+Bytes body_data(std::uint8_t *handle, std::uint32_t field) noexcept {
+  return {transmog_sdk_rust::body_page_data(handle, field),
+          transmog_sdk_rust::body_page_data_length(handle, field)};
+}
+std::string_view body_text(std::uint8_t *handle, std::uint32_t field) noexcept {
+  const auto bytes = body_data(handle, field);
+  return bytes.data
+             ? std::string_view(reinterpret_cast<const char *>(bytes.data),
+                                bytes.size)
+             : std::string_view{};
+}
+std::optional<std::string_view>
+optional_body_text(std::uint8_t *handle, std::uint32_t field) noexcept {
+  return transmog_sdk_rust::body_page_data(handle, field)
+             ? std::optional{body_text(handle, field)}
+             : std::nullopt;
+}
+} // namespace
+Error BodyPage::error() const noexcept {
+  if (handle_) {
+    return {static_cast<ErrorCategory>(
+                transmog_sdk_rust::body_page_number(handle_, 10)),
+            body_text(handle_, 7),
+            transmog_sdk_rust::body_page_number(handle_, 11) != 0};
+  }
+  switch (failure_) {
+  case Status::out_of_memory:
+    return {ErrorCategory::internal, "SDK allocation failed", false};
+  case Status::internal_error:
+    return {ErrorCategory::internal, "SDK internal error", false};
+  default:
+    return {ErrorCategory::invalid_input, "Empty or moved-from SDK handle",
+            false};
+  }
+}
+BodyPageView BodyPage::view() const noexcept {
+  if (!succeeded())
+    return {};
+  const auto number = [this](std::uint32_t field) noexcept {
+    return transmog_sdk_rust::body_page_number(handle_, field);
+  };
+  return {body_data(handle_, 0),
+          number(0),
+          number(1),
+          static_cast<std::size_t>(number(2)),
+          {number(4) != 0, body_text(handle_, 1), body_text(handle_, 2),
+           number(5), number(7) ? std::optional{number(8)} : std::nullopt,
+           number(6), static_cast<BodyAvailability>(number(3)),
+           optional_body_text(handle_, 3), optional_body_text(handle_, 4),
+           static_cast<std::size_t>(number(9)), optional_body_text(handle_, 5),
+           optional_body_text(handle_, 6)}};
+}
+std::string_view BodyPage::content_coding(std::size_t index) const noexcept {
+  if (!succeeded())
+    return {};
+  const auto *data = transmog_sdk_rust::body_page_coding(handle_, index);
+  return data ? std::string_view(
+                    reinterpret_cast<const char *>(data),
+                    transmog_sdk_rust::body_page_coding_length(handle_, index))
+              : std::string_view{};
+}
 Application::Application() noexcept
     : handle_(nullptr), failure_(Status::no_result) {}
 Application::Application(std::uint8_t *handle, Status failure) noexcept
@@ -133,15 +225,33 @@ TRANSMOG_INPUT_OPERATION(query_sessions, const)
 TRANSMOG_INPUT_OPERATION(query_traffic_view, const)
 TRANSMOG_INPUT_OPERATION(release_traffic_view, )
 TRANSMOG_INPUT_OPERATION(session_detail, const)
-TRANSMOG_INPUT_OPERATION(read_body_range, const)
 #undef TRANSMOG_INPUT_OPERATION
 Result Application::traffic_view_rows(std::string_view id, std::size_t offset,
                                       std::size_t limit) const noexcept {
-  TRANSMOG_INVOKE(transmog_sdk_rust::traffic_view_rows(
-      handle_, reinterpret_cast<const std::uint8_t *>(id.data()), id.size(),
-      offset, limit))
-}
+    TRANSMOG_INVOKE(transmog_sdk_rust::traffic_view_rows(
+        handle_, reinterpret_cast<const std::uint8_t *>(id.data()), id.size(),
+        offset, limit))}
 #undef TRANSMOG_INVOKE
+
+BodyPage Application::read_body_range(
+    const BodyRangeRequest &request) const noexcept {
+  if (!handle_)
+    return BodyPage(nullptr, failure_);
+  try {
+    return BodyPage(
+        transmog_sdk_rust::read_body_range(
+            handle_,
+            reinterpret_cast<const std::uint8_t *>(request.session_id.data()),
+            request.session_id.size(),
+            reinterpret_cast<const std::uint8_t *>(request.boundary.data()),
+            request.boundary.size(), request.offset, request.max_bytes),
+        Status::out_of_memory);
+  } catch (const std::bad_alloc &) {
+    return BodyPage(nullptr, Status::out_of_memory);
+  } catch (...) {
+    return BodyPage(nullptr, Status::internal_error);
+  }
+}
 
 struct SessionUpdates::State {
   std::uint8_t *handle;
@@ -224,5 +334,5 @@ Application::subscribe_session_updates(SessionUpdateCallback callback,
     return SessionUpdates(nullptr, Status::internal_error);
   }
 }
-std::uint32_t abi_version() noexcept { return 2; }
+std::uint32_t abi_version() noexcept { return 3; }
 } // namespace transmog

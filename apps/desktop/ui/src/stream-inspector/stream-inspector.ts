@@ -158,7 +158,7 @@ export class StreamInspector extends WorkspaceElement {
     const bytes=new Uint8Array(message.payload);let text=new TextDecoder().decode(bytes);this.streamHex=null;
     if(this.streamView==='raw')text=message.raw??text;
     if(this.streamView==='json'){try{text=JSON.stringify(JSON.parse(text),null,2);}catch{text='Invalid or incomplete JSON.\n\n'+text;}}
-    if(this.streamView==='hex'){let binary='';for(const byte of bytes)binary+=String.fromCharCode(byte);this.streamHex={key:this.sessionId+':'+this.streamSelected,bytesBase64:btoa(binary),offset:0,truncated:message.truncated};}
+    if(this.streamView==='hex')this.streamHex={key:this.sessionId+':'+this.streamSelected,bytes,offset:0,truncated:message.truncated};
     this.streamText=text;
     this.streamFacts=message.sender+' · '+message.kind+' · '+formatBytes(message.byteCount)+(message.truncated?' · Retained prefix only':'')+(message.compressed?' · permessage-deflate':'')+(message.eventId!==null?' · ID: '+message.eventId:'')+(message.retry!==null?' · Retry: '+message.retry+' ms':'')+(message.closeCode!==null?' · Close: '+message.closeCode:'');
   }

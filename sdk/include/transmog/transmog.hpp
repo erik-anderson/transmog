@@ -2,6 +2,7 @@
 #include "transmog/export.h"
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 #include <string_view>
 
 namespace transmog {
@@ -16,6 +17,87 @@ enum class Status : std::uint32_t {
 struct Bytes {
   const std::uint8_t *data;
   std::size_t size;
+};
+
+enum class ErrorCategory : std::uint32_t {
+  none = 0,
+  password_required = 1,
+  invalid_password = 2,
+  invalid_input = 3,
+  unsupported = 4,
+  canceled = 5,
+  conflict = 6,
+  limit = 7,
+  unavailable = 8,
+  retryable = 9,
+  internal = 10
+};
+struct Error {
+  ErrorCategory category;
+  std::string_view message;
+  bool retryable;
+};
+enum class BodyAvailability : std::uint32_t {
+  unavailable = 0,
+  capturing = 1,
+  complete = 2,
+  truncated = 3,
+  lost = 4,
+  evicted = 5,
+  disabled = 6,
+  quota_omitted = 7
+};
+struct BodyRangeRequest {
+  std::string_view session_id;
+  std::string_view boundary;
+  std::uint64_t offset = 0;
+  std::size_t max_bytes = 64 * 1024;
+};
+// Text and byte views below are borrowed from their BodyPage owner. Optional
+// text distinguishes absent values from present empty strings.
+struct BodyMetadata {
+  bool length_known;
+  std::string_view exchange_id;
+  std::string_view boundary;
+  std::uint64_t observed_bytes;
+  std::optional<std::uint64_t> wire_body_bytes;
+  std::uint64_t retained_bytes;
+  BodyAvailability availability;
+  std::optional<std::string_view> media_type;
+  std::optional<std::string_view> charset;
+  std::size_t content_coding_count;
+  std::optional<std::string_view> sha256;
+  std::optional<std::string_view> reason;
+};
+struct BodyPageView {
+  Bytes bytes;
+  std::uint64_t offset;
+  std::uint64_t total_bytes;
+  std::size_t read_limit;
+  BodyMetadata metadata;
+};
+
+// Owns a typed Application byte page or error, without JSON/base64. Views
+// expire on destruction/replacement; the page can outlive its Application.
+class TRANSMOG_API BodyPage final {
+public:
+  BodyPage() noexcept;
+  ~BodyPage() noexcept;
+  BodyPage(BodyPage &&) noexcept;
+  BodyPage &operator=(BodyPage &&) noexcept;
+  BodyPage(const BodyPage &) = delete;
+  BodyPage &operator=(const BodyPage &) = delete;
+  Status status() const noexcept;
+  bool succeeded() const noexcept;
+  Error error() const noexcept;
+  BodyPageView view() const noexcept;
+  std::string_view content_coding(std::size_t index) const noexcept;
+
+private:
+  friend class Application;
+  BodyPage(std::uint8_t *, Status) noexcept;
+  std::uint8_t *handle_;
+  Status failure_;
 };
 
 class Application;
@@ -115,11 +197,9 @@ public:
   SessionUpdates subscribe_session_updates(SessionUpdateCallback callback,
                                            void *context) const noexcept;
   Result session_detail(std::string_view session_id) const noexcept;
-  // Existing BodyRangeRequest -> BodyBytePage, including raw bytesBase64,
-  // exact decimal offsets, and retention/availability metadata. Pull bounded
-  // pages to stream a body; a capturing prefix is not EOF. Reads do not pin
-  // a body across calls, so eviction/loss remains visible to the consumer.
-  Result read_body_range(std::string_view request_json) const noexcept;
+  // Same Application read, with numeric offsets, raw bytes, and typed metadata.
+  // A capturing prefix is not EOF. Reads do not pin bodies across calls.
+  BodyPage read_body_range(const BodyRangeRequest &request) const noexcept;
 
 private:
   Application(std::uint8_t *, Status) noexcept;

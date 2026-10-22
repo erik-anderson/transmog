@@ -4,6 +4,9 @@
 //! to `transmog_app::Application`. This crate adds no proxy or HTTP-client model.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod body;
+pub use body::*;
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
@@ -279,11 +282,6 @@ json_input!(
     query_sessions,
     transmog_app::SessionQueryInput,
     |app, request| { json(app.query_sessions(request)?) }
-);
-json_input!(
-    read_body_range,
-    transmog_app::BodyRangeRequest,
-    |app, request| { json(app.read_body_range(request).await?) }
 );
 json_input!(
     query_traffic_view,
@@ -566,9 +564,18 @@ mod tests {
                         .read_body_range(serde_json::from_slice(request).unwrap()),
                 )
                 .unwrap_err();
-            let actual = read_body_range(app, request.as_ptr(), request.len());
-            assert_eq!((*actual).error, serde_json::to_vec(&expected).unwrap());
-            release(actual);
+            let actual = read_body_range(
+                app,
+                b"00000000000000000000000000000000".as_ptr(),
+                32,
+                b"client-response".as_ptr(),
+                15,
+                0,
+                0,
+            );
+            assert_eq!((*actual).value.as_ref().unwrap_err(), &expected);
+            assert_eq!(body_page_number(actual, 10), 7);
+            body_page_release(actual);
             application_release(app);
             assert!(
                 !path.exists(),

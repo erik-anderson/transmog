@@ -2,7 +2,6 @@
 from __future__ import annotations
 import argparse
 import ctypes
-import base64
 import gzip
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -85,7 +84,7 @@ def main():
         return function
     pointer, size = ctypes.c_void_p, ctypes.c_size_t
     version = bind("abi_version", [], ctypes.c_uint32)
-    require(version() == 2, "Expected application SDK ABI 2")
+    require(version() == 3, "Expected application SDK ABI 3")
     create = bind("application_create", [], pointer)
     create_with_bodies = bind("application_create_with_body_store", [pointer, size], pointer)
     valid = bind("application_valid", [pointer], ctypes.c_int32)
@@ -100,7 +99,7 @@ def main():
     for name in ("status", "product_state", "stop_proxy", "shutdown"):
         operations[name] = bind("application_" + name, [pointer], pointer)
     for name in ("save_product_state", "start_proxy", "query_sessions", "session_detail",
-                 "query_traffic_view", "release_traffic_view", "read_body_range"):
+                 "query_traffic_view", "release_traffic_view"):
         operations[name] = bind("application_" + name, [pointer, pointer, size], pointer)
     rows_operation = bind("application_traffic_view_rows", [pointer, pointer, size, size, size], pointer)
     callback_type = ctypes.CFUNCTYPE(None, pointer, pointer, size)
@@ -108,6 +107,62 @@ def main():
     valid_updates = bind("session_updates_valid", [pointer], ctypes.c_int32)
     updates_status = bind("session_updates_status", [pointer], pointer)
     free_updates = bind("session_updates_free", [pointer], None)
+
+    class NativeBytes(ctypes.Structure):
+        _fields_ = [("data", pointer), ("size", size)]
+    class NativeError(ctypes.Structure):
+        _fields_ = [("category", ctypes.c_uint32), ("message", NativeBytes), ("retryable", ctypes.c_uint32)]
+    class NativeBodyPage(ctypes.Structure):
+        _fields_ = [("bytes", NativeBytes), ("offset", ctypes.c_uint64), ("total_bytes", ctypes.c_uint64),
+                    ("read_limit", size), ("availability", ctypes.c_uint32), ("length_known", ctypes.c_uint32),
+                    ("observed_bytes", ctypes.c_uint64), ("retained_bytes", ctypes.c_uint64),
+                    ("has_wire_body_bytes", ctypes.c_uint32), ("wire_body_bytes", ctypes.c_uint64),
+                    *[(name, NativeBytes) for name in ("exchange_id", "boundary", "media_type", "charset", "sha256", "reason")],
+                    ("content_coding_count", size)]
+    body_range = bind("application_read_body_range", [pointer, pointer, size, pointer, size, ctypes.c_uint64, size], pointer)
+    body_succeeded = bind("body_page_succeeded", [pointer], ctypes.c_int32)
+    body_error = bind("body_page_error", [pointer], NativeError)
+    body_view = bind("body_page_get_view", [pointer], NativeBodyPage)
+    body_coding = bind("body_page_content_coding", [pointer, size], NativeBytes)
+    free_body = bind("body_page_free", [pointer], None)
+
+    def text(value):
+        return ctypes.string_at(value.data, value.size).decode() if value.data else None
+
+    def body_handle(app, request):
+        session = request["sessionId"]
+        boundary = request["boundary"]
+        session = session if isinstance(session, bytes) else session.encode()
+        boundary = boundary if isinstance(boundary, bytes) else boundary.encode()
+        session_input, boundary_input = ctypes.create_string_buffer(session), ctypes.create_string_buffer(boundary)
+        return body_range(app, session_input, len(session), boundary_input, len(boundary),
+                          int(request["offset"]), request["maxBytes"])
+
+    def read_body(app, request, expected):
+        page = body_handle(app, request)
+        require(page, "SDK body-page allocation failed")
+        try:
+            success = bool(body_succeeded(page))
+            if success:
+                view = body_view(page)
+                value = {"bytes": ctypes.string_at(view.bytes.data, view.bytes.size), "offset": view.offset,
+                         "totalBytes": view.total_bytes, "readLimit": view.read_limit,
+                         "metadata": {"lengthKnown": bool(view.length_known), "exchangeId": text(view.exchange_id),
+                                      "boundary": text(view.boundary), "observedBytes": view.observed_bytes,
+                                      "retainedBytes": view.retained_bytes,
+                                      "wireBodyBytes": view.wire_body_bytes if view.has_wire_body_bytes else None,
+                                      "availability": ("unavailable", "capturing", "complete", "truncated", "lost", "evicted", "disabled", "quota-omitted")[view.availability],
+                                      "mediaType": text(view.media_type), "charset": text(view.charset),
+                                      "sha256": text(view.sha256), "reason": text(view.reason),
+                                      "contentCodings": [text(body_coding(page, index)) for index in range(view.content_coding_count)]}}
+            else:
+                error = body_error(page)
+                value = {"category": ("none", "password-required", "invalid-password", "invalid-input", "unsupported", "canceled", "conflict", "limit", "unavailable", "retryable", "internal")[error.category],
+                         "message": text(error.message), "retryable": bool(error.retryable)}
+            require(success == expected, f"read_body_range: {value}")
+            return value
+        finally:
+            free_body(page)
 
     def read(result):
         require(result, "SDK wrapper allocation failed")
@@ -120,6 +175,7 @@ def main():
             free_result(result)
 
     def call(app, name, value=None, expected=True):
+        if name == "read_body_range": return read_body(app, value, expected)
         if value is None:
             result = operations[name](app)
         else:
@@ -217,11 +273,15 @@ def main():
         require(detail["id"] == session_id, "Inspection did not use the catalog's exchange ID")
         body_request = {"sessionId": session_id, "boundary": "client-response", "offset": "0", "maxBytes": 4}
         body_page = call(app, "read_body_range", body_request)
-        require(base64.b64decode(body_page["bytesBase64"]) == BODY[:4]
-                and body_page["totalBytes"] == str(len(BODY)) and body_page["offset"] == "0"
+        require(body_page["bytes"] == BODY[:4]
+                and body_page["totalBytes"] == len(BODY) and body_page["offset"] == 0
                 and body_page["metadata"]["availability"] == "complete", "Body page must preserve the shared model and binary bytes")
+        require(body_page["metadata"] == next(body for body in detail["storedBodies"] if body["boundary"] == "client-response"),
+                "Typed metadata differs from the desktop serialization")
         for change, category in (({"maxBytes": 0}, "limit"), ({"maxBytes": 16777217}, "limit"),
-                                 ({"offset": "-1"}, "invalid-input"), ({"offset": "18446744073709551616"}, "invalid-input"),
+                                 ({"offset": "18446744073709551615"}, "unavailable"),
+                                 ({"sessionId": b"\xff"}, "invalid-input"), ({"boundary": b"\xff"}, "invalid-input"),
+                                 ({"sessionId": b"x" * 262145}, "limit"),
                                  ({"boundary": "not-a-boundary"}, "invalid-input")):
             require(call(app, "read_body_range", dict(body_request, **change), expected=False)["category"] == category,
                     "Body range validation differs from the application")
@@ -361,7 +421,7 @@ def main():
             while len(captured) < 32768:
                 page = call(app, "read_body_range", dict(body_request, sessionId=stream_id, offset=str(len(captured)), maxBytes=4096))
                 require(page["metadata"]["availability"] == "capturing", "Expected a live retained body")
-                captured.extend(base64.b64decode(page["bytesBase64"]))
+                captured.extend(page["bytes"])
             require(captured == STREAM_BODY[:32768] and streaming_thread.is_alive(), "Prefix read waited for body completion")
         finally:
             stream_resume.set()
@@ -371,14 +431,21 @@ def main():
         while len(captured) < len(STREAM_BODY):
             page = call(app, "read_body_range", dict(body_request, sessionId=stream_id, offset=str(len(captured)), maxBytes=4096))
             require(page["metadata"]["availability"] == "complete", "Completed body was not retained")
-            captured.extend(base64.b64decode(page["bytesBase64"]))
+            captured.extend(page["bytes"])
         require(captured == STREAM_BODY, "Chunked body reads changed the captured bytes")
         require(call(app, "status")["lifecycle"] == "stopped", "Final shutdown did not stop the application")
         # Results are independent owners, even after their application is freed.
         retained = operations["product_state"](app)
+        retained_body = body_handle(app, dict(body_request, sessionId=stream_id, offset=0, maxBytes=4))
         free_app(app)
         app = None
         require(read(retained)[0], "Result did not survive application destruction")
+        try:
+            view = body_view(retained_body)
+            require(body_succeeded(retained_body) and ctypes.string_at(view.bytes.data, view.bytes.size) == STREAM_BODY[:4],
+                    "Typed body page did not survive application destruction")
+        finally:
+            free_body(retained_body)
 
         with tempfile.TemporaryDirectory(prefix="application-", dir=output) as temporary:
             directory = Path(temporary)
@@ -410,6 +477,8 @@ def main():
         free_app(None)
         free_result(None)
         free_updates(None)
+        require(not body_succeeded(None) and not body_view(None).bytes.data, "Empty typed page must be safe")
+        free_body(None)
     finally:
         resume.set()
         stream_resume.set()

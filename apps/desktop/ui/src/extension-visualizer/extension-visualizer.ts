@@ -2,6 +2,7 @@ import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
 import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import {describeError} from '../utilities.js';
+import {decodeBytes} from '../hex-viewer/hex-formats.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
 import {ReloadObserver} from './reload.js';
 import {copyGesture, fieldCopyActions, requestCopy, CopyError} from '../inspection-copy.js';
@@ -483,7 +484,7 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerSource=chosen.id;this.visualizerSourceText=chosen.description;
     const derived=this.view.document.sources.find(source=>source.id===chosen.id),original=this.view.sources.find(source=>source.id===chosen.id);
     const key=this.view.handle.instanceId+':'+chosen.id;
-    this.visualizerHex={key,bytesBase64:derived?.bytesBase64??'',offset:'0',truncated:false,...(original?{source:{kind:'visualizer' as const,handle:this.view.handle,sourceId:original.id,totalBytes:original.length,readLimit:65536}}:{}),...(span?{selection:{offset:span.offset,length:span.length}}:{})};
+    this.visualizerHex={key,bytes:decodeBytes(derived?.bytesBase64??''),offset:'0',truncated:false,...(original?{source:{kind:'visualizer' as const,handle:this.view.handle,sourceId:original.id,totalBytes:original.length,readLimit:65536}}:{}),...(span?{selection:{offset:span.offset,length:span.length}}:{})};
     const parents=derived?.parents??(original?.httpDecoded?[original.httpDecoded.parent]:[]);
     if(parents.length)this.visualizerSourceText+=` · Parents: ${parents.map(parent=>`${this.visualizerSources.find(source=>source.id===parent.sourceId)?.name??parent.sourceId}, offset ${parent.offset}, ${parent.length} bytes`).join('; ')}`;
   }

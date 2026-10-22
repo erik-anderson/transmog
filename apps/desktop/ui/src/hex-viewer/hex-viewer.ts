@@ -5,7 +5,7 @@ import { describeError } from '../utilities.js';
 import type {VisualizerHandle} from '../extension-visualizer/models.js';
 
 export type HexSource={kind?:'body';sessionId:string;boundary:string;totalBytes:string;readLimit:number}|{kind:'visualizer';handle:VisualizerHandle;sourceId:string;totalBytes:string;readLimit:number};
-export interface HexPreview { key: string; bytesBase64: string; offset: number|string; truncated: boolean; source?:HexSource; selection?:{offset:string;length:string}; }
+export interface HexPreview { key: string; bytes: Uint8Array; offset: number|string; truncated: boolean; source?:HexSource; selection?:{offset:string;length:string}; }
 interface HexCell { index: string; hex: string; text: string; hexId: string; textId: string; selection: string; selected:boolean; caretHex:boolean; caretText:boolean; }
 interface HexRow { index: string; address: string; top: string; cells: HexCell[]; }
 type Column = 'hex' | 'text';

@@ -260,7 +260,6 @@ mod tests {
     #[tokio::test]
     async fn shared_inspection_retains_full_binary_bytes_without_traffic_and_leases_survive_replacement()
      {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
         let bytes = (0..300_019)
             .map(|index| u8::try_from(index % 256).unwrap())
             .collect::<Vec<_>>();
@@ -310,11 +309,8 @@ mod tests {
         assert!(headers.contains("Set-Cookie: [redacted]"));
         assert!(!headers.contains("private=value"));
         let page = app.read_body_range(request(id, 300_010, 9)).await.unwrap();
-        assert_eq!(page.total_bytes, bytes.len().to_string());
-        assert_eq!(
-            STANDARD.decode(page.bytes_base64).unwrap(),
-            bytes[300_010..]
-        );
+        assert_eq!(page.total_bytes, bytes.len() as u64);
+        assert_eq!(page.bytes, bytes[300_010..]);
         let leased = app.prepare_response_file(id, "client-response").unwrap();
         assert_eq!(leased.suggested_name(), "binary.bin");
         executor.0.lock().unwrap().body = Bytes::from_static(b"replacement");
@@ -370,7 +366,7 @@ mod tests {
             .read_body_range(request(&id, 0, encoded.len()))
             .await
             .unwrap();
-        assert_eq!(raw.total_bytes, encoded.len().to_string());
+        assert_eq!(raw.total_bytes, encoded.len() as u64);
         let root = tempfile::tempdir().unwrap();
         app.prepare_response_file(&id, "client-response")
             .unwrap()

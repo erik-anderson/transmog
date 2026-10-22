@@ -13,8 +13,8 @@ internal sealed unsafe class NativeApplication : IDisposable
 
     public NativeApplication(string? bodyCacheDirectory = null)
     {
-        if (NativeMethods.AbiVersion() != 2)
-            throw new InvalidOperationException("The native application SDK requires ABI revision 2.");
+        if (NativeMethods.AbiVersion() != 3)
+            throw new InvalidOperationException("The native application SDK requires ABI revision 3.");
         if (bodyCacheDirectory is null)
             handle = NativeMethods.Create();
         else
@@ -50,7 +50,52 @@ internal sealed unsafe class NativeApplication : IDisposable
     public JsonElement ReleaseTrafficView(string viewId) => Input(NativeMethods.ReleaseTrafficView, viewId);
     public SessionUpdates SubscribeSessionUpdates(Action<JsonElement> callback) => new(this, callback);
     public JsonElement SessionDetail(string id) => Input(NativeMethods.SessionDetail, id);
-    public JsonElement ReadBodyRange(string json) => Input(NativeMethods.ReadBodyRange, json);
+    public BodyPage ReadBodyRange(string sessionId, string boundary, ulong offset, nuint maxBytes = 64 * 1024)
+    {
+        byte[] session = Encoding.UTF8.GetBytes(sessionId), stage = Encoding.UTF8.GetBytes(boundary);
+        BodyPageHandle page;
+        fixed (byte* sessionInput = session)
+        fixed (byte* boundaryInput = stage)
+            page = NativeMethods.ReadBodyRange(handle, sessionInput, (nuint)session.Length,
+                boundaryInput, (nuint)stage.Length, offset, maxBytes);
+        using (page)
+        {
+            if (page.IsInvalid) throw new InvalidOperationException("The SDK could not allocate a body page.");
+            if (NativeMethods.BodyPageSucceeded(page) != 1)
+            {
+                NativeError error = NativeMethods.BodyPageError(page);
+                string category = error.Category switch
+                {
+                    1 => "password-required",
+                    2 => "invalid-password",
+                    3 => "invalid-input",
+                    4 => "unsupported",
+                    5 => "canceled",
+                    6 => "conflict",
+                    7 => "limit",
+                    8 => "unavailable",
+                    9 => "retryable",
+                    _ => "internal"
+                };
+                throw new NativeApplicationException(category, Text(error.Message)!, error.Retryable != 0);
+            }
+            NativeBodyPage value = NativeMethods.BodyPageView(page);
+            if (value.ContentCodingCount > int.MaxValue || value.Bytes.Size > maxBytes ||
+                value.Bytes.Size > value.ReadLimit || value.Offset != offset ||
+                value.Offset > value.TotalBytes || value.Bytes.Size > value.TotalBytes - value.Offset ||
+                value.RetainedBytes != value.TotalBytes)
+                throw new InvalidOperationException("The SDK returned an invalid body page.");
+            string[] codings = new string[(int)value.ContentCodingCount];
+            for (int index = 0; index < codings.Length; index++)
+                codings[index] = Text(NativeMethods.BodyPageContentCoding(page, (nuint)index))!;
+            return new BodyPage(value.Offset, value.TotalBytes, value.ReadLimit,
+                Copy(value.Bytes.Data, value.Bytes.Size), new BodyMetadata(value.LengthKnown != 0,
+                    Text(value.ExchangeId)!, Text(value.Boundary)!, value.ObservedBytes,
+                    value.HasWireBodyBytes != 0 ? value.WireBodyBytes : null, value.RetainedBytes,
+                    value.Availability, Text(value.MediaType), Text(value.Charset), codings,
+                    Text(value.Sha256), Text(value.Reason)));
+        }
+    }
     public void Dispose() => handle.Dispose();
 
     private delegate ResultHandle InputOperation(ApplicationHandle app, byte* input, nuint length);
@@ -93,6 +138,28 @@ internal sealed unsafe class NativeApplication : IDisposable
         return bytes;
     }
 
+    private static string? Text(NativeBytes value) => value.Data == 0 ? null
+        : Encoding.UTF8.GetString(Copy(value.Data, value.Size));
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeBytes { internal nint Data; internal nuint Size; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeError { internal uint Category; internal NativeBytes Message; internal uint Retryable; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct NativeBodyPage
+    {
+        internal NativeBytes Bytes;
+        internal ulong Offset, TotalBytes;
+        internal nuint ReadLimit;
+        internal BodyAvailability Availability;
+        internal uint LengthKnown;
+        internal ulong ObservedBytes, RetainedBytes;
+        internal uint HasWireBodyBytes;
+        internal ulong WireBodyBytes;
+        internal NativeBytes ExchangeId, Boundary, MediaType, Charset, Sha256, Reason;
+        internal nuint ContentCodingCount;
+    }
+
     private sealed class ApplicationHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
         public ApplicationHandle() : base(true) { }
@@ -102,6 +169,11 @@ internal sealed unsafe class NativeApplication : IDisposable
     {
         public ResultHandle() : base(true) { }
         protected override bool ReleaseHandle() { NativeMethods.FreeResult(handle); return true; }
+    }
+    private sealed class BodyPageHandle : SafeHandleZeroOrMinusOneIsInvalid
+    {
+        public BodyPageHandle() : base(true) { }
+        protected override bool ReleaseHandle() { NativeMethods.FreeBodyPage(handle); return true; }
     }
     private sealed class SessionUpdatesHandle : SafeHandleZeroOrMinusOneIsInvalid
     {
@@ -215,7 +287,18 @@ internal sealed unsafe class NativeApplication : IDisposable
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_session_detail")]
         internal static extern ResultHandle SessionDetail(ApplicationHandle app, byte* input, nuint length);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_read_body_range")]
-        internal static extern ResultHandle ReadBodyRange(ApplicationHandle app, byte* input, nuint length);
+        internal static extern BodyPageHandle ReadBodyRange(ApplicationHandle app, byte* session, nuint sessionLength,
+            byte* boundary, nuint boundaryLength, ulong offset, nuint maxBytes);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_body_page_succeeded")]
+        internal static extern int BodyPageSucceeded(BodyPageHandle page);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_body_page_error")]
+        internal static extern NativeError BodyPageError(BodyPageHandle page);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_body_page_get_view")]
+        internal static extern NativeBodyPage BodyPageView(BodyPageHandle page);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_body_page_content_coding")]
+        internal static extern NativeBytes BodyPageContentCoding(BodyPageHandle page, nuint index);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_body_page_free")]
+        internal static extern void FreeBodyPage(nint page);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_succeeded")]
         internal static extern int Succeeded(ResultHandle result);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_json")]

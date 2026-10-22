@@ -14,12 +14,9 @@ static JsonElement Detail(string availability, int length) => JsonSerializer.Ser
     storedBodies = new[] { new { boundary = "client-response", availability, retainedBytes = length } }
 });
 
-static JsonElement Page(string availability, string offset, byte value) => JsonSerializer.SerializeToElement(new
-{
-    metadata = new { availability },
-    offset,
-    bytesBase64 = Convert.ToBase64String([value])
-});
+static BodyPage Page(BodyAvailability availability, ulong offset, byte value) =>
+    new(offset, offset + 1, 65536, [value], new BodyMetadata(true, "session", "client-response",
+        offset + 1, offset + 1, offset + 1, availability, null, null, [], null, null));
 
 static void Require(bool value, string message)
 {
@@ -52,7 +49,7 @@ static async Task CancellationAtPageCompletionAsync()
     var app = new NativeApplication
     {
         OnDetail = () => Detail("complete", 1),
-        OnPage = _ => { cancel.Cancel(); return Page("complete", "0", 42); }
+        OnPage = (_, _, _, _) => { cancel.Cancel(); return Page(BodyAvailability.Complete, 0, 42); }
     };
     await using var chunks = app.ReadBodyChunksAsync("session", "client-response", cancellationToken: cancel.Token)
         .GetAsyncEnumerator();
@@ -73,13 +70,12 @@ static async Task LivePrefixAndDisposalAsync()
             if (retained == 1) prefixChecked.TrySetResult();
             return Detail("capturing", retained);
         },
-        OnPage = request =>
+        OnPage = (session, boundary, offset, maxBytes) =>
         {
-            Require(request.GetProperty("sessionId").GetString() == "session", "Session ID changed.");
-            Require(request.GetProperty("boundary").GetString() == "client-response", "Boundary changed.");
-            Require(request.GetProperty("maxBytes").GetInt32() == 1, "Page budget changed.");
-            string offset = request.GetProperty("offset").GetString()!;
-            return Page("capturing", offset, offset == "0" ? (byte)0 : (byte)255);
+            Require(session == "session", "Session ID changed.");
+            Require(boundary == "client-response", "Boundary changed.");
+            Require(maxBytes == 1, "Page budget changed.");
+            return Page(BodyAvailability.Capturing, offset, offset == 0 ? (byte)0 : (byte)255);
         }
     };
     var chunks = app.ReadBodyChunksAsync("session", "client-response", chunkSize: 1, cancellationToken: deadline.Token)
@@ -105,12 +101,13 @@ static async Task LivePrefixAndDisposalAsync()
 
 static async Task RetentionFailureAsync()
 {
-    foreach (string availability in new[] { "disabled", "truncated", "lost", "quota-omitted", "evicted" })
+    foreach (BodyAvailability availability in new[] { BodyAvailability.Disabled, BodyAvailability.Truncated,
+        BodyAvailability.Lost, BodyAvailability.QuotaOmitted, BodyAvailability.Evicted })
     {
         var app = new NativeApplication
         {
             OnDetail = () => Detail("capturing", 1),
-            OnPage = _ => Page(availability, "0", 42)
+            OnPage = (_, _, _, _) => Page(availability, 0, 42)
         };
         await using var chunks = app.ReadBodyChunksAsync("session", "client-response").GetAsyncEnumerator();
         bool failed = false;
@@ -127,11 +124,11 @@ namespace Transmog.Embedding.Sample
     internal sealed class NativeApplication
     {
         internal Func<JsonElement> OnDetail = () => throw new InvalidOperationException("Unexpected detail read.");
-        internal Func<JsonElement, JsonElement> OnPage = _ => throw new InvalidOperationException("Unexpected page read.");
+        internal Func<string, string, ulong, nuint, BodyPage> OnPage = (_, _, _, _) => throw new InvalidOperationException("Unexpected page read.");
         private Action<JsonElement>? callback;
         internal int Subscriptions;
         internal JsonElement SessionDetail(string _) => OnDetail();
-        internal JsonElement ReadBodyRange(string request) => OnPage(JsonSerializer.Deserialize<JsonElement>(request));
+        internal BodyPage ReadBodyRange(string session, string boundary, ulong offset, nuint maxBytes) => OnPage(session, boundary, offset, maxBytes);
         internal SessionUpdates SubscribeSessionUpdates(Action<JsonElement> action)
         {
             callback = action;

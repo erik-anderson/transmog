@@ -1,7 +1,7 @@
 import {invoke} from '@tauri-apps/api/core';
 import {decodeBytes} from './hex-formats.js';
 import type {HexPreview} from './hex-viewer.js';
-import type {BodyBytePage} from '../models.js';
+import {readBodyRange} from '../body-range.js';
 import {describeError} from '../utilities.js';
 import type {SourcePage} from '../extension-visualizer/models.js';
 
@@ -24,7 +24,7 @@ export class HexByteSource {
   private revision=0;
 
   constructor(private preview:HexPreview,private changed:()=>void) {
-    const bytes=decodeBytes(preview.bytesBase64);
+    const bytes=preview.bytes;
     this.inline=preview.source?null:bytes;
     this.length=preview.source?BigInt(preview.source.totalBytes):BigInt(bytes.length);
     this.pageBytes=Math.min(65536,preview.source?.readLimit??65536);
@@ -33,10 +33,10 @@ export class HexByteSource {
   update(preview:HexPreview):void {
     this.revision++;this.error='';
     this.preview=preview;
-    if(!preview.source){this.inline=decodeBytes(preview.bytesBase64);this.length=BigInt(this.inline.length);return;}
+    if(!preview.source){this.inline=preview.bytes;this.length=BigInt(this.inline.length);return;}
     const previous=this.length;this.length=BigInt(preview.source.totalBytes);
     if(this.length>previous)for(const [offset,page]of this.pages)if(page.length<this.pageBytes)this.pages.delete(offset);
-    const bytes=decodeBytes(preview.bytesBase64);if(bytes.length)this.pages.set('0',bytes.subarray(0,this.pageBytes));
+    const bytes=preview.bytes;if(bytes.length)this.pages.set('0',bytes.subarray(0,this.pageBytes));
     while(this.pages.size>MAX_PAGES)this.pages.delete(this.pages.keys().next().value!);
   }
   byte(index:bigint):number|undefined {
@@ -90,12 +90,12 @@ export class HexByteSource {
       if(count<=0)throw new Error('Selected bytes are unavailable');
       const page=source.kind==='visualizer'?
         await invoke<SourcePage>('visualizer_source',{handle:source.handle,request:{sourceId:source.sourceId,offset:offset.toString(),maxBytes:count}}):
-        await invoke<BodyBytePage>('read_body_range',{request:{sessionId:source.sessionId,boundary:source.boundary,offset:offset.toString(),maxBytes:count}});
+        await readBodyRange(source.sessionId,source.boundary,offset.toString(),count);
       if(!this.live)throw new Error('Byte view closed');
       if(revision!==this.revision)throw new ObsoleteRange();
       if(BigInt(page.offset)!==offset)throw new Error('The byte range did not match its requested offset');
       this.length=BigInt(page.totalBytes);
-      const bytes=decodeBytes(page.bytesBase64);
+      const bytes='bytes' in page?page.bytes:decodeBytes(page.bytesBase64);
       if(bytes.length>length)throw new Error('The returned byte page exceeded its requested budget');
       if(!bytes.length&&offset<this.length)throw new Error('The requested byte range is unavailable');
       return bytes;

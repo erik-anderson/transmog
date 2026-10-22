@@ -9,7 +9,7 @@ the staged headers/library needs no Rust or Crubit installation. The
 which use the public C++ implementation. This intentionally same-build interface
 demonstrates application ownership, existing product-state and error models,
 proxy start, ordered traffic views and inspection, session-update callbacks,
-bounded body reads and live streaming, reversible drain/resume,
+typed raw body reads and live streaming, reversible drain/resume,
 and final shutdown. The host generates HTTP traffic through the proxy;
 the SDK has no separate fetch implementation.
 

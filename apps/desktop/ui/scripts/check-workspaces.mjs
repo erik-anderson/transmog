@@ -663,10 +663,11 @@ await page.addInitScript((configuration) => {
           const offset=BigInt(request.offset),count=Number((total-offset)<BigInt(request.maxBytes)?total-offset:BigInt(request.maxBytes));
           const bytes=!composer&&state.hexLargeTotal?Array.from({length:count},(_,index)=>Number((offset+BigInt(index))%256n)):retained.slice(Number(offset),Number(offset)+count);
           if(state.deferRangeOffset===request.offset){state.rangePending=true;await new Promise(resolve=>state.releaseRange=resolve);}
-          const metadata=detail(request.sessionId).storedBodies[0];if(state.bodyOverride&&!composer)Object.assign(metadata,state.bodyOverride);
+          const metadata={lengthKnown:true,wireBodyBytes:null,...detail(request.sessionId).storedBodies[0]};if(state.bodyOverride&&!composer)Object.assign(metadata,state.bodyOverride);
           metadata.retainedBytes=Number(total);
-          const chunks=[];for(let start=0;start<bytes.length;start+=8192)chunks.push(String.fromCharCode(...bytes.slice(start,start+8192)));
-          return {metadata,totalBytes:total.toString(),offset:request.offset,bytesBase64:btoa(chunks.join('')),readLimit:16777216};
+          const header=new TextEncoder().encode(JSON.stringify({metadata,totalBytes:total.toString(),offset:request.offset,readLimit:16777216}));
+          const frame=new Uint8Array(4+header.length+bytes.length);new DataView(frame.buffer).setUint32(0,header.length,true);frame.set(header,4);frame.set(bytes,4+header.length);
+          return frame.buffer;
         }
         case 'inspect_body': {
           const composer=state.composerResponseDetail?.id===args.request.sessionId;

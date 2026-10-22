@@ -125,6 +125,10 @@ def main():
                      "-p", "transmog-sdk-engine", "-p", "transmog-sdk-facade"]
         step("clippy", [*cargo, "clippy", *selection, "--all-targets", "--", "-D", "warnings"])
         step("parity-tests", [*cargo, "test", *selection])
+        application_tests = ["--manifest-path", "Cargo.toml", "--locked", "--target", "x86_64-unknown-linux-gnu",
+                             "-p", "transmog-app", "--lib"]
+        step("body-range-tests", [*cargo, "test", *application_tests, "body_ranges::tests"])
+        step("composer-body-tests", [*cargo, "test", *application_tests, "composer_response::tests"])
         install = ROOT / ".local/sdk/x86_64-unknown-linux-gnu/Release/install"
         relocated_consumer(install, dict(os.environ))
         report["relocated_consumers"] = "passed without Rust/Crubit on PATH"

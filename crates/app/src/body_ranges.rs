@@ -1,7 +1,6 @@
 //! Bounded byte pages with exact 64-bit offsets for the virtual Hex viewer.
 use crate::{AppError, BodyStore, ErrorCategory, StoredBodyMetadata, inspector};
-use base64::{Engine as _, engine::general_purpose::STANDARD};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 
 /// One raw retained-body byte range. Decimal strings avoid JavaScript precision loss.
 #[derive(Clone, Debug, Deserialize)]
@@ -19,17 +18,16 @@ pub struct BodyRangeRequest {
 }
 
 /// A bounded raw byte page and the exact length of its retained source.
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug)]
 pub struct BodyBytePage {
     /// Original representation and retention context, never preview decoding.
     pub metadata: StoredBodyMetadata,
-    /// Exact retained byte count in decimal text.
-    pub total_bytes: String,
-    /// Exact returned byte offset in decimal text.
-    pub offset: String,
+    /// Exact retained byte count, without transport encoding.
+    pub total_bytes: u64,
+    /// Exact returned byte offset, without transport encoding.
+    pub offset: u64,
     /// Lossless bytes for this page.
-    pub bytes_base64: String,
+    pub bytes: Vec<u8>,
     /// Maximum bytes accepted per call for this store.
     pub read_limit: usize,
 }
@@ -82,9 +80,9 @@ pub(crate) fn read(
     metadata.availability = range.availability;
     Ok(BodyBytePage {
         metadata,
-        total_bytes: range.retained_bytes.to_string(),
-        offset: range.offset.to_string(),
-        bytes_base64: STANDARD.encode(range.bytes),
+        total_bytes: range.retained_bytes,
+        offset: range.offset,
+        bytes: range.bytes,
         read_limit,
     })
 }
@@ -166,15 +164,10 @@ mod tests {
             max_bytes: Some(5),
         };
         let page = read(&store, &request).unwrap();
-        assert_eq!(page.offset, "9007199254740994");
-        assert_eq!(page.total_bytes, "9007199254741009");
-        assert_eq!(
-            STANDARD.decode(&page.bytes_base64).unwrap(),
-            [2, 3, 4, 5, 6]
-        );
+        assert_eq!(page.offset, 9_007_199_254_740_994);
+        assert_eq!(page.total_bytes, 9_007_199_254_741_009);
+        assert_eq!(page.bytes, [2, 3, 4, 5, 6]);
         assert_eq!(counter.load(Ordering::Relaxed), 6);
-        let serialized = serde_json::to_value(&page).unwrap();
-        assert_eq!(serialized["totalBytes"], "9007199254741009");
         request.offset = bytes.to_string();
         assert!(read(&store, &request).is_err());
         request.offset = "-1".into();

@@ -36,6 +36,8 @@ handle_call!(result_error, *const u8);
 handle_call!(result_error_length, usize);
 handle_call!(session_updates_valid, i32);
 handle_call!(session_updates_release, ());
+handle_call!(body_page_succeeded, i32);
+handle_call!(body_page_release, ());
 
 macro_rules! operation {
     ($name:ident) => {
@@ -68,10 +70,53 @@ macro_rules! input_operation {
 input_operation!(save_product_state);
 input_operation!(start_proxy);
 input_operation!(query_sessions);
-input_operation!(read_body_range);
 input_operation!(session_detail);
 input_operation!(query_traffic_view);
 input_operation!(release_traffic_view);
+
+/// Reads an owned typed page from the shared Application operation.
+///
+/// # Safety
+/// Application and UTF-8 session/boundary inputs must remain live for this call.
+pub unsafe fn read_body_range(
+    handle: *mut u8,
+    session: *const u8,
+    session_length: usize,
+    boundary: *const u8,
+    boundary_length: usize,
+    offset: u64,
+    max_bytes: usize,
+) -> *mut u8 {
+    unsafe {
+        engine::read_body_range(
+            handle.cast(),
+            session,
+            session_length,
+            boundary,
+            boundary_length,
+            offset,
+            max_bytes,
+        )
+        .cast()
+    }
+}
+
+macro_rules! body_field {
+    ($name:ident, $field:ty, $result:ty) => {
+        /// Borrows a primitive field from an owned body page.
+        ///
+        /// # Safety
+        /// Keep the page live during the call and any use of borrowed bytes.
+        pub unsafe fn $name(handle: *mut u8, field: $field) -> $result {
+            unsafe { engine::$name(handle.cast(), field) }
+        }
+    };
+}
+body_field!(body_page_number, u32, u64);
+body_field!(body_page_data, u32, *const u8);
+body_field!(body_page_data_length, u32, usize);
+body_field!(body_page_coding, usize, *const u8);
+body_field!(body_page_coding_length, usize, usize);
 
 /// Reads the shared traffic view's bounded row window.
 ///

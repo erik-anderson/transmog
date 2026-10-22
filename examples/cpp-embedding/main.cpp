@@ -40,7 +40,7 @@ int main(int argc, char **argv) {
   if (argc == 2 && std::strcmp(argv[1], "--product-state") == 0)
     return show(app.product_state()) ? 0 : 1;
   if (argc == 2 && std::strcmp(argv[1], "--self-test") == 0) {
-    if (transmog::abi_version() != 2 || transmog_c_header_version() != 2)
+    if (transmog::abi_version() != 3 || transmog_c_header_version() != 3)
       return 1;
     if (!app.status().succeeded() || !app.product_state().succeeded() ||
         !app.query_sessions("{}").succeeded())
@@ -49,7 +49,7 @@ int main(int argc, char **argv) {
       return 3;
     auto invalid_cache = transmog::Application::create_with_body_store({});
     if (invalid_cache.valid() || invalid_cache.status().succeeded() ||
-        app.read_body_range("{}").succeeded())
+        app.read_body_range({}).succeeded())
       return 10;
     if (app.query_traffic_view("not-json").succeeded() ||
         app.traffic_view_rows("missing", 0, 1).succeeded() ||

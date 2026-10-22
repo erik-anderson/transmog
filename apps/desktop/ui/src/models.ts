@@ -139,7 +139,7 @@ export interface StoredBodyMetadata {
   sha256: string | null;
   reason: string | null;
 }
-export interface BodyBytePage {metadata:StoredBodyMetadata;totalBytes:string;offset:string;bytesBase64:string;readLimit:number;}
+export interface BodyBytePage {metadata:StoredBodyMetadata;totalBytes:string;offset:string;bytes:Uint8Array;readLimit:number;}
 export interface BodyInspection {
   metadata: StoredBodyMetadata;
   representation: string;

@@ -9,6 +9,9 @@ mod certificate_test_fixture;
 mod windows;
 
 #[cfg(any(windows, test))]
+mod body_page;
+
+#[cfg(any(windows, test))]
 mod bundled_extensions;
 
 #[cfg(any(windows, test))]

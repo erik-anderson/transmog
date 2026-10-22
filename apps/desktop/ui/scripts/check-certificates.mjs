@@ -71,7 +71,7 @@ export async function checkCertificates(page, root) {
   await alps.getByText('Sec-CH-UA-Platform, Sec-CH-UA-Model',{exact:true}).waitFor({state:'visible'});
   await alps.locator('.certificate-alps-raw > summary').click();
   await alps.locator('.hex-row').first().waitFor();
-  assert.equal(await alps.locator('hex-viewer').evaluate(node=>node.preview.bytesBase64),alpsFixture.view.payloadBase64);
+  assert.deepEqual(await alps.locator('hex-viewer').evaluate(node=>Array.from(node.preview.bytes)),Array.from(Buffer.from(alpsFixture.view.payloadBase64,'base64')));
   await page.screenshot({path:resolve(root,'../../../target/ui-check/alps-contents-compact.png')});
   await connection.selectOption('upstream:alps-empty');
   await dialog.getByText('Empty (ALPS was negotiated)',{exact:true}).waitFor();

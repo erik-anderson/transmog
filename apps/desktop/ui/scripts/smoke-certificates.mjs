@@ -108,7 +108,7 @@ async function smokeFallbackConnection(viewer,traffic,source,nativeFixture,chain
   await wait(`${component}.querySelector('.certificate-alps').open && ${component}.textContent.includes('Sec-CH-UA-Platform, Sec-CH-UA-Model')`);
   await viewer.evaluate(`${component}.querySelector('.certificate-alps-raw > summary').click()`);
   await wait(`${component}.querySelector('.certificate-alps hex-viewer')?.hexRows.length>0`);
-  assert.equal(await viewer.evaluate(`${component}.querySelector('.certificate-alps hex-viewer').preview.bytesBase64`),alpsFixture.view.payloadBase64);
+  assert.deepEqual(await viewer.evaluate(`Array.from(${component}.querySelector('.certificate-alps hex-viewer').preview.bytes)`),Array.from(Buffer.from(alpsFixture.view.payloadBase64,'base64')));
   await viewer.call('Emulation.setDeviceMetricsOverride',{width:640,height:520,deviceScaleFactor:1,mobile:false});
   await viewer.evaluate(`${component}.querySelector('.certificate-alps-raw').scrollIntoView({block:'nearest'})`);
   if(screenshot)await writeFile(screenshot.replace('.png','-alps-contents-compact.png'),Buffer.from((await viewer.call('Page.captureScreenshot',{format:'png'})).data,'base64'));

@@ -5,7 +5,7 @@ the desktop. C++ hosts use `transmog::Application`; .NET calls C exports that
 delegate to that public C++ implementation. Crubit and Rust adapters are private
 build inputs. The opt-in SDK workspace adds no app or CLI dependency.
 
-This is a **same-build evaluation interface, ABI revision 2**. Build the SDK
+This is a **same-build evaluation interface, ABI revision 3**. Build the SDK
 from this repository; consumers need only the staged headers/library and a
 compatible platform runtime. Rebuild the consumer and library together.
 Packaging and compatibility across SDK builds remain deferred.
@@ -69,9 +69,10 @@ unverified configuration; macOS, GCC, and other configurations are unqualified.
 
 ## Application contract
 
-Operations use the existing Application request/result schemas, serialized as
-UTF-8 JSON. ID arguments are plain UTF-8; they are not JSON strings.
-Errors preserve `AppError.category`, `message`, and `retryable`.
+Body reads use typed arguments, raw bytes, metadata, and errors. Other operations
+use the existing Application request/result schemas as UTF-8 JSON. ID arguments
+are plain UTF-8, not JSON strings. Both paths preserve
+`AppError.category`, `message`, and `retryable`.
 There is no SDK command dispatcher or separate proxy/client model.
 
 | C++ operation | Shared Application operation/model |
@@ -88,7 +89,7 @@ There is no SDK command dispatcher or separate proxy/client model.
 | `release_traffic_view` | Release view ID -> JSON `null` |
 | `subscribe_session_updates` | Owned subscription to `SessionHint` |
 | `session_detail` | Session ID -> `SessionDetail` |
-| `read_body_range` | `BodyRangeRequest` -> `BodyBytePage` |
+| `read_body_range` | Numeric request -> owned typed `BodyPage`, projecting `BodyBytePage` |
 
 Calls block the caller; each application's executor continues proxy work between
 calls. Offload calls from UI threads. Default construction uses in-memory product
@@ -165,17 +166,38 @@ directory after application and subscription owners have been released.
 
 ```cpp
 auto app = transmog::Application::create_with_body_store("/owned/body-cache");
-auto page = app.read_body_range(
-    R"({"sessionId":"00000000000000000000000000000001","boundary":"client-response","offset":"0","maxBytes":65536})");
+auto page = app.read_body_range({session_id, "client-response", 0, 65536});
+if (page.succeeded()) {
+  auto view = page.view(); // raw Bytes, uint64_t offset/total_bytes, metadata
+  // Consume view.bytes while page remains alive.
+} else {
+  auto error = page.error(); // typed category, borrowed message, retryable
+}
 ```
 
 Use an actual session ID and boundary from `session_detail.storedBodies`.
-The canonical [range schema](../crates/app/src/body_ranges.rs) returns
-`bytesBase64`, decimal-string `offset`/`totalBytes`, `readLimit`, and
-[StoredBodyMetadata](../crates/app/src/body_store.rs).
+The shared [range result](../crates/app/src/body_ranges.rs) owns raw bytes and
+64-bit numeric offsets/counts. SDK body reads produce no JSON/base64. The
+desktop adapts the same result at its Tauri boundary: one `ArrayBuffer` response
+contains a four-byte little-endian metadata length, UTF-8 JSON metadata (at most
+256 KiB), then raw body bytes. Only the small header uses JSON; exact page
+`offset`/`totalBytes` remain decimal strings for JavaScript. The hex viewer borrows
+a `Uint8Array` over the payload, with no base64 conversion. IPC still copies data
+between processes; this is not shared-memory or zero-copy IPC. No legacy
+base64 body-page path is retained. Other preview/visualizer operations keep
+their current contracts.
+
+`BodyPage` is a move-only owner that can outlive Application. Its `view()` and
+`content_coding(index)` return borrowed byte/text/metadata views, valid until the
+page is destroyed or replaced. Optional metadata distinguishes absence from an
+empty string. `error()` projects the original AppError without serialization.
+The C API uses an opaque `transmog_sdk_body_page`, fixed-layout view/error
+structs, explicit 32-bit enum/boolean values, and `body_page_free`. Every buffer
+belongs to that page; callers never free a borrowed pointer. ABI revision 3
+replaces the old JSON body-read signature; rebuild consumers and library together.
 Bytes preserve content encoding; HTTP transfer framing and TLS are excluded.
-`maxBytes` is a per-call budget (1 byte through 16 MiB); the store may impose a lower limit.
-Advance by the decoded byte count. This transport does not buffer a whole body
+`max_bytes` is a per-call budget (1 byte through 16 MiB); the store may impose a lower limit.
+Advance by the returned byte count. This transport does not buffer a whole body
 and holds no eviction lease between calls.
 
 ```mermaid
@@ -187,7 +209,7 @@ sequenceDiagram
     Reader->>SDK: session_detail(session ID)
     SDK-->>Reader: capturing, retainedBytes
     Reader->>SDK: read_body_range(offset, maxBytes)
-    SDK-->>Reader: Bounded bytesBase64 page
+    SDK-->>Reader: Owned raw byte page and typed metadata
     Note over Reader: Consume chunk, then advance offset
     Reader->>SDK: session_detail(session ID)
     SDK-->>Reader: capturing, offset equals retainedBytes
@@ -214,17 +236,18 @@ panics are contained before generated thunks. This prevents ABI unwinding,
 without promising recovery from process faults, allocator aborts, aborting
 panics, or caller memory/lifetime violations.
 
-Application, Result, and SessionUpdates are move-only owners. Result byte views
+Application, Result, BodyPage, and SessionUpdates are move-only owners. Result byte views
 expire on result destruction/replacement; results can outlive Application.
 Serialize moves/release against calls and borrowed-byte use. Application
 destruction performs best-effort shutdown; call `shutdown` explicitly to inspect
 failure. `stop_proxy` begins reversible drain and allows `start_proxy` to resume.
 
-C callers free each non-null application/result/subscription once; null free is
+C callers free each non-null application/result/body-page/subscription once; null free is
 accepted. A null returned C pointer means wrapper allocation failed before the
 operation ran. Failed construction instead produces an invalid owner whose
 status contains the creation error. Inputs must remain readable for each call
 and are bounded to 256 KiB. Buffers are length-delimited, without a promised NUL.
+For body reads the bound applies to the combined UTF-8 session ID and boundary.
 
 ## Verification
 
@@ -238,7 +261,11 @@ traffic views and callbacks, drain/resume, shutdown/ownership, bounded binary
 body reads, empty/compressed/incomplete responses, and live reads before origin
 completion. A deterministic managed contract checks cancellation at native-call
 completion, prefix waiting, early iterator disposal, and incomplete-retention
-errors. `check-sdk-isolation.py` verifies SDK-free app/CLI dependency closures.
+errors. Typed-page checks cover exact 64-bit counts, optional metadata, and
+ownership independent of the application. Desktop Rust/TypeScript checks cover
+binary framing, exact offsets and malformed replies; browser and native WebView2
+checks exercise paged Hex. `check-sdk-isolation.py` verifies SDK-free app/CLI
+dependency closures.
 
 Repeat Linux qualification through a Linux Docker engine (including Docker
 Desktop's WSL2 backend):
