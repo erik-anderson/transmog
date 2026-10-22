@@ -5,10 +5,12 @@ a C compatibility surface binding the same `transmog_app::Application` facade
 used by the desktop. Its opt-in build is
 isolated from the desktop and CLI. Crubit is a private SDK build tool; consuming
 the staged headers/library needs no Rust or Crubit installation. The
-[.NET 10 sample](../examples/dotnet-embedding/README.md) calls the SDK's C exports,
-which use the public C++ implementation. This intentionally same-build interface
-demonstrates application ownership, existing product-state and error models,
-proxy start, ordered traffic views and inspection, session-update callbacks,
+[.NET 10 sample](../examples/dotnet-embedding/README.md) uses the reusable
+[`Transmog.Sdk`](../sdk/managed/Transmog.Sdk.csproj) binding over those C exports.
+Its typed records and native model views are generated from the canonical Rust
+models. This intentionally same-build interface demonstrates application
+ownership, existing product-state and error models, proxy start,
+ordered traffic views and inspection, session-update callbacks,
 typed raw body reads and live streaming, reversible drain/resume,
 and final shutdown. The host generates HTTP traffic through the proxy;
 the SDK has no separate fetch implementation.

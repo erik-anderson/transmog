@@ -1,13 +1,19 @@
 # C++ application embedding example
 
-This consumer uses only the installed public headers and library. It needs a
-C++20 compiler and CMake; Rust and Crubit are needed only to build the SDK.
+This consumer uses only the installed public headers and library. It needs C and
+C++20 compilers and CMake 3.24 or newer; Rust and Crubit are needed only to build
+the SDK.
 
 ```sh
-cmake -S examples/cpp-embedding -B .local/cpp-consumer -DCMAKE_PREFIX_PATH=<SDK_OUTPUT>
-cmake --build .local/cpp-consumer
-ctest --test-dir .local/cpp-consumer --output-on-failure
+cmake -S examples/cpp-embedding -B .local/cpp-consumer -DCMAKE_PREFIX_PATH="<SDK_OUTPUT>" -DCMAKE_BUILD_TYPE=Debug
+cmake --build .local/cpp-consumer --config Debug
+ctest --test-dir .local/cpp-consumer -C Debug --output-on-failure
 ```
+
+Run from the repository root and replace `<SDK_OUTPUT>` with the SDK's native
+install directory. Choose a compiler compatible with that library's C++ ABI;
+see the [qualified configurations](../../sdk/README.md#build-and-consume).
+`--config` and `-C` also select Debug for multi-configuration CMake generators.
 
 Run `transmog_cpp_embedding` to start a loopback HTTP proxy, send traffic through
 its printed listener, then press Enter to list captured rows and shut down.
