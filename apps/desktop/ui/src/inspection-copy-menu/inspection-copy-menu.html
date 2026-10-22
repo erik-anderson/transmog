@@ -1,5 +1,5 @@
 <template shadowrootmode="open">
-  <span class="copy-feedback" role="status" aria-live="polite">{{copyFeedback}}</span>
+  <span w-ref="{feedback}" popover="manual" class="copy-feedback" role="status" aria-live="polite">{{copyFeedback}}</span>
   <div w-ref="{menu}" class="copy-menu" popover="auto" role="menu" aria-label="Copy inspection value" data-scheme="{{copyColorScheme}}" data-x="{{copyMenuX}}" data-y="{{copyMenuY}}" @keydown="{key(e)}" @toggle="{toggled(e)}">
     <for each="action in copyActions"><button key="{{action.id}}" type="button" role="menuitem" ?disabled="{{action.disabled || copyMenuBusy}}" @click="{execute(action.id)}">{{action.label}}</button></for>
     <if condition="copyMenuNote"><p>{{copyMenuNote}}</p></if>

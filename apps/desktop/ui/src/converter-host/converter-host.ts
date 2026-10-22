@@ -2,6 +2,8 @@ import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import { describeError } from '../utilities.js';
 import { selectedConverterText, restoreConverterSelection, focusConverterSource, type ConverterSelection } from '../converter-selection.js';
+import {MeasuredMenu,menuAnchor,navigateMenu,copied} from '../context-menu.js';
+import {copyDialog} from '../inspection-copy.js';
 
 type Representation='text'|'hex';
 type Encoding='utf8'|'utf16le'|'utf16be'|'windows1252';
@@ -45,6 +47,8 @@ export class ConverterHost extends WebUIElement {
   private revision=0;
   private timer:number|undefined;
   private selection:ConverterSelection|null=null;
+  private readonly menuPlacement=new MeasuredMenu(()=>this.selectionMenu,(x,y)=>{this.converterMenuX=x;this.converterMenuY=y;this.$flushUpdates();});
+  menuToggled(event:ToggleEvent):void {if(event.newState==='closed')this.menuPlacement.close();}
   private output:Output|null=null;
   private restoreFocus:HTMLElement|null=null;
   private resultInput:Record<string,unknown>|null=null;
@@ -52,13 +56,13 @@ export class ConverterHost extends WebUIElement {
   private active():Element|null {let element:Element|null=document.activeElement;while(element?.shadowRoot?.activeElement)element=element.shadowRoot.activeElement;return element;}
   private readonly contextListener=(event:MouseEvent):void=>{
     if(event.defaultPrevented||event.composedPath().some(node=>node instanceof HTMLElement&&node.classList.contains('monaco-editor')))return;
-    const selected=selectedConverterText(event);if(!selected)return;
+    const selected=selectedConverterText(event);if(!selected||copyDialog(selected.source))return;
     this.showContext(event,selected,'');
   };
   private readonly keyboardListener=(event:KeyboardEvent):void=>{
     if(event.defaultPrevented||event.repeat||!(event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey))return;
     if(event.composedPath().some(node=>node instanceof HTMLElement&&node.classList.contains('monaco-editor')))return;
-    const selection=selectedConverterText(event);if(selection)this.showContext(event,selection,'');
+    const selection=selectedConverterText(event);if(selection&&!copyDialog(selection.source))this.showContext(event,selection,'');
   };
   private readonly requestListener=(event:Event):void=>{
     const request=(event as CustomEvent<{text:string;source:HTMLElement}>).detail;
@@ -76,6 +80,7 @@ export class ConverterHost extends WebUIElement {
     if(this.standalone)void this.receiveDraft();
   }
   disconnectedCallback():void {
+    this.menuPlacement.close();
     document.removeEventListener('contextmenu',this.contextListener);document.removeEventListener('keydown',this.keyboardListener);
     document.removeEventListener('format-converter-request',this.requestListener);document.removeEventListener('format-converter-header',this.headerListener);
     clearTimeout(this.timer);this.cancelWork();super.disconnectedCallback();
@@ -143,13 +148,12 @@ export class ConverterHost extends WebUIElement {
     event.preventDefault();event.stopPropagation();this.selection=selection;
     const editable=selection.source instanceof HTMLTextAreaElement||selection.source instanceof HTMLInputElement;
     this.converterEditable=(editable||selection.source.isContentEditable)&&!selection.source.hasAttribute('readonly')&&!selection.source.hasAttribute('disabled');this.converterSelection=selection.text.length>0;this.converterMenuError=error;
-    const rect=selection.source.getBoundingClientRect();const pointer=event instanceof MouseEvent&&event.button===2;
-    this.converterMenuX=Math.max(8,Math.min(pointer?event.clientX:rect.left,innerWidth-296))+'px';this.converterMenuY=Math.max(8,Math.min(pointer?event.clientY:rect.bottom,innerHeight-200))+'px';
-    this.$flushUpdates();this.selectionMenu.showPopover();(this.selectionMenu.querySelector('button:not(:disabled)') as HTMLElement|null)?.focus();
+    const anchor=menuAnchor(event,selection.source);
+    this.$flushUpdates();this.selectionMenu.showPopover();this.menuPlacement.open(anchor);(this.selectionMenu.querySelector('button:not(:disabled)') as HTMLElement|null)?.focus();
   }
   menuKey(event:KeyboardEvent):void {
-    if(event.key==='Escape'){event.preventDefault();this.selectionMenu.hidePopover();this.restoreSource();}
-    if(event.key==='ArrowDown'||event.key==='ArrowUp'){event.preventDefault();const buttons=[...this.selectionMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([hidden])')];const index=buttons.indexOf(this.shadowRoot?.activeElement as HTMLButtonElement);buttons[(index+(event.key==='ArrowDown'?1:buttons.length-1))%buttons.length]?.focus();}
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.selectionMenu.hidePopover();this.restoreSource();return;}
+    navigateMenu(event,[...this.selectionMenu.querySelectorAll<HTMLButtonElement>('button:not(:disabled):not([hidden])')],this.shadowRoot?.activeElement??null);
   }
   openSelection():void {this.selectionMenu.hidePopover();void this.acceptSelection();}
   private async acceptSelection():Promise<void> {
@@ -165,11 +169,11 @@ export class ConverterHost extends WebUIElement {
   closeSaveError(event:Event):void {event.preventDefault();this.saveErrorDialog.close();if(!this.standalone)this.panel.showPopover();this.outputEditor.focus();}
   async selectionInWindow():Promise<void> {if(!this.selection||this.converterHandoff)return;const selection=this.selection;this.replaceDialog.close();const focus=this.active();this.converterHandoff=true;try{await invoke('open_converter_window',{draft:this.draft(selection.text)});}catch(error:unknown){this.converterError=describeError(error);if(this.isConnected&&!this.standalone&&this.selection===selection&&this.active()===focus&&document.hasFocus())this.panel.showPopover();}finally{this.converterHandoff=false;}}
   private clipboardSelectionCurrent(selection:ConverterSelection):boolean {
-    if(!this.isConnected||this.selection!==selection||!selection.source.isConnected||!this.selectionMenu.matches(':popover-open')||!this.selectionMenu.contains(this.shadowRoot?.activeElement??null))return false;
+    if(!this.isConnected||document.hidden||this.selection!==selection||!selection.source.isConnected||(!selection.source.getClientRects().length&&!this.panel.contains(selection.source))||!this.selectionMenu.matches(':popover-open')||!this.selectionMenu.contains(this.shadowRoot?.activeElement??null))return false;
     if(selection.source instanceof HTMLInputElement||selection.source instanceof HTMLTextAreaElement)return selection.source.value===selection.inputValue;
     return !selection.range||selection.range.toString()===selection.text;
   }
-  async copySelection():Promise<void> {if(!this.selection)return;const selection=this.selection;try{await navigator.clipboard.writeText(selection.text);if(!this.clipboardSelectionCurrent(selection))return;this.selectionMenu.hidePopover();this.restoreSource(selection);}catch{if(this.clipboardSelectionCurrent(selection))this.converterMenuError='Copy failed. Select the text and press Ctrl+C.';}}
+  async copySelection():Promise<void> {if(!this.selection)return;const selection=this.selection;if(!this.clipboardSelectionCurrent(selection))return;try{await navigator.clipboard.writeText(selection.text);if(!this.clipboardSelectionCurrent(selection))return;this.selectionMenu.hidePopover();this.restoreSource(selection);copied(selection.source);}catch{if(this.clipboardSelectionCurrent(selection))this.converterMenuError='Copy failed. Select the text and press Ctrl+C.';}}
   async editSelection(action:string):Promise<void> {
     if(!this.selection||!this.converterEditable)return;const selection=this.selection;
     try{const text=action==='paste'?await navigator.clipboard.readText():'';if(action==='cut')await navigator.clipboard.writeText(selection.text);if(!this.clipboardSelectionCurrent(selection))return;this.selectionMenu.hidePopover();this.restoreSource(selection);document.execCommand('insertText',false,text);}

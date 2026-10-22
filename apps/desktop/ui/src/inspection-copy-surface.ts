@@ -1,4 +1,4 @@
-import {copyGesture, copyScalar, copyTree, fieldCopyActions, type CopyRequest, type CopyTreeNode} from './inspection-copy.js';
+import {copyGesture, copyTree, fieldCopyActions, type CopyRequest, type CopyTreeNode} from './inspection-copy.js';
 import {selectedConverterText} from './converter-selection.js';
 
 /** Opted-in read-only evidence only. Editors and native-value providers keep ownership. */
@@ -44,10 +44,6 @@ export function surfaceCopy(event: MouseEvent | KeyboardEvent): Omit<CopyRequest
   const label = source.getAttribute('data-copy-label') || source.getAttribute('aria-label') || 'Text';
   return {source, current, actions: [
     {id: 'text', label: source.getAttribute('data-copy-label') ? 'Copy ' + label.toLowerCase() : 'Copy text', read: () => value},
-    ...(label !== 'Text' ? [
-      {id: 'name', label: 'Copy name', read: () => copyScalar(label)},
-      {id: 'pair', label: 'Copy name and value', read: () => copyScalar(label) + ': ' + copyScalar(value)},
-    ] : []),
   ]};
 }
 function definitionPair(element: HTMLElement): {name: string; value: string} | null {

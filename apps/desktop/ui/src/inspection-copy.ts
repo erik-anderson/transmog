@@ -42,9 +42,12 @@ export function boundedCopy(text: string): string {
     throw new CopyError('Copy exceeds the 16 MiB clipboard text limit. The clipboard was not changed.');
   return text;
 }
+export function nameCopyAction(name: string): CopyAction {
+  return {id: 'name', label: 'Copy name', read: () => copyScalar(name)};
+}
 export function fieldCopyActions(name: string, read: CopyAction['read'] | null): CopyAction[] {
   return [
-    {id: 'name', label: 'Copy name', read: () => copyScalar(name)},
+    nameCopyAction(name),
     {id: 'value', label: 'Copy value', disabled: !read, read: async current => copyScalar(await read!(current))},
     {id: 'pair', label: 'Copy name and value', disabled: !read, read: async current => copyScalar(name) + ': ' + copyScalar(await read!(current))},
   ];

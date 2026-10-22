@@ -15,7 +15,7 @@ export async function smokeConnectTunnels(viewer) {
       workspace.applyDetail(detail);
       const inspector=workspace.querySelector('message-inspector[side="response"]');
       inspector.viewer='auto';inspector.showMode('body');await inspector.inspectBody();inspector.$flushUpdates();
-      return {text:inspector.bodyText,rendered:inspector.textContent};
+      return {text:inspector.bodyNotice,rendered:inspector.textContent};
     })()`);
     assert.equal(decrypted.text,'saved viewer response');
     assert.match(decrypted.rendered,/saved viewer response/);
@@ -26,7 +26,7 @@ export async function smokeConnectTunnels(viewer) {
       detail.performance.transports=[{leg:'upstream',connectionId:'native-opaque',tunnelDestination:'media.stores.com:443'}];
       workspace.applyDetail(detail);
       const inspector=workspace.querySelector('message-inspector[side="response"]');
-      await inspector.inspectBody();inspector.$flushUpdates();return inspector.bodyText;
+      await inspector.inspectBody();inspector.$flushUpdates();return inspector.bodyNotice;
     })()`);
     assert.match(opaque,/Opaque CONNECT tunnel to media.stores.com:443/);
   } finally {

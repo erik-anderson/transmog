@@ -31,7 +31,7 @@ p { margin:.3rem 0; line-height:1.4; }
 footer { display:grid; gap:.4rem; }
 footer .actions { justify-content:flex-start; }
 footer span { min-height:1em; font-size:.75rem; }
-.selection-menu { inset:auto; top:attr(data-y type(<length>),100px); left:attr(data-x type(<length>),12px); margin:0; width:min(18rem,calc(100vw - 1rem)); padding:.3rem; border:1px solid var(--converter-line); border-radius:.35rem; background:var(--converter-panel); color:var(--converter-text); box-shadow:0 .4rem 1rem #0003; }
+.selection-menu { position:fixed; box-sizing:border-box; max-height:calc(100dvh - 16px); overflow:auto; inset:auto; top:attr(data-y type(<length>),100px); left:attr(data-x type(<length>),12px); margin:0; width:min(18rem,calc(100vw - 1rem)); padding:.3rem; border:1px solid var(--converter-line); border-radius:.35rem; background:var(--converter-panel); color:var(--converter-text); box-shadow:0 .4rem 1rem #0003; }
 .selection-menu:popover-open { display:grid; }
 .selection-menu button { text-align:left; border:0; }
 .selection-menu p { padding:.4rem; }

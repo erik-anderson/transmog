@@ -5,7 +5,7 @@ import {describeError} from '../utilities.js';
 import {decodeBytes} from '../hex-viewer/hex-formats.js';
 import type {HexPreview} from '../hex-viewer/hex-viewer.js';
 import {ReloadObserver} from './reload.js';
-import {copyGesture, fieldCopyActions, requestCopy, CopyError} from '../inspection-copy.js';
+import {copyGesture, fieldCopyActions, nameCopyAction, requestCopy, CopyError} from '../inspection-copy.js';
 import {selectedConverterText} from '../converter-selection.js';
 import {hasCopyValue, nodeCopyValue, visualizerCopyTree} from './copy.js';
 import {DOCUMENT_NODE,documentNode,formatText,nodeAncestors,nodeIndex,sourceDescription,tablePage,treeRows,valueText,type LiveStatus,type LiveUpdate,type Presentation,type Span,type TreeRow,type VisualizerChoice,type VisualizerNode,type VisualizerSelection,type VisualizerView} from './models.js';
@@ -471,7 +471,7 @@ export class ExtensionVisualizer extends WebUIElement {
       } finally { if (revision === this.revision) this.visualizerBusy = false; }
     };
     requestCopy(event, {source: event.currentTarget as HTMLElement, current,
-      actions: [...fieldCopyActions(node.name, hasCopyValue(node) ? valid => read(false, valid) : null),
+      actions: [...(hasCopyValue(node) ? fieldCopyActions(node.name, valid => read(false, valid)) : [nameCopyAction(node.name)]),
         ...(node.children.length || node.childrenToken ? [{id: 'subtree', label: 'Copy subtree', read: (valid: () => boolean) => read(true, valid)}] : [])]});
   }
   tablePage(delta:number):void {const node=this.nodes.get(this.selected);if(node){this.tableOffset=Math.max(0,this.tableOffset+delta);this.visualizerTable=tablePage(node,this.tableOffset);}}

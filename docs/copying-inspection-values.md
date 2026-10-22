@@ -5,6 +5,12 @@ without first selecting its text. The menu targets the item under the pointer;
 copying does not change the selected request, tree field or stream message.
 Shift+F10 or the Context Menu key opens the same actions for a focused item.
 Escape dismisses the menu and returns focus.
+Pointer menus open at the cursor and move only as far as their rendered size
+requires to fit inside the window. Keyboard menus open beside the focused item. Inspection, selected-text and Traffic
+menus measure their actual content, including changes after opening and zoom.
+Arrow keys, Home and End move within menus. Escape restores the source focus;
+clicking elsewhere keeps the clicked control focused. A brief **Copied.** message
+confirms successful inspection and selected-text copying without moving focus.
 
 | Action | Clipboard text |
 | --- | --- |
@@ -28,9 +34,11 @@ decimal strings; enum and flag values retain their names and raw values. Byte
 arrays become uppercase hexadecimal pairs separated by spaces. Whole text/report
 actions preserve their text block's line breaks. Clipboard content is plain text.
 
-Actions follow their context. Objects and arrays without a scalar value disable
-Copy value and Copy name and value. Leaves omit Copy subtree. Unnamed text blocks
-offer Copy text; named previews and converter output identify what is copied.
+Actions follow their context. Objects, arrays and Auth finding headings without
+a scalar value omit Copy value and Copy name and value. Leaves omit Copy subtree.
+Unnamed text blocks offer Copy text; named previews and converter output identify
+what is copied. A text block's display label is not a field name: Body previews,
+Raw data and converter output offer only their text-copy action.
 Key-value groups with multiple fields offer Copy section. Tables offer field or
 row actions where applicable. Redacted/unavailable values explain why value
 actions are disabled, while their names remain copyable.
@@ -73,7 +81,10 @@ their ordinary editing shortcuts and menus; existing text-selection copying is
 preserved. Hex keeps its specialized byte-range/encoding and offset actions.
 
 Copy body preview copies the displayed preview, which can be shorter than the
-retained body. Retained stream-prefix coverage stays explicit. Use the existing
+retained body. Warnings and missing-body prose offer **Copy explanation**, independently of the
+body evidence. Metadata offers **Copy body metadata**. Selected text offers Copy
+first; read-only selections inside modal inspectors use the modal's copy menu.
+Retained stream-prefix coverage stays explicit. Use the existing
 body/message save actions when the complete retained binary representation is
 needed. Display masking and clipboard actions do not sanitize retained traffic
 or change capture/export redaction.

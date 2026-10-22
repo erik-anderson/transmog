@@ -16,9 +16,9 @@ test('copy fails as a whole on output and recursive limits',()=>{
   assert.throws(()=>copyTree({name:'root',children:Array.from({length:10000},()=>({name:'x'}))}),/node limit/);
   let root={name:'leaf'};for(let i=0;i<34;i++)root={name:'parent',children:[root]};assert.throws(()=>copyTree(root),/depth/);
 });
-test('field actions read the real value on demand and disable branch-only values',async()=>{
+test('field actions read the real value on demand and disable unavailable values',async()=>{
   let reads=0;const actions=fieldCopyActions('Name',()=>{reads++;return 'full\nvalue';});
   assert.equal(reads,0);assert.equal(await actions[0].read(()=>true),'Name');assert.equal(reads,0);
   assert.equal(await actions[2].read(()=>true),'Name: full\\nvalue');assert.equal(reads,1);
-  assert.deepEqual(fieldCopyActions('Branch',null).map(action=>!!action.disabled),[false,true,true]);
+  assert.deepEqual(fieldCopyActions('Redacted field',null).map(action=>!!action.disabled),[false,true,true]);
 });

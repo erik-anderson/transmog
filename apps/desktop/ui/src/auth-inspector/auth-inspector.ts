@@ -3,16 +3,16 @@ import {invoke} from '@tauri-apps/api/core';
 import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {AuthField,AuthFinding,AuthRelated,AuthRelatedEntry,AuthSelection,AuthSourceNavigation,AuthView} from './models.js';
 import {authBodyFormats} from './models.js';
-import {copyGesture, copyTree, fieldCopyActions, requestCopy, CopyError, type CopyTreeNode} from '../inspection-copy.js';
+import {copyGesture, copyTree, fieldCopyActions, nameCopyAction, requestCopy, CopyError, type CopyTreeNode} from '../inspection-copy.js';
 import {selectedConverterText} from '../converter-selection.js';
+import {authArtifact,type AuthArtifact} from './presentation.js';
 
 let generation=0n;
 const next=():string=>(++generation).toString();
 const group=(finding:AuthFinding):AuthFinding=>{
   const children=finding.children.map(group);
   const fields=finding.fields.map(field=>({...field,revealed:!!field.revealed,visibilityLabel:(field.revealed?'Hide ':'Reveal ')+field.name}));
-  const summary=finding.fields.filter(field=>!field.sensitive&&/^(iss|aud|Username|Domain|Target name|Ticket realm|Service principal|client_id|scope|response_type)/.test(field.name)).slice(0,4).map(field=>field.name+': '+field.value.slice(0,180)).join(' · ')||children.find(child=>child.summary)?.summary||'';
-  return {...finding,fields,summary,readableFields:fields.filter(field=>!technical(field)),technicalFields:fields.filter(technical),children};
+  return {...finding,fields,readableFields:fields.filter(field=>!technical(field)),technicalFields:fields.filter(technical),children};
 };
 const technical=(field:AuthField):boolean=>/^(Original |Decoded |Compact token)/.test(field.name)||field.name.includes(' · original field');
 export class AuthInspector extends WebUIElement {
@@ -24,7 +24,14 @@ export class AuthInspector extends WebUIElement {
   @observable authError='';
   @observable authNotice='';
   @observable authFindings:AuthFinding[]=[];
+  @observable authArtifacts:AuthArtifact[]=[];
+  authFindingsChanged():void {this.authArtifacts=this.authFindings.map(authArtifact);}
   @observable authCoverage:AuthView['inspection']['coverage']=[];
+  @observable authCoverageSummary='';
+  authCoverageChanged():void {
+    const complete=this.authCoverage.filter(source=>source.status==='complete').length,total=this.authCoverage.length;
+    this.authCoverageSummary=!total?'Source coverage unavailable':complete===total?'All '+total+' scanned sources complete':complete+' of '+total+' scanned sources complete · limited coverage';
+  }
   @observable authDiagnostics:string[]=[];
   @observable authRelated:AuthRelated|null=null;
   @observable authRelatedBusy=false;
@@ -33,6 +40,17 @@ export class AuthInspector extends WebUIElement {
   @observable authBodyHint='';
   @observable authBodyResult='';
   private view:AuthView|null=null;
+  private returnPosition:{key:string;interpretation:string;top:number}|null=null;
+  private relatedOriginTop=0;
+  relatedButton!:HTMLButtonElement;
+  closeRelated():void {this.authRelated=null;this.$flushUpdates();const scroll=this.querySelector('.auth-scroll');if(scroll)scroll.scrollTop=this.relatedOriginTop;this.relatedButton.focus({preventScroll:true});}
+  restorePosition(top:number):void {if(this.selection){this.returnPosition={key:this.selection.key,interpretation:this.interpretation,top};this.applyPosition();}}
+  private applyPosition():void {
+    const position=this.returnPosition;if(!position||this.authBusy||!this.view)return;
+    this.returnPosition=null;
+    if(position.key!==this.selection?.key||position.interpretation!==this.interpretation)return;
+    this.$flushUpdates();const scroll=this.querySelector('.auth-scroll');if(scroll)scroll.scrollTop=position.top;
+  }
   private pending:{slot:string;generation:string;pageId:string}|null=null;
   private key='';
   private evidenceKey='';
@@ -99,7 +117,7 @@ export class AuthInspector extends WebUIElement {
           'Body could not be interpreted as '+format.label+'. '+(this.authCoverage.find(source=>source.source==='body')?.detail??'No retained body was available.');
       this.$emit('auth-count',{count:this.authFindings.length,complete:this.authCoverage.every(source=>source.status==='complete')});
     } catch {if(this.current(revision)){this.authError='Auth evidence could not be inspected or changed while loading. Retry the current selection.';this.view=null;this.$emit('auth-count',{count:null,failed:true});}}
-    finally {if(this.current(revision))this.authBusy=false;}
+    finally {if(this.current(revision)){this.authBusy=false;this.applyPosition();}}
   }
   retry():void {this.suspended=false;this.key='';this.reconcile();}
   closeBody():void {this.$emit('auth-body-close',null);}
@@ -138,6 +156,7 @@ export class AuthInspector extends WebUIElement {
       return undefined;
     };
     const finding = find(this.authFindings); if (!view || !finding) return;
+    const artifact=authArtifact(finding);
     const hasSecrets = (node: AuthFinding): boolean => node.fields.some(field => field.available && field.sensitive) || node.children.some(hasSecrets);
     const subtree = async (secrets: boolean, current: () => boolean): Promise<string> => {
       const fields: AuthField[] = [];
@@ -153,17 +172,19 @@ export class AuthInspector extends WebUIElement {
     };
     requestCopy(event, {source: event.currentTarget as HTMLElement,
       current: () => this.current(revision) && this.active && this.view === view,
-      actions: [...fieldCopyActions(finding.format + ' · ' + finding.role, null),
+      actions: [nameCopyAction(artifact.format + ' · ' + artifact.context),
         ...(finding.fields.length || finding.children.length ? [{id: 'subtree', label: 'Copy subtree', read: (current: () => boolean) => subtree(false, current)}] : []),
         ...(hasSecrets(finding) ? [{id: 'secrets', label: 'Copy subtree including secrets', read: (current: () => boolean) => subtree(true, current)}] : [])]});
   }
   async related():Promise<void> {
     const view=this.view;if(!view||this.authRelatedBusy)return;const revision=this.revision;this.authRelatedBusy=true;
-    try {const related=await invoke<AuthRelated>('related_auth',{handle:view.handle});if(this.current(revision)&&this.active)this.authRelated=related;}
+    const scroll=this.querySelector('.auth-scroll'),top=scroll?.scrollTop??0;
+    if(!this.authRelated)this.relatedOriginTop=top;
+    try {const related=await invoke<AuthRelated>('related_auth',{handle:view.handle});if(this.current(revision)&&this.active){const unmoved=scroll?.scrollTop===top;this.authRelated=related;this.$flushUpdates();if(unmoved&&scroll)scroll.scrollTop=0;}}
     catch {if(this.current(revision))this.authNotice='Related evidence is unavailable or changed. Retry inspection.';}
     finally {if(this.current(revision))this.authRelatedBusy=false;}
   }
-  navigate(entry:AuthRelatedEntry):void {const revision=this.revision;if(!this.view||!this.current(revision))return;this.$emit('auth-traffic-request',{id:entry.sessionId,boundary:entry.boundary,isCurrent:()=>this.current(revision)});}
+  navigate(entry:AuthRelatedEntry):void {const revision=this.revision;if(!this.view||!this.selection||!this.current(revision))return;this.$emit('auth-traffic-request',{id:entry.sessionId,boundary:entry.boundary,isCurrent:()=>this.current(revision),origin:{id:this.selection.sessionId,boundary:this.selection.boundary,interpretation:this.interpretation,scrollTop:this.relatedOriginTop}});}
   disconnectedCallback():void {this.ready=false;this.nativeListener++;const unlisten=this.nativeUnlisten;this.nativeUnlisten=null;if(unlisten)void Promise.resolve(unlisten()).catch(()=>undefined);document.removeEventListener('visibilitychange',this.visibility);this.stop();this.key='';super.disconnectedCallback();}
 }
 AuthInspector.define('auth-inspector');

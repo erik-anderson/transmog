@@ -92,8 +92,7 @@ export async function checkBodyRefresh(page,root,{reproduce=false}={}) {
     await inspector.locator('.body-options > summary').click();
     await inspector.getByLabel('Decode',{exact:true}).uncheck();
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.bodyRefresh.calls.at(-1).decodeContent),false);
-    await inspector.locator('.preview-options > summary').click();
-    await inspector.getByLabel('Bytes',{exact:true}).fill('1024');await inspector.getByLabel('Bytes',{exact:true}).press('Tab');
+    await inspector.getByLabel('Preview limit (bytes)',{exact:true}).fill('1024');await inspector.getByLabel('Preview limit (bytes)',{exact:true}).press('Tab');
     assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.bodyRefresh.calls.at(-1).maxBytes),1024);
     await inspector.locator('.body-options > summary').click();
 

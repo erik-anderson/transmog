@@ -17,8 +17,9 @@ auth-inspector { display:block; min-width:0; min-height:0; height:100%; overflow
 .auth-field dt { font-weight:600; overflow-wrap:anywhere; }
 .auth-field dd { margin:0; min-width:0; }
 .auth-field pre { flex:1; min-width:0; margin:0; max-height:14rem; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:.75rem/1.5 "Cascadia Mono",Consolas,monospace; user-select:text; }
-.auth-meaning { margin-top:.3rem; font-size:.7rem; }
-.auth-meaning summary,.auth-provenance summary,.auth-coverage summary { cursor:pointer; }
+.auth-inspector .auth-meaning { margin:.2rem 0 0; font-size:.72rem; line-height:1.4; }
+.auth-technical > summary,.auth-coverage summary { cursor:pointer; }
+.auth-technical h4 { margin:.4rem 0; font-size:inherit; }
 .auth-provenance,.auth-coverage,.auth-related { margin:.5rem 0; }
 .auth-provenance ol,.auth-coverage ul,.auth-related ul { padding-left:1.2rem; }
 .auth-finding .auth-finding { margin-left:.6rem; padding-left:.5rem; border-left:2px solid var(--line); }
@@ -35,3 +36,9 @@ auth-inspector { display:block; min-width:0; min-height:0; height:100%; overflow
 @media (forced-colors:active) { .auth-reveal { color:ButtonText; } }
 
 .auth-body-format { display:flex; flex-wrap:wrap; align-items:center; justify-content:space-between; gap:.25rem .5rem; }
+
+.auth-options { font-size:.72rem; }
+.auth-options > summary { cursor:pointer; padding:.2rem; }
+.auth-options[open] { flex-basis:100%; padding:.35rem; border:1px solid var(--line); background:var(--panel-subtle); }
+.auth-options[open] > button { margin:.35rem 0; }
+.auth-inspector .auth-overview { margin:0; color:var(--muted); font-size:.72rem; }

@@ -19,7 +19,10 @@ recovered. Live and imported traffic use the same native analysis path.
 
 Automatic detection also scans an eligible complete retained body in each visible
 selected message. Other rows and routine list refreshes do not read bodies.
-**Retry inspection** repeats the selected analysis.
+Failures offer **Retry inspection** directly. After a successful scan, use
+**Inspection options → Refresh inspection** to repeat it. The persistent overview
+states that evidence is unverified and distinguishes complete from limited source
+coverage; **Source coverage** contains the individual source details.
 
 For a body that is itself a standalone token or SAML document, choose **Body**,
 then select JWT/JWS/JWE, SAML XML, NTLM or Negotiate from the **Authentication ·
@@ -75,8 +78,17 @@ Passwords, client secrets, tokens/codes/correlation values, PKCE verifiers,
 raw/decoded representations and cryptographic bytes are masked by default.
 The eye button beside a value reveals or hides that field. Right-click or use
 Shift+F10 for **Copy value**, which copies the actual authorized retained contents
-even when masked. Raw/decoded material has a separate
-disclosure and still requires reveal. User/domain/workstation and ordinary claim
+even when masked. **Technical details** groups decoding provenance and raw/decoded
+material after the readable fields and decoded children; values still require
+reveal. Field-specific interpretation notes appear beside their values without
+another disclosure. Single-child envelopes that refer to the same retained source
+are presented as one artifact, such as JWT/JWS within Bearer. The technical
+details retain each decoder layer, role, status and source range. Distinct source
+ranges and sibling artifacts stay separate, warnings remain attributed to their
+layer, and subtree copying preserves the original evidence hierarchy. JWT claims
+lead the readable fields; JOSE metadata follows them without changing captured
+field order in subtree copies.
+User/domain/workstation and ordinary claim
 metadata are readable diagnostic evidence and may contain personal data. Reveals
 reset on selection, stage/evidence changes, hide, disconnect or workspace change;
 neither reveal state nor values become preferences or diagnostic history.
@@ -121,3 +133,12 @@ role; shared or multiplexed connections are context, not proof of a handshake.
 Missing imported connection metadata is reported instead of substituting host/
 time proximity. Body-only relationships can be absent from this searched scope;
 the view does not reconstruct a complete login flow.
+
+**Related traffic** shows the searched scope and any search limit above the source
+fields. **Back to evidence** restores the position from before the search.
+After opening a related request, **Back to auth source** returns to the original
+message stage, body interpretation and reading position. Reveals reset normally;
+return navigation does not restore credentials into the display. A navigation
+that is superseded by a new focus or selection does not steal focus.
+For WebSocket and event-stream exchanges, both directions open the HTTP
+handshake inspector so the requested Auth evidence is visible.

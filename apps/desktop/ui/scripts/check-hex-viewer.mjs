@@ -234,7 +234,9 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
           t.preferences={...t.preferences,listSplit:Math.max(15,Math.min(85,Math.round(t.preferences.listSplit+(content.getBoundingClientRect().height-110*zoom)/workspace.getBoundingClientRect().height*100)))};
         },zoom);
         const save=inspector.getByRole('button',{name:'Save as…',exact:true});await save.focus();
-        assert.equal(await save.evaluate(element=>{const r=element.getBoundingClientRect(),c=element.closest('.message-content').getBoundingClientRect();return r.top>=c.top&&r.bottom<=c.bottom&&r.bottom<=innerHeight;}),true,'Save control became unreachable in the compact pane');
+        const saveReachability=await save.evaluate(element=>{const r=element.getBoundingClientRect(),c=element.closest('.message-content').getBoundingClientRect();return {reachable:r.top>=c.top&&r.bottom<=c.bottom&&r.bottom<=innerHeight,button:r.toJSON(),content:c.toJSON(),height:innerHeight};});
+        if(!saveReachability.reachable)await page.screenshot({path:screenshotPath.replace('.png','-save-clipping.png')});
+        assert.equal(saveReachability.reachable,true,'Save control became unreachable in the compact pane: '+JSON.stringify(saveReachability));
         await viewer.evaluate(element=>element.scrollIntoView({block:'nearest'}));await grid.focus();await grid.press('Control+End');
         await viewer.getByRole('button',{name:'Go to offset',exact:true}).focus();
         let reachable;for(let attempt=0;attempt<40;attempt++){reachable=await viewer.evaluate(hexReachability,end);if(reachable.visible&&reachable.tailVisible)break;await new Promise(resolve=>setTimeout(resolve,25));}assert.ok(reachable.visible&&reachable.rows<100&&reachable.tailVisible,'Compact Hex clipping: '+JSON.stringify(reachable));

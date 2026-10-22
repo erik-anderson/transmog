@@ -9,5 +9,5 @@ button:disabled { opacity:.5; cursor:default; }
 button:focus-visible { outline:2px solid var(--focus,Highlight); outline-offset:-2px; }
 p { margin:.2rem .5rem; overflow-wrap:anywhere; line-height:1.4; }
 p:empty { display:none; }
-.copy-feedback { position:fixed; width:1px; height:1px; overflow:hidden; clip-path:inset(50%); }
+.copy-feedback { position:fixed; inset:auto 1rem 1rem auto; margin:0; max-width:calc(100vw - 2rem); padding:.5rem .8rem; border:1px solid var(--line,GrayText); border-radius:.35rem; color:var(--text,CanvasText); background:var(--panel,Canvas); box-shadow:0 .2rem .6rem #0002; pointer-events:none; }
 @media(forced-colors:active) { .copy-menu { background:Canvas; color:CanvasText; border-color:ButtonText; } }

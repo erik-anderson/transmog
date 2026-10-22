@@ -74,7 +74,9 @@ when changing the experience.
   reducing text size or control targets. Reuse styles and align text baselines.
 - Keep actions outside list scrollers. Preserve comparison in wide panes and
   provide list/detail or request/response switching in narrow ones. Scroll within
-  workspaces so content cannot push navigation beyond the viewport.
+  workspaces so content cannot push navigation beyond the viewport. Temporary
+  inspector expansion preserves selection and reading position without changing
+  saved splits; keep the return to the list visible and available by keyboard.
 - Important labels wrap or reflow. Abbreviated metadata must have an accessible
   complete form; essential actions and state must not depend on tooltips.
 - Use native controls with accessible names, visible focus and logical tab order.
@@ -95,6 +97,11 @@ when changing the experience.
   of selection. Use complete underlying evidence for field values; name previews
   accurately. Offer only actions supported by the context and preserve masking in
   ordinary Auth subtree copies. See [copying inspection values](copying-inspection-values.md).
+  Anchor pointer menus at the cursor, adjusting for their actual size at window
+  edges. Omit actions that have no meaning for the target; explain disabled
+  actions only when a relevant value is unavailable. Text-block labels do not
+  turn their contents into name/value fields. Keep captured body text separate
+  from explanatory prose so copying evidence never includes a status message.
 - Removing Traffic keeps open live WebSockets inspectable unless the user has
   explicitly enabled termination on clear. Cancellation stops selected live work
   while preserving its evidence; Undo never reconnects a terminated connection.
@@ -150,6 +157,12 @@ when changing the experience.
   Surface Auth when selected-message discovery finds evidence. Put explicit
   whole-body format choices with body viewers and show their result clearly.
   Keep value reveal controls inline and copying in the inspection context menu.
+  Keep field-specific interpretation beside its value; group technical evidence
+  into one disclosure per finding after readable decoded content. Do not repeat
+  a child's summary on its enclosing artifact. Present a single-source envelope
+  chain as one readable artifact while preserving its decoder layers and warning
+  ownership. Keep verification limits and a source-coverage summary visible;
+  promote retries for failed evidence and group routine refresh with options.
   See [Auth inspection](auth-inspection.md).
 
 - Local certificate trust controls add trust grants. Disabling them cannot turn

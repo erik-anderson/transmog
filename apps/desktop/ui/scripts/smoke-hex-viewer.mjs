@@ -5,11 +5,11 @@ export async function smokeHexViewer(evaluate, call) {
     const points = await evaluate(`(async () => {
       const inspector = document.querySelector('app-shell').shadowRoot.querySelector('message-inspector[side="response"]');
       const traffic=document.querySelector('app-shell').traffic;
-      globalThis.__hexSmoke = { traffic,selectedId:traffic.selectedSessionId,side:traffic.inspectorSide,inspector, mode:inspector.mode, preview:inspector.hexPreview, text:inspector.bodyText,
+      globalThis.__hexSmoke = { traffic,selectedId:traffic.selectedSessionId,side:traffic.inspectorSide,inspector, mode:inspector.mode, preview:inspector.hexPreview, text:inspector.bodyText,notice:inspector.bodyNotice,
         clipboard:Object.getOwnPropertyDescriptor(navigator,'clipboard') };
       Object.defineProperty(navigator,'clipboard',{configurable:true,value:{writeText:async text=>globalThis.__hexSmoke.copied=text}});
       traffic.selectedSessionId='hex-smoke';traffic.inspectorSide='response';traffic.$flushUpdates();
-      inspector.mode='body'; inspector.bodyText='';
+      inspector.mode='body'; inspector.bodyText='';inspector.bodyNotice='';
       inspector.hexPreview={key:'webview-hex-check',bytes:new Uint8Array([1,71,1,87,1,91,1,101]),offset:16,truncated:true};
       inspector.$flushUpdates();
       await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
@@ -76,7 +76,7 @@ export async function smokeHexViewer(evaluate, call) {
       if(!saved)return;
       if(saved.viewer&&saved.listener)for(const type of ['pointerdown','pointermove','pointerup','lostpointercapture'])saved.viewer.viewport.removeEventListener(type,saved.listener);
       saved.viewer?.contextMenu.hidePopover();
-      saved.inspector.hexPreview=saved.preview;saved.inspector.bodyText=saved.text;saved.inspector.mode=saved.mode;
+      saved.inspector.hexPreview=saved.preview;saved.inspector.bodyText=saved.text;saved.inspector.bodyNotice=saved.notice;saved.inspector.mode=saved.mode;
       saved.inspector.$flushUpdates();
       saved.traffic.selectedSessionId=saved.selectedId;saved.traffic.inspectorSide=saved.side;saved.traffic.$flushUpdates();
       if(saved.clipboard)Object.defineProperty(navigator,'clipboard',saved.clipboard);else delete navigator.clipboard;

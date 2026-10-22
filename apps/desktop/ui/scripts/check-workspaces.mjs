@@ -1459,7 +1459,7 @@ try {
 
   await view('traffic');
   await page.locator('tr[data-session-id="cached"]').click();
-  await page.locator('traffic-workspace message-inspector[side="response"] .body-preview').getByText('304 Not Modified',{exact:false}).waitFor({state:'visible'});
+  await page.locator('traffic-workspace message-inspector[side="response"] .body-notice').getByText('304 Not Modified',{exact:false}).waitFor({state:'visible'});
   await page.locator('tr[data-session-id="image"]').click();
   await page.locator('traffic-workspace message-inspector[side="response"]').getByText('Auto · Image',{exact:true}).waitFor({state:'visible'});
   await page.locator('traffic-workspace message-inspector[side="response"] img').waitFor({state:'visible'});
@@ -1509,8 +1509,8 @@ try {
   });
   await responseInspector.getByText('Preview unavailable:',{exact:false}).waitFor({state:'visible'});
   assert.match(await responseInspector.locator('.body-facts').textContent(),/4 B retained \/ 8 B observed · lost/);
-  assert.match(await responseInspector.locator('.body-preview').textContent(),/Reason: exchange failed at ResponseBody/);
-  assert.match(await responseInspector.locator('.body-preview').textContent(),/Raw Hex shows the 4 B retained bytes/);
+  assert.match(await responseInspector.locator('.body-notice').textContent(),/Reason: exchange failed at ResponseBody/);
+  assert.match(await responseInspector.locator('.body-notice').textContent(),/Raw Hex shows the 4 B retained bytes/);
   assert.equal(await saveBody.isEnabled(),false,'Save as accepts an incomplete response');
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('bytes');
   await responseInspector.locator('.body-facts strong').getByText('Hex',{exact:true}).waitFor({state:'visible'});
@@ -1535,8 +1535,8 @@ try {
   });
   assert.match(await responseInspector.locator('.body-preview').textContent(),/"availability": "evicted"/,'Metadata cannot inspect a body without retained bytes');
   await responseInspector.getByLabel('Body viewer',{exact:true}).selectOption('auto');
-  assert.match(await responseInspector.locator('.body-preview').textContent(),/removed to make room/);
-  assert.doesNotMatch(await responseInspector.locator('.body-preview').textContent(),/Hex/,'Unavailable bytes incorrectly recommend Hex');
+  assert.match(await responseInspector.locator('.body-notice').textContent(),/removed to make room/);
+  assert.doesNotMatch(await responseInspector.locator('.body-notice').textContent(),/Hex/,'Unavailable bytes incorrectly recommend Hex');
   assert.equal(await saveBody.isEnabled(),false,'Save as accepts evicted response bytes');
   await page.evaluate(()=>delete globalThis.__workspaceFixture.bodyOverride);
   await page.locator('tr[data-session-id="second"]').click();

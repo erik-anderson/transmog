@@ -32,6 +32,7 @@ import type { CertificateInspector } from '../certificate-inspector/certificate-
 import type { TraceMetadata, TraceImportResult, TraceImportProgress, TrafficSearchResult, TrafficSearchProgress, TrafficSearchEntry, TrafficSearchMatch, CapturedPageReport, PreviewRuleSnapshot } from '../models.js';
 
 import {traceMarkers,type MarkerReview,type TraceMarker} from '../markers.js';
+import {MeasuredMenu,menuAnchor,navigateMenu,type MenuPoint} from '../context-menu.js';
 
 type ContextValue={dimension:TrafficDimension;label:string;value:TrafficFilterValue};
 type Column = ReturnType<typeof displayColumns>[number] & {sortDirection:string;sortArrow:string};
@@ -39,20 +40,36 @@ type Row = SessionSummary & {extensionCells:Array<{key:string;text:string;title:
 const NO_EXTENSION_KEYS:string[]=[];
 const NO_EXTENSION_CELLS:Array<{key:string;text:string;title:string}>=[];
 type PreviewPageChoices={pages:Array<{id:string;url:string;startedAt:number;recordedReferrer:boolean}>;more:boolean};
+type AuthReturn={id:string;boundary:string;interpretation:string;scrollTop:number};
 
 export class TrafficWorkspace extends WorkspaceElement {
   requestMessage!:MessageInspector;
   responseMessage!:MessageInspector;
   private authNavigation=0;
-  async onAuthTraffic(event:CustomEvent<{id:string;boundary:string;isCurrent:()=>boolean}>):Promise<void> {
+  private authReturn:AuthReturn|null=null;
+  @observable authReturnAvailable=false;
+  @observable authReturnBusy=false;
+  async returnToAuth():Promise<void> {
+    const origin=this.authReturn;if(!origin||this.authReturnBusy)return;
+    const generation=++this.authNavigation,focus=this.trackNavigationFocus();this.authReturnBusy=true;
+    const current=():boolean=>this.isConnected&&this.view==='traffic'&&generation===this.authNavigation;
+    try{
+      const found=await this.revealSession(origin.id,()=>false,()=>current()&&focus.unchanged());
+      if(found&&current()&&focus.unchanged()&&this.selectedSessionId===origin.id){
+        this.streamPanel=false;this.inspectorSide=origin.boundary.endsWith('request')?'request':'response';this.authReturn=null;this.authReturnAvailable=false;this.$flushUpdates();
+        (this.inspectorSide==='request'?this.requestMessage:this.responseMessage).showAuthBoundary(origin.boundary,origin.interpretation,origin.scrollTop);
+      }else if(current()&&focus.unchanged())this.diagnostic='The original Auth source is no longer retained or navigation was superseded.';
+    }finally{focus.dispose();this.authReturnBusy=false;}
+  }
+  async onAuthTraffic(event:CustomEvent<{id:string;boundary:string;isCurrent:()=>boolean;origin:AuthReturn}>):Promise<void> {
     event.stopPropagation();if(!event.detail.isCurrent()||this.view!=='traffic')return;
     const {id,boundary}=event.detail,generation=++this.authNavigation;
     const focus=this.trackNavigationFocus();let admitted=false;
     const current=():boolean=>this.isConnected&&this.view==='traffic'&&generation===this.authNavigation;
     try {
-      const found=await this.revealSession(id,()=>focus.unchanged(),()=>{if(!current()||!focus.unchanged())return false;if(!admitted){if(!event.detail.isCurrent())return false;admitted=true;}return true;});
-      if(found&&current()&&this.selectedSessionId===id){this.inspectorSide=boundary.endsWith('request')?'request':'response';this.$flushUpdates();(boundary.endsWith('request')?this.requestMessage:this.responseMessage).showAuthBoundary(boundary);}
-      else if(current())this.diagnostic='Related auth evidence is no longer retained.';
+      const found=await this.revealSession(id,()=>false,()=>{if(!current()||!focus.unchanged())return false;if(!admitted){if(!event.detail.isCurrent())return false;admitted=true;}return true;});
+      if(found&&current()&&focus.unchanged()&&this.selectedSessionId===id){this.authReturn??=event.detail.origin;this.authReturnAvailable=!!this.authReturn;this.streamPanel=false;this.inspectorSide=boundary.endsWith('request')?'request':'response';this.$flushUpdates();(boundary.endsWith('request')?this.requestMessage:this.responseMessage).showAuthBoundary(boundary);}
+      else if(current()&&focus.unchanged())this.diagnostic='Related auth evidence is no longer retained.';
     } finally {focus.dispose();}
   }
 
@@ -297,11 +314,10 @@ export class TrafficWorkspace extends WorkspaceElement {
   closeTrafficActions(event:Event):void {if((event.target as Element).closest('button'))this.closePopover(this.trafficMenu,this.trafficTable);}
   actionMenuKey(event:KeyboardEvent,inspected:boolean):void {
     const menu=inspected?this.requestActionsMenu:this.trafficMenu;
-    if(event.key==='Escape'){event.preventDefault();this.closePopover(menu,inspected?this.actionsButton:this.trafficTable);return;}
+    if(event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closePopover(menu,inspected?this.actionsButton:this.trafficTable);return;}
     if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
     const items=Array.from(menu.children).filter((item):item is HTMLButtonElement|ActionSubmenu=>(item instanceof HTMLButtonElement||item instanceof ActionSubmenu)&&!item.hidden&&!(item instanceof HTMLButtonElement&&item.disabled));
-    const index=items.indexOf(event.target as HTMLButtonElement|ActionSubmenu);
-    event.preventDefault();items[event.key==='Home'?0:event.key==='End'?items.length-1:(index+(event.key==='ArrowDown'?1:-1)+items.length)%items.length]?.focus();
+    navigateMenu(event,items,event.target as Element);
   }
   @observable detailsTimingsSelected='true';
   @observable detailsConnectionSelected='false';
@@ -654,6 +670,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable trafficUndoText='';
   @observable trafficMenuX='12px';
   @observable trafficMenuY='80px';
+  private trafficMenuAnchor:MenuPoint={x:8,y:8};
+  private readonly trafficMenuPlacement=new MeasuredMenu(()=>this.trafficMenu,(x,y)=>{this.trafficMenuX=x;this.trafficMenuY=y;this.$flushUpdates();});
+  trafficMenuToggled(event:ToggleEvent):void {if(event.newState==='open'){this.trafficMenuPlacement.open(this.trafficMenuAnchor);this.trafficMenu.querySelector<HTMLElement>('button:not(:disabled)')?.focus();}else this.trafficMenuPlacement.close();}
   @observable windowsCommands=false;
   @observable commandBusy=false;
   @observable commandTitle='Copy request';
@@ -683,6 +702,27 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable selectedStatusText = 'No response';
   @observable selectedTone = 'pending';
   @observable inspectorSide = 'response';
+  @observable inspectorExpanded = false;
+  @observable expandedRequestSplit = 45;
+  inspectorExpandButton!:HTMLButtonElement;
+  private compactInspection:{id:string|null;listTop:number;listLeft:number;scroll:Array<{element:HTMLElement;top:number;left:number}>}|null=null;
+  toggleInspector():void {
+    if(!this.selectedSessionId&&!this.inspectorExpanded)return;
+    if(!this.inspectorExpanded){
+      this.compactInspection={id:this.selectedSessionId,listTop:this.sessionScroller.scrollTop,listLeft:this.sessionScroller.scrollLeft,
+        scroll:Array.from(this.querySelectorAll<HTMLElement>('.details-pane *')).filter(element=>element.scrollTop||element.scrollLeft||element.scrollHeight>element.clientHeight||element.scrollWidth>element.clientWidth).map(element=>({element,top:element.scrollTop,left:element.scrollLeft}))};
+      this.expandedRequestSplit=this.preferences.requestSplit;
+      this.inspectorExpanded=true;this.$flushUpdates();this.inspectorExpandButton.focus({preventScroll:true});
+    }else{
+      const previous=this.compactInspection;this.compactInspection=null;
+      this.inspectorExpanded=false;this.requestShare=this.preferences.requestSplit+'%';this.$flushUpdates();
+      if(previous){
+        this.sessionScroller.scrollTop=previous.listTop;this.sessionScroller.scrollLeft=previous.listLeft;
+        if(previous.id===this.selectedSessionId)for(const position of previous.scroll)if(position.element.isConnected){position.element.scrollTop=position.top;position.element.scrollLeft=position.left;}
+      }
+      this.scheduleViewport();this.focusTraffic();
+    }
+  }
   showInspectorSide(side:string):void {this.inspectorSide=side;}
   @observable reuseDisabled = true;
   @observable reuseTitle = '';
@@ -1241,12 +1281,12 @@ export class TrafficWorkspace extends WorkspaceElement {
   preferencesChanged():void {
     if(this.extensionSelection!==(this.preferences.extensionColumns??NO_EXTENSION_KEYS)){this.classifications.invalidate();this.rebuildExtensionColumns();}
     this.listShare = this.preferences.listSplit+'%';
-    this.requestShare = this.preferences.requestSplit+'%';
+    this.requestShare = (this.inspectorExpanded?this.expandedRequestSplit:this.preferences.requestSplit)+'%';
     this.dividerOrientation = this.preferences.layout === 'stacked' ? 'horizontal' : 'vertical';
     this.rebuildColumns();
     this.scheduleViewport();
   }
-  selectedSessionIdChanged():void { this.rebuildRows(this.sessions); }
+  selectedSessionIdChanged():void { if(!this.selectedSessionId&&this.inspectorExpanded)this.toggleInspector();this.rebuildRows(this.sessions); }
   private requestNumberDigits=1;
   private rebuildColumns():void {
     this.columns = displayColumns(this.preferences.columns.map(column=>column.id==='request-number'&&column.width===72?{...column,width:Math.max(column.width,this.requestNumberDigits*8+24)}:column)).map((column) => ({...column,sortDirection:this.sort.column === column.id ? this.sort.direction : 'none',sortArrow:this.sort.column === column.id ? this.sort.direction === 'ascending' ? '↑' : '↓' : ''}));
@@ -1386,7 +1426,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.$emit('workspace-change',{patch,committed});
   }
   resizeList(event:CustomEvent<{value:number;committed:boolean}>):void { this.patchPreferences({listSplit:event.detail.value},event.detail.committed); }
-  resizeRequest(event:CustomEvent<{value:number;committed:boolean}>):void { this.patchPreferences({requestSplit:event.detail.value},event.detail.committed); }
+  resizeRequest(event:CustomEvent<{value:number;committed:boolean}>):void { if(this.inspectorExpanded){this.expandedRequestSplit=event.detail.value;this.requestShare=event.detail.value+'%';}else this.patchPreferences({requestSplit:event.detail.value},event.detail.committed); }
   resizeMessage(event:CustomEvent<{side:string;value:number;committed:boolean}>):void { this.patchPreferences(event.detail.side === 'request' ? {requestBodySplit:event.detail.value} : {responseBodySplit:event.detail.value},event.detail.committed); }
   setLayout(event:Event):void { this.patchPreferences({layout:(event.currentTarget as HTMLSelectElement).value as WorkspacePreferences['layout']}); }
   setCompact(event:Event):void { this.patchPreferences({compactRows:(event.currentTarget as HTMLInputElement).checked}); }
@@ -1472,6 +1512,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   async focusSearch(contents=false):Promise<void> {
     for(const menu of this.querySelectorAll<HTMLElement>(':popover-open'))menu.hidePopover();
+    if(this.inspectorExpanded)this.toggleInspector();
     this.searchInput.focus();this.searchInput.select();
     if(contents&&this.trafficSearchKind!=='contents')await this.setTrafficSearchKind('contents');
   }
@@ -1695,7 +1736,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     try { await invoke<void>('watch_sessions',{onEvent}); this.watchError = ''; await this.refreshSessions(undefined,true); this.renderSessionState(); }
     catch (error:unknown) { this.watching = false; this.watchError = 'Live refresh failed: '+describeError(error); this.renderSessionState(); }
   }
-  sessionScrolled():void { if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); }this.scheduleViewport(); }
+  sessionScrolled():void { if(this.inspectorExpanded)return;if (this.followLatest && this.sessionScroller.scrollTop > 8) { this.followLatest = false; this.renderFollowState(); }this.scheduleViewport(); }
   private updateTrafficSelection():void {
     this.trafficSelectionRevision++;
     this.canCancelRequests=[...this.trafficSelection.ids].some(id=>{const row=this.rowCache.get(id);return !row||row.terminal==='active'&&!row.traceId;});
@@ -1710,6 +1751,9 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.trafficTable.focus({preventScroll:true});
   }
   trafficKeyboard(event:KeyboardEvent):void {
+    if(!event.defaultPrevented&&event.ctrlKey&&event.shiftKey&&!event.altKey&&event.key==='Enter'&&!this.querySelector('dialog[open],[popover]:popover-open')){
+      event.preventDefault();if(!event.repeat)this.toggleInspector();return;
+    }
     if(event.defaultPrevented||event.key!=='Escape'||isTextEditing(event)||!this.selectedTrafficCount)return;
     if(this.querySelector('dialog[open],[popover]:popover-open'))return;
     if(event.composedPath().some(node=>node instanceof HTMLElement&&node.matches('dialog,[popover]')))return;
@@ -1725,6 +1769,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   }
   private handleTrafficKey(id:string,event:KeyboardEvent):void {
     if(event.defaultPrevented || isTextEditing(event))return;
+    if(event.key==='ContextMenu'||event.key==='F10'&&event.shiftKey){const row=this.rowCache.get(id);if(row)this.openTrafficMenu(row,event);return;}
     const control=event.ctrlKey||event.metaKey,key=event.key.toLowerCase();
     if(control&&key===' '&&!id){event.preventDefault();id=this.virtualList.ids[0]??'';if(!id)return;}
     if(control&&!event.altKey&&!event.shiftKey&&['x','z','y'].includes(key)) {
@@ -1766,15 +1811,14 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
     this.handleTrafficKey(this.trafficSelection.focused??'',event);
   }
-  positionTrafficMenu(event:MouseEvent):void {
+  positionTrafficMenu(event:MouseEvent|KeyboardEvent,source=event.currentTarget as HTMLElement):void {
     if(event.type!=='contextmenu'){const row=this.rowCache.get(this.trafficSelection.focused??this.selectedSessionId??'');if(row)this.prepareContextValues(row);}
-    const rect=(event.currentTarget as HTMLElement).getBoundingClientRect();
-    this.trafficMenuX=Math.max(10,Math.min(event.type==='contextmenu'?event.clientX:rect.left,window.innerWidth-320))+'px';
-    this.trafficMenuY=Math.max(50,Math.min(event.type==='contextmenu'?event.clientY:rect.bottom+4,window.innerHeight-230))+'px';this.$flushUpdates();
+    this.trafficMenuAnchor=menuAnchor(event,source);
   }
-  openTrafficMenu(session:SessionSummary,event:MouseEvent):void {
+  openTrafficMenu(session:SessionSummary,event:MouseEvent|KeyboardEvent):void {
     this.prepareContextValues(session);event.preventDefault();if(!this.trafficSelection.ids.has(session.id)){this.trafficSelection.replace(session.id);this.updateTrafficSelection();void this.inspectTraffic(session.id,false,()=>this.trafficSelection.focused===session.id&&this.trafficSelection.ids.has(session.id));}
-    this.positionTrafficMenu(event);this.trafficMenu.showPopover();
+    const source=event instanceof KeyboardEvent?(this.getRootNode() as ShadowRoot).getElementById('session-'+session.id)??this.trafficTable:event.currentTarget as HTMLElement;
+    this.positionTrafficMenu(event,source);this.trafficMenu.showPopover();this.trafficMenuPlacement.open(this.trafficMenuAnchor);
   }
   selectedResponses():void {this.trafficMenu.hidePopover();this.$emit('autoresponse-batch-request',Array.from(this.trafficSelection.ids));}
   addSelectedToResponseSet(inspected=false):void {if(this.viewerMode)return;const ids=inspected&&this.selectedSessionId?[this.selectedSessionId]:Array.from(this.trafficSelection.ids);if(!ids.length)return;this.trafficMenu.hidePopover();this.$emit('response-set-intake-request',{source:'traffic',ids});}
@@ -2291,7 +2335,7 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.markerGeneration++;this.markerNavigation++;this.timelineGeneration++;window.clearTimeout(this.timelineTimer);
     this.clearColumnDrag();
     for(const unlisten of this.nativeUnlisteners)unlisten();this.nativeUnlisteners=[];if(this.importOperation)void invoke('cancel_trace_import',{operationId:this.importOperation}).catch(()=>{});if(this.searchOperation)void invoke('cancel_traffic_search',{operationId:this.searchOperation}).catch(()=>{});this.previewReportGeneration++;this.matchGeneration++;this.metadataGeneration++;
-    window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
+    this.trafficMenuPlacement.close();window.clearTimeout(this.searchTimer); this.layoutObserver?.disconnect(); if (this.sessionUpdates) this.sessionUpdates.onmessage = () => undefined;
     this.rowObserver?.disconnect();window.clearTimeout(this.refreshTimer);if(this.renderFrame!==undefined)cancelAnimationFrame(this.renderFrame);this.releaseView(this.trafficView);this.releaseView(this.pendingView);this.scrollGeneration++;
     if(this.previewPageOperation)void invoke('cancel_captured_page',{operationId:this.previewPageOperation}).catch(()=>{});
     this.inspectionGeneration++; super.disconnectedCallback();

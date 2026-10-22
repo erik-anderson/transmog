@@ -66,3 +66,7 @@ auth-inspector { container-type:inline-size; }
 .body-view .body-toolbar > select { max-width:100%; }
 .message-content[data-mode="split"]:has(extension-visualizer) { grid-template-rows:minmax(9rem,35%) 6px minmax(9rem,1fr); }
 @supports (height:attr(data-size type(<length>))) { .message-content[data-mode="split"]:has(extension-visualizer) { grid-template-rows:minmax(9rem,attr(data-header-share type(<percentage>),35%)) 6px minmax(9rem,1fr); } }
+
+.body-options-panel > p { flex-basis:100%; margin:.2rem 0; color:var(--muted); }
+.body-scroll pre { height:auto; }
+.body-scroll .body-notice { flex:none; color:var(--muted); background:var(--panel-subtle); border-bottom:1px solid var(--line); font:inherit; font-size:.75rem; }

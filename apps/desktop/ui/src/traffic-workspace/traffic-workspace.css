@@ -323,3 +323,20 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
 .extension-column-icon { flex:none; color:currentColor; }
 .extension-column-options legend { display:flex; align-items:center; gap:.3rem; }
 .extension-column-options {border:0;border-top:1px solid var(--line);padding:.4rem 0;margin:.4rem 0;}
+
+/* Expansion is temporary: keep both mounted panes and their saved split intact. */
+.traffic-view[data-active][data-inspector-expanded] { grid-template-rows:minmax(0,1fr); }
+.traffic-view[data-inspector-expanded] > .traffic-toolbar-stack { display:none; }
+.traffic-view[data-inspector-expanded] > .traffic-workspace { grid-row:1; grid-template-rows:minmax(0,1fr); grid-template-columns:minmax(0,1fr); }
+.traffic-view[data-inspector-expanded] > .traffic-workspace > trace-drop-target,
+.traffic-view[data-inspector-expanded] > .traffic-workspace > pane-divider { display:none; }
+
+.inspector-expand-short { display:none; }
+@container (max-width:36rem) {
+  .inspector-expand-label { display:none; }
+  .inspector-expand-short { display:inline; }
+}
+@container (max-width:24rem) {
+  .selection-actions { gap:.2rem; }
+  .compact-inspector-side label { padding-inline:.4rem; }
+}

@@ -13,6 +13,7 @@ import {listen,type UnlistenFn} from '@tauri-apps/api/event';
 import type {VisualizerChoice,VisualizerSelection} from '../extension-visualizer/models.js';
 import type {AuthSelection,AuthSourceNavigation} from '../auth-inspector/models.js';
 import {authBodyFormats} from '../auth-inspector/models.js';
+import type {AuthInspector} from '../auth-inspector/auth-inspector.js';
 
 const stages:Record<string,string> = {'client-request':'Original request','upstream-request':'Request sent to origin','upstream-response':'Origin response','client-response':'Response sent to client'};
 
@@ -51,7 +52,12 @@ export class MessageInspector extends WebUIElement {
       this.$flushUpdates();const root=this.getRootNode();if(root instanceof ShadowRoot)root.getElementById(this.pane+'-header-'+index)?.focus({preventScroll:false});
     } finally {document.removeEventListener('pointerdown',interaction,true);document.removeEventListener('keydown',interaction,true);}
   }
-  showAuthBoundary(boundary:string):void {if(!this.heads().some(head=>head.boundary===boundary))return;this.boundary=boundary;this.updateMessage();this.showMode('auth');}
+  showAuthBoundary(boundary:string,interpretation='auto',scrollTop?:number):void {
+    if(!this.heads().some(head=>head.boundary===boundary))return;
+    this.boundary=boundary;this.updateMessage();this.authInterpretation=interpretation;this.showMode('auth');this.$flushUpdates();
+    this.authTab?.focus({preventScroll:true});
+    if(scrollTop!==undefined)this.querySelector<AuthInspector>('auth-inspector')?.restorePosition(scrollTop);
+  }
   headerContext(header:{id:string;sensitive:boolean},event:MouseEvent|KeyboardEvent):void {
     if (!copyGesture(event) || selectedConverterText(event)) return;
     const source=event.currentTarget as HTMLElement,id=this.detail?.id,boundary=this.boundary,headers=this.headerGeneration;
@@ -111,7 +117,9 @@ export class MessageInspector extends WebUIElement {
   private headerContextGeneration=0;
   @observable sourceIp = '';
   @observable headSummary = 'Select an exchange';
-  @observable bodyText = 'Select an exchange to preview its body.';
+  @observable bodyText = '';
+  @observable bodyNotice = 'Select an exchange to preview its body.';
+  @observable bodyCopyLabel = 'Body preview';
   @observable bodyFacts = '';
   @observable bodySummary = '';
   @observable viewerLabel = 'Auto';
@@ -226,7 +234,7 @@ export class MessageInspector extends WebUIElement {
     if (this.detail && (this.mode === 'body' || this.mode === 'split')) void this.inspectBody(false);
     else if (!this.detail || this.bodyInspectionKey() !== this.inspectedBodyKey) {
       this.generation++; this.inspectedBodyKey=null; this.loading=false; this.hexPreview=null; this.imageUrl='';
-      this.bodyText='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
+      this.bodyText='';this.bodyNotice='Select an exchange to preview its body.'; this.bodyFacts=''; this.bodySummary='';
     }
   }
   showMode(mode:string): void { if(mode==='auth'){this.authSourceNotice='';this.authRequestedKey=this.authSelection?.key??'';}else this.authInterpretation='auto';this.mode = mode; this.rememberView(); if (mode === 'body' || mode === 'split') void this.inspectBody(false); }
@@ -288,23 +296,23 @@ export class MessageInspector extends WebUIElement {
     const previewKey = [this.detail?.id, this.boundary, this.viewer, this.decodeContent].join(':');
     if (this.hexPreview?.key !== previewKey) this.hexPreview = null;
     this.pagedHex = false;
-    this.imageUrl = ''; this.loading = false;
+    this.imageUrl = ''; this.loading = false;this.bodyText='';this.bodyNotice='';this.bodyCopyLabel='Body preview';
     if (!this.detail) { this.hexPreview = null; return; }
     const head = this.heads().find((head) => head.boundary === this.boundary);
     this.bodyFacts = body ? this.retentionFacts(body) : '';
     this.bodySummary=body?formatBytes(body.retainedBytes)+' · '+body.availability:'';
     this.viewerLabel = this.viewer === 'auto' ? 'Auto' : this.viewer;
     const tunnel=opaqueConnectTransport(this.detail);
-    if(tunnel) {this.hexPreview=null;this.bodyText='Opaque CONNECT tunnel to '+tunnel.tunnelDestination+'. HTTPS decryption was disabled. Tunnel contents and the tunneled protocol were not inspected. Open Timings for connection outcomes, endpoints and byte counts.';this.viewerLabel='Opaque tunnel';return;}
-    if (this.viewer === 'metadata') { this.bodyText = body ? JSON.stringify(body,null,2) : 'No body metadata was captured for this message stage.'; this.viewerLabel = 'Metadata'; return; }
+    if(tunnel) {this.hexPreview=null;this.bodyNotice='Opaque CONNECT tunnel to '+tunnel.tunnelDestination+'. HTTPS decryption was disabled. Tunnel contents and the tunneled protocol were not inspected. Open Timings for connection outcomes, endpoints and byte counts.';this.viewerLabel='Opaque tunnel';return;}
+    if (this.viewer === 'metadata') { this.bodyText = body ? JSON.stringify(body,null,2) : '';this.bodyNotice=body?'':'No body metadata was captured for this message stage.';this.bodyCopyLabel='Body metadata'; this.viewerLabel = 'Metadata'; return; }
     if (this.side === 'response' && head?.status === 304 && !body?.retainedBytes) {
-      this.bodyText = '304 Not Modified — no response body is expected. The client uses its cached representation.';
+      this.bodyNotice = '304 Not Modified — no response body is expected. The client uses its cached representation.';
       this.viewerLabel = 'Auto · no body'; return;
     }
-    if (!body) { this.hexPreview = null; this.bodyText = this.side === 'request' ? 'No request body is available. Check retention settings or the source capture.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
-    if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.hexPreview = null; this.bodyText = this.retentionReason(body); return; }
-    if (!body.retainedBytes) { this.hexPreview = null; this.bodyText = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
-    this.loading = true; this.bodyText = this.hexPreview ? '' : 'Loading preview…';
+    if (!body) { this.hexPreview = null; this.bodyNotice = this.side === 'request' ? 'No request body is available. Check retention settings or the source capture.' : 'No response body metadata was captured. The Details tab shows exchange failures and capture loss.'; return; }
+    if (['disabled','evicted','quota-omitted'].includes(body.availability)) { this.hexPreview = null; this.bodyNotice = this.retentionReason(body); return; }
+    if (!body.retainedBytes) { this.hexPreview = null; this.bodyNotice = body.availability === 'complete' && body.observedBytes === 0 ? 'This '+this.side+' has no body.' : this.retentionReason(body); return; }
+    this.loading = true; this.bodyNotice = 'Loading preview…';
     try {
       if(this.viewer==='bytes') {
         await this.inspectRawHex(previewKey,generation);return;
@@ -315,21 +323,24 @@ export class MessageInspector extends WebUIElement {
       const labels:Record<string,string> = {'formatted-json':'JSON','original-text':'Text','bytes':'Hex','image':'Image','metadata':'Metadata','unavailable':'Unavailable'};
       this.viewerLabel = (this.viewer === 'auto' ? 'Auto · ' : '')+(labels[inspection.representation] ?? inspection.representation);
       this.bodyFacts = this.retentionFacts(inspection.metadata)+' · '+formatBytes(inspection.displayBytes)+' shown'+(inspection.decoded ? ' · decoded' : '')+(inspection.truncated ? ' · preview truncated' : '');
+      this.bodySummary=formatBytes(inspection.displayBytes)+' shown · '+(inspection.decoded?'content decoded':'no content decoding')+(inspection.truncated?' · preview limited':'');
+      this.bodyNotice=[inspection.warning,inspection.truncated?'Preview limited to the displayed portion.':''].filter(Boolean).join('\n');
       if (inspection.representation === 'bytes' && inspection.bytesBase64 !== null) {
-        if(!inspection.decoded) await this.inspectRawHex(previewKey,generation,inspection.warning??'');
+        if(!inspection.decoded) {await this.inspectRawHex(previewKey,generation,inspection.warning??'');return;}
         else {
           this.hexPreview = { key: previewKey, bytes: decodeBytes(inspection.bytesBase64), offset: inspection.byteOffset,truncated: inspection.truncated };
-          this.bodyText = inspection.warning ?? '';
         }
       } else {
         this.hexPreview = null;
-        this.bodyText = inspection.display || inspection.warning || (inspection.representation === 'image' ? '' : 'No body content.');
-        if (inspection.warning && inspection.display) this.bodyText = inspection.warning+'\n\n'+inspection.display;
+        this.bodyText = inspection.display;
+        if(!inspection.display&&!this.bodyNotice&&inspection.representation!=='image')this.bodyNotice='No body content.';
+        if(inspection.representation==='metadata')this.bodyCopyLabel='Body metadata';
+        if(inspection.representation==='unavailable'){this.bodyNotice=inspection.warning||inspection.display||'Body preview is unavailable.';this.bodyText='';}
       }
-      if (inspection.metadata.availability !== 'complete') this.bodyText = this.retentionReason(inspection.metadata)+'\n\n'+this.bodyText;
+      if (inspection.metadata.availability !== 'complete') this.bodyNotice = this.retentionReason(inspection.metadata)+'\n'+this.bodyNotice;
       if (inspection.previewHandle) this.imageUrl = convertFileSrc('preview/'+inspection.previewHandle,'transmog-preview');
     } catch (error:unknown) {
-      if (generation === this.generation) { this.hexPreview = null; this.bodyText = 'Preview unavailable: '+describeError(error)+'.\n\n'+this.retentionReason(body)+' Raw Hex shows the '+formatBytes(body.retainedBytes)+' retained bytes with decoding disabled. Metadata shows the capture status and reason.'; }
+      if (generation === this.generation) { this.hexPreview = null; this.bodyText='';this.bodyNotice = 'Preview unavailable: '+describeError(error)+'.\n\n'+this.retentionReason(body)+' Raw Hex shows the '+formatBytes(body.retainedBytes)+' retained bytes with decoding disabled. Metadata shows the capture status and reason.'; }
     } finally { if (generation === this.generation) this.loading = false; }
   }
   private async inspectRawHex(key:string,generation:number,warning=''):Promise<void> {
@@ -339,11 +350,11 @@ export class MessageInspector extends WebUIElement {
     if(generation!==this.generation||!this.isConnected)return;
     this.bodyMetadata=page.metadata;this.pagedHex=true;
     this.viewerLabel=(this.viewer==='auto'?'Auto · ':'')+'Hex';
-    this.bodySummary=formatBytes(page.metadata.retainedBytes)+' · '+page.metadata.availability;
+    this.bodySummary=formatBytes(page.metadata.retainedBytes)+' retained · original bytes · paged';
     this.bodyFacts=this.retentionFacts(page.metadata)+' · All retained bytes available, loaded in pages · raw bytes';
     this.hexPreview={key,bytes:page.bytes,offset:'0',truncated:false,source:{sessionId,boundary,totalBytes:page.totalBytes,readLimit:page.readLimit}};
-    this.bodyText=warning;
-    if(page.metadata.availability!=='complete')this.bodyText=this.retentionReason(page.metadata)+'\n\n'+this.bodyText;
+    this.bodyText='';this.bodyNotice=warning;
+    if(page.metadata.availability!=='complete')this.bodyNotice=this.retentionReason(page.metadata)+'\n'+this.bodyNotice;
   }
   private retentionFacts(body:StoredBodyMetadata):string {
     const bytes = (value:number) => body.availability === 'complete' ? formatBytes(value) : value.toLocaleString()+' B';

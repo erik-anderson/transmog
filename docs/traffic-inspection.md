@@ -18,6 +18,23 @@ the controls wrap together to keep the full URL accessible. Incomplete,
 unavailable, redacted and evicted evidence are distinct states; display previews
 can be shorter than the retained source.
 
+**Expand inspector** temporarily fills the Traffic workspace with the selected
+exchange. **Restore** returns to the list and its prior scroll position. Use
+**Ctrl+Shift+Enter** for either action. Selection, message modes and the prior
+inspection scroll position are preserved; expansion and its request/response
+resize do not overwrite saved split positions. Wide windows retain both messages,
+while compact windows retain the Request/Response switch.
+The search shortcuts **Ctrl+F** and **Ctrl+Shift+F** restore Traffic before
+focusing the filter or content search field.
+
+Body's status line identifies the representation, content decoding and displayed
+preview size. Significant preview limits, decoding warnings and unavailable-body
+reasons remain visible. **Body options** contains Decode and the preview byte
+limit in one disclosure. **Copy body preview** copies only the displayed evidence;
+**Copy explanation** copies a warning or missing-body reason, and **Copy body
+metadata** identifies the metadata view. **Save as…** saves the full retained
+response with content decoding, independently of the displayed preview limit.
+
 Cancellation appears as **Cancelled** in the Status column, inspector, State
 column, Timeline and copied request summary. Cancellation uses a neutral badge;
 the retained diagnostics explain whether the caller stopped waiting or the

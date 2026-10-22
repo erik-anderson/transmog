@@ -21,10 +21,10 @@
     <textarea w-ref="{outputEditor}" aria-label="Converter output" spellcheck="false" readonly data-copy-surface data-copy-label="Output"></textarea>
     <footer><div class="actions"><button type="button" @click="{copyOutput()}" ?disabled="{{!converterReady}}">Copy output</button><button type="button" @click="{chain()}" ?disabled="{{!converterReady || converterHandoff}}">Use output as input</button><button type="button" @click="{save()}" ?disabled="{{!converterReady || converterSaving}}">Save output…</button></div><span role="status">{{converterStatus}}</span></footer>
   </section>
-  <div class="selection-menu" w-ref="{selectionMenu}" popover="auto" data-x="{{converterMenuX}}" data-y="{{converterMenuY}}" aria-label="Text actions" @keydown="{menuKey(e)}">
+  <div class="selection-menu" w-ref="{selectionMenu}" @toggle="{menuToggled(e)}" popover="auto" data-x="{{converterMenuX}}" data-y="{{converterMenuY}}" aria-label="Text actions" @keydown="{menuKey(e)}">
+    <button type="button" @click="{copySelection()}" ?disabled="{{!converterSelection}}">Copy</button>
     <button type="button" @click="{openSelection()}" ?disabled="{{converterMenuError}}">Open in Format converter</button>
     <p role="status" ?hidden="{{!converterMenuError}}">{{converterMenuError}}</p>
-    <button type="button" @click="{copySelection()}" ?disabled="{{!converterSelection}}">Copy</button>
     <button type="button" @click="{editSelection('cut')}" ?hidden="{{!converterEditable}}" ?disabled="{{!converterSelection}}">Cut</button>
     <button type="button" @click="{editSelection('paste')}" ?hidden="{{!converterEditable}}">Paste</button>
   </div>

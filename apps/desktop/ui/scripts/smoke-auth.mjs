@@ -16,7 +16,7 @@ const encrypted=sequence([der(0xa0,der(2,[18])),der(0xa1,der(2,[3])),der(0xa2,de
 const kerberos=der(0x6f,sequence([der(0xa0,der(2,[5])),der(0xa1,der(2,[15])),der(0xa2,encrypted)]));
 const entry=(path,headers,mime,text,responseHeaders=[])=>({startedDateTime:'2023-11-14T22:13:20Z',time:1,request:{method:'GET',url:'https://auth.invalid/'+path,httpVersion:'HTTP/1.1',headers,queryString:[],cookies:[],headersSize:-1,bodySize:0},response:{status:200,statusText:'OK',httpVersion:'HTTP/1.1',headers:[{name:'Content-Type',value:mime},...responseHeaders],cookies:[],content:{size:Buffer.byteLength(text),mimeType:mime,text},redirectURL:'',headersSize:-1,bodySize:Buffer.byteLength(text)},cache:{},timings:{send:0,wait:1,receive:0}});
 const fixture=resolve(output,'auth.har');
-await writeFile(fixture,JSON.stringify({log:{version:'1.2',creator:{name:'Synthetic Auth check',version:'1'},entries:[entry('token',[{name:'Authorization',value:'Basic '+Buffer.from('synthetic-user:native-private-password').toString('base64')}],'application/json',JSON.stringify({access_token:jwt,token_type:'Bearer'}),[{name:'WWW-Authenticate',value:'Negotiate '+ntlm.toString('base64')}]),entry('saml?SAMLResponse='+encodeURIComponent(deflateRawSync(xml).toString('base64')),[],'text/html','<input type="hidden" name="SAMLResponse" value="'+Buffer.from(xml).toString('base64')+'">'),entry('kerberos',[],'text/plain','uninterpreted',[{name:'WWW-Authenticate',value:'Negotiate '+kerberos.toString('base64')}]),entry('standalone',[],'text/plain',jwt) ]}}));
+await writeFile(fixture,JSON.stringify({log:{version:'1.2',creator:{name:'Synthetic Auth check',version:'1'},entries:[entry('token',[{name:'Authorization',value:'Basic '+Buffer.from('synthetic-user:native-private-password').toString('base64')}],'application/json',JSON.stringify({access_token:jwt,token_type:'Bearer'}),[{name:'WWW-Authenticate',value:'Negotiate '+ntlm.toString('base64')}]),entry('saml?SAMLResponse='+encodeURIComponent(deflateRawSync(xml).toString('base64')),[],'text/html','<input type="hidden" name="SAMLResponse" value="'+Buffer.from(xml).toString('base64')+'">'),entry('kerberos',[],'text/plain','uninterpreted',[{name:'WWW-Authenticate',value:'Negotiate '+kerberos.toString('base64')}]),entry('standalone',[{name:'Authorization',value:'Bearer '+jwt}],'text/plain',jwt) ]}}));
 const browser=await chromium.connectOverCDP('http://127.0.0.1:'+argument('--port'));
 const pages=browser.contexts()[0].pages();const page=pages.find(page=>page.url().includes('transmog-ui'))??pages[0];const errors=[];page.on('pageerror',error=>errors.push(error.message));
 try {
@@ -53,6 +53,24 @@ try {
   await page.waitForFunction(()=>globalThis.__nativeCopied.startsWith('Authorization: Basic '));
   await request.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
   const denied=await page.evaluate(async handle=>{try{await window.__TAURI_INTERNALS__.invoke('auth_value',{handle:{...handle,owner:'another-workspace'},field:'v1'});return false;}catch{return true;}},handle);assert.equal(denied,true);
+  await response.locator('.message-tabs').getByRole('button',{name:'Body',exact:true}).click();
+  await response.getByLabel('Body viewer',{exact:true}).selectOption('original-text');
+  const body=response.locator('pre.body-preview');await body.getByText(/access_token/).waitFor();
+  for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
+    await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});
+    const switcher=page.getByRole('button',{name:'Response',exact:true});if(await switcher.count()&&await switcher.first().isVisible())await switcher.first().click();
+    const rect=await body.boundingBox(),point={x:Math.min(width-12,rect.x+rect.width-12),y:Math.min(height-12,rect.y+rect.height-12)};
+    await page.mouse.click(point.x,point.y,{button:'right'});await menu.waitFor();
+    assert.deepEqual(await menu.getByRole('menuitem').allTextContents(),['Copy body preview']);
+    const box=await menu.boundingBox();
+    assert.ok(box.x>=0&&box.y>=0&&box.x+box.width<=width&&box.y+box.height<=height,'Native copy menu is clipped');
+    assert.ok(Math.abs(box.x-Math.max(8,Math.min(point.x,width-box.width-8)))<2,'Native menu is detached horizontally');
+    assert.ok(Math.abs(box.y-Math.max(8,Math.min(point.y,height-box.height-8)))<2,'Native menu is detached vertically');
+    await page.screenshot({path:resolve(output,`copy-native-body-${width}.png`)});
+    await page.keyboard.press('Escape');
+    assert.equal(await body.evaluate(element=>element===element.getRootNode().activeElement),true);
+  }
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
   await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
   await response.getByText('JWT / JWS',{exact:true}).waitFor();await response.getByText('NTLM',{exact:true}).waitFor();
   assert.equal(await response.evaluate(element=>element.outerHTML.includes('native-private-nonce')),false);
@@ -60,13 +78,45 @@ try {
   await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').traffic;await traffic.inspectSession(traffic.sessions.find(row=>row.path.startsWith('/saml')));});
   await response.getByText('SAML 2.0 XML',{exact:true}).waitFor();
   await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').traffic;await traffic.inspectSession(traffic.sessions.find(row=>row.path==='/kerberos'));});
-  await response.getByText('Kerberos V5',{exact:true}).waitFor();await response.getByText('AP-REP',{exact:true}).waitFor();
+  await response.getByText('Kerberos V5',{exact:true}).waitFor();await response.locator('.auth-finding > summary').filter({hasText:'AP-REP'}).waitFor();
   await response.locator('auth-inspector').getByRole('button',{name:'Related traffic',exact:true}).click();await response.getByText(/connection metadata is missing/).waitFor();
   const stale=await page.evaluate(async handle=>{try{await window.__TAURI_INTERNALS__.invoke('auth_value',{handle,field:'v1'});return false;}catch{return true;}},handle);assert.equal(stale,true);
   for(const [width,height] of [[960,720],[800,600]]){await cdp.send('Emulation.setDeviceMetricsOverride',{width,height,deviceScaleFactor:1,mobile:false});const switcher=page.getByRole('button',{name:'Response',exact:true});if(await switcher.count()&&await switcher.first().isVisible())await switcher.first().click();await page.screenshot({path:resolve(output,`auth-native-${width}.png`)});}
+  await page.getByRole('button',{name:'Expand inspector',exact:true}).click();
+  assert.equal(await page.getByRole('grid',{name:'Traffic entries',exact:true}).isVisible(),false);
+  await page.screenshot({path:resolve(output,'auth-native-expanded.png')});
+  await page.keyboard.press('Control+Shift+Enter');
+  assert.equal(await page.getByRole('grid',{name:'Traffic entries',exact:true}).evaluate(element=>element===element.getRootNode().activeElement),true);
   await cdp.send('Emulation.clearDeviceMetricsOverride');
   const ax=await cdp.send('Accessibility.getFullAXTree');assert.ok(ax.nodes.some(node=>node.name?.value==='Auth inspection'));
   await page.evaluate(async()=>{const traffic=document.querySelector('app-shell').traffic;await traffic.inspectSession(traffic.sessions.find(row=>row.path==='/standalone'));});
+  await request.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
+  const nested=request.locator('auth-inspector .auth-scroll > .auth-finding');
+  await nested.getByText('JWT / JWS',{exact:true}).waitFor();
+  assert.equal(await nested.locator('.auth-finding').count(),0,'Native Bearer/JWT retained nested artifacts');
+  assert.equal(await nested.getByRole('button',{name:'Show original source',exact:true}).count(),1);
+  assert.equal(await nested.locator('.auth-field').filter({has:page.locator('dt',{hasText:/^iss$/})}).isVisible(),true);
+  await cdp.send('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
+  await page.evaluate(()=>document.documentElement.style.zoom='1.25');
+  await page.locator('traffic-workspace').getByRole('radio',{name:'Request',exact:true}).check();
+  await request.locator('.auth-scroll').evaluate(element=>element.scrollTop=0);
+  await page.getByRole('button',{name:'Expand inspector',exact:true}).click();
+  const nativeIssuer=nested.locator('.auth-field').filter({has:page.locator('dt',{hasText:/^iss$/})});
+  assert.equal(await nativeIssuer.evaluate(element=>{const box=element.getBoundingClientRect(),scroll=element.closest('.auth-scroll').getBoundingClientRect();return box.top>=scroll.top&&box.bottom<=scroll.bottom;}),true,'Native expanded inspector hid the first claim at 125% zoom');
+  await page.screenshot({path:resolve(output,'auth-native-expanded-zoom.png')});
+  await request.locator('.auth-scroll').evaluate(element=>element.scrollTop=100);
+  await page.getByRole('button',{name:'Restore',exact:true}).click();
+  assert.equal(await request.locator('.auth-scroll').evaluate(element=>element.scrollTop),0,'Native restore lost a reading position at the top');
+  await page.getByRole('button',{name:'Expand inspector',exact:true}).click();
+  await page.keyboard.press('Control+f');
+  const nativeSearch=page.getByRole('searchbox',{name:'Filter or search traffic',exact:true});
+  assert.equal(await nativeSearch.isVisible(),true,'Native search shortcut left the Traffic toolbar hidden');
+  assert.equal(await nativeSearch.evaluate(element=>element===element.getRootNode().activeElement),true,'Native search shortcut lost focus after restoring Traffic');
+  await page.screenshot({path:resolve(output,'auth-native-search-restored.png')});
+  await page.locator('traffic-workspace').getByRole('radio',{name:'Response',exact:true}).check();
+  await page.evaluate(()=>document.documentElement.style.zoom='');
+  await cdp.send('Emulation.clearDeviceMetricsOverride');
+
   await page.waitForFunction(()=>document.querySelector('app-shell').traffic.querySelector('message-inspector[side="response"]')?.authCount===0);
   assert.equal(await response.locator('.message-tabs').getByRole('button',{name:/^Auth/}).count(),0);
   await response.getByLabel('Body viewer',{exact:true}).selectOption('auth:jose');
@@ -115,7 +165,7 @@ try {
     await viewer.getByRole('treeitem').nth(1).click();
     const selected=await viewer.getByRole('tree').getAttribute('aria-activedescendant');
     await viewer.getByRole('treeitem').first().click({button:'right'});
-    assert.equal(await menu.getByRole('menuitem',{name:'Copy value',exact:true}).isDisabled(),true);
+    assert.equal(await menu.getByRole('menuitem',{name:'Copy value',exact:true}).count(),0);
     await page.screenshot({path:resolve(output,'copy-native-mapi-menu.png')});
     await menu.getByRole('menuitem',{name:'Copy subtree',exact:true}).click();
     await page.waitForFunction(()=>globalThis.__nativeCopied.includes('9007199254740993'));
@@ -124,7 +174,7 @@ try {
     await page.screenshot({path:resolve(output,'copy-native-mapi.png')});
   }
   await cdp.detach();assert.deepEqual(errors,[]);
-  await writeFile(resolve(output,'auth-native.json'),JSON.stringify({masked:true,revealCopy:true,ownerAuthorization:true,staleRejection:true,jwtSamlNtlmKerberos:true,accessibility:true,copyMenus:true,mapiSubtree:process.argv.includes('--mapi'),trafficContext:process.argv.includes('--mapi')},null,2));
+  await writeFile(resolve(output,'auth-native.json'),JSON.stringify({masked:true,revealCopy:true,ownerAuthorization:true,staleRejection:true,jwtSamlNtlmKerberos:true,nestedArtifacts:true,expandedInspector:true,compactZoom:true,accessibility:true,copyMenus:true,mapiSubtree:process.argv.includes('--mapi'),trafficContext:process.argv.includes('--mapi')},null,2));
   console.log('Native Auth parsing, masking, clipboard, authorization, accessibility and layouts verified.');
 } catch(error) {
   await page.screenshot({path:resolve(output,'copy-native-failure.png')}).catch(()=>undefined);
