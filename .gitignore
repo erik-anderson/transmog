@@ -1,6 +1,8 @@
 /target/
 /fuzz/target/
 /sdk/target/
+/sdk/managed/bin/
+/sdk/managed/obj/
 /sdk/tests/managed-body-reader/bin/
 /sdk/tests/managed-body-reader/obj/
 /fuzz/artifacts/

@@ -4,13 +4,15 @@
 //! to `transmog_app::Application`. This crate adds no proxy or HTTP-client model.
 #![deny(unsafe_op_in_unsafe_fn)]
 
+mod abi;
 mod body;
+mod models;
 pub use body::*;
 
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::Arc;
 
-use serde::{Serialize, de::DeserializeOwned};
+use abi::{FromAbi, Model, Projected};
 use tokio::runtime::Runtime;
 use transmog_app::{AppConfig, AppError, Application, ErrorCategory};
 
@@ -27,10 +29,15 @@ pub struct ApplicationHandle {
     error: Option<AppError>,
 }
 
-/// Owned serialization of one existing application result or error.
+/// Owns an existing Rust model and its generated ABI projection, or AppError.
 pub struct OperationResult {
-    json: Vec<u8>,
-    error: Vec<u8>,
+    value: Result<ErasedModel, Projected<AppError>>,
+}
+
+struct ErasedModel {
+    kind: u32,
+    view: *const u8,
+    _owner: Box<dyn std::any::Any>,
 }
 
 /// Owns a bounded application hint subscription and its delivery worker.
@@ -76,23 +83,33 @@ fn contain<T>(operation: impl FnOnce() -> Result<T, AppError>) -> Result<T, AppE
         .unwrap_or_else(|_| Err(internal("native application operation panicked")))
 }
 
-fn result(operation: impl FnOnce() -> Result<Vec<u8>, AppError>) -> *mut OperationResult {
-    let value = match contain(operation) {
-        Ok(json) => OperationResult {
-            json,
-            error: Vec::new(),
-        },
-        Err(error) => OperationResult {
-            json: Vec::new(),
-            // AppError contains only serializable scalar fields.
-            error: serde_json::to_vec(&error).expect("AppError serialization"),
-        },
-    };
-    Box::into_raw(Box::new(value))
+fn result<T: Model>(operation: impl FnOnce() -> Result<T, AppError>) -> *mut OperationResult {
+    let value = contain(|| {
+        let owner = Box::new(Projected::new(operation()?)?);
+        let view = (&raw const owner.view).cast();
+        Ok(ErasedModel {
+            kind: T::KIND,
+            view,
+            _owner: owner,
+        })
+    })
+    .map_err(|error| Projected::new(error).expect("AppError projection is infallible"));
+    Box::into_raw(Box::new(OperationResult { value }))
 }
 
-fn json(value: impl Serialize) -> Result<Vec<u8>, AppError> {
-    serde_json::to_vec(&value).map_err(|_| internal("application result could not be serialized"))
+/// Shared Rust defaults for proxy startup, without a second defaults table.
+pub fn default_proxy_start_request() -> *mut OperationResult {
+    result(|| Ok(transmog_app::ProxyStartRequest::default()))
+}
+
+/// Shared Rust defaults for the complete session query.
+pub fn default_session_query_input() -> *mut OperationResult {
+    result(|| Ok(transmog_app::SessionQueryInput::default()))
+}
+
+/// Private layout handshake, checked by C++ before it exposes generated views.
+pub fn model_layout(index: usize) -> usize {
+    models::layout(index)
 }
 
 /// Creates an application with the same default AppConfig used by Rust callers.
@@ -217,18 +234,22 @@ unsafe fn input<'a>(pointer: *const u8, length: usize) -> Result<&'a [u8], AppEr
     Ok(unsafe { std::slice::from_raw_parts(pointer, length) })
 }
 
-unsafe fn parse<T: DeserializeOwned>(pointer: *const u8, length: usize) -> Result<T, AppError> {
-    serde_json::from_slice(unsafe { input(pointer, length) }?).map_err(|_| {
-        error(
+unsafe fn model_input<T: FromAbi>(pointer: *const u8) -> Result<T, AppError> {
+    let pointer = pointer.cast::<T::View>();
+    if pointer.is_null() || !pointer.is_aligned() {
+        return Err(error(
             ErrorCategory::InvalidInput,
-            "input does not match the application request schema",
-        )
-    })
+            "SDK model pointer is null or misaligned",
+        ));
+    }
+    let mut budget = abi::InputBudget::default();
+    budget.consume(std::mem::size_of::<T::View>())?;
+    unsafe { T::read(&*pointer, &mut budget) }
 }
 
 macro_rules! no_input {
     ($name:ident, $app:ident, $body:block) => {
-        /// Calls the corresponding Application operation and owns its serialized result.
+        /// Calls the corresponding Application operation and owns its typed result.
         ///
         /// # Safety
         /// The handle must be live throughout the call, with no concurrent release.
@@ -242,51 +263,47 @@ macro_rules! no_input {
     };
 }
 
-no_input!(status, app, { json(app.status()) });
-no_input!(product_state, app, { json(app.product_state()) });
-no_input!(stop_proxy, app, { json(app.stop_proxy().await?) });
-no_input!(shutdown, app, {
-    app.shutdown().await?;
-    json(())
-});
+no_input!(status, app, { Ok(app.status()) });
+no_input!(product_state, app, { Ok(app.product_state()) });
+no_input!(stop_proxy, app, { app.stop_proxy().await });
+no_input!(shutdown, app, { app.shutdown().await });
 
-macro_rules! json_input {
+macro_rules! typed_input {
     ($name:ident, $request:ty, |$app:ident, $request_id:ident| $body:block) => {
-        /// Calls the corresponding Application operation with its existing request schema.
+        /// Copies a generated ABI view into the canonical Rust request and calls Application.
         ///
         /// # Safety
-        /// The handle must be live and input must reference `length` readable bytes.
-        pub unsafe fn $name(handle: *const ApplicationHandle, pointer: *const u8,
-                            length: usize) -> *mut OperationResult {
+        /// The application and the aligned model view, including all nonempty
+        /// text/array slices reachable from it, must remain readable for this call.
+        pub unsafe fn $name(handle: *const ApplicationHandle, pointer: *const u8) -> *mut OperationResult {
             result(|| {
                 let state = unsafe { state(handle) }?;
-                let $request_id: $request = unsafe { parse(pointer, length) }?;
+                let $request_id: $request = unsafe { model_input(pointer) }?;
                 let $app = &state.application;
                 state.runtime.block_on(async $body)
             })
         }
     };
 }
-
-json_input!(
+typed_input!(
     save_product_state,
     transmog_app::ProductState,
-    |app, request| { json(app.save_product_state(request)?) }
+    |app, request| { app.save_product_state(request) }
 );
-json_input!(
+typed_input!(
     start_proxy,
     transmog_app::ProxyStartRequest,
-    |app, request| { json(app.start_proxy(request, None).await?) }
+    |app, request| { app.start_proxy(request, None).await }
 );
-json_input!(
+typed_input!(
     query_sessions,
     transmog_app::SessionQueryInput,
-    |app, request| { json(app.query_sessions(request)?) }
+    |app, request| { app.query_sessions(request) }
 );
-json_input!(
+typed_input!(
     query_traffic_view,
     transmog_app::SessionQueryInput,
-    |app, request| { json(app.query_traffic_view(&request)?) }
+    |app, request| { app.query_traffic_view(&request) }
 );
 
 unsafe fn view_id<'a>(pointer: *const u8, length: usize) -> Result<&'a str, AppError> {
@@ -310,7 +327,7 @@ pub unsafe fn traffic_view_rows(
         let id = unsafe { view_id(pointer, length) }?;
         state
             .runtime
-            .block_on(async { json(state.application.traffic_view_rows(id, offset, limit)?) })
+            .block_on(async { state.application.traffic_view_rows(id, offset, limit) })
     })
 }
 
@@ -328,7 +345,7 @@ pub unsafe fn release_traffic_view(
         let id = unsafe { view_id(pointer, length) }?;
         state.runtime.block_on(async {
             state.application.release_traffic_view(id);
-            json(())
+            Ok(())
         })
     })
 }
@@ -338,7 +355,7 @@ pub unsafe fn release_traffic_view(
 ///
 /// # Safety
 /// The application must be live for this call. `callback` must be a non-null
-/// extern-C function taking (usize context, *const u8 JSON, usize length), contain
+/// extern-C function taking (usize context, *const u8 SessionHint view, usize size), contain
 /// exceptions, and keep its context valid until subscription release completes.
 pub unsafe fn subscribe_session_updates(
     handle: *const ApplicationHandle,
@@ -391,9 +408,9 @@ pub unsafe fn subscribe_session_updates(
                             Some(hint)
                         });
                         let Some(hint) = hint else { break; };
-                        let bytes = json(hint)?;
+                        let hint = Projected::new(hint)?;
                         if *cancelled.borrow() { break; }
-                        unsafe { callback(context, bytes.as_ptr(), bytes.len()) };
+                        unsafe { callback(context, (&raw const hint.view).cast(), std::mem::size_of_val(&hint.view)) };
                     }
                     Ok(())
                 });
@@ -443,7 +460,7 @@ pub unsafe fn session_updates_status(handle: *const SessionUpdatesHandle) -> *mu
         if let Some(error) = &handle.error {
             return Err(error.clone());
         }
-        json(())
+        Ok(())
     })
 }
 
@@ -475,7 +492,7 @@ pub unsafe fn session_detail(
             .map_err(|_| error(ErrorCategory::InvalidInput, "session ID must be UTF-8"))?;
         state
             .runtime
-            .block_on(async { json(state.application.session_detail(id)?) })
+            .block_on(async { state.application.session_detail(id) })
     })
 }
 
@@ -485,30 +502,22 @@ pub unsafe fn session_detail(
 /// A non-null result must be live until this call returns.
 pub unsafe fn succeeded(handle: *const OperationResult) -> i32 {
     unsafe { handle.as_ref() }
-        .is_some_and(|value| value.error.is_empty())
+        .is_some_and(|value| value.value.is_ok())
         .into()
 }
 
-macro_rules! bytes {
-    ($pointer:ident, $length:ident, $field:ident) => {
-        /// Borrows serialized bytes until the result is released.
-        ///
-        /// # Safety
-        /// A non-null result must be live throughout this call and any use of its bytes.
-        pub unsafe fn $pointer(handle: *const OperationResult) -> *const u8 {
-            unsafe { handle.as_ref() }.map_or(std::ptr::null(), |value| value.$field.as_ptr())
-        }
-        /// Returns the corresponding byte length.
-        ///
-        /// # Safety
-        /// A non-null result must be live throughout this call.
-        pub unsafe fn $length(handle: *const OperationResult) -> usize {
-            unsafe { handle.as_ref() }.map_or(0, |value| value.$field.len())
-        }
-    };
+/// Borrows a generated model view; an unexpected kind returns null.
+/// Kind AppError reads the failure model. Its fields live until release.
+///
+/// # Safety
+/// The result must remain live during this call and every use of the borrowed view.
+pub unsafe fn result_model(handle: *const OperationResult, kind: u32) -> *const u8 {
+    match unsafe { handle.as_ref() }.map(|result| &result.value) {
+        Some(Ok(value)) if value.kind == kind => value.view,
+        Some(Err(error)) if kind == AppError::KIND => (&raw const error.view).cast(),
+        _ => std::ptr::null(),
+    }
 }
-bytes!(result_json, result_json_length, json);
-bytes!(result_error, result_error_length, error);
 
 /// Releases an operation result exactly once; null is accepted.
 ///
@@ -521,173 +530,4 @@ pub unsafe fn release(handle: *mut OperationResult) {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn contains_recoverable_panics() {
-        let error = contain::<()>(|| panic!("injected panic")).unwrap_err();
-        assert_eq!(error.category, ErrorCategory::Internal);
-    }
-
-    #[test]
-    fn body_storage_is_opt_in_and_range_errors_match_the_application() {
-        unsafe {
-            let bad_path = application_create_with_body_store(b"\xff".as_ptr(), 1);
-            assert_eq!(application_valid(bad_path), 0);
-            let failure = status(bad_path);
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&(*failure).error).unwrap()["category"],
-                "invalid-input"
-            );
-            release(failure);
-            application_release(bad_path);
-            let path = std::env::temp_dir().join(format!(
-                "transmog-sdk-body-{}-{}",
-                std::process::id(),
-                std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_nanos()
-            ));
-            let bytes = path.to_str().unwrap().as_bytes();
-            let app = application_create_with_body_store(bytes.as_ptr(), bytes.len());
-            assert_eq!(application_valid(app), 1);
-            let state = state(app).unwrap();
-            assert!(state.application.body_store().is_some());
-            let request = br#"{"sessionId":"00000000000000000000000000000000","boundary":"client-response","offset":"0","maxBytes":0}"#;
-            let expected = state
-                .runtime
-                .block_on(
-                    state
-                        .application
-                        .read_body_range(serde_json::from_slice(request).unwrap()),
-                )
-                .unwrap_err();
-            let actual = read_body_range(
-                app,
-                b"00000000000000000000000000000000".as_ptr(),
-                32,
-                b"client-response".as_ptr(),
-                15,
-                0,
-                0,
-            );
-            assert_eq!((*actual).value.as_ref().unwrap_err(), &expected);
-            assert_eq!(body_page_number(actual, 10), 7);
-            body_page_release(actual);
-            application_release(app);
-            assert!(
-                !path.exists(),
-                "The default memory body store should not create files"
-            );
-        }
-    }
-
-    #[test]
-    fn traffic_view_projection_preserves_shared_validation_and_release() {
-        let app = application_create();
-        unsafe {
-            let view = query_traffic_view(app, b"{}".as_ptr(), 2);
-            let value: serde_json::Value = serde_json::from_slice(&(*view).json).unwrap();
-            let id = value["id"].as_str().unwrap();
-            let expected = state(app)
-                .unwrap()
-                .application
-                .traffic_view_rows(id, 0, 1)
-                .unwrap();
-            let rows = traffic_view_rows(app, id.as_ptr(), id.len(), 0, 1);
-            assert_eq!((*rows).json, json(expected).unwrap());
-            release(rows);
-            let expected = state(app)
-                .unwrap()
-                .application
-                .traffic_view_rows(id, 0, 0)
-                .unwrap_err();
-            let invalid = traffic_view_rows(app, id.as_ptr(), id.len(), 0, 0);
-            assert_eq!((*invalid).error, serde_json::to_vec(&expected).unwrap());
-            release(invalid);
-            let released = release_traffic_view(app, id.as_ptr(), id.len());
-            assert_eq!((*released).json, b"null");
-            release(released);
-            let expired = traffic_view_rows(app, id.as_ptr(), id.len(), 0, 1);
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&(*expired).error).unwrap()["category"],
-                "unavailable"
-            );
-            release(expired);
-            release(view);
-            application_release(app);
-        }
-    }
-
-    #[test]
-    fn subscriptions_deliver_shared_hints_and_can_outlive_the_application_owner() {
-        unsafe extern "C" fn receive(context: usize, bytes: *const u8, length: usize) {
-            let sender = unsafe { &*(context as *const std::sync::mpsc::Sender<Vec<u8>>) };
-            let _ = sender.send(unsafe { std::slice::from_raw_parts(bytes, length) }.to_vec());
-        }
-        let app = application_create();
-        let (sender, receiver) = std::sync::mpsc::channel::<Vec<u8>>();
-        unsafe {
-            let invalid = subscribe_session_updates(app, 0, 0);
-            assert_eq!(session_updates_valid(invalid), 0);
-            let status = session_updates_status(invalid);
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&(*status).error).unwrap()["category"],
-                "invalid-input"
-            );
-            release(status);
-            session_updates_release(invalid);
-            let updates = subscribe_session_updates(
-                app,
-                receive as *const () as usize,
-                (&raw const sender) as usize,
-            );
-            assert_eq!(session_updates_valid(updates), 1);
-            let state = state(app).unwrap();
-            state
-                .application
-                .save_product_state(state.application.product_state())
-                .unwrap();
-            let hint: serde_json::Value = serde_json::from_slice(
-                &receiver
-                    .recv_timeout(std::time::Duration::from_secs(5))
-                    .unwrap(),
-            )
-            .unwrap();
-            assert!(hint["sequence"].is_u64());
-            assert!(hint["lagged"].is_boolean());
-            application_release(app);
-            session_updates_release(updates);
-            session_updates_release(std::ptr::null_mut());
-        }
-    }
-
-    #[test]
-    fn projects_application_models_and_validation_without_another_domain_model() {
-        let app = application_create();
-        unsafe {
-            assert_eq!(application_valid(app), 1);
-            let state = state(app).unwrap();
-            let status = status(app);
-            assert_eq!((*status).json, json(state.application.status()).unwrap());
-            release(status);
-            let request = br#"{"limit":0}"#;
-            let expected = state
-                .application
-                .query_sessions(serde_json::from_slice(request).unwrap())
-                .unwrap_err();
-            let actual = query_sessions(app, request.as_ptr(), request.len());
-            assert_eq!((*actual).error, serde_json::to_vec(&expected).unwrap());
-            release(actual);
-            let too_large = query_sessions(app, std::ptr::null(), MAX_INPUT_BYTES + 1);
-            assert_eq!(
-                serde_json::from_slice::<serde_json::Value>(&(*too_large).error).unwrap()["category"],
-                "limit"
-            );
-            release(too_large);
-            application_release(app);
-        }
-    }
-}
+mod tests;

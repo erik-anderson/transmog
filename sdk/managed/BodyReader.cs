@@ -1,14 +1,14 @@
 using System.Runtime.CompilerServices;
-using System.Text.Json;
+using Transmog.Sdk.Models;
 
-namespace Transmog.Embedding.Sample;
+namespace Transmog.Sdk;
 
 // A language adapter over the same bounded byte pages used by the desktop.
 // No independent body storage, retention policy, or native stream state.
-internal static class BodyReader
+public static class BodyReader
 {
     public static async IAsyncEnumerable<ReadOnlyMemory<byte>> ReadBodyChunksAsync(
-        this NativeApplication app, string sessionId, string boundary, int chunkSize = 64 * 1024,
+        this Application app, string sessionId, string boundary, int chunkSize = 64 * 1024,
         [EnumeratorCancellation] CancellationToken cancellationToken = default)
     {
         if (chunkSize is < 1 or > 16 * 1024 * 1024)
@@ -23,16 +23,14 @@ internal static class BodyReader
         while (true)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            JsonElement detail = await Task.Run(() => app.SessionDetail(sessionId), cancellationToken);
+            SessionDetail detail = await Task.Run(() => app.SessionDetail(sessionId), cancellationToken);
             cancellationToken.ThrowIfCancellationRequested();
-            JsonElement? metadata = null;
-            foreach (JsonElement body in detail.GetProperty("storedBodies").EnumerateArray())
-                if (body.GetProperty("boundary").GetString() == boundary) { metadata = body; break; }
-            if (metadata is JsonElement retained)
+            StoredBodyMetadata? metadata = detail.StoredBodies.FirstOrDefault(body => body.Boundary == boundary);
+            if (metadata is { } retained)
             {
-                string? availability = retained.GetProperty("availability").GetString();
+                BodyAvailability availability = retained.Availability;
                 RequireReadable(availability);
-                ulong length = retained.GetProperty("retainedBytes").GetUInt64();
+                ulong length = retained.RetainedBytes;
                 if (offset > length)
                     throw new IOException("The retained body changed while it was being read.");
                 if (offset < length)
@@ -50,9 +48,9 @@ internal static class BodyReader
                     yield return bytes;
                     continue;
                 }
-                if (availability == "complete") yield break;
+                if (availability == BodyAvailability.Complete) yield break;
             }
-            if (detail.GetProperty("terminalState").GetString() != "active")
+            if (detail.TerminalState != "active")
                 throw new IOException("The exchange ended without a complete retained body.");
             if (updates.CallbackError is not null)
                 throw new IOException("Body refresh notifications failed.", updates.CallbackError);
@@ -62,9 +60,9 @@ internal static class BodyReader
         }
     }
 
-    private static void RequireReadable(string? availability)
+    private static void RequireReadable(BodyAvailability availability)
     {
-        if (availability is not ("capturing" or "complete"))
-            throw new IOException($"The retained body is {availability ?? "unavailable"}; a complete read is unavailable.");
+        if (availability is not (BodyAvailability.Capturing or BodyAvailability.Complete))
+            throw new IOException($"The retained body is {availability}; a complete read is unavailable.");
     }
 }

@@ -20,6 +20,7 @@ def main():
     if sys.platform not in {"win32", "linux"}:
         raise ValueError("The SDK currently builds on Windows and Linux hosts only")
     command([sys.executable, ROOT / "scripts/dev-env.py", "--check"])
+    command([sys.executable, ROOT / "scripts/generate-sdk-models.py", "--check"])
     verify_selections()
     env = development_environment()
     # Do not inherit an opt-in compiler bootstrap into engine builds.
@@ -53,7 +54,7 @@ def main():
                  "shutdown", "query_sessions", "query_traffic_view", "traffic_view_rows",
                  "release_traffic_view", "subscribe_session_updates", "session_updates_valid",
                  "session_updates_status", "session_updates_release", "session_detail", "read_body_range", "release", "succeeded",
-                 "result_json", "result_json_length", "result_error", "result_error_length",
+                 "result_model", "model_layout", "default_proxy_start_request", "default_session_query_input",
                  "body_page_succeeded", "body_page_release", "body_page_number", "body_page_data",
                  "body_page_data_length", "body_page_coding", "body_page_coding_length"):
         if not re.search(rf"\b{name}\s*\(", errors):

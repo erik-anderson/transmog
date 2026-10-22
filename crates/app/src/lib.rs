@@ -139,7 +139,8 @@ pub use diagnostics::{
 pub use experiment_pages::{ExperimentPreviewPage, ExperimentPreviewPages};
 pub use inspector::{
     AutoResponseMatchView, BodyEditView, BodyInspection, BodyInspectionRequest, BodyRepresentation,
-    BodyView, HeaderCopy, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView, SessionDetail,
+    BodyView, HeadView, HeaderCopy, HeaderEffectView, HeaderPage, HeaderSummary, HeaderView,
+    SessionDetail,
 };
 pub use lifecycle::{
     CaCreateRequest, CaIdentity, ProxyRoute, ProxyStartRequest, protect_ca_private_key,

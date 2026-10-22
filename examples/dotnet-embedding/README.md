@@ -3,14 +3,34 @@
 This .NET 10 console example embeds the same `transmog_app::Application` used by
 the desktop. It configures a loopback proxy, generates traffic with HttpClient,
 finds the exchange through an ordered traffic view, streams its captured native
-response body to a file, prints session detail, and shuts down.
+response body to a file, prints a session summary, and shuts down.
 
-`NativeApplication.cs` adapts P/Invoke and SafeHandle ownership. C exports use the
-public no-throw C++ SDK, with private Crubit/Rust adapters underneath. Body reads
-use typed numeric arguments, raw bytes, metadata, and errors; other operations
-retain the existing Application JSON schemas. See the
-[SDK guide](../../sdk/README.md) for the full API, build prerequisites, and ABI
-contract.
+The reusable [`Transmog.Sdk`](../../sdk/managed/) binding owns P/Invoke,
+SafeHandles, typed models, and the streaming iterator. Models are generated from
+the existing Rust declarations; startup, configuration, queries, session detail,
+errors, and callback hints cross the ABI as typed values. The sample contains no
+JSON serialization. C exports delegate to the public no-throw C++ SDK, with
+private Crubit/Rust adapters underneath. See the
+[SDK guide](../../sdk/README.md) for build prerequisites and ownership rules.
+
+```csharp
+using Transmog.Sdk;
+using Transmog.Sdk.Models;
+
+using var app = new Application();
+var state = app.ProductState();
+app.SaveProductState(state with
+{
+    Preferences = state.Preferences with { DecryptHttps = false, ConfigureSystemProxy = false }
+});
+var started = app.StartProxy(Application.DefaultProxyStartRequest() with
+{
+    Listen = "127.0.0.1:0",
+    Route = ProxyRoute.Http1
+});
+var page = app.QuerySessions(Application.DefaultSessionQueryInput() with { Limit = 10 });
+app.Shutdown();
+```
 
 ## Build and run
 
@@ -83,7 +103,7 @@ sequenceDiagram
     Host->>SDK: stop_proxy, shutdown, dispose owners
 ```
 
-[`BodyReader.ReadBodyChunksAsync`](Transmog.Embedding.Sample/BodyReader.cs)
+[`BodyReader.ReadBodyChunksAsync`](../../sdk/managed/BodyReader.cs)
 returns `IAsyncEnumerable<ReadOnlyMemory<byte>>`:
 
 ```csharp
@@ -102,12 +122,12 @@ and a 100 ms refresh fallback. Only `complete` at the retained length ends
 successfully, including an empty complete body. Disabled, truncated, lost,
 quota-omitted, or evicted retention raises an error.
 
-`NativeApplication.ReadBodyRange(sessionId, boundary, offset, maxBytes)` returns
+`Application.ReadBodyRange(sessionId, boundary, offset, maxBytes)` returns
 a typed `BodyPage`: `byte[] Bytes`, `ulong Offset`/`TotalBytes`, `ReadLimit`, and
-`BodyMetadata`. The adapter copies native bytes, strings, optional fields, and
+`StoredBodyMetadata`. The adapter copies native bytes, strings, optional fields, and
 content-coding tokens before releasing the page's SafeHandle. Body pages and
 their errors cross no JSON/base64 boundary. Session discovery and live-prefix
-waiting still use the existing session-detail JSON and refresh notifications.
+waiting use generated `SessionDetail`, `StoredBodyMetadata`, and `SessionHint` records.
 The desktop uses the same raw result through a Tauri `ArrayBuffer` response;
 its hex viewer consumes `Uint8Array` pages. Transport adaptation stays outside
 the shared body operation.
@@ -120,16 +140,16 @@ and its in-flight calls have finished.
 
 ## Notifications and ownership
 
-Callbacks carry lossy, coalesced `SessionHint` JSON; re-query authoritative rows
+Callbacks carry lossy, coalesced `SessionHint` records; re-query authoritative rows
 rather than applying deltas. Callbacks run on a native delivery thread, so signal
 a host queue and marshal UI work. `SessionUpdates` owns the native subscription
-and managed callback root, copies JSON before delivery, and exposes caught
+and managed callback root, copies the borrowed native hint before delivery, and exposes caught
 callback exceptions through `CallbackError`.
 
 Dispose the subscription before its callback state. Disposal waits for an
 in-flight callback; do not make that callback wait on the disposing thread.
 SafeHandles own native applications/results/subscriptions; the adapter copies
-result JSON before releasing each result. Explicit `Shutdown()` exposes final
+result fields before releasing each result. Explicit `Shutdown()` exposes final
 shutdown errors; disposal performs best-effort cleanup. See the SDK guide's
 [traffic contract](../../sdk/README.md#traffic-views-and-notifications)
 for the subscribe/refresh/release sequence.
@@ -143,6 +163,6 @@ origin completion. It also checks binary, empty, compressed, and incomplete
 responses, output overwrite protection, and deterministic iterator cancellation
 and retention failures.
 
-This is a same-build demonstration, ABI revision 3. General AppConfig, host
+This is a same-build demonstration, ABI revision 4. General AppConfig, host
 integration callbacks, interception, replay, and package distribution remain
 deferred. The app and CLI continue using their Rust API directly.

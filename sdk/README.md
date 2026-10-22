@@ -5,7 +5,7 @@ the desktop. C++ hosts use `transmog::Application`; .NET calls C exports that
 delegate to that public C++ implementation. Crubit and Rust adapters are private
 build inputs. The opt-in SDK workspace adds no app or CLI dependency.
 
-This is a **same-build evaluation interface, ABI revision 3**. Build the SDK
+This is a **same-build evaluation interface, ABI revision 4**. Build the SDK
 from this repository; consumers need only the staged headers/library and a
 compatible platform runtime. Rebuild the consumer and library together.
 Packaging and compatibility across SDK builds remain deferred.
@@ -45,8 +45,8 @@ The script prints `SDK_OUTPUT`, normally
 | `lib/cmake/Transmog/` | Consumer CMake package |
 | `share/transmog/build.json` | Compiler, target, and source provenance |
 
-Only the applicable platform files are staged. Generated bindings, Crubit
-headers, and compiler libraries stay private. Release packaging, complete
+Only the applicable platform files are staged. Generated public model headers
+are included; Crubit bindings, Crubit headers, and compiler libraries stay private. Release packaging, complete
 dependency sources/notices, and signed distribution remain deferred.
 
 ```cmake
@@ -69,11 +69,21 @@ unverified configuration; macOS, GCC, and other configurations are unqualified.
 
 ## Application contract
 
-Body reads use typed arguments, raw bytes, metadata, and errors. Other operations
-use the existing Application request/result schemas as UTF-8 JSON. ID arguments
-are plain UTF-8, not JSON strings. Both paths preserve
-`AppError.category`, `message`, and `retryable`.
-There is no SDK command dispatcher or separate proxy/client model.
+Every SDK operation uses typed requests, results, errors, and callbacks. There
+is no runtime JSON contract in the C++, C, or managed binding. IDs and free-form
+text remain length-delimited UTF-8. Body pages carry raw bytes.
+
+`models.h`, Rust ABI projections, and managed records are generated directly
+from the existing Rust declarations reachable from the SDK operations. There is
+no separately authored model schema. The adapter reconstructs the canonical Rust
+request and calls the same `Application` method; validation and defaults stay in
+Rust. `DefaultProxyStartRequest` and `DefaultSessionQueryInput` retrieve those
+defaults instead of repeating them in each language.
+
+After changing a shared model, run `python scripts/generate-sdk-models.py` and
+commit the generated files. SDK builds run `--check` to reject stale projections.
+Unsupported source shapes fail generation; no fields silently fall back to JSON.
+This generator is opt-in with the SDK and adds no app/CLI build dependency.
 
 | C++ operation | Shared Application operation/model |
 | --- | --- |
@@ -86,7 +96,7 @@ There is no SDK command dispatcher or separate proxy/client model.
 | `query_sessions` | `SessionQueryInput` -> `SessionPage` |
 | `query_traffic_view` | `SessionQueryInput` -> `TrafficView` |
 | `traffic_view_rows` | View ID, offset, limit -> current `SessionSummary[]` |
-| `release_traffic_view` | Release view ID -> JSON `null` |
+| `release_traffic_view` | Release view ID -> success/error |
 | `subscribe_session_updates` | Owned subscription to `SessionHint` |
 | `session_detail` | Session ID -> `SessionDetail` |
 | `read_body_range` | Numeric request -> owned typed `BodyPage`, projecting `BodyBytePage` |
@@ -103,13 +113,56 @@ own HTTP client traffic through the listener and perform no host proxy/trust set
 
 ```cpp
 auto app = transmog::Application::create();
-auto status = app.status();
-if (!status.succeeded()) {
-  auto error = status.error_json(); // AppError JSON; borrowed from status
+auto defaults = transmog::Application::default_session_query_input();
+if (!defaults.succeeded()) { /* inspect defaults.error() */ return; }
+auto query = *defaults.get(); // Borrowed fields still belong to defaults.
+query.limit = {1, 10};
+auto page = app.query_sessions(query);
+if (page.succeeded()) {
+  for (const auto &row : page->sessions) {
+    auto method = row.method.text(); // Valid while page lives.
+  }
+} else {
+  auto error = page.error(); // Typed category, message, retryable.
 }
-// Configure/start using the shared request schemas.
-auto page = app.query_sessions(R"({"limit":10})");
-auto stopped = app.shutdown(); // inspect failures before destroying app
+auto stopped = app.shutdown(); // Inspect failure before destroying app.
+```
+
+Generated C views use fixed-width scalars, 32-bit boolean/enum values,
+pointer/count slices, and explicit `{has_value, value}` optionals. Payload enums
+have a discriminant and named payload fields. C++ aliases these types under
+`transmog::models`, with text/slice helpers and payload constructors. Rust enum
+variants become C++/C# enum values; Rust snake_case fields become PascalCase
+properties in C#. C++ keyword fields use a trailing underscore.
+
+`TypedResult<T>::get()` returns a borrowed `const T*`, or null on failure;
+check success before using `operator->`. Copying a view copies pointers, not
+their storage. Keep the result and any replacement input buffers alive until
+the operation returns. The operation validates and copies inputs before return.
+Text and array sizes share a 256 KiB aggregate input budget. Null nonempty
+slices, misalignment, invalid UTF-8, booleans, optional flags, and enum values
+return typed errors. Null/zero-length slices represent empty values; optional
+flags distinguish absent text from present empty text.
+
+C consumers use opaque result owners and named accessors such as
+`transmog_sdk_result_as_app_status`; an incorrect accessor returns null.
+`transmog_sdk_result_error` also handles wrapper allocation/empty-owner errors.
+The managed binding in [`managed/`](managed/) copies native projections into
+generated records before freeing the native result, and offers typed
+`TransmogException.Category` and `Retryable` properties.
+
+```mermaid
+sequenceDiagram
+    participant Host as C++ / C / managed host
+    participant SDK as SDK adapter
+    participant App as Shared Rust Application
+    Host->>SDK: start_proxy(typed ProxyStartRequest)
+    SDK->>SDK: Validate views and copy into canonical Rust request
+    SDK->>App: start_proxy(request, None)
+    App-->>SDK: AppStatus or AppError
+    SDK-->>Host: Owned result with borrowed typed view
+    Note over Host: Managed binding copies into records; native callers retain owner
+    Host->>SDK: Release result after reading/copying its fields
 ```
 
 ### Traffic views and notifications
@@ -144,7 +197,8 @@ sequenceDiagram
 Hints retain `exchangeId`, `sequence`, and `lagged`, coalesced over 75 ms.
 They signal refresh, not per-row deltas or a complete event stream.
 Re-query after hints, including lag; use periodic refresh for idle elapsed times.
-Callback bytes are borrowed until return. Copy them if needed later, keep
+The callback receives a borrowed `SessionHint` view until return. Copy needed
+fields into owned storage for later use, keep
 callbacks brief, and marshal UI work to the host's UI thread.
 
 Subscription destruction stops delivery and waits for an in-flight callback.
@@ -193,8 +247,8 @@ page is destroyed or replaced. Optional metadata distinguishes absence from an
 empty string. `error()` projects the original AppError without serialization.
 The C API uses an opaque `transmog_sdk_body_page`, fixed-layout view/error
 structs, explicit 32-bit enum/boolean values, and `body_page_free`. Every buffer
-belongs to that page; callers never free a borrowed pointer. ABI revision 3
-replaces the old JSON body-read signature; rebuild consumers and library together.
+belongs to that page; callers never free a borrowed pointer. ABI revision 4
+replaces the remaining JSON operation signatures; rebuild consumers and library together.
 Bytes preserve content encoding; HTTP transfer framing and TLS are excluded.
 `max_bytes` is a per-call budget (1 byte through 16 MiB); the store may impose a lower limit.
 Advance by the returned byte count. This transport does not buffer a whole body
@@ -225,7 +279,7 @@ sequenceDiagram
 A zero-length complete body needs no page. Reading at the end of a nonempty
 body returns a range error. Disabled, truncated, lost, quota-omitted, or evicted
 retention must remain visible; a retained prefix is not a successful full read.
-The .NET example provides a cancellation-aware pull iterator over these same
+The managed SDK provides a cancellation-aware pull iterator over these same
 operations, using notifications plus periodic refresh while awaiting live bytes.
 
 ## Ownership and failure boundary
@@ -236,9 +290,9 @@ panics are contained before generated thunks. This prevents ABI unwinding,
 without promising recovery from process faults, allocator aborts, aborting
 panics, or caller memory/lifetime violations.
 
-Application, Result, BodyPage, and SessionUpdates are move-only owners. Result byte views
-expire on result destruction/replacement; results can outlive Application.
-Serialize moves/release against calls and borrowed-byte use. Application
+Application, Result, TypedResult, BodyPage, and SessionUpdates are move-only
+owners. Result views expire on result destruction/replacement; results can outlive Application.
+Serialize moves/release against calls and borrowed-view use. Application
 destruction performs best-effort shutdown; call `shutdown` explicitly to inspect
 failure. `stop_proxy` begins reversible drain and allows `start_proxy` to resume.
 

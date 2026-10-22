@@ -1,8 +1,8 @@
 using System.Diagnostics;
 using System.Net;
 using System.Security.Cryptography;
-using System.Text.Json;
-using System.Text.Json.Nodes;
+using Transmog.Sdk;
+using Transmog.Sdk.Models;
 
 namespace Transmog.Embedding.Sample;
 
@@ -30,7 +30,7 @@ internal static class Program
             finally { cache.Delete(recursive: true); }
         }
         catch (Exception error) when (error is ArgumentException or IOException or InvalidOperationException
-            or JsonException or DllNotFoundException or EntryPointNotFoundException or HttpRequestException
+            or DllNotFoundException or EntryPointNotFoundException or HttpRequestException
             or OperationCanceledException)
         {
             Console.Error.WriteLine($"error: {error.Message}");
@@ -40,26 +40,22 @@ internal static class Program
 
     private static async Task<int> RunAsync(Options options, string cacheDirectory)
     {
-        using var app = new NativeApplication(cacheDirectory);
+        using var app = new Application(cacheDirectory);
         // These are the app's existing ProductState/ProxyStartRequest models.
         // Change the same preferences the desktop changes; no SDK-specific proxy settings.
-        JsonNode state = JsonNode.Parse(app.ProductState().GetRawText())!;
-        state["preferences"]!["decryptHttps"] = false;
-        state["preferences"]!["configureSystemProxy"] = false;
-        state["privacy"]!["retainResponseBodies"] = true;
-        state["privacy"]!["bufferLimit"] = new JsonObject { ["mode"] = "custom", ["bytes"] = 64 * 1024 * 1024 };
-        _ = app.SaveProductState(state.ToJsonString());
-        string startRequest = JsonSerializer.Serialize(new
+        ProductState state = app.ProductState();
+        app.SaveProductState(state with
         {
-            caCertificatePath = "",
-            caPrivateKeyPath = "",
-            listen = "127.0.0.1:0",
-            route = "http1",
-            allowRemoteClients = false,
-            recordingOnly = false
+            Preferences = state.Preferences with { DecryptHttps = false, ConfigureSystemProxy = false },
+            Privacy = state.Privacy with { RetainResponseBodies = true, BufferLimit = new BufferLimit.Custom(64 * 1024 * 1024) }
         });
-        JsonElement started = app.StartProxy(startRequest);
-        string listener = started.GetProperty("listener").GetString()!;
+        ProxyStartRequest request = Application.DefaultProxyStartRequest() with
+        {
+            Listen = "127.0.0.1:0",
+            Route = ProxyRoute.Http1
+        };
+        AppStatus started = app.StartProxy(request);
+        string listener = started.Listener!;
         Console.WriteLine($"Proxy listening on {listener}");
         using var changed = new SemaphoreSlim(0, 1);
         int notifications = 0;
@@ -67,7 +63,7 @@ internal static class Program
         {
             // SessionHint signals a refresh, including when its lagged flag
             // is set. Read authoritative rows rather than applying deltas.
-            _ = hint.GetProperty("lagged").GetBoolean();
+            _ = hint.Lagged;
             Interlocked.Increment(ref notifications);
             if (changed.CurrentCount == 0) changed.Release();
         });
@@ -122,7 +118,8 @@ internal static class Program
                 Console.WriteLine($"HTTP {(int)response.StatusCode}; wrote {bytes} captured bytes to {options.Output}");
                 Console.WriteLine($"Captured body: {bytes} bytes in {chunks} chunks; SHA-256 matches host response.");
                 Console.WriteLine($"Session updates received: {Volatile.Read(ref notifications)}");
-                Console.WriteLine(app.SessionDetail(id).GetRawText());
+                SessionDetail detail = app.SessionDetail(id);
+                Console.WriteLine($"Exchange {detail.Id}: {detail.TerminalState}; {detail.StoredBodies.Length} retained body boundaries.");
             }
             finally
             {
@@ -132,35 +129,35 @@ internal static class Program
             }
         }
         _ = app.StopProxy();
-        _ = app.Shutdown();
+        app.Shutdown();
         return 0;
     }
 
     private static async Task<string> FindSessionAsync(
-        NativeApplication app, Uri url, SemaphoreSlim changed, CancellationToken token)
+        Application app, Uri url, SemaphoreSlim changed, CancellationToken token)
     {
         // Use the same ordering snapshot and bounded row reads as the desktop.
-        string query = JsonSerializer.Serialize(new
+        SessionQueryInput query = Application.DefaultSessionQueryInput() with
         {
-            method = "GET",
-            host = url.Host,
-            sort = new { column = "started-at", direction = "descending" }
-        });
+            Method = "GET",
+            Host = url.Host,
+            Sort = new SessionSort(TrafficColumn.StartedAt, SortDirection.Descending)
+        };
         var wait = Stopwatch.StartNew();
         string? id = null;
         while (wait.Elapsed < TimeSpan.FromSeconds(10))
         {
             token.ThrowIfCancellationRequested();
-            JsonElement view = await Task.Run(() => app.QueryTrafficView(query), token);
-            string viewId = view.GetProperty("id").GetString()!;
+            TrafficView view = await Task.Run(() => app.QueryTrafficView(query), token);
+            string viewId = view.Id;
             try
             {
-                JsonElement rows = await Task.Run(() => app.TrafficViewRows(viewId, 0, 100), token);
-                foreach (JsonElement session in rows.EnumerateArray())
-                    if (session.GetProperty("path").GetString() == url.PathAndQuery)
-                        id = session.GetProperty("id").GetString();
+                SessionSummary[] rows = await Task.Run(() => app.TrafficViewRows(viewId, 0, 100), token);
+                foreach (SessionSummary session in rows)
+                    if (session.Path == url.PathAndQuery)
+                        id = session.Id;
             }
-            finally { _ = app.ReleaseTrafficView(viewId); }
+            finally { app.ReleaseTrafficView(viewId); }
             if (id is not null) break;
             // A periodic refresh also covers coalesced/lost refresh hints.
             _ = await changed.WaitAsync(TimeSpan.FromMilliseconds(100), token);

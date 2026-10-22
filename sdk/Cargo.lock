@@ -4219,6 +4219,7 @@ dependencies = [
  "serde_json",
  "tokio",
  "transmog-app",
+ "transmog-core",
 ]
 
 [[package]]
@@ -4226,6 +4227,15 @@ name = "transmog-sdk-facade"
 version = "0.1.9"
 dependencies = [
  "transmog-sdk-engine",
+]
+
+[[package]]
+name = "transmog-sdk-model-codegen"
+version = "0.1.9"
+dependencies = [
+ "quote",
+ "serde_json",
+ "syn 2.0.119",
 ]
 
 [[package]]

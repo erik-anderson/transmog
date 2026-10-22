@@ -5,8 +5,9 @@
 
 namespace transmog {
 namespace {
-template <std::size_t N> Bytes literal(const char (&text)[N]) noexcept {
-  return {reinterpret_cast<const std::uint8_t *>(text), N - 1};
+bool compatible_layout() {
+#include "model_layout.inc"
+  return true;
 }
 } // namespace
 Result::Result() noexcept : handle_(nullptr), failure_(Status::no_result) {}
@@ -35,25 +36,23 @@ Status Result::status() const noexcept {
                  : failure_;
 }
 bool Result::succeeded() const noexcept { return status() == Status::success; }
-Bytes Result::json() const noexcept {
-  return handle_ ? Bytes{transmog_sdk_rust::result_json(handle_),
-                         transmog_sdk_rust::result_json_length(handle_)}
-                 : Bytes{nullptr, 0};
+const void *Result::model(std::uint32_t kind) const noexcept {
+  return handle_ ? transmog_sdk_rust::result_model(handle_, kind) : nullptr;
 }
-Bytes Result::error_json() const noexcept {
-  if (handle_)
-    return {transmog_sdk_rust::result_error(handle_),
-            transmog_sdk_rust::result_error_length(handle_)};
+Error Result::error() const noexcept {
+  if (const auto *value = get<models::AppError>())
+    return {static_cast<ErrorCategory>(value->category), value->message.text(),
+            value->retryable != 0};
+  if (succeeded())
+    return {ErrorCategory::None, {}, false};
   switch (failure_) {
   case Status::out_of_memory:
-    return literal(
-        R"({"category":"internal","message":"SDK allocation failed","retryable":false})");
+    return {ErrorCategory::Internal, "SDK allocation failed", false};
   case Status::internal_error:
-    return literal(
-        R"({"category":"internal","message":"SDK internal error","retryable":false})");
+    return {ErrorCategory::Internal, "SDK internal error", false};
   default:
-    return literal(
-        R"({"category":"invalid-input","message":"Empty or moved-from SDK handle","retryable":false})");
+    return {ErrorCategory::InvalidInput, "Empty or moved-from SDK handle",
+            false};
   }
 }
 BodyPage::BodyPage() noexcept : handle_(nullptr), failure_(Status::no_result) {}
@@ -114,11 +113,11 @@ Error BodyPage::error() const noexcept {
   }
   switch (failure_) {
   case Status::out_of_memory:
-    return {ErrorCategory::internal, "SDK allocation failed", false};
+    return {ErrorCategory::Internal, "SDK allocation failed", false};
   case Status::internal_error:
-    return {ErrorCategory::internal, "SDK internal error", false};
+    return {ErrorCategory::Internal, "SDK internal error", false};
   default:
-    return {ErrorCategory::invalid_input, "Empty or moved-from SDK handle",
+    return {ErrorCategory::InvalidInput, "Empty or moved-from SDK handle",
             false};
   }
 }
@@ -170,6 +169,8 @@ Application &Application::operator=(Application &&other) noexcept {
 }
 Application Application::create() noexcept {
   try {
+    if (!compatible_layout())
+      return Application(nullptr, Status::internal_error);
     return Application(transmog_sdk_rust::application_create(),
                        Status::out_of_memory);
   } catch (const std::bad_alloc &) {
@@ -181,6 +182,8 @@ Application Application::create() noexcept {
 Application
 Application::create_with_body_store(std::string_view path) noexcept {
   try {
+    if (!compatible_layout())
+      return Application(nullptr, Status::internal_error);
     return Application(
         transmog_sdk_rust::application_create_with_body_store(
             reinterpret_cast<const std::uint8_t *>(path.data()), path.size()),
@@ -194,47 +197,112 @@ Application::create_with_body_store(std::string_view path) noexcept {
 bool Application::valid() const noexcept {
   return handle_ && transmog_sdk_rust::application_valid(handle_) == 1;
 }
-#define TRANSMOG_INVOKE(expression)                                            \
+#define TRANSMOG_INVOKE(ResultType, expression)                                \
   if (!handle_)                                                                \
-    return Result(nullptr, failure_);                                          \
+    return ResultType(nullptr, failure_);                                      \
   try {                                                                        \
-    return Result(expression, Status::out_of_memory);                          \
+    return ResultType(expression, Status::out_of_memory);                      \
   } catch (const std::bad_alloc &) {                                           \
-    return Result(nullptr, Status::out_of_memory);                             \
+    return ResultType(nullptr, Status::out_of_memory);                         \
   } catch (...) {                                                              \
-    return Result(nullptr, Status::internal_error);                            \
+    return ResultType(nullptr, Status::internal_error);                        \
   }
-#define TRANSMOG_OPERATION(name, qualifier)                                    \
-  Result Application::name() qualifier noexcept {                              \
-    TRANSMOG_INVOKE(transmog_sdk_rust::name(handle_))                          \
-  }
-TRANSMOG_OPERATION(status, const)
-TRANSMOG_OPERATION(product_state, const)
-TRANSMOG_OPERATION(stop_proxy, )
-TRANSMOG_OPERATION(shutdown, )
-#undef TRANSMOG_OPERATION
-#define TRANSMOG_INPUT_OPERATION(name, qualifier)                              \
-  Result Application::name(std::string_view input) qualifier noexcept {        \
-    TRANSMOG_INVOKE(transmog_sdk_rust::name(                                   \
-        handle_, reinterpret_cast<const std::uint8_t *>(input.data()),         \
-        input.size()))                                                         \
-  }
-TRANSMOG_INPUT_OPERATION(save_product_state, )
-TRANSMOG_INPUT_OPERATION(start_proxy, )
-TRANSMOG_INPUT_OPERATION(query_sessions, const)
-TRANSMOG_INPUT_OPERATION(query_traffic_view, const)
-TRANSMOG_INPUT_OPERATION(release_traffic_view, )
-TRANSMOG_INPUT_OPERATION(session_detail, const)
-#undef TRANSMOG_INPUT_OPERATION
-Result Application::traffic_view_rows(std::string_view id, std::size_t offset,
-                                      std::size_t limit) const noexcept {
-    TRANSMOG_INVOKE(transmog_sdk_rust::traffic_view_rows(
-        handle_, reinterpret_cast<const std::uint8_t *>(id.data()), id.size(),
-        offset, limit))}
+TypedResult<models::AppStatus> Application::status() const noexcept {
+    TRANSMOG_INVOKE(
+        TypedResult<models::AppStatus>,
+        transmog_sdk_rust::status(
+            handle_))} TypedResult<models::ProductState> Application::
+    product_state() const noexcept {TRANSMOG_INVOKE(
+        TypedResult<models::ProductState>,
+        transmog_sdk_rust::product_state(
+            handle_))} TypedResult<models::AppStatus> Application::
+        stop_proxy() noexcept {
+            TRANSMOG_INVOKE(TypedResult<models::AppStatus>,
+                            transmog_sdk_rust::stop_proxy(handle_))} Result
+    Application::shutdown() noexcept {TRANSMOG_INVOKE(
+        Result, transmog_sdk_rust::shutdown(
+                    handle_))} TypedResult<models::ProductState> Application::
+        save_product_state(const models::ProductState &input) noexcept {
+            TRANSMOG_INVOKE(
+                TypedResult<models::ProductState>,
+                transmog_sdk_rust::save_product_state(
+                    handle_,
+                    reinterpret_cast<const std::uint8_t *>(
+                        &input)))} TypedResult<models::AppStatus> Application::
+            start_proxy(const models::ProxyStartRequest &input) noexcept {
+                TRANSMOG_INVOKE(
+                    TypedResult<models::AppStatus>,
+                    transmog_sdk_rust::start_proxy(
+                        handle_,
+                        reinterpret_cast<const std::uint8_t *>(
+                            &input)))} TypedResult<models::
+                                                       SessionPage> Application::
+                query_sessions(const models::SessionQueryInput &input) const
+    noexcept {TRANSMOG_INVOKE(
+        TypedResult<models::SessionPage>,
+        transmog_sdk_rust::query_sessions(
+            handle_,
+            reinterpret_cast<const std::uint8_t *>(
+                &input)))} TypedResult<models::TrafficView> Application::
+        query_traffic_view(const models::SessionQueryInput &input) const
+    noexcept {TRANSMOG_INVOKE(
+        TypedResult<models::TrafficView>,
+        transmog_sdk_rust::query_traffic_view(
+            handle_,
+            reinterpret_cast<const std::uint8_t *>(
+                &input)))} TypedResult<models::SessionDetail> Application::
+        session_detail(std::string_view input) const noexcept {TRANSMOG_INVOKE(
+            TypedResult<models::SessionDetail>,
+            transmog_sdk_rust::session_detail(
+                handle_, reinterpret_cast<const std::uint8_t *>(input.data()),
+                input.size()))} Result
+    Application::release_traffic_view(std::string_view input) noexcept {
+        TRANSMOG_INVOKE(
+            Result,
+            transmog_sdk_rust::release_traffic_view(
+                handle_, reinterpret_cast<const std::uint8_t *>(input.data()),
+                input
+                    .size()))} TypedResult<models::
+                                               SliceSessionSummary> Application::
+        traffic_view_rows(std::string_view id, std::size_t offset,
+                          std::size_t limit) const noexcept {
+            TRANSMOG_INVOKE(
+                TypedResult<models::SliceSessionSummary>,
+                transmog_sdk_rust::traffic_view_rows(
+                    handle_, reinterpret_cast<const std::uint8_t *>(id.data()),
+                    id.size(), offset, limit))}
 #undef TRANSMOG_INVOKE
+TypedResult<models::ProxyStartRequest> Application::
+    default_proxy_start_request() noexcept {
+  using Value = TypedResult<models::ProxyStartRequest>;
+  try {
+    if (!compatible_layout())
+      return Value(nullptr, Status::internal_error);
+    return Value(transmog_sdk_rust::default_proxy_start_request(),
+                 Status::out_of_memory);
+  } catch (const std::bad_alloc &) {
+    return Value(nullptr, Status::out_of_memory);
+  } catch (...) {
+    return Value(nullptr, Status::internal_error);
+  }
+}
+TypedResult<models::SessionQueryInput>
+Application::default_session_query_input() noexcept {
+  using Value = TypedResult<models::SessionQueryInput>;
+  try {
+    if (!compatible_layout())
+      return Value(nullptr, Status::internal_error);
+    return Value(transmog_sdk_rust::default_session_query_input(),
+                 Status::out_of_memory);
+  } catch (const std::bad_alloc &) {
+    return Value(nullptr, Status::out_of_memory);
+  } catch (...) {
+    return Value(nullptr, Status::internal_error);
+  }
+}
 
-BodyPage Application::read_body_range(
-    const BodyRangeRequest &request) const noexcept {
+BodyPage
+Application::read_body_range(const BodyRangeRequest &request) const noexcept {
   if (!handle_)
     return BodyPage(nullptr, failure_);
   try {
@@ -304,7 +372,8 @@ void SessionUpdates::deliver(std::uintptr_t address, const std::uint8_t *bytes,
   const auto callback = state->callback;
   auto *context = state->context;
   try {
-    callback(context, bytes, length);
+    if (bytes && length == sizeof(models::SessionHint))
+      callback(context, reinterpret_cast<const models::SessionHint *>(bytes));
   } catch (...) {
     // Never unwind into Rust; context may have been released by the callback.
   }
@@ -334,5 +403,5 @@ Application::subscribe_session_updates(SessionUpdateCallback callback,
     return SessionUpdates(nullptr, Status::internal_error);
   }
 }
-std::uint32_t abi_version() noexcept { return 3; }
+std::uint32_t abi_version() noexcept { return 4; }
 } // namespace transmog

@@ -1,21 +1,56 @@
-using System.Text.Json;
-using Transmog.Embedding.Sample;
+using Transmog.Sdk;
+using Transmog.Sdk.Models;
 
 // Deterministic responses exercise the real iterator without networking or sleeps.
+TypedModelRoundtrip();
 await CancellationAtMetadataCompletionAsync();
 await CancellationAtPageCompletionAsync();
 await LivePrefixAndDisposalAsync();
 await RetentionFailureAsync();
 Console.WriteLine("Managed body reader passed: cancellation at native-call completion, live prefix waiting, owned chunks, early disposal, and incomplete retention.");
 
-static JsonElement Detail(string availability, int length) => JsonSerializer.SerializeToElement(new
+static void TypedModelRoundtrip()
 {
-    terminalState = "active",
-    storedBodies = new[] { new { boundary = "client-response", availability, retainedBytes = length } }
-});
+    ProductState state = ModelMarshal.ReadProductState(default);
+    state = state with
+    {
+        Privacy = state.Privacy with { BufferLimit = new BufferLimit.Custom(ulong.MaxValue) },
+        Preferences = state.Preferences with
+        {
+            ProxyPort = ushort.MaxValue,
+            ClientCertificatePolicy = new ClientCertificatePolicy(ClientCertificateDefault.Prompt,
+            [new ClientCertificateRule("unicode-雪\0id", true, "example.test", 443,
+                new ClientCertificateAction.Automatic(new ClientCertificateSelector("", [new("CN", "雪")], [])))])
+        }
+    };
+    ProductState copied;
+    using (var arena = new InputArena())
+        copied = ModelMarshal.ReadProductState(ModelMarshal.WriteProductState(state, arena));
+    Require(copied.Privacy.BufferLimit is BufferLimit.Custom { Bytes: ulong.MaxValue }, "64-bit enum payload changed.");
+    Require(copied.Preferences.ProxyPort == ushort.MaxValue, "Optional scalar changed.");
+    var rule = copied.Preferences.ClientCertificatePolicy.Rules.Single();
+    Require(rule.Id == "unicode-雪\0id" && rule.Enabled && rule.Port == 443, "Owned nested fields changed.");
+    var selector = ((ClientCertificateAction.Automatic)rule.Mode).Selector;
+    Require(selector.Identity == "" && selector.Subject.Single().Value == "雪" && selector.Issuer.Length == 0,
+        "Maps, Unicode, or present empty text changed.");
+    using var invalid = new InputArena();
+    bool rejected = false;
+    try { invalid.Text("\ud800"); }
+    catch (System.Text.EncoderFallbackException) { rejected = true; }
+    Require(rejected, "Invalid UTF-16 must not be silently replaced.");
+}
+
+static SessionDetail Detail(string availability, int length) =>
+    ModelMarshal.ReadSessionDetail(default) with
+    {
+        TerminalState = "active",
+        StoredBodies = [new StoredBodyMetadata(true, "session", "client-response", (ulong)length,
+            (ulong)length, (ulong)length, Enum.Parse<BodyAvailability>(availability, ignoreCase: true),
+            null, null, [], null, null)]
+    };
 
 static BodyPage Page(BodyAvailability availability, ulong offset, byte value) =>
-    new(offset, offset + 1, 65536, [value], new BodyMetadata(true, "session", "client-response",
+    new(offset, offset + 1, 65536, [value], new StoredBodyMetadata(true, "session", "client-response",
         offset + 1, offset + 1, offset + 1, availability, null, null, [], null, null));
 
 static void Require(bool value, string message)
@@ -33,7 +68,7 @@ static async Task ExpectCancellationAsync(Task<bool> read)
 static async Task CancellationAtMetadataCompletionAsync()
 {
     using var cancel = new CancellationTokenSource();
-    var app = new NativeApplication
+    var app = new Application
     {
         OnDetail = () => { cancel.Cancel(); return Detail("complete", 0); }
     };
@@ -46,7 +81,7 @@ static async Task CancellationAtMetadataCompletionAsync()
 static async Task CancellationAtPageCompletionAsync()
 {
     using var cancel = new CancellationTokenSource();
-    var app = new NativeApplication
+    var app = new Application
     {
         OnDetail = () => Detail("complete", 1),
         OnPage = (_, _, _, _) => { cancel.Cancel(); return Page(BodyAvailability.Complete, 0, 42); }
@@ -62,7 +97,7 @@ static async Task LivePrefixAndDisposalAsync()
     using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(5));
     var prefixChecked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     int length = 1;
-    var app = new NativeApplication
+    var app = new Application
     {
         OnDetail = () =>
         {
@@ -104,7 +139,7 @@ static async Task RetentionFailureAsync()
     foreach (BodyAvailability availability in new[] { BodyAvailability.Disabled, BodyAvailability.Truncated,
         BodyAvailability.Lost, BodyAvailability.QuotaOmitted, BodyAvailability.Evicted })
     {
-        var app = new NativeApplication
+        var app = new Application
         {
             OnDetail = () => Detail("capturing", 1),
             OnPage = (_, _, _, _) => Page(availability, 0, 42)
@@ -117,26 +152,26 @@ static async Task RetentionFailureAsync()
     }
 }
 
-namespace Transmog.Embedding.Sample
+namespace Transmog.Sdk
 {
     // Minimal synchronous boundary fixture; the shared Application models and
     // actual native ownership are tested by test-sdk.py and the C++ contract.
-    internal sealed class NativeApplication
+    public sealed class Application
     {
-        internal Func<JsonElement> OnDetail = () => throw new InvalidOperationException("Unexpected detail read.");
+        internal Func<SessionDetail> OnDetail = () => throw new InvalidOperationException("Unexpected detail read.");
         internal Func<string, string, ulong, nuint, BodyPage> OnPage = (_, _, _, _) => throw new InvalidOperationException("Unexpected page read.");
-        private Action<JsonElement>? callback;
+        private Action<SessionHint>? callback;
         internal int Subscriptions;
-        internal JsonElement SessionDetail(string _) => OnDetail();
+        internal SessionDetail SessionDetail(string _) => OnDetail();
         internal BodyPage ReadBodyRange(string session, string boundary, ulong offset, nuint maxBytes) => OnPage(session, boundary, offset, maxBytes);
-        internal SessionUpdates SubscribeSessionUpdates(Action<JsonElement> action)
+        internal SessionUpdates SubscribeSessionUpdates(Action<SessionHint> action)
         {
             callback = action;
             Subscriptions++;
             return new SessionUpdates(this);
         }
-        internal void Notify() => callback?.Invoke(default);
-        internal sealed class SessionUpdates(NativeApplication app) : IDisposable
+        internal void Notify() => callback?.Invoke(new SessionHint(null, 1, false));
+        internal sealed class SessionUpdates(Application app) : IDisposable
         {
             internal Exception? CallbackError => null;
             public void Dispose() { app.callback = null; app.Subscriptions--; }

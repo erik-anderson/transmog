@@ -30,10 +30,6 @@ handle_call!(application_valid, i32);
 handle_call!(application_release, ());
 handle_call!(release, ());
 handle_call!(succeeded, i32);
-handle_call!(result_json, *const u8);
-handle_call!(result_json_length, usize);
-handle_call!(result_error, *const u8);
-handle_call!(result_error_length, usize);
 handle_call!(session_updates_valid, i32);
 handle_call!(session_updates_release, ());
 handle_call!(body_page_succeeded, i32);
@@ -67,12 +63,44 @@ macro_rules! input_operation {
         }
     };
 }
-input_operation!(save_product_state);
-input_operation!(start_proxy);
-input_operation!(query_sessions);
 input_operation!(session_detail);
-input_operation!(query_traffic_view);
 input_operation!(release_traffic_view);
+
+macro_rules! typed_operation {
+    ($name:ident) => {
+        /// Converts the generated view to the canonical Rust model before invoking Application.
+        ///
+        /// # Safety
+        /// The application and the complete aligned input view must remain live/readable.
+        pub unsafe fn $name(handle: *mut u8, input: *const u8) -> *mut u8 {
+            unsafe { engine::$name(handle.cast(), input).cast() }
+        }
+    };
+}
+typed_operation!(save_product_state);
+typed_operation!(start_proxy);
+typed_operation!(query_sessions);
+typed_operation!(query_traffic_view);
+
+/// Constructs the existing Rust startup defaults.
+pub fn default_proxy_start_request() -> *mut u8 {
+    engine::default_proxy_start_request().cast()
+}
+/// Constructs the existing Rust query defaults.
+pub fn default_session_query_input() -> *mut u8 {
+    engine::default_session_query_input().cast()
+}
+/// Private generated-layout verification before exposing model views.
+pub fn model_layout(index: usize) -> usize {
+    engine::model_layout(index)
+}
+/// Borrows a model view of the requested kind, or null when the kind differs.
+///
+/// # Safety
+/// The result owner must remain live during this call and all use of the view.
+pub unsafe fn result_model(handle: *mut u8, kind: u32) -> *const u8 {
+    unsafe { engine::result_model(handle.cast(), kind) }
+}
 
 /// Reads an owned typed page from the shared Application operation.
 ///

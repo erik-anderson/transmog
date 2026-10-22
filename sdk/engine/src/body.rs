@@ -1,6 +1,6 @@
 //! Owned typed body results. No body JSON or base64 crosses the native boundary.
 use super::{ApplicationHandle, MAX_INPUT_BYTES, contain, error, input, state};
-use transmog_app::{AppError, BodyAvailability, BodyBytePage, BodyRangeRequest, ErrorCategory};
+use transmog_app::{AppError, BodyBytePage, BodyRangeRequest, ErrorCategory};
 
 /// Owns one shared Application byte page or its original structured error.
 pub struct BodyPageHandle {
@@ -70,15 +70,9 @@ pub unsafe fn body_page_number(handle: *const BodyPageHandle, field: u32) -> u64
             0 => page.offset,
             1 => page.total_bytes,
             2 => page.read_limit as u64,
-            3 => match page.metadata.availability {
-                BodyAvailability::Capturing => 1,
-                BodyAvailability::Complete => 2,
-                BodyAvailability::Truncated => 3,
-                BodyAvailability::Lost => 4,
-                BodyAvailability::Evicted => 5,
-                BodyAvailability::Disabled => 6,
-                BodyAvailability::QuotaOmitted => 7,
-            },
+            3 => u64::from(super::models::body_availability_number(
+                &page.metadata.availability,
+            )),
             4 => u64::from(page.metadata.length_known),
             5 => page.metadata.observed_bytes,
             6 => page.metadata.retained_bytes,
@@ -88,18 +82,7 @@ pub unsafe fn body_page_number(handle: *const BodyPageHandle, field: u32) -> u64
             _ => 0,
         },
         Err(error) => match field {
-            10 => match error.category {
-                ErrorCategory::PasswordRequired => 1,
-                ErrorCategory::InvalidPassword => 2,
-                ErrorCategory::InvalidInput => 3,
-                ErrorCategory::Unsupported => 4,
-                ErrorCategory::Canceled => 5,
-                ErrorCategory::Conflict => 6,
-                ErrorCategory::Limit => 7,
-                ErrorCategory::Unavailable => 8,
-                ErrorCategory::Retryable => 9,
-                ErrorCategory::Internal => 10,
-            },
+            10 => u64::from(super::models::error_category_number(&error.category)),
             11 => u64::from(error.retryable),
             _ => 0,
         },
@@ -179,7 +162,7 @@ pub unsafe fn body_page_release(handle: *mut BodyPageHandle) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use transmog_app::StoredBodyMetadata;
+    use transmog_app::{BodyAvailability, StoredBodyMetadata};
 
     #[test]
     fn primitive_projection_preserves_exact_bytes_metadata_and_structured_errors() {

@@ -1,33 +1,22 @@
 # C++ application embedding example
 
-Build the opt-in SDK with `python scripts/build-sdk.py --test`. This also builds
-this independent consumer using only the installed `Transmog::SDK` CMake target.
-To build independently, set `CMAKE_PREFIX_PATH=<SDK_OUTPUT>` and use a matching
-Clang/LLVM toolchain. Rust and Crubit are not consumer dependencies.
+This consumer uses only the installed public headers and library. It needs a
+C++20 compiler and CMake; Rust and Crubit are needed only to build the SDK.
 
-`transmog_cpp_embedding --self-test` exercises application creation, status,
-product-state and session queries, traffic-view validation, callback subscription
-creation, malformed input, move ownership, and final
-shutdown through installed C++/C entry points without network access.
-
-For an interactive run, pass two files:
-
-```text
-transmog_cpp_embedding <product-state.json> <proxy-start.json>
+```sh
+cmake -S examples/cpp-embedding -B .local/cpp-consumer -DCMAKE_PREFIX_PATH=<SDK_OUTPUT>
+cmake --build .local/cpp-consumer
+ctest --test-dir .local/cpp-consumer --output-on-failure
 ```
 
-The first is the existing ProductState JSON returned by `Application::product_state`
-(print it with `transmog_cpp_embedding --product-state`),
-with `preferences.decryptHttps=false` and `configureSystemProxy=false`.
-The second uses the existing ProxyStartRequest schema, for example:
+Run `transmog_cpp_embedding` to start a loopback HTTP proxy, send traffic through
+its printed listener, then press Enter to list captured rows and shut down.
+It reads the real ProductState, disables HTTPS decryption and system proxy
+configuration, and starts from the shared Rust request defaults. Only explicitly
+proxied traffic reaches it. `--self-test` exercises typed inputs/results, errors,
+traffic views, ownership, and the C header against the installed library.
 
-```json
-{"caCertificatePath":"","caPrivateKeyPath":"","listen":"127.0.0.1:0","route":"http1","allowRemoteClients":false,"recordingOnly":false}
-```
-
-The example prints the bound endpoint. Send HTTP traffic through it with a
-separate client, then press Enter to query captured exchanges and stop.
-The SDK uses the same application models and drain/shutdown semantics as the
-desktop, and performs no host proxy or trust installation.
-See [the SDK guide](../../sdk/README.md) and the [.NET example](../dotnet-embedding/README.md)
-for the complete host-traffic demonstration and current binding scope.
+The example copies generated views to change fields. Their text and arrays
+remain borrowed from the result owner until the call returns. Results can
+outlive their application. See the [SDK contract](../../sdk/README.md) for
+callbacks, body streaming, no-throw behavior, and the same-build ABI restriction.

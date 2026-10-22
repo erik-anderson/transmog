@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine", "facade", "bindings"]
+members = ["engine", "facade", "bindings", "model-codegen"]
 resolver = "2"
 
 [workspace.package]

@@ -1,4 +1,5 @@
 #pragma once
+#include "transmog/models.h"
 #include <cstddef>
 #include <cstdint>
 #include <new>
@@ -57,11 +58,19 @@ FAKE_OPERATION(session_updates_status)
                             std::size_t) {                                     \
     return operation();                                                        \
   }
-FAKE_INPUT(save_product_state)
-FAKE_INPUT(start_proxy)
-FAKE_INPUT(query_sessions)
+inline std::uint8_t *save_product_state(std::uint8_t *, const std::uint8_t *) {
+  return operation();
+}
+inline std::uint8_t *start_proxy(std::uint8_t *, const std::uint8_t *) {
+  return operation();
+}
+inline std::uint8_t *query_sessions(std::uint8_t *, const std::uint8_t *) {
+  return operation();
+}
 FAKE_INPUT(session_detail)
-FAKE_INPUT(query_traffic_view)
+inline std::uint8_t *query_traffic_view(std::uint8_t *, const std::uint8_t *) {
+  return operation();
+}
 FAKE_INPUT(release_traffic_view)
 #undef FAKE_INPUT
 inline std::uint8_t *read_body_range(std::uint8_t *, const std::uint8_t *,
@@ -158,12 +167,18 @@ inline void session_updates_release(std::uint8_t *) noexcept {
 }
 inline void release(std::uint8_t *) noexcept { --results; }
 inline std::int32_t succeeded(std::uint8_t *) noexcept { return 1; }
-inline const std::uint8_t *result_json(std::uint8_t *) noexcept {
-  return &storage;
+inline std::uint8_t *default_proxy_start_request() { return operation(); }
+inline std::uint8_t *default_session_query_input() { return operation(); }
+inline const std::uint8_t *result_model(std::uint8_t *,
+                                        std::uint32_t kind) noexcept {
+  static const transmog_sdk_app_status status{};
+  return kind == 1 ? reinterpret_cast<const std::uint8_t *>(&status) : nullptr;
 }
-inline std::size_t result_json_length(std::uint8_t *) noexcept { return 1; }
-inline const std::uint8_t *result_error(std::uint8_t *) noexcept {
-  return nullptr;
+inline std::size_t model_layout(std::size_t index) noexcept {
+  switch (index) {
+#include "model_layout.inc"
+  default:
+    return 0;
+  }
 }
-inline std::size_t result_error_length(std::uint8_t *) noexcept { return 0; }
 } // namespace transmog_sdk_rust

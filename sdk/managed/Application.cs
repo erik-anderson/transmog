@@ -1,25 +1,24 @@
 using System.Runtime.InteropServices;
 using System.Text;
-using System.Text.Json;
+using Transmog.Sdk.Models;
 using Microsoft.Win32.SafeHandles;
 
-namespace Transmog.Embedding.Sample;
+namespace Transmog.Sdk;
 
 // Language and ownership adapter. Schemas and behavior come from transmog_app::Application.
-internal sealed unsafe class NativeApplication : IDisposable
+public sealed unsafe class Application : IDisposable
 {
     private const string LibraryName = "transmog_sdk";
     private readonly ApplicationHandle handle;
 
-    public NativeApplication(string? bodyCacheDirectory = null)
+    public Application(string? bodyCacheDirectory = null)
     {
-        if (NativeMethods.AbiVersion() != 3)
-            throw new InvalidOperationException("The native application SDK requires ABI revision 3.");
+        RequireAbiVersion();
         if (bodyCacheDirectory is null)
             handle = NativeMethods.Create();
         else
         {
-            byte[] path = Encoding.UTF8.GetBytes(bodyCacheDirectory);
+            byte[] path = Utf8.GetBytes(bodyCacheDirectory);
             fixed (byte* input = path)
                 handle = NativeMethods.CreateWithBodyStore(input, (nuint)path.Length);
         }
@@ -33,26 +32,56 @@ internal sealed unsafe class NativeApplication : IDisposable
         catch { handle.Dispose(); throw; }
     }
 
-    public JsonElement Status() => Read(NativeMethods.Status(handle));
-    public JsonElement ProductState() => Read(NativeMethods.ProductState(handle));
-    public JsonElement SaveProductState(string json) => Input(NativeMethods.SaveProductState, json);
-    public JsonElement StartProxy(string json) => Input(NativeMethods.StartProxy, json);
-    public JsonElement StopProxy() => Read(NativeMethods.StopProxy(handle));
-    public JsonElement Shutdown() => Read(NativeMethods.Shutdown(handle));
-    public JsonElement QuerySessions(string json) => Input(NativeMethods.QuerySessions, json);
-    public JsonElement QueryTrafficView(string json) => Input(NativeMethods.QueryTrafficView, json);
-    public JsonElement TrafficViewRows(string viewId, nuint offset, nuint limit)
+    public AppStatus Status() => Read(NativeMethods.Status(handle), ModelMarshal.ReadAppStatusResult);
+    public ProductState ProductState() => Read(NativeMethods.ProductState(handle), ModelMarshal.ReadProductStateResult);
+    public static ProxyStartRequest DefaultProxyStartRequest()
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(viewId);
-        fixed (byte* input = bytes)
-            return Read(NativeMethods.TrafficViewRows(handle, input, (nuint)bytes.Length, offset, limit));
+        RequireAbiVersion();
+        return Read(NativeMethods.DefaultProxyStartRequest(), ModelMarshal.ReadProxyStartRequestResult);
     }
-    public JsonElement ReleaseTrafficView(string viewId) => Input(NativeMethods.ReleaseTrafficView, viewId);
-    public SessionUpdates SubscribeSessionUpdates(Action<JsonElement> callback) => new(this, callback);
-    public JsonElement SessionDetail(string id) => Input(NativeMethods.SessionDetail, id);
+    public static SessionQueryInput DefaultSessionQueryInput()
+    {
+        RequireAbiVersion();
+        return Read(NativeMethods.DefaultSessionQueryInput(), ModelMarshal.ReadSessionQueryInputResult);
+    }
+    public ProductState SaveProductState(ProductState value)
+    {
+        using var arena = new InputArena();
+        var input = ModelMarshal.WriteProductState(value, arena);
+        return Read(NativeMethods.SaveProductState(handle, in input), ModelMarshal.ReadProductStateResult);
+    }
+    public AppStatus StartProxy(ProxyStartRequest value)
+    {
+        using var arena = new InputArena();
+        var input = ModelMarshal.WriteProxyStartRequest(value, arena);
+        return Read(NativeMethods.StartProxy(handle, in input), ModelMarshal.ReadAppStatusResult);
+    }
+    public AppStatus StopProxy() => Read(NativeMethods.StopProxy(handle), ModelMarshal.ReadAppStatusResult);
+    public void Shutdown() => Check(NativeMethods.Shutdown(handle));
+    public SessionPage QuerySessions(SessionQueryInput value)
+    {
+        using var arena = new InputArena();
+        var input = ModelMarshal.WriteSessionQueryInput(value, arena);
+        return Read(NativeMethods.QuerySessions(handle, in input), ModelMarshal.ReadSessionPageResult);
+    }
+    public TrafficView QueryTrafficView(SessionQueryInput value)
+    {
+        using var arena = new InputArena();
+        var input = ModelMarshal.WriteSessionQueryInput(value, arena);
+        return Read(NativeMethods.QueryTrafficView(handle, in input), ModelMarshal.ReadTrafficViewResult);
+    }
+    public SessionSummary[] TrafficViewRows(string viewId, nuint offset, nuint limit)
+    {
+        byte[] bytes = Utf8.GetBytes(viewId);
+        fixed (byte* input = bytes)
+            return Read(NativeMethods.TrafficViewRows(handle, input, (nuint)bytes.Length, offset, limit), ModelMarshal.ReadSessionRowsResult);
+    }
+    public void ReleaseTrafficView(string viewId) => Check(Input(NativeMethods.ReleaseTrafficView, viewId));
+    public SessionUpdates SubscribeSessionUpdates(Action<SessionHint> callback) => new(this, callback);
+    public SessionDetail SessionDetail(string id) => Read(Input(NativeMethods.SessionDetail, id), ModelMarshal.ReadSessionDetailResult);
     public BodyPage ReadBodyRange(string sessionId, string boundary, ulong offset, nuint maxBytes = 64 * 1024)
     {
-        byte[] session = Encoding.UTF8.GetBytes(sessionId), stage = Encoding.UTF8.GetBytes(boundary);
+        byte[] session = Utf8.GetBytes(sessionId), stage = Utf8.GetBytes(boundary);
         BodyPageHandle page;
         fixed (byte* sessionInput = session)
         fixed (byte* boundaryInput = stage)
@@ -64,20 +93,7 @@ internal sealed unsafe class NativeApplication : IDisposable
             if (NativeMethods.BodyPageSucceeded(page) != 1)
             {
                 NativeError error = NativeMethods.BodyPageError(page);
-                string category = error.Category switch
-                {
-                    1 => "password-required",
-                    2 => "invalid-password",
-                    3 => "invalid-input",
-                    4 => "unsupported",
-                    5 => "canceled",
-                    6 => "conflict",
-                    7 => "limit",
-                    8 => "unavailable",
-                    9 => "retryable",
-                    _ => "internal"
-                };
-                throw new NativeApplicationException(category, Text(error.Message)!, error.Retryable != 0);
+                throw new TransmogException((ErrorCategory)error.Category, Text(error.Message)!, error.Retryable != 0);
             }
             NativeBodyPage value = NativeMethods.BodyPageView(page);
             if (value.ContentCodingCount > int.MaxValue || value.Bytes.Size > maxBytes ||
@@ -89,7 +105,7 @@ internal sealed unsafe class NativeApplication : IDisposable
             for (int index = 0; index < codings.Length; index++)
                 codings[index] = Text(NativeMethods.BodyPageContentCoding(page, (nuint)index))!;
             return new BodyPage(value.Offset, value.TotalBytes, value.ReadLimit,
-                Copy(value.Bytes.Data, value.Bytes.Size), new BodyMetadata(value.LengthKnown != 0,
+                Copy(value.Bytes.Data, value.Bytes.Size), new StoredBodyMetadata(value.LengthKnown != 0,
                     Text(value.ExchangeId)!, Text(value.Boundary)!, value.ObservedBytes,
                     value.HasWireBodyBytes != 0 ? value.WireBodyBytes : null, value.RetainedBytes,
                     value.Availability, Text(value.MediaType), Text(value.Charset), codings,
@@ -98,34 +114,39 @@ internal sealed unsafe class NativeApplication : IDisposable
     }
     public void Dispose() => handle.Dispose();
 
-    private delegate ResultHandle InputOperation(ApplicationHandle app, byte* input, nuint length);
-    private JsonElement Input(InputOperation operation, string text)
+    private static readonly UTF8Encoding Utf8 = new(false, true);
+    private static void RequireAbiVersion()
     {
-        byte[] bytes = Encoding.UTF8.GetBytes(text);
-        ResultHandle result;
-        fixed (byte* input = bytes) result = operation(handle, input, (nuint)bytes.Length);
-        return Read(result);
+        if (NativeMethods.AbiVersion() != 4)
+            throw new InvalidOperationException("The native application SDK requires ABI revision 4.");
+    }
+    private delegate ResultHandle InputOperation(ApplicationHandle app, byte* input, nuint length);
+    private ResultHandle Input(InputOperation operation, string text)
+    {
+        byte[] bytes = Utf8.GetBytes(text);
+        fixed (byte* input = bytes) return operation(handle, input, (nuint)bytes.Length);
     }
 
-    private static JsonElement Read(ResultHandle result)
+    private static void RequireSuccess(ResultHandle result)
+    {
+        if (result.IsInvalid) throw new InvalidOperationException("The SDK could not allocate an operation result.");
+        if (NativeMethods.Succeeded(result) == 1) return;
+        NativeError error = NativeMethods.Error(result);
+        throw new TransmogException((ErrorCategory)error.Category, Text(error.Message)!, error.Retryable != 0);
+    }
+    private static T Read<T>(ResultHandle result, Func<nint, T> read)
     {
         using (result)
         {
-            if (result.IsInvalid)
-                throw new InvalidOperationException("The SDK could not allocate an operation result.");
-            bool succeeded = NativeMethods.Succeeded(result) == 1;
-            byte[] bytes = succeeded
-                ? Copy(NativeMethods.Json(result), NativeMethods.JsonLength(result))
-                : Copy(NativeMethods.Error(result), NativeMethods.ErrorLength(result));
-            using JsonDocument document = JsonDocument.Parse(bytes);
-            JsonElement value = document.RootElement;
-            if (!succeeded)
-                throw new NativeApplicationException(
-                    value.GetProperty("category").GetString()!,
-                    value.GetProperty("message").GetString()!,
-                    value.GetProperty("retryable").GetBoolean());
-            return value.Clone();
+            RequireSuccess(result);
+            T value = read(result.DangerousGetHandle());
+            GC.KeepAlive(result);
+            return value;
         }
+    }
+    private static void Check(ResultHandle result)
+    {
+        using (result) RequireSuccess(result);
     }
 
     private static byte[] Copy(nint pointer, nuint length)
@@ -139,7 +160,7 @@ internal sealed unsafe class NativeApplication : IDisposable
     }
 
     private static string? Text(NativeBytes value) => value.Data == 0 ? null
-        : Encoding.UTF8.GetString(Copy(value.Data, value.Size));
+        : Utf8.GetString(Copy(value.Data, value.Size));
 
     [StructLayout(LayoutKind.Sequential)]
     private struct NativeBytes { internal nint Data; internal nuint Size; }
@@ -191,9 +212,9 @@ internal sealed unsafe class NativeApplication : IDisposable
     // release waits for delivery before releasing the root (including on finalization).
     public sealed class SessionUpdates : IDisposable
     {
-        private sealed class CallbackState(Action<JsonElement> callback)
+        private sealed class CallbackState(Action<SessionHint> callback)
         {
-            internal readonly Action<JsonElement> Callback = callback;
+            internal readonly Action<SessionHint> Callback = callback;
             internal Exception? Error;
         }
         private readonly SessionUpdatesHandle handle;
@@ -201,7 +222,7 @@ internal sealed unsafe class NativeApplication : IDisposable
         private static readonly NativeMethods.SessionUpdateCallback DispatchCallback = Dispatch;
         public Exception? CallbackError => Volatile.Read(ref state.Error);
 
-        internal SessionUpdates(NativeApplication app, Action<JsonElement> callback)
+        internal SessionUpdates(Application app, Action<SessionHint> callback)
         {
             ArgumentNullException.ThrowIfNull(callback);
             state = new CallbackState(callback);
@@ -221,18 +242,17 @@ internal sealed unsafe class NativeApplication : IDisposable
             try
             {
                 if (NativeMethods.SessionUpdatesValid(handle) != 1)
-                    _ = Read(NativeMethods.SessionUpdatesStatus(handle));
+                    Check(NativeMethods.SessionUpdatesStatus(handle));
             }
             catch { handle.Dispose(); throw; }
         }
 
-        private static void Dispatch(nint context, nint bytes, nuint length)
+        private static void Dispatch(nint context, nint hint)
         {
             var state = (CallbackState)GCHandle.FromIntPtr(context).Target!;
             try
             {
-                using JsonDocument document = JsonDocument.Parse(Copy(bytes, length));
-                state.Callback(document.RootElement.Clone());
+                state.Callback(ModelMarshal.ReadSessionHint(ModelMemory.Value<NativeSessionHint>(hint)));
             }
             catch (Exception error)
             {
@@ -245,7 +265,7 @@ internal sealed unsafe class NativeApplication : IDisposable
     private static class NativeMethods
     {
         [UnmanagedFunctionPointer(CallingConvention.Cdecl)]
-        internal delegate void SessionUpdateCallback(nint context, nint json, nuint length);
+        internal delegate void SessionUpdateCallback(nint context, nint hint);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_abi_version")]
         internal static extern uint AbiVersion();
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_create")]
@@ -261,17 +281,17 @@ internal sealed unsafe class NativeApplication : IDisposable
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_product_state")]
         internal static extern ResultHandle ProductState(ApplicationHandle app);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_save_product_state")]
-        internal static extern ResultHandle SaveProductState(ApplicationHandle app, byte* input, nuint length);
+        internal static extern ResultHandle SaveProductState(ApplicationHandle app, in NativeProductState input);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_start_proxy")]
-        internal static extern ResultHandle StartProxy(ApplicationHandle app, byte* input, nuint length);
+        internal static extern ResultHandle StartProxy(ApplicationHandle app, in NativeProxyStartRequest input);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_stop_proxy")]
         internal static extern ResultHandle StopProxy(ApplicationHandle app);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_shutdown")]
         internal static extern ResultHandle Shutdown(ApplicationHandle app);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_query_sessions")]
-        internal static extern ResultHandle QuerySessions(ApplicationHandle app, byte* input, nuint length);
+        internal static extern ResultHandle QuerySessions(ApplicationHandle app, in NativeSessionQueryInput input);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_query_traffic_view")]
-        internal static extern ResultHandle QueryTrafficView(ApplicationHandle app, byte* input, nuint length);
+        internal static extern ResultHandle QueryTrafficView(ApplicationHandle app, in NativeSessionQueryInput input);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_traffic_view_rows")]
         internal static extern ResultHandle TrafficViewRows(ApplicationHandle app, byte* id, nuint length, nuint offset, nuint limit);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_application_release_traffic_view")]
@@ -301,21 +321,19 @@ internal sealed unsafe class NativeApplication : IDisposable
         internal static extern void FreeBodyPage(nint page);
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_succeeded")]
         internal static extern int Succeeded(ResultHandle result);
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_json")]
-        internal static extern nint Json(ResultHandle result);
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_json_length")]
-        internal static extern nuint JsonLength(ResultHandle result);
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_error_json")]
-        internal static extern nint Error(ResultHandle result);
-        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_error_json_length")]
-        internal static extern nuint ErrorLength(ResultHandle result);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_error")]
+        internal static extern NativeError Error(ResultHandle result);
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_default_proxy_start_request")]
+        internal static extern ResultHandle DefaultProxyStartRequest();
+        [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_default_session_query_input")]
+        internal static extern ResultHandle DefaultSessionQueryInput();
         [DllImport(LibraryName, CallingConvention = CallingConvention.Cdecl, ExactSpelling = true, EntryPoint = "transmog_sdk_result_free")]
         internal static extern void FreeResult(nint result);
     }
 }
-internal sealed class NativeApplicationException(string category, string message, bool retryable)
+public sealed class TransmogException(ErrorCategory category, string message, bool retryable)
     : InvalidOperationException(message)
 {
-    public string Category { get; } = category;
+    public ErrorCategory Category { get; } = category;
     public bool Retryable { get; } = retryable;
 }

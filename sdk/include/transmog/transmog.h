@@ -1,5 +1,6 @@
 #pragma once
 #include "transmog/export.h"
+#include "transmog/models.h"
 #include <stddef.h>
 #include <stdint.h>
 #ifdef __cplusplus
@@ -13,29 +14,6 @@ typedef struct transmog_sdk_application transmog_sdk_application;
 typedef struct transmog_sdk_result transmog_sdk_result;
 typedef struct transmog_sdk_session_updates transmog_sdk_session_updates;
 typedef struct transmog_sdk_body_page transmog_sdk_body_page;
-enum transmog_sdk_error_category {
-  TRANSMOG_ERROR_NONE = 0,
-  TRANSMOG_ERROR_PASSWORD_REQUIRED = 1,
-  TRANSMOG_ERROR_INVALID_PASSWORD = 2,
-  TRANSMOG_ERROR_INVALID_INPUT = 3,
-  TRANSMOG_ERROR_UNSUPPORTED = 4,
-  TRANSMOG_ERROR_CANCELED = 5,
-  TRANSMOG_ERROR_CONFLICT = 6,
-  TRANSMOG_ERROR_LIMIT = 7,
-  TRANSMOG_ERROR_UNAVAILABLE = 8,
-  TRANSMOG_ERROR_RETRYABLE = 9,
-  TRANSMOG_ERROR_INTERNAL = 10
-};
-enum transmog_sdk_body_availability {
-  TRANSMOG_BODY_UNAVAILABLE = 0,
-  TRANSMOG_BODY_CAPTURING = 1,
-  TRANSMOG_BODY_COMPLETE = 2,
-  TRANSMOG_BODY_TRUNCATED = 3,
-  TRANSMOG_BODY_LOST = 4,
-  TRANSMOG_BODY_EVICTED = 5,
-  TRANSMOG_BODY_DISABLED = 6,
-  TRANSMOG_BODY_QUOTA_OMITTED = 7
-};
 typedef struct transmog_sdk_bytes {
   const uint8_t *data;
   size_t size;
@@ -68,12 +46,10 @@ typedef struct transmog_sdk_body_page_view {
   transmog_sdk_bytes reason;
   size_t content_coding_count;
 } transmog_sdk_body_page_view;
-// Borrowed SessionHint JSON on a native thread. Copy before returning, contain
-// language exceptions, and keep callback/context alive until
-// session_updates_free completes. Free waits for in-flight delivery, except
-// from that callback itself.
-typedef void (*transmog_sdk_session_update_callback)(void *, const uint8_t *,
-                                                     size_t);
+// Typed borrowed hint on a native thread. Copy fields before returning. Free
+// joins an in-flight callback except when called by that callback itself.
+typedef void (*transmog_sdk_session_update_callback)(
+    void *, const transmog_sdk_session_hint *);
 TRANSMOG_API uint32_t transmog_sdk_abi_version(void) TRANSMOG_NOEXCEPT;
 // Null means wrapper allocation failed; otherwise query valid/status.
 // Creation uses AppConfig::default. It does not mutate host proxy/trust
@@ -99,19 +75,33 @@ TRANSMOG_OPERATION(product_state)
 TRANSMOG_OPERATION(stop_proxy)
 TRANSMOG_OPERATION(shutdown)
 #undef TRANSMOG_OPERATION
-// Inputs are existing application JSON models; detail/release take UTF-8 IDs.
-// Memory must remain readable throughout each call. Input limit is 256 KiB.
-#define TRANSMOG_INPUT_OPERATION(name)                                         \
-  TRANSMOG_API transmog_sdk_result *transmog_sdk_application_##name(           \
-      const transmog_sdk_application *, const uint8_t *, size_t)               \
-      TRANSMOG_NOEXCEPT;
-TRANSMOG_INPUT_OPERATION(save_product_state)
-TRANSMOG_INPUT_OPERATION(start_proxy)
-TRANSMOG_INPUT_OPERATION(query_sessions)
-TRANSMOG_INPUT_OPERATION(session_detail)
-TRANSMOG_INPUT_OPERATION(query_traffic_view)
-TRANSMOG_INPUT_OPERATION(release_traffic_view)
-#undef TRANSMOG_INPUT_OPERATION
+// The complete generated view and its nonempty arrays/text must remain readable
+// and correctly aligned throughout the call. Inputs are copied and validated by
+// the canonical Rust model. The aggregate input bound is 256 KiB.
+TRANSMOG_API transmog_sdk_result *transmog_sdk_application_save_product_state(
+    const transmog_sdk_application *,
+    const transmog_sdk_product_state *) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *transmog_sdk_application_start_proxy(
+    const transmog_sdk_application *,
+    const transmog_sdk_proxy_start_request *) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *transmog_sdk_application_query_sessions(
+    const transmog_sdk_application *,
+    const transmog_sdk_session_query_input *) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *transmog_sdk_application_query_traffic_view(
+    const transmog_sdk_application *,
+    const transmog_sdk_session_query_input *) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *
+transmog_sdk_application_session_detail(const transmog_sdk_application *,
+                                        const uint8_t *,
+                                        size_t) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *
+transmog_sdk_application_release_traffic_view(const transmog_sdk_application *,
+                                              const uint8_t *,
+                                              size_t) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *
+transmog_sdk_default_proxy_start_request(void) TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_result *
+transmog_sdk_default_session_query_input(void) TRANSMOG_NOEXCEPT;
 // Body reads use typed arguments/results. String inputs are length-delimited
 // UTF-8, with a combined 256 KiB transfer bound. max_bytes is a per-call
 // budget. Null means C wrapper allocation failed before invoking the operation.
@@ -148,16 +138,42 @@ TRANSMOG_API void transmog_sdk_session_updates_free(
     transmog_sdk_session_updates *) TRANSMOG_NOEXCEPT;
 TRANSMOG_API int32_t transmog_sdk_result_succeeded(const transmog_sdk_result *)
     TRANSMOG_NOEXCEPT;
-// Borrowed UTF-8 JSON bytes, valid until result_free; no terminating NUL
-// promised.
-#define TRANSMOG_BUFFER(name)                                                  \
-  TRANSMOG_API const uint8_t *transmog_sdk_result_##name(                      \
-      const transmog_sdk_result *) TRANSMOG_NOEXCEPT;                          \
-  TRANSMOG_API size_t transmog_sdk_result_##name##_length(                     \
-      const transmog_sdk_result *) TRANSMOG_NOEXCEPT;
-TRANSMOG_BUFFER(json)
-TRANSMOG_BUFFER(error_json)
-#undef TRANSMOG_BUFFER
+// Borrowed typed views. The requested type must match the operation's result;
+// mismatch/failure returns null. AppError reads the original Rust failure
+// model. All nested pointers expire when the result is freed or replaced.
+TRANSMOG_API const transmog_sdk_app_status *transmog_sdk_result_as_app_status(
+    const transmog_sdk_result *) TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_product_state *
+transmog_sdk_result_as_product_state(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_proxy_start_request *
+transmog_sdk_result_as_proxy_start_request(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_session_query_input *
+transmog_sdk_result_as_session_query_input(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_session_page *
+transmog_sdk_result_as_session_page(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_traffic_view *
+transmog_sdk_result_as_traffic_view(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_session_summary *
+transmog_sdk_result_as_session_summary(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_session_detail *
+transmog_sdk_result_as_session_detail(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_session_hint *
+transmog_sdk_result_as_session_hint(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_app_error *
+transmog_sdk_result_as_app_error(const transmog_sdk_result *) TRANSMOG_NOEXCEPT;
+TRANSMOG_API const transmog_sdk_slice_session_summary *
+transmog_sdk_result_as_session_rows(const transmog_sdk_result *)
+    TRANSMOG_NOEXCEPT;
+TRANSMOG_API transmog_sdk_error
+transmog_sdk_result_error(const transmog_sdk_result *) TRANSMOG_NOEXCEPT;
 TRANSMOG_API void
 transmog_sdk_result_free(transmog_sdk_result *) TRANSMOG_NOEXCEPT;
 #ifdef __cplusplus

@@ -1,5 +1,6 @@
 #pragma once
 #include "transmog/export.h"
+#include "transmog/models.h"
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -19,34 +20,13 @@ struct Bytes {
   std::size_t size;
 };
 
-enum class ErrorCategory : std::uint32_t {
-  none = 0,
-  password_required = 1,
-  invalid_password = 2,
-  invalid_input = 3,
-  unsupported = 4,
-  canceled = 5,
-  conflict = 6,
-  limit = 7,
-  unavailable = 8,
-  retryable = 9,
-  internal = 10
-};
+using ErrorCategory = models::ErrorCategory;
 struct Error {
   ErrorCategory category;
   std::string_view message;
   bool retryable;
 };
-enum class BodyAvailability : std::uint32_t {
-  unavailable = 0,
-  capturing = 1,
-  complete = 2,
-  truncated = 3,
-  lost = 4,
-  evicted = 5,
-  disabled = 6,
-  quota_omitted = 7
-};
+using BodyAvailability = models::BodyAvailability;
 struct BodyRangeRequest {
   std::string_view session_id;
   std::string_view boundary;
@@ -103,11 +83,10 @@ private:
 class Application;
 class SessionUpdates;
 using SessionUpdateCallback = void (*)(void *context,
-                                       const std::uint8_t *hint_json,
-                                       std::size_t length);
-// Owns the exact serialized Application output or AppError, with no Rust
-// layouts.
-class TRANSMOG_API Result final {
+                                       const models::SessionHint *hint);
+// Owns a Rust value and its generated C-compatible projection. Pointers
+// returned by get() are borrowed until this owner is destroyed or replaced.
+class TRANSMOG_API Result {
 public:
   Result() noexcept;
   ~Result() noexcept;
@@ -117,23 +96,44 @@ public:
   Result &operator=(const Result &) = delete;
   Status status() const noexcept;
   bool succeeded() const noexcept;
-  Bytes json() const noexcept;
-  Bytes error_json() const noexcept;
+  Error error() const noexcept;
+  template <class T> const T *get() const noexcept {
+    return static_cast<const T *>(model(detail::model_kind<T>::value));
+  }
 
 private:
   friend class Application;
   friend class SessionUpdates;
+  template <class T> friend class TypedResult;
+  const void *model(std::uint32_t kind) const noexcept;
   Result(std::uint8_t *, Status) noexcept;
   std::uint8_t *handle_;
   Status failure_;
 };
 
-// Owns delivery of the application's lossy SessionHint JSON. Callbacks run on
-// a native delivery thread; copy borrowed bytes before returning. Keep callback
-// code/context alive until this owner is destroyed. Destruction stops delivery
-// and waits for an in-flight callback, except when called by that callback.
-// Callback exceptions are contained. The owner may outlive Application and
-// retains its executor until released. valid/status report creation success.
+// The operation's return type fixes its model at compile time. Empty/failed
+// results return null from get(); inspect succeeded()/error() before access.
+template <class T> class TypedResult final : public Result {
+public:
+  TypedResult() noexcept = default;
+  TypedResult(TypedResult &&) noexcept = default;
+  TypedResult &operator=(TypedResult &&) noexcept = default;
+  const T *get() const noexcept { return Result::get<T>(); }
+  const T *operator->() const noexcept { return get(); }
+
+private:
+  friend class Application;
+  TypedResult(std::uint8_t *handle, Status failure) noexcept
+      : Result(handle, failure) {}
+};
+
+// Owns delivery of the application's lossy typed SessionHint. Callbacks run on
+// a native delivery thread; copy borrowed fields before returning. Keep
+// callback code/context alive until this owner is destroyed. Destruction stops
+// delivery and waits for an in-flight callback, except when called by that
+// callback. Callback exceptions are contained. The owner may outlive
+// Application and retains its executor until released. valid/status report
+// creation success.
 class TRANSMOG_API SessionUpdates final {
 public:
   SessionUpdates() noexcept;
@@ -176,27 +176,37 @@ public:
   create_with_body_store(std::string_view cache_directory) noexcept;
   bool valid() const noexcept;
   // status also reports a creation failure when valid() is false.
-  Result status() const noexcept;
-  Result product_state() const noexcept;
-  Result save_product_state(std::string_view product_state_json) noexcept;
+  TypedResult<models::AppStatus> status() const noexcept;
+  TypedResult<models::ProductState> product_state() const noexcept;
+  TypedResult<models::ProductState>
+  save_product_state(const models::ProductState &) noexcept;
+  static TypedResult<models::ProxyStartRequest>
+  default_proxy_start_request() noexcept;
+  static TypedResult<models::SessionQueryInput>
+  default_session_query_input() noexcept;
   // Uses ProxyStartRequest and caller-owned host setup (HostIntegration=None).
-  Result start_proxy(std::string_view request_json) noexcept;
+  TypedResult<models::AppStatus>
+  start_proxy(const models::ProxyStartRequest &) noexcept;
   // Existing application semantics: turn routing off and begin reversible
   // drain.
-  Result stop_proxy() noexcept;
+  TypedResult<models::AppStatus> stop_proxy() noexcept;
   // Existing application semantics: stop unfinished work and await final
   // shutdown.
   Result shutdown() noexcept;
-  Result query_sessions(std::string_view query_json) const noexcept;
-  Result query_traffic_view(std::string_view query_json) const noexcept;
-  Result traffic_view_rows(std::string_view view_id, std::size_t offset,
-                           std::size_t limit) const noexcept;
-  // Releases the ordering snapshot; success contains JSON null.
+  TypedResult<models::SessionPage>
+  query_sessions(const models::SessionQueryInput &) const noexcept;
+  TypedResult<models::TrafficView>
+  query_traffic_view(const models::SessionQueryInput &) const noexcept;
+  TypedResult<models::SliceSessionSummary>
+  traffic_view_rows(std::string_view view_id, std::size_t offset,
+                    std::size_t limit) const noexcept;
+  // Releases the ordering snapshot; success has no payload.
   Result release_traffic_view(std::string_view view_id) noexcept;
   // Hints signal a re-query; they are not an authoritative row/event stream.
   SessionUpdates subscribe_session_updates(SessionUpdateCallback callback,
                                            void *context) const noexcept;
-  Result session_detail(std::string_view session_id) const noexcept;
+  TypedResult<models::SessionDetail>
+  session_detail(std::string_view session_id) const noexcept;
   // Same Application read, with numeric offsets, raw bytes, and typed metadata.
   // A capturing prefix is not EOF. Reads do not pin bodies across calls.
   BodyPage read_body_range(const BodyRangeRequest &request) const noexcept;

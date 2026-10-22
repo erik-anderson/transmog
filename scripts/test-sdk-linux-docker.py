@@ -22,6 +22,8 @@ def main():
         "type=volume,source=transmog-linux-cargo-git,target=/usr/local/cargo/git",
         "type=volume,source=transmog-sdk-linux-managed-bin,target=/work/examples/dotnet-embedding/Transmog.Embedding.Sample/bin",
         "type=volume,source=transmog-sdk-linux-managed-obj,target=/work/examples/dotnet-embedding/Transmog.Embedding.Sample/obj",
+        "type=volume,source=transmog-sdk-linux-binding-bin,target=/work/sdk/managed/bin",
+        "type=volume,source=transmog-sdk-linux-binding-obj,target=/work/sdk/managed/obj",
         f"type=bind,source={reports},target=/qualification",
     )
     argv = container_arguments(docker, image, mounts=mounts,

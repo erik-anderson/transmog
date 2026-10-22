@@ -118,11 +118,12 @@ def main():
         step("format", [sys.executable, "scripts/dev-env.py", "--run", "cargo", "fmt", "--manifest-path", "sdk/Cargo.toml", "--all", "--", "--check"])
         step("isolation", [sys.executable, "scripts/check-sdk-isolation.py"])
         step("bootstrap-regression", [sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_sdk_tools.py"])
+        step("model-generation", [sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests", "-p", "test_sdk_models.py"])
         for configuration in ("Debug", "Release"):
             step(configuration.lower(), [sys.executable, "scripts/test-sdk.py", "--configuration", configuration])
         cargo = [sys.executable, "scripts/dev-env.py", "--run", "cargo"]
         selection = ["--manifest-path", "sdk/Cargo.toml", "--locked", "--target", "x86_64-unknown-linux-gnu",
-                     "-p", "transmog-sdk-engine", "-p", "transmog-sdk-facade"]
+                     "-p", "transmog-sdk-engine", "-p", "transmog-sdk-facade", "-p", "transmog-sdk-model-codegen"]
         step("clippy", [*cargo, "clippy", *selection, "--all-targets", "--", "-D", "warnings"])
         step("parity-tests", [*cargo, "test", *selection])
         application_tests = ["--manifest-path", "Cargo.toml", "--locked", "--target", "x86_64-unknown-linux-gnu",

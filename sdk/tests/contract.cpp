@@ -31,11 +31,11 @@ using transmog::Result;
 using transmog::SessionUpdates;
 using transmog::Status;
 static_assert(
-    static_cast<std::uint32_t>(transmog::BodyAvailability::complete) ==
-    TRANSMOG_BODY_COMPLETE);
+    static_cast<std::uint32_t>(transmog::BodyAvailability::Complete) ==
+    static_cast<uint32_t>(transmog_sdk_body_availability::Complete));
 static_assert(
-    static_cast<std::uint32_t>(transmog::ErrorCategory::invalid_input) ==
-    TRANSMOG_ERROR_INVALID_INPUT);
+    static_cast<std::uint32_t>(transmog::ErrorCategory::InvalidInput) ==
+    static_cast<uint32_t>(transmog_sdk_error_category::InvalidInput));
 #define OWNER(Type)                                                            \
   static_assert(std::is_nothrow_default_constructible_v<Type>);                \
   static_assert(std::is_nothrow_move_constructible_v<Type>);                   \
@@ -60,13 +60,12 @@ OP(shutdown)
 #undef OP
 #define OP(name)                                                               \
   static_assert(noexcept(std::declval<Application &>().name({})));             \
-  static_assert(noexcept(transmog_sdk_application_##name(nullptr, nullptr, 0)));
+  static_assert(noexcept(transmog_sdk_application_##name(nullptr, nullptr)));
 OP(save_product_state)
 OP(start_proxy)
 OP(query_sessions)
 OP(query_traffic_view)
-OP(release_traffic_view)
-OP(session_detail)
+
 #undef OP
 static_assert(noexcept(std::declval<Application &>().read_body_range({})));
 static_assert(noexcept(transmog_sdk_application_read_body_range(
@@ -94,13 +93,20 @@ static_assert(noexcept(transmog_sdk_application_subscribe_session_updates(
 static_assert(noexcept(transmog_sdk_session_updates_valid(nullptr)));
 static_assert(noexcept(transmog_sdk_session_updates_status(nullptr)));
 static_assert(noexcept(transmog_sdk_session_updates_free(nullptr)));
-#define BUFFER(name)                                                           \
-  static_assert(noexcept(std::declval<Result &>().name()));                    \
-  static_assert(noexcept(transmog_sdk_result_##name(nullptr)));                \
-  static_assert(noexcept(transmog_sdk_result_##name##_length(nullptr)));
-BUFFER(json)
-BUFFER(error_json)
-#undef BUFFER
+static_assert(noexcept(std::declval<Result &>().error()));
+static_assert(noexcept(transmog_sdk_result_error(nullptr)));
+static_assert(
+    noexcept(std::declval<Result &>().get<transmog::models::AppStatus>()));
+static_assert(noexcept(Application::default_proxy_start_request()));
+static_assert(noexcept(Application::default_session_query_input()));
+static_assert(noexcept(transmog_sdk_default_proxy_start_request()));
+static_assert(noexcept(transmog_sdk_default_session_query_input()));
+static_assert(noexcept(std::declval<Application &>().release_traffic_view({})));
+static_assert(noexcept(std::declval<Application &>().session_detail({})));
+static_assert(noexcept(
+    transmog_sdk_application_release_traffic_view(nullptr, nullptr, 0)));
+static_assert(noexcept(transmog_sdk_application_session_detail(nullptr, nullptr,
+                                                               0)));
 static_assert(noexcept(std::declval<Result &>().status()));
 static_assert(noexcept(std::declval<Result &>().succeeded()));
 static_assert(noexcept(transmog_sdk_result_succeeded(nullptr)));
@@ -117,15 +123,23 @@ int main() {
   Result retained;
   {
     auto app = Application::create();
+    int calls = 0;
     auto updates = app.subscribe_session_updates(
-        [](void *, const std::uint8_t *, std::size_t) { throw 42; }, nullptr);
+        [](void *context, const transmog::models::SessionHint *) {
+          ++*static_cast<int *>(context);
+          throw 42;
+        },
+        &calls);
     auto moved = std::move(updates);
     require(!updates.valid() && moved.valid() && moved.status().succeeded(),
             "subscription owns a stable callback context across moves");
+    const transmog::models::SessionHint hint{};
     reinterpret_cast<void (*)(std::uintptr_t, const std::uint8_t *,
                               std::size_t)>(fake::update_callback)(
-        fake::update_context, nullptr, 0);
-    require(fake::subscriptions == 1, "callback exception contained");
+        fake::update_context, reinterpret_cast<const std::uint8_t *>(&hint),
+        sizeof(hint));
+    require(fake::subscriptions == 1 && calls == 1,
+            "callback exception contained");
   }
   require(fake::subscriptions == 0, "subscription released exactly once");
   {
@@ -135,13 +149,13 @@ int main() {
       auto page = app.read_body_range({"exchange", "client-response", 0, 3});
       auto view = page.view();
       require(page.succeeded() &&
-                  page.error().category == transmog::ErrorCategory::none &&
+                  page.error().category == transmog::ErrorCategory::None &&
                   view.offset == 9007199254740994ULL &&
                   view.total_bytes == 9007199254741009ULL &&
                   view.bytes.size == 3 && view.bytes.data[1] == 255 &&
                   view.metadata.length_known &&
                   view.metadata.availability ==
-                      transmog::BodyAvailability::complete &&
+                      transmog::BodyAvailability::Complete &&
                   view.metadata.exchange_id == "exchange" &&
                   view.metadata.boundary == "client-response" &&
                   view.metadata.media_type == "application/octet-stream" &&
@@ -168,7 +182,7 @@ int main() {
       auto failed = app.read_body_range({});
       require(!failed.succeeded() &&
                   failed.error().category ==
-                      transmog::ErrorCategory::internal &&
+                      transmog::ErrorCategory::Internal &&
                   failed.view().bytes.data == nullptr,
               "typed read exceptions/failures stay inspectable");
     }
@@ -201,18 +215,18 @@ int main() {
     require(moved.status().status() == Status::out_of_memory,
             "bad_alloc contained");
     fake::failure = fake::Failure::exception;
-    require(moved.start_proxy("{}").status() == Status::internal_error,
+    require(moved.start_proxy({}).status() == Status::internal_error,
             "standard exception contained");
     fake::failure = fake::Failure::unknown;
     require(moved.shutdown().status() == Status::internal_error,
             "unknown exception contained");
     fake::failure = fake::Failure::null_handle;
-    require(moved.query_sessions("{}").status() == Status::out_of_memory,
+    require(moved.query_sessions({}).status() == Status::out_of_memory,
             "null result handled");
     fake::failure = fake::Failure::none;
   }
   require(fake::applications == 0 && fake::results == 1 &&
-              retained.json().size == 1,
+              retained.get<transmog::models::AppStatus>() != nullptr,
           "result survives application destruction");
   retained = Result{};
   require(fake::results == 0, "all results released");

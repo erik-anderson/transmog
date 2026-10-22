@@ -4,10 +4,13 @@
     <TargetFramework>net10.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="../../../examples/dotnet-embedding/Transmog.Embedding.Sample/BodyReader.cs" Link="BodyReader.cs" />
-    <Compile Include="../../../examples/dotnet-embedding/Transmog.Embedding.Sample/BodyPage.cs" Link="BodyPage.cs" />
+    <Compile Include="../../managed/BodyReader.cs" Link="BodyReader.cs" />
+    <Compile Include="../../managed/BodyPage.cs" Link="BodyPage.cs" />
+    <Compile Include="../../managed/Models.g.cs" Link="Models.g.cs" />
+    <Compile Include="../../managed/ModelMemory.cs" Link="ModelMemory.cs" />
   </ItemGroup>
 </Project>

@@ -5,7 +5,6 @@ import ctypes
 import gzip
 from http.client import HTTPConnection
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-import json
 import os
 from pathlib import Path
 import sys
@@ -13,6 +12,9 @@ import tempfile
 import threading
 import time
 from repo_tools import ROOT, command, development_environment, main_guard
+
+sys.path.insert(0, str(ROOT / "sdk/tests"))
+import model_support as models
 
 entered = threading.Event()
 resume = threading.Event()
@@ -84,25 +86,35 @@ def main():
         return function
     pointer, size = ctypes.c_void_p, ctypes.c_size_t
     version = bind("abi_version", [], ctypes.c_uint32)
-    require(version() == 3, "Expected application SDK ABI 3")
+    require(version() == 4, "Expected application SDK ABI 4")
     create = bind("application_create", [], pointer)
     create_with_bodies = bind("application_create_with_body_store", [pointer, size], pointer)
     valid = bind("application_valid", [pointer], ctypes.c_int32)
     free_app = bind("application_free", [pointer], None)
     free_result = bind("result_free", [pointer], None)
     succeeded = bind("result_succeeded", [pointer], ctypes.c_int32)
-    get_json = bind("result_json", [pointer], pointer)
-    json_length = bind("result_json_length", [pointer], size)
-    get_error = bind("result_error_json", [pointer], pointer)
-    error_length = bind("result_error_json_length", [pointer], size)
+    output_types = {"status": "AppStatus", "product_state": "ProductState", "stop_proxy": "AppStatus",
+                    "shutdown": None, "save_product_state": "ProductState", "start_proxy": "AppStatus",
+                    "query_sessions": "SessionPage", "query_traffic_view": "TrafficView",
+                    "session_detail": "SessionDetail", "release_traffic_view": None}
+    getters = {name: bind("result_as_" + models.kebab(name).replace("-", "_"), [pointer], pointer)
+               for name in set(output_types.values()) - {None}}
+    getters["SliceSessionSummary"] = bind("result_as_session_rows", [pointer], pointer)
+    defaults = {}
+    for name, suffix in (("ProxyStartRequest", "proxy_start_request"), ("SessionQueryInput", "session_query_input")):
+        getters[name] = bind("result_as_" + suffix, [pointer], pointer)
+        defaults[name] = bind("default_" + suffix, [], pointer)
+    input_types = {"save_product_state": "ProductState", "start_proxy": "ProxyStartRequest",
+                   "query_sessions": "SessionQueryInput", "query_traffic_view": "SessionQueryInput"}
     operations = {}
     for name in ("status", "product_state", "stop_proxy", "shutdown"):
         operations[name] = bind("application_" + name, [pointer], pointer)
-    for name in ("save_product_state", "start_proxy", "query_sessions", "session_detail",
-                 "query_traffic_view", "release_traffic_view"):
+    for name in input_types:
+        operations[name] = bind("application_" + name, [pointer, pointer], pointer)
+    for name in ("session_detail", "release_traffic_view"):
         operations[name] = bind("application_" + name, [pointer, pointer, size], pointer)
     rows_operation = bind("application_traffic_view_rows", [pointer, pointer, size, size, size], pointer)
-    callback_type = ctypes.CFUNCTYPE(None, pointer, pointer, size)
+    callback_type = ctypes.CFUNCTYPE(None, pointer, pointer)
     subscribe = bind("application_subscribe_session_updates", [pointer, callback_type, pointer], pointer)
     valid_updates = bind("session_updates_valid", [pointer], ctypes.c_int32)
     updates_status = bind("session_updates_status", [pointer], pointer)
@@ -164,25 +176,39 @@ def main():
         finally:
             free_body(page)
 
-    def read(result):
+    get_error = bind("result_error", [pointer], NativeError)
+    def read(result, model=None):
         require(result, "SDK wrapper allocation failed")
         try:
             success = bool(succeeded(result))
-            data = ctypes.string_at(get_json(result), json_length(result)) if success else \
-                ctypes.string_at(get_error(result), error_length(result))
-            return success, json.loads(data)
+            if success:
+                value = models.read_pointer(model, getters[model](result)) if model else None
+            else:
+                error = get_error(result)
+                value = {"category": models.read("ErrorCategory", error.category),
+                         "message": text(error.message), "retryable": bool(error.retryable)}
+            return success, value
         finally:
             free_result(result)
 
     def call(app, name, value=None, expected=True):
         if name == "read_body_range": return read_body(app, value, expected)
-        if value is None:
+        owners = []
+        if name in input_types:
+            model = input_types[name]
+            if model in defaults:
+                initial = read(defaults[model](), model)[1]
+                initial.update(value)
+                value = initial
+            source = models.write(model, value, owners)
+            result = operations[name](app, ctypes.byref(source))
+        elif value is None:
             result = operations[name](app)
         else:
-            data = value if isinstance(value, bytes) else json.dumps(value).encode()
+            data = value if isinstance(value, bytes) else value.encode()
             source = ctypes.create_string_buffer(data)
             result = operations[name](app, source, len(data))
-        success, value = read(result)
+        success, value = read(result, output_types[name])
         require(success == expected, f"{name}: {value}")
         return value
 
@@ -200,17 +226,17 @@ def main():
     def rows(app, view_id, offset=0, limit=100, expected=True):
         data = view_id if isinstance(view_id, bytes) else view_id.encode()
         source = ctypes.create_string_buffer(data)
-        success, value = read(rows_operation(app, source, len(data), offset, limit))
+        success, value = read(rows_operation(app, source, len(data), offset, limit), "SliceSessionSummary")
         require(success == expected, f"traffic_view_rows: {value}")
         return value
 
     hints, callback_errors, notification = [], [], threading.Event()
     context_value = ctypes.c_int(73)
     @callback_type
-    def on_update(context, data, length):
+    def on_update(context, data):
         try:
             require(ctypes.cast(context, ctypes.POINTER(ctypes.c_int)).contents.value == 73, "Callback context changed")
-            hint = json.loads(ctypes.string_at(data, length))
+            hint = models.read_pointer("SessionHint", data)
             require(set(hint) == {"exchangeId", "sequence", "lagged"}, "Expected the shared SessionHint schema")
             hints.append(hint)
             notification.set()
@@ -239,7 +265,7 @@ def main():
         state = call(app, "product_state")
         state["preferences"]["decryptHttps"] = False
         state["preferences"]["configureSystemProxy"] = False
-        state["privacy"]["bufferLimit"] = {"mode": "custom", "bytes": 64 * 1024 * 1024}
+        state["privacy"]["bufferLimit"] = {"kind": "Custom", "bytes": 64 * 1024 * 1024}
         saved = call(app, "save_product_state", state)
         require(saved == state, "SDK changed the ProductState schema")
         request = {"caCertificatePath": "", "caPrivateKeyPath": "", "listen": "127.0.0.1:0",
@@ -255,10 +281,12 @@ def main():
         free_updates(invalid)
         updates = subscribe(app, on_update, ctypes.byref(context_value))
         require(updates and valid_updates(updates) and read(updates_status(updates))[0], "Subscription creation failed")
-        for bad in (b"not-json", b"x" * 262145, {"limit": 0}):
+        for bad in ({"search": "x" * 262145}, {"limit": 0}):
             failure = call(app, "query_sessions", bad, expected=False)
             require(failure["category"] in ("invalid-input", "limit") and "retryable" in failure,
                     "Expected the shared AppError model")
+        require(read(operations["query_sessions"](app, None))[1]["category"] == "invalid-input",
+                "Null typed input must return an error")
         for _ in range(3):
             send(listener, url + "/ok")
         deadline = time.monotonic() + 10
@@ -337,7 +365,7 @@ def main():
             time.sleep(0.025)
         require(completed["id"] == active["id"] and completed["status"] == 200, "Row identity changed on completion")
         for view_id in (frozen_id, live_id):
-            require(call(app, "release_traffic_view", view_id.encode()) is None, "Release must return JSON null")
+            require(call(app, "release_traffic_view", view_id.encode()) is None, "Release must return unit")
             require(rows(app, view_id, expected=False)["category"] == "unavailable", "Released view remained readable")
             call(app, "release_traffic_view", view_id.encode())
         # Explicit release must return capacity to the shared application registry.
@@ -354,7 +382,7 @@ def main():
         # Unsubscribe joins an in-flight callback, and callbacks can safely re-query.
         callback_entered, callback_resume, unsubscribed = threading.Event(), threading.Event(), threading.Event()
         @callback_type
-        def blocked_update(_context, _data, _length):
+        def blocked_update(_context, _data):
             try:
                 call(app, "query_sessions", {"limit": 1})
                 callback_entered.set()
@@ -386,7 +414,7 @@ def main():
         self_released = threading.Event()
         self_subscription = []
         @callback_type
-        def self_release(_context, _data, _length):
+        def self_release(_context, _data):
             try:
                 free_updates(self_subscription[0])
                 self_released.set()
@@ -439,7 +467,7 @@ def main():
         retained_body = body_handle(app, dict(body_request, sessionId=stream_id, offset=0, maxBytes=4))
         free_app(app)
         app = None
-        require(read(retained)[0], "Result did not survive application destruction")
+        require(read(retained, "ProductState")[0], "Result did not survive application destruction")
         try:
             view = body_view(retained_body)
             require(body_succeeded(retained_body) and ctypes.string_at(view.bytes.data, view.bytes.size) == STREAM_BODY[:4],
@@ -455,7 +483,7 @@ def main():
             assembly = project / "bin" / args.configuration / "net10.0/Transmog.Embedding.Sample.dll"
             body = directory / "response.bin"
             managed = command(["dotnet", assembly, "--url", url + "/ok", "--output", body], env=env, capture=True)
-            require(body.read_bytes() == BODY and "HTTP 200" in managed.stdout and '"responses"' in managed.stdout
+            require(body.read_bytes() == BODY and "HTTP 200" in managed.stdout and "retained body boundaries" in managed.stdout
                     and "Session updates received:" in managed.stdout and "SHA-256 matches host response" in managed.stdout,
                     ".NET did not capture and inspect host HTTP traffic")
             global managed_stream_output
