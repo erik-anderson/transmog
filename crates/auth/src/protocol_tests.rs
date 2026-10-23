@@ -50,7 +50,7 @@ fn saml_binding_character_decoding_honors_bom_and_xml_declaration() {
 fn fractional_time_conditions_do_not_invent_subsecond_capture_ordering() {
     let token = compact(
         r#"{"alg":"none","typ":"JWT"}"#,
-        r#"{"exp":1700000000.5}"#,
+        r#"{"iss":"synthetic","aud":["workbench"],"admin":false,"exp":1700000000.5}"#,
         "",
     );
     let result = body(
@@ -63,13 +63,29 @@ fn fractional_time_conditions_do_not_invent_subsecond_capture_ordering() {
             .iter()
             .any(|field| field.name == "exp" && field.note.contains("uncertain"))
     );
-    let result=body("application/xml",br#"<a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion"><a:Conditions NotOnOrAfter="2023-11-14T22:13:20.500Z"/></a:Assertion>"#.to_vec());
+    for name in ["iss", "aud[0]", "admin"] {
+        let field = result.findings[0].children[0]
+            .fields
+            .iter()
+            .find(|field| field.name == name)
+            .unwrap();
+        assert!(field.note.is_empty(), "Generic note repeated for {name}");
+    }
+    let result=body("application/xml",br#"<a:Assertion xmlns:a="urn:oasis:names:tc:SAML:2.0:assertion" Version="2.0"><a:Issuer>synthetic</a:Issuer><a:Conditions NotOnOrAfter="2023-11-14T22:13:20.500Z"/></a:Assertion>"#.to_vec());
     assert!(
         result.findings[0]
             .fields
             .iter()
             .any(|field| field.name.contains("NotOnOrAfter") && field.note.contains("uncertain"))
     );
+    for name in ["Issuer", "Assertion @Version"] {
+        let field = result.findings[0]
+            .fields
+            .iter()
+            .find(|field| field.name == name)
+            .unwrap();
+        assert!(field.note.is_empty(), "Generic note repeated for {name}");
+    }
 }
 
 #[test]

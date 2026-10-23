@@ -193,7 +193,7 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
                     let note = if ["NotBefore", "NotOnOrAfter"].contains(&key) {
                         time_note(&value, key, context.captured_at)
                     } else {
-                        "Unverified captured XML attribute.".into()
+                        String::new()
                     };
                     let sensitive = ["SessionIndex", "InResponseTo", "ID"].contains(&key)
                         || signature && !["Algorithm", "URI"].contains(&key);
@@ -226,7 +226,14 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
                         break;
                     };
                     if !value.trim().is_empty() {
-                        context.field(&mut finding, name, value.trim(), !["Issuer", "Audience", "AuthnContextClassRef"].contains(&name.as_str()), "Unverified captured XML text. Attributes and subject values may contain personal data.");
+                        context.field(
+                            &mut finding,
+                            name,
+                            value.trim(),
+                            !["Issuer", "Audience", "AuthnContextClassRef"]
+                                .contains(&name.as_str()),
+                            "",
+                        );
                     }
                 }
             }
@@ -334,21 +341,21 @@ pub(crate) fn xml(context: &mut Context, bytes: &[u8], mut source: Source) -> Op
 fn time_note(raw: &str, name: &str, capture: Option<i64>) -> String {
     let Ok(time) = time::OffsetDateTime::parse(raw, &time::format_description::well_known::Rfc3339)
     else {
-        return "Unverified SAML time; UTC interpretation unavailable.".into();
+        return "SAML time; UTC interpretation unavailable.".into();
     };
     capture.map_or_else(
-        || "Capture time unavailable; no condition comparison. Unverified.".into(),
+        || "Capture time unavailable; no condition comparison.".into(),
         |capture| {
-            if capture == time.unix_timestamp() { return "At capture: ordering within the recorded time's one-second precision boundary is uncertain. Unverified.".into(); }
+            if capture == time.unix_timestamp() { return "At capture: ordering within the recorded time's one-second precision boundary is uncertain.".into(); }
             let crossed = if name == "NotBefore" {
                 capture < time.unix_timestamp()
             } else {
                 capture >= time.unix_timestamp()
             };
             if crossed {
-                "At capture: this condition was outside its declared interval. Unverified."
+                "At capture: this condition was outside its declared interval."
             } else {
-                "At capture: this condition was inside its declared interval. Unverified."
+                "At capture: this condition was inside its declared interval."
             }
             .into()
         },

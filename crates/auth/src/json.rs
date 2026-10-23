@@ -214,7 +214,7 @@ pub(crate) fn fields(
                 if matches!(node, Node::Scalar(_)) && ["iat", "nbf", "exp"].contains(&prefix) {
                     numeric_date(value, prefix, context.captured_at)
                 } else {
-                    "Captured, unverified value.".into()
+                    String::new()
                 };
             context.field(finding, prefix, value, secret, &interpretation);
         }
@@ -252,7 +252,5 @@ pub(crate) fn numeric_date(raw: &str, role: &str, captured: Option<i64>) -> Stri
             .into()
         },
     );
-    format!(
-        "{utc} (UTC shown to whole seconds). {condition} Unverified; this does not establish token validity."
-    )
+    format!("{utc} (UTC shown to whole seconds). {condition}")
 }

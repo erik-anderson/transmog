@@ -161,8 +161,10 @@ when changing the experience.
   into one disclosure per finding after readable decoded content. Do not repeat
   a child's summary on its enclosing artifact. Present a single-source envelope
   chain as one readable artifact while preserving its decoder layers and warning
-  ownership. Keep verification limits and a source-coverage summary visible;
-  promote retries for failed evidence and group routine refresh with options.
+  ownership. Explain shared verification and privacy limits once in a disclosure
+  near the top of Auth, without repeating generic caveats under individual fields.
+  Keep the source-coverage summary visible; promote retries for failed evidence
+  and group routine refresh with the inspection disclosure.
   See [Auth inspection](auth-inspection.md).
 
 - Local certificate trust controls add trust grants. Disabling them cannot turn
