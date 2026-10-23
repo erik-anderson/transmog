@@ -1,178 +1,659 @@
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
-export async function checkPortableCases(page,root){
-  await page.goto('https://workspace.test/');await page.waitForFunction(()=>document.querySelector('app-shell').traffic.queryLoaded);
-  await page.evaluate(()=>{
-    const state=globalThis.__workspaceFixture;
-    const comparisons=[{id:'scope-snapshot',label:'Saved scope snapshot',scope:{kind:'selected',ids:['first','second']}}];
-    state.caseChoices={choices:[{id:'rule:rule-a',ruleId:'rule-a',selection:null,label:'Keep the exact encoded response',relevance:'matched'},{id:'rule:missing',ruleId:'missing',selection:null,label:'Response for a resource missing from this capture',relevance:'unmatched'},{id:'rule:unknown',ruleId:'unknown',selection:null,label:'Requires redacted request headers',relevance:'unknown'},{id:'version:blue',ruleId:null,selection:{experimentId:'css',variantId:'blue',revision:7},label:'Checkout CSS / Blue / revision 7',relevance:'matched'}],comparisons};
-    state.caseReview={traffic:{entries:99,retainedEntries:120,streamRecords:12,incompleteBodies:198},manifest:{id:'portable-test',kind:'case',title:'Checkout investigation — customer-provided context <script>inert</script>',sources:[{id:'source-a',artifactSha256:'fixture-digest',sourceKey:'root',requestCount:'99',label:'Original source with a long descriptive label — '+ 'customer evidence '.repeat(8),dependency:{state:'present'},evidenceCompleteness:'truncated'}],rules:[{id:'rule-a'}],assets:[{}],experiments:[{id:'future',label:'Unsupported optional experiment'}],notes:[{id:'note',source:{artifactSha256:'fixture-digest',sourceKey:'root',exchangeId:'original',occurrence:'0'},text:'Authored observation <img src=x onerror=alert(1)>\nOriginal config output remains source evidence.'}],contexts:[{id:'context-a',kind:'capture-metadata',completeness:'partial',content:{state:'present',sha256:'context-digest'}}],markers:[{}],runs:[],objects:[{role:'capture',bytes:'1000'},{role:'context',bytes:'20',sha256:'context-digest',mediaType:'application/json'}]},inventory:{missingDependencies:1,incompleteSources:1,experiments:[{id:'future',state:'unavailable',reason:'This optional experiment is not supported by this build.'}]},excluded:['Unselected evidence and working history'],activation:'Opening and importing do not activate rules or scripts.'};
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
+export async function checkPortableCases(page, root) {
+  await page.goto("https://workspace.test/");
+  await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    const comparisons = [
+      {
+        id: "scope-snapshot",
+        label: "Saved scope snapshot",
+        scope: { kind: "selected", ids: ["first", "second"] },
+      },
+    ];
+    state.caseChoices = {
+      choices: [
+        {
+          id: "rule:rule-a",
+          ruleId: "rule-a",
+          selection: null,
+          label: "Keep the exact encoded response",
+          relevance: "matched",
+        },
+        {
+          id: "rule:missing",
+          ruleId: "missing",
+          selection: null,
+          label: "Response for a resource missing from this capture",
+          relevance: "unmatched",
+        },
+        {
+          id: "rule:unknown",
+          ruleId: "unknown",
+          selection: null,
+          label: "Requires redacted request headers",
+          relevance: "unknown",
+        },
+        {
+          id: "version:blue",
+          ruleId: null,
+          selection: { experimentId: "css", variantId: "blue", revision: 7 },
+          label: "Checkout CSS / Blue / revision 7",
+          relevance: "matched",
+        },
+      ],
+      comparisons,
+    };
+    state.caseReview = {
+      traffic: { entries: 99, retainedEntries: 120, streamRecords: 12, incompleteBodies: 198 },
+      manifest: {
+        id: "portable-test",
+        kind: "case",
+        title: "Checkout investigation — customer-provided context <script>inert</script>",
+        sources: [
+          {
+            id: "source-a",
+            artifactSha256: "fixture-digest",
+            sourceKey: "root",
+            requestCount: "99",
+            label:
+              "Original source with a long descriptive label — " + "customer evidence ".repeat(8),
+            dependency: { state: "present" },
+            evidenceCompleteness: "truncated",
+          },
+        ],
+        rules: [{ id: "rule-a" }],
+        assets: [{}],
+        experiments: [{ id: "future", label: "Unsupported optional experiment" }],
+        notes: [
+          {
+            id: "note",
+            source: {
+              artifactSha256: "fixture-digest",
+              sourceKey: "root",
+              exchangeId: "original",
+              occurrence: "0",
+            },
+            text: "Authored observation <img src=x onerror=alert(1)>\nOriginal config output remains source evidence.",
+          },
+        ],
+        contexts: [
+          {
+            id: "context-a",
+            kind: "capture-metadata",
+            completeness: "partial",
+            content: { state: "present", sha256: "context-digest" },
+          },
+        ],
+        markers: [{}],
+        runs: [],
+        objects: [
+          { role: "capture", bytes: "1000" },
+          { role: "context", bytes: "20", sha256: "context-digest", mediaType: "application/json" },
+        ],
+      },
+      inventory: {
+        missingDependencies: 1,
+        incompleteSources: 1,
+        experiments: [
+          {
+            id: "future",
+            state: "unavailable",
+            reason: "This optional experiment is not supported by this build.",
+          },
+        ],
+      },
+      excluded: ["Unselected evidence and working history"],
+      activation: "Opening and importing do not activate rules or scripts.",
+    };
   });
-  const traffic=page.locator('traffic-workspace');const dialog=page.locator('portable-case dialog');
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
-  assert.equal(await dialog.getByLabel('Traffic to include',{exact:true}).inputValue(),'filtered');
-  await dialog.getByText('Rules and response sets · 0 selected',{exact:true}).click();
-  await dialog.getByText('Comparisons · 0 selected',{exact:true}).click();
-  await dialog.getByLabel('Title',{exact:true}).fill('A portable investigation');
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');
-  await dialog.getByText('99 included requests.',{exact:false}).waitFor();
-  await dialog.getByLabel('Saved scope snapshot',{exact:true}).check();
-  await dialog.getByLabel('Keep the exact encoded response',{exact:false}).check();
-  assert.equal(await dialog.getByLabel('Response for a resource missing',{exact:false}).count(),0);
-  await dialog.getByLabel('Checkout CSS / Blue / revision 7',{exact:false}).check();
-  await dialog.getByLabel('Show all',{exact:true}).check();
-  await dialog.getByLabel('Response for a resource missing',{exact:false}).check();
-  await dialog.getByText('Saved rule · Could not assess',{exact:true}).waitFor();
-  await dialog.getByLabel('Show all',{exact:true}).uncheck();
-  assert.equal(await dialog.getByLabel('Response for a resource missing',{exact:false}).isChecked(),true);
-  assert.equal(await dialog.getByLabel('Requires redacted request headers',{exact:false}).count(),0);
-  for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.locator('.case-scroll').evaluate(e=>e.scrollTop=0);await page.screenshot({path:resolve(root,`../../../target/ui-check/case-picker-${width}.png`)});}
-  // A late assessment cannot restore an obsolete scope or discard selected content.
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseRelevance=true;});
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('none');await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseCaseRelevance);
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
-  await page.evaluate(()=>globalThis.__workspaceFixture.releaseCaseRelevance());await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseChoicesBusy);
-  assert.equal(await dialog.getByLabel('Traffic to include',{exact:true}).inputValue(),'filtered');
-  assert.equal(await dialog.getByLabel('Requires redacted request headers',{exact:false}).count(),0);
-  assert.equal(await dialog.getByLabel('Keep the exact encoded response',{exact:false}).isChecked(),true);
-  await page.evaluate(()=>{globalThis.__workspaceFixture.caseRelevanceError='Matching temporarily unavailable';});
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('none');await dialog.getByText('Matching temporarily unavailable',{exact:true}).waitFor();
-  assert.equal(await dialog.getByLabel('Keep the exact encoded response',{exact:false}).isChecked(),true);
-  await page.evaluate(()=>{delete globalThis.__workspaceFixture.caseRelevanceError;});await dialog.getByRole('button',{name:'Retry matching',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseChoicesBusy);
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
-  await dialog.getByLabel('Show all',{exact:true}).uncheck();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseRelevance=true;delete globalThis.__workspaceFixture.releaseCaseRelevance;});
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('none');await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseCaseRelevance);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('filtered');await dialog.getByText('99 included requests.',{exact:false}).waitFor();
-  await page.evaluate(()=>globalThis.__workspaceFixture.releaseCaseRelevance());assert.equal(await dialog.getByLabel('Traffic to include',{exact:true}).inputValue(),'filtered');
-  assert.equal(await dialog.getByLabel('Saved scope snapshot',{exact:true}).isChecked(),true);
-  await dialog.getByLabel('Notes').fill('Reproduce checkout.');
-
-  await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByText('Ready to save.',{exact:true}).waitFor();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.scope.kind),'filtered');
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.ruleIds),['rule-a','missing']);
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.selections),[{experimentId:'css',variantId:'blue',revision:7}]);
-  await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();
-  assert.match(await dialog.locator('.case-summary').textContent(),/99 requests/);
-  assert.match(await dialog.locator('.case-summary').textContent(),/1 unavailable file$/);
-  await dialog.getByText('Capture observations',{exact:true}).click();await dialog.getByText(/these counts alone do not indicate an export failure/).waitFor();
-  assert.equal(await dialog.getByLabel('File format',{exact:true}).count(),0);
-  assert.equal(await dialog.getByLabel('Protect the saved file with a password',{exact:true}).isEnabled(),true);
-  assert.equal(await dialog.locator('script,img').count(),0);
-  for(const [width,height] of [[1440,900],[960,720],[800,600]]){
-    await page.setViewportSize({width,height});await dialog.getByRole('button',{name:'Save case…',exact:true}).scrollIntoViewIfNeeded();
-    await dialog.locator('.case-scroll').evaluate(el=>el.scrollTop=0);
-    const rect=await dialog.boundingBox();assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=width+1&&rect.y+rect.height<=height+1);
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/portable-case-${width}.png`)});
-    await dialog.getByLabel('Protect the saved file with a password',{exact:true}).scrollIntoViewIfNeeded();
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/case-save-options-${width}.png`)});
+  const traffic = page.locator("traffic-workspace");
+  const dialog = page.locator("portable-case dialog");
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Save case…", exact: true }).click();
+  assert.equal(
+    await dialog.getByLabel("Traffic to include", { exact: true }).inputValue(),
+    "filtered",
+  );
+  await dialog.getByText("Rules and response sets · 0 selected", { exact: true }).click();
+  await dialog.getByText("Comparisons · 0 selected", { exact: true }).click();
+  await dialog.getByLabel("Title", { exact: true }).fill("A portable investigation");
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("filtered");
+  await dialog.getByText("99 included requests.", { exact: false }).waitFor();
+  await dialog.getByLabel("Saved scope snapshot", { exact: true }).check();
+  await dialog.getByLabel("Keep the exact encoded response", { exact: false }).check();
+  assert.equal(
+    await dialog.getByLabel("Response for a resource missing", { exact: false }).count(),
+    0,
+  );
+  await dialog.getByLabel("Checkout CSS / Blue / revision 7", { exact: false }).check();
+  await dialog.getByLabel("Show all", { exact: true }).check();
+  await dialog.getByLabel("Response for a resource missing", { exact: false }).check();
+  await dialog.getByText("Saved rule · Could not assess", { exact: true }).waitFor();
+  await dialog.getByLabel("Show all", { exact: true }).uncheck();
+  assert.equal(
+    await dialog.getByLabel("Response for a resource missing", { exact: false }).isChecked(),
+    true,
+  );
+  assert.equal(
+    await dialog.getByLabel("Requires redacted request headers", { exact: false }).count(),
+    0,
+  );
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await dialog.locator(".case-scroll").evaluate((e) => (e.scrollTop = 0));
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/case-picker-${width}.png`),
+    });
   }
-  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/portable-case-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseSave=true;});
-  await dialog.getByRole('button',{name:'Save case…',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseCaseSave);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
-  await dialog.getByRole('button',{name:'Cancel operation',exact:true}).click();await dialog.getByText('Case operation canceled.',{exact:true}).waitFor();
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.caseLocked=true;});
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open case…',exact:true}).click();
-  const password=page.getByRole('dialog',{name:'Unlock case'});await password.getByLabel('Password',{exact:true}).fill('wrong');await password.getByRole('button',{name:'Continue',exact:true}).click();
-  await password.getByText('The package password is incorrect',{exact:true}).waitFor();await password.getByLabel('Password',{exact:true}).fill('fixture');await password.getByRole('button',{name:'Continue',exact:true}).click();
-  await dialog.getByRole('button',{name:'Open in Traffic',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedSessionId==='first');assert.equal(await dialog.isVisible(),false);
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
-  await dialog.getByText('Saved context',{exact:true}).click();await dialog.getByRole('button',{name:'View context',exact:true}).click();await dialog.getByText(/Original config output <script>/).waitFor();assert.equal(await dialog.locator('script,img').count(),0);
-  await dialog.getByText('Import rules and response sets',{exact:true}).click();
-  assert.equal(await dialog.getByLabel('Unsupported optional experiment',{exact:false}).isDisabled(),true);
-  await dialog.getByLabel('Saved rules',{exact:true}).check();await dialog.getByRole('button',{name:'Review rule import',exact:true}).click();
-  await dialog.getByText('Adds a separate copy; keeps the existing definition.',{exact:true}).waitFor();await dialog.getByRole('button',{name:'Import rules',exact:true}).click();
-  await dialog.getByText(/Rules imported and turned off/).first().waitFor();assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.caseImported),true);
-  await page.keyboard.press('Escape');assert.equal(await dialog.isVisible(),false);
-  assert.equal(await traffic.getByRole('button',{name:'Files',exact:true}).evaluate(e=>e===e.getRootNode().activeElement),true);
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();await dialog.getByRole('button',{name:'Open linked request',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedSessionId==='first');assert.equal(await dialog.isVisible(),false);
-  await page.setViewportSize({width:1440,height:900});
-  // Frozen case previews and saved comparisons use the existing trusted flows.
-  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.pagePreviewCanceled=false;state.caseLocked=false;state.caseReview.manifest.comparisons=[{id:'saved-pair',label:'Working / failing',kind:'exchange',engine:'transmog-comparison/1',left:[{artifactSha256:'fixture-digest',sourceKey:'root'}],right:[{artifactSha256:'fixture-digest',sourceKey:'root'}],recordedSummary:'Recorded 2 changes; not a current equality claim.'},{id:'saved-scopes',label:'Capture membership',kind:'captures',engine:'transmog-comparison/1',left:[{artifactSha256:'fixture-digest',sourceKey:'root'}],right:[{artifactSha256:'fixture-digest',sourceKey:'root'}],recordedSummary:'Historical metadata only.'}];state.caseReview.manifest.experiments.push({id:'frozen',label:'Frozen CSS',variants:[{id:'blue',label:'Blue',revisions:[{revision:'7',rules:[{kind:'auto-response',enabledIntent:true}]}]}]});state.caseChoices.comparisons=[{id:'comparison-1',label:'Working / failing',scope:{kind:'selected',ids:['first','second']}}];});
-  await page.evaluate(()=>document.querySelector('app-shell').traffic.portableCase.closePackage());
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open case…',exact:true}).click();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.deferCaseChoices=true;});
-  await dialog.getByRole('button',{name:'Preview…',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseCaseChoices);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();await page.evaluate(()=>globalThis.__workspaceFixture.releaseCaseChoices());await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseBusy);assert.equal(await dialog.isVisible(),false);
-  assert.notEqual(await page.evaluate(()=>document.querySelector('app-shell').traffic.portableCase.caseStage),'preview','Late document choices replaced the closed review');
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
-  await dialog.getByRole('button',{name:'Preview…',exact:true}).click();await dialog.getByRole('heading',{name:'Preview saved responses',exact:true}).waitFor();
-  assert.equal(await dialog.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);
-  await dialog.getByLabel('Responses',{exact:true}).selectOption({label:'Frozen CSS / Blue / revision 7'});
-
-  for(const [width,height] of [[1440,900],[960,720],[800,600]]){await page.setViewportSize({width,height});await dialog.getByRole('button',{name:'Open preview',exact:true}).scrollIntoViewIfNeeded();const rect=await dialog.boundingBox();assert.ok(rect.x>=0&&rect.y>=0&&rect.x+rect.width<=width+1&&rect.y+rect.height<=height+1);await page.screenshot({path:resolve(root,`../../../target/ui-check/case-integration-${width}.png`)});}
-  await dialog.getByRole('button',{name:'Open preview',exact:true}).click();await dialog.getByText(/Case preview opened/).first().waitFor();
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.casePreview.selection),{experimentId:'frozen',variantId:'blue',revision:'7'});assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.enableScripts),false);
-  await dialog.getByRole('button',{name:'More',exact:true}).click();await dialog.getByRole('button',{name:'Preview diagnostics…',exact:true}).click();const diagnostics=page.getByRole('dialog',{name:'Captured preview diagnostics',exact:true});await diagnostics.getByText(/fixture-case@1/).waitFor({state:'attached'});await diagnostics.getByRole('button',{name:'Close',exact:true}).click();assert.equal(await dialog.getByRole('button',{name:'More',exact:true}).evaluate(e=>e===e.getRootNode().activeElement),true);
-  await dialog.locator('.case-row').filter({hasText:'Working / failing'}).getByRole('button',{name:'Recompute comparison',exact:true}).click();
-  const comparison=page.getByRole('dialog',{name:'Compare requests and responses'});await comparison.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.comparisonBusy);
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.comparisonInput.options),{excludedHeaders:['date','x-request-id'],normalizeNewlines:true});
-  await comparison.getByRole('button',{name:'More',exact:true}).click();await comparison.getByRole('button',{name:'Save comparison in case…',exact:true}).click();await dialog.getByRole('button',{name:'Review selected content',exact:true}).waitFor();
-  assert.equal(await dialog.getByLabel('Traffic to include',{exact:true}).inputValue(),'comparison');assert.equal(await dialog.getByLabel('Working / failing',{exact:true}).isChecked(),true);
-await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByRole('heading',{name:/Checkout investigation/}).waitFor();
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.caseExportInput.comparisonIds),['comparison-1']);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();await comparison.getByRole('button',{name:'Close',exact:true}).click();
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
-  await dialog.locator('.case-row').filter({hasText:'Capture membership'}).getByRole('button',{name:'Recompute comparison',exact:true}).click();
-  const captures=page.getByRole('dialog',{name:'Compare capture scopes'});await captures.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').comparison.captureBusy);assert.ok(await page.evaluate(()=>globalThis.__workspaceFixture.calls.reopen_case_capture_comparison));await captures.getByRole('button',{name:'Close',exact:true}).click();
-  // Production manifests omit empty arrays. A notes-only case remains usable.
-  await page.evaluate(()=>{globalThis.__workspaceFixture.caseReview={manifest:{id:'notes-only',kind:'case',title:'Notes-only case',notes:[{id:'note',text:'Standalone reproduction notes'}]},inventory:{missingDependencies:0,incompleteSources:0,experiments:[]},excluded:[],activation:'Opening and importing do not activate rules or scripts.'};});
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Save case…',exact:true}).click();
-  await dialog.getByRole('button',{name:'Review selected content',exact:true}).waitFor();
-  await dialog.getByLabel('Traffic to include',{exact:true}).selectOption('none');
-
-  await dialog.getByRole('button',{name:'Review selected content',exact:true}).click();await dialog.getByRole('heading',{name:'Notes-only case',exact:true}).waitFor();
-  await dialog.getByText('No captured traffic is included.',{exact:true}).waitFor();await dialog.getByText('Standalone reproduction notes',{exact:true}).waitFor();
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  // The ordinary import/drop route recognizes cases; it never admits them as traces.
-  const importsBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0);
-  await page.evaluate(()=>{globalThis.__workspaceFixture.caseLocked=false;globalThis.__workspaceFixture.pickedTrace='C:/captures/received.tmcase.tmcap';});
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();
-  const fileButtons=await traffic.locator('#trace-files-menu').getByRole('button').allTextContents();
-  assert.deepEqual(fileButtons.slice(0,2),['Import traffic… Ctrl+O','Save copy… Ctrl+S']);
-  await traffic.getByRole('button',{name:'Import traffic…',exact:true}).click();
-  await dialog.getByRole('heading',{name:'Notes-only case',exact:true}).waitFor();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);
-  const choicesBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.choose_case??0);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.choose_case??0),choicesBefore);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open case…',exact:true}).click();
-  await page.waitForFunction(count=>(globalThis.__workspaceFixture.calls.choose_case??0)>count,choicesBefore);
-  await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.portableCase.caseBusy);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  const drop=traffic.locator('trace-drop-target');
-  await drop.evaluate(element=>{const b=element.dropRegion.getBoundingClientRect();element.handleNativeDrag({type:'drop',paths:['C:/captures/dropped.tmcase.tmcap'],position:{x:(b.left+10)*devicePixelRatio,y:(b.top+10)*devicePixelRatio}});});
-  await dialog.getByRole('heading',{name:'Notes-only case',exact:true}).waitFor();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.import_trace??0),importsBefore);
-  await dialog.getByRole('button',{name:'More',exact:true}).click();await page.keyboard.press('Escape');
-  assert.equal(await dialog.isVisible(),true);
-  assert.equal(await dialog.getByRole('button',{name:'More',exact:true}).evaluate(e=>e===e.getRootNode().activeElement),true);
-  await dialog.getByRole('button',{name:'More',exact:true}).click();await dialog.getByRole('button',{name:'Unload case',exact:true}).click();
-  assert.equal(await dialog.isVisible(),false);
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.caseOpen),false);
-  // Unknown counts remain honest, and unsupported experiments remain inspectable.
-  await page.evaluate(()=>{
-    const review=globalThis.__workspaceFixture.caseReview;
-    review.manifest.sources=[{id:'one',label:'First capture',dependency:{state:'present'},evidenceCompleteness:'unknown'},{id:'two',label:'Second capture',requestCount:'1',dependency:{state:'present'},evidenceCompleteness:'complete'}];
-    review.manifest.experiments=[{id:'future',label:'Future experiment'}];
-    review.inventory.experiments=[{id:'future',state:'unavailable',reason:'Requires a newer response set engine.'}];
+  // A late assessment cannot restore an obsolete scope or discard selected content.
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferCaseRelevance = true;
   });
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Open case…',exact:true}).click();
-  await dialog.getByLabel('Capture',{exact:true}).waitFor();
-  assert.match(await dialog.locator('.case-summary').textContent(),/^Request count not recorded · 2 captures/);
-  assert.equal(await dialog.getByText('Import rules and response sets',{exact:true}).count(),0);
-  await dialog.locator('summary').filter({hasText:/^Response sets$/}).click();await dialog.getByText('Requires a newer response set engine.',{exact:true}).waitFor();
-  await dialog.getByLabel('Capture',{exact:true}).selectOption('two');
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  await traffic.getByRole('button',{name:'Files',exact:true}).click();await traffic.getByRole('button',{name:'Current case…',exact:true}).click();
-  assert.equal(await dialog.getByLabel('Capture',{exact:true}).inputValue(),'two','Reopening the case lost the selected capture');
-  await page.evaluate(()=>{document.querySelector('app-shell').traffic.portableCase.viewerMode=true;});
-  await dialog.getByText('Open this case in the main window to import supported response sets.',{exact:true}).waitFor();
-  await page.evaluate(()=>{document.querySelector('app-shell').traffic.portableCase.viewerMode=false;});
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("none");
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseCaseRelevance);
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("filtered");
+  await dialog.getByText("99 included requests.", { exact: false }).waitFor();
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseCaseRelevance());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseChoicesBusy,
+  );
+  assert.equal(
+    await dialog.getByLabel("Traffic to include", { exact: true }).inputValue(),
+    "filtered",
+  );
+  assert.equal(
+    await dialog.getByLabel("Requires redacted request headers", { exact: false }).count(),
+    0,
+  );
+  assert.equal(
+    await dialog.getByLabel("Keep the exact encoded response", { exact: false }).isChecked(),
+    true,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.caseRelevanceError = "Matching temporarily unavailable";
+  });
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("none");
+  await dialog.getByText("Matching temporarily unavailable", { exact: true }).waitFor();
+  assert.equal(
+    await dialog.getByLabel("Keep the exact encoded response", { exact: false }).isChecked(),
+    true,
+  );
+  await page.evaluate(() => {
+    delete globalThis.__workspaceFixture.caseRelevanceError;
+  });
+  await dialog.getByRole("button", { name: "Retry matching", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseChoicesBusy,
+  );
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("filtered");
+  await dialog.getByText("99 included requests.", { exact: false }).waitFor();
+  await dialog.getByLabel("Show all", { exact: true }).uncheck();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferCaseRelevance = true;
+    delete globalThis.__workspaceFixture.releaseCaseRelevance;
+  });
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("none");
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseCaseRelevance);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Save case…", exact: true }).click();
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("filtered");
+  await dialog.getByText("99 included requests.", { exact: false }).waitFor();
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseCaseRelevance());
+  assert.equal(
+    await dialog.getByLabel("Traffic to include", { exact: true }).inputValue(),
+    "filtered",
+  );
+  assert.equal(await dialog.getByLabel("Saved scope snapshot", { exact: true }).isChecked(), true);
+  await dialog.getByLabel("Notes").fill("Reproduce checkout.");
+
+  await dialog.getByRole("button", { name: "Review selected content", exact: true }).click();
+  await dialog.getByText("Ready to save.", { exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.caseExportInput.scope.kind),
+    "filtered",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.caseExportInput.ruleIds),
+    ["rule-a", "missing"],
+  );
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.caseExportInput.selections),
+    [{ experimentId: "css", variantId: "blue", revision: 7 }],
+  );
+  await dialog.getByRole("heading", { name: /Checkout investigation/ }).waitFor();
+  assert.match(await dialog.locator(".case-summary").textContent(), /99 requests/);
+  assert.match(await dialog.locator(".case-summary").textContent(), /1 unavailable file$/);
+  await dialog.getByText("Capture observations", { exact: true }).click();
+  await dialog.getByText(/these counts alone do not indicate an export failure/).waitFor();
+  assert.equal(await dialog.getByLabel("File format", { exact: true }).count(), 0);
+  assert.equal(
+    await dialog.getByLabel("Protect the saved file with a password", { exact: true }).isEnabled(),
+    true,
+  );
+  assert.equal(await dialog.locator("script,img").count(), 0);
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await dialog.getByRole("button", { name: "Save case…", exact: true }).scrollIntoViewIfNeeded();
+    await dialog.locator(".case-scroll").evaluate((el) => (el.scrollTop = 0));
+    const rect = await dialog.boundingBox();
+    assert.ok(
+      rect.x >= 0 &&
+        rect.y >= 0 &&
+        rect.x + rect.width <= width + 1 &&
+        rect.y + rect.height <= height + 1,
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/portable-case-${width}.png`),
+    });
+    await dialog
+      .getByLabel("Protect the saved file with a password", { exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/case-save-options-${width}.png`),
+    });
+  }
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/portable-case-forced-colors.png"),
+  });
+  await page.emulateMedia({ forcedColors: "none" });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferCaseSave = true;
+  });
+  await dialog.getByRole("button", { name: "Save case…", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseCaseSave);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Save case…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Cancel operation", exact: true }).click();
+  await dialog.getByText("Case operation canceled.", { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.caseLocked = true;
+  });
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Open case…", exact: true }).click();
+  const password = page.getByRole("dialog", { name: "Unlock case" });
+  await password.getByLabel("Password", { exact: true }).fill("wrong");
+  await password.getByRole("button", { name: "Continue", exact: true }).click();
+  await password.getByText("The package password is incorrect", { exact: true }).waitFor();
+  await password.getByLabel("Password", { exact: true }).fill("fixture");
+  await password.getByRole("button", { name: "Continue", exact: true }).click();
+  await dialog.getByRole("button", { name: "Open in Traffic", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").traffic.selectedSessionId === "first",
+  );
+  assert.equal(await dialog.isVisible(), false);
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Current case…", exact: true }).click();
+  await dialog.getByText("Saved context", { exact: true }).click();
+  await dialog.getByRole("button", { name: "View context", exact: true }).click();
+  await dialog.getByText(/Original config output <script>/).waitFor();
+  assert.equal(await dialog.locator("script,img").count(), 0);
+  await dialog.getByText("Import rules and response sets", { exact: true }).click();
+  assert.equal(
+    await dialog.getByLabel("Unsupported optional experiment", { exact: false }).isDisabled(),
+    true,
+  );
+  await dialog.getByLabel("Saved rules", { exact: true }).check();
+  await dialog.getByRole("button", { name: "Review rule import", exact: true }).click();
+  await dialog
+    .getByText("Adds a separate copy; keeps the existing definition.", { exact: true })
+    .waitFor();
+  await dialog.getByRole("button", { name: "Import rules", exact: true }).click();
+  await dialog
+    .getByText(/Rules imported and turned off/)
+    .first()
+    .waitFor();
+  assert.equal(await page.evaluate(() => globalThis.__workspaceFixture.caseImported), true);
+  await page.keyboard.press("Escape");
+  assert.equal(await dialog.isVisible(), false);
+  assert.equal(
+    await traffic
+      .getByRole("button", { name: "Files", exact: true })
+      .evaluate((e) => e === e.getRootNode().activeElement),
+    true,
+  );
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Current case…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Open linked request", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").traffic.selectedSessionId === "first",
+  );
+  assert.equal(await dialog.isVisible(), false);
+  await page.setViewportSize({ width: 1440, height: 900 });
+  // Frozen case previews and saved comparisons use the existing trusted flows.
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.pagePreviewCanceled = false;
+    state.caseLocked = false;
+    state.caseReview.manifest.comparisons = [
+      {
+        id: "saved-pair",
+        label: "Working / failing",
+        kind: "exchange",
+        engine: "transmog-comparison/1",
+        left: [{ artifactSha256: "fixture-digest", sourceKey: "root" }],
+        right: [{ artifactSha256: "fixture-digest", sourceKey: "root" }],
+        recordedSummary: "Recorded 2 changes; not a current equality claim.",
+      },
+      {
+        id: "saved-scopes",
+        label: "Capture membership",
+        kind: "captures",
+        engine: "transmog-comparison/1",
+        left: [{ artifactSha256: "fixture-digest", sourceKey: "root" }],
+        right: [{ artifactSha256: "fixture-digest", sourceKey: "root" }],
+        recordedSummary: "Historical metadata only.",
+      },
+    ];
+    state.caseReview.manifest.experiments.push({
+      id: "frozen",
+      label: "Frozen CSS",
+      variants: [
+        {
+          id: "blue",
+          label: "Blue",
+          revisions: [{ revision: "7", rules: [{ kind: "auto-response", enabledIntent: true }] }],
+        },
+      ],
+    });
+    state.caseChoices.comparisons = [
+      {
+        id: "comparison-1",
+        label: "Working / failing",
+        scope: { kind: "selected", ids: ["first", "second"] },
+      },
+    ];
+  });
+  await page.evaluate(() =>
+    document.querySelector("app-shell").traffic.portableCase.closePackage(),
+  );
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Open case…", exact: true }).click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferCaseChoices = true;
+  });
+  await dialog.getByRole("button", { name: "Preview…", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseCaseChoices);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseCaseChoices());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseBusy,
+  );
+  assert.equal(await dialog.isVisible(), false);
+  assert.notEqual(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.portableCase.caseStage),
+    "preview",
+    "Late document choices replaced the closed review",
+  );
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Current case…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Preview…", exact: true }).click();
+  await dialog.getByRole("heading", { name: "Preview saved responses", exact: true }).waitFor();
+  assert.equal(
+    await dialog.getByLabel("Enable scripts for this preview", { exact: true }).isChecked(),
+    false,
+  );
+  await dialog
+    .getByLabel("Responses", { exact: true })
+    .selectOption({ label: "Frozen CSS / Blue / revision 7" });
+
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await dialog
+      .getByRole("button", { name: "Open preview", exact: true })
+      .scrollIntoViewIfNeeded();
+    const rect = await dialog.boundingBox();
+    assert.ok(
+      rect.x >= 0 &&
+        rect.y >= 0 &&
+        rect.x + rect.width <= width + 1 &&
+        rect.y + rect.height <= height + 1,
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/case-integration-${width}.png`),
+    });
+  }
+  await dialog.getByRole("button", { name: "Open preview", exact: true }).click();
+  await dialog
+    .getByText(/Case preview opened/)
+    .first()
+    .waitFor();
+  assert.deepEqual(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.previewArgs.options.casePreview.selection,
+    ),
+    { experimentId: "frozen", variantId: "blue", revision: "7" },
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.previewArgs.enableScripts),
+    false,
+  );
+  await dialog.getByRole("button", { name: "More", exact: true }).click();
+  await dialog.getByRole("button", { name: "Preview diagnostics…", exact: true }).click();
+  const diagnostics = page.getByRole("dialog", {
+    name: "Captured preview diagnostics",
+    exact: true,
+  });
+  await diagnostics.getByText(/fixture-case@1/).waitFor({ state: "attached" });
+  await diagnostics.getByRole("button", { name: "Close", exact: true }).click();
+  assert.equal(
+    await dialog
+      .getByRole("button", { name: "More", exact: true })
+      .evaluate((e) => e === e.getRootNode().activeElement),
+    true,
+  );
+  await dialog
+    .locator(".case-row")
+    .filter({ hasText: "Working / failing" })
+    .getByRole("button", { name: "Recompute comparison", exact: true })
+    .click();
+  const comparison = page.getByRole("dialog", { name: "Compare requests and responses" });
+  await comparison.waitFor();
+  await page.waitForFunction(() => !document.querySelector("app-shell").comparison.comparisonBusy);
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.comparisonInput.options),
+    { excludedHeaders: ["date", "x-request-id"], normalizeNewlines: true },
+  );
+  await comparison.getByRole("button", { name: "More", exact: true }).click();
+  await comparison.getByRole("button", { name: "Save comparison in case…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Review selected content", exact: true }).waitFor();
+  assert.equal(
+    await dialog.getByLabel("Traffic to include", { exact: true }).inputValue(),
+    "comparison",
+  );
+  assert.equal(await dialog.getByLabel("Working / failing", { exact: true }).isChecked(), true);
+  await dialog.getByRole("button", { name: "Review selected content", exact: true }).click();
+  await dialog.getByRole("heading", { name: /Checkout investigation/ }).waitFor();
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.caseExportInput.comparisonIds),
+    ["comparison-1"],
+  );
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await comparison.getByRole("button", { name: "Close", exact: true }).click();
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Current case…", exact: true }).click();
+  await dialog
+    .locator(".case-row")
+    .filter({ hasText: "Capture membership" })
+    .getByRole("button", { name: "Recompute comparison", exact: true })
+    .click();
+  const captures = page.getByRole("dialog", { name: "Compare capture scopes" });
+  await captures.waitFor();
+  await page.waitForFunction(() => !document.querySelector("app-shell").comparison.captureBusy);
+  assert.ok(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.reopen_case_capture_comparison),
+  );
+  await captures.getByRole("button", { name: "Close", exact: true }).click();
+  // Production manifests omit empty arrays. A notes-only case remains usable.
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.caseReview = {
+      manifest: {
+        id: "notes-only",
+        kind: "case",
+        title: "Notes-only case",
+        notes: [{ id: "note", text: "Standalone reproduction notes" }],
+      },
+      inventory: { missingDependencies: 0, incompleteSources: 0, experiments: [] },
+      excluded: [],
+      activation: "Opening and importing do not activate rules or scripts.",
+    };
+  });
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Save case…", exact: true }).click();
+  await dialog.getByRole("button", { name: "Review selected content", exact: true }).waitFor();
+  await dialog.getByLabel("Traffic to include", { exact: true }).selectOption("none");
+
+  await dialog.getByRole("button", { name: "Review selected content", exact: true }).click();
+  await dialog.getByRole("heading", { name: "Notes-only case", exact: true }).waitFor();
+  await dialog.getByText("No captured traffic is included.", { exact: true }).waitFor();
+  await dialog.getByText("Standalone reproduction notes", { exact: true }).waitFor();
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  // The ordinary import/drop route recognizes cases; it never admits them as traces.
+  const importsBefore = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.import_trace ?? 0,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.caseLocked = false;
+    globalThis.__workspaceFixture.pickedTrace = "C:/captures/received.tmcase.tmcap";
+  });
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  const fileButtons = await traffic
+    .locator("#trace-files-menu")
+    .getByRole("button")
+    .allTextContents();
+  assert.deepEqual(fileButtons.slice(0, 2), ["Import traffic… Ctrl+O", "Save copy… Ctrl+S"]);
+  await traffic.getByRole("button", { name: "Import traffic…", exact: true }).click();
+  await dialog.getByRole("heading", { name: "Notes-only case", exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.import_trace ?? 0),
+    importsBefore,
+  );
+  const choicesBefore = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.choose_case ?? 0,
+  );
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Current case…", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.choose_case ?? 0),
+    choicesBefore,
+  );
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Open case…", exact: true }).click();
+  await page.waitForFunction(
+    (count) => (globalThis.__workspaceFixture.calls.choose_case ?? 0) > count,
+    choicesBefore,
+  );
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").traffic.portableCase.caseBusy,
+  );
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  const drop = traffic.locator("trace-drop-target");
+  await drop.evaluate((element) => {
+    const b = element.dropRegion.getBoundingClientRect();
+    element.handleNativeDrag({
+      type: "drop",
+      paths: ["C:/captures/dropped.tmcase.tmcap"],
+      position: { x: (b.left + 10) * devicePixelRatio, y: (b.top + 10) * devicePixelRatio },
+    });
+  });
+  await dialog.getByRole("heading", { name: "Notes-only case", exact: true }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.import_trace ?? 0),
+    importsBefore,
+  );
+  await dialog.getByRole("button", { name: "More", exact: true }).click();
+  await page.keyboard.press("Escape");
+  assert.equal(await dialog.isVisible(), true);
+  assert.equal(
+    await dialog
+      .getByRole("button", { name: "More", exact: true })
+      .evaluate((e) => e === e.getRootNode().activeElement),
+    true,
+  );
+  await dialog.getByRole("button", { name: "More", exact: true }).click();
+  await dialog.getByRole("button", { name: "Unload case", exact: true }).click();
+  assert.equal(await dialog.isVisible(), false);
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").traffic.caseOpen),
+    false,
+  );
+  // Unknown counts remain honest, and unsupported experiments remain inspectable.
+  await page.evaluate(() => {
+    const review = globalThis.__workspaceFixture.caseReview;
+    review.manifest.sources = [
+      {
+        id: "one",
+        label: "First capture",
+        dependency: { state: "present" },
+        evidenceCompleteness: "unknown",
+      },
+      {
+        id: "two",
+        label: "Second capture",
+        requestCount: "1",
+        dependency: { state: "present" },
+        evidenceCompleteness: "complete",
+      },
+    ];
+    review.manifest.experiments = [{ id: "future", label: "Future experiment" }];
+    review.inventory.experiments = [
+      { id: "future", state: "unavailable", reason: "Requires a newer response set engine." },
+    ];
+  });
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Open case…", exact: true }).click();
+  await dialog.getByLabel("Capture", { exact: true }).waitFor();
+  assert.match(
+    await dialog.locator(".case-summary").textContent(),
+    /^Request count not recorded · 2 captures/,
+  );
+  assert.equal(
+    await dialog.getByText("Import rules and response sets", { exact: true }).count(),
+    0,
+  );
+  await dialog
+    .locator("summary")
+    .filter({ hasText: /^Response sets$/ })
+    .click();
+  await dialog.getByText("Requires a newer response set engine.", { exact: true }).waitFor();
+  await dialog.getByLabel("Capture", { exact: true }).selectOption("two");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await traffic.getByRole("button", { name: "Files", exact: true }).click();
+  await traffic.getByRole("button", { name: "Current case…", exact: true }).click();
+  assert.equal(
+    await dialog.getByLabel("Capture", { exact: true }).inputValue(),
+    "two",
+    "Reopening the case lost the selected capture",
+  );
+  await page.evaluate(() => {
+    document.querySelector("app-shell").traffic.portableCase.viewerMode = true;
+  });
+  await dialog
+    .getByText("Open this case in the main window to import supported response sets.", {
+      exact: true,
+    })
+    .waitFor();
+  await page.evaluate(() => {
+    document.querySelector("app-shell").traffic.portableCase.viewerMode = false;
+  });
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
 }

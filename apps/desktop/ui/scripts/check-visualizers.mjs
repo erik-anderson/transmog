@@ -1,218 +1,552 @@
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
-import {checkLiveVisualizers} from './check-live-visualizers.mjs';
-import {checkHttpVisualizers} from './check-http-visualizers.mjs';
-import {checkReloadVisualizers} from './check-reload-visualizers.mjs';
-import {checkVisualizerSelection} from './check-visualizer-selection.mjs';
-import {checkAutomaticVisualizers} from './check-automatic-visualizers.mjs';
-import {checkVisualizerPanes} from './check-visualizer-panes.mjs';
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
+import { checkLiveVisualizers } from "./check-live-visualizers.mjs";
+import { checkHttpVisualizers } from "./check-http-visualizers.mjs";
+import { checkReloadVisualizers } from "./check-reload-visualizers.mjs";
+import { checkVisualizerSelection } from "./check-visualizer-selection.mjs";
+import { checkAutomaticVisualizers } from "./check-automatic-visualizers.mjs";
+import { checkVisualizerPanes } from "./check-visualizer-panes.mjs";
 
-export async function checkVisualizers(page,root) {
-  await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
-  const traffic=page.locator('traffic-workspace'),response=traffic.locator('message-inspector[side="response"]'),request=traffic.locator('message-inspector[side="request"]');
-  const saved=await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;return {preferences:t.preferences};});
+export async function checkVisualizers(page, root) {
+  await page.locator('a[data-view="traffic"]').click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const traffic = page.locator("traffic-workspace"),
+    response = traffic.locator('message-inspector[side="response"]'),
+    request = traffic.locator('message-inspector[side="request"]');
+  const saved = await page.evaluate(() => {
+    const t = document.querySelector("app-shell").traffic;
+    return { preferences: t.preferences };
+  });
   try {
-    await page.evaluate(async()=>{
-      const s=globalThis.__workspaceFixture,t=document.querySelector('app-shell').traffic;
-      t.preferences={...t.preferences,layout:'stacked',listSplit:30};
-      const choice={extensionId:'example.protocol',visualizerId:'structure',name:'Protocol structure'};
-      s.visualizerChoices={headers:[{...choice,visualizerId:'headers',name:'Protocol headers'}],body:[choice]};
-      s.visualizerDocument={title:'Protocol <img src=x onerror="alert(1)">',status:'partial',presentation:'tree',summary:'Synthetic structure with exact source provenance',sources:[{id:'derived',name:'Decoded structure',bytesBase64:btoa('0123456789abcdef'),parents:[{sourceId:'body',offset:'0',length:'32'}],transform:'Synthetic decoding',exactMapping:false}],diagnostics:[{code:'missing-context',message:'An earlier exchange is unavailable.',nodeId:null}],roots:Array.from({length:5000},(_,i)=>({id:'field-'+i,name:'Field '+i,value:{kind:'integer',value:i===0?'9007199254740993':String(i)},format:i===0?{protocol:'Example protocol',byteOrder:'little-endian',radix:16}:null,spans:i===0?[{sourceId:'body',offset:'9007199254741000',length:'8'}]:[],children:[],childrenToken:i===1?'later':null,presentation:null}))};
-      s.expandedVisualizerDocument=structuredClone(s.visualizerDocument);s.expandedVisualizerDocument.roots[1].childrenToken=null;s.expandedVisualizerDocument.roots[1].children=[{id:'nested',name:'Nested text',value:{kind:'string',value:'<script>capture remains inert</script>'},spans:[{sourceId:'derived',offset:'1',length:'4'}],children:[],format:{charset:'utf-8',encoding:'decoded'},presentation:'text'}];
-      s.visualizerDocument.roots[2].childrenToken='other-later';
-      s.expandedVisualizerDocument.roots[2].childrenToken='other-later';
-      s.visualizerSources=[{id:'body',name:'Original response body',length:'9007199254742000',availability:'complete',sessionId:'first',boundary:'client-response'}];
-      s.emitNative('extensions-changed');await t.refreshSessions(undefined,true);
+    await page.evaluate(async () => {
+      const s = globalThis.__workspaceFixture,
+        t = document.querySelector("app-shell").traffic;
+      t.preferences = { ...t.preferences, layout: "stacked", listSplit: 30 };
+      const choice = {
+        extensionId: "example.protocol",
+        visualizerId: "structure",
+        name: "Protocol structure",
+      };
+      s.visualizerChoices = {
+        headers: [{ ...choice, visualizerId: "headers", name: "Protocol headers" }],
+        body: [choice],
+      };
+      s.visualizerDocument = {
+        title: 'Protocol <img src=x onerror="alert(1)">',
+        status: "partial",
+        presentation: "tree",
+        summary: "Synthetic structure with exact source provenance",
+        sources: [
+          {
+            id: "derived",
+            name: "Decoded structure",
+            bytesBase64: btoa("0123456789abcdef"),
+            parents: [{ sourceId: "body", offset: "0", length: "32" }],
+            transform: "Synthetic decoding",
+            exactMapping: false,
+          },
+        ],
+        diagnostics: [
+          { code: "missing-context", message: "An earlier exchange is unavailable.", nodeId: null },
+        ],
+        roots: Array.from({ length: 5000 }, (_, i) => ({
+          id: "field-" + i,
+          name: "Field " + i,
+          value: { kind: "integer", value: i === 0 ? "9007199254740993" : String(i) },
+          format:
+            i === 0
+              ? { protocol: "Example protocol", byteOrder: "little-endian", radix: 16 }
+              : null,
+          spans: i === 0 ? [{ sourceId: "body", offset: "9007199254741000", length: "8" }] : [],
+          children: [],
+          childrenToken: i === 1 ? "later" : null,
+          presentation: null,
+        })),
+      };
+      s.expandedVisualizerDocument = structuredClone(s.visualizerDocument);
+      s.expandedVisualizerDocument.roots[1].childrenToken = null;
+      s.expandedVisualizerDocument.roots[1].children = [
+        {
+          id: "nested",
+          name: "Nested text",
+          value: { kind: "string", value: "<script>capture remains inert</script>" },
+          spans: [{ sourceId: "derived", offset: "1", length: "4" }],
+          children: [],
+          format: { charset: "utf-8", encoding: "decoded" },
+          presentation: "text",
+        },
+      ];
+      s.visualizerDocument.roots[2].childrenToken = "other-later";
+      s.expandedVisualizerDocument.roots[2].childrenToken = "other-later";
+      s.visualizerSources = [
+        {
+          id: "body",
+          name: "Original response body",
+          length: "9007199254742000",
+          availability: "complete",
+          sessionId: "first",
+          boundary: "client-response",
+        },
+      ];
+      s.emitNative("extensions-changed");
+      await t.refreshSessions(undefined, true);
     });
-    await traffic.locator('.session-link').first().click();
-    await response.getByRole('button',{name:'Body',exact:true}).click();
-    const selector=response.getByRole('combobox',{name:'Body viewer',exact:true});
-    await selector.locator('option',{hasText:'Protocol structure'}).waitFor({state:'attached'});
-    const before=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer??0);
-    assert.equal(await response.locator('extension-visualizer').count(),0);
-    await selector.selectOption({label:'Protocol structure'});
-    const visualizer=response.locator('extension-visualizer[slot="traffic-response-body"]');
-    await visualizer.locator('.visualizer-heading > strong').waitFor();
-    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),before+1);
-    assert.equal(await visualizer.locator('img,script').count(),0,'Captured output became markup');
-    const tree=visualizer.getByRole('tree',{name:'Visualization structure',exact:true});
-    const details=visualizer.getByRole('region',{name:'Selected structure',exact:true});
-    assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false,'An unselected result reserved an empty details pane');
-    const fullWidth=await visualizer.evaluate(element=>{const root=element.shadowRoot??element,tree=root.querySelector('.visualizer-tree'),layout=root.querySelector('.visualizer-layout');return tree.getBoundingClientRect().width>=layout.getBoundingClientRect().width-2;});
-    assert.equal(fullWidth,true,'The unselected structure did not use the pane width');
-    await tree.focus();await page.keyboard.press('ArrowDown');
-    await visualizer.getByText('9007199254740993',{exact:true}).last().waitFor();
-    await visualizer.getByText('Example protocol · little-endian · Base 16',{exact:true}).waitFor();
+    await traffic.locator(".session-link").first().click();
+    await response.getByRole("button", { name: "Body", exact: true }).click();
+    const selector = response.getByRole("combobox", { name: "Body viewer", exact: true });
+    await selector
+      .locator("option", { hasText: "Protocol structure" })
+      .waitFor({ state: "attached" });
+    const before = await page.evaluate(
+      () => globalThis.__workspaceFixture.calls.activate_visualizer ?? 0,
+    );
+    assert.equal(await response.locator("extension-visualizer").count(), 0);
+    await selector.selectOption({ label: "Protocol structure" });
+    const visualizer = response.locator('extension-visualizer[slot="traffic-response-body"]');
+    await visualizer.locator(".visualizer-heading > strong").waitFor();
+    assert.equal(
+      await page.evaluate(() => globalThis.__workspaceFixture.calls.activate_visualizer),
+      before + 1,
+    );
+    assert.equal(
+      await visualizer.locator("img,script").count(),
+      0,
+      "Captured output became markup",
+    );
+    const tree = visualizer.getByRole("tree", { name: "Visualization structure", exact: true });
+    const details = visualizer.getByRole("region", { name: "Selected structure", exact: true });
+    assert.equal(
+      await visualizer.locator(".visualizer-node").isVisible(),
+      false,
+      "An unselected result reserved an empty details pane",
+    );
+    const fullWidth = await visualizer.evaluate((element) => {
+      const root = element.shadowRoot ?? element,
+        tree = root.querySelector(".visualizer-tree"),
+        layout = root.querySelector(".visualizer-layout");
+      return tree.getBoundingClientRect().width >= layout.getBoundingClientRect().width - 2;
+    });
+    assert.equal(fullWidth, true, "The unselected structure did not use the pane width");
+    await tree.focus();
+    await page.keyboard.press("ArrowDown");
+    await visualizer.getByText("9007199254740993", { exact: true }).last().waitFor();
+    await visualizer
+      .getByText("Example protocol · little-endian · Base 16", { exact: true })
+      .waitFor();
     await details.waitFor();
-    await checkVisualizerPanes(page,root,visualizer);
-    const selected=await tree.getAttribute('aria-activedescendant');
-    const inspected=await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId);
-    assert.ok(inspected,'Visualizer checks require a selected request');
-    await visualizer.getByRole('button',{name:'Close structure details',exact:true}).click();
-    assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false);
-    assert.equal(await tree.evaluate(element=>element===element.getRootNode().activeElement||element===document.activeElement),true,'Closing details lost tree focus');
-    assert.equal(await tree.getAttribute('aria-activedescendant'),selected,'Closing details lost the selected field');
-    await page.keyboard.press('Enter');await details.waitFor();
-    assert.equal(await tree.getAttribute('aria-activedescendant'),selected);
-    await visualizer.locator('.visualizer-value pre').focus();
-    await page.keyboard.press('Escape');
-    assert.equal(await visualizer.locator('.visualizer-node').isVisible(),false);
-    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),inspected,'Escape cleared the inspected request');
-    await page.keyboard.press('Enter');await details.waitFor();
-    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),before+1,'Toggling field details restarted the worker');
+    await checkVisualizerPanes(page, root, visualizer);
+    const selected = await tree.getAttribute("aria-activedescendant");
+    const inspected = await page.evaluate(
+      () => document.querySelector("app-shell").traffic.selectedSessionId,
+    );
+    assert.ok(inspected, "Visualizer checks require a selected request");
+    await visualizer.getByRole("button", { name: "Close structure details", exact: true }).click();
+    assert.equal(await visualizer.locator(".visualizer-node").isVisible(), false);
+    assert.equal(
+      await tree.evaluate(
+        (element) =>
+          element === element.getRootNode().activeElement || element === document.activeElement,
+      ),
+      true,
+      "Closing details lost tree focus",
+    );
+    assert.equal(
+      await tree.getAttribute("aria-activedescendant"),
+      selected,
+      "Closing details lost the selected field",
+    );
+    await page.keyboard.press("Enter");
+    await details.waitFor();
+    assert.equal(await tree.getAttribute("aria-activedescendant"), selected);
+    await visualizer.locator(".visualizer-value pre").focus();
+    await page.keyboard.press("Escape");
+    assert.equal(await visualizer.locator(".visualizer-node").isVisible(), false);
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+      inspected,
+      "Escape cleared the inspected request",
+    );
+    await page.keyboard.press("Enter");
+    await details.waitFor();
+    assert.equal(
+      await page.evaluate(() => globalThis.__workspaceFixture.calls.activate_visualizer),
+      before + 1,
+      "Toggling field details restarted the worker",
+    );
 
-    const originalStyle=await visualizer.getAttribute('style');
+    const originalStyle = await visualizer.getAttribute("style");
     try {
-      await visualizer.evaluate(element=>{element.style.width='360px';element.style.height='160px';});
-      const fits=await visualizer.evaluate(async element=>{
-        await new Promise(resolve=>requestAnimationFrame(resolve));
-        const root=element.shadowRoot??element,layout=root.querySelector('.visualizer-layout').getBoundingClientRect(),details=root.querySelector('.visualizer-node').getBoundingClientRect();
-        return details.top>=layout.top-1&&details.bottom<=layout.bottom+1;
+      await visualizer.evaluate((element) => {
+        element.style.width = "360px";
+        element.style.height = "160px";
       });
-      assert.equal(fits,true,'Selected details overflowed a small inspector instead of remaining scrollable');
-      await visualizer.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-narrow-details.png')});
-      const aboutButton=visualizer.getByRole('button',{name:'About this visualizer',exact:true});
-      const beforeAbout=await visualizer.locator('.visualizer-layout').evaluate(element=>element.getBoundingClientRect().height);
+      const fits = await visualizer.evaluate(async (element) => {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const root = element.shadowRoot ?? element,
+          layout = root.querySelector(".visualizer-layout").getBoundingClientRect(),
+          details = root.querySelector(".visualizer-node").getBoundingClientRect();
+        return details.top >= layout.top - 1 && details.bottom <= layout.bottom + 1;
+      });
+      assert.equal(
+        fits,
+        true,
+        "Selected details overflowed a small inspector instead of remaining scrollable",
+      );
+      await visualizer.screenshot({
+        path: resolve(root, "../../../target/ui-check/visualizer-narrow-details.png"),
+      });
+      const aboutButton = visualizer.getByRole("button", {
+        name: "About this visualizer",
+        exact: true,
+      });
+      const beforeAbout = await visualizer
+        .locator(".visualizer-layout")
+        .evaluate((element) => element.getBoundingClientRect().height);
       await aboutButton.click();
-      const about=visualizer.getByRole('dialog',{name:'About this visualizer',exact:true});
+      const about = visualizer.getByRole("dialog", { name: "About this visualizer", exact: true });
       await about.waitFor();
-      await about.getByText('Read only · No network access',{exact:true}).waitFor();
-      const inspectionHeight=await visualizer.locator('.visualizer-layout').evaluate(element=>element.getBoundingClientRect().height);
-      assert.ok(inspectionHeight>=52,'Opening result metadata hid the inspection panes in a compact viewer');
-      assert.equal(inspectionHeight,beforeAbout,'Extension context consumed inspection space');
-      await about.getByText('An earlier exchange is unavailable.',{exact:false}).scrollIntoViewIfNeeded();
-      await about.getByRole('button',{name:'Copy diagnostics',exact:true}).click();
-      await about.getByRole('status').filter({hasText:'Diagnostics copied.'}).waitFor();
-      assert.equal(await page.evaluate(()=>navigator.clipboard.readText()),'missing-context: An earlier exchange is unavailable.');
-      const fitsViewport=await about.evaluate(element=>{const r=element.getBoundingClientRect();return r.left>=0&&r.top>=0&&r.right<=innerWidth&&r.bottom<=innerHeight;});
-      assert.equal(fitsViewport,true,'Visualizer information escaped the viewport');
-      await page.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-narrow-about.png')});
-      await page.keyboard.press('Escape');await about.waitFor({state:'hidden'});
-      assert.equal(await aboutButton.evaluate(element=>element===element.getRootNode().activeElement),true,'Closing visualizer information lost trigger focus');
-      assert.equal(await details.isVisible(),true,'Closing visualizer information also closed structure details');
-      assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),inspected,'Closing visualizer information cleared the inspected request');
-      await page.keyboard.press('Enter');await about.waitFor();
-      await about.getByRole('button',{name:'Close visualizer information',exact:true}).click();
-      await about.waitFor({state:'hidden'});
+      await about.getByText("Read only · No network access", { exact: true }).waitFor();
+      const inspectionHeight = await visualizer
+        .locator(".visualizer-layout")
+        .evaluate((element) => element.getBoundingClientRect().height);
+      assert.ok(
+        inspectionHeight >= 52,
+        "Opening result metadata hid the inspection panes in a compact viewer",
+      );
+      assert.equal(inspectionHeight, beforeAbout, "Extension context consumed inspection space");
+      await about
+        .getByText("An earlier exchange is unavailable.", { exact: false })
+        .scrollIntoViewIfNeeded();
+      await about.getByRole("button", { name: "Copy diagnostics", exact: true }).click();
+      await about.getByRole("status").filter({ hasText: "Diagnostics copied." }).waitFor();
+      assert.equal(
+        await page.evaluate(() => navigator.clipboard.readText()),
+        "missing-context: An earlier exchange is unavailable.",
+      );
+      const fitsViewport = await about.evaluate((element) => {
+        const r = element.getBoundingClientRect();
+        return r.left >= 0 && r.top >= 0 && r.right <= innerWidth && r.bottom <= innerHeight;
+      });
+      assert.equal(fitsViewport, true, "Visualizer information escaped the viewport");
+      await page.screenshot({
+        path: resolve(root, "../../../target/ui-check/visualizer-narrow-about.png"),
+      });
+      await page.keyboard.press("Escape");
+      await about.waitFor({ state: "hidden" });
+      assert.equal(
+        await aboutButton.evaluate((element) => element === element.getRootNode().activeElement),
+        true,
+        "Closing visualizer information lost trigger focus",
+      );
+      assert.equal(
+        await details.isVisible(),
+        true,
+        "Closing visualizer information also closed structure details",
+      );
+      assert.equal(
+        await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+        inspected,
+        "Closing visualizer information cleared the inspected request",
+      );
+      await page.keyboard.press("Enter");
+      await about.waitFor();
+      await about
+        .getByRole("button", { name: "Close visualizer information", exact: true })
+        .click();
+      await about.waitFor({ state: "hidden" });
     } finally {
-      await visualizer.evaluate((element,style)=>{if(style===null)element.removeAttribute('style');else element.setAttribute('style',style);},originalStyle);
+      await visualizer.evaluate((element, style) => {
+        if (style === null) element.removeAttribute("style");
+        else element.setAttribute("style", style);
+      }, originalStyle);
     }
-    await visualizer.getByText('Source ranges (1)',{exact:true}).click();
-    await visualizer.getByRole('button',{name:'Original response body · offset 9007199254741000 · 8 bytes',exact:true}).click();
-    await visualizer.locator('hex-viewer').getByText('8 bytes selected',{exact:false}).waitFor();
-    const range=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
-    assert.deepEqual(range,{first:'9007199254741000',last:'9007199254741007'});
-    await visualizer.getByRole('button',{name:'Close structure details',exact:true}).click();
-    await page.keyboard.press('Enter');
-    assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'hex','Reopening details lost the chosen representation');
-    const retainedRange=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
-    assert.deepEqual(retainedRange,range,'Reopening details lost the exact byte selection');
-    await visualizer.getByRole('grid',{name:'Hex byte viewer',exact:true}).focus();
-    await page.keyboard.press('Escape');
-    assert.equal(await details.isVisible(),true,'Clearing a byte selection also closed structure details');
-    assert.equal(await visualizer.locator('hex-viewer').evaluate(element=>element.rangeStart),'-1');
-    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').traffic.selectedSessionId),inspected,'Clearing a byte selection cleared the inspected request');
+    await visualizer.getByText("Source ranges (1)", { exact: true }).click();
+    await visualizer
+      .getByRole("button", {
+        name: "Original response body · offset 9007199254741000 · 8 bytes",
+        exact: true,
+      })
+      .click();
+    await visualizer
+      .locator("hex-viewer")
+      .getByText("8 bytes selected", { exact: false })
+      .waitFor();
+    const range = await visualizer
+      .locator("hex-viewer")
+      .evaluate((element) => ({ first: element.rangeStart, last: element.rangeEnd }));
+    assert.deepEqual(range, { first: "9007199254741000", last: "9007199254741007" });
+    await visualizer.getByRole("button", { name: "Close structure details", exact: true }).click();
+    await page.keyboard.press("Enter");
+    assert.equal(
+      await visualizer.getByRole("combobox", { name: "Structure view", exact: true }).inputValue(),
+      "hex",
+      "Reopening details lost the chosen representation",
+    );
+    const retainedRange = await visualizer
+      .locator("hex-viewer")
+      .evaluate((element) => ({ first: element.rangeStart, last: element.rangeEnd }));
+    assert.deepEqual(retainedRange, range, "Reopening details lost the exact byte selection");
+    await visualizer.getByRole("grid", { name: "Hex byte viewer", exact: true }).focus();
+    await page.keyboard.press("Escape");
+    assert.equal(
+      await details.isVisible(),
+      true,
+      "Clearing a byte selection also closed structure details",
+    );
+    assert.equal(
+      await visualizer.locator("hex-viewer").evaluate((element) => element.rangeStart),
+      "-1",
+    );
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").traffic.selectedSessionId),
+      inspected,
+      "Clearing a byte selection cleared the inspected request",
+    );
 
-    await page.waitForFunction(()=>globalThis.__workspaceFixture.visualizerRanges?.length>0);
-    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.visualizerRanges.every(read=>read.handle.instanceId&&read.request.maxBytes<=65536)),true);
-    await tree.focus();await page.keyboard.press('ArrowDown');await page.keyboard.press('ArrowRight');
-    await tree.getByText('Nested text',{exact:true}).waitFor();
-    await page.keyboard.press('ArrowDown');
-    assert.equal(await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).inputValue(),'hex','Selecting a field closed Source ranges Hex');
-    await page.waitForFunction(element=>{const viewer=(element.shadowRoot??element).querySelector('hex-viewer');return viewer?.rangeStart==='1'&&viewer?.rangeEnd==='4';},await visualizer.elementHandle());
-    assert.equal(await visualizer.locator('.visualizer-ranges').evaluate(element=>element.open),true,'Selecting a field collapsed Source ranges');
-    await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).selectOption('text');
-    await visualizer.locator('pre').filter({hasText:'<script>capture remains inert</script>'}).waitFor();
-    if(!await visualizer.locator('.visualizer-ranges').evaluate(element=>element.open))await visualizer.getByText('Source ranges (1)',{exact:true}).click();
-    await visualizer.getByRole('button',{name:'Decoded structure · offset 1 · 4 bytes',exact:true}).click();
-    await visualizer.getByText('enclosing parent regions only',{exact:false}).waitFor();
-    const derivedRange=await visualizer.locator('hex-viewer').evaluate(element=>({first:element.rangeStart,last:element.rangeEnd}));
-    assert.deepEqual(derivedRange,{first:'1',last:'4'});
-    await tree.getByRole('button',{name:'Collapse Field 1',exact:true}).click();
-    assert.equal(await tree.getByRole('treeitem',{selected:true}).count(),1,'Collapsing a branch left its hidden child selected');
-    assert.equal(await tree.getByRole('treeitem',{selected:true}).textContent().then(text=>text.includes('Field 1')),true,'Collapsing a branch left its hidden child selected');
-    await tree.focus();await page.keyboard.press('ArrowDown');
-    await visualizer.locator('.visualizer-node-heading > strong').filter({hasText:'Field 2'}).waitFor();
-    await tree.focus();await page.keyboard.press('End');
-    await visualizer.locator('.visualizer-node-heading > strong').filter({hasText:'Field 4999'}).waitFor();
-    assert.ok(await tree.getByRole('treeitem').count()<80,'Large structures created unbounded DOM');
-    await page.keyboard.press('Home');
-    await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).selectOption('table');
-    assert.equal(await visualizer.locator('tbody tr').count(),50);
-    await visualizer.getByRole('button',{name:'Next',exact:true}).click();
-    await visualizer.getByText('51–100 of 5000 rows',{exact:true}).waitFor();
-    await visualizer.getByRole('combobox',{name:'Structure view',exact:true}).selectOption('tree');
-    await checkVisualizerSelection(page,visualizer,tree);
-    await checkHttpVisualizers(page,visualizer,selector,tree);
-    await checkLiveVisualizers(page,root,visualizer,selector,tree);
-    const starts=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
-    await page.evaluate(()=>globalThis.__workspaceFixture.emitNative('extensions-changed'));
+    await page.waitForFunction(() => globalThis.__workspaceFixture.visualizerRanges?.length > 0);
+    assert.equal(
+      await page.evaluate(() =>
+        globalThis.__workspaceFixture.visualizerRanges.every(
+          (read) => read.handle.instanceId && read.request.maxBytes <= 65536,
+        ),
+      ),
+      true,
+    );
+    await tree.focus();
+    await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("ArrowRight");
+    await tree.getByText("Nested text", { exact: true }).waitFor();
+    await page.keyboard.press("ArrowDown");
+    assert.equal(
+      await visualizer.getByRole("combobox", { name: "Structure view", exact: true }).inputValue(),
+      "hex",
+      "Selecting a field closed Source ranges Hex",
+    );
+    await page.waitForFunction(
+      (element) => {
+        const viewer = (element.shadowRoot ?? element).querySelector("hex-viewer");
+        return viewer?.rangeStart === "1" && viewer?.rangeEnd === "4";
+      },
+      await visualizer.elementHandle(),
+    );
+    assert.equal(
+      await visualizer.locator(".visualizer-ranges").evaluate((element) => element.open),
+      true,
+      "Selecting a field collapsed Source ranges",
+    );
+    await visualizer
+      .getByRole("combobox", { name: "Structure view", exact: true })
+      .selectOption("text");
+    await visualizer
+      .locator("pre")
+      .filter({ hasText: "<script>capture remains inert</script>" })
+      .waitFor();
+    if (!(await visualizer.locator(".visualizer-ranges").evaluate((element) => element.open)))
+      await visualizer.getByText("Source ranges (1)", { exact: true }).click();
+    await visualizer
+      .getByRole("button", { name: "Decoded structure · offset 1 · 4 bytes", exact: true })
+      .click();
+    await visualizer.getByText("enclosing parent regions only", { exact: false }).waitFor();
+    const derivedRange = await visualizer
+      .locator("hex-viewer")
+      .evaluate((element) => ({ first: element.rangeStart, last: element.rangeEnd }));
+    assert.deepEqual(derivedRange, { first: "1", last: "4" });
+    await tree.getByRole("button", { name: "Collapse Field 1", exact: true }).click();
+    assert.equal(
+      await tree.getByRole("treeitem", { selected: true }).count(),
+      1,
+      "Collapsing a branch left its hidden child selected",
+    );
+    assert.equal(
+      await tree
+        .getByRole("treeitem", { selected: true })
+        .textContent()
+        .then((text) => text.includes("Field 1")),
+      true,
+      "Collapsing a branch left its hidden child selected",
+    );
+    await tree.focus();
+    await page.keyboard.press("ArrowDown");
+    await visualizer
+      .locator(".visualizer-node-heading > strong")
+      .filter({ hasText: "Field 2" })
+      .waitFor();
+    await tree.focus();
+    await page.keyboard.press("End");
+    await visualizer
+      .locator(".visualizer-node-heading > strong")
+      .filter({ hasText: "Field 4999" })
+      .waitFor();
+    assert.ok(
+      (await tree.getByRole("treeitem").count()) < 80,
+      "Large structures created unbounded DOM",
+    );
+    await page.keyboard.press("Home");
+    await visualizer
+      .getByRole("combobox", { name: "Structure view", exact: true })
+      .selectOption("table");
+    assert.equal(await visualizer.locator("tbody tr").count(), 50);
+    await visualizer.getByRole("button", { name: "Next", exact: true }).click();
+    await visualizer.getByText("51–100 of 5000 rows", { exact: true }).waitFor();
+    await visualizer
+      .getByRole("combobox", { name: "Structure view", exact: true })
+      .selectOption("tree");
+    await checkVisualizerSelection(page, visualizer, tree);
+    await checkHttpVisualizers(page, visualizer, selector, tree);
+    await checkLiveVisualizers(page, root, visualizer, selector, tree);
+    const starts = await page.evaluate(
+      () => globalThis.__workspaceFixture.calls.activate_visualizer,
+    );
+    await page.evaluate(() => globalThis.__workspaceFixture.emitNative("extensions-changed"));
     await page.waitForTimeout(80);
-    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),starts,'An unrelated installation change restarted a worker');
-    await response.getByRole('button',{name:'Split',exact:true}).click();
-    await response.getByRole('combobox',{name:'Headers viewer',exact:true}).selectOption({label:'Protocol headers'});
-    await request.getByRole('combobox',{name:'Headers viewer',exact:true}).selectOption({label:'Protocol headers'});
-    await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length===3);
-    await checkReloadVisualizers(page,visualizer,selector);
-    const viewers=traffic.locator('extension-visualizer');
-    for(const viewer of await viewers.all()){
-      await viewer.getByRole('button',{name:'About this visualizer',exact:true}).click();
-      const about=viewer.getByRole('dialog',{name:'About this visualizer',exact:true});
+    assert.equal(
+      await page.evaluate(() => globalThis.__workspaceFixture.calls.activate_visualizer),
+      starts,
+      "An unrelated installation change restarted a worker",
+    );
+    await response.getByRole("button", { name: "Split", exact: true }).click();
+    await response
+      .getByRole("combobox", { name: "Headers viewer", exact: true })
+      .selectOption({ label: "Protocol headers" });
+    await request
+      .getByRole("combobox", { name: "Headers viewer", exact: true })
+      .selectOption({ label: "Protocol headers" });
+    await page.waitForFunction(
+      () => Object.keys(globalThis.__workspaceFixture.visualizerActive ?? {}).length === 3,
+    );
+    await checkReloadVisualizers(page, visualizer, selector);
+    const viewers = traffic.locator("extension-visualizer");
+    for (const viewer of await viewers.all()) {
+      await viewer.getByRole("button", { name: "About this visualizer", exact: true }).click();
+      const about = viewer.getByRole("dialog", { name: "About this visualizer", exact: true });
       await about.waitFor();
-      const name=await viewer.evaluate(element=>element.choice.name);
-      await about.locator('header > strong').filter({hasText:name}).waitFor();
-      assert.equal(await traffic.locator('.visualizer-about:popover-open').count(),1,'Concurrent viewers opened the wrong information panel');
-      await about.getByRole('button',{name:'Close visualizer information',exact:true}).click();
+      const name = await viewer.evaluate((element) => element.choice.name);
+      await about.locator("header > strong").filter({ hasText: name }).waitFor();
+      assert.equal(
+        await traffic.locator(".visualizer-about:popover-open").count(),
+        1,
+        "Concurrent viewers opened the wrong information panel",
+      );
+      await about
+        .getByRole("button", { name: "Close visualizer information", exact: true })
+        .click();
     }
-    for(const [width,height] of [[1440,900],[960,720],[800,600]]){
-      await page.setViewportSize({width,height});
-      assert.equal(await response.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true);
-      await page.screenshot({path:resolve(root,`../../../target/ui-check/visualizer-${width}.png`)});
+    for (const [width, height] of [
+      [1440, 900],
+      [960, 720],
+      [800, 600],
+    ]) {
+      await page.setViewportSize({ width, height });
+      assert.equal(
+        await response.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+        true,
+      );
+      await page.screenshot({
+        path: resolve(root, `../../../target/ui-check/visualizer-${width}.png`),
+      });
     }
-    await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(root,'../../../target/ui-check/visualizer-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
-    await visualizer.getByRole('button',{name:'About this visualizer',exact:true}).click();
+    await page.emulateMedia({ forcedColors: "active" });
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/visualizer-forced-colors.png"),
+    });
+    await page.emulateMedia({ forcedColors: "none" });
+    await visualizer.getByRole("button", { name: "About this visualizer", exact: true }).click();
     await page.locator('a[data-view="settings"]').click();
-    await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length===0);
-    assert.equal(await page.locator('.visualizer-about:popover-open').count(),0,'An inactive visualizer left its context panel open');
-    assert.equal(await page.locator('extension-visualizer .visualizer-heading > strong').count(),0,'Hidden views retained captured documents');
-    await page.locator('a[data-view="traffic"]').click();await page.setViewportSize({width:1440,height:900});
-    await response.getByRole('button',{name:'Open visualizer',exact:true}).first().waitFor();
+    await page.waitForFunction(
+      () => Object.keys(globalThis.__workspaceFixture.visualizerActive ?? {}).length === 0,
+    );
+    assert.equal(
+      await page.locator(".visualizer-about:popover-open").count(),
+      0,
+      "An inactive visualizer left its context panel open",
+    );
+    assert.equal(
+      await page.locator("extension-visualizer .visualizer-heading > strong").count(),
+      0,
+      "Hidden views retained captured documents",
+    );
+    await page.locator('a[data-view="traffic"]').click();
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await response.getByRole("button", { name: "Open visualizer", exact: true }).first().waitFor();
     await page.waitForTimeout(80);
-    assert.equal(await page.evaluate(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length),0,'Returning to Traffic silently reopened inactive parsers');
-    await response.getByRole('button',{name:'Body',exact:true}).click();
-    await selector.selectOption('auto');
-    await page.evaluate(()=>{globalThis.__workspaceFixture.holdVisualizer=true;});
-    await selector.selectOption({label:'Protocol structure'});
-    await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishVisualizer);
-    await selector.selectOption('auto');
-    await page.evaluate(()=>{globalThis.__workspaceFixture.finishVisualizer();delete globalThis.__workspaceFixture.finishVisualizer;});
+    assert.equal(
+      await page.evaluate(
+        () => Object.keys(globalThis.__workspaceFixture.visualizerActive ?? {}).length,
+      ),
+      0,
+      "Returning to Traffic silently reopened inactive parsers",
+    );
+    await response.getByRole("button", { name: "Body", exact: true }).click();
+    await selector.selectOption("auto");
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.holdVisualizer = true;
+    });
+    await selector.selectOption({ label: "Protocol structure" });
+    await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishVisualizer);
+    await selector.selectOption("auto");
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.finishVisualizer();
+      delete globalThis.__workspaceFixture.finishVisualizer;
+    });
     await page.waitForTimeout(80);
-    assert.equal(await visualizer.count(),0,'A late activation restored a deselected viewer');
-    await page.evaluate(()=>{globalThis.__workspaceFixture.visualizerError=true;});
-    await selector.selectOption({label:'Protocol structure'});
-    await visualizer.getByText('Synthetic parser failed',{exact:true}).waitFor();
-    const failedStarts=await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer);
-    await page.evaluate(()=>{const t=document.querySelector('app-shell').traffic;t.selectedDetail={...t.selectedDetail};});
+    assert.equal(await visualizer.count(), 0, "A late activation restored a deselected viewer");
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.visualizerError = true;
+    });
+    await selector.selectOption({ label: "Protocol structure" });
+    await visualizer.getByText("Synthetic parser failed", { exact: true }).waitFor();
+    const failedStarts = await page.evaluate(
+      () => globalThis.__workspaceFixture.calls.activate_visualizer,
+    );
+    await page.evaluate(() => {
+      const t = document.querySelector("app-shell").traffic;
+      t.selectedDetail = { ...t.selectedDetail };
+    });
     await page.waitForTimeout(80);
-    assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer),failedStarts,'Unrelated detail refresh retried a failed parser');
-    await page.evaluate(()=>{globalThis.__workspaceFixture.visualizerError=false;});
-    await visualizer.getByRole('button',{name:'Retry visualizer',exact:true}).click();
-    await visualizer.locator('.visualizer-heading > strong').waitFor();
-    await selector.selectOption('auto');
-    await selector.selectOption({label:'Protocol structure'});
-    await response.locator('extension-visualizer .visualizer-heading > strong').waitFor();
-    await page.evaluate(()=>globalThis.__workspaceFixture.emitNative('visualizers-suspended'));
-    await page.waitForFunction(()=>Object.keys(globalThis.__workspaceFixture.visualizerActive??{}).length===0);
-    assert.equal(await response.locator('extension-visualizer .visualizer-heading > strong').count(),0);
-    await visualizer.getByRole('button',{name:'Open visualizer',exact:true}).click();
-    await visualizer.locator('.visualizer-heading > strong').waitFor();
-    await response.getByRole('button',{name:'Body',exact:true}).click();
-    await traffic.locator('.session-link').nth(1).click();
-    await page.waitForFunction(()=>document.querySelector('app-shell').traffic.selectedDetail?.id===document.querySelector('app-shell').traffic.selectedSessionId);
-    assert.equal(await selector.inputValue(),'extension:example.protocol:structure','A matching exchange forgot the explicit protocol choice');
-    await checkAutomaticVisualizers(page,root);
+    assert.equal(
+      await page.evaluate(() => globalThis.__workspaceFixture.calls.activate_visualizer),
+      failedStarts,
+      "Unrelated detail refresh retried a failed parser",
+    );
+    await page.evaluate(() => {
+      globalThis.__workspaceFixture.visualizerError = false;
+    });
+    await visualizer.getByRole("button", { name: "Retry visualizer", exact: true }).click();
+    await visualizer.locator(".visualizer-heading > strong").waitFor();
+    await selector.selectOption("auto");
+    await selector.selectOption({ label: "Protocol structure" });
+    await response.locator("extension-visualizer .visualizer-heading > strong").waitFor();
+    await page.evaluate(() => globalThis.__workspaceFixture.emitNative("visualizers-suspended"));
+    await page.waitForFunction(
+      () => Object.keys(globalThis.__workspaceFixture.visualizerActive ?? {}).length === 0,
+    );
+    assert.equal(
+      await response.locator("extension-visualizer .visualizer-heading > strong").count(),
+      0,
+    );
+    await visualizer.getByRole("button", { name: "Open visualizer", exact: true }).click();
+    await visualizer.locator(".visualizer-heading > strong").waitFor();
+    await response.getByRole("button", { name: "Body", exact: true }).click();
+    await traffic.locator(".session-link").nth(1).click();
+    await page.waitForFunction(
+      () =>
+        document.querySelector("app-shell").traffic.selectedDetail?.id ===
+        document.querySelector("app-shell").traffic.selectedSessionId,
+    );
+    assert.equal(
+      await selector.inputValue(),
+      "extension:example.protocol:structure",
+      "A matching exchange forgot the explicit protocol choice",
+    );
+    await checkAutomaticVisualizers(page, root);
   } finally {
-    await page.evaluate(preferences=>{const s=globalThis.__workspaceFixture;s.visualizerChoices={};s.visualizerActive={};s.emitNative('extensions-changed');document.querySelector('app-shell').traffic.preferences=preferences;},saved.preferences);
-    await page.setViewportSize({width:1280,height:800});
+    await page.evaluate((preferences) => {
+      const s = globalThis.__workspaceFixture;
+      s.visualizerChoices = {};
+      s.visualizerActive = {};
+      s.emitNative("extensions-changed");
+      document.querySelector("app-shell").traffic.preferences = preferences;
+    }, saved.preferences);
+    await page.setViewportSize({ width: 1280, height: 800 });
   }
 }

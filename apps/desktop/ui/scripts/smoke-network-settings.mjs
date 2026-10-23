@@ -1,10 +1,10 @@
-import {writeFile} from 'node:fs/promises';
+import { writeFile } from "node:fs/promises";
 
 // Exercise the Windows command boundary in the harness-owned profile, preserving
 // the original settings and avoiding changes to host proxy routing or CA trust.
-export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
+export async function smokeNetworkSettings(call, evaluate, screenshotPath) {
   try {
-    const result=await evaluate(`(async()=>{
+    const result = await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');
     await settings.ready;
     const original=await window.__TAURI_INTERNALS__.invoke('product_state');
@@ -118,15 +118,38 @@ export async function smokeNetworkSettings(call,evaluate,screenshotPath) {
     settings.$flushUpdates();form.elements.namedItem('customRequestBodyLimit').scrollIntoView({block:'center'});
     return {settingsPersisted:true,inputsReachable:true,opaqueStartWithoutCertificate:true,certificateStatePreserved:true,remoteOptIn:true,persistentPort:true,reuseDisabled:true,decryptionProminent:true,customBodyLimit:true,networkProfileSaveOnly:true,networkProfileActivation:true,alpsProfileControl:true};
   })()`);
-    if(screenshotPath) {
-      await writeFile(screenshotPath.replace(/\.png$/i,'-network-settings.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-      await call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
-      await evaluate(`(()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');const profiles=settings.querySelector('network-profile-settings');profiles.customize();profiles.querySelector('.profile-handshake').open=true;for(const name of ['http2Alps','encryptedClientHello']){const input=profiles.networkForm.elements.namedItem(name);input.scrollIntoView({block:'center'});input.focus();const box=input.getBoundingClientRect();if(input.getRootNode().activeElement!==input||input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==input)throw new Error('Narrow profile '+name+' control is covered');}})()`);
-      await writeFile(screenshotPath.replace(/\.png$/i,'-network-settings-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    if (screenshotPath) {
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-network-settings.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
+      await call("Emulation.setDeviceMetricsOverride", {
+        width: 760,
+        height: 520,
+        deviceScaleFactor: 1,
+        mobile: false,
+      });
+      await evaluate(
+        `(()=>{const settings=document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace');const profiles=settings.querySelector('network-profile-settings');profiles.customize();profiles.querySelector('.profile-handshake').open=true;for(const name of ['http2Alps','encryptedClientHello']){const input=profiles.networkForm.elements.namedItem(name);input.scrollIntoView({block:'center'});input.focus();const box=input.getBoundingClientRect();if(input.getRootNode().activeElement!==input||input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)!==input)throw new Error('Narrow profile '+name+' control is covered');}})()`,
+      );
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-network-settings-compact.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
     }
     return result;
   } finally {
-    await call('Emulation.clearDeviceMetricsOverride');
-    await evaluate(`(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const catalog=(await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.networkProfiles;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:probe.original});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();settings.$flushUpdates();shell.$flushUpdates();delete globalThis.__networkSettingsProbe;})()`);
+    await call("Emulation.clearDeviceMetricsOverride");
+    await evaluate(
+      `(async()=>{const probe=globalThis.__networkSettingsProbe;if(!probe)return;const shell=document.querySelector('app-shell'),settings=shell.shadowRoot.querySelector('settings-workspace');if((await window.__TAURI_INTERNALS__.invoke('app_status')).lifecycle!=='stopped')await settings.stopProxy();const profiles=settings.querySelector('network-profile-settings');if(profiles.networkEditor.open)profiles.discard();const catalog=(await window.__TAURI_INTERNALS__.invoke('product_state')).preferences.networkProfiles;await window.__TAURI_INTERNALS__.invoke('save_network_profiles',{expectedRevision:catalog.revision,profiles:probe.original.preferences.networkProfiles.customProfiles,useProfile:probe.original.preferences.networkProfiles.activeProfile.id});await profiles.load();await window.__TAURI_INTERNALS__.invoke('save_product_state',{productState:probe.original});await settings.loadSettings();settings.querySelector('.preferences-form .connection-advanced').open=probe.open;settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();settings.$flushUpdates();shell.$flushUpdates();delete globalThis.__networkSettingsProbe;})()`,
+    );
   }
 }

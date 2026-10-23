@@ -1,158 +1,472 @@
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
 
-function extension(id,name,development=false) {
-  const contribution={id:'headers',name:'Request metadata',entry:'main.js',surfaces:['headers'],inputs:{request:{headers:['content-type','x-requesttype'],body:'none'},response:{headers:[],body:'optional'}},matches:[{direction:'request',contentTypes:['application/example'],methods:['POST'],pathPrefixes:['/protocol'],statuses:[],headers:[]}],inputMatches:[],liveUpdates:{events:['request','response'],bodyProgress:false},context:{headers:[{direction:'request',name:'x-requesttype'}],maxExchanges:32},limits:{inputBytes:1048576,outputBytes:1048576,heapBytes:67108864,durationMs:2000,nodes:2000}};
-  return {catalog:{manifest:{id,name,version:'1.0.0',runtime:'javascript-es2022',apiVersion:1,visualizers:[contribution,{...structuredClone(contribution),id:'response',name:'Response body',surfaces:['body'],inputs:{request:{headers:['x-requesttype'],body:'none'},response:{headers:['content-type'],body:'required'}}}]},digest:'a'.repeat(64),enabled:true,origin:development?'development':'installed'},directory:development?'C:/development/a-long-project-folder/experimental-protocol-visualizer':null,hotReload:false};
+function extension(id, name, development = false) {
+  const contribution = {
+    id: "headers",
+    name: "Request metadata",
+    entry: "main.js",
+    surfaces: ["headers"],
+    inputs: {
+      request: { headers: ["content-type", "x-requesttype"], body: "none" },
+      response: { headers: [], body: "optional" },
+    },
+    matches: [
+      {
+        direction: "request",
+        contentTypes: ["application/example"],
+        methods: ["POST"],
+        pathPrefixes: ["/protocol"],
+        statuses: [],
+        headers: [],
+      },
+    ],
+    inputMatches: [],
+    liveUpdates: { events: ["request", "response"], bodyProgress: false },
+    context: { headers: [{ direction: "request", name: "x-requesttype" }], maxExchanges: 32 },
+    limits: {
+      inputBytes: 1048576,
+      outputBytes: 1048576,
+      heapBytes: 67108864,
+      durationMs: 2000,
+      nodes: 2000,
+    },
+  };
+  return {
+    catalog: {
+      manifest: {
+        id,
+        name,
+        version: "1.0.0",
+        runtime: "javascript-es2022",
+        apiVersion: 1,
+        visualizers: [
+          contribution,
+          {
+            ...structuredClone(contribution),
+            id: "response",
+            name: "Response body",
+            surfaces: ["body"],
+            inputs: {
+              request: { headers: ["x-requesttype"], body: "none" },
+              response: { headers: ["content-type"], body: "required" },
+            },
+          },
+        ],
+      },
+      digest: "a".repeat(64),
+      enabled: true,
+      origin: development ? "development" : "installed",
+    },
+    directory: development
+      ? "C:/development/a-long-project-folder/experimental-protocol-visualizer"
+      : null,
+    hotReload: false,
+  };
 }
-export async function checkExtensions(page,root) {
+export async function checkExtensions(page, root) {
   await page.locator('a[data-view="settings"]').click();
-  const settings=page.locator('settings-workspace');
-  const dirtyBefore=await page.evaluate(()=>document.querySelector('app-shell').settings.settingsDirty);
-  const savesBefore=await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0);
-  await settings.getByRole('button',{name:'Extensions',exact:true}).click();
-  const panel=page.locator('extension-settings');
-  await panel.getByText('No extensions installed.',{exact:false}).waitFor();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.cancelExtensionPicker=true;});
-  await panel.getByRole('button',{name:'Install extension…',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await panel.locator('article').count(),0);
-  const name='Protocol <img src=x onerror="alert(1)"> — long extension name for retained request and response evidence';
-  await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},extension('example.protocol',name));
-  await panel.getByRole('button',{name:'Install extension…',exact:true}).click();
-  const installed=panel.getByRole('article',{name,exact:true});
-  await installed.getByRole('heading',{name,exact:true}).waitFor();
-  assert.equal(await panel.locator('img,script').count(),0,'Extension metadata produced executable UI');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.warning='A user extension conflicts with a bundled ID. Remove that installation and restart.';globalThis.__workspaceFixture.extensionStatus.managementBlocked=false;});
-  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await installed.getByRole('button',{name:'Uninstall '+name,exact:true}).isEnabled(),true,'A declaration notice blocked its uninstall recovery');
-  assert.equal(await panel.getByRole('button',{name:'Install extension…',exact:true}).isEnabled(),true);
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.warning='Extension settings could not be loaded. Restore the catalog and restart.';delete globalThis.__workspaceFixture.extensionStatus.managementBlocked;});
-  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await installed.getByRole('button',{name:'Uninstall '+name,exact:true}).isDisabled(),true,'A corrupt catalog permitted management');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.warning=null;globalThis.__workspaceFixture.extensionStatus.managementBlocked=false;});
-  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  await installed.locator('summary').click();
-  await installed.getByText('content-type, x-requesttype',{exact:true}).waitFor();
-  assert.equal(await installed.getByText('No headers',{exact:true}).count(),1);
-  assert.equal(await installed.getByText('Required',{exact:true}).count(),1);
-  assert.equal(await installed.getByText('Up to 32 earlier exchanges from the same capture, origin, and conversation; request x-requesttype',{exact:true}).count(),2);
-  const enabled=installed.getByRole('checkbox',{name:'Enable '+name,exact:true});
-  await enabled.focus();await page.keyboard.press('Space');
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await enabled.isChecked(),false);
-  const exportButton=installed.getByRole('button',{name:'Save '+name+' to folder',exact:true});
-  await exportButton.focus();await page.keyboard.press('Enter');
-  await panel.getByText('Extension saved: C:/extensions/example.protocol.',{exact:false}).waitFor();
-  assert.equal(await enabled.isChecked(),false,'Export changed the disabled preference');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.cancelExtensionPicker=true;});
-  await exportButton.click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText),'');
-  assert.equal(await installed.locator('details').evaluate(element=>element.open),true,'Updating enable state collapsed declarations');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=true;});
-  await enabled.click();
-  const errorDialog=page.locator('.operation-error-dialog[open]');await errorDialog.waitFor();
-  await errorDialog.getByRole('button',{name:'Close',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await enabled.isChecked(),false,'A failed write left an enabled-looking checkbox');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionSaveError=false;});
-  await panel.getByRole('button',{name:'Dismiss',exact:true}).click();
-  const development=extension('example.development','Development protocol',true);development.catalog.manifest.visualizers[0].context.lookAhead=true;
-  const matching=development.catalog.manifest.visualizers[0].matches;matching.push({...structuredClone(matching[0]),pathPrefixes:['/protocol-2']},{...structuredClone(matching[0]),pathPrefixes:['/protocol-3']});
-  const decoded=development.catalog.manifest.visualizers[1].inputs.response;decoded.headers.push('content-encoding');decoded.decodeHttpContent=true;
-  development.catalog.manifest.trafficColumns=[{id:'protocol',name:'Protocol classification',inputs:{request:{headers:['soapaction'],body:'none'},response:{headers:['content-type'],body:'none'}},values:[{value:'MS-FSSHTTP',matches:[{direction:'response',contentTypes:['application/soap+xml'],headers:[{direction:'request',name:'soapaction',test:{op:'equals',value:'CellStorageService'}}]}]}]}];
-  await page.evaluate(entry=>{globalThis.__workspaceFixture.nextExtension=entry;},development);
-  await panel.getByRole('button',{name:'Load unpacked…',exact:true}).click();
-  const developer=panel.getByRole('article',{name:'Development protocol',exact:true});
-  assert.equal(await installed.getByRole('button',{name:/Package/}).count(),0);
-  const pack=developer.getByRole('button',{name:'Package Development protocol',exact:true});
-  const devEnabled=developer.getByRole('checkbox',{name:'Enable Development protocol',exact:true});
-  await devEnabled.uncheck();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await pack.isEnabled(),true,'Disabled extensions must remain packageable');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.cancelExtensionPicker=true;});
-  await pack.click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText),'');
-  await pack.focus();await page.keyboard.press('Enter');
-  await panel.getByText('Extension packaged: C:/extensions/exported.tmext',{exact:true}).waitFor();
-  assert.equal(await devEnabled.isChecked(),false,'Packaging changed the enabled preference');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionPackageError=true;});
-  await pack.click();await errorDialog.waitFor();
-  await errorDialog.getByRole('button',{name:'Close',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  await panel.getByText('A declared source file is missing.',{exact:true}).waitFor();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionPackageError=false;});
-  await devEnabled.check();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await installed.getByRole('button',{name:/Reload active/}).count(),0);
-  const reload=developer.getByRole('button',{name:'Reload active visualizers for Development protocol',exact:true});
-  await reload.focus();await page.keyboard.press('Enter');
-  await panel.getByText('No active visualizers to reload.',{exact:false}).waitFor();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.reload_visualizer??0),0,'Reloading an inactive extension started code');
-  const completedReload=await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText);
-  const statusCalls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.extension_status);
-  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.deferExtensionStatus=true;s.emitNative('extensions-changed');});
-  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishExtensionStatus);
-  await page.evaluate(()=>{
-    const s=globalThis.__workspaceFixture;
-    s.extensionStatus.entries[0].catalog.enabled=true;
-    for(let i=0;i<10;i++)s.emitNative('extensions-changed');
-    s.finishExtensionStatus();delete s.finishExtensionStatus;
+  const settings = page.locator("settings-workspace");
+  const dirtyBefore = await page.evaluate(
+    () => document.querySelector("app-shell").settings.settingsDirty,
+  );
+  const savesBefore = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.save_product_state ?? 0,
+  );
+  await settings.getByRole("button", { name: "Extensions", exact: true }).click();
+  const panel = page.locator("extension-settings");
+  await panel.getByText("No extensions installed.", { exact: false }).waitFor();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.cancelExtensionPicker = true;
   });
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await installed.getByRole('checkbox',{name:'Enable '+name,exact:true}).isChecked(),true,'A catalog change arriving during refresh was lost');
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.extension_status),statusCalls+2,'Concurrent catalog notifications were not coalesced');
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsText),completedReload,'A background refresh erased the completed action feedback');
-  await developer.getByRole('checkbox',{name:'Hot reload Development protocol',exact:true}).check();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),true);
-  await developer.getByText('Visualizers and declared inputs',{exact:true}).click();
-  const matchingRules=developer.getByText('3 matching rules',{exact:true});
+  await panel.getByRole("button", { name: "Install extension…", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(await panel.locator("article").count(), 0);
+  const name =
+    'Protocol <img src=x onerror="alert(1)"> — long extension name for retained request and response evidence';
+  await page.evaluate(
+    (entry) => {
+      globalThis.__workspaceFixture.nextExtension = entry;
+    },
+    extension("example.protocol", name),
+  );
+  await panel.getByRole("button", { name: "Install extension…", exact: true }).click();
+  const installed = panel.getByRole("article", { name, exact: true });
+  await installed.getByRole("heading", { name, exact: true }).waitFor();
+  assert.equal(
+    await panel.locator("img,script").count(),
+    0,
+    "Extension metadata produced executable UI",
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionStatus.warning =
+      "A user extension conflicts with a bundled ID. Remove that installation and restart.";
+    globalThis.__workspaceFixture.extensionStatus.managementBlocked = false;
+  });
+  await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await installed.getByRole("button", { name: "Uninstall " + name, exact: true }).isEnabled(),
+    true,
+    "A declaration notice blocked its uninstall recovery",
+  );
+  assert.equal(
+    await panel.getByRole("button", { name: "Install extension…", exact: true }).isEnabled(),
+    true,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionStatus.warning =
+      "Extension settings could not be loaded. Restore the catalog and restart.";
+    delete globalThis.__workspaceFixture.extensionStatus.managementBlocked;
+  });
+  await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await installed.getByRole("button", { name: "Uninstall " + name, exact: true }).isDisabled(),
+    true,
+    "A corrupt catalog permitted management",
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionStatus.warning = null;
+    globalThis.__workspaceFixture.extensionStatus.managementBlocked = false;
+  });
+  await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  await installed.locator("summary").click();
+  await installed.getByText("content-type, x-requesttype", { exact: true }).waitFor();
+  assert.equal(await installed.getByText("No headers", { exact: true }).count(), 1);
+  assert.equal(await installed.getByText("Required", { exact: true }).count(), 1);
+  assert.equal(
+    await installed
+      .getByText(
+        "Up to 32 earlier exchanges from the same capture, origin, and conversation; request x-requesttype",
+        { exact: true },
+      )
+      .count(),
+    2,
+  );
+  const enabled = installed.getByRole("checkbox", { name: "Enable " + name, exact: true });
+  await enabled.focus();
+  await page.keyboard.press("Space");
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(await enabled.isChecked(), false);
+  const exportButton = installed.getByRole("button", {
+    name: "Save " + name + " to folder",
+    exact: true,
+  });
+  await exportButton.focus();
+  await page.keyboard.press("Enter");
+  await panel
+    .getByText("Extension saved: C:/extensions/example.protocol.", { exact: false })
+    .waitFor();
+  assert.equal(await enabled.isChecked(), false, "Export changed the disabled preference");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.cancelExtensionPicker = true;
+  });
+  await exportButton.click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.querySelector("app-shell").settings.extensionsEditor.extensionsText,
+    ),
+    "",
+  );
+  assert.equal(
+    await installed.locator("details").evaluate((element) => element.open),
+    true,
+    "Updating enable state collapsed declarations",
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionSaveError = true;
+  });
+  await enabled.click();
+  const errorDialog = page.locator(".operation-error-dialog[open]");
+  await errorDialog.waitFor();
+  await errorDialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(await enabled.isChecked(), false, "A failed write left an enabled-looking checkbox");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionSaveError = false;
+  });
+  await panel.getByRole("button", { name: "Dismiss", exact: true }).click();
+  const development = extension("example.development", "Development protocol", true);
+  development.catalog.manifest.visualizers[0].context.lookAhead = true;
+  const matching = development.catalog.manifest.visualizers[0].matches;
+  matching.push(
+    { ...structuredClone(matching[0]), pathPrefixes: ["/protocol-2"] },
+    { ...structuredClone(matching[0]), pathPrefixes: ["/protocol-3"] },
+  );
+  const decoded = development.catalog.manifest.visualizers[1].inputs.response;
+  decoded.headers.push("content-encoding");
+  decoded.decodeHttpContent = true;
+  development.catalog.manifest.trafficColumns = [
+    {
+      id: "protocol",
+      name: "Protocol classification",
+      inputs: {
+        request: { headers: ["soapaction"], body: "none" },
+        response: { headers: ["content-type"], body: "none" },
+      },
+      values: [
+        {
+          value: "MS-FSSHTTP",
+          matches: [
+            {
+              direction: "response",
+              contentTypes: ["application/soap+xml"],
+              headers: [
+                {
+                  direction: "request",
+                  name: "soapaction",
+                  test: { op: "equals", value: "CellStorageService" },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    },
+  ];
+  await page.evaluate((entry) => {
+    globalThis.__workspaceFixture.nextExtension = entry;
+  }, development);
+  await panel.getByRole("button", { name: "Load unpacked…", exact: true }).click();
+  const developer = panel.getByRole("article", { name: "Development protocol", exact: true });
+  assert.equal(await installed.getByRole("button", { name: /Package/ }).count(), 0);
+  const pack = developer.getByRole("button", { name: "Package Development protocol", exact: true });
+  const devEnabled = developer.getByRole("checkbox", {
+    name: "Enable Development protocol",
+    exact: true,
+  });
+  await devEnabled.uncheck();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(await pack.isEnabled(), true, "Disabled extensions must remain packageable");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.cancelExtensionPicker = true;
+  });
+  await pack.click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.querySelector("app-shell").settings.extensionsEditor.extensionsText,
+    ),
+    "",
+  );
+  await pack.focus();
+  await page.keyboard.press("Enter");
+  await panel
+    .getByText("Extension packaged: C:/extensions/exported.tmext", { exact: true })
+    .waitFor();
+  assert.equal(await devEnabled.isChecked(), false, "Packaging changed the enabled preference");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionPackageError = true;
+  });
+  await pack.click();
+  await errorDialog.waitFor();
+  await errorDialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  await panel.getByText("A declared source file is missing.", { exact: true }).waitFor();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionPackageError = false;
+  });
+  await devEnabled.check();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(await installed.getByRole("button", { name: /Reload active/ }).count(), 0);
+  const reload = developer.getByRole("button", {
+    name: "Reload active visualizers for Development protocol",
+    exact: true,
+  });
+  await reload.focus();
+  await page.keyboard.press("Enter");
+  await panel.getByText("No active visualizers to reload.", { exact: false }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.reload_visualizer ?? 0),
+    0,
+    "Reloading an inactive extension started code",
+  );
+  const completedReload = await page.evaluate(
+    () => document.querySelector("app-shell").settings.extensionsEditor.extensionsText,
+  );
+  const statusCalls = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.extension_status,
+  );
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture;
+    s.deferExtensionStatus = true;
+    s.emitNative("extensions-changed");
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishExtensionStatus);
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture;
+    s.extensionStatus.entries[0].catalog.enabled = true;
+    for (let i = 0; i < 10; i++) s.emitNative("extensions-changed");
+    s.finishExtensionStatus();
+    delete s.finishExtensionStatus;
+  });
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await installed.getByRole("checkbox", { name: "Enable " + name, exact: true }).isChecked(),
+    true,
+    "A catalog change arriving during refresh was lost",
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.extension_status),
+    statusCalls + 2,
+    "Concurrent catalog notifications were not coalesced",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => document.querySelector("app-shell").settings.extensionsEditor.extensionsText,
+    ),
+    completedReload,
+    "A background refresh erased the completed action feedback",
+  );
+  await developer
+    .getByRole("checkbox", { name: "Hot reload Development protocol", exact: true })
+    .check();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.extensionStatus.entries[1].hotReload),
+    true,
+  );
+  await developer.getByText("Visualizers and declared inputs", { exact: true }).click();
+  const matchingRules = developer.getByText("3 matching rules", { exact: true });
   await matchingRules.waitFor();
-  assert.equal(await matchingRules.locator('..').evaluate(element=>element.open),false,'A long matching rule list opened by default');
+  assert.equal(
+    await matchingRules.locator("..").evaluate((element) => element.open),
+    false,
+    "A long matching rule list opened by default",
+  );
   await matchingRules.click();
-  await developer.getByText('Request · application/example · POST · /protocol-3',{exact:true}).waitFor();
+  await developer
+    .getByText("Request · application/example · POST · /protocol-3", { exact: true })
+    .waitFor();
 
-  await developer.getByText('Up to 32 earlier or later exchanges from the same capture, origin, and conversation; request x-requesttype',{exact:true}).waitFor();
-  await developer.getByText('Required · HTTP decoding on demand',{exact:true}).waitFor();
-  await developer.getByText('Traffic columns and header rules',{exact:true}).click();
-  await developer.getByText('MS-FSSHTTP',{exact:true}).waitFor();
-  await developer.getByText('Response · application/soap+xml · request soapaction: equals CellStorageService',{exact:true}).waitFor();
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/extensions-declarations-wide.png')});
-  while(await panel.locator('.extension-declarations[open] > summary').count())await panel.locator('.extension-declarations[open] > summary').first().click();
-  await page.evaluate(()=>{const settings=document.querySelector('app-shell').settings,root=settings.shadowRoot??settings;root.querySelector('.settings-content').scrollTop=0;});
-  for(const [width,height] of [[1440,900],[960,720],[800,600]]) {
-    await page.setViewportSize({width,height});
-    assert.equal(await panel.evaluate(element=>element.scrollWidth<=element.clientWidth+1),true,'Extensions overflowed the settings pane');
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/extensions-${width}.png`)});
+  await developer
+    .getByText(
+      "Up to 32 earlier or later exchanges from the same capture, origin, and conversation; request x-requesttype",
+      { exact: true },
+    )
+    .waitFor();
+  await developer.getByText("Required · HTTP decoding on demand", { exact: true }).waitFor();
+  await developer.getByText("Traffic columns and header rules", { exact: true }).click();
+  await developer.getByText("MS-FSSHTTP", { exact: true }).waitFor();
+  await developer
+    .getByText("Response · application/soap+xml · request soapaction: equals CellStorageService", {
+      exact: true,
+    })
+    .waitFor();
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/extensions-declarations-wide.png"),
+  });
+  while (await panel.locator(".extension-declarations[open] > summary").count())
+    await panel.locator(".extension-declarations[open] > summary").first().click();
+  await page.evaluate(() => {
+    const settings = document.querySelector("app-shell").settings,
+      root = settings.shadowRoot ?? settings;
+    root.querySelector(".settings-content").scrollTop = 0;
+  });
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    assert.equal(
+      await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+      true,
+      "Extensions overflowed the settings pane",
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/extensions-${width}.png`),
+    });
   }
-  await page.emulateMedia({forcedColors:'active'});
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/extensions-forced-colors.png')});
-  await page.emulateMedia({forcedColors:'none'});
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionCleanupError=true;});
-  await developer.getByRole('button',{name:'Uninstall Development protocol',exact:true}).click();
-  await errorDialog.waitFor();await errorDialog.getByRole('button',{name:'Close',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.extensionsEditor.extensionsBusy);
-  assert.equal(await developer.count(),0,'Cleanup failure resurrected an already removed extension');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionCleanupError=false;globalThis.__workspaceFixture.deferExtensionStatus=true;});
-  await panel.getByRole('button',{name:'Refresh',exact:true}).click();
-  await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishExtensionStatus);
-  await settings.getByRole('button',{name:'Preferences',exact:true}).click();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.entries[0].catalog.manifest.name='Updated elsewhere';});
-  await settings.getByRole('button',{name:'Extensions',exact:true}).click();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.finishExtensionStatus();});
-  await panel.getByRole('heading',{name:'Updated elsewhere',exact:true}).waitFor();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.extensionStatus.entries[0].catalog.enabled=true;globalThis.__workspaceFixture.emitNative('extensions-changed');});
-  await page.waitForFunction(()=>document.querySelector('app-shell').settings.extensionsEditor.extensionsEntries[0]?.enabled===true);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.activate_visualizer??0),0,'Managing metadata activated extension code');
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').settings.settingsDirty),dirtyBefore);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0),savesBefore);
-  await settings.getByRole('button',{name:'Preferences',exact:true}).click();
-  await page.waitForFunction(()=>globalThis.__workspaceFixture.extensionListenerCount()===0);
-  await page.setViewportSize({width:1280,height:800});
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/extensions-forced-colors.png"),
+  });
+  await page.emulateMedia({ forcedColors: "none" });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionCleanupError = true;
+  });
+  await developer
+    .getByRole("button", { name: "Uninstall Development protocol", exact: true })
+    .click();
+  await errorDialog.waitFor();
+  await errorDialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.extensionsEditor.extensionsBusy,
+  );
+  assert.equal(
+    await developer.count(),
+    0,
+    "Cleanup failure resurrected an already removed extension",
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionCleanupError = false;
+    globalThis.__workspaceFixture.deferExtensionStatus = true;
+  });
+  await panel.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishExtensionStatus);
+  await settings.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionStatus.entries[0].catalog.manifest.name =
+      "Updated elsewhere";
+  });
+  await settings.getByRole("button", { name: "Extensions", exact: true }).click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.finishExtensionStatus();
+  });
+  await panel.getByRole("heading", { name: "Updated elsewhere", exact: true }).waitFor();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.extensionStatus.entries[0].catalog.enabled = true;
+    globalThis.__workspaceFixture.emitNative("extensions-changed");
+  });
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").settings.extensionsEditor.extensionsEntries[0]
+        ?.enabled === true,
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.activate_visualizer ?? 0),
+    0,
+    "Managing metadata activated extension code",
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").settings.settingsDirty),
+    dirtyBefore,
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.save_product_state ?? 0),
+    savesBefore,
+  );
+  await settings.getByRole("button", { name: "Preferences", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.extensionListenerCount() === 0);
+  await page.setViewportSize({ width: 1280, height: 800 });
 }

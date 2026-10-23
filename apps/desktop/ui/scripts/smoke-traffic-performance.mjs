@@ -1,9 +1,9 @@
-import assert from 'node:assert/strict';
-import {writeFile} from 'node:fs/promises';
+import assert from "node:assert/strict";
+import { writeFile } from "node:fs/promises";
 
 /** Timings include the real retained-data commands and WebView2 renderer. */
-export async function smokeTrafficPerformance(client,screenshot) {
-  const report=await client.evaluate(`(async()=>{
+export async function smokeTrafficPerformance(client, screenshot) {
+  const report = await client.evaluate(`(async()=>{
     const t=document.querySelector('app-shell').traffic;
     const stats=values=>{values.sort((a,b)=>a-b);return {p50:values[Math.floor(values.length*.5)],p95:values[Math.floor(values.length*.95)]};};
     const render=[],refresh=[],queries=[],api=window.__TAURI_INTERNALS__;
@@ -23,7 +23,14 @@ export async function smokeTrafficPerformance(client,screenshot) {
     }
     return {entries:t.virtualList.ids.length,domRows:t.sessions.length,renderMs:stats(render),refreshMs:stats(refresh),queryIpcMs:stats(queries),classificationColumns:t.extensionTableColumns?.length??0,labelCache:t.classifications?.cache.size??0};
   })()`);
-  assert.equal(report.entries,20000);assert.ok(report.domRows<150);assert.equal(report.classificationColumns,0);assert.equal(report.labelCache,0);
-  if(screenshot)await writeFile(screenshot.replace(/\.png$/i,'-traffic-performance.json'),JSON.stringify(report,null,2)+'\n');
-  process.stdout.write('Native traffic performance: '+JSON.stringify(report)+'\n');
+  assert.equal(report.entries, 20000);
+  assert.ok(report.domRows < 150);
+  assert.equal(report.classificationColumns, 0);
+  assert.equal(report.labelCache, 0);
+  if (screenshot)
+    await writeFile(
+      screenshot.replace(/\.png$/i, "-traffic-performance.json"),
+      JSON.stringify(report, null, 2) + "\n",
+    );
+  process.stdout.write("Native traffic performance: " + JSON.stringify(report) + "\n");
 }

@@ -7,13 +7,15 @@ test selection and commands. Install [build prerequisites](building.md) first;
 [Windows release](windows-release.md#local-release-qualification-before-dispatch)
 owns the mandatory candidate qualification sequence.
 
-## TypeScript lint and formatting
+## TypeScript lint and source formatting
 
 From the repository root, run `npm run check` to check every maintained TypeScript
 file, including desktop UI, Playwright tests, MAPI sources, and SDK declarations.
 ESLint uses the recommended JavaScript and TypeScript rules, type-only imports,
 mandatory braces, and at most one statement per line. Prettier owns formatting:
 two spaces, double quotes, semicolons, trailing commas, and a 100-column target.
+Prettier also formats maintained `.mjs` files, including build scripts, test
+runners, browser fixtures, and native test helpers, with the same settings.
 Vendored sources and generated build output are excluded from both tools.
 
 Run `npm run lint:fix` to apply safe ESLint fixes and format the sources. Use
@@ -33,11 +35,11 @@ npm ci --ignore-scripts
 python ./scripts/test.py
 ```
 
-The gate checks TypeScript lint and formatting, Rust formatting, strict workspace
-Clippy, locked tests, dependency policy, the single-TLS-family graph and generated
-supply-chain artifacts. It does not install certificates or modify system proxy
-settings. Tests define individual cases; this guide describes which gates to use
-instead of copying their inventory.
+The gate checks TypeScript lint, TypeScript/JavaScript module formatting, Rust
+formatting, strict workspace Clippy, locked tests, dependency policy, the
+single-TLS-family graph and generated supply-chain artifacts. It does not install
+certificates or modify system proxy settings. Tests define individual cases; this
+guide describes which gates to use instead of copying their inventory.
 
 Before a signed release dispatch, complete
 [local release qualification](windows-release.md#local-release-qualification-before-dispatch).

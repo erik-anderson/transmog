@@ -1,8 +1,8 @@
-import {writeFile} from 'node:fs/promises';
+import { writeFile } from "node:fs/promises";
 
-export async function smokeAbout(call,evaluate,screenshotPath) {
+export async function smokeAbout(call, evaluate, screenshotPath) {
   try {
-    const result=await evaluate(`(async()=>{
+    const result = await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),settings=shell.settings;
       globalThis.__aboutProbe={view:shell.activeView,section:settings.settingsSection};
       shell.openAbout();await new Promise(resolve=>setTimeout(resolve,20));
@@ -27,9 +27,19 @@ export async function smokeAbout(call,evaluate,screenshotPath) {
 
       return {installedVersion:status.currentVersion,website:true,credits:true,quietToolbar:true,automaticOptOut:true};
     })()`);
-    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-about.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    if (screenshotPath)
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-about.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
     return result;
   } finally {
-    await evaluate(`(async()=>{const probe=globalThis.__aboutProbe;if(!probe)return;const shell=document.querySelector('app-shell'),updates=shell.settings.aboutUpdates;if(probe.automatic!==undefined){const automatic=updates.shadowRoot.querySelector('input[type="checkbox"]');automatic.checked=probe.automatic;automatic.dispatchEvent(new Event('change',{bubbles:true}));for(let index=0;index<100&&updates.updatePreferenceBusy;index++)await new Promise(resolve=>setTimeout(resolve,50));if(updates.updatePreferenceBusy||updates.updateState.automaticChecksEnabled!==probe.automatic)throw new Error('The update preference probe could not restore the original choice');}shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__aboutProbe;})()`);
+    await evaluate(
+      `(async()=>{const probe=globalThis.__aboutProbe;if(!probe)return;const shell=document.querySelector('app-shell'),updates=shell.settings.aboutUpdates;if(probe.automatic!==undefined){const automatic=updates.shadowRoot.querySelector('input[type="checkbox"]');automatic.checked=probe.automatic;automatic.dispatchEvent(new Event('change',{bubbles:true}));for(let index=0;index<100&&updates.updatePreferenceBusy;index++)await new Promise(resolve=>setTimeout(resolve,50));if(updates.updatePreferenceBusy||updates.updateState.automaticChecksEnabled!==probe.automatic)throw new Error('The update preference probe could not restore the original choice');}shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__aboutProbe;})()`,
+    );
   }
 }

@@ -1,64 +1,67 @@
-import { copyFile, mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
-import { join, relative, resolve } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import * as esbuild from 'esbuild';
-import { esbuildProjection } from '@microsoft/webui/projection.js';
-import { buildCredits } from './scripts/build-credits.mjs';
+import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import * as esbuild from "esbuild";
+import { esbuildProjection } from "@microsoft/webui/projection.js";
+import { buildCredits } from "./scripts/build-credits.mjs";
 
-const workingDirectory = fileURLToPath(new URL('./', import.meta.url));
-const outputDirectory = resolve(workingDirectory, 'dist');
-for (const file of await readdir(join(workingDirectory, 'src'), { recursive: true })) {
-  if (!file.endsWith('.html')) continue;
-  const template = await readFile(join(workingDirectory, 'src', file), 'utf8');
-  if (template.includes('(event)')) {
-    throw new Error('WebUI event handlers must pass the reserved event token `e`, not `event`: ' + file);
+const workingDirectory = fileURLToPath(new URL("./", import.meta.url));
+const outputDirectory = resolve(workingDirectory, "dist");
+for (const file of await readdir(join(workingDirectory, "src"), { recursive: true })) {
+  if (!file.endsWith(".html")) continue;
+  const template = await readFile(join(workingDirectory, "src", file), "utf8");
+  if (template.includes("(event)")) {
+    throw new Error(
+      "WebUI event handlers must pass the reserved event token `e`, not `event`: " + file,
+    );
   }
 }
 
 // Discard stale hashed chunks before generating this build's asset inventory.
-if (relative(workingDirectory, outputDirectory) !== 'dist') throw new Error('Unsafe build output directory: ' + outputDirectory);
+if (relative(workingDirectory, outputDirectory) !== "dist")
+  throw new Error("Unsafe build output directory: " + outputDirectory);
 await rm(outputDirectory, { recursive: true, force: true });
 await mkdir(outputDirectory, { recursive: true });
-await buildCredits(workingDirectory, join(outputDirectory, 'credits.json'));
+await buildCredits(workingDirectory, join(outputDirectory, "credits.json"));
 
 const client = await esbuild.build({
   absWorkingDir: workingDirectory,
-  entryPoints: { app: 'src/index.ts', monaco: 'src/monaco.ts' },
+  entryPoints: { app: "src/index.ts", monaco: "src/monaco.ts" },
   outdir: outputDirectory,
-  chunkNames: 'chunks/[name]-[hash]',
+  chunkNames: "chunks/[name]-[hash]",
   bundle: true,
   splitting: true,
   metafile: true,
-  format: 'esm',
+  format: "esm",
   minify: true,
   sourcemap: false,
-  target: ['es2022'],
+  target: ["es2022"],
   define: {
-    __WEBUI_DEV__: 'false'
+    __WEBUI_DEV__: "false",
   },
-  legalComments: 'inline',
-  loader: { '.ttf': 'dataurl' },
-  plugins: [esbuildProjection()]
+  legalComments: "inline",
+  loader: { ".ttf": "dataurl" },
+  plugins: [esbuildProjection()],
 });
 
 const outputs = { ...client.metafile.outputs };
 for (const [entryPoint, outfile] of [
-  ['node_modules/monaco-editor/esm/vs/editor/editor.worker.js', 'monaco-editor.worker.js'],
-  ['node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js', 'monaco-ts.worker.js'],
-  ['node_modules/monaco-editor/esm/vs/language/json/json.worker.js', 'monaco-json.worker.js'],
-  ['node_modules/monaco-editor/esm/vs/language/css/css.worker.js', 'monaco-css.worker.js'],
-  ['node_modules/monaco-editor/esm/vs/language/html/html.worker.js', 'monaco-html.worker.js'],
+  ["node_modules/monaco-editor/esm/vs/editor/editor.worker.js", "monaco-editor.worker.js"],
+  ["node_modules/monaco-editor/esm/vs/language/typescript/ts.worker.js", "monaco-ts.worker.js"],
+  ["node_modules/monaco-editor/esm/vs/language/json/json.worker.js", "monaco-json.worker.js"],
+  ["node_modules/monaco-editor/esm/vs/language/css/css.worker.js", "monaco-css.worker.js"],
+  ["node_modules/monaco-editor/esm/vs/language/html/html.worker.js", "monaco-html.worker.js"],
 ]) {
   const worker = await esbuild.build({
     absWorkingDir: workingDirectory,
     entryPoints: [join(workingDirectory, entryPoint)],
     outfile: join(outputDirectory, outfile),
     bundle: true,
-    format: 'esm',
+    format: "esm",
     minify: true,
     sourcemap: false,
-    target: ['es2022'],
-    legalComments: 'inline',
+    target: ["es2022"],
+    legalComments: "inline",
     metafile: true,
   });
   Object.assign(outputs, worker.metafile.outputs);
@@ -66,17 +69,39 @@ for (const [entryPoint, outfile] of [
 
 // The native origin embeds only the current bundler outputs, including dynamic chunks.
 // Split roots each receive an identical CSS output; templates load the Monaco entry once.
-const assets = Object.entries(outputs).filter(([file]) => !file.endsWith('.css') || file.endsWith('/monaco.css')).map(([file, metadata]) => {
-  const name = relative(outputDirectory, resolve(workingDirectory, file)).replaceAll('\\', '/');
-  if (!/^(?:chunks\/)?[a-zA-Z0-9_.-]+\.(?:js|css)$/.test(name)) throw new Error('Unsafe client asset path: ' + name);
-  return { path: '/' + name, file: name, contentType: name.endsWith('.css') ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8', bytes: metadata.bytes };
-}).sort((a, b) => a.path.localeCompare(b.path));
-assets.push({path:'/credits.json',file:'credits.json',contentType:'application/json; charset=utf-8',bytes:(await readFile(join(outputDirectory,'credits.json'))).length});
-await writeFile(join(outputDirectory, 'client-assets.json'), JSON.stringify(assets, null, 2) + '\n');
-await writeFile(join(outputDirectory, 'client-metafile.json'), JSON.stringify(client.metafile, null, 2) + '\n');
-await copyFile(join(workingDirectory, 'src/document.css'), join(outputDirectory, 'document.css'));
+const assets = Object.entries(outputs)
+  .filter(([file]) => !file.endsWith(".css") || file.endsWith("/monaco.css"))
+  .map(([file, metadata]) => {
+    const name = relative(outputDirectory, resolve(workingDirectory, file)).replaceAll("\\", "/");
+    if (!/^(?:chunks\/)?[a-zA-Z0-9_.-]+\.(?:js|css)$/.test(name))
+      throw new Error("Unsafe client asset path: " + name);
+    return {
+      path: "/" + name,
+      file: name,
+      contentType: name.endsWith(".css")
+        ? "text/css; charset=utf-8"
+        : "text/javascript; charset=utf-8",
+      bytes: metadata.bytes,
+    };
+  })
+  .sort((a, b) => a.path.localeCompare(b.path));
+assets.push({
+  path: "/credits.json",
+  file: "credits.json",
+  contentType: "application/json; charset=utf-8",
+  bytes: (await readFile(join(outputDirectory, "credits.json"))).length,
+});
+await writeFile(
+  join(outputDirectory, "client-assets.json"),
+  JSON.stringify(assets, null, 2) + "\n",
+);
+await writeFile(
+  join(outputDirectory, "client-metafile.json"),
+  JSON.stringify(client.metafile, null, 2) + "\n",
+);
+await copyFile(join(workingDirectory, "src/document.css"), join(outputDirectory, "document.css"));
 
 await copyFile(
-  join(workingDirectory, '../icons/icon.svg'),
-  join(outputDirectory, 'transmog-icon.svg')
+  join(workingDirectory, "../icons/icon.svg"),
+  join(outputDirectory, "transmog-icon.svg"),
 );

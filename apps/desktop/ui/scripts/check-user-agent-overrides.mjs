@@ -1,92 +1,320 @@
-import {newTrafficRule} from './check-unified-rules.mjs';
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
+import { newTrafficRule } from "./check-unified-rules.mjs";
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
 
-export async function checkUserAgentOverrides(page,root) {
-  await page.evaluate(()=>{const shell=document.querySelector('app-shell');globalThis.__uaOriginal={state:structuredClone(globalThis.__workspaceFixture.automation??{generation:0,rules:[],autoresponsesEnabled:true,diagnostics:[],usage:[],candidateCount:0,historyCount:0}),scriptGeneration:shell.scriptGeneration,scriptCount:shell.enabledScriptCount};});
-  await page.evaluate(()=>document.querySelector('app-shell').automation.showAutomationSection('headers'));
-  await page.locator('user-agent-overrides .ua-order > summary').click();
-  const editor=page.locator('user-agent-overrides'),field=name=>editor.locator('[name="'+name+'"]');
-  const rows=()=>editor.locator('.ua-list-row');
-  const settled=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('automation-workspace').userAgentOverrides.uaBusy);
-  const sorted=()=>page.evaluate(()=>globalThis.__workspaceFixture.automation.rules.filter(rule=>rule.request.userAgent).sort((a,b)=>a.priority-b.priority||a.id.localeCompare(b.id)).map(rule=>({id:rule.id,name:rule.displayName,priority:rule.priority,enabled:rule.enabled,policy:rule.request.userAgent})));
-  const named=name=>rows().filter({has:page.getByText(name,{exact:true})});
-  await editor.getByText('No User-Agent overrides. Add one to choose a browser preset or enter your own value.',{exact:true}).waitFor();
-  await newTrafficRule(page,'Change UA headers…');
-  assert.equal(await editor.getByLabel('User-Agent preset',{exact:true}).locator('option').count(),49);
-  const edge=await editor.getByLabel('User-Agent preset',{exact:true}).locator('option').evaluateAll(options=>options.find(option=>/Edge.*Windows/.test(option.textContent))?.value);
-  assert.ok(edge,'The supplied Edge Windows preset is absent');
-  await field('uaName').fill('Edge desktop');await field('uaHost').fill('example.test');await field('uaPath').fill('/api');
-  await editor.getByLabel('User-Agent preset',{exact:true}).selectOption(edge);
-  assert.match(await field('uaValue').inputValue(),/Edg\/%s/,'Choosing a preset did not update the native textarea value');
-  assert.equal(await editor.getByLabel('Client hint policy',{exact:true}).inputValue(),'override');
-  await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();
-  assert.equal((await sorted()).length,1);assert.match((await sorted())[0].policy.clientHints['Sec-CH-UA'],/Microsoft Edge/);
-  assert.equal((await sorted())[0].policy.versionOverride,null);
-  const originalId=(await sorted())[0].id;
-  await newTrafficRule(page,'Change UA headers…');
-  await field('uaName').fill('Scoped custom');await field('uaHost').fill('other.test');await field('uaPath').fill('/private');await field('uaValue').fill('Custom/5.0');await field('uaVersion').fill('155');
-  await editor.getByLabel('Client hint policy',{exact:true}).selectOption('strip');
-  await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();assert.equal((await sorted()).length,2);
-  assert.equal((await sorted())[1].policy.stripClientHints,true);
-  await newTrafficRule(page,'Change UA headers…');
-  await field('uaName').fill('Replacement');await field('uaHost').fill('EXAMPLE.TEST');await field('uaPath').fill('/api');await field('uaValue').fill('Replacement/1.0');
-  await editor.getByRole('button',{name:'Save and enable',exact:true}).click();
-  const duplicate=editor.locator('.ua-duplicate-dialog[open]');await duplicate.getByText('Edge desktop',{exact:false}).waitFor();
-  await duplicate.getByRole('button',{name:'Keep existing override',exact:true}).click();await settled();
-  assert.equal((await sorted())[0].name,'Edge desktop');assert.equal(await field('uaValue').inputValue(),'Replacement/1.0');
-  assert.equal(await editor.getByRole('button',{name:'Save rule',exact:true}).evaluate(node=>node===node.getRootNode().activeElement),true);
-  await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await duplicate.getByRole('button',{name:'Replace override',exact:true}).click();await settled();
-  assert.equal((await sorted()).length,2);assert.equal((await sorted())[0].id,originalId);assert.equal((await sorted())[0].name,'Replacement');
-  const badge=page.locator('app-shell a[data-view="automation"] .nav-count');assert.equal(await badge.textContent(),'2');
-  assert.equal(await page.locator('.catalog-rule rule-activation button[aria-pressed="true"]').count(),2);
-  await named('Replacement').getByRole('button',{name:'Disable',exact:true}).click();await settled();assert.equal(await badge.textContent(),'1');
-  await named('Replacement').getByRole('button',{name:'Enable',exact:true}).click();await settled();assert.equal(await badge.textContent(),'2');
-  await named('Replacement').getByRole('button',{name:'Move Replacement down',exact:true}).click();await settled();assert.deepEqual((await sorted()).map(rule=>rule.name),['Scoped custom','Replacement']);
-  const target=named('Replacement'),bounds=await target.boundingBox();
-  await named('Scoped custom').locator('.ua-drag').dragTo(target,{targetPosition:{x:bounds.width/2,y:bounds.height-5}});await settled();
-  assert.deepEqual((await sorted()).map(rule=>rule.name),['Replacement','Scoped custom'],'Drag/drop cannot move the first override after the last');
-  await named('Replacement').locator('.ua-select').click();await field('uaValue').fill('Draft to keep');
-  await named('Replacement').getByRole('button',{name:'Move Replacement down',exact:true}).click();await settled();assert.equal(await field('uaValue').inputValue(),'Draft to keep');
-  await named('Scoped custom').locator('.ua-select').click();await editor.locator('.ua-unsaved').getByRole('button',{name:'Discard changes',exact:true}).click();
-  await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settled();assert.equal((await sorted()).length,1);
-  await editor.getByRole('button',{name:'Undo deletion',exact:true}).click();await settled();assert.equal((await sorted()).length,2);
-  assert.equal((await sorted()).find(rule=>rule.name==='Scoped custom').policy.stripClientHints,true);
-  const addRule=async(name,path)=>{await newTrafficRule(page,'Change UA headers…');await field('uaName').fill(name);await field('uaHost').fill('example.test');await field('uaPath').fill(path);await field('uaValue').fill(name+'/1.0');await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();};
-  await addRule('Broad fallback','/');
-  await named('Replacement').locator('.ua-select').click();await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settled();
-  await addRule('New scoped','/new');
-  const afterDeletion=await sorted();
-  assert.deepEqual(afterDeletion.map(rule=>rule.name),['Scoped custom','Broad fallback','New scoped'],'Adding after deleting a middle rule changed explicit precedence');
-  assert.equal(new Set(afterDeletion.map(rule=>rule.priority)).size,3,'New rules reused an existing priority');
-  assert.deepEqual(await editor.locator('.ua-select strong').allTextContents(),afterDeletion.map(rule=>rule.name),'Displayed order differs from persisted order');
-  await field('uaPath').fill('/');await editor.getByRole('button',{name:'Save rule',exact:true}).click();
-  await duplicate.getByRole('button',{name:'Replace override',exact:true}).click();await settled();
-  assert.deepEqual((await sorted()).map(rule=>rule.name),['Scoped custom','New scoped'],'Replacing an earlier duplicate moved its position');
-  await newTrafficRule(page,'Change UA headers…');
-  await field('uaName').fill('Googlebook');await field('uaHost').fill('googlebook.test');
-  const googlebook=await editor.getByLabel('User-Agent preset',{exact:true}).locator('option').evaluateAll(options=>options.find(option=>option.textContent==='Chrome — Googlebook')?.value);
-  assert.ok(googlebook);await editor.getByLabel('User-Agent preset',{exact:true}).selectOption(googlebook);
-  const platformVersion=editor.getByLabel('Sec-CH-UA-Platform-Version value',{exact:true});
-  const android=await page.evaluate(()=>{const now=new Date();return now.getFullYear()-(now.getMonth()>=9?2010:2011);});
-  assert.equal(await platformVersion.inputValue(),`"${android}.0.0"`);
-  await editor.getByRole('button',{name:'Save and enable',exact:true}).click();await settled();
-  assert.equal(await editor.getByLabel('User-Agent preset',{exact:true}).inputValue(),googlebook,'Saving Googlebook changed its preset to Chrome OS, which shares its UA template');
-  await platformVersion.fill('"14.2.0"');await editor.getByRole('button',{name:'Save rule',exact:true}).click();await settled();
-  assert.equal(await platformVersion.inputValue(),'"14.2.0"','Saving replaced the explicit platform version with the dynamic default');
-  await editor.getByRole('button',{name:'Remove rule',exact:true}).click();await settled();
-  await page.evaluate(()=>{const shell=document.querySelector('app-shell'),state=globalThis.__workspaceFixture;const rule=structuredClone(state.automation.rules[0]);rule.id='ua-test-autoresponse';rule.request.userAgent=null;rule.request.responseAsset='test@1';state.automation.rules.push(rule);shell.onAutomationState(new CustomEvent('automation-state-change',{detail:structuredClone(state.automation)}));});
-  assert.equal(await badge.textContent(),'3','Saved responses must contribute to the automation badge');
-  await page.evaluate(()=>document.querySelector('app-shell').onScriptActivity(new CustomEvent('script-activity-change',{detail:{generation:100,activeCount:1}})));
-  assert.equal(await badge.textContent(),'4');
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/user-agent-wide.png')});
-  await page.setViewportSize({width:760,height:520});
-  const save=editor.getByRole('button',{name:'Save rule',exact:true});
-  assert.equal(await save.evaluate(node=>{node.scrollIntoView({block:'nearest'});const rect=node.getBoundingClientRect();return rect.bottom<=innerHeight&&node.getRootNode().elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)===node;}),true,'The compact UA editor hides its primary action');
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/user-agent-compact.png')});
-  await page.setViewportSize({width:1280,height:800});
-  await field('uaValue').fill('Draft after failure');await page.evaluate(()=>globalThis.__workspaceFixture.uaRejectValidation=true);
-  await save.click();await settled();assert.equal(await field('uaValue').inputValue(),'Draft after failure');assert.match(await editor.locator('.ua-status').textContent(),/could not be saved/);
-  await page.evaluate(async()=>{const shell=document.querySelector('app-shell'),state=globalThis.__workspaceFixture,original=globalThis.__uaOriginal;delete state.uaRejectValidation;state.automation={...original.state,generation:state.automation.generation+1};shell.scriptGeneration=original.scriptGeneration;shell.enabledScriptCount=original.scriptCount;shell.onAutomationState(new CustomEvent('automation-state-change',{detail:structuredClone(state.automation)}));const component=shell.automation.userAgentOverrides;component.uaDirty=false;component.uaEditing=false;component.uaSelectedId='';component.uaStateChanged();delete globalThis.__uaOriginal;});
-  await page.locator('automation-workspace .workspace-tabs').getByRole('button',{name:'Rules',exact:true}).click();
+export async function checkUserAgentOverrides(page, root) {
+  await page.evaluate(() => {
+    const shell = document.querySelector("app-shell");
+    globalThis.__uaOriginal = {
+      state: structuredClone(
+        globalThis.__workspaceFixture.automation ?? {
+          generation: 0,
+          rules: [],
+          autoresponsesEnabled: true,
+          diagnostics: [],
+          usage: [],
+          candidateCount: 0,
+          historyCount: 0,
+        },
+      ),
+      scriptGeneration: shell.scriptGeneration,
+      scriptCount: shell.enabledScriptCount,
+    };
+  });
+  await page.evaluate(() =>
+    document.querySelector("app-shell").automation.showAutomationSection("headers"),
+  );
+  await page.locator("user-agent-overrides .ua-order > summary").click();
+  const editor = page.locator("user-agent-overrides"),
+    field = (name) => editor.locator('[name="' + name + '"]');
+  const rows = () => editor.locator(".ua-list-row");
+  const settled = () =>
+    page.waitForFunction(
+      () =>
+        !document.querySelector("app-shell").shadowRoot.querySelector("automation-workspace")
+          .userAgentOverrides.uaBusy,
+    );
+  const sorted = () =>
+    page.evaluate(() =>
+      globalThis.__workspaceFixture.automation.rules
+        .filter((rule) => rule.request.userAgent)
+        .sort((a, b) => a.priority - b.priority || a.id.localeCompare(b.id))
+        .map((rule) => ({
+          id: rule.id,
+          name: rule.displayName,
+          priority: rule.priority,
+          enabled: rule.enabled,
+          policy: rule.request.userAgent,
+        })),
+    );
+  const named = (name) => rows().filter({ has: page.getByText(name, { exact: true }) });
+  await editor
+    .getByText(
+      "No User-Agent overrides. Add one to choose a browser preset or enter your own value.",
+      { exact: true },
+    )
+    .waitFor();
+  await newTrafficRule(page, "Change UA headers…");
+  assert.equal(
+    await editor.getByLabel("User-Agent preset", { exact: true }).locator("option").count(),
+    49,
+  );
+  const edge = await editor
+    .getByLabel("User-Agent preset", { exact: true })
+    .locator("option")
+    .evaluateAll(
+      (options) => options.find((option) => /Edge.*Windows/.test(option.textContent))?.value,
+    );
+  assert.ok(edge, "The supplied Edge Windows preset is absent");
+  await field("uaName").fill("Edge desktop");
+  await field("uaHost").fill("example.test");
+  await field("uaPath").fill("/api");
+  await editor.getByLabel("User-Agent preset", { exact: true }).selectOption(edge);
+  assert.match(
+    await field("uaValue").inputValue(),
+    /Edg\/%s/,
+    "Choosing a preset did not update the native textarea value",
+  );
+  assert.equal(
+    await editor.getByLabel("Client hint policy", { exact: true }).inputValue(),
+    "override",
+  );
+  await editor.getByRole("button", { name: "Save and enable", exact: true }).click();
+  await settled();
+  assert.equal((await sorted()).length, 1);
+  assert.match((await sorted())[0].policy.clientHints["Sec-CH-UA"], /Microsoft Edge/);
+  assert.equal((await sorted())[0].policy.versionOverride, null);
+  const originalId = (await sorted())[0].id;
+  await newTrafficRule(page, "Change UA headers…");
+  await field("uaName").fill("Scoped custom");
+  await field("uaHost").fill("other.test");
+  await field("uaPath").fill("/private");
+  await field("uaValue").fill("Custom/5.0");
+  await field("uaVersion").fill("155");
+  await editor.getByLabel("Client hint policy", { exact: true }).selectOption("strip");
+  await editor.getByRole("button", { name: "Save and enable", exact: true }).click();
+  await settled();
+  assert.equal((await sorted()).length, 2);
+  assert.equal((await sorted())[1].policy.stripClientHints, true);
+  await newTrafficRule(page, "Change UA headers…");
+  await field("uaName").fill("Replacement");
+  await field("uaHost").fill("EXAMPLE.TEST");
+  await field("uaPath").fill("/api");
+  await field("uaValue").fill("Replacement/1.0");
+  await editor.getByRole("button", { name: "Save and enable", exact: true }).click();
+  const duplicate = editor.locator(".ua-duplicate-dialog[open]");
+  await duplicate.getByText("Edge desktop", { exact: false }).waitFor();
+  await duplicate.getByRole("button", { name: "Keep existing override", exact: true }).click();
+  await settled();
+  assert.equal((await sorted())[0].name, "Edge desktop");
+  assert.equal(await field("uaValue").inputValue(), "Replacement/1.0");
+  assert.equal(
+    await editor
+      .getByRole("button", { name: "Save rule", exact: true })
+      .evaluate((node) => node === node.getRootNode().activeElement),
+    true,
+  );
+  await editor.getByRole("button", { name: "Save and enable", exact: true }).click();
+  await duplicate.getByRole("button", { name: "Replace override", exact: true }).click();
+  await settled();
+  assert.equal((await sorted()).length, 2);
+  assert.equal((await sorted())[0].id, originalId);
+  assert.equal((await sorted())[0].name, "Replacement");
+  const badge = page.locator('app-shell a[data-view="automation"] .nav-count');
+  assert.equal(await badge.textContent(), "2");
+  assert.equal(
+    await page.locator('.catalog-rule rule-activation button[aria-pressed="true"]').count(),
+    2,
+  );
+  await named("Replacement").getByRole("button", { name: "Disable", exact: true }).click();
+  await settled();
+  assert.equal(await badge.textContent(), "1");
+  await named("Replacement").getByRole("button", { name: "Enable", exact: true }).click();
+  await settled();
+  assert.equal(await badge.textContent(), "2");
+  await named("Replacement")
+    .getByRole("button", { name: "Move Replacement down", exact: true })
+    .click();
+  await settled();
+  assert.deepEqual(
+    (await sorted()).map((rule) => rule.name),
+    ["Scoped custom", "Replacement"],
+  );
+  const target = named("Replacement"),
+    bounds = await target.boundingBox();
+  await named("Scoped custom")
+    .locator(".ua-drag")
+    .dragTo(target, { targetPosition: { x: bounds.width / 2, y: bounds.height - 5 } });
+  await settled();
+  assert.deepEqual(
+    (await sorted()).map((rule) => rule.name),
+    ["Replacement", "Scoped custom"],
+    "Drag/drop cannot move the first override after the last",
+  );
+  await named("Replacement").locator(".ua-select").click();
+  await field("uaValue").fill("Draft to keep");
+  await named("Replacement")
+    .getByRole("button", { name: "Move Replacement down", exact: true })
+    .click();
+  await settled();
+  assert.equal(await field("uaValue").inputValue(), "Draft to keep");
+  await named("Scoped custom").locator(".ua-select").click();
+  await editor
+    .locator(".ua-unsaved")
+    .getByRole("button", { name: "Discard changes", exact: true })
+    .click();
+  await editor.getByRole("button", { name: "Remove rule", exact: true }).click();
+  await settled();
+  assert.equal((await sorted()).length, 1);
+  await editor.getByRole("button", { name: "Undo deletion", exact: true }).click();
+  await settled();
+  assert.equal((await sorted()).length, 2);
+  assert.equal(
+    (await sorted()).find((rule) => rule.name === "Scoped custom").policy.stripClientHints,
+    true,
+  );
+  const addRule = async (name, path) => {
+    await newTrafficRule(page, "Change UA headers…");
+    await field("uaName").fill(name);
+    await field("uaHost").fill("example.test");
+    await field("uaPath").fill(path);
+    await field("uaValue").fill(name + "/1.0");
+    await editor.getByRole("button", { name: "Save and enable", exact: true }).click();
+    await settled();
+  };
+  await addRule("Broad fallback", "/");
+  await named("Replacement").locator(".ua-select").click();
+  await editor.getByRole("button", { name: "Remove rule", exact: true }).click();
+  await settled();
+  await addRule("New scoped", "/new");
+  const afterDeletion = await sorted();
+  assert.deepEqual(
+    afterDeletion.map((rule) => rule.name),
+    ["Scoped custom", "Broad fallback", "New scoped"],
+    "Adding after deleting a middle rule changed explicit precedence",
+  );
+  assert.equal(
+    new Set(afterDeletion.map((rule) => rule.priority)).size,
+    3,
+    "New rules reused an existing priority",
+  );
+  assert.deepEqual(
+    await editor.locator(".ua-select strong").allTextContents(),
+    afterDeletion.map((rule) => rule.name),
+    "Displayed order differs from persisted order",
+  );
+  await field("uaPath").fill("/");
+  await editor.getByRole("button", { name: "Save rule", exact: true }).click();
+  await duplicate.getByRole("button", { name: "Replace override", exact: true }).click();
+  await settled();
+  assert.deepEqual(
+    (await sorted()).map((rule) => rule.name),
+    ["Scoped custom", "New scoped"],
+    "Replacing an earlier duplicate moved its position",
+  );
+  await newTrafficRule(page, "Change UA headers…");
+  await field("uaName").fill("Googlebook");
+  await field("uaHost").fill("googlebook.test");
+  const googlebook = await editor
+    .getByLabel("User-Agent preset", { exact: true })
+    .locator("option")
+    .evaluateAll(
+      (options) => options.find((option) => option.textContent === "Chrome — Googlebook")?.value,
+    );
+  assert.ok(googlebook);
+  await editor.getByLabel("User-Agent preset", { exact: true }).selectOption(googlebook);
+  const platformVersion = editor.getByLabel("Sec-CH-UA-Platform-Version value", { exact: true });
+  const android = await page.evaluate(() => {
+    const now = new Date();
+    return now.getFullYear() - (now.getMonth() >= 9 ? 2010 : 2011);
+  });
+  assert.equal(await platformVersion.inputValue(), `"${android}.0.0"`);
+  await editor.getByRole("button", { name: "Save and enable", exact: true }).click();
+  await settled();
+  assert.equal(
+    await editor.getByLabel("User-Agent preset", { exact: true }).inputValue(),
+    googlebook,
+    "Saving Googlebook changed its preset to Chrome OS, which shares its UA template",
+  );
+  await platformVersion.fill('"14.2.0"');
+  await editor.getByRole("button", { name: "Save rule", exact: true }).click();
+  await settled();
+  assert.equal(
+    await platformVersion.inputValue(),
+    '"14.2.0"',
+    "Saving replaced the explicit platform version with the dynamic default",
+  );
+  await editor.getByRole("button", { name: "Remove rule", exact: true }).click();
+  await settled();
+  await page.evaluate(() => {
+    const shell = document.querySelector("app-shell"),
+      state = globalThis.__workspaceFixture;
+    const rule = structuredClone(state.automation.rules[0]);
+    rule.id = "ua-test-autoresponse";
+    rule.request.userAgent = null;
+    rule.request.responseAsset = "test@1";
+    state.automation.rules.push(rule);
+    shell.onAutomationState(
+      new CustomEvent("automation-state-change", { detail: structuredClone(state.automation) }),
+    );
+  });
+  assert.equal(
+    await badge.textContent(),
+    "3",
+    "Saved responses must contribute to the automation badge",
+  );
+  await page.evaluate(() =>
+    document
+      .querySelector("app-shell")
+      .onScriptActivity(
+        new CustomEvent("script-activity-change", { detail: { generation: 100, activeCount: 1 } }),
+      ),
+  );
+  assert.equal(await badge.textContent(), "4");
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/user-agent-wide.png") });
+  await page.setViewportSize({ width: 760, height: 520 });
+  const save = editor.getByRole("button", { name: "Save rule", exact: true });
+  assert.equal(
+    await save.evaluate((node) => {
+      node.scrollIntoView({ block: "nearest" });
+      const rect = node.getBoundingClientRect();
+      return (
+        rect.bottom <= innerHeight &&
+        node.getRootNode().elementFromPoint(rect.x + rect.width / 2, rect.y + rect.height / 2) ===
+          node
+      );
+    }),
+    true,
+    "The compact UA editor hides its primary action",
+  );
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/user-agent-compact.png") });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await field("uaValue").fill("Draft after failure");
+  await page.evaluate(() => (globalThis.__workspaceFixture.uaRejectValidation = true));
+  await save.click();
+  await settled();
+  assert.equal(await field("uaValue").inputValue(), "Draft after failure");
+  assert.match(await editor.locator(".ua-status").textContent(), /could not be saved/);
+  await page.evaluate(async () => {
+    const shell = document.querySelector("app-shell"),
+      state = globalThis.__workspaceFixture,
+      original = globalThis.__uaOriginal;
+    delete state.uaRejectValidation;
+    state.automation = { ...original.state, generation: state.automation.generation + 1 };
+    shell.scriptGeneration = original.scriptGeneration;
+    shell.enabledScriptCount = original.scriptCount;
+    shell.onAutomationState(
+      new CustomEvent("automation-state-change", { detail: structuredClone(state.automation) }),
+    );
+    const component = shell.automation.userAgentOverrides;
+    component.uaDirty = false;
+    component.uaEditing = false;
+    component.uaSelectedId = "";
+    component.uaStateChanged();
+    delete globalThis.__uaOriginal;
+  });
+  await page
+    .locator("automation-workspace .workspace-tabs")
+    .getByRole("button", { name: "Rules", exact: true })
+    .click();
 }

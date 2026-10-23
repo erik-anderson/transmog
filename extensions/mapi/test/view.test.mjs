@@ -3,12 +3,24 @@ import { test } from "node:test";
 import { present } from "../dist/view.js";
 
 test("only a complete interpretation of final input opts out of future updates", () => {
-  const root = {name:"Packet", type:"Packet", range:{sourceId:"body",offset:0,length:1}, children:[]};
-  const decoded = {root, derivedSources:[]};
-  assert.equal(present(decoded, [["body",1]], "Packet", []).step.document.updates, undefined);
-  const final = present(decoded, [["body",1]], "Packet", [], undefined, true);
+  const root = {
+    name: "Packet",
+    type: "Packet",
+    range: { sourceId: "body", offset: 0, length: 1 },
+    children: [],
+  };
+  const decoded = { root, derivedSources: [] };
+  assert.equal(present(decoded, [["body", 1]], "Packet", []).step.document.updates, undefined);
+  const final = present(decoded, [["body", 1]], "Packet", [], undefined, true);
   assert.equal(final.step.document.updates, "final");
-  const partial = present(decoded, [["body",1]], "Packet", [{code:"missing-context",message:"Earlier data is missing."}], undefined, true);
+  const partial = present(
+    decoded,
+    [["body", 1]],
+    "Packet",
+    [{ code: "missing-context", message: "Earlier data is missing." }],
+    undefined,
+    true,
+  );
   assert.equal(partial.step.document.updates, undefined);
 });
 

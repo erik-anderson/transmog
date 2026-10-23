@@ -1,109 +1,923 @@
-import assert from 'node:assert/strict';
-import {mkdir} from 'node:fs/promises';
-import {resolve} from 'node:path';
+import assert from "node:assert/strict";
+import { mkdir } from "node:fs/promises";
+import { resolve } from "node:path";
 
-export async function checkResponseSetWorkspaces(page,root) {
-  page.setDefaultTimeout(15000);await page.goto('https://workspace.test/');
-  await page.getByRole('link',{name:/Automation/}).click();
-  await page.waitForFunction(()=>!!document.querySelector('app-shell').automation.autoresponseState);
-  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.automation=structuredClone(document.querySelector('app-shell').automation.autoresponseState);state.automation.responseSets=[];});
-  const workspace=page.locator('automation-workspace'),sets=workspace.locator('response-set-workspace'),editor=workspace.locator('.auto-response-editor'),dialog=sets.locator('.set-create-dialog');
-  await workspace.locator('.workspace-tabs').getByRole('button',{name:'Response sets',exact:true}).click();
-  assert.equal(await sets.getByText('Keep useful debugging work together.',{exact:false}).isVisible(),true);
-  await sets.getByRole('button',{name:'New response set…',exact:true}).focus();await page.keyboard.press('Enter');
-  await dialog.getByLabel('Response set name',{exact:true}).fill('Checkout validation');await dialog.getByLabel('Notes',{exact:true}).fill('Keep the checkout task and its context together.');
-  await dialog.getByRole('button',{name:'Create response set',exact:true}).click();
-  await page.waitForFunction(()=>document.querySelector('app-shell').automation.collectionOpen);
-  assert.equal(await sets.locator('.response-set-current').getByLabel('Response set name',{exact:true}).inputValue(),'Checkout validation');
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules),[],'Empty creation required a captured response');
-  const originalLive=await page.evaluate(()=>JSON.stringify(globalThis.__workspaceFixture.automation.rules));
-  const add=async(source)=>{const count=await page.evaluate(()=>document.querySelector('app-shell').automation.responseSets.draftRules.length);await sets.getByRole('button',{name:'Add responses…',exact:true}).click();await sets.locator('#set-add-menu').getByRole('button',{name:source,exact:true}).click();await page.waitForFunction(count=>document.querySelector('app-shell').automation.responseSets.draftRules.length===count+1,count);await editor.waitFor({state:'visible'});};
-  await add('Create from scratch…');await editor.getByLabel('Response name',{exact:true}).fill('Checkout response');await editor.getByLabel('Matching address',{exact:true}).fill('https://example.test/checkout');await editor.locator('[name="body"]').fill('first body\r\nwith exact bytes');
-  await add('Create from scratch…');await editor.getByLabel('Response name',{exact:true}).fill('Account response');await editor.getByLabel('Matching address',{exact:true}).fill('https://example.test/account');await editor.locator('[name="body"]').fill('second body');
-  await sets.getByRole('button',{name:'Checkout response',exact:true}).click();
-  assert.equal(await editor.locator('[name="body"]').inputValue(),'first body\nwith exact bytes','Changing response lost a pending body');
-  await editor.getByText('Request header conditions',{exact:true}).click();await editor.locator('[name="requestHeaders"]').fill('invalid header');await sets.getByRole('button',{name:'Account response',exact:true}).click();await sets.getByRole('button',{name:'Checkout response',exact:true}).click();
-  assert.equal(await editor.locator('[name="requestHeaders"]').inputValue(),'invalid header','Invalid unfinished input did not survive selection');await editor.locator('[name="requestHeaders"]').fill('');
-  await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).fill('Updated notes saved with both pending responses.');
-  assert.equal(await page.evaluate(()=>JSON.stringify(globalThis.__workspaceFixture.automation.rules)),originalLive,'Draft authoring changed live traffic');
-  await editor.getByLabel('Response name',{exact:true}).press('Control+s');
-  await page.waitForFunction(()=>{const w=document.querySelector('app-shell').automation;return !w.responseSets.busy&&!w.responseSets.dirty;});
-  const saved=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation.responseSets[0]));
-  assert.equal(saved.rules.length,2);assert.equal(saved.notes,'Updated notes saved with both pending responses.');assert.deepEqual(saved.rules.map(rule=>rule.displayName),['Checkout response','Account response']);
-  assert.equal(await sets.locator('.response-set-current').getByLabel('Response set name',{exact:true}).inputValue(),'Checkout validation','Save navigated out of current set');
-  assert.equal(await editor.getByLabel('Response name',{exact:true}).inputValue(),'Checkout response');
-  await sets.getByRole('button',{name:'Account response',exact:true}).click();assert.equal(await editor.locator('[name="body"]').inputValue(),'second body');
+export async function checkResponseSetWorkspaces(page, root) {
+  page.setDefaultTimeout(15000);
+  await page.goto("https://workspace.test/");
+  await page.getByRole("link", { name: /Automation/ }).click();
+  await page.waitForFunction(
+    () => !!document.querySelector("app-shell").automation.autoresponseState,
+  );
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.automation = structuredClone(
+      document.querySelector("app-shell").automation.autoresponseState,
+    );
+    state.automation.responseSets = [];
+  });
+  const workspace = page.locator("automation-workspace"),
+    sets = workspace.locator("response-set-workspace"),
+    editor = workspace.locator(".auto-response-editor"),
+    dialog = sets.locator(".set-create-dialog");
+  await workspace
+    .locator(".workspace-tabs")
+    .getByRole("button", { name: "Response sets", exact: true })
+    .click();
+  assert.equal(
+    await sets.getByText("Keep useful debugging work together.", { exact: false }).isVisible(),
+    true,
+  );
+  await sets.getByRole("button", { name: "New response set…", exact: true }).focus();
+  await page.keyboard.press("Enter");
+  await dialog.getByLabel("Response set name", { exact: true }).fill("Checkout validation");
+  await dialog
+    .getByLabel("Notes", { exact: true })
+    .fill("Keep the checkout task and its context together.");
+  await dialog.getByRole("button", { name: "Create response set", exact: true }).click();
+  await page.waitForFunction(() => document.querySelector("app-shell").automation.collectionOpen);
+  assert.equal(
+    await sets
+      .locator(".response-set-current")
+      .getByLabel("Response set name", { exact: true })
+      .inputValue(),
+    "Checkout validation",
+  );
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.automation.responseSets[0].rules),
+    [],
+    "Empty creation required a captured response",
+  );
+  const originalLive = await page.evaluate(() =>
+    JSON.stringify(globalThis.__workspaceFixture.automation.rules),
+  );
+  const add = async (source) => {
+    const count = await page.evaluate(
+      () => document.querySelector("app-shell").automation.responseSets.draftRules.length,
+    );
+    await sets.getByRole("button", { name: "Add responses…", exact: true }).click();
+    await sets.locator("#set-add-menu").getByRole("button", { name: source, exact: true }).click();
+    await page.waitForFunction(
+      (count) =>
+        document.querySelector("app-shell").automation.responseSets.draftRules.length === count + 1,
+      count,
+    );
+    await editor.waitFor({ state: "visible" });
+  };
+  await add("Create from scratch…");
+  await editor.getByLabel("Response name", { exact: true }).fill("Checkout response");
+  await editor
+    .getByLabel("Matching address", { exact: true })
+    .fill("https://example.test/checkout");
+  await editor.locator('[name="body"]').fill("first body\r\nwith exact bytes");
+  await add("Create from scratch…");
+  await editor.getByLabel("Response name", { exact: true }).fill("Account response");
+  await editor.getByLabel("Matching address", { exact: true }).fill("https://example.test/account");
+  await editor.locator('[name="body"]').fill("second body");
+  await sets.getByRole("button", { name: "Checkout response", exact: true }).click();
+  assert.equal(
+    await editor.locator('[name="body"]').inputValue(),
+    "first body\nwith exact bytes",
+    "Changing response lost a pending body",
+  );
+  await editor.getByText("Request header conditions", { exact: true }).click();
+  await editor.locator('[name="requestHeaders"]').fill("invalid header");
+  await sets.getByRole("button", { name: "Account response", exact: true }).click();
+  await sets.getByRole("button", { name: "Checkout response", exact: true }).click();
+  assert.equal(
+    await editor.locator('[name="requestHeaders"]').inputValue(),
+    "invalid header",
+    "Invalid unfinished input did not survive selection",
+  );
+  await editor.locator('[name="requestHeaders"]').fill("");
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("Updated notes saved with both pending responses.");
+  assert.equal(
+    await page.evaluate(() => JSON.stringify(globalThis.__workspaceFixture.automation.rules)),
+    originalLive,
+    "Draft authoring changed live traffic",
+  );
+  await editor.getByLabel("Response name", { exact: true }).press("Control+s");
+  await page.waitForFunction(() => {
+    const w = document.querySelector("app-shell").automation;
+    return !w.responseSets.busy && !w.responseSets.dirty;
+  });
+  const saved = await page.evaluate(() =>
+    structuredClone(globalThis.__workspaceFixture.automation.responseSets[0]),
+  );
+  assert.equal(saved.rules.length, 2);
+  assert.equal(saved.notes, "Updated notes saved with both pending responses.");
+  assert.deepEqual(
+    saved.rules.map((rule) => rule.displayName),
+    ["Checkout response", "Account response"],
+  );
+  assert.equal(
+    await sets
+      .locator(".response-set-current")
+      .getByLabel("Response set name", { exact: true })
+      .inputValue(),
+    "Checkout validation",
+    "Save navigated out of current set",
+  );
+  assert.equal(
+    await editor.getByLabel("Response name", { exact: true }).inputValue(),
+    "Checkout response",
+  );
+  await sets.getByRole("button", { name: "Account response", exact: true }).click();
+  assert.equal(await editor.locator('[name="body"]').inputValue(), "second body");
   // Reorder, inclusion and removal are collection draft operations.
-  await sets.getByRole('checkbox',{name:'Include Account response',exact:true}).uncheck();await sets.getByRole('button',{name:'Move Account response earlier',exact:true}).click();
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.map(rule=>rule.displayName)),['Checkout response','Account response']);
-  await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);
-  assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.map(rule=>[rule.displayName,rule.enabled])),[['Account response',false],['Checkout response',true]]);
-  await sets.getByRole('button',{name:'Remove Checkout response',exact:true}).click();await sets.getByRole('button',{name:'Discard changes',exact:true}).click();assert.equal(await sets.getByRole('button',{name:'Checkout response',exact:true}).count(),1);
+  await sets.getByRole("checkbox", { name: "Include Account response", exact: true }).uncheck();
+  await sets.getByRole("button", { name: "Move Account response earlier", exact: true }).click();
+  assert.deepEqual(
+    await page.evaluate(() =>
+      globalThis.__workspaceFixture.automation.responseSets[0].rules.map(
+        (rule) => rule.displayName,
+      ),
+    ),
+    ["Checkout response", "Account response"],
+  );
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      globalThis.__workspaceFixture.automation.responseSets[0].rules.map((rule) => [
+        rule.displayName,
+        rule.enabled,
+      ]),
+    ),
+    [
+      ["Account response", false],
+      ["Checkout response", true],
+    ],
+  );
+  await sets.getByRole("button", { name: "Remove Checkout response", exact: true }).click();
+  await sets.getByRole("button", { name: "Discard changes", exact: true }).click();
+  assert.equal(
+    await sets.getByRole("button", { name: "Checkout response", exact: true }).count(),
+    1,
+  );
   // A delayed save cannot claim moved focus, and saving all edits stays current.
-  await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).fill('Delayed save notes');await page.evaluate(()=>globalThis.__workspaceFixture.deferSetSave=true);await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.setSavePending);
-  const scripts=workspace.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true});await scripts.focus();await page.evaluate(()=>globalThis.__workspaceFixture.finishSetSave());await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.equal(await scripts.evaluate(node=>node.getRootNode().activeElement===node),true,'Delayed save stole moved focus');
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("Delayed save notes");
+  await page.evaluate(() => (globalThis.__workspaceFixture.deferSetSave = true));
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.setSavePending);
+  const scripts = workspace
+    .locator(".workspace-tabs")
+    .getByRole("button", { name: "Scripts", exact: true });
+  await scripts.focus();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishSetSave());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.equal(
+    await scripts.evaluate((node) => node.getRootNode().activeElement === node),
+    true,
+    "Delayed save stole moved focus",
+  );
   // Departure keeps all pending fields on Keep editing or Escape, and failure keeps them retryable.
-  await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).fill('Keep this draft');await sets.getByRole('button',{name:'← Response sets',exact:true}).click();const unsaved=workspace.locator('.unsaved-rule-dialog');await unsaved.waitFor({state:'visible'});await page.keyboard.press('Escape');assert.equal(await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).inputValue(),'Keep this draft');
-  await page.evaluate(()=>globalThis.__workspaceFixture.setReject=true);await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.match(await sets.locator('.set-current-header > p[role="alert"]').first().textContent(),/save failed/);assert.equal(await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).inputValue(),'Keep this draft');
-  await page.evaluate(()=>globalThis.__workspaceFixture.setReject=false);await sets.getByRole('button',{name:'Discard changes',exact:true}).click();
-  await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.bodyFile='C:/fixtures/a long folder/checkout response.txt';state.bodyFileText='Copied file body 😀';state.bodyFileBytes=22;});
-  await add('From file…');await page.waitForFunction(()=>!document.querySelector('app-shell').automation.fileChoiceBusy);await editor.getByLabel('Response name',{exact:true}).fill('Response from a file with a long descriptive name');await editor.getByLabel('Matching address',{exact:true}).fill('https://example.test/checkout/an-intentionally-long-resource-path?first=one&second=two');
-  assert.equal(await editor.getByLabel('File use',{exact:true}).inputValue(),'copy');await sets.getByRole('button',{name:'Account response',exact:true}).click();await sets.getByRole('button',{name:'Response from a file with a long descriptive name',exact:true}).click();assert.equal(await editor.getByLabel('File use',{exact:true}).inputValue(),'copy');
-  await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);const fileRule=await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.find(rule=>rule.displayName.startsWith('Response from a file')));const fileAsset=await page.evaluate(reference=>globalThis.__workspaceFixture.assets.find(asset=>asset.id+'@'+asset.revision===reference),fileRule.request.responseAsset);assert.equal(fileAsset.copiedFrom,'C:/fixtures/a long folder/checkout response.txt');assert.equal(fileAsset.linkedBody,null);
-  await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).fill('😀'.repeat(4097));await sets.getByRole('button',{name:'Save changes',exact:true}).click();assert.match(await sets.locator('.set-current-header > p[role="alert"]').first().textContent(),/16,384/);await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).fill('Repaired bounded notes');assert.equal(await sets.locator('.set-current-header > p[role="alert"]').first().isVisible(),false);await sets.getByRole('button',{name:'Discard changes',exact:true}).click();
-  const evidence=resolve(root,'../../../target/response-set-workspaces/phase2');await mkdir(evidence,{recursive:true});
-  for(const [width,height] of [[1440,900],[960,720],[800,600]]) {await page.setViewportSize({width,height});await sets.getByRole('button',{name:'Account response',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse);await editor.evaluate(form=>form.parentElement.scrollTop=0);await page.screenshot({path:resolve(evidence,`workspace-${width}.png`)});assert.equal(await sets.getByRole('button',{name:'Save changes',exact:true}).isVisible(),true);assert.equal(await editor.getByLabel('Response name',{exact:true}).isVisible(),true);assert.equal(await workspace.evaluate(node=>node.scrollWidth<=node.clientWidth+2),true,'Workspace clipped horizontally');}
-  await page.emulateMedia({forcedColors:'active'});await page.screenshot({path:resolve(evidence,'workspace-forced-colors.png')});await page.emulateMedia({forcedColors:'none'});
-  await page.evaluate(()=>document.documentElement.style.zoom='1.5');await page.screenshot({path:resolve(evidence,'workspace-zoom.png')});await page.evaluate(()=>document.documentElement.style.zoom='');
-  await sets.getByRole('button',{name:'← Response sets',exact:true}).click();await sets.getByLabel('Search response sets',{exact:true}).fill('checkout');assert.equal(await sets.getByRole('button',{name:'Checkout validation',exact:true}).count(),1);await sets.getByLabel('Search response sets',{exact:true}).fill('unmatched');assert.equal(await sets.getByText('No response sets match your search.',{exact:true}).isVisible(),true);
-  assert.equal(await page.evaluate(()=>JSON.stringify(globalThis.__workspaceFixture.automation.rules)),originalLive);
-  await sets.getByLabel('Search response sets',{exact:true}).fill('');await sets.getByRole('button',{name:'New response set…',exact:true}).click();await dialog.getByLabel('Response set name',{exact:true}).fill('Created without stealing focus');await page.evaluate(()=>globalThis.__workspaceFixture.holdCommand='change_response_set');await dialog.getByRole('button',{name:'Create response set',exact:true}).click();await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishHeldCommand);await dialog.getByRole('button',{name:'Close',exact:true}).focus();await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await page.waitForFunction(()=>document.querySelector('app-shell').automation.responseSets.createCompleted);assert.equal(await dialog.isVisible(),true);assert.equal(await dialog.getByRole('button',{name:'Close',exact:true}).evaluate(node=>node.getRootNode().activeElement===node),true);await page.screenshot({path:resolve(evidence,'create-completed-focus.png')});await dialog.getByRole('button',{name:'Open response set',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').automation.responseSets.setName==='Created without stealing focus');
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("Keep this draft");
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+  const unsaved = workspace.locator(".unsaved-rule-dialog");
+  await unsaved.waitFor({ state: "visible" });
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await sets.locator(".response-set-current").getByLabel("Notes", { exact: true }).inputValue(),
+    "Keep this draft",
+  );
+  await page.evaluate(() => (globalThis.__workspaceFixture.setReject = true));
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.match(
+    await sets.locator('.set-current-header > p[role="alert"]').first().textContent(),
+    /save failed/,
+  );
+  assert.equal(
+    await sets.locator(".response-set-current").getByLabel("Notes", { exact: true }).inputValue(),
+    "Keep this draft",
+  );
+  await page.evaluate(() => (globalThis.__workspaceFixture.setReject = false));
+  await sets.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.bodyFile = "C:/fixtures/a long folder/checkout response.txt";
+    state.bodyFileText = "Copied file body 😀";
+    state.bodyFileBytes = 22;
+  });
+  await add("From file…");
+  await page.waitForFunction(() => !document.querySelector("app-shell").automation.fileChoiceBusy);
+  await editor
+    .getByLabel("Response name", { exact: true })
+    .fill("Response from a file with a long descriptive name");
+  await editor
+    .getByLabel("Matching address", { exact: true })
+    .fill("https://example.test/checkout/an-intentionally-long-resource-path?first=one&second=two");
+  assert.equal(await editor.getByLabel("File use", { exact: true }).inputValue(), "copy");
+  await sets.getByRole("button", { name: "Account response", exact: true }).click();
+  await sets
+    .getByRole("button", { name: "Response from a file with a long descriptive name", exact: true })
+    .click();
+  assert.equal(await editor.getByLabel("File use", { exact: true }).inputValue(), "copy");
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  const fileRule = await page.evaluate(() =>
+    globalThis.__workspaceFixture.automation.responseSets[0].rules.find((rule) =>
+      rule.displayName.startsWith("Response from a file"),
+    ),
+  );
+  const fileAsset = await page.evaluate(
+    (reference) =>
+      globalThis.__workspaceFixture.assets.find(
+        (asset) => asset.id + "@" + asset.revision === reference,
+      ),
+    fileRule.request.responseAsset,
+  );
+  assert.equal(fileAsset.copiedFrom, "C:/fixtures/a long folder/checkout response.txt");
+  assert.equal(fileAsset.linkedBody, null);
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("😀".repeat(4097));
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  assert.match(
+    await sets.locator('.set-current-header > p[role="alert"]').first().textContent(),
+    /16,384/,
+  );
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("Repaired bounded notes");
+  assert.equal(
+    await sets.locator('.set-current-header > p[role="alert"]').first().isVisible(),
+    false,
+  );
+  await sets.getByRole("button", { name: "Discard changes", exact: true }).click();
+  const evidence = resolve(root, "../../../target/response-set-workspaces/phase2");
+  await mkdir(evidence, { recursive: true });
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await sets.getByRole("button", { name: "Account response", exact: true }).click();
+    await page.waitForFunction(
+      () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+    );
+    await editor.evaluate((form) => (form.parentElement.scrollTop = 0));
+    await page.screenshot({ path: resolve(evidence, `workspace-${width}.png`) });
+    assert.equal(
+      await sets.getByRole("button", { name: "Save changes", exact: true }).isVisible(),
+      true,
+    );
+    assert.equal(await editor.getByLabel("Response name", { exact: true }).isVisible(), true);
+    assert.equal(
+      await workspace.evaluate((node) => node.scrollWidth <= node.clientWidth + 2),
+      true,
+      "Workspace clipped horizontally",
+    );
+  }
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.screenshot({ path: resolve(evidence, "workspace-forced-colors.png") });
+  await page.emulateMedia({ forcedColors: "none" });
+  await page.evaluate(() => (document.documentElement.style.zoom = "1.5"));
+  await page.screenshot({ path: resolve(evidence, "workspace-zoom.png") });
+  await page.evaluate(() => (document.documentElement.style.zoom = ""));
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+  await sets.getByLabel("Search response sets", { exact: true }).fill("checkout");
+  assert.equal(
+    await sets.getByRole("button", { name: "Checkout validation", exact: true }).count(),
+    1,
+  );
+  await sets.getByLabel("Search response sets", { exact: true }).fill("unmatched");
+  assert.equal(
+    await sets.getByText("No response sets match your search.", { exact: true }).isVisible(),
+    true,
+  );
+  assert.equal(
+    await page.evaluate(() => JSON.stringify(globalThis.__workspaceFixture.automation.rules)),
+    originalLive,
+  );
+  await sets.getByLabel("Search response sets", { exact: true }).fill("");
+  await sets.getByRole("button", { name: "New response set…", exact: true }).click();
+  await dialog
+    .getByLabel("Response set name", { exact: true })
+    .fill("Created without stealing focus");
+  await page.evaluate(() => (globalThis.__workspaceFixture.holdCommand = "change_response_set"));
+  await dialog.getByRole("button", { name: "Create response set", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishHeldCommand);
+  await dialog.getByRole("button", { name: "Close", exact: true }).focus();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").automation.responseSets.createCompleted,
+  );
+  assert.equal(await dialog.isVisible(), true);
+  assert.equal(
+    await dialog
+      .getByRole("button", { name: "Close", exact: true })
+      .evaluate((node) => node.getRootNode().activeElement === node),
+    true,
+  );
+  await page.screenshot({ path: resolve(evidence, "create-completed-focus.png") });
+  await dialog.getByRole("button", { name: "Open response set", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").automation.responseSets.setName ===
+      "Created without stealing focus",
+  );
   // A refreshed status never advances the base token of an older local draft.
-  const base=await page.evaluate(()=>document.querySelector('app-shell').automation.responseSets.currentSelection());await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).fill('Unfinished local notes');
-  await page.evaluate(()=>{const state=globalThis.__workspaceFixture,w=document.querySelector('app-shell').automation,set=state.automation.responseSets.find(set=>set.id===w.responseSets.setId);set.notes='Externally saved notes';set.revision++;state.automation.generation++;w.renderAutomation(structuredClone(state.automation));});
-  assert.deepEqual(await page.evaluate(()=>document.querySelector('app-shell').automation.responseSets.currentSelection()),base);await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.match(await sets.locator('.set-current-header > p[role="alert"]').first().textContent(),/changed/);assert.equal(await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).inputValue(),'Unfinished local notes');assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets.at(-1).notes),'Externally saved notes');await sets.getByRole('button',{name:'Discard changes',exact:true}).click();assert.equal(await sets.locator('.response-set-current').getByLabel('Notes',{exact:true}).inputValue(),'Externally saved notes');
+  const base = await page.evaluate(() =>
+    document.querySelector("app-shell").automation.responseSets.currentSelection(),
+  );
+  await sets
+    .locator(".response-set-current")
+    .getByLabel("Notes", { exact: true })
+    .fill("Unfinished local notes");
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture,
+      w = document.querySelector("app-shell").automation,
+      set = state.automation.responseSets.find((set) => set.id === w.responseSets.setId);
+    set.notes = "Externally saved notes";
+    set.revision++;
+    state.automation.generation++;
+    w.renderAutomation(structuredClone(state.automation));
+  });
+  assert.deepEqual(
+    await page.evaluate(() =>
+      document.querySelector("app-shell").automation.responseSets.currentSelection(),
+    ),
+    base,
+  );
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.match(
+    await sets.locator('.set-current-header > p[role="alert"]').first().textContent(),
+    /changed/,
+  );
+  assert.equal(
+    await sets.locator(".response-set-current").getByLabel("Notes", { exact: true }).inputValue(),
+    "Unfinished local notes",
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.automation.responseSets.at(-1).notes),
+    "Externally saved notes",
+  );
+  await sets.getByRole("button", { name: "Discard changes", exact: true }).click();
+  assert.equal(
+    await sets.locator(".response-set-current").getByLabel("Notes", { exact: true }).inputValue(),
+    "Externally saved notes",
+  );
 }
 
 export async function checkResponseSetDraftRegressions(page) {
-  await page.goto('https://workspace.test/');await page.waitForFunction(()=>document.querySelector('app-shell').workspaceLoaded);
-  await page.evaluate(async()=>{const shell=document.querySelector('app-shell'),state=globalThis.__workspaceFixture,action={headers:[],replaceBody:null,discardBody:false,abortReason:null};const rule=id=>({id,displayName:id,enabled:true,revision:1,priority:id==='Response A'?0:1,matcher:{method:'GET',url:{kind:'exact',value:'https://example.test/'+id},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null},request:{...action,responseAsset:'draft-regression-asset@1',allowNonIdempotentBodyReplacement:false},response:action});state.assets=[{id:'draft-regression-asset',revision:1,status:200,headers:[],display:'saved body',bodyBytes:10,sha256:'0'.repeat(64),mediaType:'text/plain',provenance:{kind:'authored'}}];state.automation={schemaVersion:2,generation:1,rules:[],autoresponsesEnabled:true,diagnostics:[],candidateCount:0,historyCount:0,responseSets:[{id:'draft-regressions',incarnation:'regression-owner',name:'Draft regressions',notes:'',revision:1,modifiedAt:Date.now(),rules:[rule('Response A'),rule('Response B')],versions:[],applied:null,undoApply:null,paused:false,previewPage:null,previewPageRevision:0}]};await shell.activateView('automation');shell.automation.renderAutomation(structuredClone(state.automation));await shell.automation.showAutomationSection('experiments');await shell.automation.openResponseSet(new CustomEvent('set-open',{detail:{id:'draft-regressions'}}));});
-  const workspace=page.locator('automation-workspace'),sets=workspace.locator('response-set-workspace'),editor=workspace.locator('.auto-response-editor');
-  const edit=async name=>{await sets.getByRole('button',{name,exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse);};
-  await edit('Response B');await edit('Response A');await editor.getByText('Request header conditions',{exact:true}).click();await editor.locator('[name="requestHeaders"]').fill('Invalid header');await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.equal(await editor.locator('[name="requestHeaders"]').evaluate(node=>node.validity.customError),true);
-  await edit('Response B');assert.equal(await editor.locator('[name="requestHeaders"]').evaluate(node=>node.validity.customError),false,'Response A custom validity leaked into Response B');await editor.getByLabel('Response name',{exact:true}).fill('Response B edited');await sets.getByRole('button',{name:'Remove Response A',exact:true}).click();await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.length),1);
+  await page.goto("https://workspace.test/");
+  await page.waitForFunction(() => document.querySelector("app-shell").workspaceLoaded);
+  await page.evaluate(async () => {
+    const shell = document.querySelector("app-shell"),
+      state = globalThis.__workspaceFixture,
+      action = { headers: [], replaceBody: null, discardBody: false, abortReason: null };
+    const rule = (id) => ({
+      id,
+      displayName: id,
+      enabled: true,
+      revision: 1,
+      priority: id === "Response A" ? 0 : 1,
+      matcher: {
+        method: "GET",
+        url: { kind: "exact", value: "https://example.test/" + id },
+        scheme: null,
+        host: null,
+        port: null,
+        pathPrefix: null,
+        query: null,
+        requestHeaders: [],
+        responseHeaders: [],
+        responseStatus: null,
+        responseStatusClass: null,
+      },
+      request: {
+        ...action,
+        responseAsset: "draft-regression-asset@1",
+        allowNonIdempotentBodyReplacement: false,
+      },
+      response: action,
+    });
+    state.assets = [
+      {
+        id: "draft-regression-asset",
+        revision: 1,
+        status: 200,
+        headers: [],
+        display: "saved body",
+        bodyBytes: 10,
+        sha256: "0".repeat(64),
+        mediaType: "text/plain",
+        provenance: { kind: "authored" },
+      },
+    ];
+    state.automation = {
+      schemaVersion: 2,
+      generation: 1,
+      rules: [],
+      autoresponsesEnabled: true,
+      diagnostics: [],
+      candidateCount: 0,
+      historyCount: 0,
+      responseSets: [
+        {
+          id: "draft-regressions",
+          incarnation: "regression-owner",
+          name: "Draft regressions",
+          notes: "",
+          revision: 1,
+          modifiedAt: Date.now(),
+          rules: [rule("Response A"), rule("Response B")],
+          versions: [],
+          applied: null,
+          undoApply: null,
+          paused: false,
+          previewPage: null,
+          previewPageRevision: 0,
+        },
+      ],
+    };
+    await shell.activateView("automation");
+    shell.automation.renderAutomation(structuredClone(state.automation));
+    await shell.automation.showAutomationSection("experiments");
+    await shell.automation.openResponseSet(
+      new CustomEvent("set-open", { detail: { id: "draft-regressions" } }),
+    );
+  });
+  const workspace = page.locator("automation-workspace"),
+    sets = workspace.locator("response-set-workspace"),
+    editor = workspace.locator(".auto-response-editor");
+  const edit = async (name) => {
+    await sets.getByRole("button", { name, exact: true }).click();
+    await page.waitForFunction(
+      () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+    );
+  };
+  await edit("Response B");
+  await edit("Response A");
+  await editor.getByText("Request header conditions", { exact: true }).click();
+  await editor.locator('[name="requestHeaders"]').fill("Invalid header");
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.equal(
+    await editor.locator('[name="requestHeaders"]').evaluate((node) => node.validity.customError),
+    true,
+  );
+  await edit("Response B");
+  assert.equal(
+    await editor.locator('[name="requestHeaders"]').evaluate((node) => node.validity.customError),
+    false,
+    "Response A custom validity leaked into Response B",
+  );
+  await editor.getByLabel("Response name", { exact: true }).fill("Response B edited");
+  await sets.getByRole("button", { name: "Remove Response A", exact: true }).click();
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.automation.responseSets[0].rules.length,
+    ),
+    1,
+  );
   // A new untouched capture still needs its exact immutable response asset.
-  await page.evaluate(async()=>{const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'first'});await document.querySelector('app-shell').automation.addCollectionResponse(new CustomEvent('set-add',{detail:{source:'captured',captured:{sessionId:'first',detail,reusable:true}}}));});await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.every(rule=>!!rule.request.responseAsset)),true);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.length),2);
+  await page.evaluate(async () => {
+    const detail = await window.__TAURI_INTERNALS__.invoke("session_detail", { id: "first" });
+    await document.querySelector("app-shell").automation.addCollectionResponse(
+      new CustomEvent("set-add", {
+        detail: { source: "captured", captured: { sessionId: "first", detail, reusable: true } },
+      }),
+    );
+  });
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.equal(
+    await page.evaluate(() =>
+      globalThis.__workspaceFixture.automation.responseSets[0].rules.every(
+        (rule) => !!rule.request.responseAsset,
+      ),
+    ),
+    true,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.automation.responseSets[0].rules.length,
+    ),
+    2,
+  );
   // The full captured-header/body operation owns its draft until all bytes load.
-  await page.evaluate(async()=>{const state=globalThis.__workspaceFixture;state.deferSourceHeaders=true;state.deferBody='first';state.bodyPending=false;state.finishSourceHeaders=null;state.releaseBody=null;const detail=await window.__TAURI_INTERNALS__.invoke('session_detail',{id:'first'});globalThis.pendingCollectionCapture=document.querySelector('app-shell').automation.addCollectionResponse(new CustomEvent('set-add',{detail:{source:'captured',captured:{sessionId:'first',detail,reusable:true}}}));});await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishSourceHeaders);
-  const scripts=workspace.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true});await scripts.click();assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.automationSection),'experiments');assert.equal(await sets.getByRole('button',{name:'Response B edited',exact:true}).getAttribute('aria-disabled'),'true');await page.evaluate(()=>globalThis.__workspaceFixture.finishSourceHeaders());await page.waitForFunction(()=>globalThis.__workspaceFixture.bodyPending);await scripts.click();assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.automationSection),'experiments');await sets.getByRole('button',{name:'Response B edited',exact:true}).click({force:true});assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.collectionRuleId),'');
-  await editor.getByLabel('Response name',{exact:true}).fill('Captured while body pending');await page.evaluate(async()=>{globalThis.__workspaceFixture.deferBody=null;globalThis.__workspaceFixture.releaseBody();await globalThis.pendingCollectionCapture;});assert.equal(await editor.getByLabel('Response name',{exact:true}).inputValue(),'Captured while body pending');assert.equal(await sets.getByRole('button',{name:'Response B edited',exact:true}).count(),1);await sets.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.responseSets.busy);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].rules.length),3);
+  await page.evaluate(async () => {
+    const state = globalThis.__workspaceFixture;
+    state.deferSourceHeaders = true;
+    state.deferBody = "first";
+    state.bodyPending = false;
+    state.finishSourceHeaders = null;
+    state.releaseBody = null;
+    const detail = await window.__TAURI_INTERNALS__.invoke("session_detail", { id: "first" });
+    globalThis.pendingCollectionCapture = document
+      .querySelector("app-shell")
+      .automation.addCollectionResponse(
+        new CustomEvent("set-add", {
+          detail: { source: "captured", captured: { sessionId: "first", detail, reusable: true } },
+        }),
+      );
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishSourceHeaders);
+  const scripts = workspace
+    .locator(".workspace-tabs")
+    .getByRole("button", { name: "Scripts", exact: true });
+  await scripts.click();
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.automationSection),
+    "experiments",
+  );
+  assert.equal(
+    await sets
+      .getByRole("button", { name: "Response B edited", exact: true })
+      .getAttribute("aria-disabled"),
+    "true",
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.finishSourceHeaders());
+  await page.waitForFunction(() => globalThis.__workspaceFixture.bodyPending);
+  await scripts.click();
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.automationSection),
+    "experiments",
+  );
+  await sets.getByRole("button", { name: "Response B edited", exact: true }).click({ force: true });
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.collectionRuleId),
+    "",
+  );
+  await editor.getByLabel("Response name", { exact: true }).fill("Captured while body pending");
+  await page.evaluate(async () => {
+    globalThis.__workspaceFixture.deferBody = null;
+    globalThis.__workspaceFixture.releaseBody();
+    await globalThis.pendingCollectionCapture;
+  });
+  assert.equal(
+    await editor.getByLabel("Response name", { exact: true }).inputValue(),
+    "Captured while body pending",
+  );
+  assert.equal(
+    await sets.getByRole("button", { name: "Response B edited", exact: true }).count(),
+    1,
+  );
+  await sets.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.responseSets.busy,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.automation.responseSets[0].rules.length,
+    ),
+    3,
+  );
 }
 
-export async function checkResponseSetPendingDialogs(page,root) {
-  await page.goto('https://workspace.test/');await page.waitForFunction(()=>document.querySelector('app-shell').workspaceLoaded);
-  await page.evaluate(async()=>{const shell=document.querySelector('app-shell'),state=globalThis.__workspaceFixture,action={headers:[],replaceBody:null,discardBody:false,abortReason:null};const rule={id:'linked-response',displayName:'Linked response',enabled:true,revision:1,priority:0,matcher:{method:'GET',url:{kind:'exact',value:'https://example.test/linked'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null},request:{...action,responseAsset:'pending-linked@1',allowNonIdempotentBodyReplacement:false},response:action};const set=(id,name,rules=[])=>({id,incarnation:'owner-'+id,name,notes:'Saved '+id,revision:1,modifiedAt:Date.now(),rules,versions:[],applied:null,undoApply:null,paused:false,previewPage:null,previewPageRevision:0});state.assets=[{id:'pending-linked',revision:1,status:200,headers:[],bodyBytes:10,sha256:'0'.repeat(64),mediaType:'text/plain',provenance:{kind:'authored'},linkedBody:{path:'C:/fixtures/pending-link.txt',originalContentCodings:[],applyOriginalCompression:false}}];state.automation={schemaVersion:2,generation:1,rules:[],autoresponsesEnabled:true,diagnostics:[],candidateCount:0,historyCount:0,responseSets:[set('pending-a','Pending set A'),set('pending-b','Pending set B',[rule])]};await shell.activateView('automation');shell.automation.renderAutomation(structuredClone(state.automation));await shell.automation.showAutomationSection('experiments');await shell.automation.openResponseSet(new CustomEvent('set-open',{detail:{id:'pending-a'}}));});
-  const workspace=page.locator('automation-workspace'),sets=workspace.locator('response-set-workspace'),current=sets.locator('.response-set-current'),unsaved=workspace.locator('.unsaved-rule-dialog'),editor=workspace.locator('.auto-response-editor');
-  await current.getByLabel('Notes',{exact:true}).fill('Notes only pending save A');await sets.getByRole('button',{name:'← Response sets',exact:true}).click();await unsaved.waitFor({state:'visible'});await page.evaluate(()=>{globalThis.__workspaceFixture.holdCommand='change_response_set';globalThis.__workspaceFixture.finishHeldCommand=null;});await unsaved.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishHeldCommand);
-  assert.equal(await unsaved.getAttribute('aria-busy'),'true');for(const name of ['Save changes','Discard changes','Keep editing'])assert.equal(await unsaved.getByRole('button',{name,exact:true}).isDisabled(),true);
-  await page.keyboard.press('Escape');await page.evaluate(async()=>{const w=document.querySelector('app-shell').automation;await w.resolveUnsaved('discard');await w.resolveUnsaved('stay');await w.resolveUnsaved('save');await w.openResponseSet(new CustomEvent('set-open',{detail:{id:'pending-b'}}));});assert.equal(await unsaved.isVisible(),true);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.responseSets.setId),'pending-a');
-  await page.screenshot({path:resolve(root,'../../../target/response-set-workspaces/phase2/unsaved-save-pending.png')});await page.evaluate(()=>globalThis.__workspaceFixture.finishHeldCommand());await page.waitForFunction(()=>!document.querySelector('app-shell').automation.collectionOpen);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].notes),'Notes only pending save A');assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[1].notes),'Saved pending-b');
+export async function checkResponseSetPendingDialogs(page, root) {
+  await page.goto("https://workspace.test/");
+  await page.waitForFunction(() => document.querySelector("app-shell").workspaceLoaded);
+  await page.evaluate(async () => {
+    const shell = document.querySelector("app-shell"),
+      state = globalThis.__workspaceFixture,
+      action = { headers: [], replaceBody: null, discardBody: false, abortReason: null };
+    const rule = {
+      id: "linked-response",
+      displayName: "Linked response",
+      enabled: true,
+      revision: 1,
+      priority: 0,
+      matcher: {
+        method: "GET",
+        url: { kind: "exact", value: "https://example.test/linked" },
+        scheme: null,
+        host: null,
+        port: null,
+        pathPrefix: null,
+        query: null,
+        requestHeaders: [],
+        responseHeaders: [],
+        responseStatus: null,
+        responseStatusClass: null,
+      },
+      request: {
+        ...action,
+        responseAsset: "pending-linked@1",
+        allowNonIdempotentBodyReplacement: false,
+      },
+      response: action,
+    };
+    const set = (id, name, rules = []) => ({
+      id,
+      incarnation: "owner-" + id,
+      name,
+      notes: "Saved " + id,
+      revision: 1,
+      modifiedAt: Date.now(),
+      rules,
+      versions: [],
+      applied: null,
+      undoApply: null,
+      paused: false,
+      previewPage: null,
+      previewPageRevision: 0,
+    });
+    state.assets = [
+      {
+        id: "pending-linked",
+        revision: 1,
+        status: 200,
+        headers: [],
+        bodyBytes: 10,
+        sha256: "0".repeat(64),
+        mediaType: "text/plain",
+        provenance: { kind: "authored" },
+        linkedBody: {
+          path: "C:/fixtures/pending-link.txt",
+          originalContentCodings: [],
+          applyOriginalCompression: false,
+        },
+      },
+    ];
+    state.automation = {
+      schemaVersion: 2,
+      generation: 1,
+      rules: [],
+      autoresponsesEnabled: true,
+      diagnostics: [],
+      candidateCount: 0,
+      historyCount: 0,
+      responseSets: [set("pending-a", "Pending set A"), set("pending-b", "Pending set B", [rule])],
+    };
+    await shell.activateView("automation");
+    shell.automation.renderAutomation(structuredClone(state.automation));
+    await shell.automation.showAutomationSection("experiments");
+    await shell.automation.openResponseSet(
+      new CustomEvent("set-open", { detail: { id: "pending-a" } }),
+    );
+  });
+  const workspace = page.locator("automation-workspace"),
+    sets = workspace.locator("response-set-workspace"),
+    current = sets.locator(".response-set-current"),
+    unsaved = workspace.locator(".unsaved-rule-dialog"),
+    editor = workspace.locator(".auto-response-editor");
+  await current.getByLabel("Notes", { exact: true }).fill("Notes only pending save A");
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+  await unsaved.waitFor({ state: "visible" });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.holdCommand = "change_response_set";
+    globalThis.__workspaceFixture.finishHeldCommand = null;
+  });
+  await unsaved.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishHeldCommand);
+  assert.equal(await unsaved.getAttribute("aria-busy"), "true");
+  for (const name of ["Save changes", "Discard changes", "Keep editing"])
+    assert.equal(await unsaved.getByRole("button", { name, exact: true }).isDisabled(), true);
+  await page.keyboard.press("Escape");
+  await page.evaluate(async () => {
+    const w = document.querySelector("app-shell").automation;
+    await w.resolveUnsaved("discard");
+    await w.resolveUnsaved("stay");
+    await w.resolveUnsaved("save");
+    await w.openResponseSet(new CustomEvent("set-open", { detail: { id: "pending-b" } }));
+  });
+  assert.equal(await unsaved.isVisible(), true);
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.responseSets.setId),
+    "pending-a",
+  );
+  await page.screenshot({
+    path: resolve(root, "../../../target/response-set-workspaces/phase2/unsaved-save-pending.png"),
+  });
+  await page.evaluate(() => globalThis.__workspaceFixture.finishHeldCommand());
+  await page.waitForFunction(() => !document.querySelector("app-shell").automation.collectionOpen);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.automation.responseSets[0].notes),
+    "Notes only pending save A",
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.automation.responseSets[1].notes),
+    "Saved pending-b",
+  );
   // Responses cannot abandon the editor while its linked-file check owns busy.
-  await sets.getByRole('button',{name:'Pending set B',exact:true}).click();await page.evaluate(()=>{globalThis.__workspaceFixture.deferFileInfo=true;globalThis.__workspaceFixture.finishFileInfo=null;});await sets.getByRole('button',{name:'Linked response',exact:true}).click();await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishFileInfo&&!document.querySelector('app-shell').automation.loadingSavedResponse);assert.equal(await editor.getByRole('button',{name:'Responses',exact:true}).isDisabled(),true);await page.evaluate(()=>document.querySelector('app-shell').automation.cancelAutoResponseEdit());assert.equal(await editor.isVisible(),true);await page.evaluate(()=>globalThis.__workspaceFixture.finishFileInfo());await page.waitForFunction(()=>!document.querySelector('app-shell').automation.fileChoiceBusy);await editor.getByRole('button',{name:'Responses',exact:true}).click();assert.equal(await sets.getByRole('button',{name:'Add responses…',exact:true}).isEnabled(),true);await sets.getByRole('button',{name:'← Response sets',exact:true}).click();
+  await sets.getByRole("button", { name: "Pending set B", exact: true }).click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferFileInfo = true;
+    globalThis.__workspaceFixture.finishFileInfo = null;
+  });
+  await sets.getByRole("button", { name: "Linked response", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      !!globalThis.__workspaceFixture.finishFileInfo &&
+      !document.querySelector("app-shell").automation.loadingSavedResponse,
+  );
+  assert.equal(
+    await editor.getByRole("button", { name: "Responses", exact: true }).isDisabled(),
+    true,
+  );
+  await page.evaluate(() =>
+    document.querySelector("app-shell").automation.cancelAutoResponseEdit(),
+  );
+  assert.equal(await editor.isVisible(), true);
+  await page.evaluate(() => globalThis.__workspaceFixture.finishFileInfo());
+  await page.waitForFunction(() => !document.querySelector("app-shell").automation.fileChoiceBusy);
+  await editor.getByRole("button", { name: "Responses", exact: true }).click();
+  assert.equal(
+    await sets.getByRole("button", { name: "Add responses…", exact: true }).isEnabled(),
+    true,
+  );
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
   // Saving a linked response reloads its file check before completing departure.
   // A late check still releases its own busy state after the editor is invalidated.
-  for(const destination of ['back','scripts']) {
-    await sets.getByRole('button',{name:'Pending set B',exact:true}).click();await sets.getByRole('button',{name:'Linked response',exact:true}).click();await page.waitForFunction(()=>{const w=document.querySelector('app-shell').automation;return !w.loadingSavedResponse&&!w.fileChoiceBusy;});
-    await current.getByLabel('Notes',{exact:true}).fill('Linked save departure '+destination);await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.deferFileInfoAfterSetSave=(state.calls.change_response_set??0)+1;state.finishFileInfo=null;});
-    if(destination==='back')await sets.getByRole('button',{name:'← Response sets',exact:true}).click();else await workspace.locator('.workspace-tabs').getByRole('button',{name:'Scripts',exact:true}).click();
-    await unsaved.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishFileInfo&&!document.querySelector('app-shell').automation.collectionOpen);
-    assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.fileChoiceBusy),true);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.editorHidden),true);
-    await page.evaluate(()=>globalThis.__workspaceFixture.finishFileInfo());await page.waitForFunction(()=>!document.querySelector('app-shell').automation.fileChoiceBusy);
-    if(destination==='scripts')await workspace.locator('.workspace-tabs').getByRole('button',{name:'Response sets',exact:true}).click();
-    await sets.getByRole('button',{name:'Pending set B',exact:true}).click();assert.equal(await sets.getByRole('button',{name:'Add responses…',exact:true}).isEnabled(),true);await sets.getByRole('button',{name:'Linked response',exact:true}).click();await page.waitForFunction(()=>{const w=document.querySelector('app-shell').automation;return !w.loadingSavedResponse&&!w.fileChoiceBusy;});assert.equal(await editor.getByRole('button',{name:'Responses',exact:true}).isEnabled(),true);await editor.getByRole('button',{name:'Responses',exact:true}).click();await sets.getByRole('button',{name:'← Response sets',exact:true}).click();
+  for (const destination of ["back", "scripts"]) {
+    await sets.getByRole("button", { name: "Pending set B", exact: true }).click();
+    await sets.getByRole("button", { name: "Linked response", exact: true }).click();
+    await page.waitForFunction(() => {
+      const w = document.querySelector("app-shell").automation;
+      return !w.loadingSavedResponse && !w.fileChoiceBusy;
+    });
+    await current.getByLabel("Notes", { exact: true }).fill("Linked save departure " + destination);
+    await page.evaluate(() => {
+      const state = globalThis.__workspaceFixture;
+      state.deferFileInfoAfterSetSave = (state.calls.change_response_set ?? 0) + 1;
+      state.finishFileInfo = null;
+    });
+    if (destination === "back")
+      await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+    else
+      await workspace
+        .locator(".workspace-tabs")
+        .getByRole("button", { name: "Scripts", exact: true })
+        .click();
+    await unsaved.getByRole("button", { name: "Save changes", exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        !!globalThis.__workspaceFixture.finishFileInfo &&
+        !document.querySelector("app-shell").automation.collectionOpen,
+    );
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").automation.fileChoiceBusy),
+      true,
+    );
+    assert.equal(
+      await page.evaluate(() => document.querySelector("app-shell").automation.editorHidden),
+      true,
+    );
+    await page.evaluate(() => globalThis.__workspaceFixture.finishFileInfo());
+    await page.waitForFunction(
+      () => !document.querySelector("app-shell").automation.fileChoiceBusy,
+    );
+    if (destination === "scripts")
+      await workspace
+        .locator(".workspace-tabs")
+        .getByRole("button", { name: "Response sets", exact: true })
+        .click();
+    await sets.getByRole("button", { name: "Pending set B", exact: true }).click();
+    assert.equal(
+      await sets.getByRole("button", { name: "Add responses…", exact: true }).isEnabled(),
+      true,
+    );
+    await sets.getByRole("button", { name: "Linked response", exact: true }).click();
+    await page.waitForFunction(() => {
+      const w = document.querySelector("app-shell").automation;
+      return !w.loadingSavedResponse && !w.fileChoiceBusy;
+    });
+    assert.equal(
+      await editor.getByRole("button", { name: "Responses", exact: true }).isEnabled(),
+      true,
+    );
+    await editor.getByRole("button", { name: "Responses", exact: true }).click();
+    await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
   }
   // Clearing a pending choice and starting another gives busy to the new request.
-  await sets.getByRole('button',{name:'Pending set B',exact:true}).click();await sets.getByRole('button',{name:'Linked response',exact:true}).click();await page.waitForFunction(()=>{const w=document.querySelector('app-shell').automation;return !w.loadingSavedResponse&&!w.fileChoiceBusy;});await page.evaluate(()=>{globalThis.__workspaceFixture.deferFileInfo=true;globalThis.__workspaceFixture.finishFileInfo=null;});await editor.getByRole('button',{name:'Check file',exact:true}).click();await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishFileInfo);await page.evaluate(()=>globalThis.finishOlderFileInfo=globalThis.__workspaceFixture.finishFileInfo);await editor.getByRole('button',{name:'Clear file choice',exact:true}).click();await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.bodyFile='C:/fixtures/newer-link.txt';state.deferFileInfo=true;state.finishFileInfo=null;});await editor.getByRole('button',{name:'Serve response body from file…',exact:true}).click();await page.waitForFunction(()=>!!globalThis.__workspaceFixture.finishFileInfo);await page.evaluate(()=>globalThis.finishOlderFileInfo());assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.fileChoiceBusy),true,'An older check cleared a newer file operation');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.responseBodyPath),null,'An older check restored the cleared file');await page.evaluate(()=>globalThis.__workspaceFixture.finishFileInfo());await page.waitForFunction(()=>!document.querySelector('app-shell').automation.fileChoiceBusy);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.responseBodyPath),'C:/fixtures/newer-link.txt');await sets.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>{const w=document.querySelector('app-shell').automation;return !w.loadingSavedResponse&&!w.fileChoiceBusy;});await sets.getByRole('button',{name:'← Response sets',exact:true}).click();
+  await sets.getByRole("button", { name: "Pending set B", exact: true }).click();
+  await sets.getByRole("button", { name: "Linked response", exact: true }).click();
+  await page.waitForFunction(() => {
+    const w = document.querySelector("app-shell").automation;
+    return !w.loadingSavedResponse && !w.fileChoiceBusy;
+  });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferFileInfo = true;
+    globalThis.__workspaceFixture.finishFileInfo = null;
+  });
+  await editor.getByRole("button", { name: "Check file", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishFileInfo);
+  await page.evaluate(
+    () => (globalThis.finishOlderFileInfo = globalThis.__workspaceFixture.finishFileInfo),
+  );
+  await editor.getByRole("button", { name: "Clear file choice", exact: true }).click();
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.bodyFile = "C:/fixtures/newer-link.txt";
+    state.deferFileInfo = true;
+    state.finishFileInfo = null;
+  });
+  await editor.getByRole("button", { name: "Serve response body from file…", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishFileInfo);
+  await page.evaluate(() => globalThis.finishOlderFileInfo());
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.fileChoiceBusy),
+    true,
+    "An older check cleared a newer file operation",
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.responseBodyPath),
+    null,
+    "An older check restored the cleared file",
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.finishFileInfo());
+  await page.waitForFunction(() => !document.querySelector("app-shell").automation.fileChoiceBusy);
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.responseBodyPath),
+    "C:/fixtures/newer-link.txt",
+  );
+  await sets.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(() => {
+    const w = document.querySelector("app-shell").automation;
+    return !w.loadingSavedResponse && !w.fileChoiceBusy;
+  });
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
   // Collection validation and final storage failures remain visible in the modal.
-  await sets.getByRole('button',{name:'Pending set A',exact:true}).click();await current.getByLabel('Response set name',{exact:true}).fill('');await sets.getByRole('button',{name:'← Response sets',exact:true}).click();await unsaved.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.resolvingUnsaved);assert.match(await unsaved.getByRole('alert').innerText(),/Enter a response set name/);assert.equal(await unsaved.isVisible(),true);await unsaved.getByRole('button',{name:'Keep editing',exact:true}).click();await current.getByLabel('Response set name',{exact:true}).fill('Pending set A');await current.getByLabel('Notes',{exact:true}).fill('Retry after final write failure');await sets.getByRole('button',{name:'← Response sets',exact:true}).click();await page.evaluate(()=>globalThis.__workspaceFixture.setReject=true);await unsaved.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.resolvingUnsaved);assert.match(await unsaved.getByRole('alert').innerText(),/save failed/);assert.equal(await unsaved.isVisible(),true);await page.screenshot({path:resolve(root,'../../../target/response-set-workspaces/phase2/unsaved-save-error.png')});await page.evaluate(()=>globalThis.__workspaceFixture.setReject=false);await unsaved.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.collectionOpen);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.automation.responseSets[0].notes),'Retry after final write failure');
-  await sets.getByRole('button',{name:'Pending set A',exact:true}).click();await current.getByLabel('Notes',{exact:true}).fill('Local notes after external save');await page.evaluate(()=>{const state=globalThis.__workspaceFixture;state.automation.responseSets[0].revision++;state.automation.responseSets[0].notes='External modal CAS notes';state.automation.generation++;document.querySelector('app-shell').automation.renderAutomation(structuredClone(state.automation));});await sets.getByRole('button',{name:'← Response sets',exact:true}).click();await unsaved.getByRole('button',{name:'Save changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.resolvingUnsaved);assert.match(await unsaved.getByRole('alert').innerText(),/changed/);await unsaved.getByRole('button',{name:'Keep editing',exact:true}).click();assert.equal(await current.getByLabel('Notes',{exact:true}).inputValue(),'Local notes after external save');await sets.getByRole('button',{name:'Discard changes',exact:true}).click();assert.equal(await current.getByLabel('Notes',{exact:true}).inputValue(),'External modal CAS notes');
+  await sets.getByRole("button", { name: "Pending set A", exact: true }).click();
+  await current.getByLabel("Response set name", { exact: true }).fill("");
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+  await unsaved.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.resolvingUnsaved,
+  );
+  assert.match(await unsaved.getByRole("alert").innerText(), /Enter a response set name/);
+  assert.equal(await unsaved.isVisible(), true);
+  await unsaved.getByRole("button", { name: "Keep editing", exact: true }).click();
+  await current.getByLabel("Response set name", { exact: true }).fill("Pending set A");
+  await current.getByLabel("Notes", { exact: true }).fill("Retry after final write failure");
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+  await page.evaluate(() => (globalThis.__workspaceFixture.setReject = true));
+  await unsaved.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.resolvingUnsaved,
+  );
+  assert.match(await unsaved.getByRole("alert").innerText(), /save failed/);
+  assert.equal(await unsaved.isVisible(), true);
+  await page.screenshot({
+    path: resolve(root, "../../../target/response-set-workspaces/phase2/unsaved-save-error.png"),
+  });
+  await page.evaluate(() => (globalThis.__workspaceFixture.setReject = false));
+  await unsaved.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector("app-shell").automation.collectionOpen);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.automation.responseSets[0].notes),
+    "Retry after final write failure",
+  );
+  await sets.getByRole("button", { name: "Pending set A", exact: true }).click();
+  await current.getByLabel("Notes", { exact: true }).fill("Local notes after external save");
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.automation.responseSets[0].revision++;
+    state.automation.responseSets[0].notes = "External modal CAS notes";
+    state.automation.generation++;
+    document
+      .querySelector("app-shell")
+      .automation.renderAutomation(structuredClone(state.automation));
+  });
+  await sets.getByRole("button", { name: "← Response sets", exact: true }).click();
+  await unsaved.getByRole("button", { name: "Save changes", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.resolvingUnsaved,
+  );
+  assert.match(await unsaved.getByRole("alert").innerText(), /changed/);
+  await unsaved.getByRole("button", { name: "Keep editing", exact: true }).click();
+  assert.equal(
+    await current.getByLabel("Notes", { exact: true }).inputValue(),
+    "Local notes after external save",
+  );
+  await sets.getByRole("button", { name: "Discard changes", exact: true }).click();
+  assert.equal(
+    await current.getByLabel("Notes", { exact: true }).inputValue(),
+    "External modal CAS notes",
+  );
 }

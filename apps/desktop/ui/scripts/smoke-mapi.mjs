@@ -1,17 +1,22 @@
-import {readFile,writeFile} from 'node:fs/promises';
-import {dirname,join} from 'node:path';
+import { readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 
 /** Synthetic binary evidence through the bundled ordinary tmext and real host UI. */
-export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
-  const path=join(dirname(tracePath),'mapi-fixture.saz');
-  const specification=JSON.parse(await readFile(path.replace(/\.saz$/i,'.json'),'utf8'));
-  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
-  const result=await evaluate(`(async()=>{
+export async function smokeMapi(call, evaluate, screenshotPath, tracePath) {
+  const path = join(dirname(tracePath), "mapi-fixture.saz");
+  const specification = JSON.parse(await readFile(path.replace(/\.saz$/i, ".json"), "utf8"));
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const result = await evaluate(`(async()=>{
     const specification=${JSON.stringify(specification)},shell=document.querySelector('app-shell'),traffic=shell.traffic,invoke=(command,args={})=>window.__TAURI_INTERNALS__.invoke(command,args);
     const wait=async(condition)=>{const deadline=Date.now()+30000;while(!condition()){if(Date.now()>deadline)throw new Error('Bundled MAPI did not settle');await new Promise(resolve=>setTimeout(resolve,25));}};
     globalThis.__mapiProbe={preferences:traffic.preferences,handles:[]};
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
-    await traffic.importTrace(${JSON.stringify(path.replace(/\.saz$/i,'-other.saz'))});
+    await traffic.importTrace(${JSON.stringify(path.replace(/\.saz$/i, "-other.saz"))});
     await traffic.importTrace(${JSON.stringify(path)});
     traffic.preferences={...traffic.preferences,layout:'stacked',listSplit:30};
     const root=traffic.shadowRoot??traffic,response=root.querySelector('message-inspector[side=response]'),request=root.querySelector('message-inspector[side=request]');
@@ -121,15 +126,36 @@ export async function smokeMapi(call,evaluate,screenshotPath,tracePath) {
     globalThis.__mapiProbe.concurrent=true;
     return {properties:true,utcTicks:true,transformedRpc:true,httpGzip:true,budget14kb:true,budgetCompressed:true,retainedRows:true,scopedContext:true,byteSelection:true,tableSelection:true,concurrent:4,headersReadOnly:true,staticClassification:true,compactDetails:true,compactInformation:true,initialHandle:rowHandle};
   })()`);
-  if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-mapi-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-  await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
-  if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-mapi-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-  const unloaded=await evaluate(`(async()=>{
+  if (screenshotPath)
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-mapi-wide.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 800,
+    height: 600,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  if (screenshotPath)
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-mapi-compact.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
+  const unloaded = await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="settings"]').click();shell.settings.showSettingsSection('extensions');
     const deadline=Date.now()+10000;
     while((await Promise.all(globalThis.__mapiProbe.handles.map(handle=>window.__TAURI_INTERNALS__.invoke('visualizer_active',{handle})))).some(Boolean)){if(Date.now()>deadline)throw new Error('Inactive MAPI workers were not unloaded');await new Promise(resolve=>setTimeout(resolve,25));}
     shell.traffic.preferences=globalThis.__mapiProbe.preferences;delete globalThis.__mapiProbe;return true;
   })()`);
-  await call('Emulation.clearDeviceMetricsOverride');
-  return {...result,unloaded};
+  await call("Emulation.clearDeviceMetricsOverride");
+  return { ...result, unloaded };
 }

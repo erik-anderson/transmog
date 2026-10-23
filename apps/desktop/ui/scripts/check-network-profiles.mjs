@@ -1,152 +1,350 @@
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
 
-export async function checkNetworkProfiles(page,root) {
-  const panel=page.locator('network-profile-settings');
-  const selector=panel.getByRole('combobox',{name:'Network profile',exact:true});
-  const dialog=panel.locator('dialog');
-  const idle=()=>page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').querySelector('network-profile-settings').networkBusy);
+export async function checkNetworkProfiles(page, root) {
+  const panel = page.locator("network-profile-settings");
+  const selector = panel.getByRole("combobox", { name: "Network profile", exact: true });
+  const dialog = panel.locator("dialog");
+  const idle = () =>
+    page.waitForFunction(
+      () =>
+        !document
+          .querySelector("app-shell")
+          .shadowRoot.querySelector("settings-workspace")
+          .querySelector("network-profile-settings").networkBusy,
+    );
   await idle();
-  const preferences=page.locator('settings-workspace');
-  const ordinaryWrites=await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0);
-  await preferences.getByLabel('Theme',{exact:true}).selectOption('dark');
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').querySelector('network-profile-settings').networkForm.parentElement.closest('form')),null,'Profile and ordinary settings forms are nested');
-  assert.equal(await selector.inputValue(),'webview2-chromium-154');
-  assert.equal(await panel.evaluate(element=>element.networkProfiles.activeProfile.settings.rootStore),'webview2-installed');
-  assert.equal(await panel.evaluate(element=>element.networkProfiles.activeProfile.settings.localCertificates),true);
-  await selector.selectOption('chromium-154');
-  assert.match(await panel.textContent(),/In use: WebView2/,'Selecting Chromium activated it');
-  assert.equal(await panel.getByRole('button',{name:'Manage network profile'}).isVisible(),false,'Built-in Chromium can be deleted');
-  await selector.selectOption('webview2-chromium-154');
-  assert.equal(await panel.getByRole('button',{name:'Use profile',exact:true}).isEnabled(),false);
-  await panel.getByRole('button',{name:'Customize…',exact:true}).click();
-  await dialog.waitFor({state:'visible'});
-  await dialog.getByLabel('Name',{exact:true}).fill('Debug without H3');
-  const localTrust=dialog.getByLabel('Trust locally installed Windows certificates',{exact:true});
-  assert.equal(await localTrust.isChecked(),true);
+  const preferences = page.locator("settings-workspace");
+  const ordinaryWrites = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.save_product_state ?? 0,
+  );
+  await preferences.getByLabel("Theme", { exact: true }).selectOption("dark");
+  assert.equal(
+    await page.evaluate(() =>
+      document
+        .querySelector("app-shell")
+        .shadowRoot.querySelector("settings-workspace")
+        .querySelector("network-profile-settings")
+        .networkForm.parentElement.closest("form"),
+    ),
+    null,
+    "Profile and ordinary settings forms are nested",
+  );
+  assert.equal(await selector.inputValue(), "webview2-chromium-154");
+  assert.equal(
+    await panel.evaluate((element) => element.networkProfiles.activeProfile.settings.rootStore),
+    "webview2-installed",
+  );
+  assert.equal(
+    await panel.evaluate(
+      (element) => element.networkProfiles.activeProfile.settings.localCertificates,
+    ),
+    true,
+  );
+  await selector.selectOption("chromium-154");
+  assert.match(await panel.textContent(), /In use: WebView2/, "Selecting Chromium activated it");
+  assert.equal(
+    await panel.getByRole("button", { name: "Manage network profile" }).isVisible(),
+    false,
+    "Built-in Chromium can be deleted",
+  );
+  await selector.selectOption("webview2-chromium-154");
+  assert.equal(
+    await panel.getByRole("button", { name: "Use profile", exact: true }).isEnabled(),
+    false,
+  );
+  await panel.getByRole("button", { name: "Customize…", exact: true }).click();
+  await dialog.waitFor({ state: "visible" });
+  await dialog.getByLabel("Name", { exact: true }).fill("Debug without H3");
+  const localTrust = dialog.getByLabel("Trust locally installed Windows certificates", {
+    exact: true,
+  });
+  assert.equal(await localTrust.isChecked(), true);
   await localTrust.uncheck();
-  assert.equal(await dialog.locator('.profile-handshake').getAttribute('open'),null);
-  await dialog.locator('.profile-handshake summary').click();
-  assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true);
-  assert.equal(await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).isChecked(),true);
-  assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true);
-  await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).uncheck();
-  await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).uncheck();
-  await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).uncheck();
-  assert.equal(await dialog.getByLabel('Provide info about the certificates trusted by the root store',{exact:true}).isChecked(),true);
-  await dialog.getByLabel('Provide info about the certificates trusted by the root store',{exact:true}).uncheck();
-  await dialog.getByLabel('PKI metadata file',{exact:true}).fill('C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
-  await dialog.locator('.profile-handshake summary').click();
-  await dialog.getByLabel('HTTP/3',{exact:true}).uncheck();
-  await dialog.getByLabel('Reuse server connections',{exact:true}).uncheck();
-  await dialog.getByRole('button',{name:'Save only',exact:true}).click();
-  await idle();await dialog.waitFor({state:'hidden'});
-  const savedId=await selector.inputValue();
-  assert.match(savedId,/^custom-/);
-  assert.match(await panel.textContent(),/In use: WebView2/);
-  assert.equal(await panel.getByRole('button',{name:'Use profile',exact:true}).isEnabled(),true);
-  await panel.getByRole('button',{name:'Use profile',exact:true}).click();await idle();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http3Alps),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.encryptedClientHello),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.trustAnchorIds),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.localCertificates),false);
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.pkiMetadataFile),'C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb');
-  await panel.getByRole('button',{name:'Customize…',exact:true}).click();
-  await dialog.getByLabel('Profile TLS versions').selectOption('tls12-only');
-  await dialog.getByLabel('HTTP/3',{exact:true}).check();
-  assert.match(await dialog.textContent(),/HTTP\/3 requires TLS 1.3/);
-  assert.equal(await dialog.getByRole('button',{name:'Save and use',exact:true}).isEnabled(),false);
-  await dialog.getByLabel('HTTP/3',{exact:true}).uncheck();
-  await dialog.getByRole('button',{name:'Reset to Chromium 154',exact:true}).click();
-  assert.equal(await dialog.getByLabel('HTTP/3',{exact:true}).isChecked(),true);
-  assert.equal(await dialog.getByLabel('Profile TLS versions').inputValue(),'tls12-and13');
-  await dialog.locator('.profile-handshake summary').click();
-  assert.equal(await dialog.getByLabel('Offer HTTP/2 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium ALPS');
-  assert.equal(await dialog.getByLabel('Offer HTTP/3 ALPS',{exact:true}).isChecked(),true,'Reset did not restore Chromium H3 ALPS');
-  assert.equal(await dialog.getByLabel('Provide info about the certificates trusted by the root store',{exact:true}).isChecked(),true);
-  assert.equal(await dialog.getByLabel('PKI metadata file',{exact:true}).inputValue(),'');
-  assert.equal(await dialog.getByLabel('Use Encrypted Client Hello',{exact:true}).isChecked(),true,'Reset did not restore ECH');
-  const roots=dialog.getByRole('combobox',{name:'Profile root store',exact:true});
-  assert.equal(await localTrust.isChecked(),true,'Reset did not restore local trust');
-  for(const choice of ['os','chromium-bundled','webview2-installed','chrome-installed']) {
+  assert.equal(await dialog.locator(".profile-handshake").getAttribute("open"), null);
+  await dialog.locator(".profile-handshake summary").click();
+  assert.equal(await dialog.getByLabel("Offer HTTP/2 ALPS", { exact: true }).isChecked(), true);
+  assert.equal(await dialog.getByLabel("Offer HTTP/3 ALPS", { exact: true }).isChecked(), true);
+  assert.equal(
+    await dialog.getByLabel("Use Encrypted Client Hello", { exact: true }).isChecked(),
+    true,
+  );
+  await dialog.getByLabel("Use Encrypted Client Hello", { exact: true }).uncheck();
+  await dialog.getByLabel("Offer HTTP/2 ALPS", { exact: true }).uncheck();
+  await dialog.getByLabel("Offer HTTP/3 ALPS", { exact: true }).uncheck();
+  assert.equal(
+    await dialog
+      .getByLabel("Provide info about the certificates trusted by the root store", { exact: true })
+      .isChecked(),
+    true,
+  );
+  await dialog
+    .getByLabel("Provide info about the certificates trusted by the root store", { exact: true })
+    .uncheck();
+  await dialog
+    .getByLabel("PKI metadata file", { exact: true })
+    .fill("C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb");
+  await dialog.locator(".profile-handshake summary").click();
+  await dialog.getByLabel("HTTP/3", { exact: true }).uncheck();
+  await dialog.getByLabel("Reuse server connections", { exact: true }).uncheck();
+  await dialog.getByRole("button", { name: "Save only", exact: true }).click();
+  await idle();
+  await dialog.waitFor({ state: "hidden" });
+  const savedId = await selector.inputValue();
+  assert.match(savedId, /^custom-/);
+  assert.match(await panel.textContent(), /In use: WebView2/);
+  assert.equal(
+    await panel.getByRole("button", { name: "Use profile", exact: true }).isEnabled(),
+    true,
+  );
+  await panel.getByRole("button", { name: "Use profile", exact: true }).click();
+  await idle();
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.protocols.http3,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.reuseConnections,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http2Alps,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.http3Alps,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () =>
+        globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.encryptedClientHello,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.trustAnchorIds,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.localCertificates,
+    ),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.pkiMetadataFile,
+    ),
+    "C:\\Users\\debug\\Chrome PKIMetadata\\crs.pb",
+  );
+  await panel.getByRole("button", { name: "Customize…", exact: true }).click();
+  await dialog.getByLabel("Profile TLS versions").selectOption("tls12-only");
+  await dialog.getByLabel("HTTP/3", { exact: true }).check();
+  assert.match(await dialog.textContent(), /HTTP\/3 requires TLS 1.3/);
+  assert.equal(
+    await dialog.getByRole("button", { name: "Save and use", exact: true }).isEnabled(),
+    false,
+  );
+  await dialog.getByLabel("HTTP/3", { exact: true }).uncheck();
+  await dialog.getByRole("button", { name: "Reset to Chromium 154", exact: true }).click();
+  assert.equal(await dialog.getByLabel("HTTP/3", { exact: true }).isChecked(), true);
+  assert.equal(await dialog.getByLabel("Profile TLS versions").inputValue(), "tls12-and13");
+  await dialog.locator(".profile-handshake summary").click();
+  assert.equal(
+    await dialog.getByLabel("Offer HTTP/2 ALPS", { exact: true }).isChecked(),
+    true,
+    "Reset did not restore Chromium ALPS",
+  );
+  assert.equal(
+    await dialog.getByLabel("Offer HTTP/3 ALPS", { exact: true }).isChecked(),
+    true,
+    "Reset did not restore Chromium H3 ALPS",
+  );
+  assert.equal(
+    await dialog
+      .getByLabel("Provide info about the certificates trusted by the root store", { exact: true })
+      .isChecked(),
+    true,
+  );
+  assert.equal(await dialog.getByLabel("PKI metadata file", { exact: true }).inputValue(), "");
+  assert.equal(
+    await dialog.getByLabel("Use Encrypted Client Hello", { exact: true }).isChecked(),
+    true,
+    "Reset did not restore ECH",
+  );
+  const roots = dialog.getByRole("combobox", { name: "Profile root store", exact: true });
+  assert.equal(await localTrust.isChecked(), true, "Reset did not restore local trust");
+  for (const choice of ["os", "chromium-bundled", "webview2-installed", "chrome-installed"]) {
     await roots.selectOption(choice);
-    assert.equal(await roots.inputValue(),choice);
-    assert.equal(await localTrust.isEnabled(),choice!=='os');
-    assert.equal(await localTrust.isChecked(),true,'Root switching lost the local trust choice');
+    assert.equal(await roots.inputValue(), choice);
+    assert.equal(await localTrust.isEnabled(), choice !== "os");
+    assert.equal(await localTrust.isChecked(), true, "Root switching lost the local trust choice");
   }
-  await dialog.getByLabel('Profile GREASE').selectOption('no-signature');
-  await dialog.getByLabel('Send a dummy ECH extension',{exact:true}).uncheck();
-  assert.match(await dialog.locator('.profile-differences').textContent(),/2 changes/);
+  await dialog.getByLabel("Profile GREASE").selectOption("no-signature");
+  await dialog.getByLabel("Send a dummy ECH extension", { exact: true }).uncheck();
+  assert.match(await dialog.locator(".profile-differences").textContent(), /2 changes/);
   // Closing keeps a draft; reopening never replaces it with refreshed settings.
-  await page.keyboard.press('Escape');await dialog.waitFor({state:'hidden'});
-  await panel.getByRole('button',{name:'Resume draft…',exact:true}).click();
-  assert.equal(await dialog.getByLabel('Profile GREASE').inputValue(),'no-signature');
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+  await panel.getByRole("button", { name: "Resume draft…", exact: true }).click();
+  assert.equal(await dialog.getByLabel("Profile GREASE").inputValue(), "no-signature");
   // Slow saving disables duplicate submits and cannot be cancelled halfway through activation.
-  await page.evaluate(()=>{globalThis.__workspaceFixture.delayNetworkSave=true;});
-  await dialog.getByRole('button',{name:'Save only',exact:true}).click();
-  await page.waitForFunction(()=>Boolean(globalThis.__workspaceFixture.resolveNetworkSave));
-  await page.keyboard.press('Escape');assert.equal(await dialog.isVisible(),true);
-  assert.equal(await dialog.getByRole('button',{name:'Save and use',exact:true}).isEnabled(),false);
-  await page.evaluate(()=>{globalThis.__workspaceFixture.delayNetworkSave=false;globalThis.__workspaceFixture.resolveNetworkSave();});
-  await idle();await dialog.waitFor({state:'hidden'});
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.grease),'chromium','Save only replaced the live recipe');
-  await panel.getByRole('button',{name:'Customize…',exact:true}).click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.delayNetworkSave = true;
+  });
+  await dialog.getByRole("button", { name: "Save only", exact: true }).click();
+  await page.waitForFunction(() => Boolean(globalThis.__workspaceFixture.resolveNetworkSave));
+  await page.keyboard.press("Escape");
+  assert.equal(await dialog.isVisible(), true);
+  assert.equal(
+    await dialog.getByRole("button", { name: "Save and use", exact: true }).isEnabled(),
+    false,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.delayNetworkSave = false;
+    globalThis.__workspaceFixture.resolveNetworkSave();
+  });
+  await idle();
+  await dialog.waitFor({ state: "hidden" });
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.grease,
+    ),
+    "chromium",
+    "Save only replaced the live recipe",
+  );
+  await panel.getByRole("button", { name: "Customize…", exact: true }).click();
   // Exercise a stale write, error acknowledgement and reload while keeping authored input.
-  await dialog.getByLabel('Name',{exact:true}).fill('Renamed diagnostic profile');
-  await page.evaluate(()=>{globalThis.__workspaceFixture.networkProfiles.revision++;});
-  await dialog.getByRole('button',{name:'Save only',exact:true}).click();
-  const error=page.getByRole('alertdialog',{name:'Network profile could not be saved'});
-  await error.waitFor({state:'visible'});
-  await error.getByRole('button',{name:'Close',exact:true}).click();await idle();
-  assert.equal(await dialog.getByLabel('Name',{exact:true}).inputValue(),'Renamed diagnostic profile');
-  await dialog.getByRole('button',{name:'Reload profiles',exact:true}).click();await idle();
-  await dialog.getByRole('button',{name:'Save and use',exact:true}).click();await idle();await dialog.waitFor({state:'hidden'});
-  await selector.selectOption('chromium-154');
-  assert.match(await panel.textContent(),/In use: Renamed diagnostic profile/,'Selecting a profile silently activated it');
-  await panel.getByRole('button',{name:'Use profile',exact:true}).click();await idle();
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.rootStore),'chrome-installed');
+  await dialog.getByLabel("Name", { exact: true }).fill("Renamed diagnostic profile");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.networkProfiles.revision++;
+  });
+  await dialog.getByRole("button", { name: "Save only", exact: true }).click();
+  const error = page.getByRole("alertdialog", { name: "Network profile could not be saved" });
+  await error.waitFor({ state: "visible" });
+  await error.getByRole("button", { name: "Close", exact: true }).click();
+  await idle();
+  assert.equal(
+    await dialog.getByLabel("Name", { exact: true }).inputValue(),
+    "Renamed diagnostic profile",
+  );
+  await dialog.getByRole("button", { name: "Reload profiles", exact: true }).click();
+  await idle();
+  await dialog.getByRole("button", { name: "Save and use", exact: true }).click();
+  await idle();
+  await dialog.waitFor({ state: "hidden" });
+  await selector.selectOption("chromium-154");
+  assert.match(
+    await panel.textContent(),
+    /In use: Renamed diagnostic profile/,
+    "Selecting a profile silently activated it",
+  );
+  await panel.getByRole("button", { name: "Use profile", exact: true }).click();
+  await idle();
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.networkProfiles.activeProfile.settings.rootStore,
+    ),
+    "chrome-installed",
+  );
   await selector.selectOption(savedId);
-  await panel.getByRole('button',{name:'Manage network profile'}).click();
-  await panel.getByRole('button',{name:'Duplicate…',exact:true}).click();
-  await dialog.getByLabel('Name',{exact:true}).fill('A long custom profile name for layout and keyboard checks');
-  for(const width of [1440,960,800]) {
-    await page.setViewportSize({width,height:width===1440?900:600});
-    const bounds=await dialog.boundingBox();
-    assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=width+1,'Profile editor clips horizontally');
-    assert.equal(await dialog.getByRole('button',{name:'Save only',exact:true}).isVisible(),true);
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-${width}.png`)});
-    const metadataFile=dialog.getByLabel('PKI metadata file',{exact:true});
+  await panel.getByRole("button", { name: "Manage network profile" }).click();
+  await panel.getByRole("button", { name: "Duplicate…", exact: true }).click();
+  await dialog
+    .getByLabel("Name", { exact: true })
+    .fill("A long custom profile name for layout and keyboard checks");
+  for (const width of [1440, 960, 800]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+    const bounds = await dialog.boundingBox();
+    assert.ok(
+      bounds.x >= 0 && bounds.y >= 0 && bounds.x + bounds.width <= width + 1,
+      "Profile editor clips horizontally",
+    );
+    assert.equal(
+      await dialog.getByRole("button", { name: "Save only", exact: true }).isVisible(),
+      true,
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/network-profile-${width}.png`),
+    });
+    const metadataFile = dialog.getByLabel("PKI metadata file", { exact: true });
     await metadataFile.focus();
-    assert.equal(await metadataFile.evaluate(input=>{
-      const box=input.getBoundingClientRect();
-      return input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)===input;
-    }),true,'Metadata file control is obscured in the profile editor');
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-metadata-${width}.png`)});
-    const ech=dialog.getByLabel('Use Encrypted Client Hello',{exact:true});
+    assert.equal(
+      await metadataFile.evaluate((input) => {
+        const box = input.getBoundingClientRect();
+        return (
+          input.getRootNode().elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) ===
+          input
+        );
+      }),
+      true,
+      "Metadata file control is obscured in the profile editor",
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/network-profile-metadata-${width}.png`),
+    });
+    const ech = dialog.getByLabel("Use Encrypted Client Hello", { exact: true });
     await ech.focus();
-    assert.equal(await ech.evaluate(input=>{
-      const box=input.getBoundingClientRect();
-      return input.getRootNode().elementFromPoint(box.x+box.width/2,box.y+box.height/2)===input;
-    }),true,'ECH control is obscured in the profile editor');
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/network-profile-ech-${width}.png`)});
-    await dialog.getByLabel('Name',{exact:true}).focus();
+    assert.equal(
+      await ech.evaluate((input) => {
+        const box = input.getBoundingClientRect();
+        return (
+          input.getRootNode().elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) ===
+          input
+        );
+      }),
+      true,
+      "ECH control is obscured in the profile editor",
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/network-profile-ech-${width}.png`),
+    });
+    await dialog.getByLabel("Name", { exact: true }).focus();
   }
-  await page.emulateMedia({forcedColors:'active'});
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/network-profile-forced-colors.png')});
-  await page.emulateMedia({forcedColors:'none'});
-  await dialog.getByRole('button',{name:'Discard draft',exact:true}).click();
-  await panel.getByRole('button',{name:'Manage network profile'}).click();
-  await panel.getByRole('button',{name:'Delete profile',exact:true}).click();await idle();
-  await panel.getByRole('button',{name:'Undo deletion',exact:true}).click();await idle();
-  await selector.selectOption('chromium-154');
-  await page.setViewportSize({width:1280,height:800});
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/network-profile-forced-colors.png"),
+  });
+  await page.emulateMedia({ forcedColors: "none" });
+  await dialog.getByRole("button", { name: "Discard draft", exact: true }).click();
+  await panel.getByRole("button", { name: "Manage network profile" }).click();
+  await panel.getByRole("button", { name: "Delete profile", exact: true }).click();
+  await idle();
+  await panel.getByRole("button", { name: "Undo deletion", exact: true }).click();
+  await idle();
+  await selector.selectOption("chromium-154");
+  await page.setViewportSize({ width: 1280, height: 800 });
   // Profile saves preserve ordinary drafts without submitting their preferences.
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.save_product_state??0),ordinaryWrites,'Saving a profile submitted ordinary settings');
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsDirty),true,'Profile save consumed the ordinary settings draft');
-  assert.equal(await preferences.getByLabel('Theme',{exact:true}).inputValue(),'dark');
-  await preferences.getByRole('button',{name:'Revert changes',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').settingsBusy);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.save_product_state ?? 0),
+    ordinaryWrites,
+    "Saving a profile submitted ordinary settings",
+  );
+  assert.equal(
+    await page.evaluate(
+      () =>
+        document.querySelector("app-shell").shadowRoot.querySelector("settings-workspace")
+          .settingsDirty,
+    ),
+    true,
+    "Profile save consumed the ordinary settings draft",
+  );
+  assert.equal(await preferences.getByLabel("Theme", { exact: true }).inputValue(), "dark");
+  await preferences.getByRole("button", { name: "Revert changes", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      !document.querySelector("app-shell").shadowRoot.querySelector("settings-workspace")
+        .settingsBusy,
+  );
 }

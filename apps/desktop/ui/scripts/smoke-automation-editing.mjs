@@ -1,10 +1,12 @@
-import {writeFile} from 'node:fs/promises';
-import {gzipSync} from 'node:zlib';
+import { writeFile } from "node:fs/promises";
+import { gzipSync } from "node:zlib";
 
 /** Real command contracts, persistence and authoring in the owned WebView2 profile. */
-export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitForEvent) {
-  const bytes=[0,255,128,13,10,42],encoded=Array.from(gzipSync(Buffer.from(bytes)));
-  try { await evaluate(`(async()=>{
+export async function smokeAutomationEditing(call, evaluate, screenshotPath, waitForEvent) {
+  const bytes = [0, 255, 128, 13, 10, 42],
+    encoded = Array.from(gzipSync(Buffer.from(bytes)));
+  try {
+    await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell'),invoke=window.__TAURI_INTERNALS__.invoke;
     const original=await invoke('automation_status');globalThis.__automationEditingProbe={original,view:shell.activeView};
     shell.shadowRoot.querySelector('a[data-view="automation"]').click();
@@ -50,13 +52,25 @@ export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitFo
     status=await invoke('script_status');if(status.active[0].source!==good.source||!editor.scriptDirty)throw new Error('Invalid source replaced the active script');
     editor.sourceEditor.setValue(good.source);await editor.disableScript();if(editor.scriptActive)throw new Error('Native Pause failed');
     editor.$flushUpdates();
-  })()`); } finally {
-    await evaluate(`(async()=>{const probe=globalThis.__automationEditingProbe;if(!probe)return;const invoke=window.__TAURI_INTERNALS__.invoke,current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,responseSets:probe.original.responseSets,rules:probe.original.rules}});await invoke('activate_automation',{candidateId:candidate.candidateId});delete globalThis.__automationEditingProbe;})()`);
+  })()`);
+  } finally {
+    await evaluate(
+      `(async()=>{const probe=globalThis.__automationEditingProbe;if(!probe)return;const invoke=window.__TAURI_INTERNALS__.invoke,current=await invoke('automation_status');const candidate=await invoke('validate_automation',{document:{schemaVersion:2,generation:current.generation,autoresponsesEnabled:probe.original.autoresponsesEnabled,responseSets:probe.original.responseSets,rules:probe.original.rules}});await invoke('activate_automation',{candidateId:candidate.candidateId});delete globalThis.__automationEditingProbe;})()`,
+    );
   }
-  if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-script-editing.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+  if (screenshotPath)
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-script-editing.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
   // Reload the real WebView and check persistence without explicitly saving a draft.
-  const loaded=waitForEvent('Page.loadEventFired',20000);
-  await call('Page.reload',{ignoreCache:true});await loaded;
+  const loaded = waitForEvent("Page.loadEventFired", 20000);
+  await call("Page.reload", { ignoreCache: true });
+  await loaded;
   await evaluate(`(async()=>{
     const end=Date.now()+20000;while(!document.querySelector('app-shell')?.shadowRoot?.querySelector('a[data-view="automation"]')&&Date.now()<end)await new Promise(resolve=>setTimeout(resolve,25));
     const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="automation"]').click();
@@ -67,5 +81,15 @@ export async function smokeAutomationEditing(call,evaluate,screenshotPath,waitFo
     if(!editor?.sourceEditor?.getValue().includes('native edited version')||editor.scriptDirty)throw new Error('Reopened native script lost activated source');
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
   })()`);
-  return {binaryFallback:true,bytePreservation:true,compressedHexEdit:true,unsavedValidationFocus:true,explicitExpectations:true,oneClickActivation:true,atomicFailure:true,sandboxEvidence:true,activatedSourceReload:true};
+  return {
+    binaryFallback: true,
+    bytePreservation: true,
+    compressedHexEdit: true,
+    unsavedValidationFocus: true,
+    explicitExpectations: true,
+    oneClickActivation: true,
+    atomicFailure: true,
+    sandboxEvidence: true,
+    activatedSourceReload: true,
+  };
 }

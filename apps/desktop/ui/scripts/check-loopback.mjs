@@ -1,198 +1,450 @@
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
 
-export async function checkLoopback(page,root) {
-  await page.evaluate(()=>{
-    const fixture=globalThis.__workspaceFixture;
-    fixture.appContainers=Array.from({length:84},(_,index)=>({displayName:'App '+String(index+1).padStart(3,'0'),description:index===0?'A long description with <script>inert text</script> and enough words to check wrapping in the inventory.':'Windows application '+index,package:'Example.Package.'+index+'_1.0.0.0_x64__publisher',name:'Example.Package.'+index+'_publisher',sid:'S-1-15-2-'+(1000+index)+'-123456789-234567890-345678901-456789012-567890123-678901234',users:['Example\\Owner (S-1-5-21-1-2-3-1001)','Example\\Other (S-1-5-21-1-2-3-1002)'],exempt:index%3===0}));
-    const shell=document.querySelector('app-shell');shell.settings.showSettingsSection('connection');
+export async function checkLoopback(page, root) {
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.appContainers = Array.from({ length: 84 }, (_, index) => ({
+      displayName: "App " + String(index + 1).padStart(3, "0"),
+      description:
+        index === 0
+          ? "A long description with <script>inert text</script> and enough words to check wrapping in the inventory."
+          : "Windows application " + index,
+      package: "Example.Package." + index + "_1.0.0.0_x64__publisher",
+      name: "Example.Package." + index + "_publisher",
+      sid:
+        "S-1-15-2-" +
+        (1000 + index) +
+        "-123456789-234567890-345678901-456789012-567890123-678901234",
+      users: ["Example\\Owner (S-1-5-21-1-2-3-1001)", "Example\\Other (S-1-5-21-1-2-3-1002)"],
+      exempt: index % 3 === 0,
+    }));
+    const shell = document.querySelector("app-shell");
+    shell.settings.showSettingsSection("connection");
   });
   await page.locator('app-shell a[data-view="settings"]').click();
-  const launch=page.getByRole('button',{name:'Manage loopback exemptions…',exact:true});
+  const launch = page.getByRole("button", { name: "Manage loopback exemptions…", exact: true });
   await launch.click();
-  const dialog=page.getByRole('dialog',{name:'AppContainer loopback exemptions',exact:true});
-  await dialog.getByText('84 of 84 AppContainers · 0 selected',{exact:true}).waitFor();
-  const grid=dialog.getByRole('grid',{name:'Windows AppContainers'});
-  assert.equal(await grid.locator('tbody tr[data-appcontainer-sid]').count(),84);
-  for(const heading of ['Display Name','Description','Package','AppContainer name','AppContainer SID','AppContainer user(s)'])assert.equal(await grid.getByRole('columnheader',{name:heading,exact:true}).count(),1);
-  assert.match(await grid.locator('tbody tr').first().textContent(),/<script>inert text<\/script>/);
-  assert.equal(await grid.locator('tbody tr').first().locator('td').nth(3).evaluate(element=>getComputedStyle(element).whiteSpace),'normal','AppContainer descriptions inherit single-line truncation');
-  assert.equal(await grid.locator('tbody tr').first().locator('td').last().evaluate(element=>getComputedStyle(element).whiteSpace),'pre-wrap','AppContainer users are flattened into a truncated line');
-  assert.equal(await grid.locator('tbody tr').first().locator('td').nth(1).textContent(),'Enabled');
-  const row=index=>grid.locator('tbody tr[data-appcontainer-sid]').nth(index);
-  const add=dialog.getByRole('button',{name:/^Add selected exemptions \(/});
-  const remove=dialog.getByRole('button',{name:/^Remove selected exemptions \(/});
-  const selection=dialog.getByRole('button',{name:/^Select (all|filtered)$/});
-  const actionHelp=dialog.locator('#loopback-action-help');
-  assert.equal(await selection.textContent(),'Select all');
-  assert.equal(await add.isDisabled(),true);assert.equal(await remove.isDisabled(),true);
-  await row(0).locator('td').nth(2).click();
-  assert.equal(await add.textContent(),'Add selected exemptions (0)');
-  assert.equal(await add.isDisabled(),true);
-  assert.equal(await remove.textContent(),'Remove selected exemptions (1)');
-  assert.equal(await remove.isEnabled(),true);
-  assert.equal(await actionHelp.textContent(),'Selected apps already have exemptions. Remove exemptions for App 001.');
-  const calls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.set_loopback_exemptions??0);
-  await page.evaluate(()=>document.querySelector('app-shell').settings.loopbackManager.apply(true));
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.set_loopback_exemptions??0),calls,'An already-exempt selection requested administrator approval');
-  await row(1).locator('td').nth(2).click();
-  await row(3).locator('td').nth(2).click({modifiers:['Shift']});
-  assert.equal(await grid.locator('tr[data-selected]').count(),3,'Shift-click did not select the visible range');
-  await row(5).locator('td').nth(2).click({modifiers:['Control']});
-  assert.equal(await grid.locator('tr[data-selected]').count(),4);
-  assert.equal(await add.textContent(),'Add selected exemptions (3)');
-  assert.equal(await remove.textContent(),'Remove selected exemptions (1)');
-  assert.equal(await actionHelp.textContent(),'Remove exemptions for App 004.');
-  await add.click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  const changed=await page.evaluate(()=>globalThis.__workspaceFixture.loopbackChange);
-  assert.equal(changed.enabled,true);
-  assert.deepEqual(changed.sids,await page.evaluate(()=>[1,2,5].map(index=>globalThis.__workspaceFixture.appContainers[index].sid)),'Adding included an already-exempt row');
-  assert.match(await dialog.locator('.loopback-feedback').textContent(),/Enabled loopback access for 3 AppContainers\./);
-  assert.equal(await grid.locator('tr[data-selected]').count(),4,'Applying exemptions lost the selected set');
-  assert.equal(await add.isDisabled(),true);
-  assert.equal(await remove.textContent(),'Remove selected exemptions (4)');
-  assert.equal(await row(1).locator('td').nth(1).textContent(),'Enabled');
-  assert.equal(await row(2).locator('td').nth(1).textContent(),'Enabled');
-  await remove.click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  assert.equal(await row(1).locator('td').nth(1).textContent(),'Not exempt');
-  assert.equal(await row(0).locator('td').nth(1).textContent(),'Enabled','Removal changed an unselected row');
-  assert.equal(await remove.isDisabled(),true);
-  assert.equal(await add.textContent(),'Add selected exemptions (4)');
-  assert.equal(await grid.locator('tr[data-selected]').count(),4,'Removing exemptions lost the selected set');
-  assert.equal(await actionHelp.textContent(),'Selected apps have no exemptions to remove.');
-  const noRemovalCalls=await page.evaluate(()=>globalThis.__workspaceFixture.calls.set_loopback_exemptions);
-  await page.evaluate(()=>document.querySelector('app-shell').settings.loopbackManager.apply(false));
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.set_loopback_exemptions),noRemovalCalls,'A non-exempt selection requested removal');
-  const exemptOnly=dialog.getByRole('checkbox',{name:'Exempt only',exact:true});
-  await exemptOnly.check();
-  assert.equal(await grid.locator('tbody tr[data-appcontainer-sid]').count(),27);
-  assert.equal(await selection.textContent(),'Select filtered');
-  assert.match(await dialog.locator('.loopback-feedback').textContent(),/4 selected · 4 hidden by the filter/);
-  await selection.click();
-  assert.equal(await grid.locator('tr[data-selected]').count(),27);
-  assert.equal(await add.isDisabled(),true);
-  assert.equal(await remove.textContent(),'Remove selected exemptions (27)');
-  await exemptOnly.uncheck();
-  assert.equal(await selection.textContent(),'Select all');
-  await dialog.getByRole('button',{name:'Clear selection',exact:true}).click();
-  await row(1).locator('td').nth(2).click();
-  await row(3).locator('td').nth(2).click({modifiers:['Shift']});
-  await row(5).locator('td').nth(2).click({modifiers:['Control']});
-  const filter=dialog.getByRole('searchbox',{name:'Filter AppContainers',exact:true});
-  await filter.fill('App 084');
-  assert.equal(await grid.locator('tbody tr[data-appcontainer-sid]').count(),1);
-  assert.match(await dialog.locator('.loopback-feedback').textContent(),/4 selected · 4 hidden by the filter/);
-  assert.equal(await selection.textContent(),'Select filtered');
-  await selection.click();
-  assert.match(await dialog.locator('.loopback-feedback').textContent(),/1 selected/);
-  assert.equal(await remove.isDisabled(),true);
-  await filter.fill('   ');
-  assert.equal(await selection.textContent(),'Select all','Whitespace activated the filter');
-  await filter.fill('no such package');
-  assert.match(await grid.textContent(),/No AppContainers match/);
-  await filter.fill('');
-  await dialog.getByRole('button',{name:'Clear selection',exact:true}).click();
-  await row(0).focus();
-  const keyboardFocus=await row(0).evaluate(element=>({focused:element===element.getRootNode().activeElement,tabindex:element.getAttribute('tabindex'),tag:element.getRootNode().activeElement?.tagName,active:element.getRootNode().activeElement?.getAttribute('aria-label'),connected:element.isConnected}));
-  assert.equal(keyboardFocus.focused,true,'Inventory row could not receive keyboard focus: '+JSON.stringify(keyboardFocus));
-  await page.keyboard.press('Space');await page.keyboard.press('Shift+ArrowDown');
-  assert.equal(await grid.locator('tr[data-selected]').count(),2,'Keyboard range selection failed');
-  await page.keyboard.press('Control+a');assert.equal(await grid.locator('tr[data-selected]').count(),84);
-  await grid.getByRole('button',{name:'Display Name',exact:true}).click();
-  assert.match(await row(0).textContent(),/App 084/);
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/loopback-wide.png')});
-  for(const [width,height] of [[960,720],[620,640],[800,600]]) {
-    await page.setViewportSize({width,height});
-    for(const button of [dialog.getByRole('button',{name:'Close',exact:true}),dialog.getByRole('button',{name:'Refresh',exact:true}),selection,add,remove]) {
-      const name=await button.textContent();
-      const bounds=await button.boundingBox();
-      assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=width&&bounds.y+bounds.height<=height,`Loopback action clipped at ${width}: ${name}`);
-    }
-    const scroll=dialog.locator('.loopback-table-scroll');
-    assert.equal(await scroll.evaluate(element=>element.scrollHeight>element.clientHeight&&element.scrollWidth>element.clientWidth),true,'Populated inventory did not scroll in both directions');
-    await scroll.evaluate(element=>{element.scrollLeft=element.scrollWidth;element.scrollTop=element.scrollHeight;});
-    await page.screenshot({path:resolve(root,`../../../target/ui-check/loopback-${width}.png`)});
-  }
-  await page.setViewportSize({width:1280,height:800});
-  await dialog.locator('.loopback-table-scroll').evaluate(element=>{element.scrollLeft=0;element.scrollTop=0;});
-  await filter.fill('App 001');await selection.click();
-  assert.equal(await actionHelp.textContent(),'Selected apps already have exemptions. Remove exemptions for App 001.');
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/loopback-selected.png')});
-  await page.evaluate(()=>globalThis.__workspaceFixture.loopbackChangeError=true);
-  await remove.click();
-  await dialog.getByRole('alert').getByText(/Windows approval was canceled/).waitFor();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  assert.equal(await row(0).locator('td').nth(1).textContent(),'Enabled','Canceled approval changed the exemption');
-  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.loopbackChangeError=false;fixture.deferLoopbackChange=true;});
-  await remove.click();
-  await page.waitForFunction(()=>globalThis.__workspaceFixture.loopbackChangePending);
-  await page.keyboard.press('Escape');assert.equal(await dialog.isVisible(),false);assert.equal(await launch.evaluate(element=>element===element.getRootNode().activeElement),true);
-  await launch.click();assert.match(await dialog.textContent(),/Waiting for Windows approval/);
-  assert.equal(await remove.isDisabled(),true);
-  await filter.fill('App 084');
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();
-  await page.locator('a[data-view="traffic"]').click();
-  await page.evaluate(()=>globalThis.__workspaceFixture.finishLoopbackChange());
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  assert.equal(await dialog.isVisible(),false,'A late exemption result reopened the modal');
-  assert.equal(await page.evaluate(()=>document.querySelector('app-shell').activeView),'traffic');
-  await page.locator('a[data-view="settings"]').click();
-  await page.evaluate(()=>{globalThis.__workspaceFixture.loopbackReadError=true;});
-  await launch.click();await dialog.getByRole('alert').getByText('Fixture Windows Firewall unavailable',{exact:true}).waitFor();
-  assert.equal(await add.isDisabled(),true);
-  await page.evaluate(()=>globalThis.__workspaceFixture.loopbackReadError=false);
-  await dialog.getByRole('button',{name:'Refresh',exact:true}).click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  await filter.fill('App 001');
-  assert.equal(await row(0).locator('td').nth(1).textContent(),'Not exempt');
-  assert.equal(await add.textContent(),'Add selected exemptions (1)','An asynchronous filter change replaced the selected operation targets');
-  await page.evaluate(()=>{
-    const apps=globalThis.__workspaceFixture.appContainers;
-    apps[6].displayName='App 007 — A Windows application with a long display name that must remain readable';
-    apps[9].displayName='App 010 — Another Windows application with a long display name';
+  const dialog = page.getByRole("dialog", {
+    name: "AppContainer loopback exemptions",
+    exact: true,
   });
-  await dialog.getByRole('button',{name:'Refresh',exact:true}).click();
-  await filter.fill('App 007');await selection.click();
-  await filter.fill('App 008');await row(0).getByRole('checkbox').check();
-  await filter.fill('App 010');await row(0).getByRole('checkbox').check();
-  assert.equal(await add.textContent(),'Add selected exemptions (1)');
-  assert.equal(await remove.textContent(),'Remove selected exemptions (2)');
-  assert.match(await actionHelp.textContent(),/Remove exemptions for App 007 .* and App 010 /);
-  assert.match(await dialog.locator('.loopback-feedback').textContent(),/3 selected · 2 hidden by the filter/);
-  await page.setViewportSize({width:1440,height:900});
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/loopback-removal-targets-wide.png')});
-  await page.setViewportSize({width:620,height:640});
-  await page.emulateMedia({forcedColors:'active'});
-  for(const button of [add,remove]) {
-    const bounds=await button.boundingBox();
-    assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=620&&bounds.y+bounds.height<=640,'Removal targets clipped an action');
-  }
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/loopback-removal-targets-compact.png')});
-  await page.emulateMedia({forcedColors:'none'});
-  // A 960×720 window at 150% zoom has a 640×480 CSS-pixel viewport.
-  await page.setViewportSize({width:640,height:480});
-  for(const button of [add,remove]) {
-    const bounds=await button.boundingBox();
-    assert.ok(bounds.x>=0&&bounds.y>=0&&bounds.x+bounds.width<=640&&bounds.y+bounds.height<=480,'Removal targets clipped an action in the zoom-sized viewport');
-  }
-  await page.screenshot({path:resolve(root,'../../../target/ui-check/loopback-removal-targets-zoom.png')});
+  await dialog.getByText("84 of 84 AppContainers · 0 selected", { exact: true }).waitFor();
+  const grid = dialog.getByRole("grid", { name: "Windows AppContainers" });
+  assert.equal(await grid.locator("tbody tr[data-appcontainer-sid]").count(), 84);
+  for (const heading of [
+    "Display Name",
+    "Description",
+    "Package",
+    "AppContainer name",
+    "AppContainer SID",
+    "AppContainer user(s)",
+  ])
+    assert.equal(await grid.getByRole("columnheader", { name: heading, exact: true }).count(), 1);
+  assert.match(
+    await grid.locator("tbody tr").first().textContent(),
+    /<script>inert text<\/script>/,
+  );
+  assert.equal(
+    await grid
+      .locator("tbody tr")
+      .first()
+      .locator("td")
+      .nth(3)
+      .evaluate((element) => getComputedStyle(element).whiteSpace),
+    "normal",
+    "AppContainer descriptions inherit single-line truncation",
+  );
+  assert.equal(
+    await grid
+      .locator("tbody tr")
+      .first()
+      .locator("td")
+      .last()
+      .evaluate((element) => getComputedStyle(element).whiteSpace),
+    "pre-wrap",
+    "AppContainer users are flattened into a truncated line",
+  );
+  assert.equal(
+    await grid.locator("tbody tr").first().locator("td").nth(1).textContent(),
+    "Enabled",
+  );
+  const row = (index) => grid.locator("tbody tr[data-appcontainer-sid]").nth(index);
+  const add = dialog.getByRole("button", { name: /^Add selected exemptions \(/ });
+  const remove = dialog.getByRole("button", { name: /^Remove selected exemptions \(/ });
+  const selection = dialog.getByRole("button", { name: /^Select (all|filtered)$/ });
+  const actionHelp = dialog.locator("#loopback-action-help");
+  assert.equal(await selection.textContent(), "Select all");
+  assert.equal(await add.isDisabled(), true);
+  assert.equal(await remove.isDisabled(), true);
+  await row(0).locator("td").nth(2).click();
+  assert.equal(await add.textContent(), "Add selected exemptions (0)");
+  assert.equal(await add.isDisabled(), true);
+  assert.equal(await remove.textContent(), "Remove selected exemptions (1)");
+  assert.equal(await remove.isEnabled(), true);
+  assert.equal(
+    await actionHelp.textContent(),
+    "Selected apps already have exemptions. Remove exemptions for App 001.",
+  );
+  const calls = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.set_loopback_exemptions ?? 0,
+  );
+  await page.evaluate(() =>
+    document.querySelector("app-shell").settings.loopbackManager.apply(true),
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.set_loopback_exemptions ?? 0),
+    calls,
+    "An already-exempt selection requested administrator approval",
+  );
+  await row(1).locator("td").nth(2).click();
+  await row(3)
+    .locator("td")
+    .nth(2)
+    .click({ modifiers: ["Shift"] });
+  assert.equal(
+    await grid.locator("tr[data-selected]").count(),
+    3,
+    "Shift-click did not select the visible range",
+  );
+  await row(5)
+    .locator("td")
+    .nth(2)
+    .click({ modifiers: ["Control"] });
+  assert.equal(await grid.locator("tr[data-selected]").count(), 4);
+  assert.equal(await add.textContent(), "Add selected exemptions (3)");
+  assert.equal(await remove.textContent(), "Remove selected exemptions (1)");
+  assert.equal(await actionHelp.textContent(), "Remove exemptions for App 004.");
+  await add.click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  const changed = await page.evaluate(() => globalThis.__workspaceFixture.loopbackChange);
+  assert.equal(changed.enabled, true);
+  assert.deepEqual(
+    changed.sids,
+    await page.evaluate(() =>
+      [1, 2, 5].map((index) => globalThis.__workspaceFixture.appContainers[index].sid),
+    ),
+    "Adding included an already-exempt row",
+  );
+  assert.match(
+    await dialog.locator(".loopback-feedback").textContent(),
+    /Enabled loopback access for 3 AppContainers\./,
+  );
+  assert.equal(
+    await grid.locator("tr[data-selected]").count(),
+    4,
+    "Applying exemptions lost the selected set",
+  );
+  assert.equal(await add.isDisabled(), true);
+  assert.equal(await remove.textContent(), "Remove selected exemptions (4)");
+  assert.equal(await row(1).locator("td").nth(1).textContent(), "Enabled");
+  assert.equal(await row(2).locator("td").nth(1).textContent(), "Enabled");
   await remove.click();
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  const removed=await page.evaluate(()=>globalThis.__workspaceFixture.loopbackChange);
-  assert.equal(removed.enabled,false);
-  assert.deepEqual(removed.sids,await page.evaluate(()=>[6,9].map(index=>globalThis.__workspaceFixture.appContainers[index].sid)),'Removal included a non-exempt or unselected row');
-  assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.appContainers[12].exempt),true,'Removal changed an unrelated exemption');
-  assert.equal(await add.textContent(),'Add selected exemptions (3)');
-  assert.equal(await remove.isDisabled(),true);
-  await page.setViewportSize({width:1280,height:800});
-  await page.keyboard.press('Escape');
-  await page.evaluate(()=>{const fixture=globalThis.__workspaceFixture;fixture.deferLoopbackRead=true;});
-  await launch.click();await page.waitForFunction(()=>globalThis.__workspaceFixture.loopbackReadPending);
-  await dialog.getByRole('button',{name:'Close',exact:true}).click();await page.locator('a[data-view="traffic"]').click();
-  await page.evaluate(()=>globalThis.__workspaceFixture.finishLoopbackRead());
-  await page.waitForFunction(()=>!document.querySelector('app-shell').settings.loopbackManager.loopbackBusy);
-  assert.equal(await dialog.isVisible(),false,'A late inventory result reopened the modal');
-  await page.evaluate(()=>{const manager=document.querySelector('app-shell').settings.loopbackManager;manager.loopbackQuery='';manager.clearSelection();});
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  assert.equal(await row(1).locator("td").nth(1).textContent(), "Not exempt");
+  assert.equal(
+    await row(0).locator("td").nth(1).textContent(),
+    "Enabled",
+    "Removal changed an unselected row",
+  );
+  assert.equal(await remove.isDisabled(), true);
+  assert.equal(await add.textContent(), "Add selected exemptions (4)");
+  assert.equal(
+    await grid.locator("tr[data-selected]").count(),
+    4,
+    "Removing exemptions lost the selected set",
+  );
+  assert.equal(await actionHelp.textContent(), "Selected apps have no exemptions to remove.");
+  const noRemovalCalls = await page.evaluate(
+    () => globalThis.__workspaceFixture.calls.set_loopback_exemptions,
+  );
+  await page.evaluate(() =>
+    document.querySelector("app-shell").settings.loopbackManager.apply(false),
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.set_loopback_exemptions),
+    noRemovalCalls,
+    "A non-exempt selection requested removal",
+  );
+  const exemptOnly = dialog.getByRole("checkbox", { name: "Exempt only", exact: true });
+  await exemptOnly.check();
+  assert.equal(await grid.locator("tbody tr[data-appcontainer-sid]").count(), 27);
+  assert.equal(await selection.textContent(), "Select filtered");
+  assert.match(
+    await dialog.locator(".loopback-feedback").textContent(),
+    /4 selected · 4 hidden by the filter/,
+  );
+  await selection.click();
+  assert.equal(await grid.locator("tr[data-selected]").count(), 27);
+  assert.equal(await add.isDisabled(), true);
+  assert.equal(await remove.textContent(), "Remove selected exemptions (27)");
+  await exemptOnly.uncheck();
+  assert.equal(await selection.textContent(), "Select all");
+  await dialog.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await row(1).locator("td").nth(2).click();
+  await row(3)
+    .locator("td")
+    .nth(2)
+    .click({ modifiers: ["Shift"] });
+  await row(5)
+    .locator("td")
+    .nth(2)
+    .click({ modifiers: ["Control"] });
+  const filter = dialog.getByRole("searchbox", { name: "Filter AppContainers", exact: true });
+  await filter.fill("App 084");
+  assert.equal(await grid.locator("tbody tr[data-appcontainer-sid]").count(), 1);
+  assert.match(
+    await dialog.locator(".loopback-feedback").textContent(),
+    /4 selected · 4 hidden by the filter/,
+  );
+  assert.equal(await selection.textContent(), "Select filtered");
+  await selection.click();
+  assert.match(await dialog.locator(".loopback-feedback").textContent(), /1 selected/);
+  assert.equal(await remove.isDisabled(), true);
+  await filter.fill("   ");
+  assert.equal(await selection.textContent(), "Select all", "Whitespace activated the filter");
+  await filter.fill("no such package");
+  assert.match(await grid.textContent(), /No AppContainers match/);
+  await filter.fill("");
+  await dialog.getByRole("button", { name: "Clear selection", exact: true }).click();
+  await row(0).focus();
+  const keyboardFocus = await row(0).evaluate((element) => ({
+    focused: element === element.getRootNode().activeElement,
+    tabindex: element.getAttribute("tabindex"),
+    tag: element.getRootNode().activeElement?.tagName,
+    active: element.getRootNode().activeElement?.getAttribute("aria-label"),
+    connected: element.isConnected,
+  }));
+  assert.equal(
+    keyboardFocus.focused,
+    true,
+    "Inventory row could not receive keyboard focus: " + JSON.stringify(keyboardFocus),
+  );
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Shift+ArrowDown");
+  assert.equal(
+    await grid.locator("tr[data-selected]").count(),
+    2,
+    "Keyboard range selection failed",
+  );
+  await page.keyboard.press("Control+a");
+  assert.equal(await grid.locator("tr[data-selected]").count(), 84);
+  await grid.getByRole("button", { name: "Display Name", exact: true }).click();
+  assert.match(await row(0).textContent(), /App 084/);
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/loopback-wide.png") });
+  for (const [width, height] of [
+    [960, 720],
+    [620, 640],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    for (const button of [
+      dialog.getByRole("button", { name: "Close", exact: true }),
+      dialog.getByRole("button", { name: "Refresh", exact: true }),
+      selection,
+      add,
+      remove,
+    ]) {
+      const name = await button.textContent();
+      const bounds = await button.boundingBox();
+      assert.ok(
+        bounds.x >= 0 &&
+          bounds.y >= 0 &&
+          bounds.x + bounds.width <= width &&
+          bounds.y + bounds.height <= height,
+        `Loopback action clipped at ${width}: ${name}`,
+      );
+    }
+    const scroll = dialog.locator(".loopback-table-scroll");
+    assert.equal(
+      await scroll.evaluate(
+        (element) =>
+          element.scrollHeight > element.clientHeight && element.scrollWidth > element.clientWidth,
+      ),
+      true,
+      "Populated inventory did not scroll in both directions",
+    );
+    await scroll.evaluate((element) => {
+      element.scrollLeft = element.scrollWidth;
+      element.scrollTop = element.scrollHeight;
+    });
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/loopback-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await dialog.locator(".loopback-table-scroll").evaluate((element) => {
+    element.scrollLeft = 0;
+    element.scrollTop = 0;
+  });
+  await filter.fill("App 001");
+  await selection.click();
+  assert.equal(
+    await actionHelp.textContent(),
+    "Selected apps already have exemptions. Remove exemptions for App 001.",
+  );
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/loopback-selected.png") });
+  await page.evaluate(() => (globalThis.__workspaceFixture.loopbackChangeError = true));
+  await remove.click();
+  await dialog
+    .getByRole("alert")
+    .getByText(/Windows approval was canceled/)
+    .waitFor();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  assert.equal(
+    await row(0).locator("td").nth(1).textContent(),
+    "Enabled",
+    "Canceled approval changed the exemption",
+  );
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.loopbackChangeError = false;
+    fixture.deferLoopbackChange = true;
+  });
+  await remove.click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.loopbackChangePending);
+  await page.keyboard.press("Escape");
+  assert.equal(await dialog.isVisible(), false);
+  assert.equal(
+    await launch.evaluate((element) => element === element.getRootNode().activeElement),
+    true,
+  );
+  await launch.click();
+  assert.match(await dialog.textContent(), /Waiting for Windows approval/);
+  assert.equal(await remove.isDisabled(), true);
+  await filter.fill("App 084");
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.locator('a[data-view="traffic"]').click();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishLoopbackChange());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  assert.equal(await dialog.isVisible(), false, "A late exemption result reopened the modal");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").activeView),
+    "traffic",
+  );
+  await page.locator('a[data-view="settings"]').click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.loopbackReadError = true;
+  });
+  await launch.click();
+  await dialog
+    .getByRole("alert")
+    .getByText("Fixture Windows Firewall unavailable", { exact: true })
+    .waitFor();
+  assert.equal(await add.isDisabled(), true);
+  await page.evaluate(() => (globalThis.__workspaceFixture.loopbackReadError = false));
+  await dialog.getByRole("button", { name: "Refresh", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  await filter.fill("App 001");
+  assert.equal(await row(0).locator("td").nth(1).textContent(), "Not exempt");
+  assert.equal(
+    await add.textContent(),
+    "Add selected exemptions (1)",
+    "An asynchronous filter change replaced the selected operation targets",
+  );
+  await page.evaluate(() => {
+    const apps = globalThis.__workspaceFixture.appContainers;
+    apps[6].displayName =
+      "App 007 — A Windows application with a long display name that must remain readable";
+    apps[9].displayName = "App 010 — Another Windows application with a long display name";
+  });
+  await dialog.getByRole("button", { name: "Refresh", exact: true }).click();
+  await filter.fill("App 007");
+  await selection.click();
+  await filter.fill("App 008");
+  await row(0).getByRole("checkbox").check();
+  await filter.fill("App 010");
+  await row(0).getByRole("checkbox").check();
+  assert.equal(await add.textContent(), "Add selected exemptions (1)");
+  assert.equal(await remove.textContent(), "Remove selected exemptions (2)");
+  assert.match(await actionHelp.textContent(), /Remove exemptions for App 007 .* and App 010 /);
+  assert.match(
+    await dialog.locator(".loopback-feedback").textContent(),
+    /3 selected · 2 hidden by the filter/,
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/loopback-removal-targets-wide.png"),
+  });
+  await page.setViewportSize({ width: 620, height: 640 });
+  await page.emulateMedia({ forcedColors: "active" });
+  for (const button of [add, remove]) {
+    const bounds = await button.boundingBox();
+    assert.ok(
+      bounds.x >= 0 &&
+        bounds.y >= 0 &&
+        bounds.x + bounds.width <= 620 &&
+        bounds.y + bounds.height <= 640,
+      "Removal targets clipped an action",
+    );
+  }
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/loopback-removal-targets-compact.png"),
+  });
+  await page.emulateMedia({ forcedColors: "none" });
+  // A 960×720 window at 150% zoom has a 640×480 CSS-pixel viewport.
+  await page.setViewportSize({ width: 640, height: 480 });
+  for (const button of [add, remove]) {
+    const bounds = await button.boundingBox();
+    assert.ok(
+      bounds.x >= 0 &&
+        bounds.y >= 0 &&
+        bounds.x + bounds.width <= 640 &&
+        bounds.y + bounds.height <= 480,
+      "Removal targets clipped an action in the zoom-sized viewport",
+    );
+  }
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/loopback-removal-targets-zoom.png"),
+  });
+  await remove.click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  const removed = await page.evaluate(() => globalThis.__workspaceFixture.loopbackChange);
+  assert.equal(removed.enabled, false);
+  assert.deepEqual(
+    removed.sids,
+    await page.evaluate(() =>
+      [6, 9].map((index) => globalThis.__workspaceFixture.appContainers[index].sid),
+    ),
+    "Removal included a non-exempt or unselected row",
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.appContainers[12].exempt),
+    true,
+    "Removal changed an unrelated exemption",
+  );
+  assert.equal(await add.textContent(), "Add selected exemptions (3)");
+  assert.equal(await remove.isDisabled(), true);
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.keyboard.press("Escape");
+  await page.evaluate(() => {
+    const fixture = globalThis.__workspaceFixture;
+    fixture.deferLoopbackRead = true;
+  });
+  await launch.click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.loopbackReadPending);
+  await dialog.getByRole("button", { name: "Close", exact: true }).click();
+  await page.locator('a[data-view="traffic"]').click();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishLoopbackRead());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").settings.loopbackManager.loopbackBusy,
+  );
+  assert.equal(await dialog.isVisible(), false, "A late inventory result reopened the modal");
+  await page.evaluate(() => {
+    const manager = document.querySelector("app-shell").settings.loopbackManager;
+    manager.loopbackQuery = "";
+    manager.clearSelection();
+  });
 }

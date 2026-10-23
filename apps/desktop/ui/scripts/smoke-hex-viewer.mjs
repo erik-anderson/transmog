@@ -1,4 +1,4 @@
-import assert from 'node:assert/strict';
+import assert from "node:assert/strict";
 
 export async function smokeHexViewer(evaluate, call) {
   try {
@@ -27,11 +27,23 @@ export async function smokeHexViewer(evaluate, call) {
       const point=index=>{const bounds=viewer.querySelector('[data-byte="'+index+'"][data-column="hex"]').getBoundingClientRect();return {x:bounds.left+bounds.width/2,y:bounds.top+bounds.height/2};};
       return [point(0),point(7)];
     })()`);
-    await call('Input.dispatchMouseEvent',{type:'mouseMoved',...points[0]});
-    await call('Input.dispatchMouseEvent',{type:'mousePressed',button:'left',clickCount:1,...points[0]});
-    await call('Input.dispatchMouseEvent',{type:'mouseMoved',buttons:1,...points[1]});
-    await evaluate('new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))');
-    await call('Input.dispatchMouseEvent',{type:'mouseReleased',button:'left',clickCount:1,...points[1]});
+    await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...points[0] });
+    await call("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      button: "left",
+      clickCount: 1,
+      ...points[0],
+    });
+    await call("Input.dispatchMouseEvent", { type: "mouseMoved", buttons: 1, ...points[1] });
+    await evaluate(
+      "new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)))",
+    );
+    await call("Input.dispatchMouseEvent", {
+      type: "mouseReleased",
+      button: "left",
+      clickCount: 1,
+      ...points[1],
+    });
     const selection = await evaluate(`(() => {
       const viewer=globalThis.__hexSmoke.viewer;
       const selected=column=>[...viewer.querySelectorAll('[data-selected][data-column="'+column+'"]')].map(cell=>Number(cell.dataset.byte));
@@ -40,36 +52,76 @@ export async function smokeHexViewer(evaluate, call) {
         allLabel:viewer.selectAllLabel,reducedMotion:matchMedia('(prefers-reduced-motion:reduce)').matches,
         focused:viewer.viewport.matches(':focus'),events:globalThis.__hexSmoke.events};
     })()`);
-    assert.deepEqual(selection.hex,[0,1,2,3,4,5,6,7],JSON.stringify({points,selection}));
-    assert.deepEqual(selection.text,selection.hex);
-    assert.equal(selection.caret,7);
-    assert.equal(selection.caretAnimation,selection.reducedMotion?'none':'hex-caret-blink',JSON.stringify(selection));
-    assert.equal(selection.allLabel,'Select all (truncated)');
-    const key = async (key, code, modifiers=0) => {
-      await call('Input.dispatchKeyEvent',{type:'keyDown',key,windowsVirtualKeyCode:code,modifiers});
-      await call('Input.dispatchKeyEvent',{type:'keyUp',key,windowsVirtualKeyCode:code,modifiers});
-      await evaluate('new Promise(resolve=>requestAnimationFrame(resolve))');
+    assert.deepEqual(
+      selection.hex,
+      [0, 1, 2, 3, 4, 5, 6, 7],
+      JSON.stringify({ points, selection }),
+    );
+    assert.deepEqual(selection.text, selection.hex);
+    assert.equal(selection.caret, 7);
+    assert.equal(
+      selection.caretAnimation,
+      selection.reducedMotion ? "none" : "hex-caret-blink",
+      JSON.stringify(selection),
+    );
+    assert.equal(selection.allLabel, "Select all (truncated)");
+    const key = async (key, code, modifiers = 0) => {
+      await call("Input.dispatchKeyEvent", {
+        type: "keyDown",
+        key,
+        windowsVirtualKeyCode: code,
+        modifiers,
+      });
+      await call("Input.dispatchKeyEvent", {
+        type: "keyUp",
+        key,
+        windowsVirtualKeyCode: code,
+        modifiers,
+      });
+      await evaluate("new Promise(resolve=>requestAnimationFrame(resolve))");
     };
-    await key('c',67,2);
-    assert.equal(await evaluate('globalThis.__hexSmoke.copied'),'AUcBVwFbAWU=');
-    await key('ArrowLeft',37,2);
-    assert.deepEqual(await evaluate('(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd].map(Number)})()'),[6,-1,-1]);
-    await key('ArrowRight',39,8);
-    assert.deepEqual(await evaluate('(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd].map(Number)})()'),[7,6,7]);
-    await key('F10',121,8);
-    await key('ArrowDown',40);
-    await key('ArrowRight',39);
-    assert.equal(await evaluate('globalThis.__hexSmoke.viewer.copyMenuOpen'),true);
-    const active = await evaluate('globalThis.__hexSmoke.viewer.getRootNode().activeElement.textContent');
-    assert.equal(active.trim(),'Hex');
-    await key('Escape',27); await key('Escape',27);
-    assert.equal(await evaluate(`(async () => {
+    await key("c", 67, 2);
+    assert.equal(await evaluate("globalThis.__hexSmoke.copied"), "AUcBVwFbAWU=");
+    await key("ArrowLeft", 37, 2);
+    assert.deepEqual(
+      await evaluate(
+        "(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd].map(Number)})()",
+      ),
+      [6, -1, -1],
+    );
+    await key("ArrowRight", 39, 8);
+    assert.deepEqual(
+      await evaluate(
+        "(()=>{const v=globalThis.__hexSmoke.viewer;return [v.caret,v.rangeStart,v.rangeEnd].map(Number)})()",
+      ),
+      [7, 6, 7],
+    );
+    await key("F10", 121, 8);
+    await key("ArrowDown", 40);
+    await key("ArrowRight", 39);
+    assert.equal(await evaluate("globalThis.__hexSmoke.viewer.copyMenuOpen"), true);
+    const active = await evaluate(
+      "globalThis.__hexSmoke.viewer.getRootNode().activeElement.textContent",
+    );
+    assert.equal(active.trim(), "Hex");
+    await key("Escape", 27);
+    await key("Escape", 27);
+    assert.equal(
+      await evaluate(`(async () => {
       const viewer=globalThis.__hexSmoke.viewer,deadline=performance.now()+1000;
       while(viewer.viewport!==viewer.getRootNode().activeElement && performance.now()<deadline)
         await new Promise(resolve=>requestAnimationFrame(resolve));
       return viewer.viewport===viewer.getRootNode().activeElement;
-    })()`),true);
-    return {mouseSelection:true,mirroredHighlight:true,keyboardSelection:true,copy:true,submenu:true};
+    })()`),
+      true,
+    );
+    return {
+      mouseSelection: true,
+      mirroredHighlight: true,
+      keyboardSelection: true,
+      copy: true,
+      submenu: true,
+    };
   } finally {
     await evaluate(`(() => {
       const saved=globalThis.__hexSmoke;

@@ -1,20 +1,25 @@
-import {writeFile} from 'node:fs/promises';
-import {smokeLiveVisualizers} from './smoke-live-visualizers.mjs';
-import {smokeHttpVisualizers} from './smoke-http-visualizers.mjs';
-import {smokeClassifications} from './smoke-classifications.mjs';
-import {smokeVisualizerReload} from './smoke-visualizer-reload.mjs';
-import {smokeDevelopmentVisualizers} from './smoke-development-visualizers.mjs';
-import {smokeMapi} from './smoke-mapi.mjs';
+import { writeFile } from "node:fs/promises";
+import { smokeLiveVisualizers } from "./smoke-live-visualizers.mjs";
+import { smokeHttpVisualizers } from "./smoke-http-visualizers.mjs";
+import { smokeClassifications } from "./smoke-classifications.mjs";
+import { smokeVisualizerReload } from "./smoke-visualizer-reload.mjs";
+import { smokeDevelopmentVisualizers } from "./smoke-development-visualizers.mjs";
+import { smokeMapi } from "./smoke-mapi.mjs";
 
 /** Real WebView2 -> native evidence broker -> AppContainer worker -> host renderer. */
-export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
-  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
-  const result=await evaluate(`(async()=>{
+export async function smokeVisualizers(call, evaluate, screenshotPath, tracePath) {
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  const result = await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell'),traffic=shell.traffic;
     globalThis.__visualizerProbe={preferences:traffic.preferences};
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     await traffic.importTrace(${JSON.stringify(tracePath)});
-    await traffic.importTrace(${JSON.stringify(tracePath.replace(/\.saz$/i,'-other.saz'))});
+    await traffic.importTrace(${JSON.stringify(tracePath.replace(/\.saz$/i, "-other.saz"))});
     await (${smokeClassifications.toString()})(traffic);
     const row=traffic.sessions.find(row=>row.path==='/extension-fixture'&&row.responseBytes===23);if(!row)throw new Error('Native visualizer fixture did not import: '+traffic.importStatus);
     traffic.preferences={...traffic.preferences,layout:'stacked',listSplit:30};
@@ -49,11 +54,37 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     const classifications=globalThis.__nativeClassificationVerified;delete globalThis.__nativeClassificationVerified;
     return {workers:viewers.length,byteContinuation:true,sameOriginContext:true,sameCaptureContext:true,expansion:true,sourceDenied:denied,classifications};
   })()`);
-  const development=await smokeDevelopmentVisualizers(evaluate,tracePath);
-  await call('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
-  if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-visualizer-wide.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-  await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
-  if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-visualizer-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+  const development = await smokeDevelopmentVisualizers(evaluate, tracePath);
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  if (screenshotPath)
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-visualizer-wide.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 800,
+    height: 600,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
+  if (screenshotPath)
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-visualizer-compact.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
   await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="settings"]').click();shell.settings.showSettingsSection('extensions');
     const deadline=Date.now()+10000;
@@ -63,10 +94,10 @@ export async function smokeVisualizers(call,evaluate,screenshotPath,tracePath) {
     if(children.some(view=>view.view||view.visualizerHex||view.visualizerRows.length))throw new Error('Hidden native visualizer retained captured data');
     shell.traffic.preferences=globalThis.__visualizerProbe.preferences;delete globalThis.__visualizerProbe;
   })()`);
-  await call('Emulation.clearDeviceMetricsOverride');
-  const live=await smokeLiveVisualizers(call,evaluate,screenshotPath);
-  const http=await smokeHttpVisualizers(call,evaluate,screenshotPath);
-  const reload=await smokeVisualizerReload(evaluate,tracePath);
-  const mapi=await smokeMapi(call,evaluate,screenshotPath,tracePath);
-  return {...result,unloaded:true,live,http,reload,development,mapi};
+  await call("Emulation.clearDeviceMetricsOverride");
+  const live = await smokeLiveVisualizers(call, evaluate, screenshotPath);
+  const http = await smokeHttpVisualizers(call, evaluate, screenshotPath);
+  const reload = await smokeVisualizerReload(evaluate, tracePath);
+  const mapi = await smokeMapi(call, evaluate, screenshotPath, tracePath);
+  return { ...result, unloaded: true, live, http, reload, development, mapi };
 }

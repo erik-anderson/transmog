@@ -1,36 +1,39 @@
-import { writeFile } from 'node:fs/promises';
-import process from 'node:process';
-import { smokeHexViewer } from './smoke-hex-viewer.mjs';
-import { smokeNetworkSettings } from './smoke-network-settings.mjs';
-import {smokeExtensions} from './smoke-extensions.mjs';
-import { smokeAbout } from './smoke-about.mjs';
-import { smokeLoopback } from './smoke-loopback.mjs';
-import { smokeUserAgent } from './smoke-user-agent.mjs';
-import { smokeStreams } from './smoke-streams.mjs';
-import { smokeBodyEditor } from './smoke-body-editor.mjs';
-import { smokeAutomationEditing } from './smoke-automation-editing.mjs';
-import { smokeAutoResponseFiles,smokeAutoResponseDragging } from './smoke-autoresponses.mjs';
+import { writeFile } from "node:fs/promises";
+import process from "node:process";
+import { smokeHexViewer } from "./smoke-hex-viewer.mjs";
+import { smokeNetworkSettings } from "./smoke-network-settings.mjs";
+import { smokeExtensions } from "./smoke-extensions.mjs";
+import { smokeAbout } from "./smoke-about.mjs";
+import { smokeLoopback } from "./smoke-loopback.mjs";
+import { smokeUserAgent } from "./smoke-user-agent.mjs";
+import { smokeStreams } from "./smoke-streams.mjs";
+import { smokeBodyEditor } from "./smoke-body-editor.mjs";
+import { smokeAutomationEditing } from "./smoke-automation-editing.mjs";
+import { smokeAutoResponseFiles, smokeAutoResponseDragging } from "./smoke-autoresponses.mjs";
 
-const portArgument = process.argv.findIndex((value) => value === '--port');
-const port = portArgument >= 0 ? process.argv[portArgument + 1] : '9333';
-const soakArgument = process.argv.findIndex((value) => value === '--soak-minutes');
+const portArgument = process.argv.findIndex((value) => value === "--port");
+const port = portArgument >= 0 ? process.argv[portArgument + 1] : "9333";
+const soakArgument = process.argv.findIndex((value) => value === "--soak-minutes");
 const soakMinutes = soakArgument >= 0 ? Number(process.argv[soakArgument + 1]) : 0;
-const screenshotArgument = process.argv.findIndex((value) => value === '--screenshot');
+const screenshotArgument = process.argv.findIndex((value) => value === "--screenshot");
 const screenshotPath = screenshotArgument >= 0 ? process.argv[screenshotArgument + 1] : undefined;
-const visualizerTraceArgument=process.argv.indexOf('--visualizer-trace');
-const visualizerTracePath=visualizerTraceArgument>=0?process.argv[visualizerTraceArgument+1]:undefined;
-const invalidTraceArgument = process.argv.findIndex(value=>value==='--invalid-trace');
-const invalidTracePath = invalidTraceArgument >= 0 ? process.argv[invalidTraceArgument + 1] : undefined;
-const automationScreenshotArgument = process.argv.findIndex((value) => value === '--automation-screenshot');
-const automationScreenshotPath = automationScreenshotArgument >= 0
-  ? process.argv[automationScreenshotArgument + 1]
-  : undefined;
-const keyRecoveryChecks = process.argv.includes('--key-recovery');
+const visualizerTraceArgument = process.argv.indexOf("--visualizer-trace");
+const visualizerTracePath =
+  visualizerTraceArgument >= 0 ? process.argv[visualizerTraceArgument + 1] : undefined;
+const invalidTraceArgument = process.argv.findIndex((value) => value === "--invalid-trace");
+const invalidTracePath =
+  invalidTraceArgument >= 0 ? process.argv[invalidTraceArgument + 1] : undefined;
+const automationScreenshotArgument = process.argv.findIndex(
+  (value) => value === "--automation-screenshot",
+);
+const automationScreenshotPath =
+  automationScreenshotArgument >= 0 ? process.argv[automationScreenshotArgument + 1] : undefined;
+const keyRecoveryChecks = process.argv.includes("--key-recovery");
 if (port === undefined || !/^\d{1,5}$/.test(port)) {
-  throw new Error('usage: npm run smoke:webview -- --port <loopback DevTools port>');
+  throw new Error("usage: npm run smoke:webview -- --port <loopback DevTools port>");
 }
 if (!Number.isFinite(soakMinutes) || soakMinutes < 0 || soakMinutes > 240) {
-  throw new Error('--soak-minutes must be between 0 and 240');
+  throw new Error("--soak-minutes must be between 0 and 240");
 }
 
 const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response) => {
@@ -39,8 +42,8 @@ const targets = await fetch(`http://127.0.0.1:${port}/json/list`).then((response
   }
   return response.json();
 });
-const candidates = targets.filter((target) =>
-  target.type === 'page' && target.title === 'Transmog'
+const candidates = targets.filter(
+  (target) => target.type === "page" && target.title === "Transmog",
 );
 if (candidates.length !== 1) {
   throw new Error(`expected one Transmog page, found ${candidates.length}`);
@@ -48,8 +51,8 @@ if (candidates.length !== 1) {
 
 const socket = new WebSocket(candidates[0].webSocketDebuggerUrl);
 await new Promise((resolve, reject) => {
-  socket.addEventListener('open', resolve, { once: true });
-  socket.addEventListener('error', reject, { once: true });
+  socket.addEventListener("open", resolve, { once: true });
+  socket.addEventListener("error", reject, { once: true });
 });
 
 let nextId = 1;
@@ -57,14 +60,14 @@ const pending = new Map();
 const eventWaiters = new Map();
 const browserErrors = [];
 
-socket.addEventListener('close', () => {
+socket.addEventListener("close", () => {
   for (const request of pending.values()) {
     request.reject(new Error(`WebView2 connection closed during ${request.method}`));
   }
   pending.clear();
 });
 
-socket.addEventListener('message', ({ data }) => {
+socket.addEventListener("message", ({ data }) => {
   const message = JSON.parse(String(data));
   if (message.id !== undefined) {
     const request = pending.get(message.id);
@@ -77,14 +80,14 @@ socket.addEventListener('message', ({ data }) => {
     return;
   }
 
-  if (message.method === 'Runtime.exceptionThrown') {
+  if (message.method === "Runtime.exceptionThrown") {
     browserErrors.push(message.params.exceptionDetails.text);
   }
-  if (message.method === 'Log.entryAdded' && message.params.entry.level === 'error') {
+  if (message.method === "Log.entryAdded" && message.params.entry.level === "error") {
     browserErrors.push({
       text: message.params.entry.text,
       url: message.params.entry.url,
-      source: message.params.entry.source
+      source: message.params.entry.source,
     });
   }
   const waiters = eventWaiters.get(message.method) ?? [];
@@ -96,10 +99,13 @@ socket.addEventListener('message', ({ data }) => {
 
 try {
   await Promise.all([
-    call('Page.enable'), call('Runtime.enable'), call('Log.enable'),
-    call('Accessibility.enable'), call('Performance.enable')
+    call("Page.enable"),
+    call("Runtime.enable"),
+    call("Log.enable"),
+    call("Accessibility.enable"),
+    call("Performance.enable"),
   ]);
-  await call('Page.addScriptToEvaluateOnNewDocument', {
+  await call("Page.addScriptToEvaluateOnNewDocument", {
     source: `
       globalThis.__transmogCspViolations = [];
       addEventListener('securitypolicyviolation', (event) => {
@@ -108,11 +114,11 @@ try {
           directive: event.effectiveDirective
         });
       });
-    `
+    `,
   });
 
-  const loaded = waitForEvent('Page.loadEventFired', 10_000);
-  await call('Page.reload', { ignoreCache: true });
+  const loaded = waitForEvent("Page.loadEventFired", 10_000);
+  await call("Page.reload", { ignoreCache: true });
   await loaded;
 
   const result = await evaluate(`
@@ -348,44 +354,115 @@ try {
     })()
   `);
 
-  assert(result.text === 'Proxy stopped', `typed status command failed: ${result.text}`);
-  assert(result.formSubmission === 'Proxy stopped. Start the proxy to capture traffic.', `WebUI event binding or stopped traffic status failed: ${result.formSubmission}`);
-  assert(result.url === 'http://transmog-ui.localhost/', `unexpected application origin: ${result.url}`);
-  assert(result.previewProtocolUrl === 'http://transmog-preview.localhost/preview%2Fsmoke-handle',
-    `preview protocol was not mapped for WebView2: ${result.previewProtocolUrl}`);
-  assert(result.resources.some((url) => url.endsWith('/app.js')), 'module asset was not loaded');
-  assert(result.resources.some((url) => url.endsWith('.css')), 'WebUI CSS asset was not loaded');
-  assert(result.resources.some((url) => url.endsWith('/transmog-icon.svg')), 'brand icon asset was not loaded');
-  assert(result.cspViolations.length === 0, `CSP violations: ${JSON.stringify(result.cspViolations)}`);
-  assert(result.landmarks.nav === 1 && result.landmarks.main === 1 && result.landmarks.headings >= 6,
-    `semantic landmarks missing: ${JSON.stringify(result.landmarks)}`);
-  assert(result.unnamedControls.length === 0, `interactive controls have no accessible name: ${JSON.stringify(result.unnamedControls)}`);
-  assert(result.rootLayout.settingsVisible, `navigation did not switch bounded views: ${JSON.stringify(result.rootLayout)}`);
-  assert(result.rootLayout.activeView === 'traffic', `traffic view did not restore: ${JSON.stringify(result.rootLayout)}`);
-  assert(result.rootLayout.hostOverflow === 'hidden', `application host can scroll: ${JSON.stringify(result.rootLayout)}`);
-  assert(result.rootLayout.documentScrollHeight <= result.rootLayout.documentClientHeight + 1,
-    `document root can scroll: ${JSON.stringify(result.rootLayout)}`);
-  assert(result.rootLayout.bodyScrollHeight <= result.rootLayout.bodyClientHeight + 1,
-    `document body can scroll: ${JSON.stringify(result.rootLayout)}`);
-  assert(result.rootLayout.shellHeight <= result.rootLayout.documentClientHeight + 1,
-    `application shell exceeds the viewport: ${JSON.stringify(result.rootLayout)}`);
-  assert(result.ux.paginationControls === 0 && result.ux.watchControls === 0,
-    `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`);
-  assert(!result.ux.hooksV2Branding, `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`);
-  assert(['Rules','Response sets','Scripts'].every(label=>result.ux.automationTools.some(tool=>tool.startsWith(label))) && result.ux.autoResponseWorkspace === 1
-    && result.ux.automationActivity === 1 && result.ux.exactUrlFields === 1
-    && result.ux.capturedResponsePrimary && result.ux.scratchSecondary && result.ux.trafficRowDragRemoved
-    && result.ux.firstMatchExplained && result.ux.scratchEditorOpened
-    && result.ux.responseBodyRows === 12 && result.ux.responseBodyResize === 'vertical'
-    && result.ux.postHeaderFilterVisible && result.ux.scratchEditorClosed
-    && result.ux.internalAutomationFields === 0,
-    `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`);
-  assert(result.ux.decodeSelected && result.ux.noticeAvailable && result.ux.sessionScrollerAvailable
-    && result.ux.callerColumn && result.ux.brandIconLoaded && result.ux.resizableLayout && result.ux.proxyToggle,
-    `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`);
-  assert(result.ux.unsavedPromptWorked && result.ux.nativePatternMatched && result.ux.nativePatternRejected
-    && result.ux.denseRuleList && result.ux.computedEntityHeaders && result.ux.sharedSwitchWorked && result.ux.disabledPreserved && result.ux.deleteUndoWorked,
-    `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`);
+  assert(result.text === "Proxy stopped", `typed status command failed: ${result.text}`);
+  assert(
+    result.formSubmission === "Proxy stopped. Start the proxy to capture traffic.",
+    `WebUI event binding or stopped traffic status failed: ${result.formSubmission}`,
+  );
+  assert(
+    result.url === "http://transmog-ui.localhost/",
+    `unexpected application origin: ${result.url}`,
+  );
+  assert(
+    result.previewProtocolUrl === "http://transmog-preview.localhost/preview%2Fsmoke-handle",
+    `preview protocol was not mapped for WebView2: ${result.previewProtocolUrl}`,
+  );
+  assert(
+    result.resources.some((url) => url.endsWith("/app.js")),
+    "module asset was not loaded",
+  );
+  assert(
+    result.resources.some((url) => url.endsWith(".css")),
+    "WebUI CSS asset was not loaded",
+  );
+  assert(
+    result.resources.some((url) => url.endsWith("/transmog-icon.svg")),
+    "brand icon asset was not loaded",
+  );
+  assert(
+    result.cspViolations.length === 0,
+    `CSP violations: ${JSON.stringify(result.cspViolations)}`,
+  );
+  assert(
+    result.landmarks.nav === 1 && result.landmarks.main === 1 && result.landmarks.headings >= 6,
+    `semantic landmarks missing: ${JSON.stringify(result.landmarks)}`,
+  );
+  assert(
+    result.unnamedControls.length === 0,
+    `interactive controls have no accessible name: ${JSON.stringify(result.unnamedControls)}`,
+  );
+  assert(
+    result.rootLayout.settingsVisible,
+    `navigation did not switch bounded views: ${JSON.stringify(result.rootLayout)}`,
+  );
+  assert(
+    result.rootLayout.activeView === "traffic",
+    `traffic view did not restore: ${JSON.stringify(result.rootLayout)}`,
+  );
+  assert(
+    result.rootLayout.hostOverflow === "hidden",
+    `application host can scroll: ${JSON.stringify(result.rootLayout)}`,
+  );
+  assert(
+    result.rootLayout.documentScrollHeight <= result.rootLayout.documentClientHeight + 1,
+    `document root can scroll: ${JSON.stringify(result.rootLayout)}`,
+  );
+  assert(
+    result.rootLayout.bodyScrollHeight <= result.rootLayout.bodyClientHeight + 1,
+    `document body can scroll: ${JSON.stringify(result.rootLayout)}`,
+  );
+  assert(
+    result.rootLayout.shellHeight <= result.rootLayout.documentClientHeight + 1,
+    `application shell exceeds the viewport: ${JSON.stringify(result.rootLayout)}`,
+  );
+  assert(
+    result.ux.paginationControls === 0 && result.ux.watchControls === 0,
+    `traffic surface exposes manual paging/watch controls: ${JSON.stringify(result.ux)}`,
+  );
+  assert(
+    !result.ux.hooksV2Branding,
+    `historical Hooks v2 branding is visible: ${JSON.stringify(result.ux)}`,
+  );
+  assert(
+    ["Rules", "Response sets", "Scripts"].every((label) =>
+      result.ux.automationTools.some((tool) => tool.startsWith(label)),
+    ) &&
+      result.ux.autoResponseWorkspace === 1 &&
+      result.ux.automationActivity === 1 &&
+      result.ux.exactUrlFields === 1 &&
+      result.ux.capturedResponsePrimary &&
+      result.ux.scratchSecondary &&
+      result.ux.trafficRowDragRemoved &&
+      result.ux.firstMatchExplained &&
+      result.ux.scratchEditorOpened &&
+      result.ux.responseBodyRows === 12 &&
+      result.ux.responseBodyResize === "vertical" &&
+      result.ux.postHeaderFilterVisible &&
+      result.ux.scratchEditorClosed &&
+      result.ux.internalAutomationFields === 0,
+    `automation surface lacks the discoverable ordered auto-response flow or exposes internals: ${JSON.stringify(result.ux)}`,
+  );
+  assert(
+    result.ux.decodeSelected &&
+      result.ux.noticeAvailable &&
+      result.ux.sessionScrollerAvailable &&
+      result.ux.callerColumn &&
+      result.ux.brandIconLoaded &&
+      result.ux.resizableLayout &&
+      result.ux.proxyToggle,
+    `expected inspection/setup affordances are missing: ${JSON.stringify(result.ux)}`,
+  );
+  assert(
+    result.ux.unsavedPromptWorked &&
+      result.ux.nativePatternMatched &&
+      result.ux.nativePatternRejected &&
+      result.ux.denseRuleList &&
+      result.ux.computedEntityHeaders &&
+      result.ux.sharedSwitchWorked &&
+      result.ux.disabledPreserved &&
+      result.ux.deleteUndoWorked,
+    `native autoresponse editing, matching, pause or keyboard actions failed: ${JSON.stringify(result.ux)}`,
+  );
   assert(result.startupMs < 10_000, `document startup exceeded 10 seconds: ${result.startupMs}`);
 
   if (keyRecoveryChecks) {
@@ -405,13 +482,22 @@ try {
       if (shell.shadowRoot.activeElement !== action || shell.shadowRoot.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==action) throw new Error('The recovery action is not reachable by keyboard and pointer');
       return {explanation:true,resetOffered:true,ready:false};
     })()`);
-    const dialog = waitForEvent('Page.javascriptDialogOpening', 10_000);
-    const canceledReset = evaluate(`(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').resetCa();return true;})()`);
+    const dialog = waitForEvent("Page.javascriptDialogOpening", 10_000);
+    const canceledReset = evaluate(
+      `(async()=>{await document.querySelector('app-shell').shadowRoot.querySelector('settings-workspace').resetCa();return true;})()`,
+    );
     await dialog;
-    await call('Page.handleJavaScriptDialog',{accept:false});
+    await call("Page.handleJavaScriptDialog", { accept: false });
     await canceledReset;
     if (screenshotPath) {
-      await writeFile(screenshotPath.replace(/\.png$/i,'-key-recovery.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-key-recovery.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
     }
     result.keyRecovery.cancelPreservedMaterial = true;
   }
@@ -471,8 +557,7 @@ try {
     return { cycles: 2, lifecycle: after.lifecycle, listener: after.listener };
   })()`);
 
-
-  result.recordingDefaults=await evaluate(`(async()=>{
+  result.recordingDefaults = await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="captures"]').click();
     await customElements.whenDefined('capture-workspace');
     const workspace=shell.shadowRoot.querySelector('capture-workspace');await workspace.loadRecordingDefaults();
@@ -487,8 +572,11 @@ try {
     return {savedDefault:true,draftPreserved:true};
   })()`);
   if (screenshotPath !== undefined) {
-    const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-    await writeFile(screenshotPath, Buffer.from(screenshot.data, 'base64'));
+    const screenshot = await call("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    await writeFile(screenshotPath, Buffer.from(screenshot.data, "base64"));
     result.screenshot = screenshotPath;
     result.bufferControls = await evaluate(`(async () => {
       const shell=document.querySelector('app-shell');
@@ -518,10 +606,18 @@ try {
       settings.querySelector('.settings-content').scrollTop=0;
       return {reachable,storage:status.storage,maxBytes:status.maxBytes,installedRam:status.installedRam};
     })()`);
-    const settingsScreenshot=await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false});
-    await writeFile(screenshotPath.replace(/\.png$/i,'-settings.png'),Buffer.from(settingsScreenshot.data,'base64'));
-    await evaluate(`document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click()`);
-    result.passwordControls=await evaluate(`(() => {
+    const settingsScreenshot = await call("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-settings.png"),
+      Buffer.from(settingsScreenshot.data, "base64"),
+    );
+    await evaluate(
+      `document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click()`,
+    );
+    result.passwordControls = await evaluate(`(() => {
       const shell=document.querySelector('app-shell');const traffic=shell.traffic;
       traffic.showSaveTrace();globalThis.__passwordProbe=traffic.promptTracePassword('Encrypt saved trace',true);
       shell.$flushUpdates();
@@ -534,17 +630,38 @@ try {
       if(!reachable)throw new Error('Password controls escaped the viewport');
       return {masked:true,confirmedMismatch:true,reachable,width:rect.width};
     })()`);
-    await writeFile(screenshotPath.replace(/\.png$/i,'-password.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-    await call('Emulation.setDeviceMetricsOverride',{width:800,height:600,deviceScaleFactor:1,mobile:false});
-    await writeFile(screenshotPath.replace(/\.png$/i,'-password-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-    await evaluate(`(async()=>{const shell=document.querySelector('app-shell');const input=shell.passwordForm.elements.namedItem('confirmPassword');input.value='test-password';shell.passwordForm.requestSubmit();if(await globalThis.__passwordProbe!=='test-password')throw new Error('Confirmed password was lost');delete globalThis.__passwordProbe;if(shell.passwordForm.elements.namedItem('password').value)throw new Error('Password was not cleared');const canceled=shell.traffic.promptTracePassword('Open encrypted trace');shell.cancelTracePassword();if(await canceled!==null)throw new Error('Cancel did not resolve the password request');shell.traffic.closeSaveTrace();})()`);
-    await call('Emulation.clearDeviceMetricsOverride');
-
-
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-password.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 800,
+      height: 600,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-password-compact.png"),
+      Buffer.from(
+        (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+          .data,
+        "base64",
+      ),
+    );
+    await evaluate(
+      `(async()=>{const shell=document.querySelector('app-shell');const input=shell.passwordForm.elements.namedItem('confirmPassword');input.value='test-password';shell.passwordForm.requestSubmit();if(await globalThis.__passwordProbe!=='test-password')throw new Error('Confirmed password was lost');delete globalThis.__passwordProbe;if(shell.passwordForm.elements.namedItem('password').value)throw new Error('Password was not cleared');const canceled=shell.traffic.promptTracePassword('Open encrypted trace');shell.cancelTracePassword();if(await canceled!==null)throw new Error('Cancel did not resolve the password request');shell.traffic.closeSaveTrace();})()`,
+    );
+    await call("Emulation.clearDeviceMetricsOverride");
   }
   if (invalidTracePath !== undefined) {
-    await evaluate(`(() => {const shell=document.querySelector('app-shell');globalThis.__importFailureProbe=shell.traffic.importTrace(${JSON.stringify(invalidTracePath)});})()`);
-    result.importFailure=await evaluate(`(async()=>{
+    await evaluate(
+      `(() => {const shell=document.querySelector('app-shell');globalThis.__importFailureProbe=shell.traffic.importTrace(${JSON.stringify(invalidTracePath)});})()`,
+    );
+    result.importFailure = await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),dialog=shell.errorDialog,deadline=performance.now()+10000;
       while(!dialog.open){if(performance.now()>deadline)throw new Error('Import error dialog did not open');await new Promise(resolve=>setTimeout(resolve,25));}
       const close=dialog.querySelector('button');
@@ -552,14 +669,49 @@ try {
       if(!dialog.matches(':modal')||shell.shadowRoot.activeElement!==close)throw new Error('Import failure was not modal or focused');
       return {modal:true,details:true,focused:true};
     })()`);
-    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-import-error.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-    await call('Emulation.setDeviceMetricsOverride',{width:760,height:520,deviceScaleFactor:1,mobile:false});
-    await evaluate(`(() => {const shell=document.querySelector('app-shell'),dialog=shell.errorDialog,close=dialog.querySelector('button'),rect=close.getBoundingClientRect(),bounds=dialog.getBoundingClientRect();if(bounds.width>innerWidth||bounds.height>innerHeight||shell.shadowRoot.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==close)throw new Error('Compact import dialog controls are unreachable');})()`);
-    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-import-error-compact.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
-    await call('Input.dispatchKeyEvent',{type:'keyDown',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-    await call('Input.dispatchKeyEvent',{type:'keyUp',key:'Escape',code:'Escape',windowsVirtualKeyCode:27});
-    await evaluate(`(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.filesMenuButton.getRootNode().activeElement!==traffic.filesMenuButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();traffic.$flushUpdates();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`);
-    await call('Emulation.clearDeviceMetricsOverride');
+    if (screenshotPath)
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-import-error.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
+    await call("Emulation.setDeviceMetricsOverride", {
+      width: 760,
+      height: 520,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await evaluate(
+      `(() => {const shell=document.querySelector('app-shell'),dialog=shell.errorDialog,close=dialog.querySelector('button'),rect=close.getBoundingClientRect(),bounds=dialog.getBoundingClientRect();if(bounds.width>innerWidth||bounds.height>innerHeight||shell.shadowRoot.elementFromPoint(rect.x+rect.width/2,rect.y+rect.height/2)!==close)throw new Error('Compact import dialog controls are unreachable');})()`,
+    );
+    if (screenshotPath)
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-import-error-compact.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
+    await call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Escape",
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+    });
+    await call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Escape",
+      code: "Escape",
+      windowsVirtualKeyCode: 27,
+    });
+    await evaluate(
+      `(async()=>{await globalThis.__importFailureProbe;delete globalThis.__importFailureProbe;const shell=document.querySelector('app-shell'),traffic=shell.traffic;if(shell.errorDialog.open||traffic.filesMenuButton.getRootNode().activeElement!==traffic.filesMenuButton)throw new Error('Import dialog did not close and restore focus');const dismiss=traffic.querySelector('[aria-label="Dismiss import message"]');dismiss.click();traffic.$flushUpdates();if(traffic.importStatus)throw new Error('Import message was not dismissible');})()`,
+    );
+    await call("Emulation.clearDeviceMetricsOverride");
   }
   if (automationScreenshotPath !== undefined) {
     const automationLayout = await evaluate(`(() => {
@@ -577,28 +729,39 @@ try {
       };
     })()`);
     await new Promise((resolve) => setTimeout(resolve, 250));
-    const screenshot = await call('Page.captureScreenshot', { format: 'png', captureBeyondViewport: false });
-    await writeFile(automationScreenshotPath, Buffer.from(screenshot.data, 'base64'));
-    await evaluate("document.querySelector('app-shell').shadowRoot.querySelector('#automation').scrollTop="+JSON.stringify(automationLayout.priorScrollTop));
+    const screenshot = await call("Page.captureScreenshot", {
+      format: "png",
+      captureBeyondViewport: false,
+    });
+    await writeFile(automationScreenshotPath, Buffer.from(screenshot.data, "base64"));
+    await evaluate(
+      "document.querySelector('app-shell').shadowRoot.querySelector('#automation').scrollTop=" +
+        JSON.stringify(automationLayout.priorScrollTop),
+    );
     result.automationScreenshot = automationScreenshotPath;
     result.automationLayout = automationLayout;
-    await evaluate(`(() => document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click())()`);
+    await evaluate(
+      `(() => document.querySelector('app-shell').shadowRoot.querySelector('a[data-view="traffic"]').click())()`,
+    );
   }
 
-  const accessibility = await call('Accessibility.getFullAXTree');
-  const unnamedAxControls = accessibility.nodes.filter((node) =>
-    ['button', 'textbox', 'combobox', 'link', 'checkbox'].includes(node.role?.value)
-      && !(node.name?.value ?? '').trim()
+  const accessibility = await call("Accessibility.getFullAXTree");
+  const unnamedAxControls = accessibility.nodes.filter(
+    (node) =>
+      ["button", "textbox", "combobox", "link", "checkbox"].includes(node.role?.value) &&
+      !(node.name?.value ?? "").trim(),
   );
-  assert(unnamedAxControls.length === 0,
-    `accessibility tree contains unnamed controls: ${JSON.stringify(unnamedAxControls)}`);
+  assert(
+    unnamedAxControls.length === 0,
+    `accessibility tree contains unnamed controls: ${JSON.stringify(unnamedAxControls)}`,
+  );
 
-  await call('Emulation.setEmulatedMedia', {
-    media: 'screen',
+  await call("Emulation.setEmulatedMedia", {
+    media: "screen",
     features: [
-      { name: 'forced-colors', value: 'active' },
-      { name: 'prefers-reduced-motion', value: 'reduce' }
-    ]
+      { name: "forced-colors", value: "active" },
+      { name: "prefers-reduced-motion", value: "reduce" },
+    ],
   });
   const contrast = await evaluate(`(() => {
     const root = document.querySelector('app-shell').shadowRoot;
@@ -609,28 +772,36 @@ try {
       transition: getComputedStyle(button).transitionDuration
     };
   })()`);
-  assert(contrast.panelBorder !== 'none', 'forced-colors removed panel boundaries');
-  assert(contrast.transition === '0s', `reduced motion still animates: ${contrast.transition}`);
+  assert(contrast.panelBorder !== "none", "forced-colors removed panel boundaries");
+  assert(contrast.transition === "0s", `reduced motion still animates: ${contrast.transition}`);
 
-  await call('Emulation.setEmulatedMedia', {
-    media: 'screen',
-    features: [{ name: 'prefers-color-scheme', value: 'dark' }]
+  await call("Emulation.setEmulatedMedia", {
+    media: "screen",
+    features: [{ name: "prefers-color-scheme", value: "dark" }],
   });
   const darkCanvas = await evaluate(`(() => {
     const shell = document.querySelector('app-shell');
     shell.dataset.theme = 'system';
     return getComputedStyle(shell).getPropertyValue('--canvas').trim();
   })()`);
-  await call('Emulation.setEmulatedMedia', {
-    media: 'screen',
-    features: [{ name: 'prefers-color-scheme', value: 'light' }]
+  await call("Emulation.setEmulatedMedia", {
+    media: "screen",
+    features: [{ name: "prefers-color-scheme", value: "light" }],
   });
-  const lightCanvas = await evaluate(`(() => getComputedStyle(document.querySelector('app-shell')).getPropertyValue('--canvas').trim())()`);
-  assert(darkCanvas !== lightCanvas, `system color scheme did not change application palette: ${darkCanvas}`);
+  const lightCanvas = await evaluate(
+    `(() => getComputedStyle(document.querySelector('app-shell')).getPropertyValue('--canvas').trim())()`,
+  );
+  assert(
+    darkCanvas !== lightCanvas,
+    `system color scheme did not change application palette: ${darkCanvas}`,
+  );
   result.systemTheme = { darkCanvas, lightCanvas };
 
-  await call('Emulation.setDeviceMetricsOverride', {
-    width: 760, height: 520, deviceScaleFactor: 2, mobile: false
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 760,
+    height: 520,
+    deviceScaleFactor: 2,
+    mobile: false,
   });
   const scaled = await evaluate(`(() => {
     const root = document.querySelector('app-shell').shadowRoot;
@@ -655,17 +826,25 @@ try {
       heading.textContent = originalHeading;
     }
   })()`);
-  assert(scaled.shellWidth <= scaled.viewport + 1, `200% DPI shell overflow: ${JSON.stringify(scaled)}`);
-  assert(scaled.headingHeight > 0 && scaled.controlsVisible, `long localized text hid interactive UI: ${JSON.stringify(scaled)}`);
+  assert(
+    scaled.shellWidth <= scaled.viewport + 1,
+    `200% DPI shell overflow: ${JSON.stringify(scaled)}`,
+  );
+  assert(
+    scaled.headingHeight > 0 && scaled.controlsVisible,
+    `long localized text hid interactive UI: ${JSON.stringify(scaled)}`,
+  );
   assert(scaled.rootScroll <= 1, `200% DPI introduced root scrolling: ${JSON.stringify(scaled)}`);
-  await call('Emulation.clearDeviceMetricsOverride');
-  await call('Emulation.setEmulatedMedia', { media: 'screen', features: [] });
+  await call("Emulation.clearDeviceMetricsOverride");
+  await call("Emulation.setEmulatedMedia", { media: "screen", features: [] });
 
   const soakStartedAt = performance.now();
   const reportSoakProgress = () => {
     const elapsed = (performance.now() - soakStartedAt) / 60_000;
     const remaining = Math.max(0, soakMinutes - elapsed);
-    process.stdout.write(`[${new Date().toISOString()}] WebView soak: ${elapsed.toFixed(1)} min elapsed, approximately ${remaining.toFixed(1)} min remaining (target ${soakMinutes} min).\n`);
+    process.stdout.write(
+      `[${new Date().toISOString()}] WebView soak: ${elapsed.toFixed(1)} min elapsed, approximately ${remaining.toFixed(1)} min remaining (target ${soakMinutes} min).\n`,
+    );
   };
   if (soakMinutes > 0) reportSoakProgress();
   const soakProgressTimer = soakMinutes > 0 ? setInterval(reportSoakProgress, 60_000) : undefined;
@@ -688,19 +867,26 @@ try {
     if (soakProgressTimer !== undefined) clearInterval(soakProgressTimer);
   }
   if (soakMinutes > 0) {
-    process.stdout.write(`[${new Date().toISOString()}] WebView soak duration complete: ${((performance.now() - soakStartedAt) / 60_000).toFixed(1)} min elapsed.\n`);
+    process.stdout.write(
+      `[${new Date().toISOString()}] WebView soak duration complete: ${((performance.now() - soakStartedAt) / 60_000).toFixed(1)} min elapsed.\n`,
+    );
   }
-  result.networkSettings=await smokeNetworkSettings(call,evaluate,screenshotPath);
-  result.extensions=await smokeExtensions(call,evaluate,screenshotPath,visualizerTracePath);
-  result.about=await smokeAbout(call,evaluate,screenshotPath);
-  result.autoResponseFiles=await smokeAutoResponseFiles(call,evaluate,screenshotPath);
-  result.autoResponseDragging=await smokeAutoResponseDragging(call,evaluate,screenshotPath);
-  result.loopback=await smokeLoopback(call,evaluate,screenshotPath);
-  result.userAgent=await smokeUserAgent(call,evaluate,screenshotPath);
-  result.streams=await smokeStreams(call,evaluate,screenshotPath);
-  result.automationEditing=await smokeAutomationEditing(call,evaluate,screenshotPath,waitForEvent);
-  result.bodyEditor=await smokeBodyEditor(call,evaluate,screenshotPath);
-  result.traceExportDialog=await evaluate(`(async()=>{
+  result.networkSettings = await smokeNetworkSettings(call, evaluate, screenshotPath);
+  result.extensions = await smokeExtensions(call, evaluate, screenshotPath, visualizerTracePath);
+  result.about = await smokeAbout(call, evaluate, screenshotPath);
+  result.autoResponseFiles = await smokeAutoResponseFiles(call, evaluate, screenshotPath);
+  result.autoResponseDragging = await smokeAutoResponseDragging(call, evaluate, screenshotPath);
+  result.loopback = await smokeLoopback(call, evaluate, screenshotPath);
+  result.userAgent = await smokeUserAgent(call, evaluate, screenshotPath);
+  result.streams = await smokeStreams(call, evaluate, screenshotPath);
+  result.automationEditing = await smokeAutomationEditing(
+    call,
+    evaluate,
+    screenshotPath,
+    waitForEvent,
+  );
+  result.bodyEditor = await smokeBodyEditor(call, evaluate, screenshotPath);
+  result.traceExportDialog = await evaluate(`(async()=>{
     const workspace=document.querySelector('app-shell').traffic,dialog=workspace.saveTraceDialog;
     const wait=async(condition)=>{const deadline=Date.now()+10000;while(!condition()){if(Date.now()>deadline)throw new Error('Native export dialog lifecycle timed out');await new Promise(resolve=>setTimeout(resolve,25));}};
     try {
@@ -715,18 +901,27 @@ try {
       return {reopenKeepsReview:true,reopenKeepsFocus:true,closeClearsReview:true};
     } finally {if(dialog.open)workspace.closeSaveTrace();}
   })()`);
-  const metrics = await call('Performance.getMetrics');
-  const heap = metrics.metrics.find((metric) => metric.name === 'JSHeapUsedSize')?.value ?? Number.POSITIVE_INFINITY;
+  const metrics = await call("Performance.getMetrics");
+  const heap =
+    metrics.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ??
+    Number.POSITIVE_INFINITY;
   const heapLimitMiB = 96;
   const heapLimitBytes = heapLimitMiB * 1024 * 1024;
-  if(heap>=heapLimitBytes){
+  if (heap >= heapLimitBytes) {
     // Collection adds diagnostics; the original raw sample determines the result.
-    const collected=await call('HeapProfiler.collectGarbage')
-      .then(()=>call('Performance.getMetrics')).catch(()=>null);
-    const retained=collected?.metrics.find(metric=>metric.name==='JSHeapUsedSize')?.value??null;
-    process.stderr.write(`Heap failure context: ${JSON.stringify({rawHeapBytes:heap,afterCollectionBytes:retained})}\n`);
+    const collected = await call("HeapProfiler.collectGarbage")
+      .then(() => call("Performance.getMetrics"))
+      .catch(() => null);
+    const retained =
+      collected?.metrics.find((metric) => metric.name === "JSHeapUsedSize")?.value ?? null;
+    process.stderr.write(
+      `Heap failure context: ${JSON.stringify({ rawHeapBytes: heap, afterCollectionBytes: retained })}\n`,
+    );
   }
-  assert(heap < heapLimitBytes, `bounded status soak exceeded ${heapLimitMiB} MiB JS heap: ${heap}`);
+  assert(
+    heap < heapLimitBytes,
+    `bounded status soak exceeded ${heapLimitMiB} MiB JS heap: ${heap}`,
+  );
   result.soak = { ...soak, minutes: soakMinutes, finalHeapBytes: heap };
   assert(browserErrors.length === 0, `browser errors: ${JSON.stringify(browserErrors)}`);
 
@@ -762,13 +957,15 @@ function waitForEvent(method, timeoutMilliseconds) {
 }
 
 async function evaluate(expression) {
-  const response = await call('Runtime.evaluate', {
+  const response = await call("Runtime.evaluate", {
     expression,
     awaitPromise: true,
-    returnByValue: true
+    returnByValue: true,
   });
   if (response.exceptionDetails !== undefined) {
-    throw new Error(response.exceptionDetails.exception?.description ?? response.exceptionDetails.text);
+    throw new Error(
+      response.exceptionDetails.exception?.description ?? response.exceptionDetails.text,
+    );
   }
   return response.result.value;
 }

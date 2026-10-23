@@ -1,64 +1,555 @@
-import assert from 'node:assert/strict';
-import {resolve} from 'node:path';
+import assert from "node:assert/strict";
+import { resolve } from "node:path";
 
 /** Current-set preview origin/frozen context plus historical diagnostic guards. */
-export async function checkResponseSetPreview(page,root) {
+export async function checkResponseSetPreview(page, root) {
   // Diagnostic rule reveals exercise the visible list/properties layout. Other
   // suites verify compact navigation; do not inherit their final viewport.
-  await page.setViewportSize({width:1440,height:900});
-  await page.goto('https://workspace.test/?empty');await page.waitForFunction(()=>document.querySelector('app-shell').workspaceLoaded);
-  await page.evaluate(async()=>{
-    const shell=document.querySelector('app-shell'),s=globalThis.__workspaceFixture,action={headers:[],replaceBody:null,discardBody:false,abortReason:null};
-    const rule={id:'follow-rule',displayName:'Saved current response',revision:1,priority:1,enabled:true,matcher:{method:'GET',url:{kind:'exact',value:'https://follow.test/app.js'},scheme:null,host:null,port:null,pathPrefix:null,query:null,requestHeaders:[],responseHeaders:[],responseStatus:null,responseStatusClass:null},request:{...action,responseAsset:'follow-asset@1'},response:action};
-    s.sessions=[{...s.emptyExample,id:'follow-page',requestNumber:'31',url:'https://follow.test/',contentType:'text/html',traceId:'follow.har',startedAt:1800000000000}];
-    const previewPage={capture:'fixture-capture',entryId:'follow-page',requestNumber:'31',traceId:'follow.har',url:'https://follow.test/',method:'GET',startedAt:1800000000000,source:'follow.har'};
-    const set={id:'follow-set',incarnation:'follow-owner',name:'Follow-up response set',notes:'Saved context',revision:2,modifiedAt:1800000000000,rules:[rule],versions:[{id:'milestone',name:'Named milestone',revision:1,rules:[rule]}],applied:{revision:1,rules:[rule]},undoApply:null,paused:false,previewPage,previewPageRevision:1};
-    s.assets=[{id:'follow-asset',revision:1,status:200,headers:[],display:'/* saved */',bodyBytes:11,sha256:'0'.repeat(64),mediaType:'application/javascript',provenance:{kind:'authored'}}];
-    s.automation={schemaVersion:2,generation:5,rules:[{...structuredClone(rule),id:'unrelated',displayName:'Unrelated live response'}],autoresponsesEnabled:true,diagnostics:[],responseSets:[set]};
-    await shell.activateView('automation');shell.automation.renderAutomation(structuredClone(s.automation));await shell.automation.showAutomationSection('experiments');await shell.automation.openResponseSet(new CustomEvent('set-open',{detail:{id:'follow-set'}}));
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto("https://workspace.test/?empty");
+  await page.waitForFunction(() => document.querySelector("app-shell").workspaceLoaded);
+  await page.evaluate(async () => {
+    const shell = document.querySelector("app-shell"),
+      s = globalThis.__workspaceFixture,
+      action = { headers: [], replaceBody: null, discardBody: false, abortReason: null };
+    const rule = {
+      id: "follow-rule",
+      displayName: "Saved current response",
+      revision: 1,
+      priority: 1,
+      enabled: true,
+      matcher: {
+        method: "GET",
+        url: { kind: "exact", value: "https://follow.test/app.js" },
+        scheme: null,
+        host: null,
+        port: null,
+        pathPrefix: null,
+        query: null,
+        requestHeaders: [],
+        responseHeaders: [],
+        responseStatus: null,
+        responseStatusClass: null,
+      },
+      request: { ...action, responseAsset: "follow-asset@1" },
+      response: action,
+    };
+    s.sessions = [
+      {
+        ...s.emptyExample,
+        id: "follow-page",
+        requestNumber: "31",
+        url: "https://follow.test/",
+        contentType: "text/html",
+        traceId: "follow.har",
+        startedAt: 1800000000000,
+      },
+    ];
+    const previewPage = {
+      capture: "fixture-capture",
+      entryId: "follow-page",
+      requestNumber: "31",
+      traceId: "follow.har",
+      url: "https://follow.test/",
+      method: "GET",
+      startedAt: 1800000000000,
+      source: "follow.har",
+    };
+    const set = {
+      id: "follow-set",
+      incarnation: "follow-owner",
+      name: "Follow-up response set",
+      notes: "Saved context",
+      revision: 2,
+      modifiedAt: 1800000000000,
+      rules: [rule],
+      versions: [{ id: "milestone", name: "Named milestone", revision: 1, rules: [rule] }],
+      applied: { revision: 1, rules: [rule] },
+      undoApply: null,
+      paused: false,
+      previewPage,
+      previewPageRevision: 1,
+    };
+    s.assets = [
+      {
+        id: "follow-asset",
+        revision: 1,
+        status: 200,
+        headers: [],
+        display: "/* saved */",
+        bodyBytes: 11,
+        sha256: "0".repeat(64),
+        mediaType: "application/javascript",
+        provenance: { kind: "authored" },
+      },
+    ];
+    s.automation = {
+      schemaVersion: 2,
+      generation: 5,
+      rules: [
+        { ...structuredClone(rule), id: "unrelated", displayName: "Unrelated live response" },
+      ],
+      autoresponsesEnabled: true,
+      diagnostics: [],
+      responseSets: [set],
+    };
+    await shell.activateView("automation");
+    shell.automation.renderAutomation(structuredClone(s.automation));
+    await shell.automation.showAutomationSection("experiments");
+    await shell.automation.openResponseSet(
+      new CustomEvent("set-open", { detail: { id: "follow-set" } }),
+    );
   });
-  const manager=page.locator('response-set-workspace'),editor=page.locator('automation-workspace .auto-response-editor'),warning=page.locator('captured-preview .captured-page-warning'),report=page.getByRole('dialog',{name:'Captured preview diagnostics',exact:true});
-  const state=()=>page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.automation));
-  const preview=async()=>{await manager.getByRole('button',{name:'Try changes…',exact:true}).click();await manager.getByRole('button',{name:'Preview captured page…',exact:true}).click();};
-  const before=await state();await preview();await warning.waitFor();assert.equal(await warning.getByLabel('Enable scripts for this preview',{exact:true}).isChecked(),false);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').activeView),'automation');await page.keyboard.press('Escape');assert.equal(await manager.getByRole('button',{name:'Try changes…',exact:true}).evaluate(button=>button.getRootNode().activeElement===button),true);
+  const manager = page.locator("response-set-workspace"),
+    editor = page.locator("automation-workspace .auto-response-editor"),
+    warning = page.locator("captured-preview .captured-page-warning"),
+    report = page.getByRole("dialog", { name: "Captured preview diagnostics", exact: true });
+  const state = () =>
+    page.evaluate(() => structuredClone(globalThis.__workspaceFixture.automation));
+  const preview = async () => {
+    await manager.getByRole("button", { name: "Try changes…", exact: true }).click();
+    await manager.getByRole("button", { name: "Preview captured page…", exact: true }).click();
+  };
+  const before = await state();
+  await preview();
+  await warning.waitFor();
+  assert.equal(
+    await warning.getByLabel("Enable scripts for this preview", { exact: true }).isChecked(),
+    false,
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").activeView),
+    "automation",
+  );
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await manager
+      .getByRole("button", { name: "Try changes…", exact: true })
+      .evaluate((button) => button.getRootNode().activeElement === button),
+    true,
+  );
   // Captured source comparison remains available without changing saved content.
-  await manager.getByRole('button',{name:'Saved current response',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse);await editor.getByRole('button',{name:'Preview…',exact:true}).click();await editor.getByRole('button',{name:'Captured baseline…',exact:true}).click();await warning.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewRulesBusy);await warning.getByLabel('Responses',{exact:true}).selectOption('modified');assert.match(await warning.textContent(),/Saved current response/);assert.doesNotMatch(await warning.textContent(),/Unrelated live response/);await warning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewPageBusy);assert.deepEqual(await page.evaluate(()=>globalThis.__workspaceFixture.previewArgs.options.variant),{experimentId:'follow-set',incarnation:'follow-owner',variantId:'',revision:2});assert.deepEqual(await state(),before);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').activeView),'automation');await editor.getByRole('button',{name:'Responses',exact:true}).click();
+  await manager.getByRole("button", { name: "Saved current response", exact: true }).click();
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+  );
+  await editor.getByRole("button", { name: "Preview…", exact: true }).click();
+  await editor.getByRole("button", { name: "Captured baseline…", exact: true }).click();
+  await warning.waitFor();
+  await page.waitForFunction(() => !document.querySelector("app-shell").traffic.previewRulesBusy);
+  await warning.getByLabel("Responses", { exact: true }).selectOption("modified");
+  assert.match(await warning.textContent(), /Saved current response/);
+  assert.doesNotMatch(await warning.textContent(), /Unrelated live response/);
+  await warning.getByRole("button", { name: "Open preview", exact: true }).click();
+  await page.waitForFunction(() => !document.querySelector("app-shell").traffic.previewPageBusy);
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.previewArgs.options.variant),
+    { experimentId: "follow-set", incarnation: "follow-owner", variantId: "", revision: 2 },
+  );
+  assert.deepEqual(await state(), before);
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").activeView),
+    "automation",
+  );
+  await editor.getByRole("button", { name: "Responses", exact: true }).click();
   // Each run's rows, metadata and actions belong to that loaded run only.
-  await page.evaluate(()=>{const s=globalThis.__workspaceFixture;const report=(url,id)=>({url,scope:'original-trace',source:'follow.har',scriptsEnabled:false,available:1,skipped:0,bytes:11,hits:1,misses:0,rules:[{id:'follow-rule',name:'Historical rule',revision:1,asset:'follow-asset@1',bytes:11,sha256:'0'.repeat(64)}],resources:[{entryId:'follow-page',source:'follow.har',sourceAvailable:true,method:'GET',url,bytes:11,decision:'Exact captured response'}],requests:[{id,method:'GET',url,outcome:'captured',entryId:'follow-page',reason:'Exact captured response'}]});s.previewReports={'run-A':report('https://run-a.test/',1),'run-B':report('https://run-b.test/',2)};s.previewRunLabel='run-A';});
-  const diagnostics=manager.getByRole('button',{name:'Last preview diagnostics',exact:true});const openRun=async()=>{await preview();await warning.waitFor();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewRulesBusy);await warning.getByRole('button',{name:'Open preview',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').traffic.previewPageBusy);};
-  await openRun();await diagnostics.click();await report.getByText('https://run-a.test/',{exact:true}).first().waitFor();await report.getByRole('button',{name:'Close',exact:true}).click();await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.previewRunLabel='run-B';s.deferPreviewReportLabel='run-B';s.previewReportFailure='run-B';});await openRun();await diagnostics.click();await page.waitForFunction(()=>globalThis.__workspaceFixture.releasePreviewReport);
-  assert.doesNotMatch(await report.textContent(),/run-a\.test|Historical rule|Exact captured response|No browser requests have been recorded yet/);assert.equal(await report.getByRole('button',{name:'Compare response',exact:true}).count(),0);assert.equal(await report.getByRole('button',{name:'Open updated preview…',exact:true}).isDisabled(),true);
-  const calls=await page.evaluate(()=>structuredClone(globalThis.__workspaceFixture.calls));await page.evaluate(async()=>{const t=document.querySelector('app-shell').traffic;t.setPreviewResponseBaseline('1');t.comparePreviewResponse('1','follow-page','follow-rule');t.showPreviewRule('follow-rule');await t.showPreviewSource('follow-page');t.showRelatedPreview('modified');});assert.equal(await warning.isVisible(),false);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.session_detail??0),calls.session_detail??0);assert.equal(await page.evaluate(()=>globalThis.__workspaceFixture.calls.compare_messages??0),calls.compare_messages??0);
-  await page.evaluate(()=>globalThis.__workspaceFixture.releasePreviewReport());await report.getByText(/Fixture preview report unavailable/).waitFor();assert.doesNotMatch(await report.textContent(),/run-a\.test|Historical rule|No browser requests have been recorded yet/);await page.screenshot({path:resolve(root,'../../../target/response-set-action-review-followup/report-unavailable.png')});await page.evaluate(()=>globalThis.__workspaceFixture.previewReportFailure=null);await report.getByRole('button',{name:'Refresh diagnostics',exact:true}).click();await report.getByText('https://run-b.test/',{exact:true}).first().waitFor();assert.doesNotMatch(await report.textContent(),/run-a\.test/);
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture;
+    const report = (url, id) => ({
+      url,
+      scope: "original-trace",
+      source: "follow.har",
+      scriptsEnabled: false,
+      available: 1,
+      skipped: 0,
+      bytes: 11,
+      hits: 1,
+      misses: 0,
+      rules: [
+        {
+          id: "follow-rule",
+          name: "Historical rule",
+          revision: 1,
+          asset: "follow-asset@1",
+          bytes: 11,
+          sha256: "0".repeat(64),
+        },
+      ],
+      resources: [
+        {
+          entryId: "follow-page",
+          source: "follow.har",
+          sourceAvailable: true,
+          method: "GET",
+          url,
+          bytes: 11,
+          decision: "Exact captured response",
+        },
+      ],
+      requests: [
+        {
+          id,
+          method: "GET",
+          url,
+          outcome: "captured",
+          entryId: "follow-page",
+          reason: "Exact captured response",
+        },
+      ],
+    });
+    s.previewReports = {
+      "run-A": report("https://run-a.test/", 1),
+      "run-B": report("https://run-b.test/", 2),
+    };
+    s.previewRunLabel = "run-A";
+  });
+  const diagnostics = manager.getByRole("button", {
+    name: "Last preview diagnostics",
+    exact: true,
+  });
+  const openRun = async () => {
+    await preview();
+    await warning.waitFor();
+    await page.waitForFunction(() => !document.querySelector("app-shell").traffic.previewRulesBusy);
+    await warning.getByRole("button", { name: "Open preview", exact: true }).click();
+    await page.waitForFunction(() => !document.querySelector("app-shell").traffic.previewPageBusy);
+  };
+  await openRun();
+  await diagnostics.click();
+  await report.getByText("https://run-a.test/", { exact: true }).first().waitFor();
+  await report.getByRole("button", { name: "Close", exact: true }).click();
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture;
+    s.previewRunLabel = "run-B";
+    s.deferPreviewReportLabel = "run-B";
+    s.previewReportFailure = "run-B";
+  });
+  await openRun();
+  await diagnostics.click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releasePreviewReport);
+  assert.doesNotMatch(
+    await report.textContent(),
+    /run-a\.test|Historical rule|Exact captured response|No browser requests have been recorded yet/,
+  );
+  assert.equal(
+    await report.getByRole("button", { name: "Compare response", exact: true }).count(),
+    0,
+  );
+  assert.equal(
+    await report.getByRole("button", { name: "Open updated preview…", exact: true }).isDisabled(),
+    true,
+  );
+  const calls = await page.evaluate(() => structuredClone(globalThis.__workspaceFixture.calls));
+  await page.evaluate(async () => {
+    const t = document.querySelector("app-shell").traffic;
+    t.setPreviewResponseBaseline("1");
+    t.comparePreviewResponse("1", "follow-page", "follow-rule");
+    t.showPreviewRule("follow-rule");
+    await t.showPreviewSource("follow-page");
+    t.showRelatedPreview("modified");
+  });
+  assert.equal(await warning.isVisible(), false);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.session_detail ?? 0),
+    calls.session_detail ?? 0,
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.compare_messages ?? 0),
+    calls.compare_messages ?? 0,
+  );
+  await page.evaluate(() => globalThis.__workspaceFixture.releasePreviewReport());
+  await report.getByText(/Fixture preview report unavailable/).waitFor();
+  assert.doesNotMatch(
+    await report.textContent(),
+    /run-a\.test|Historical rule|No browser requests have been recorded yet/,
+  );
+  await page.screenshot({
+    path: resolve(
+      root,
+      "../../../target/response-set-action-review-followup/report-unavailable.png",
+    ),
+  });
+  await page.evaluate(() => (globalThis.__workspaceFixture.previewReportFailure = null));
+  await report.getByRole("button", { name: "Refresh diagnostics", exact: true }).click();
+  await report.getByText("https://run-b.test/", { exact: true }).first().waitFor();
+  assert.doesNotMatch(await report.textContent(), /run-a\.test/);
   // A saved-rule reveal begun from this report cannot replace later work after
   // its automation refresh finishes. A newly opened report supersedes it.
-  await page.evaluate(()=>globalThis.__workspaceFixture.deferAutomationStatus=true);await report.getByRole('button',{name:'Show saved rule',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseAutomationStatus);await diagnostics.click();await report.getByText('https://run-b.test/',{exact:true}).first().waitFor();const closeReport=report.getByRole('button',{name:'Close',exact:true});await closeReport.focus();await page.evaluate(()=>globalThis.__workspaceFixture.releaseAutomationStatus());await page.waitForTimeout(30);assert.equal(await report.isVisible(),true);assert.equal(await closeReport.evaluate(button=>button.getRootNode().activeElement===button),true);await closeReport.click();
+  await page.evaluate(() => (globalThis.__workspaceFixture.deferAutomationStatus = true));
+  await report.getByRole("button", { name: "Show saved rule", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseAutomationStatus);
+  await diagnostics.click();
+  await report.getByText("https://run-b.test/", { exact: true }).first().waitFor();
+  const closeReport = report.getByRole("button", { name: "Close", exact: true });
+  await closeReport.focus();
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseAutomationStatus());
+  await page.waitForTimeout(30);
+  assert.equal(await report.isVisible(), true);
+  assert.equal(
+    await closeReport.evaluate((button) => button.getRootNode().activeElement === button),
+    true,
+  );
+  await closeReport.click();
   // Keep the report's ownership/focus guard alive through ordinary rule asset
   // inspection too. Typed work and a newer selection must win over late focus.
-  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,a=document.querySelector('app-shell').automation;s.previewReports['run-B'].rules[0].id='unrelated';s.automation.rules.push({...structuredClone(s.automation.rules[0]),id:'newer-rule',displayName:'Newer selected rule'});a.renderAutomation(structuredClone(s.automation));await document.querySelector('app-shell').traffic.showPreviewReport();s.deferAssetInspection=true;s.releaseAssetInspection=null;});
-  await report.getByRole('button',{name:'Show saved rule',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseAssetInspection);const ruleName=editor.getByLabel('Rule name',{exact:true});await ruleName.fill('A typed rule draft');await page.evaluate(()=>globalThis.__workspaceFixture.releaseAssetInspection());await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse);assert.equal(await ruleName.inputValue(),'A typed rule draft');assert.equal(await ruleName.evaluate(input=>input.getRootNode().activeElement===input),true);assert.notEqual(await page.evaluate(()=>document.querySelector('app-shell').automation.highlightedRuleId),'unrelated');
-  await page.evaluate(async()=>{const s=globalThis.__workspaceFixture,a=document.querySelector('app-shell').automation;a.draftDirty=false;a.editorHidden=true;await document.querySelector('app-shell').traffic.showPreviewReport();s.deferAssetInspection=true;s.releaseAssetInspection=null;});await report.getByRole('button',{name:'Show saved rule',exact:true}).click();await page.waitForFunction(()=>globalThis.__workspaceFixture.releaseAssetInspection);await page.locator('#rule-newer-rule .rule-description').click();await page.waitForFunction(()=>document.querySelector('app-shell').automation.editingAutoResponseId==='newer-rule'&&!document.querySelector('app-shell').automation.loadingSavedResponse);const newer=page.locator('#rule-newer-rule');await newer.focus();await page.evaluate(()=>globalThis.__workspaceFixture.releaseAssetInspection());await page.waitForTimeout(30);assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.editingAutoResponseId),'newer-rule');assert.equal(await newer.evaluate(row=>row.getRootNode().activeElement===row),true);assert.equal(await ruleName.inputValue(),'Newer selected rule');
+  await page.evaluate(async () => {
+    const s = globalThis.__workspaceFixture,
+      a = document.querySelector("app-shell").automation;
+    s.previewReports["run-B"].rules[0].id = "unrelated";
+    s.automation.rules.push({
+      ...structuredClone(s.automation.rules[0]),
+      id: "newer-rule",
+      displayName: "Newer selected rule",
+    });
+    a.renderAutomation(structuredClone(s.automation));
+    await document.querySelector("app-shell").traffic.showPreviewReport();
+    s.deferAssetInspection = true;
+    s.releaseAssetInspection = null;
+  });
+  await report.getByRole("button", { name: "Show saved rule", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseAssetInspection);
+  const ruleName = editor.getByLabel("Rule name", { exact: true });
+  await ruleName.fill("A typed rule draft");
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseAssetInspection());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").automation.loadingSavedResponse,
+  );
+  assert.equal(await ruleName.inputValue(), "A typed rule draft");
+  assert.equal(
+    await ruleName.evaluate((input) => input.getRootNode().activeElement === input),
+    true,
+  );
+  assert.notEqual(
+    await page.evaluate(() => document.querySelector("app-shell").automation.highlightedRuleId),
+    "unrelated",
+  );
+  await page.evaluate(async () => {
+    const s = globalThis.__workspaceFixture,
+      a = document.querySelector("app-shell").automation;
+    a.draftDirty = false;
+    a.editorHidden = true;
+    await document.querySelector("app-shell").traffic.showPreviewReport();
+    s.deferAssetInspection = true;
+    s.releaseAssetInspection = null;
+  });
+  await report.getByRole("button", { name: "Show saved rule", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.releaseAssetInspection);
+  await page.locator("#rule-newer-rule .rule-description").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").automation.editingAutoResponseId === "newer-rule" &&
+      !document.querySelector("app-shell").automation.loadingSavedResponse,
+  );
+  const newer = page.locator("#rule-newer-rule");
+  await newer.focus();
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseAssetInspection());
+  await page.waitForTimeout(30);
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.editingAutoResponseId),
+    "newer-rule",
+  );
+  assert.equal(await newer.evaluate((row) => row.getRootNode().activeElement === row), true);
+  assert.equal(await ruleName.inputValue(), "Newer selected rule");
   // With no intervening work the intentional reveal still focuses its rule.
-  await page.evaluate(()=>document.querySelector('app-shell').traffic.showPreviewReport());await report.getByRole('button',{name:'Show saved rule',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.activeElement?.id==='rule-unrelated');assert.equal(await ruleName.inputValue(),'Unrelated live response');
+  await page.evaluate(() => document.querySelector("app-shell").traffic.showPreviewReport());
+  await report.getByRole("button", { name: "Show saved rule", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").shadowRoot.activeElement?.id === "rule-unrelated",
+  );
+  assert.equal(await ruleName.inputValue(), "Unrelated live response");
   // Focus inside the reveal's own unsaved confirmation is part of the action.
   // Keep editing preserves the draft; Discard/Save continue to the target.
-  const unsaved=page.getByRole('dialog',{name:'Unsaved changes',exact:true}),showRule=async id=>{await page.evaluate(async id=>{globalThis.__workspaceFixture.previewReports['run-B'].rules[0].id=id;await document.querySelector('app-shell').traffic.showPreviewReport();},id);await report.getByRole('button',{name:'Show saved rule',exact:true}).click();await unsaved.waitFor();};
-  await ruleName.fill('Keep this typed draft');await showRule('newer-rule');await unsaved.getByRole('button',{name:'Keep editing',exact:true}).click();assert.equal(await ruleName.inputValue(),'Keep this typed draft');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.editingAutoResponseId),'unrelated');
-  const beforeDiscard=await state();await showRule('newer-rule');await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.activeElement?.id==='rule-newer-rule');assert.equal(await ruleName.inputValue(),'Newer selected rule');assert.deepEqual(await state(),beforeDiscard);
-  await ruleName.fill('Saved via navigation confirmation');await showRule('unrelated');await unsaved.getByRole('button',{name:'Save and continue',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.activeElement?.id==='rule-unrelated');assert.equal((await state()).rules.find(rule=>rule.id==='newer-rule').displayName,'Saved via navigation confirmation');assert.equal(await ruleName.inputValue(),'Unrelated live response');
-  await ruleName.fill('Discard for named target');await showRule('follow-rule');await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return a.collectionOpen&&a.automationSection==='experiments'&&a.responseSets.setId==='follow-set'&&document.querySelector('app-shell').shadowRoot.activeElement===a.responseSets.backButton;});
+  const unsaved = page.getByRole("dialog", { name: "Unsaved changes", exact: true }),
+    showRule = async (id) => {
+      await page.evaluate(async (id) => {
+        globalThis.__workspaceFixture.previewReports["run-B"].rules[0].id = id;
+        await document.querySelector("app-shell").traffic.showPreviewReport();
+      }, id);
+      await report.getByRole("button", { name: "Show saved rule", exact: true }).click();
+      await unsaved.waitFor();
+    };
+  await ruleName.fill("Keep this typed draft");
+  await showRule("newer-rule");
+  await unsaved.getByRole("button", { name: "Keep editing", exact: true }).click();
+  assert.equal(await ruleName.inputValue(), "Keep this typed draft");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.editingAutoResponseId),
+    "unrelated",
+  );
+  const beforeDiscard = await state();
+  await showRule("newer-rule");
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").shadowRoot.activeElement?.id === "rule-newer-rule",
+  );
+  assert.equal(await ruleName.inputValue(), "Newer selected rule");
+  assert.deepEqual(await state(), beforeDiscard);
+  await ruleName.fill("Saved via navigation confirmation");
+  await showRule("unrelated");
+  await unsaved.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").shadowRoot.activeElement?.id === "rule-unrelated",
+  );
+  assert.equal(
+    (await state()).rules.find((rule) => rule.id === "newer-rule").displayName,
+    "Saved via navigation confirmation",
+  );
+  assert.equal(await ruleName.inputValue(), "Unrelated live response");
+  await ruleName.fill("Discard for named target");
+  await showRule("follow-rule");
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(() => {
+    const a = document.querySelector("app-shell").automation;
+    return (
+      a.collectionOpen &&
+      a.automationSection === "experiments" &&
+      a.responseSets.setId === "follow-set" &&
+      document.querySelector("app-shell").shadowRoot.activeElement === a.responseSets.backButton
+    );
+  });
   // A historical target can be absent. Discover that before asking to leave
   // an unrelated draft, which must remain dirty and protected afterward.
-  await page.evaluate(async()=>{const a=document.querySelector('app-shell').automation;await a.editAutoResponse(globalThis.__workspaceFixture.automation.rules.find(rule=>rule.id==='newer-rule'),true);});await ruleName.fill('Protected missing-target draft');const missingBefore=await state();await page.evaluate(async()=>{globalThis.__workspaceFixture.previewReports['run-B'].rules[0].id='missing-historical';await document.querySelector('app-shell').traffic.showPreviewReport();});await report.getByRole('button',{name:'Show saved rule',exact:true}).click();await page.getByRole('alert').getByText('Historical rule',{exact:true}).waitFor();assert.equal(await unsaved.isVisible(),false);assert.equal(await ruleName.inputValue(),'Protected missing-target draft');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.draftDirty),true);assert.equal(await ruleName.evaluate(input=>input.getRootNode().activeElement===input),true);assert.deepEqual(await state(),missingBefore);await page.locator('#rule-unrelated .rule-description').click();await unsaved.waitFor();await unsaved.getByRole('button',{name:'Keep editing',exact:true}).click();assert.equal(await ruleName.inputValue(),'Protected missing-target draft');
+  await page.evaluate(async () => {
+    const a = document.querySelector("app-shell").automation;
+    await a.editAutoResponse(
+      globalThis.__workspaceFixture.automation.rules.find((rule) => rule.id === "newer-rule"),
+      true,
+    );
+  });
+  await ruleName.fill("Protected missing-target draft");
+  const missingBefore = await state();
+  await page.evaluate(async () => {
+    globalThis.__workspaceFixture.previewReports["run-B"].rules[0].id = "missing-historical";
+    await document.querySelector("app-shell").traffic.showPreviewReport();
+  });
+  await report.getByRole("button", { name: "Show saved rule", exact: true }).click();
+  await page.getByRole("alert").getByText("Historical rule", { exact: true }).waitFor();
+  assert.equal(await unsaved.isVisible(), false);
+  assert.equal(await ruleName.inputValue(), "Protected missing-target draft");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.draftDirty),
+    true,
+  );
+  assert.equal(
+    await ruleName.evaluate((input) => input.getRootNode().activeElement === input),
+    true,
+  );
+  assert.deepEqual(await state(), missingBefore);
+  await page.locator("#rule-unrelated .rule-description").click();
+  await unsaved.waitFor();
+  await unsaved.getByRole("button", { name: "Keep editing", exact: true }).click();
+  assert.equal(await ruleName.inputValue(), "Protected missing-target draft");
   // A newer report can supersede a confirmed reveal before its continuation.
   // The unchanged editor still owns its dirty fields, including newer edits.
-  const holdDecision=()=>page.evaluate(()=>{const a=document.querySelector('app-shell').automation,canLeave=a.canLeaveEditor;globalThis.releaseRevealConfirmation=null;a.canLeaveEditor=async function(){a.canLeaveEditor=canLeave;const allowed=await canLeave.call(a);await new Promise(resolve=>globalThis.releaseRevealConfirmation=resolve);return allowed;};});
-  await holdDecision();await showRule('unrelated');await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>globalThis.releaseRevealConfirmation);await page.evaluate(()=>{document.querySelector('app-shell').traffic.previewReportGeneration++;globalThis.releaseRevealConfirmation();});await page.waitForFunction(()=>document.querySelector('app-shell').automation.draftDirty);assert.equal(await ruleName.inputValue(),'Protected missing-target draft');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.editingAutoResponseId),'newer-rule');
-  await holdDecision();await showRule('unrelated');await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>globalThis.releaseRevealConfirmation);await page.evaluate(()=>{const shell=document.querySelector('app-shell');shell.traffic.previewReportGeneration++;shell.automation.autoResponseForm.elements.namedItem('name').value='Newer field work survives';globalThis.releaseRevealConfirmation();});await page.waitForFunction(()=>document.querySelector('app-shell').automation.draftDirty);assert.equal(await ruleName.inputValue(),'Newer field work survives');
-  await holdDecision();await showRule('unrelated');await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>globalThis.releaseRevealConfirmation);await page.evaluate(()=>{const a=document.querySelector('app-shell').automation;a.renderAutomation({...structuredClone(a.automationStatus),rules:a.automationStatus.rules.filter(rule=>rule.id!=='unrelated')});globalThis.releaseRevealConfirmation();});await page.waitForFunction(()=>document.querySelector('app-shell').automation.draftDirty);assert.equal(await ruleName.inputValue(),'Newer field work survives');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.editingAutoResponseId),'newer-rule');
+  const holdDecision = () =>
+    page.evaluate(() => {
+      const a = document.querySelector("app-shell").automation,
+        canLeave = a.canLeaveEditor;
+      globalThis.releaseRevealConfirmation = null;
+      a.canLeaveEditor = async function () {
+        a.canLeaveEditor = canLeave;
+        const allowed = await canLeave.call(a);
+        await new Promise((resolve) => (globalThis.releaseRevealConfirmation = resolve));
+        return allowed;
+      };
+    });
+  await holdDecision();
+  await showRule("unrelated");
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(() => globalThis.releaseRevealConfirmation);
+  await page.evaluate(() => {
+    document.querySelector("app-shell").traffic.previewReportGeneration++;
+    globalThis.releaseRevealConfirmation();
+  });
+  await page.waitForFunction(() => document.querySelector("app-shell").automation.draftDirty);
+  assert.equal(await ruleName.inputValue(), "Protected missing-target draft");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.editingAutoResponseId),
+    "newer-rule",
+  );
+  await holdDecision();
+  await showRule("unrelated");
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(() => globalThis.releaseRevealConfirmation);
+  await page.evaluate(() => {
+    const shell = document.querySelector("app-shell");
+    shell.traffic.previewReportGeneration++;
+    shell.automation.autoResponseForm.elements.namedItem("name").value =
+      "Newer field work survives";
+    globalThis.releaseRevealConfirmation();
+  });
+  await page.waitForFunction(() => document.querySelector("app-shell").automation.draftDirty);
+  assert.equal(await ruleName.inputValue(), "Newer field work survives");
+  await holdDecision();
+  await showRule("unrelated");
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(() => globalThis.releaseRevealConfirmation);
+  await page.evaluate(() => {
+    const a = document.querySelector("app-shell").automation;
+    a.renderAutomation({
+      ...structuredClone(a.automationStatus),
+      rules: a.automationStatus.rules.filter((rule) => rule.id !== "unrelated"),
+    });
+    globalThis.releaseRevealConfirmation();
+  });
+  await page.waitForFunction(() => document.querySelector("app-shell").automation.draftDirty);
+  assert.equal(await ruleName.inputValue(), "Newer field work survives");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.editingAutoResponseId),
+    "newer-rule",
+  );
   // Discard aimed at the same rule reloads the saved fields instead of merely
   // marking the current typed draft clean. A failed different target is honest.
-  await showRule('newer-rule');await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>document.querySelector('app-shell').shadowRoot.activeElement?.id==='rule-newer-rule');assert.equal(await ruleName.inputValue(),'Saved via navigation confirmation');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.draftDirty),false);
-  await ruleName.fill('Save despite superseded reveal');await holdDecision();await showRule('unrelated');await unsaved.getByRole('button',{name:'Save and continue',exact:true}).click();await page.waitForFunction(()=>globalThis.releaseRevealConfirmation);await page.evaluate(()=>{document.querySelector('app-shell').traffic.previewReportGeneration++;globalThis.releaseRevealConfirmation();});await page.waitForFunction(()=>{const a=document.querySelector('app-shell').automation;return !a.unsavedDialog.open&&!a.savingAutoResponse;});assert.equal((await state()).rules.find(rule=>rule.id==='newer-rule').displayName,'Save despite superseded reveal');assert.equal(await ruleName.inputValue(),'Save despite superseded reveal');assert.equal(await page.evaluate(()=>document.querySelector('app-shell').automation.draftDirty),false);
-  await ruleName.fill('Old draft before failed target');await showRule('unrelated');await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.savedAssets=s.assets;s.assets=[];});await unsaved.getByRole('button',{name:'Discard changes',exact:true}).click();await page.waitForFunction(()=>!document.querySelector('app-shell').automation.loadingSavedResponse&&document.querySelector('app-shell').automation.sourceText.includes('Saved response missing'));assert.equal(await ruleName.inputValue(),'Unrelated live response');assert.notEqual(await ruleName.inputValue(),'Old draft before failed target');await page.evaluate(()=>{const s=globalThis.__workspaceFixture;s.assets=s.savedAssets;delete s.savedAssets;});
+  await showRule("newer-rule");
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector("app-shell").shadowRoot.activeElement?.id === "rule-newer-rule",
+  );
+  assert.equal(await ruleName.inputValue(), "Saved via navigation confirmation");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.draftDirty),
+    false,
+  );
+  await ruleName.fill("Save despite superseded reveal");
+  await holdDecision();
+  await showRule("unrelated");
+  await unsaved.getByRole("button", { name: "Save and continue", exact: true }).click();
+  await page.waitForFunction(() => globalThis.releaseRevealConfirmation);
+  await page.evaluate(() => {
+    document.querySelector("app-shell").traffic.previewReportGeneration++;
+    globalThis.releaseRevealConfirmation();
+  });
+  await page.waitForFunction(() => {
+    const a = document.querySelector("app-shell").automation;
+    return !a.unsavedDialog.open && !a.savingAutoResponse;
+  });
+  assert.equal(
+    (await state()).rules.find((rule) => rule.id === "newer-rule").displayName,
+    "Save despite superseded reveal",
+  );
+  assert.equal(await ruleName.inputValue(), "Save despite superseded reveal");
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").automation.draftDirty),
+    false,
+  );
+  await ruleName.fill("Old draft before failed target");
+  await showRule("unrelated");
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture;
+    s.savedAssets = s.assets;
+    s.assets = [];
+  });
+  await unsaved.getByRole("button", { name: "Discard changes", exact: true }).click();
+  await page.waitForFunction(
+    () =>
+      !document.querySelector("app-shell").automation.loadingSavedResponse &&
+      document.querySelector("app-shell").automation.sourceText.includes("Saved response missing"),
+  );
+  assert.equal(await ruleName.inputValue(), "Unrelated live response");
+  assert.notEqual(await ruleName.inputValue(), "Old draft before failed target");
+  await page.evaluate(() => {
+    const s = globalThis.__workspaceFixture;
+    s.assets = s.savedAssets;
+    delete s.savedAssets;
+  });
 }

@@ -1,8 +1,8 @@
-import {writeFile} from 'node:fs/promises';
+import { writeFile } from "node:fs/promises";
 
-export async function smokeLoopback(call,evaluate,screenshotPath) {
+export async function smokeLoopback(call, evaluate, screenshotPath) {
   try {
-    const result=await evaluate(`(async()=>{
+    const result = await evaluate(`(async()=>{
       const shell=document.querySelector('app-shell'),settings=shell.settings,manager=settings.loopbackManager;
       globalThis.__loopbackProbe={view:shell.activeView,section:settings.settingsSection};
       shell.shadowRoot.querySelector('a[data-view="settings"]').click();settings.showSettingsSection('connection');settings.$flushUpdates();
@@ -28,9 +28,19 @@ export async function smokeLoopback(call,evaluate,screenshotPath) {
       const scroller=manager.querySelector('.loopback-table-scroll');if(count>30&&scroller.scrollHeight<=scroller.clientHeight)throw new Error('Populated native AppContainers did not scroll');
       return {enumerated:count,exempt,groupedUsers:true,multiSelection:true,selectionActions:true,exemptFilter:true,columns:true,readOnly:true};
     })()`);
-    if(screenshotPath)await writeFile(screenshotPath.replace(/\.png$/i,'-loopback.png'),Buffer.from((await call('Page.captureScreenshot',{format:'png',captureBeyondViewport:false})).data,'base64'));
+    if (screenshotPath)
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-loopback.png"),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
     return result;
   } finally {
-    await evaluate(`(()=>{const probe=globalThis.__loopbackProbe;if(!probe)return;const shell=document.querySelector('app-shell'),manager=shell.settings.loopbackManager;const filter=manager.querySelector('.loopback-exempt-only input');if(filter.checked)filter.click();manager.clearSelection();manager.close();shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__loopbackProbe;})()`);
+    await evaluate(
+      `(()=>{const probe=globalThis.__loopbackProbe;if(!probe)return;const shell=document.querySelector('app-shell'),manager=shell.settings.loopbackManager;const filter=manager.querySelector('.loopback-exempt-only input');if(filter.checked)filter.click();manager.clearSelection();manager.close();shell.settings.showSettingsSection(probe.section);shell.shadowRoot.querySelector('a[data-view="'+probe.view+'"]').click();delete globalThis.__loopbackProbe;})()`,
+    );
   }
 }
