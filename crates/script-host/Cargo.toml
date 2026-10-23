@@ -17,6 +17,7 @@ transmog-script = { version = "=0.1.11", path = "../proxy-script" }
 transmog-extension-host = { version = "=0.1.11", path = "../extension-host" }
 
 [dev-dependencies]
+serde.workspace = true
 tokio.workspace = true
 transmog-script-supervisor = { version = "=0.1.11", path = "../script-supervisor" }
 base64.workspace = true

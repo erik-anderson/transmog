@@ -18,6 +18,7 @@ tokio = { version = "1.53.3", features = ["fs", "io-util", "macros", "net", "pro
 
 # Keep these identical to the root selections; build-sdk.py verifies them.
 [patch.crates-io]
+swc_ecma_parser = { path = "../third_party/swc-ecma-parser" }
 h2 = { path = "../third_party/rust-transport/vendor/h2" }
 hyper = { path = "../third_party/rust-transport/vendor/hyper" }
 quiche = { path = "../third_party/rust-transport/vendor/quiche" }

@@ -5,7 +5,7 @@ from repo_tools import ROOT, command, main_guard
 
 
 def main():
-    targets = ('content_encoding', 'decode_stream', 'codec_roundtrip', 'content_pipeline', 'websocket_frames', 'sse_stream', 'capture_reader', 'capture_crypto')
+    targets = ('content_encoding', 'decode_stream', 'codec_roundtrip', 'content_pipeline', 'websocket_frames', 'sse_stream', 'capture_reader', 'capture_crypto', 'script_compiler', 'script_protocol')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runs", type=int, default=10000)
     parser.add_argument("--image", default="transmog-content-fuzz:nightly-2026-10-01")

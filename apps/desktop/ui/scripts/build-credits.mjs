@@ -39,6 +39,7 @@ export async function cargoCredits(repository, metadata) {
   const packages = [];
   for (const pkg of metadata.packages) {
     const source = sources.get(pkg.name);
+    const parser = pkg.name === "swc_ecma_parser";
     if (source) {
       const manifest = await realpath(
         resolve(repository, "third_party/rust-transport/vendor", pkg.name, "Cargo.toml"),
@@ -50,7 +51,17 @@ export async function cargoCredits(repository, metadata) {
       )
         throw new Error("Unreviewed transport dependency: " + pkg.name);
     }
-    if (source || pkg.source) packages.push(pkg);
+    if (parser) {
+      const directory = resolve(repository, "third_party/swc-ecma-parser");
+      const receipt = JSON.parse(await readFile(join(directory, "transmog-snapshot.json"), "utf8"));
+      if (
+        pkg.source !== null ||
+        pkg.version !== receipt.source.version ||
+        (await realpath(pkg.manifest_path)) !== (await realpath(join(directory, "Cargo.toml")))
+      )
+        throw new Error("Unreviewed SWC parser dependency");
+    }
+    if (source || parser || pkg.source) packages.push(pkg);
   }
   const entries = [];
   const byRepository = new Map();

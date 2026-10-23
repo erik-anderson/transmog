@@ -13,6 +13,12 @@ transmog-auth = { version = "=0.1.11", path = "../crates/auth" }
 base64 = "0.22.1"
 bytes = "1.11.1"
 libfuzzer-sys = "=0.4.13"
+transmog-script-compiler = { version = "=0.1.11", path = "../crates/script-compiler" }
+transmog-script = { version = "=0.1.11", path = "../crates/proxy-script" }
+transmog-extensions = { version = "=0.1.11", path = "../crates/extensions" }
+sourcemap = "=9.3.2"
+url = "=2.5.8"
+serde = "1.0.228"
 transmog-content = { version = "=0.1.11", path = "../crates/proxy-content" }
 transmog-core = { version = "=0.1.11", path = "../crates/proxy-core" }
 transmog-websocket = { version = "=0.1.11", path = "../crates/proxy-websocket" }
@@ -26,6 +32,23 @@ crc32fast = "1.5.2"
 zstd = { version = "=0.14.3", default-features = false }
 
 [workspace]
+
+[patch.crates-io]
+swc_ecma_parser = { path = "../third_party/swc-ecma-parser" }
+
+[[bin]]
+name = "script_compiler"
+path = "fuzz_targets/script_compiler.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "script_protocol"
+path = "fuzz_targets/script_protocol.rs"
+test = false
+doc = false
+bench = false
 
 [[bin]]
 name = "auth_evidence"

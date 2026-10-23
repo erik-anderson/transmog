@@ -1,0 +1,1 @@
+T﻿export function onRequestHead(){return {action:"continue"};}

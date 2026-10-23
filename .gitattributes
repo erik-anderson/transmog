@@ -6,7 +6,7 @@
 *.mjs text eol=lf
 fuzz/*.sh text eol=lf
 fuzz/corpus/** binary
-fuzz/seeds/** -text
+fuzz/seeds/** -text -whitespace
 # Fixture hashes and archive recipes require exact bytes on every checkout.
 verification/fixtures/portable/** -text
 third_party/chromium-root-store/* text eol=lf
@@ -16,6 +16,7 @@ third_party/chromium-suffix-list/** text eol=lf -whitespace
 third_party/chromium-certificate-policy/** text eol=lf -whitespace
 third_party/chromium-certificate-policy/*.pb binary
 third_party/rust-transport/** -text -whitespace
+third_party/swc-ecma-parser/** -text -whitespace
 third_party/mapi-inspector/LICENSE -text -whitespace
 extensions/mapi/LICENSES/** -text -whitespace
 extensions/mapi/README.runtime.md -text

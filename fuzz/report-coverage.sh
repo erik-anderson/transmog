@@ -2,16 +2,17 @@
 set -euo pipefail
 
 target_dir="fuzz/target/coverage"
-summary="fuzz/coverage-summary.txt"
-targets=(content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames)
+summary="${FUZZ_COVERAGE_SUMMARY:-fuzz/coverage-summary.txt}"
+read -r -a targets <<<"${FUZZ_COVERAGE_TARGETS:-content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames script_compiler script_protocol}"
 
 for target in "${targets[@]}"; do
+    corpora=("fuzz/seeds/$target")
+    if [[ -d "fuzz/corpus/$target" ]]; then corpora+=("fuzz/corpus/$target"); fi
     replay_log="$(mktemp)"
     if ! cargo +nightly-2026-10-01 fuzz coverage \
         --target-dir "$target_dir" \
         "$target" \
-        "fuzz/corpus/$target" \
-        "fuzz/seeds/$target" -- \
+        "${corpora[@]}" -- \
         -verbosity=0 >"$replay_log" 2>&1; then
         cat "$replay_log" >&2
         rm -f "$replay_log"
@@ -30,6 +31,14 @@ fi
 {
     for target in "${targets[@]}"; do
         case "$target" in
+            script_compiler)
+                minimum_lines=""
+                sources=("$PWD/crates/script-compiler/src/lib.rs" "$PWD/crates/proxy-script/src/lib.rs")
+                ;;
+            script_protocol)
+                minimum_lines=""
+                sources=("$PWD/crates/extensions/src/protocol.rs" "$PWD/crates/proxy-script/src/lib.rs")
+                ;;
             content_encoding)
                 minimum_lines=70
                 sources=(
@@ -89,6 +98,10 @@ fi
         if [[ -z "$line_coverage" ]]; then
             echo "Could not read $target line coverage." >&2
             exit 1
+        fi
+        if [[ -z "$minimum_lines" ]]; then
+            printf 'Line coverage measurement: %s%% (no regression floor established yet)\n' "$line_coverage"
+            continue
         fi
         if ! awk -v actual="$line_coverage" -v minimum="$minimum_lines" \
             'BEGIN { exit !(actual + 0 >= minimum + 0) }'; then

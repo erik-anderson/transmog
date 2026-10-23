@@ -52,6 +52,32 @@ test("credits retain each vendored transport and its complete upstream license",
   }
 });
 
+test("credits retain the patched SWC parser and reject substituted copies", async () => {
+  const directory = resolve(repository, "third_party/swc-ecma-parser");
+  const receipt = JSON.parse(await readFile(join(directory, "transmog-snapshot.json"), "utf8"));
+  const parser = {
+    id: "swc_ecma_parser",
+    name: "swc_ecma_parser",
+    version: receipt.source.version,
+    source: null,
+    license: "Apache-2.0",
+    manifest_path: join(directory, "Cargo.toml"),
+  };
+  const entries = await cargoCredits(repository, { packages: [parser] });
+  assert.equal(entries.length, 1);
+  assert.ok(entries[0].text.includes(await readFile(join(directory, "LICENSE"), "utf8")));
+  for (const change of [
+    { source: "registry+https://github.com/rust-lang/crates.io-index" },
+    { version: "0.0.0" },
+    { manifest_path: resolve(repository, "Cargo.toml") },
+  ]) {
+    await assert.rejects(
+      cargoCredits(repository, { packages: [{ ...parser, ...change }] }),
+      /Unreviewed SWC parser dependency/,
+    );
+  }
+});
+
 test("credits reject transports with a different source, version, or manifest", async () => {
   for (const pkg of packages) {
     for (const change of [

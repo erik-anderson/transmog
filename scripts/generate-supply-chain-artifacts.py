@@ -9,6 +9,7 @@ import re
 from urllib.parse import quote, urlsplit
 from repo_tools import ROOT, command, main_guard, write_json
 from transport_dependencies import resolved_provenance
+from swc_dependencies import resolved_provenance as swc_provenance
 
 
 def package_key(package):
@@ -49,7 +50,7 @@ def license_choices(expression):
 
 def artifacts(metadata, npm, version, *, native=None):
     packages = sorted(metadata["packages"], key=package_key)
-    transports = resolved_provenance(metadata, ROOT)
+    transports = {**resolved_provenance(metadata, ROOT), **swc_provenance(metadata, ROOT)}
     third_party = [p for p in packages if p.get("source") is not None or p["id"] in transports]
     lines = ["# Third-party notices", "",
              "Transmog includes the following third-party software.",
@@ -57,7 +58,7 @@ def artifacts(metadata, npm, version, *, native=None):
              "| Package | Version | License expression | Source |", "|---|---:|---|---|"]
     lines += [f"| {p['name']} | {p['version']} | {p.get('license') or ''} | {transports[p['id']]['archiveUrl'] if p['id'] in transports else (source_identity(p) or {}).get('url', p.get('repository') or p['source'])} |" for p in third_party]
     if transports:
-        lines += ["", "## Patched Rust transport dependencies", "",
+        lines += ["", "## Patched Rust dependencies", "",
                   "The registry archives below are vendored with local patches. Original license and copyright texts are included in the desktop Credits.", "",
                   "| Package | Archive SHA-256 | Local patch | Patch SHA-256 |", "|---|---|---|---|"]
         for package in third_party:
@@ -120,7 +121,7 @@ def artifacts(metadata, npm, version, *, native=None):
             component["pedigree"] = {"ancestors": [ancestor], "patches": [{"type": "unofficial", "diff": {
                 "text": {"contentType": "text/x-diff", "encoding": "base64", "content": base64.b64encode(patch).decode("ascii")}}}]}
             component.setdefault("externalReferences", []).append({"type": "distribution", "url": transport["archiveUrl"]})
-            component["properties"] = [{"name": "transmog:transport:" + key, "value": transport[key]}
+            component["properties"] = [{"name": transport.get("propertyPrefix", "transmog:transport:") + key, "value": transport[key]}
                                        for key in ("archiveSha256", "patchPath", "patchSha256", "snapshotSha256")]
         components.append(component)
     for package in npm:

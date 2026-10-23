@@ -60,7 +60,7 @@ publish_target() {
         "$destination" "$(find "$destination" -maxdepth 1 -type f | wc -l)"
 }
 
-targets="${FUZZ_TARGETS:-content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames sse_stream capture_reader capture_crypto}"
+targets="${FUZZ_TARGETS:-content_encoding decode_stream codec_roundtrip content_pipeline websocket_frames sse_stream capture_reader capture_crypto script_compiler script_protocol}"
 selected_targets=()
 for target in $targets; do
     case "$target" in
@@ -87,6 +87,12 @@ for target in $targets; do
             ;;
         capture_crypto)
             evolve_target capture_crypto 256
+            ;;
+        script_compiler)
+            evolve_target script_compiler 16384 -dict=fuzz/dictionaries/script_compiler.dict
+            ;;
+        script_protocol)
+            evolve_target script_protocol 16384 -dict=fuzz/dictionaries/script_protocol.dict
             ;;
         *)
             echo "Unknown fuzz target: $target" >&2

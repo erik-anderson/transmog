@@ -13,6 +13,7 @@ def main():
              "--output", ROOT / "artifacts/release-policy/local-check"], env=env)
     command([sys.executable, "-m", "unittest", "discover", "-s", "scripts/tests"], env=env)
     command([sys.executable, ROOT / "scripts/vendor-boringssl-pki.py", "--check"], env=env)
+    command([sys.executable, ROOT / "scripts/swc_dependencies.py"], env=env)
     command([sys.executable, ROOT / "scripts/test-chromium-psl.py"], env=env)
     command([sys.executable, ROOT / "scripts/update-chromium-certificate-policy.py", "--check"], env=env)
     command([sys.executable, ROOT / "scripts/test-chromium-certificate-policy.py"], env=env)

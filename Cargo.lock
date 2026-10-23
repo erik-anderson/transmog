@@ -5453,8 +5453,6 @@ dependencies = [
 [[package]]
 name = "swc_ecma_parser"
 version = "27.0.7"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7f1a51af1a92cd4904c073b293e491bbc0918400a45d58227b34c961dd6f52d7"
 dependencies = [
  "bitflags 2.13.2",
  "either",
@@ -7034,6 +7032,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "sourcemap",
  "thiserror 2.0.21",
  "tokio",
  "transmog-core",
@@ -7046,6 +7045,7 @@ name = "transmog-script-compiler"
 version = "0.1.11"
 dependencies = [
  "sourcemap",
+ "stacker",
  "swc_common",
  "swc_ecma_ast",
  "swc_ecma_codegen",
@@ -7061,6 +7061,7 @@ name = "transmog-script-host"
 version = "0.1.11"
 dependencies = [
  "base64 0.22.1",
+ "serde",
  "serde_json",
  "tempfile",
  "tokio",

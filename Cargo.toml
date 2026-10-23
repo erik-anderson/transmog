@@ -1,5 +1,5 @@
 [workspace]
-exclude = ["sdk", "third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche"]
+exclude = ["sdk", "third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche", "third_party/swc-ecma-parser"]
 resolver = "2"
 members = [
     "crates/auth",
@@ -66,6 +66,7 @@ boring-sys = "=5.2.0"
 foreign-types = "=0.5.0"
 brotli = "=9.0.0"
 bytes = { version = "1.11.1", features = ["serde"] }
+stacker = "=0.1.25"
 swc_common = { version = "=17.0.1", features = ["sourcemap"] }
 swc_ecma_ast = "=18.0.0"
 swc_ecma_parser = "=27.0.7"
@@ -116,6 +117,7 @@ zip = { version = "=9.0.4", default-features = false, features = ["deflate-flate
 zstd = { version = "=0.14.3", default-features = false }
 
 [patch.crates-io]
+swc_ecma_parser = { path = "third_party/swc-ecma-parser" }
 h2 = { path = "third_party/rust-transport/vendor/h2" }
 hyper = { path = "third_party/rust-transport/vendor/hyper" }
 quiche = { path = "third_party/rust-transport/vendor/quiche" }

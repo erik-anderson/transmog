@@ -46,7 +46,7 @@ pub struct ScriptHostConfig {
 
 /// One persistent, serialized, fail-closed script runner.
 pub struct SupervisedScriptRunner {
-    sender: SyncSender<Work>,
+    sender: SyncSender<Option<Work>>,
     process: Arc<Mutex<Option<Child>>>,
     failed: Arc<AtomicBool>,
     next_request_id: AtomicU64,
@@ -149,11 +149,11 @@ impl ScriptRunner for SupervisedScriptRunner {
         }
         let request_id = self.next_request_id.fetch_add(1, Ordering::Relaxed);
         let (reply_sender, reply_receiver) = tokio::sync::oneshot::channel();
-        match self.sender.try_send(Work {
+        match self.sender.try_send(Some(Work {
             request_id,
             invocation,
             reply: reply_sender,
-        }) {
+        })) {
             Ok(()) => {}
             Err(TrySendError::Full(_)) => {
                 return Box::pin(async {
@@ -173,8 +173,16 @@ impl ScriptRunner for SupervisedScriptRunner {
         let deadline = self.deadline;
         let process = Arc::clone(&self.process);
         let failed = Arc::clone(&self.failed);
+        // Submission is eager, so the guard must be captured before the future
+        // is first polled. Dropping an unpolled future still cancels its work.
+        let mut pending = PendingInvocation {
+            sender: self.sender.clone(),
+            process: Arc::clone(&self.process),
+            failed: Arc::clone(&self.failed),
+            armed: true,
+        };
         Box::pin(async move {
-            match tokio::time::timeout(deadline, reply_receiver).await {
+            let result = match tokio::time::timeout(deadline, reply_receiver).await {
                 Ok(Ok(result)) => result,
                 Ok(Err(_)) => {
                     failed.store(true, Ordering::Release);
@@ -191,7 +199,9 @@ impl ScriptRunner for SupervisedScriptRunner {
                         column: None,
                     })
                 }
-            }
+            };
+            pending.disarm();
+            result
         })
     }
 }
@@ -208,12 +218,38 @@ struct Work {
     reply: tokio::sync::oneshot::Sender<Result<ScriptAction, ScriptFailure>>,
 }
 
+// The caller owns the timeout future. If it disappears while work is queued or
+// executing, terminate the revision rather than leaving hostile code unobserved.
+struct PendingInvocation {
+    sender: SyncSender<Option<Work>>,
+    process: Arc<Mutex<Option<Child>>>,
+    failed: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl PendingInvocation {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingInvocation {
+    fn drop(&mut self) {
+        if self.armed {
+            self.failed.store(true, Ordering::Release);
+            // Wake an idle worker too: its reply may have raced cancellation.
+            let _ = self.sender.try_send(None);
+            kill(&self.process);
+        }
+    }
+}
+
 fn worker(
     mut stdin: ChildStdin,
     stdout: ChildStdout,
     token: ScriptHostToken,
     compiled: CompiledScript,
-    receiver: mpsc::Receiver<Work>,
+    receiver: mpsc::Receiver<Option<Work>>,
     ready: &SyncSender<Result<(), ScriptFailure>>,
     failed: &AtomicBool,
 ) {
@@ -246,11 +282,12 @@ fn worker(
         }
     }
     for work in receiver {
+        let Some(work) = work else { break };
         if failed.load(Ordering::Acquire) {
             let _ = work
                 .reply
                 .send(Err(unavailable("script host is unavailable")));
-            continue;
+            break;
         }
         if write_host_frame(
             &mut stdin,

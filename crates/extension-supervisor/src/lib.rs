@@ -204,7 +204,13 @@ impl Runner {
                 reply: tx,
             }))
             .map_err(|_| fail(FailureKind::Limit, "The visualizer operation queue is full"))?;
-        match tokio::time::timeout(
+        let mut pending = PendingInvocation {
+            sender: self.sender.clone(),
+            process: Arc::clone(&self.process),
+            failed: Arc::clone(&self.failed),
+            armed: true,
+        };
+        let result = match tokio::time::timeout(
             Duration::from_millis(self.visualizer.limits.duration_ms),
             rx,
         )
@@ -227,7 +233,9 @@ impl Runner {
                     "The visualizer operation timed out",
                 ))
             }
-        }
+        };
+        pending.disarm();
+        result
     }
     /// Cancels queued work and terminates the worker; it cannot be resumed after this call.
     pub fn stop(&self) {
@@ -287,6 +295,32 @@ struct Work {
     id: u64,
     invocation: Invocation,
     reply: tokio::sync::oneshot::Sender<Result<VisualizationStep, Failure>>,
+}
+
+// A dropped invocation future must not remove the only deadline while its
+// isolated worker continues running. The I/O thread releases its slot on exit.
+struct PendingInvocation {
+    sender: SyncSender<Option<Work>>,
+    process: Arc<Mutex<Option<Child>>>,
+    failed: Arc<AtomicBool>,
+    armed: bool,
+}
+
+impl PendingInvocation {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for PendingInvocation {
+    fn drop(&mut self) {
+        if self.armed {
+            self.failed.store(true, Ordering::Release);
+            // The worker may already have replied and be waiting for more work.
+            let _ = self.sender.try_send(None);
+            kill(&self.process);
+        }
+    }
 }
 struct Worker {
     _slot: Slot,

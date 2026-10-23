@@ -1,0 +1,191 @@
+--- a/src/error.rs
++++ b/src/error.rs
+@@ -40,6 +40,8 @@
+ #[derive(Debug, Clone, PartialEq)]
+ #[non_exhaustive]
+ pub enum SyntaxError {
++    /// Embedders must treat this as a fatal resource failure, even after recovery.
++    ResourceLimit,
+     Eof,
+     DeclNotAllowed,
+ 
+@@ -298,6 +300,7 @@
+     #[inline(never)]
+     pub fn msg(&self) -> Cow<'static, str> {
+         match self {
++            SyntaxError::ResourceLimit => "JavaScript syntax exceeds compiler complexity limits".into(),
+             SyntaxError::PrivateNameInInterface => {
+                 "private names are not allowed in interface".into()
+             }
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -247,3 +247,16 @@
+ fn maybe_grow<R, F: FnOnce() -> R>(red_zone: usize, stack_size: usize, callback: F) -> R {
+     stacker::maybe_grow(red_zone, stack_size, callback)
+ }
++
++// Token advancement occurs before recursive grammar work can continue. Preserve
++// enough native stack for error recovery and dropping partially built nodes.
++#[cfg(all(not(any(target_arch = "wasm32", target_arch = "arm", miri)), feature = "stacker"))]
++fn parser_stack_limit_reached() -> bool {
++    stacker::remaining_stack().is_none_or(|remaining| remaining < 8 * 1024 * 1024)
++}
++
++#[cfg(any(target_arch = "wasm32", target_arch = "arm", not(feature = "stacker"), miri))]
++fn parser_stack_limit_reached() -> bool {
++    // These targets cannot establish the required native stack boundary.
++    true
++}
+--- a/src/parser/expr.rs
++++ b/src/parser/expr.rs
+@@ -1062,12 +1062,13 @@
+             _ => unreachable!(),
+         };
+ 
+-        loop {
++        for _ in 0..128 {
+             expr = match self.parse_subscript(start, expr, no_call, no_computed_member)? {
+                 (expr, false) => return Ok(expr),
+                 (expr, true) => expr,
+             }
+         }
++        syntax_error!(self, SyntaxError::ResourceLimit)
+     }
+ 
+     /// returned bool is true if this method should be called again.
+@@ -1706,7 +1707,7 @@
+         mut left: Box<Expr>,
+         mut min_prec: u8,
+     ) -> PResult<Box<Expr>> {
+-        loop {
++        for _ in 0..128 {
+             let (next_left, next_prec) = self.parse_bin_op_recursively_inner(left, min_prec)?;
+ 
+             match &*next_left {
+@@ -1736,6 +1737,7 @@
+ 
+             left = next_left;
+         }
++        syntax_error!(self, SyntaxError::ResourceLimit)
+     }
+ 
+     /// Returns `(left, Some(next_prec))` or `(expr, None)`.
+--- a/src/parser/input.rs
++++ b/src/parser/input.rs
+@@ -79,6 +79,13 @@
+     pub cur: TokenAndSpan,
+     /// Peeked token
+     pub next: Option<NextTokenAndSpan>,
++    // Monotonic across cloned/speculative parser states. Recovery or TypeScript
++    // backtracking must not turn a resource failure into an accepted module.
++    stack_limit_reached: std::rc::Rc<std::cell::Cell<bool>>,
++    // Shared monotonic work budget also bounds partially constructed ASTs when
++    // individually short wrapping loops compose into a deeply nested tree.
++    token_advances: std::rc::Rc<std::cell::Cell<usize>>,
++    item_token_advances: std::rc::Rc<std::cell::Cell<usize>>,
+ }
+ 
+ impl<I: Tokens> Buffer<I> {
+@@ -207,6 +214,9 @@
+             cur: TokenAndSpan::new(Token::Eof, prev_span, false),
+             prev_span,
+             next: None,
++            stack_limit_reached: Default::default(),
++            token_advances: Default::default(),
++            item_token_advances: Default::default(),
+         }
+     }
+ 
+@@ -283,6 +293,33 @@
+     }
+ 
+     pub fn bump(&mut self) {
++        let advances = self.token_advances.get();
++        self.token_advances.set(advances.saturating_add(1));
++        let item_advances = self.item_token_advances.get();
++        self.item_token_advances.set(item_advances.saturating_add(1));
++        let reserve_exhausted = crate::parser_stack_limit_reached();
++        if self.stack_limit_reached.get()
++            || reserve_exhausted
++            || advances >= 262_144
++            || item_advances >= 16_384
++        {
++            let span = self.cur.span;
++            let first = !self.stack_limit_reached.replace(true);
++            let token = if first {
++                self.iter.set_token_value(Some(TokenValue::Error(Error::new(
++                    span,
++                    crate::error::SyntaxError::ResourceLimit,
++                ))));
++                Token::Error
++            } else {
++                self.iter.set_token_value(None);
++                Token::Eof
++            };
++            self.next = None;
++            self.prev_span = span;
++            self.set_cur(TokenAndSpan::new(token, span, true));
++            return;
++        }
+         let next = if let Some(next) = self.next.take() {
+             self.iter.set_token_value(next.value);
+             next.token_and_span
+@@ -295,6 +332,18 @@
+         };
+         self.prev_span = self.cur.span;
+         self.set_cur(next);
++    }
++
++    /// Whether any cloned parser state exhausted its stack or syntax-work budget.
++    pub fn stack_limit_reached(&self) -> bool {
++        self.stack_limit_reached.get()
++    }
++
++    // Only a completed top-level item can reset the partial-tree budget. Nested
++    // blocks, error recovery and speculative states must never reset it or the
++    // monotonic total-work budget / failure latch.
++    pub(super) fn finish_top_level_item(&mut self) {
++        self.item_token_advances.set(0);
+     }
+ 
+     pub fn expect_word_token_and_bump(&mut self) -> Atom {
+--- a/src/parser/stmt.rs
++++ b/src/parser/stmt.rs
+@@ -1351,6 +1351,9 @@
+             while is_stmt_start(p) {
+                 let stmt = p.parse_stmt_like(true, &handle_import_export)?;
+                 stmts.push(stmt);
++                if end.is_none() {
++                    p.input_mut().finish_top_level_item();
++                }
+             }
+             Ok(())
+         };
+--- a/src/parser/typescript.rs
++++ b/src/parser/typescript.rs
+@@ -421,7 +421,12 @@
+             self.emit_err(dot_span, SyntaxError::TS1005)
+         }
+         let mut entity = TsEntityName::Ident(init.into());
++        let mut nesting = 0;
+         while self.input_mut().eat(Token::Dot) {
++            nesting += 1;
++            if nesting > 128 {
++                syntax_error!(self, SyntaxError::ResourceLimit);
++            }
+             let dot_start = self.input().cur_pos();
+             let cur = self.input().cur();
+             if cur != Token::Hash && !cur.is_word() {
+@@ -1885,7 +1890,12 @@
+ 
+         let mut ty = self.parse_ts_non_array_type()?;
+ 
++        let mut nesting = 0;
+         while !self.input().had_line_break_before_cur() && self.input_mut().eat(Token::LBracket) {
++            nesting += 1;
++            if nesting > 128 {
++                syntax_error!(self, SyntaxError::ResourceLimit);
++            }
+             if self.input_mut().eat(Token::RBracket) {
+                 ty = Box::new(TsType::TsArrayType(TsArrayType {
+                     span: self.span(ty.span_lo()),

@@ -129,8 +129,15 @@ impl Runtime {
 }
 
 type Modules = BTreeMap<ModuleSpecifier, String>;
-#[allow(clippy::too_many_lines)] // Keep the static module policy next to every dependency/export check.
 fn load_modules(
+    snapshot: &Snapshot,
+    visualizer: &Visualizer,
+) -> Result<(ModuleSpecifier, Modules), Failure> {
+    transmog_script_compiler::with_compiler_stack(|| load_modules_inner(snapshot, visualizer))
+}
+
+#[allow(clippy::too_many_lines)] // Keep the static module policy next to every dependency/export check.
+fn load_modules_inner(
     snapshot: &Snapshot,
     visualizer: &Visualizer,
 ) -> Result<(ModuleSpecifier, Modules), Failure> {

@@ -330,6 +330,13 @@ pub fn compile_typescript(
     manifest: ScriptManifest,
     source: &str,
 ) -> Result<CompiledScript, ScriptCompileError> {
+    transmog_script_compiler::with_compiler_stack(|| compile_typescript_inner(manifest, source))
+}
+
+fn compile_typescript_inner(
+    manifest: ScriptManifest,
+    source: &str,
+) -> Result<CompiledScript, ScriptCompileError> {
     validate_manifest(&manifest)?;
     if source.len() > MAX_SCRIPT_SOURCE_BYTES {
         return Err(ScriptCompileError::SourceLimitExceeded);
@@ -350,10 +357,16 @@ pub fn compile_typescript(
             ModuleItem::ModuleDecl(ModuleDecl::Import(import))
                 if import.type_only && import.src.value == *"transmog:api/v1" => {}
             ModuleItem::ModuleDecl(
-                ModuleDecl::Import(_) | ModuleDecl::ExportAll(_) | ModuleDecl::ExportNamed(_),
+                ModuleDecl::Import(_)
+                | ModuleDecl::ExportAll(_)
+                | ModuleDecl::ExportNamed(_)
+                | ModuleDecl::TsImportEquals(_),
             ) => return Err(ScriptCompileError::ImportsForbidden),
             ModuleItem::ModuleDecl(
-                ModuleDecl::ExportDefaultDecl(_) | ModuleDecl::ExportDefaultExpr(_),
+                ModuleDecl::ExportDefaultDecl(_)
+                | ModuleDecl::ExportDefaultExpr(_)
+                | ModuleDecl::TsExportAssignment(_)
+                | ModuleDecl::TsNamespaceExport(_),
             ) => {
                 return Err(ScriptCompileError::DefaultExportForbidden);
             }
@@ -370,6 +383,9 @@ pub fn compile_typescript(
     }
     let mut forbidden = ForbiddenSyntax::default();
     parsed.module().visit_with(&mut forbidden);
+    if forbidden.module_assignment {
+        return Err(ScriptCompileError::ImportsForbidden);
+    }
     if forbidden.dynamic_import || forbidden.string_codegen {
         return Err(ScriptCompileError::ForbiddenCapability);
     }
@@ -405,9 +421,20 @@ pub fn compile_typescript(
 struct ForbiddenSyntax {
     dynamic_import: bool,
     string_codegen: bool,
+    module_assignment: bool,
 }
 
 impl Visit for ForbiddenSyntax {
+    fn visit_module_decl(&mut self, declaration: &ModuleDecl) {
+        self.module_assignment |= matches!(
+            declaration,
+            ModuleDecl::TsImportEquals(_)
+                | ModuleDecl::TsExportAssignment(_)
+                | ModuleDecl::TsNamespaceExport(_)
+        );
+        declaration.visit_children_with(self);
+    }
+
     fn visit_call_expr(&mut self, expression: &CallExpr) {
         match &expression.callee {
             Callee::Import(_) => self.dynamic_import = true,
@@ -1328,6 +1355,43 @@ mod tests {
             .unwrap_err(),
             ScriptCompileError::HandlerMustBeSynchronous(ScriptHandler::RequestHead)
         );
+    }
+
+    #[test]
+    fn complete_compilation_is_safe_on_a_small_caller_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let source = format!(
+                    "{}0;{} export function onRequestHead() {{return {{action:'continue'}};}}",
+                    "function f(){".repeat(120),
+                    "}".repeat(120)
+                );
+                let compiled =
+                    compile_typescript(manifest(&source, &[ScriptHandler::RequestHead]), &source)
+                        .unwrap();
+                assert!(compiled.javascript.contains("onRequestHead"));
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn typescript_module_assignments_are_rejected_before_emission() {
+        for statement in [
+            "import value = require('node:fs');",
+            "export = onRequestHead;",
+            "export as namespace Script;",
+            "namespace N { import value = require('node:fs'); export const item = value; }",
+            "namespace N { export = onRequestHead; }",
+        ] {
+            let source = format!("{statement} export function onRequestHead() {{}} ");
+            assert!(
+                compile_typescript(manifest(&source, &[ScriptHandler::RequestHead]), &source,)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

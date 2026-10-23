@@ -1,0 +1,1 @@
+Timport value = require("node:fs"); export function onRequestHead(){return value;}

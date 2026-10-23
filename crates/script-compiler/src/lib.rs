@@ -15,6 +15,7 @@ use swc_common::{
     },
     source_map::{SmallPos, SourceMapGenConfig},
     sync::Lrc,
+    util::take::Take,
 };
 use swc_ecma_ast::{EsVersion, Module, Program};
 use swc_ecma_codegen::{Emitter, Node, text_writer::JsWriter};
@@ -26,6 +27,8 @@ use swc_ecma_transforms_typescript::{
     Config as TypeScriptConfig, ImportsNotUsedAsValues, TsImportExportAssignConfig, typescript,
 };
 use url::Url;
+
+mod safety;
 
 /// SWC AST types used by the authoritative contract validators.
 pub use swc_ecma_ast as ast;
@@ -73,8 +76,28 @@ pub fn parse_module(
     source: &str,
     syntax: ModuleSyntax,
 ) -> Result<ParsedModule, String> {
+    with_compiler_stack(|| parse_module_inner(specifier, source, syntax))
+}
+
+/// Runs trusted compiler work with bounded native stack space for SWC passes.
+///
+/// This does not execute JavaScript. The parser and AST complexity budgets remain
+/// required: a larger stack alone cannot contain untrusted syntax.
+pub fn with_compiler_stack<R>(work: impl FnOnce() -> R) -> R {
+    stacker::maybe_grow(8 * 1024 * 1024, 16 * 1024 * 1024, work)
+}
+
+fn parse_module_inner(
+    specifier: Url,
+    source: &str,
+    syntax: ModuleSyntax,
+) -> Result<ParsedModule, String> {
+    if source.len() > 1024 * 1024 {
+        return Err("JavaScript module exceeds the 1 MiB source limit".into());
+    }
     let source_map: Lrc<SourceMap> = Lrc::new(SourceMap::default());
-    let source = source.strip_prefix('\u{feff}').unwrap_or(source);
+    // SourceMap removes exactly one encoding BOM. Do not strip it twice: a
+    // second U+FEFF is ordinary source whitespace and belongs in sourcesContent.
     let file = source_map.new_source_file(FileName::Url(specifier).into(), source.to_owned());
     let comments = SingleThreadedComments::default();
     let syntax = match syntax {
@@ -105,16 +128,29 @@ pub fn parse_module(
         Some(&comments),
     );
     let mut parser = Parser::new_from(lexer);
-    let module = parser
-        .parse_module()
-        .map_err(|error| parser_error(&source_map, &error))?;
+    let parsed = parser.parse_module();
     let recoverable_errors = parser.take_errors();
-    Ok(ParsedModule {
+    let stack_limit = parser.input().stack_limit_reached();
+    let module = match parsed {
+        Ok(module) => module,
+        Err(error) => return Err(parser_error(&source_map, &error)),
+    };
+    let parsed = ParsedModule {
         module,
         comments,
         source_map,
         recoverable_errors,
-    })
+    };
+    if stack_limit
+        || parsed
+            .recoverable_errors
+            .iter()
+            .any(|error| matches!(error.kind(), SyntaxError::ResourceLimit))
+    {
+        return Err("JavaScript module exceeds compiler syntax complexity limits".into());
+    }
+    safety::validate(parsed.module())?;
+    Ok(parsed)
 }
 
 impl ParsedModule {
@@ -131,6 +167,10 @@ impl ParsedModule {
     /// # Errors
     /// Returns fatal syntax, transform or source-map emission diagnostics.
     pub fn transpile_typescript(self) -> Result<EmittedModule, String> {
+        with_compiler_stack(|| self.transpile_typescript_inner())
+    }
+
+    fn transpile_typescript_inner(mut self) -> Result<EmittedModule, String> {
         if let Some(error) = self
             .recoverable_errors
             .iter()
@@ -150,7 +190,7 @@ impl ParsedModule {
             let top_level = Mark::new();
             HANDLER.set(&handler, || {
                 helpers::HELPERS.set(&helpers::Helpers::new(false), || {
-                    Program::Module(self.module).apply((
+                    Program::Module(self.module.take()).apply((
                         resolver(unresolved, top_level, true),
                         helpers::inject_helpers(top_level),
                         typescript(
@@ -215,6 +255,12 @@ impl ParsedModule {
             text: String::from_utf8(text).map_err(|error| error.to_string())?,
             source_map,
         })
+    }
+}
+
+impl Drop for ParsedModule {
+    fn drop(&mut self) {
+        safety::drop_module(self.module.take());
     }
 }
 
@@ -332,7 +378,8 @@ fn diagnostic_message(source_map: &SourceMap, diagnostic: &Diagnostic) -> String
 fn fatal_syntax(error: &SyntaxError) -> bool {
     matches!(
         error,
-        SyntaxError::TS1003
+        SyntaxError::ResourceLimit
+            | SyntaxError::TS1003
             | SyntaxError::TS1005
             | SyntaxError::TS1085
             | SyntaxError::LegacyOctal
@@ -466,5 +513,87 @@ mod tests {
         .unwrap();
         assert!(error.contains("..."));
         assert!(error.len() < 300);
+    }
+
+    #[test]
+    fn hostile_nesting_and_partial_syntax_errors_are_rejected_on_a_small_caller_stack() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                for depth in [128, 1024, 4096] {
+                    for source in [
+                        format!("const value={}0{};", "[".repeat(depth), "]".repeat(depth)),
+                        format!("const value=0{} + ;", "+1".repeat(depth)),
+                        format!("const value=object{}(", ".item".repeat(depth)),
+                        format!("type Value=A{};", ".B".repeat(depth)),
+                        format!("type Value=number{};", "[]".repeat(depth)),
+                        format!("namespace A{} {{}}", ".B".repeat(depth)),
+                    ] {
+                        assert!(
+                            parse_module(
+                                Url::parse("file:///hostile.ts").unwrap(),
+                                &source,
+                                ModuleSyntax::TypeScript
+                            )
+                            .is_err()
+                        );
+                    }
+                }
+                // This used to bypass a per-loop construction cap: each group has
+                // fewer member operations, while the combined tree is much deeper.
+                for groups in [256, 2000] {
+                    let source = format!(
+                        "const value={}object{} + ;",
+                        "(".repeat(groups),
+                        format!("){}", ".item".repeat(100)).repeat(groups)
+                    );
+                    assert!(
+                        parse_module(
+                            Url::parse("file:///hostile.ts").unwrap(),
+                            &source,
+                            ModuleSyntax::TypeScript
+                        )
+                        .is_err()
+                    );
+                }
+                // Flat module items can exceed the partial-tree budget in total.
+                // Nested blocks cannot reset that budget, even with flat contents.
+                let flat = "0;".repeat(10_000);
+                assert!(
+                    parse_module(
+                        Url::parse("file:///flat.ts").unwrap(),
+                        &flat,
+                        ModuleSyntax::TypeScript
+                    )
+                    .is_ok()
+                );
+                for source in [
+                    format!("function f() {{{flat}}}"),
+                    format!("namespace N {{{flat}}}"),
+                    "0;".repeat(140_000),
+                ] {
+                    assert!(
+                        parse_module(
+                            Url::parse("file:///work-limit.ts").unwrap(),
+                            &source,
+                            ModuleSyntax::TypeScript
+                        )
+                        .is_err()
+                    );
+                }
+                // A valid returned module may also be dropped after the grown parse
+                // stack is gone; its custom destructor must stay iterative.
+                let source = format!("const value={}1{};", "[".repeat(64), "]".repeat(64));
+                let parsed = parse_module(
+                    Url::parse("file:///valid.ts").unwrap(),
+                    &source,
+                    ModuleSyntax::TypeScript,
+                )
+                .unwrap();
+                drop(parsed);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
     }
 }

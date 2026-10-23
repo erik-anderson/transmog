@@ -116,6 +116,147 @@ async fn allocation_bomb_cannot_take_the_desktop_or_proxy_with_it() {
 }
 
 #[tokio::test]
+async fn native_arraybuffer_memory_is_bounded_without_affecting_another_script() {
+    let healthy_source =
+        "export function onRequestHead() { return {action:'abort',reason:'healthy'}; }";
+    let healthy = SupervisedScriptRunner::start(&config(), compile(healthy_source, 500)).unwrap();
+    let source = r"
+export function onRequestHead() {
+  const bytes = new Uint8Array(256 * 1024 * 1024);
+  bytes.fill(165);
+  return {action:'abort',reason:String(bytes[bytes.length - 1])};
+}
+";
+    let mut compiled = compile(source, 2_000);
+    // The native process cap is 3 * heap + 128 MiB. A 256 MiB backing store
+    // exceeds this 152 MiB cap while requiring almost no JavaScript heap.
+    compiled.manifest.limits.max_heap_bytes = 8 * 1024 * 1024;
+    let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
+    let failure = runner.invoke(invocation()).await.unwrap_err();
+    assert_ne!(
+        failure.category,
+        transmog_script::ScriptFailureCategory::Timeout,
+        "the allocation must hit the native limit before its deadline"
+    );
+    assert_eq!(
+        healthy.invoke(invocation()).await.unwrap(),
+        ScriptAction::Abort {
+            reason: "healthy".to_owned()
+        }
+    );
+}
+
+#[test]
+fn recursively_queued_native_microtasks_are_contained_by_the_startup_deadline() {
+    let source = r"
+function repeat() { queueMicrotask(repeat); }
+queueMicrotask(repeat);
+export function onRequestHead() { return {action:'continue'}; }
+";
+    let started = std::time::Instant::now();
+    let Err(failure) = SupervisedScriptRunner::start(&config(), compile(source, 500)) else {
+        panic!("an endlessly draining microtask queue must not become ready");
+    };
+    assert_eq!(
+        failure.category,
+        transmog_script::ScriptFailureCategory::Timeout
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(8));
+}
+
+#[tokio::test]
+async fn hostile_output_and_exception_getters_do_not_poison_later_script_calls() {
+    for hostile in [
+        "return {get then() {throw new Error('then getter');}};",
+        "return new Proxy({}, {get() {throw new Error('proxy getter');}});",
+        "return {toJSON() {throw new Proxy({}, {get() {throw new Error('diagnostic getter');}});}};",
+    ] {
+        let source = format!(
+            "let calls=0; export function onRequestHead() {{ \
+             if(++calls===1) {{ {hostile} }} return {{action:'abort',reason:'recovered'}}; }}"
+        );
+        let runner = SupervisedScriptRunner::start(&config(), compile(&source, 500)).unwrap();
+        let failure = runner.invoke(invocation()).await.unwrap_err();
+        assert_eq!(
+            failure.category,
+            transmog_script::ScriptFailureCategory::Exception,
+            "hostile case: {hostile}"
+        );
+        assert!(failure.message.len() <= 512);
+        assert_eq!(
+            runner.invoke(invocation()).await.unwrap(),
+            ScriptAction::Abort {
+                reason: "recovered".to_owned()
+            }
+        );
+    }
+}
+
+#[tokio::test]
+async fn serialization_and_exception_diagnostics_remain_under_the_callback_deadline() {
+    for hostile in [
+        "return {get then() {while(true) {}}};",
+        "return {toJSON() {while(true) {}}};",
+        "throw {get stack() {while(true) {}}};",
+    ] {
+        let source = format!("export function onRequestHead() {{ {hostile} }}");
+        let runner = SupervisedScriptRunner::start(&config(), compile(&source, 75)).unwrap();
+        assert_eq!(
+            runner.invoke(invocation()).await.unwrap_err().category,
+            transmog_script::ScriptFailureCategory::Timeout,
+            "hostile case: {hostile}"
+        );
+        assert!(runner.has_failed());
+        assert_eq!(
+            runner.invoke(invocation()).await.unwrap_err().category,
+            transmog_script::ScriptFailureCategory::Unavailable
+        );
+    }
+}
+
+#[tokio::test]
+async fn abandoning_a_polled_invocation_keeps_the_script_watchdog_active() {
+    let source = "export function onRequestHead() {while(true) {}}";
+    let runner = SupervisedScriptRunner::start(&config(), compile(source, 75)).unwrap();
+    let mut pending = runner.invoke(invocation());
+    std::future::poll_fn(|context| {
+        assert!(std::future::Future::poll(pending.as_mut(), context).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(pending);
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert!(
+        runner.has_failed(),
+        "canceling the caller must retain containment"
+    );
+    assert_eq!(
+        runner.invoke(invocation()).await.unwrap_err().category,
+        transmog_script::ScriptFailureCategory::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn dropping_an_unpolled_script_invocation_cannot_strand_work() {
+    let source = r"
+export function onRequestHead(context) {
+  if(context.exchangeId === 'abandoned') while(true) {}
+  return {action:'abort',reason:'healthy'};
+}
+";
+    let runner = SupervisedScriptRunner::start(&config(), compile(source, 75)).unwrap();
+    let mut abandoned = invocation();
+    abandoned.context.exchange_id = "abandoned".to_owned();
+    drop(runner.invoke(abandoned));
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert!(runner.has_failed());
+    assert_eq!(
+        runner.invoke(invocation()).await.unwrap_err().category,
+        transmog_script::ScriptFailureCategory::Unavailable
+    );
+}
+
+#[tokio::test]
 async fn module_initialization_awaits_promises_with_string_codegen_already_disabled() {
     let source = r#"
       for (const constructor of [

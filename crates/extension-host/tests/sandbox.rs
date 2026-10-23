@@ -1,46 +1,58 @@
 //! Production `AppContainer` coverage for capability-free extension execution and lifecycle.
 #![cfg(windows)]
 mod support;
+#[path = "support/worker_tests.rs"]
+mod worker_tests;
 use std::{collections::BTreeMap, sync::Arc};
 use transmog_extension_supervisor::{HostConfig, Runner};
 use transmog_extensions::*;
+use worker_tests::WorkerTest;
 
-fn snapshot(source: &str) -> Snapshot {
-    let helper = "class Target { static title; static { this.title = 'Structured view'; } } export const title = Target.title;";
-    let manifest:Manifest=serde_json::from_value(serde_json::json!({
-        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.worker","version":"1.0.0","name":"Example worker",
+impl WorkerTest {
+    fn snapshot(&self, source: &str) -> Snapshot {
+        let helper = "class Target { static title; static { this.title = 'Structured view'; } } export const title = Target.title;";
+        let manifest:Manifest=serde_json::from_value(serde_json::json!({
+        "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":self.package(),"version":"1.0.0","name":"Example worker",
         "visualizers":[{"id":"view","name":"View","entry":"src/main.js","surfaces":["body"],
             "inputs":{"request":{"headers":["x-kind"],"body":"none"},"response":{"headers":["content-type"],"body":"optional"}},
             "matches":[{"direction":"response","contentTypes":["application/example"]}],
             "limits":{"inputBytes":1_048_576,"outputBytes":1_048_576,"heapBytes":67_108_864,"durationMs":1000,"nodes":1000}}],
         "files":[{"path":"src/main.js","bytes":source.len()},{"path":"src/helper.mjs","bytes":helper.len()}]
     })).unwrap();
-    Snapshot::new(
-        manifest,
-        BTreeMap::from([
-            ("src/main.js".into(), Arc::<[u8]>::from(source.as_bytes())),
-            (
-                "src/helper.mjs".into(),
-                Arc::<[u8]>::from(helper.as_bytes()),
-            ),
-        ]),
-    )
-    .unwrap()
-}
-
-fn snapshot_with_modules(source: &str, modules: &[(&str, &str)]) -> Snapshot {
-    let mut candidate = snapshot(source);
-    for &(path, source) in modules {
-        candidate.manifest.files.push(Payload {
-            path: path.into(),
-            bytes: source.len() as u64,
-            sha256: None,
-        });
-        candidate
-            .files
-            .insert(path.into(), Arc::<[u8]>::from(source.as_bytes()));
+        Snapshot::new(
+            manifest,
+            BTreeMap::from([
+                ("src/main.js".into(), Arc::<[u8]>::from(source.as_bytes())),
+                (
+                    "src/helper.mjs".into(),
+                    Arc::<[u8]>::from(helper.as_bytes()),
+                ),
+            ]),
+        )
+        .unwrap()
     }
-    Snapshot::new(candidate.manifest, candidate.files).unwrap()
+
+    fn snapshot_with_modules(&self, source: &str, modules: &[(&str, &str)]) -> Snapshot {
+        let mut candidate = self.snapshot(source);
+        for &(path, source) in modules {
+            candidate.manifest.files.push(Payload {
+                path: path.into(),
+                bytes: source.len() as u64,
+                sha256: None,
+            });
+            candidate
+                .files
+                .insert(path.into(), Arc::<[u8]>::from(source.as_bytes()));
+        }
+        Snapshot::new(candidate.manifest, candidate.files).unwrap()
+    }
+
+    fn snapshot_with_limits(&self, source: &str, heap_bytes: usize, duration_ms: u64) -> Snapshot {
+        let mut candidate = self.snapshot(source);
+        candidate.manifest.visualizers[0].limits.heap_bytes = heap_bytes;
+        candidate.manifest.visualizers[0].limits.duration_ms = duration_ms;
+        Snapshot::new(candidate.manifest, candidate.files).unwrap()
+    }
 }
 fn start(snapshot: Snapshot) -> Result<Arc<Runner>, Failure> {
     Runner::start(
@@ -96,6 +108,7 @@ const DOCUMENT: &str =
 
 #[tokio::test]
 async fn live_batches_use_frozen_projected_inputs_and_bounded_source_continuations() {
+    let case = WorkerTest::acquire(1).await;
     let source = r"
 function render() {return {kind:'document',document:{title:'Snapshot',status:'complete',presentation:'tree',roots:[]}};}
 function traffic(events,info) {
@@ -111,7 +124,7 @@ function onTraffic() {throw new Error('private onTraffic');}
 function resume() {throw new Error('private resume');}
 export {render as visualize, traffic as onTraffic, finish as resume};
 ";
-    let original = snapshot(source);
+    let original = case.snapshot(source);
     let mut manifest = original.manifest.clone();
     manifest.visualizers[0].live_updates = Some(LiveUpdates {
         events: vec![Direction::Response],
@@ -174,6 +187,7 @@ export {render as visualize, traffic as onTraffic, finish as resume};
 
 #[tokio::test]
 async fn declared_context_continuations_receive_only_projected_inputs_and_scoped_sources() {
+    let case = WorkerTest::acquire(1).await;
     let source = r"
 export function visualize() {return {kind:'needContext',token:'history',request:{position:'before',cursor:null,limit:1}};}
 export function resumeContext(token,page) {
@@ -184,7 +198,7 @@ export function resumeContext(token,page) {
 }
 export function resume(token,pages) { return {kind:'document',document:{title:'Related bytes',status:'complete',presentation:'tree',roots:[{id:'value',name:'Value',value:{kind:'integer',value:String(pages[0].bytes[0])},spans:[{sourceId:pages[0].sourceId,offset:'0',length:'4'}]}]}}; }
 ";
-    let original = snapshot(source);
+    let original = case.snapshot(source);
     let mut manifest = original.manifest.clone();
     manifest.visualizers[0].context = Some(Context {
         headers: vec![HeaderPredicate {
@@ -249,7 +263,7 @@ export function resume(token,pages) { return {kind:'document',document:{title:'R
     assert_eq!(document.roots[0].value, Some(Value::Integer("7".into())));
     runner.stop();
     assert_eq!(
-        start(snapshot(source))
+        start(case.snapshot(source))
             .unwrap()
             .invoke(Invocation::Visualize {
                 input: Box::new(input())
@@ -263,6 +277,7 @@ export function resume(token,pages) { return {kind:'document',document:{title:'R
 
 #[tokio::test]
 async fn relative_javascript_modules_execute_after_capability_restrictions_and_projection() {
+    let case = WorkerTest::acquire(1).await;
     let source = r"
 import {title} from './helper.mjs';
 if (typeof Deno !== 'undefined' || typeof fetch !== 'undefined' || typeof WebSocket !== 'undefined' || typeof WebAssembly !== 'undefined' || typeof setTimeout !== 'undefined') throw new Error('ambient authority');
@@ -276,7 +291,7 @@ function visualize(input) {
   return {kind:'document',document:{title,status:'complete',presentation:'tree',roots:[]}};
 }
 ";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     let step = runner
         .invoke(Invocation::Visualize {
             input: Box::new(input()),
@@ -293,6 +308,7 @@ function visualize(input) {
 
 #[tokio::test]
 async fn cyclic_static_graphs_preserve_module_identity_live_bindings_and_evaluation_order() {
+    let case = WorkerTest::acquire(1).await;
     let shared = r"
 globalThis.order = ['shared'];
 export const identity = {};
@@ -326,7 +342,7 @@ export function visualize() {
   return {kind:'document',document:{title:globalThis.order.join(',') + ':' + counter + ':' + left.readRight(),status:'complete',presentation:'tree',roots:[]}};
 }
 ";
-    let runner = start(snapshot_with_modules(
+    let runner = start(case.snapshot_with_modules(
         source,
         &[
             ("src/shared.mjs", shared),
@@ -354,6 +370,7 @@ export function visualize() {
 
 #[tokio::test]
 async fn dependency_initializers_cannot_generate_code_and_can_await_resolved_promises() {
+    let case = WorkerTest::acquire(1).await;
     let dependency = r"
 for (const name of ['Function', 'eval', 'fetch', 'Deno', 'process', 'require', 'WebAssembly', 'setTimeout', 'queueMicrotask']) {
   if (globalThis[name] !== undefined) throw new Error('ambient authority before entry');
@@ -376,11 +393,8 @@ export function visualize() {
   return {kind:'document',document:{title:initialized,status:'complete',presentation:'tree',roots:[]}};
 }
 ";
-    let runner = start(snapshot_with_modules(
-        source,
-        &[("src/restricted.mjs", dependency)],
-    ))
-    .unwrap();
+    let runner =
+        start(case.snapshot_with_modules(source, &[("src/restricted.mjs", dependency)])).unwrap();
     let VisualizationStep::Document { document } = runner
         .invoke(Invocation::Visualize {
             input: Box::new(input()),
@@ -393,14 +407,15 @@ export function visualize() {
     assert_eq!(document.title, "ready");
 }
 
-#[test]
-fn rejected_top_level_await_fails_extension_initialization() {
+#[tokio::test]
+async fn rejected_top_level_await_fails_extension_initialization() {
+    let case = WorkerTest::acquire(1).await;
     let source = format!(
         "await Promise.reject(new Error('initialization rejected')); \
          export function visualize(){{return {DOCUMENT};}}"
     );
     assert_eq!(
-        start(snapshot(&source))
+        start(case.snapshot(&source))
             .err()
             .expect("a rejected module must not become ready")
             .kind,
@@ -408,8 +423,9 @@ fn rejected_top_level_await_fails_extension_initialization() {
     );
 }
 
-#[test]
-fn unsettled_top_level_await_never_becomes_ready_and_remains_cancelable() {
+#[tokio::test]
+async fn unsettled_top_level_await_never_becomes_ready_and_remains_cancelable() {
+    let case = WorkerTest::acquire(1).await;
     let source =
         format!("await new Promise(() => {{}}); export function visualize(){{return {DOCUMENT};}}");
     let started = std::time::Instant::now();
@@ -417,14 +433,14 @@ fn unsettled_top_level_await_never_becomes_ready_and_remains_cancelable() {
         &HostConfig {
             executable: support::host_executable().into(),
         },
-        snapshot(&source),
+        case.snapshot(&source),
         "view",
         || started.elapsed() >= std::time::Duration::from_millis(150),
     );
     assert!(result.is_err(), "an unsettled module must not become ready");
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
     // A failed or canceled module must leave the next activation usable.
-    let runner = start(snapshot(&format!(
+    let runner = start(case.snapshot(&format!(
         "export function visualize(){{return {DOCUMENT};}}"
     )))
     .unwrap();
@@ -433,6 +449,7 @@ fn unsettled_top_level_await_never_becomes_ready_and_remains_cancelable() {
 
 #[tokio::test]
 async fn queued_microtasks_run_before_the_next_extension_invocation() {
+    let case = WorkerTest::acquire(1).await;
     let source = r"
 let calls = 0;
 let completed = 0;
@@ -443,7 +460,7 @@ export function visualize() {
   return {kind:'document',document:{title:calls + ':' + completed,status:'complete',presentation:'tree',roots:[]}};
 }
 ";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     for calls in 1..=3 {
         let VisualizationStep::Document { document } = runner
             .invoke(Invocation::Visualize {
@@ -458,14 +475,15 @@ export function visualize() {
     }
 }
 
-#[test]
-fn unhandled_promise_rejections_fail_extension_initialization() {
+#[tokio::test]
+async fn unhandled_promise_rejections_fail_extension_initialization() {
+    let case = WorkerTest::acquire(1).await;
     let source = format!(
         "Promise.reject(new Error('unhandled initialization')); \
          export function visualize(){{return {DOCUMENT};}}"
     );
     assert_eq!(
-        start(snapshot(&source))
+        start(case.snapshot(&source))
             .err()
             .expect("an unhandled rejection must not become ready")
             .kind,
@@ -475,6 +493,7 @@ fn unhandled_promise_rejections_fail_extension_initialization() {
 
 #[tokio::test]
 async fn handled_rejections_are_allowed_and_unhandled_rejections_surface_before_the_next_call() {
+    let case = WorkerTest::acquire(1).await;
     let source = r"
 let calls = 0;
 let handled = 0;
@@ -486,7 +505,7 @@ export function visualize() {
   return {kind:'document',document:{title:calls + ':' + handled,status:'complete',presentation:'tree',roots:[]}};
 }
 ";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     for expected in ["1:1", "2:2"] {
         let VisualizationStep::Document { document } = runner
             .invoke(Invocation::Visualize {
@@ -523,6 +542,7 @@ export function visualize() {
 
 #[tokio::test]
 async fn promises_and_thenables_are_rejected_without_poisoning_the_extension() {
+    let case = WorkerTest::acquire(1).await;
     for result in [
         format!("Promise.resolve({DOCUMENT})"),
         "{then() {}}".to_owned(),
@@ -531,7 +551,7 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_extension() {
             "let calls = 0; export function visualize(){{ \
              if (++calls === 1) return {result}; return {DOCUMENT}; }}"
         );
-        let runner = start(snapshot(&source)).unwrap();
+        let runner = start(case.snapshot(&source)).unwrap();
         assert_eq!(
             runner
                 .invoke(Invocation::Visualize {
@@ -556,6 +576,7 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_extension() {
 
 #[tokio::test]
 async fn large_modules_and_repeated_allocations_keep_the_engine_available() {
+    let case = WorkerTest::acquire(1).await;
     let source = format!(
         "const payload = '{}'; let calls = 0; \
          export function visualize(){{ \
@@ -565,7 +586,7 @@ async fn large_modules_and_repeated_allocations_keep_the_engine_available() {
          }}",
         "x".repeat(262_144)
     );
-    let runner = start(snapshot(&source)).unwrap();
+    let runner = start(case.snapshot(&source)).unwrap();
     for calls in 1..=24 {
         let VisualizationStep::Document { document } = runner
             .invoke(Invocation::Visualize {
@@ -581,8 +602,238 @@ async fn large_modules_and_repeated_allocations_keep_the_engine_available() {
     }
 }
 
-#[test]
-fn commonjs_and_non_synchronous_named_handlers_are_rejected() {
+#[tokio::test]
+async fn native_arraybuffer_memory_is_bounded_without_affecting_another_extension() {
+    let case = WorkerTest::acquire(1).await;
+    let good = format!("export function visualize(){{return {DOCUMENT};}}");
+    let healthy = start(case.snapshot(&good)).unwrap();
+    let source = format!(
+        "export function visualize(){{ \
+         const bytes=new Uint8Array(256*1024*1024); bytes.fill(165); return {DOCUMENT}; }}"
+    );
+    // This 176 MiB native process cap covers backing stores outside V8's heap.
+    let runner = start(case.snapshot_with_limits(&source, 16 * 1024 * 1024, 2_000)).unwrap();
+    let failure = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap_err();
+    assert_ne!(
+        failure.kind,
+        FailureKind::Timeout,
+        "the allocation must hit the native limit before its deadline"
+    );
+    assert!(matches!(
+        healthy
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap(),
+        VisualizationStep::Document { .. }
+    ));
+}
+
+#[tokio::test]
+async fn recursively_queued_initialization_promises_remain_cancelable() {
+    let case = WorkerTest::acquire(1).await;
+    let source = format!(
+        "function repeat(){{Promise.resolve().then(repeat);}} Promise.resolve().then(repeat); \
+         export function visualize(){{return {DOCUMENT};}}"
+    );
+    let started = std::time::Instant::now();
+    let result = Runner::start_cancellable(
+        &HostConfig {
+            executable: support::host_executable().into(),
+        },
+        case.snapshot(&source),
+        "view",
+        || started.elapsed() >= std::time::Duration::from_millis(150),
+    );
+    assert!(
+        result.is_err(),
+        "an endlessly draining queue must not become ready"
+    );
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+}
+
+#[tokio::test]
+async fn recursively_queued_callback_promises_are_contained_before_the_next_handler() {
+    let case = WorkerTest::acquire(1).await;
+    let source = format!(
+        "function repeat(){{Promise.resolve().then(repeat);}} \
+         export function visualize(){{Promise.resolve().then(repeat);return {DOCUMENT};}}"
+    );
+    let runner = start(case.snapshot_with_limits(&source, 64 * 1024 * 1024, 75)).unwrap();
+    assert!(matches!(
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap(),
+        VisualizationStep::Document { .. }
+    ));
+    assert_eq!(
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        FailureKind::Timeout
+    );
+    assert!(runner.is_stopped());
+}
+
+#[tokio::test]
+async fn hostile_output_and_exception_getters_do_not_poison_later_extension_calls() {
+    let case = WorkerTest::acquire(1).await;
+    for hostile in [
+        "return {get then() {throw new Error('then getter');}};",
+        "return new Proxy({}, {get() {throw new Error('proxy getter');}});",
+        "return {toJSON() {throw new Proxy({}, {get() {throw new Error('diagnostic getter');}});}};",
+    ] {
+        let source = format!(
+            "let calls=0; export function visualize() {{ \
+             if(++calls===1) {{ {hostile} }} return {DOCUMENT}; }}"
+        );
+        let runner = start(case.snapshot(&source)).unwrap();
+        assert_eq!(
+            runner
+                .invoke(Invocation::Visualize {
+                    input: Box::new(input()),
+                })
+                .await
+                .unwrap_err()
+                .kind,
+            FailureKind::Exception,
+            "hostile case: {hostile}"
+        );
+        assert!(matches!(
+            runner
+                .invoke(Invocation::Visualize {
+                    input: Box::new(input()),
+                })
+                .await
+                .unwrap(),
+            VisualizationStep::Document { .. }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn serialization_and_exception_diagnostics_remain_under_the_extension_deadline() {
+    let case = WorkerTest::acquire(1).await;
+    for hostile in [
+        "return {get then() {while(true) {}}};",
+        "return {toJSON() {while(true) {}}};",
+        "throw {get stack() {while(true) {}}};",
+    ] {
+        let source = format!("export function visualize() {{ {hostile} }}");
+        let runner = start(case.snapshot_with_limits(&source, 64 * 1024 * 1024, 75)).unwrap();
+        assert_eq!(
+            runner
+                .invoke(Invocation::Visualize {
+                    input: Box::new(input()),
+                })
+                .await
+                .unwrap_err()
+                .kind,
+            FailureKind::Timeout,
+            "hostile case: {hostile}"
+        );
+        assert!(runner.is_stopped());
+        assert!(
+            runner
+                .invoke(Invocation::Visualize {
+                    input: Box::new(input()),
+                })
+                .await
+                .is_err()
+        );
+    }
+}
+
+#[tokio::test]
+async fn abandoning_a_polled_invocation_keeps_the_extension_watchdog_active() {
+    let case = WorkerTest::acquire(1).await;
+    let source = "export function visualize() {while(true) {}}";
+    let runner = start(case.snapshot_with_limits(source, 64 * 1024 * 1024, 75)).unwrap();
+    let mut pending = Box::pin(runner.invoke(Invocation::Visualize {
+        input: Box::new(input()),
+    }));
+    std::future::poll_fn(|context| {
+        assert!(std::future::Future::poll(pending.as_mut(), context).is_pending());
+        std::task::Poll::Ready(())
+    })
+    .await;
+    drop(pending);
+    tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    assert!(
+        runner.is_stopped(),
+        "canceling the caller must retain containment"
+    );
+    assert_eq!(
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        FailureKind::Unavailable
+    );
+}
+
+#[tokio::test]
+async fn static_import_metadata_cannot_select_another_executable_language() {
+    let case = WorkerTest::acquire(1).await;
+    for attributes in [
+        "{type:'json'}",
+        "{type:'javascript'}",
+        "{type:''}",
+        "{type:'json',type:'javascript'}",
+    ] {
+        let source = format!(
+            "import {{title}} from './helper.mjs' with {attributes}; \
+             export function visualize(){{return {DOCUMENT};}}"
+        );
+        let Err(failure) = start(case.snapshot(&source)) else {
+            panic!("typed import became executable: {attributes}");
+        };
+        assert_eq!(failure.kind, FailureKind::Validation);
+    }
+    let source = r"
+import {title} from './helper.mjs' with {transmog:'opaque metadata'};
+export function visualize() {
+  for (const value of [Symbol('specifier'), {toString() {throw new Error('coercion');}}]) {
+    let denied=false;
+    try {import.meta.resolve(value);} catch {denied=true;}
+    if(!denied) throw new Error('invalid specifier accepted');
+  }
+  if(import.meta.resolve('./helper.mjs') !== 'file:///transmog-extension/src/helper.mjs') throw new Error('resolver poisoned');
+  return {kind:'document',document:{title,status:'complete',presentation:'tree',roots:[]}};
+}
+";
+    let runner = start(case.snapshot(source)).unwrap();
+    let VisualizationStep::Document { document } = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("document required");
+    };
+    assert_eq!(document.title, "Structured view");
+}
+
+#[tokio::test]
+async fn commonjs_and_non_synchronous_named_handlers_are_rejected() {
+    let case = WorkerTest::acquire(1).await;
     for source in [
         "module.exports = {visualize() {}};",
         "exports.visualize = function() {};",
@@ -596,7 +847,7 @@ fn commonjs_and_non_synchronous_named_handlers_are_rejected() {
         "export {title as visualize} from './helper.mjs';",
     ] {
         assert_eq!(
-            start(snapshot(source)).err().unwrap().kind,
+            start(case.snapshot(source)).err().unwrap().kind,
             FailureKind::Validation,
             "accepted unsupported handlers: {source}"
         );
@@ -604,11 +855,12 @@ fn commonjs_and_non_synchronous_named_handlers_are_rejected() {
 }
 #[tokio::test]
 async fn byte_continuations_are_authorized_and_their_results_are_host_validated() {
+    let case = WorkerTest::acquire(1).await;
     let source = r"
 export function visualize(input) {return {kind:'needInput',token:'body',reads:[{sourceId:'response-body',offset:'0',maxBytes:4}]};}
 export function resume(token,pages) { return {kind:'document',document:{title:'Bytes',status:'complete',presentation:'tree',roots:[{id:'sum',name:'Sum',value:{kind:'integer',value:String(pages[0].bytes.reduce((a,b)=>a+b,0))},spans:[{sourceId:'response-body',offset:'0',length:'4'}]}]}}; }
 ";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     assert!(matches!(
         runner
             .invoke(Invocation::Visualize {
@@ -636,8 +888,9 @@ export function resume(token,pages) { return {kind:'document',document:{title:'B
 }
 #[tokio::test]
 async fn undeclared_source_read_and_forged_document_source_are_rejected() {
+    let case = WorkerTest::acquire(1).await;
     let source = "export function visualize() {return {kind:'needInput',token:'bad',reads:[{sourceId:'forbidden-request',offset:'0',maxBytes:1}]};}";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     assert_eq!(
         runner
             .invoke(Invocation::Visualize {
@@ -649,7 +902,7 @@ async fn undeclared_source_read_and_forged_document_source_are_rejected() {
         FailureKind::Validation
     );
     let source = "export function visualize(){return {kind:'document',document:{title:'Bad',status:'complete',presentation:'tree',roots:[{id:'bad',name:'Bad',spans:[{sourceId:'not-granted',offset:'0',length:'1'}]}]}};}";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     assert_eq!(
         runner
             .invoke(Invocation::Visualize {
@@ -661,8 +914,9 @@ async fn undeclared_source_read_and_forged_document_source_are_rejected() {
         FailureKind::Validation
     );
 }
-#[test]
-fn imports_cannot_resolve_network_filesystem_or_another_package() {
+#[tokio::test]
+async fn imports_cannot_resolve_network_filesystem_or_another_package() {
+    let case = WorkerTest::acquire(1).await;
     for dependency in [
         "https://example.invalid/script.js",
         "file:///C:/outside.js",
@@ -672,29 +926,30 @@ fn imports_cannot_resolve_network_filesystem_or_another_package() {
         let source = format!(
             "import {{value}} from '{dependency}'; export function visualize(){{return {DOCUMENT};}}"
         );
-        let Err(error) = start(snapshot(&source)) else {
+        let Err(error) = start(case.snapshot(&source)) else {
             panic!("external import accepted");
         };
         assert_eq!(error.kind, FailureKind::Validation);
     }
     let source = "export function visualize(){return import('https://example.invalid/code');}";
-    let Err(error) = start(snapshot(source)) else {
+    let Err(error) = start(case.snapshot(source)) else {
         panic!("dynamic import accepted");
     };
     assert_eq!(error.kind, FailureKind::Validation);
 }
 
-#[test]
-fn typescript_and_non_javascript_dependencies_are_not_transpiled() {
+#[tokio::test]
+async fn typescript_and_non_javascript_dependencies_are_not_transpiled() {
+    let case = WorkerTest::acquire(1).await;
     let typed = format!("export function visualize(input: unknown){{return {DOCUMENT};}}");
     assert_eq!(
-        start(snapshot(&typed)).err().unwrap().kind,
+        start(case.snapshot(&typed)).err().unwrap().kind,
         FailureKind::Validation
     );
     let source = format!(
         "import {{title}} from './author.ts'; export function visualize(){{return {DOCUMENT};}}"
     );
-    let mut candidate = snapshot(&source);
+    let mut candidate = case.snapshot(&source);
     let bytes = b"export const title = 'This is inert authoring source';";
     candidate.manifest.files.push(Payload {
         path: "src/author.ts".into(),
@@ -712,8 +967,9 @@ fn typescript_and_non_javascript_dependencies_are_not_transpiled() {
 }
 #[tokio::test]
 async fn infinite_loop_times_out_and_unload_is_independent_between_instances() {
+    let case = WorkerTest::acquire(1).await;
     let source = "export function visualize(){while(true){}}";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     assert_eq!(
         runner
             .invoke(Invocation::Visualize {
@@ -726,8 +982,8 @@ async fn infinite_loop_times_out_and_unload_is_independent_between_instances() {
     );
     assert!(runner.is_stopped());
     let good = format!("export function visualize(){{return {DOCUMENT};}}");
-    let first = start(snapshot(&good)).unwrap();
-    let second = start(snapshot(&good)).unwrap();
+    let first = start(case.snapshot(&good)).unwrap();
+    let second = start(case.snapshot(&good)).unwrap();
     first.stop();
     assert!(
         first
@@ -746,8 +1002,9 @@ async fn infinite_loop_times_out_and_unload_is_independent_between_instances() {
             .is_ok()
     );
 }
-#[test]
-fn helper_refuses_an_unsandboxed_launch() {
+#[tokio::test]
+async fn helper_refuses_an_unsandboxed_launch() {
+    let _case = WorkerTest::acquire(1).await;
     for args in [
         vec!["--extension"],
         vec!["--extension", "--sandboxed"],
@@ -761,12 +1018,55 @@ fn helper_refuses_an_unsandboxed_launch() {
     }
 }
 
-#[test]
-fn stopping_an_idle_worker_releases_slots_even_while_its_ui_handle_is_retained() {
+#[tokio::test]
+async fn production_worker_quotas_reject_excess_and_recover_released_capacity() {
+    let case = WorkerTest::acquire(worker_tests::PARALLEL_TESTS).await;
+    let source = format!("export function visualize(){{return {DOCUMENT};}}");
+    let snapshot = case.snapshot_with_limits(&source, 16 * 1024 * 1024, 1_000);
+    let mut other_manifest = snapshot.manifest.clone();
+    other_manifest.id = format!("{}.other", case.package());
+    let other = Snapshot::new(other_manifest, snapshot.files.clone()).unwrap();
+    let mut third_manifest = snapshot.manifest.clone();
+    third_manifest.id = format!("{}.third", case.package());
+    let third = Snapshot::new(third_manifest, snapshot.files.clone()).unwrap();
+
+    let first = (0..8)
+        .map(|_| start(snapshot.clone()).unwrap())
+        .collect::<Vec<_>>();
+    let error = start(snapshot.clone()).err().unwrap();
+    assert_eq!(error.kind, FailureKind::Limit);
+    assert_eq!(
+        error.message,
+        "This extension is using all its worker slots"
+    );
+
+    let second = (0..8)
+        .map(|_| start(other.clone()).unwrap())
+        .collect::<Vec<_>>();
+    let error = start(third.clone()).err().unwrap();
+    assert_eq!(error.kind, FailureKind::Limit);
+    assert_eq!(error.message, "All visualizer worker slots are in use");
+
+    // Retain the stopped handle: termination, rather than Arc destruction, must
+    // release both the package slot and the global slot.
+    first[0].stop();
+    let replacement = start(snapshot).unwrap();
+    assert_eq!(start(third.clone()).err().unwrap().kind, FailureKind::Limit);
+    replacement.stop();
+    let unrelated = start(third).unwrap();
+    unrelated.stop();
+    for runner in first.iter().chain(&second) {
+        runner.stop();
+    }
+}
+
+#[tokio::test]
+async fn stopping_an_idle_worker_releases_slots_even_while_its_ui_handle_is_retained() {
+    let case = WorkerTest::acquire(worker_tests::PARALLEL_TESTS).await;
     let source = format!("export function visualize(){{return {DOCUMENT};}}");
     let mut retained = Vec::new();
     for _ in 0..20 {
-        let runner = start(snapshot(&source)).unwrap();
+        let runner = start(case.snapshot(&source)).unwrap();
         runner.stop();
         retained.push(runner);
     }
@@ -775,8 +1075,9 @@ fn stopping_an_idle_worker_releases_slots_even_while_its_ui_handle_is_retained()
 
 #[tokio::test]
 async fn forged_continuation_tokens_cannot_supply_unsolicited_body_pages() {
+    let case = WorkerTest::acquire(1).await;
     let source = "export function visualize(){return {kind:'needInput',token:'right-token',reads:[{sourceId:'response-body',offset:'0',maxBytes:4}]};} export function resume(){throw new Error('must not run');}";
-    let runner = start(snapshot(source)).unwrap();
+    let runner = start(case.snapshot(source)).unwrap();
     runner
         .invoke(Invocation::Visualize {
             input: Box::new(input()),
@@ -798,19 +1099,21 @@ async fn forged_continuation_tokens_cannot_supply_unsolicited_body_pages() {
     assert!(runner.is_stopped());
 }
 
-#[test]
-fn canceling_initialization_terminates_top_level_code_without_waiting_for_startup_deadline() {
+#[tokio::test]
+async fn canceling_initialization_terminates_top_level_code_without_waiting_for_startup_deadline() {
     use std::sync::atomic::{AtomicBool, Ordering};
+    let case = WorkerTest::acquire(1).await;
     let canceled = Arc::new(AtomicBool::new(false));
     let task_canceled = Arc::clone(&canceled);
     let source = format!("while(true){{}} export function visualize(){{return {DOCUMENT};}}");
+    let snapshot = case.snapshot(&source);
     let started = std::time::Instant::now();
     let worker = std::thread::spawn(move || {
         Runner::start_cancellable(
             &HostConfig {
                 executable: support::host_executable().into(),
             },
-            snapshot(&source),
+            snapshot,
             "view",
             || task_canceled.load(Ordering::Acquire),
         )
@@ -821,16 +1124,17 @@ fn canceling_initialization_terminates_top_level_code_without_waiting_for_startu
     assert!(started.elapsed() < std::time::Duration::from_secs(3));
 }
 
-#[test]
-fn cancellation_closes_an_already_ready_workers_idle_queue() {
+#[tokio::test]
+async fn cancellation_closes_an_already_ready_workers_idle_queue() {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    let case = WorkerTest::acquire(1).await;
     let calls = AtomicUsize::new(0);
     let started = std::time::Instant::now();
     let result = Runner::start_cancellable(
         &HostConfig {
             executable: support::host_executable().into(),
         },
-        snapshot(&format!(
+        case.snapshot(&format!(
             "export function visualize(){{return {DOCUMENT};}}"
         )),
         "view",
@@ -863,7 +1167,8 @@ export function resume(token,pages) {
 ";
 #[tokio::test]
 async fn http_decoding_resumes_frozen_metadata_and_grants_only_requested_decoded_pages() {
-    let denied = start(snapshot(HTTP_SOURCE)).unwrap();
+    let case = WorkerTest::acquire(1).await;
+    let denied = start(case.snapshot(HTTP_SOURCE)).unwrap();
     assert_eq!(
         denied
             .invoke(Invocation::Visualize {
@@ -875,7 +1180,7 @@ async fn http_decoding_resumes_frozen_metadata_and_grants_only_requested_decoded
         FailureKind::Validation
     );
     denied.stop();
-    let snapshot = snapshot(HTTP_SOURCE);
+    let snapshot = case.snapshot(HTTP_SOURCE);
     let mut manifest = snapshot.manifest;
     let access = &mut manifest.visualizers[0].inputs.response;
     access.headers.push("content-encoding".into());

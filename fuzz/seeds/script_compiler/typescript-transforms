@@ -1,0 +1,1 @@
+Tenum Choice{A=3,B} namespace Values{export const value=Choice.B;} class Item{constructor(public value:number=Values.value){}} export function onRequestHead(){return new Item().value satisfies number;}
