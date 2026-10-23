@@ -18,7 +18,7 @@ pub(super) fn validate(module: &Module) -> Result<(), String> {
     };
     module.visit_with(&mut budget);
     if budget.exceeded {
-        Err("JavaScript module exceeds compiler syntax complexity limits".into())
+        Err(super::COMPLEXITY_LIMIT.into())
     } else {
         Ok(())
     }

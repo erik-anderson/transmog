@@ -38,6 +38,7 @@ pub use swc_ecma_visit as visit;
 // Match the existing parser and emitter target. This does not downlevel runtime
 // JavaScript or expand the extensions' ES2022 compatibility promise.
 const ES_VERSION: EsVersion = EsVersion::Es2021;
+const COMPLEXITY_LIMIT: &str = "JavaScript module exceeds compiler syntax complexity limits";
 
 /// The executable language of one module.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -70,7 +71,8 @@ pub struct EmittedModule {
 /// first apply their existing export and capability validation rules.
 ///
 /// # Errors
-/// Returns a parser diagnostic with its module URL and one-based position.
+/// Returns a parser diagnostic with its module URL and one-based position, or a
+/// module-wide complexity error when a compiler resource budget is exhausted.
 pub fn parse_module(
     specifier: Url,
     source: &str,
@@ -130,9 +132,19 @@ fn parse_module_inner(
     let mut parser = Parser::new_from(lexer);
     let parsed = parser.parse_module();
     let recoverable_errors = parser.take_errors();
-    let stack_limit = parser.input().stack_limit_reached();
+    // Resource limits apply to the whole module. The token where a native stack
+    // reserve is exhausted depends on architecture and caller stack space, and
+    // recovery can replace that error with an unrelated syntax diagnostic.
+    let resource_limit = parser.input().stack_limit_reached()
+        || parsed
+            .as_ref()
+            .is_err_and(|error| matches!(error.kind(), SyntaxError::ResourceLimit))
+        || recoverable_errors
+            .iter()
+            .any(|error| matches!(error.kind(), SyntaxError::ResourceLimit));
     let module = match parsed {
         Ok(module) => module,
+        Err(_) if resource_limit => return Err(COMPLEXITY_LIMIT.into()),
         Err(error) => return Err(parser_error(&source_map, &error)),
     };
     let parsed = ParsedModule {
@@ -141,13 +153,8 @@ fn parse_module_inner(
         source_map,
         recoverable_errors,
     };
-    if stack_limit
-        || parsed
-            .recoverable_errors
-            .iter()
-            .any(|error| matches!(error.kind(), SyntaxError::ResourceLimit))
-    {
-        return Err("JavaScript module exceeds compiler syntax complexity limits".into());
+    if resource_limit {
+        return Err(COMPLEXITY_LIMIT.into());
     }
     safety::validate(parsed.module())?;
     Ok(parsed)
@@ -513,6 +520,36 @@ mod tests {
         .unwrap();
         assert!(error.contains("..."));
         assert!(error.len() < 300);
+    }
+
+    #[test]
+    fn resource_limit_diagnostics_do_not_depend_on_caller_stack() {
+        // Deep arrows exhaust the native stack reserve at different tokens on
+        // different architectures and caller stacks. Flat chains and large
+        // items exercise the parser's separate syntax-work budgets.
+        for source in [
+            format!("const value={}0;", "()=>".repeat(4096)),
+            format!("const value=0{};", "+1".repeat(4096)),
+            format!("function f() {{{}}}", "0;".repeat(10_000)),
+        ] {
+            for syntax in [ModuleSyntax::JavaScript, ModuleSyntax::TypeScript] {
+                for stack_mebibytes in [9, 10, 16] {
+                    let error = stacker::grow(stack_mebibytes * 1024 * 1024, || {
+                        parse_module(
+                            Url::parse("file:///resource-limit.ts").unwrap(),
+                            &source,
+                            syntax,
+                        )
+                        .err()
+                        .expect("Hostile syntax must remain rejected")
+                    });
+                    assert_eq!(
+                        error, "JavaScript module exceeds compiler syntax complexity limits",
+                        "{syntax:?} on a {stack_mebibytes} MiB caller stack"
+                    );
+                }
+            }
+        }
     }
 
     #[test]
