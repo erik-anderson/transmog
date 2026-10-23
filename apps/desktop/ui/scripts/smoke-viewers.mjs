@@ -734,10 +734,23 @@ try {
       await viewer.evaluate(
         'globalThis.__largeByteProbe.viewer.querySelector(".hex-status button").focus()',
       );
-      const reachability = await viewer.evaluate(
-        `(${hexReachability.toString()})(globalThis.__largeByteProbe.viewer,${JSON.stringify(String(byteLength - 1))})`,
-      );
+      // Focus and Ctrl+End can queue scrolling, resize observation and row layout.
+      // Wait for the same complete-byte reachability required by the browser probe.
+      let reachability;
+      const reachabilitySamples = [];
+      for (let attempt = 0; attempt < 40; attempt++) {
+        reachability = await viewer.evaluate(
+          `(${hexReachability.toString()})(globalThis.__largeByteProbe.viewer,${JSON.stringify(String(byteLength - 1))})`,
+        );
+        reachabilitySamples.push(reachability);
+        if (reachability.visible && reachability.tailVisible) break;
+        await new Promise((resolve) => setTimeout(resolve, 25));
+      }
       if (screenshot) {
+        await writeFile(
+          screenshot.replace(".png", "-hex-reachability.json"),
+          JSON.stringify(reachabilitySamples, null, 2),
+        );
         const image = await viewer.call("Page.captureScreenshot", { format: "png" });
         await writeFile(
           screenshot.replace(
