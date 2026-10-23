@@ -1,81 +1,202 @@
-import initialState from '../initial-state.json';
-import '../network-profile-settings/network-profile-settings.js';
-import '../extension-settings/extension-settings.js';
-import type {ExtensionSettings} from '../extension-settings/extension-settings.js';
-import '../client-certificate-settings/client-certificate-settings.js';
-import '../loopback-exemptions/loopback-exemptions.js';
-import type {LoopbackExemptions} from '../loopback-exemptions/loopback-exemptions.js';
-import type {AppUpdates} from '../app-updates/app-updates.js';
-import type {ClientCertificateSettings} from '../client-certificate-settings/client-certificate-settings.js';
-import { attr, observable } from '@microsoft/webui-framework';
-import { invoke } from '@tauri-apps/api/core';
-import { WorkspaceElement } from '../workspace-element.js';
-import type { AppStatus, CaIdentity, DesktopBootstrap, ProductState, WorkspacePreferences } from '../models.js';
-import { describeError } from '../utilities.js';
+import initialState from "../initial-state.json";
+import "../network-profile-settings/network-profile-settings.js";
+import "../extension-settings/extension-settings.js";
+import type { ExtensionSettings } from "../extension-settings/extension-settings.js";
+import "../client-certificate-settings/client-certificate-settings.js";
+import "../loopback-exemptions/loopback-exemptions.js";
+import type { LoopbackExemptions } from "../loopback-exemptions/loopback-exemptions.js";
+import type { AppUpdates } from "../app-updates/app-updates.js";
+import type { ClientCertificateSettings } from "../client-certificate-settings/client-certificate-settings.js";
+import { attr, observable } from "@microsoft/webui-framework";
+import { invoke } from "@tauri-apps/api/core";
+import { WorkspaceElement } from "../workspace-element.js";
+import type {
+  AppStatus,
+  CaIdentity,
+  DesktopBootstrap,
+  ProductState,
+  WorkspacePreferences,
+} from "../models.js";
+import { describeError } from "../utilities.js";
 
 export class SettingsWorkspace extends WorkspaceElement {
-  extensionsEditor!:ExtensionSettings;
-  clientCertificates!:ClientCertificateSettings;
-  aboutUpdates!:AppUpdates;
-  loopbackManager!:LoopbackExemptions;
-  openLoopback(event:Event):void {void this.loopbackManager.open(event);}
-  async openWebsite(event:Event):Promise<void> {
+  extensionsEditor!: ExtensionSettings;
+  clientCertificates!: ClientCertificateSettings;
+  aboutUpdates!: AppUpdates;
+  loopbackManager!: LoopbackExemptions;
+  openLoopback(event: Event): void {
+    void this.loopbackManager.open(event);
+  }
+  async openWebsite(event: Event): Promise<void> {
     event.preventDefault();
-    try {await invoke('open_product_website');}
-    catch(error:unknown){await this.showError('Website could not be opened',describeError(error));}
-  }
-  @observable credits:Array<{id:string;name:string;version:string;license:string;text:string}>=[];
-  @observable creditsSummary='';
-  @observable creditsStatus='';
-  creditsDialog!:HTMLDialogElement;
-  async showCredits():Promise<void> {
-    this.creditsDialog.showModal();
-    if(this.credits.length)return;
-    this.creditsStatus='Loading third-party notices…';
-    try {const response=await fetch('/credits.json');if(!response.ok)throw new Error('The bundled notices are unavailable.');const notices=await response.json() as {summary:string;entries:Array<{id:string;name:string;version:string;license:string;text:string}>};this.credits=notices.entries;this.creditsSummary=notices.summary;this.creditsStatus='';}
-    catch(error:unknown){this.creditsStatus=describeError(error);}
-  }
-  closeCredits():void {this.creditsDialog.close();}
-  resetWorkspace():void {this.$emit('reset-workspace');this.settingsText='Layout and columns reset.';}
-  checkUpdates(): void { this.$emit('check-updates'); }
-  @attr view = 'traffic';
-  @observable customPortEnabled=initialState.customPortEnabled;
-  updateProxyPortMode():void {this.customPortEnabled=(this.settingsForm.elements.namedItem('customProxyPort') as HTMLInputElement).checked;}
-  @observable requestBodyMode=initialState.requestBodyMode;
-  updateRequestBodyLimit():void {this.requestBodyMode=(this.settingsForm.elements.namedItem('requestBodyLimit') as HTMLSelectElement).value;}
-  @observable bufferMode='automatic';
-  @observable entryLimitEnabled=false;
-  updateEntryLimit():void {this.entryLimitEnabled=(this.settingsForm.elements.namedItem('limitEntries') as HTMLInputElement).checked;}
-  @observable bufferSummary='Automatic uses half of installed RAM and keeps bodies in memory.';
-  updateBufferMode():void {this.bufferMode=(this.settingsForm.elements.namedItem('bufferMode') as HTMLSelectElement).value;}
-  private async refreshBufferStatus():Promise<void> {
     try {
-      const status=await invoke<{installedRam:number|null;maxBytes:number|null;storage:string;retainedBytes:number}|null>('buffer_status');
-      if(status) {
-        const format=(bytes:number)=> (bytes/1073741824).toLocaleString(undefined,{maximumFractionDigits:2})+' GiB';
-        this.bufferSummary='Current buffer: '+(status.maxBytes===null?'No maximum':format(status.maxBytes)+' maximum')+' · '+(status.storage==='memory'?'Memory storage':'Disk storage')+(status.installedRam===null?' · Installed RAM unavailable; automatic uses 1 GiB.':' · '+format(status.installedRam)+' installed RAM');
-      }
-    } catch {this.bufferSummary='Buffer status unavailable. Automatic uses half installed RAM; larger or unlimited buffers write to disk.';}
+      await invoke("open_product_website");
+    } catch (error: unknown) {
+      await this.showError("Website could not be opened", describeError(error));
+    }
   }
-  @observable settingsSection='preferences';
-  @observable settingsDirty=false;
-  @observable settingsBusy=false;
-  @observable settingsText='';
-  @observable settingsError='';
-  @observable certificateReady=false;
-  @observable certificateRecovery=false;
-  @observable hostRecoveryPending=false;
-  @observable supportBusy=false;
-  @observable supportPathsAllowed=false;
-  @observable supportDetails='';
-  @observable supportFacts:Array<{label:string;value:string}>=[];
-  showSettingsSection(section:string):void {this.settingsSection=section;}
-  private profileEvent(event?:Event):boolean {return event?.composedPath().some(target=>target instanceof HTMLElement&&target.localName==='network-profile-settings')??false;}
-  markSettingsDirty(event?:Event):void {if(this.profileEvent(event))return;this.settingsDirty=true;this.settingsText='Unsaved changes';}
-  settingsKeyboard(event:KeyboardEvent):void {if(this.profileEvent(event))return;if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='s'){event.preventDefault();if(this.settingsDirty)this.settingsForm.requestSubmit();}}
-  private certificateBootstrap:DesktopBootstrap|undefined;
-  private updateCertificateState(bootstrap:DesktopBootstrap):void {this.certificateBootstrap=bootstrap;this.certificateRecovery=this.decryptHttps&&this.caRecoveryRequired(bootstrap);this.certificateReady=!this.decryptHttps||bootstrap.caFilesPresent&&bootstrap.ownedCaTrusted&&!this.certificateRecovery;this.hostRecoveryPending=bootstrap.hostRestorePending;}
-  private async runSupport(operation:()=>Promise<void>):Promise<void> {if(this.supportBusy)return;this.supportBusy=true;try {await operation();}finally{this.supportBusy=false;}}
+  @observable credits: Array<{
+    id: string;
+    name: string;
+    version: string;
+    license: string;
+    text: string;
+  }> = [];
+  @observable creditsSummary = "";
+  @observable creditsStatus = "";
+  creditsDialog!: HTMLDialogElement;
+  async showCredits(): Promise<void> {
+    this.creditsDialog.showModal();
+    if (this.credits.length) {
+      return;
+    }
+    this.creditsStatus = "Loading third-party notices…";
+    try {
+      const response = await fetch("/credits.json");
+      if (!response.ok) {
+        throw new Error("The bundled notices are unavailable.");
+      }
+      const notices = (await response.json()) as {
+        summary: string;
+        entries: Array<{
+          id: string;
+          name: string;
+          version: string;
+          license: string;
+          text: string;
+        }>;
+      };
+      this.credits = notices.entries;
+      this.creditsSummary = notices.summary;
+      this.creditsStatus = "";
+    } catch (error: unknown) {
+      this.creditsStatus = describeError(error);
+    }
+  }
+  closeCredits(): void {
+    this.creditsDialog.close();
+  }
+  resetWorkspace(): void {
+    this.$emit("reset-workspace");
+    this.settingsText = "Layout and columns reset.";
+  }
+  checkUpdates(): void {
+    this.$emit("check-updates");
+  }
+  @attr view = "traffic";
+  @observable customPortEnabled = initialState.customPortEnabled;
+  updateProxyPortMode(): void {
+    this.customPortEnabled = (
+      this.settingsForm.elements.namedItem("customProxyPort") as HTMLInputElement
+    ).checked;
+  }
+  @observable requestBodyMode = initialState.requestBodyMode;
+  updateRequestBodyLimit(): void {
+    this.requestBodyMode = (
+      this.settingsForm.elements.namedItem("requestBodyLimit") as HTMLSelectElement
+    ).value;
+  }
+  @observable bufferMode = "automatic";
+  @observable entryLimitEnabled = false;
+  updateEntryLimit(): void {
+    this.entryLimitEnabled = (
+      this.settingsForm.elements.namedItem("limitEntries") as HTMLInputElement
+    ).checked;
+  }
+  @observable bufferSummary = "Automatic uses half of installed RAM and keeps bodies in memory.";
+  updateBufferMode(): void {
+    this.bufferMode = (
+      this.settingsForm.elements.namedItem("bufferMode") as HTMLSelectElement
+    ).value;
+  }
+  private async refreshBufferStatus(): Promise<void> {
+    try {
+      const status = await invoke<{
+        installedRam: number | null;
+        maxBytes: number | null;
+        storage: string;
+        retainedBytes: number;
+      } | null>("buffer_status");
+      if (status) {
+        const format = (bytes: number) =>
+          (bytes / 1073741824).toLocaleString(undefined, { maximumFractionDigits: 2 }) + " GiB";
+        this.bufferSummary =
+          "Current buffer: " +
+          (status.maxBytes === null ? "No maximum" : format(status.maxBytes) + " maximum") +
+          " · " +
+          (status.storage === "memory" ? "Memory storage" : "Disk storage") +
+          (status.installedRam === null
+            ? " · Installed RAM unavailable; automatic uses 1 GiB."
+            : " · " + format(status.installedRam) + " installed RAM");
+      }
+    } catch {
+      this.bufferSummary =
+        "Buffer status unavailable. Automatic uses half installed RAM; larger or unlimited buffers write to disk.";
+    }
+  }
+  @observable settingsSection = "preferences";
+  @observable settingsDirty = false;
+  @observable settingsBusy = false;
+  @observable settingsText = "";
+  @observable settingsError = "";
+  @observable certificateReady = false;
+  @observable certificateRecovery = false;
+  @observable hostRecoveryPending = false;
+  @observable supportBusy = false;
+  @observable supportPathsAllowed = false;
+  @observable supportDetails = "";
+  @observable supportFacts: Array<{ label: string; value: string }> = [];
+  showSettingsSection(section: string): void {
+    this.settingsSection = section;
+  }
+  private profileEvent(event?: Event): boolean {
+    return (
+      event
+        ?.composedPath()
+        .some(
+          (target) =>
+            target instanceof HTMLElement && target.localName === "network-profile-settings",
+        ) ?? false
+    );
+  }
+  markSettingsDirty(event?: Event): void {
+    if (this.profileEvent(event)) {
+      return;
+    }
+    this.settingsDirty = true;
+    this.settingsText = "Unsaved changes";
+  }
+  settingsKeyboard(event: KeyboardEvent): void {
+    if (this.profileEvent(event)) {
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      if (this.settingsDirty) {
+        this.settingsForm.requestSubmit();
+      }
+    }
+  }
+  private certificateBootstrap: DesktopBootstrap | undefined;
+  private updateCertificateState(bootstrap: DesktopBootstrap): void {
+    this.certificateBootstrap = bootstrap;
+    this.certificateRecovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
+    this.certificateReady =
+      !this.decryptHttps ||
+      (bootstrap.caFilesPresent && bootstrap.ownedCaTrusted && !this.certificateRecovery);
+    this.hostRecoveryPending = bootstrap.hostRestorePending;
+  }
+  private async runSupport(operation: () => Promise<void>): Promise<void> {
+    if (this.supportBusy) {
+      return;
+    }
+    this.supportBusy = true;
+    try {
+      await operation();
+    } finally {
+      this.supportBusy = false;
+    }
+  }
   @observable decryptHttps = initialState.decryptHttps;
   @observable proxyReady = initialState.proxyReady;
   @observable proxyText = initialState.proxyText;
@@ -85,8 +206,8 @@ export class SettingsWorkspace extends WorkspaceElement {
   @observable certificatePath = initialState.certificatePath;
   @observable privateKeyPath = initialState.privateKeyPath;
   @observable caSha256 = initialState.caSha256;
-  @observable proxyLifecycle = 'stopped';
-  @observable proxyPending = '';
+  @observable proxyLifecycle = "stopped";
+  @observable proxyPending = "";
   proxyForm!: HTMLFormElement;
   settingsForm!: HTMLFormElement;
   supportForm!: HTMLFormElement;
@@ -94,16 +215,20 @@ export class SettingsWorkspace extends WorkspaceElement {
   private drainTimer: number | undefined;
   private statusRevision = 0;
 
-  protected hydratedCallback(): void { this.ready = this.initializeShell(); }
+  protected hydratedCallback(): void {
+    this.ready = this.initializeShell();
+  }
   acceptAppStatus(status: AppStatus): void {
     this.statusRevision++;
     this.hostRecoveryPending = status.hostRestorePending;
     this.proxyLifecycle = status.lifecycle;
-    this.$emit('status-changed', status);
+    this.$emit("status-changed", status);
     window.clearTimeout(this.drainTimer);
-    if (status.lifecycle === 'draining' || status.lifecycle === 'stopping') {
+    if (status.lifecycle === "draining" || status.lifecycle === "stopping") {
       this.drainTimer = window.setTimeout(() => {
-        if (this.isConnected) void this.refreshStatus();
+        if (this.isConnected) {
+          void this.refreshStatus();
+        }
       }, 750);
     }
   }
@@ -111,21 +236,26 @@ export class SettingsWorkspace extends WorkspaceElement {
     window.clearTimeout(this.drainTimer);
     super.disconnectedCallback();
   }
-  private applyTheme(theme: ProductState['preferences']['theme'], workspace?: WorkspacePreferences): void {
-    this.$emit('preferences-changed', { theme, workspace });
+  private applyTheme(
+    theme: ProductState["preferences"]["theme"],
+    workspace?: WorkspacePreferences,
+  ): void {
+    this.$emit("preferences-changed", { theme, workspace });
   }
-  dismissNotice(): void { this.$emit('dismiss-notice'); }
+  dismissNotice(): void {
+    this.$emit("dismiss-notice");
+  }
   private async initializeShell(): Promise<void> {
-    this.setProxyOutput('Loading durable proxy state…', 'progress');
+    this.setProxyOutput("Loading durable proxy state…", "progress");
     try {
       const [bootstrap, productState, status] = await Promise.all([
-        invoke<DesktopBootstrap>('desktop_bootstrap'),
-        invoke<ProductState>('product_state'),
-        invoke<AppStatus>('app_status'),
+        invoke<DesktopBootstrap>("desktop_bootstrap"),
+        invoke<ProductState>("product_state"),
+        invoke<AppStatus>("app_status"),
       ]);
       this.certificatePath = bootstrap.caCertificatePath;
       this.privateKeyPath = bootstrap.caPrivateKeyPath;
-      this.caSha256 = bootstrap.ownedCaSha256 ?? '';
+      this.caSha256 = bootstrap.ownedCaSha256 ?? "";
       this.diagnosticsPathText = bootstrap.diagnosticsPath;
       this.populateSettings(productState);
       void this.refreshBufferStatus();
@@ -133,57 +263,74 @@ export class SettingsWorkspace extends WorkspaceElement {
       this.acceptAppStatus(status);
       this.updateCertificateState(bootstrap);
       const recovery = this.decryptHttps && this.caRecoveryRequired(bootstrap);
-      const certificate = !this.decryptHttps ? 'HTTPS decryption is off. CONNECT tunnels forward bytes without inspecting their contents.' : recovery
-        ? 'The saved interception certificate needs to be reset. Reset certificate and set up again to create and trust a new one.'
-        : bootstrap.ownedCaSha256 === null
-          ? 'No app-owned trusted CA is recorded. Create and trust one before intercepting HTTPS.'
-          : bootstrap.ownedCaTrusted
-            ? 'HTTPS interception certificate is ready.'
-            : 'The interception certificate needs current-user trust.';
+      const certificate = !this.decryptHttps
+        ? "HTTPS decryption is off. CONNECT tunnels forward bytes without inspecting their contents."
+        : recovery
+          ? "The saved interception certificate needs to be reset. Reset certificate and set up again to create and trust a new one."
+          : bootstrap.ownedCaSha256 === null
+            ? "No app-owned trusted CA is recorded. Create and trust one before intercepting HTTPS."
+            : bootstrap.ownedCaTrusted
+              ? "HTTPS interception certificate is ready."
+              : "The interception certificate needs current-user trust.";
       const ready = this.certificateReady;
-      this.setProxyOutput(certificate, ready ? 'success' : recovery ? 'error' : 'progress');
+      this.setProxyOutput(certificate, ready ? "success" : recovery ? "error" : "progress");
       if (bootstrap.hostRestorePending) {
         this.showNotice(
-          'Windows proxy recovery required',
-          'Transmog could not restore the settings journaled by a previous run. Restore them before starting again.',
-          'Restore settings',
-          'recover-proxy',
+          "Windows proxy recovery required",
+          "Transmog could not restore the settings journaled by a previous run. Restore them before starting again.",
+          "Restore settings",
+          "recover-proxy",
         );
       } else if (recovery) {
         this.showCaRecovery(bootstrap);
       } else if (!ready) {
         this.showNotice(
-          'HTTPS interception needs setup',
-          'Before the proxy can start, create and trust Transmog’s local interception certificate. Windows will ask you to approve adding it to your current-user trusted roots.',
-          'Set up now',
-          'setup-ca',
+          "HTTPS interception needs setup",
+          "Before the proxy can start, create and trust Transmog’s local interception certificate. Windows will ask you to approve adding it to your current-user trusted roots.",
+          "Set up now",
+          "setup-ca",
         );
       }
     } catch (error: unknown) {
       const message = `Desktop initialization failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
-      await this.reportFrontendIssue('desktop-initialization-failed', error);
+      await this.reportFrontendIssue("desktop-initialization-failed", error);
     } finally {
       this.proxyReady = true;
-      this.$emit('proxy-ready');
+      this.$emit("proxy-ready");
     }
   }
 
-  async toggleProxy(): Promise<void> { if (this.proxyLifecycle === 'running') await this.stopProxy(); else await this.startProxy(); }
+  async toggleProxy(): Promise<void> {
+    if (this.proxyLifecycle === "running") {
+      await this.stopProxy();
+    } else {
+      await this.startProxy();
+    }
+  }
   async startProxy(event?: Event): Promise<void> {
     event?.preventDefault();
-    await this.runProxyChange('starting', () => this.startProxyNow());
+    await this.runProxyChange("starting", () => this.startProxyNow());
   }
-  async stopProxy(): Promise<void> { await this.runProxyChange('stopping', () => this.stopProxyNow()); }
+  async stopProxy(): Promise<void> {
+    await this.runProxyChange("stopping", () => this.stopProxyNow());
+  }
   private async runProxyChange(kind: string, operation: () => Promise<void>): Promise<void> {
-    if (this.proxyPending) return;
+    if (this.proxyPending) {
+      return;
+    }
     this.statusRevision++;
     window.clearTimeout(this.drainTimer);
     this.proxyPending = kind;
-    this.$emit('proxy-operation',kind);
-    try { await operation(); await this.refreshStatus(); }
-    finally { this.proxyPending = ''; this.$emit('proxy-operation',''); }
+    this.$emit("proxy-operation", kind);
+    try {
+      await operation();
+      await this.refreshStatus();
+    } finally {
+      this.proxyPending = "";
+      this.$emit("proxy-operation", "");
+    }
   }
 
   private async startProxyNow(event?: Event): Promise<void> {
@@ -191,135 +338,184 @@ export class SettingsWorkspace extends WorkspaceElement {
 
     const data = new FormData(this.proxyForm);
     try {
-      if (this.proxyLifecycle === 'draining' || this.proxyLifecycle === 'stopping') {
-        const resumed = await invoke<AppStatus>('resume_application');
+      if (this.proxyLifecycle === "draining" || this.proxyLifecycle === "stopping") {
+        const resumed = await invoke<AppStatus>("resume_application");
         this.acceptAppStatus(resumed);
-        if (resumed.lifecycle === 'running') {
-          this.setProxyOutput('Proxy resumed. Existing requests and connections remain active.', 'success');
+        if (resumed.lifecycle === "running") {
+          this.setProxyOutput(
+            "Proxy resumed. Existing requests and connections remain active.",
+            "success",
+          );
           return;
         }
       }
-      const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
       this.updateCertificateState(bootstrap);
       if (bootstrap.hostRestorePending) {
         this.showNotice(
-          'Windows proxy recovery required',
-          'Restore the exact settings journaled by the previous run before starting the proxy again.',
-          'Restore settings',
-          'recover-proxy',
+          "Windows proxy recovery required",
+          "Restore the exact settings journaled by the previous run before starting the proxy again.",
+          "Restore settings",
+          "recover-proxy",
         );
-        this.setProxyOutput('Start blocked: Windows proxy recovery is pending.', 'error');
+        this.setProxyOutput("Start blocked: Windows proxy recovery is pending.", "error");
         return;
       }
-      if (this.decryptHttps && (this.caRecoveryRequired(bootstrap) || !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null || !bootstrap.ownedCaTrusted)) {
+      if (
+        this.decryptHttps &&
+        (this.caRecoveryRequired(bootstrap) ||
+          !bootstrap.caFilesPresent ||
+          bootstrap.ownedCaSha256 === null ||
+          !bootstrap.ownedCaTrusted)
+      ) {
         if (this.caRecoveryRequired(bootstrap)) {
           this.showCaRecovery(bootstrap);
-          this.activateView('settings');
+          this.activateView("settings");
           return;
         }
-        const missing = !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null
-          ? 'Create and trust Transmog’s interception certificate before starting the proxy.'
-          : 'Transmog’s interception certificate is not trusted for the current user. Trust it before starting the proxy.';
-        this.showNotice('Proxy setup required', missing, 'Set up HTTPS interception', 'setup-ca');
-        this.setProxyOutput(`Start blocked: ${missing}`, 'error');
-        this.activateView('settings');
+        const missing =
+          !bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null
+            ? "Create and trust Transmog’s interception certificate before starting the proxy."
+            : "Transmog’s interception certificate is not trusted for the current user. Trust it before starting the proxy.";
+        this.showNotice("Proxy setup required", missing, "Set up HTTPS interception", "setup-ca");
+        this.setProxyOutput(`Start blocked: ${missing}`, "error");
+        this.activateView("settings");
         return;
       }
-      this.setProxyOutput('Starting capture, binding the proxy, and applying current-user Windows proxy settings…', 'progress');
-      const status = await invoke<AppStatus>('start_proxy', {
+      this.setProxyOutput(
+        "Starting capture, binding the proxy, and applying current-user Windows proxy settings…",
+        "progress",
+      );
+      const status = await invoke<AppStatus>("start_proxy", {
         request: {
-          caCertificatePath: String(data.get('certificate') ?? ''),
-          caPrivateKeyPath: String(data.get('privateKey') ?? ''),
-          listen: '127.0.0.1:0',
-          route: 'auto',
+          caCertificatePath: String(data.get("certificate") ?? ""),
+          caPrivateKeyPath: String(data.get("privateKey") ?? ""),
+          listen: "127.0.0.1:0",
+          route: "auto",
           allowRemoteClients: false,
         },
       });
       this.acceptAppStatus(status);
-      const listener = status.listener ?? 'an unknown listener';
+      const listener = status.listener ?? "an unknown listener";
       this.dismissNotice();
-      this.setProxyOutput(`Proxy listening at ${listener}. Windows proxy settings are active and traffic is being captured automatically.`, 'success');
+      this.setProxyOutput(
+        `Proxy listening at ${listener}. Windows proxy settings are active and traffic is being captured automatically.`,
+        "success",
+      );
     } catch (error: unknown) {
       const message = `Start failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
       try {
-        const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+        const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
         this.updateCertificateState(bootstrap);
-        if (this.caRecoveryRequired(bootstrap)) { this.showCaRecovery(bootstrap); return; }
-      } catch { /* Preserve the original start failure if inspection also fails. */ }
-      this.showNotice('Proxy could not start', `${message} See Settings for recovery options.`, 'Open Settings', 'settings');
+        if (this.caRecoveryRequired(bootstrap)) {
+          this.showCaRecovery(bootstrap);
+          return;
+        }
+      } catch {
+        /* Preserve the original start failure if inspection also fails. */
+      }
+      this.showNotice(
+        "Proxy could not start",
+        `${message} See Settings for recovery options.`,
+        "Open Settings",
+        "settings",
+      );
     }
   }
 
   async setupCa(): Promise<void> {
-    await this.runProxyChange('certificate-setup', () => this.setupCaNow());
+    await this.runProxyChange("certificate-setup", () => this.setupCaNow());
   }
 
   private caRecoveryRequired(bootstrap: DesktopBootstrap): boolean {
-    return Boolean(bootstrap.caKeyError) || bootstrap.caFilesExist && (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null)
-      || !bootstrap.caFilesPresent && bootstrap.ownedCaSha256 !== null;
+    return (
+      Boolean(bootstrap.caKeyError) ||
+      (bootstrap.caFilesExist && (!bootstrap.caFilesPresent || bootstrap.ownedCaSha256 === null)) ||
+      (!bootstrap.caFilesPresent && bootstrap.ownedCaSha256 !== null)
+    );
   }
 
   private showCaRecovery(bootstrap: DesktopBootstrap): void {
-    const reason = bootstrap.caKeyError ?? (bootstrap.ownedCaSha256 === null
-      ? 'Certificate files from a previous setup remain, but their Transmog identity is not recorded.'
-      : 'The recorded interception certificate is missing one or both of its files.');
+    const reason =
+      bootstrap.caKeyError ??
+      (bootstrap.ownedCaSha256 === null
+        ? "Certificate files from a previous setup remain, but their Transmog identity is not recorded."
+        : "The recorded interception certificate is missing one or both of its files.");
     const message = `${reason} Reset the certificate to remove the app-managed certificate and private key, then create and trust a new certificate.`;
-    this.setProxyOutput(message, 'error');
-    this.showNotice('Interception certificate needs a reset', message, 'Reset certificate and set up again', 'reset-ca');
+    this.setProxyOutput(message, "error");
+    this.showNotice(
+      "Interception certificate needs a reset",
+      message,
+      "Reset certificate and set up again",
+      "reset-ca",
+    );
   }
 
   async resetCa(): Promise<void> {
-    await this.runProxyChange('certificate-setup', async () => {
+    await this.runProxyChange("certificate-setup", async () => {
       try {
-        const bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+        const bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
         const proceed = window.confirm(
           `Reset HTTPS interception? This permanently deletes Transmog’s app-managed certificate and private key:\n${bootstrap.caCertificatePath}\n${bootstrap.caPrivateKeyPath}\n\nAny exact certificate recorded by Transmog will also be removed from your current-user trusted roots. Transmog will create a new certificate and ask Windows to trust it. You must approve the Windows certificate dialog. Continue?`,
         );
-        if (!proceed) return;
-        this.setProxyOutput('Removing the previous interception certificate and private key…', 'progress');
-        await invoke<void>('reset_ca');
+        if (!proceed) {
+          return;
+        }
+        this.setProxyOutput(
+          "Removing the previous interception certificate and private key…",
+          "progress",
+        );
+        await invoke<void>("reset_ca");
         this.certificatePath = bootstrap.caCertificatePath;
         this.privateKeyPath = bootstrap.caPrivateKeyPath;
-        this.caSha256 = '';
+        this.caSha256 = "";
         this.$flushUpdates();
         const elements = this.proxyForm.elements;
-        (elements.namedItem('certificate') as HTMLInputElement).value = this.certificatePath;
-        (elements.namedItem('privateKey') as HTMLInputElement).value = this.privateKeyPath;
-        (elements.namedItem('thumbprint') as HTMLInputElement).value = '';
+        (elements.namedItem("certificate") as HTMLInputElement).value = this.certificatePath;
+        (elements.namedItem("privateKey") as HTMLInputElement).value = this.privateKeyPath;
+        (elements.namedItem("thumbprint") as HTMLInputElement).value = "";
         await this.setupCaNow(true);
       } catch (error: unknown) {
         const message = `Certificate reset failed: ${describeError(error)}`;
-        this.setProxyOutput(message, 'error');
-        this.showNotice('Certificate reset needs attention', message, 'Reset certificate and set up again', 'reset-ca');
+        this.setProxyOutput(message, "error");
+        this.showNotice(
+          "Certificate reset needs attention",
+          message,
+          "Reset certificate and set up again",
+          "reset-ca",
+        );
       }
     });
   }
 
   private async setupCaNow(confirmed = false): Promise<void> {
-    this.setProxyOutput('Preparing the interception certificate…', 'progress');
+    this.setProxyOutput("Preparing the interception certificate…", "progress");
     try {
-      let bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      let bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
       this.updateCertificateState(bootstrap);
       if (this.caRecoveryRequired(bootstrap)) {
         this.showCaRecovery(bootstrap);
         return;
       }
-      if (!confirmed && !window.confirm(
-        'Transmog will create a durable local interception certificate if needed, then ask Windows to trust its public certificate for your account. You must manually approve the Windows certificate dialog. Continue?',
-      )) {
-        this.setProxyOutput('Certificate setup canceled.', 'progress');
+      if (
+        !confirmed &&
+        !window.confirm(
+          "Transmog will create a durable local interception certificate if needed, then ask Windows to trust its public certificate for your account. You must manually approve the Windows certificate dialog. Continue?",
+        )
+      ) {
+        this.setProxyOutput("Certificate setup canceled.", "progress");
         return;
       }
       const data = new FormData(this.proxyForm);
       let sha256 = bootstrap.ownedCaSha256;
       if (!bootstrap.caFilesPresent) {
-        const identity = await invoke<CaIdentity>('create_ca', {
+        const identity = await invoke<CaIdentity>("create_ca", {
           request: {
-            certificatePath: String(data.get('certificate') ?? ''),
-            privateKeyPath: String(data.get('privateKey') ?? ''),
-            commonName: 'Transmog local interception CA',
+            certificatePath: String(data.get("certificate") ?? ""),
+            privateKeyPath: String(data.get("privateKey") ?? ""),
+            commonName: "Transmog local interception CA",
             validityDays: 3650,
           },
         });
@@ -327,45 +523,58 @@ export class SettingsWorkspace extends WorkspaceElement {
         this.caSha256 = identity.sha256;
       }
       if (sha256 === null) {
-        throw new Error('The interception certificate identity is unavailable. Reset certificate and set up again.');
+        throw new Error(
+          "The interception certificate identity is unavailable. Reset certificate and set up again.",
+        );
       }
-      this.setProxyOutput('Approve the Windows certificate dialog to trust the Transmog interception CA.', 'progress');
-      await invoke<void>('install_certificate', {
-        path: String(data.get('certificate') ?? ''),
+      this.setProxyOutput(
+        "Approve the Windows certificate dialog to trust the Transmog interception CA.",
+        "progress",
+      );
+      await invoke<void>("install_certificate", {
+        path: String(data.get("certificate") ?? ""),
         sha256,
       });
-      bootstrap = await invoke<DesktopBootstrap>('desktop_bootstrap');
+      bootstrap = await invoke<DesktopBootstrap>("desktop_bootstrap");
       this.updateCertificateState(bootstrap);
-      if (!bootstrap.ownedCaTrusted) throw new Error('Windows did not report the certificate as trusted.');
+      if (!bootstrap.ownedCaTrusted) {
+        throw new Error("Windows did not report the certificate as trusted.");
+      }
       this.caSha256 = sha256;
-      const message = 'HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user.';
-      this.setProxyOutput(message, 'success');
-      this.showNotice('HTTPS interception is ready', 'You can start the proxy now.', 'Start proxy', 'start-proxy');
+      const message =
+        "HTTPS interception is ready. Windows trusts the exact Transmog certificate for the current user.";
+      this.setProxyOutput(message, "success");
+      this.showNotice(
+        "HTTPS interception is ready",
+        "You can start the proxy now.",
+        "Start proxy",
+        "start-proxy",
+      );
     } catch (error: unknown) {
       const message = `Certificate setup failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
-      this.showNotice('Certificate setup needs attention', message, 'Try again', 'setup-ca');
+      this.setProxyOutput(message, "error");
+      this.showNotice("Certificate setup needs attention", message, "Try again", "setup-ca");
     }
   }
 
   async createCa(): Promise<void> {
     const data = new FormData(this.proxyForm);
     try {
-      const identity = await invoke<CaIdentity>('create_ca', {
+      const identity = await invoke<CaIdentity>("create_ca", {
         request: {
-          certificatePath: String(data.get('certificate') ?? ''),
-          privateKeyPath: String(data.get('privateKey') ?? ''),
-          commonName: 'Transmog local interception CA',
+          certificatePath: String(data.get("certificate") ?? ""),
+          privateKeyPath: String(data.get("privateKey") ?? ""),
+          commonName: "Transmog local interception CA",
           validityDays: 3650,
         },
       });
       this.caSha256 = identity.sha256;
       const message = `CA created with a current-user-only private-key ACL. SHA-256 ${identity.sha256}. Trust the public CA before intercepting HTTPS.`;
-      this.setProxyOutput(message, 'success');
+      this.setProxyOutput(message, "success");
       this.diagnostic = message;
     } catch (error: unknown) {
       const message = `CA creation failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
     }
   }
@@ -373,79 +582,240 @@ export class SettingsWorkspace extends WorkspaceElement {
   async installCa(): Promise<void> {
     const data = new FormData(this.proxyForm);
     try {
-      await invoke<void>('install_certificate', {
-        path: String(data.get('certificate') ?? ''),
-        sha256: String(data.get('thumbprint') ?? ''),
+      await invoke<void>("install_certificate", {
+        path: String(data.get("certificate") ?? ""),
+        sha256: String(data.get("thumbprint") ?? ""),
       });
-      const message = 'The exact public CA is trusted for the current user and its SHA-256 identity will be restored after restart.';
-      this.setProxyOutput(message, 'success');
+      const message =
+        "The exact public CA is trusted for the current user and its SHA-256 identity will be restored after restart.";
+      this.setProxyOutput(message, "success");
       this.diagnostic = message;
     } catch (error: unknown) {
       const message = `CA installation failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
     }
   }
 
   async removeCa(): Promise<void> {
-    await this.runProxyChange('certificate-removal', () => this.removeCaNow());
+    await this.runProxyChange("certificate-removal", () => this.removeCaNow());
   }
 
   private async removeCaNow(): Promise<void> {
     const data = new FormData(this.proxyForm);
     try {
-      await invoke<void>('remove_certificate', { sha256: String(data.get('thumbprint') ?? '') });
-      this.updateCertificateState(await invoke<DesktopBootstrap>('desktop_bootstrap'));
-      const message = 'The exact public CA was removed from current-user trust. The durable CA files and identity were retained so setup can trust it again.';
-      this.setProxyOutput(message, 'success');
+      await invoke<void>("remove_certificate", { sha256: String(data.get("thumbprint") ?? "") });
+      this.updateCertificateState(await invoke<DesktopBootstrap>("desktop_bootstrap"));
+      const message =
+        "The exact public CA was removed from current-user trust. The durable CA files and identity were retained so setup can trust it again.";
+      this.setProxyOutput(message, "success");
       this.diagnostic = message;
     } catch (error: unknown) {
       const message = `CA removal failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
     }
   }
 
   private async stopProxyNow(): Promise<void> {
-    this.setProxyOutput('Stopping and restoring host settings…', 'progress');
+    this.setProxyOutput("Stopping and restoring host settings…", "progress");
     try {
-      const status = await invoke<AppStatus>('stop_application');
+      const status = await invoke<AppStatus>("stop_application");
       this.acceptAppStatus(status);
-      this.setProxyOutput(status.lifecycle==='draining'?'Proxy routing is off. Existing requests and active connections will finish; Start proxy resumes the same listener.':'Proxy stopped and any current-user Windows proxy changes were restored.', status.lifecycle==='draining'?'progress':'success');
+      this.setProxyOutput(
+        status.lifecycle === "draining"
+          ? "Proxy routing is off. Existing requests and active connections will finish; Start proxy resumes the same listener."
+          : "Proxy stopped and any current-user Windows proxy changes were restored.",
+        status.lifecycle === "draining" ? "progress" : "success",
+      );
     } catch (error: unknown) {
       const message = `Stop failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
     }
   }
 
   async recoverProxy(): Promise<void> {
     try {
-      const restored = await invoke<boolean>('recover_windows_proxy');
+      const restored = await invoke<boolean>("recover_windows_proxy");
       const message = restored
-        ? 'The exact journaled Windows proxy settings were restored.'
-        : 'No Windows proxy recovery journal was present.';
-      this.setProxyOutput(message, 'success');
+        ? "The exact journaled Windows proxy settings were restored."
+        : "No Windows proxy recovery journal was present.";
+      this.setProxyOutput(message, "success");
       this.diagnostic = message;
     } catch (error: unknown) {
       const message = `Recovery failed: ${describeError(error)}`;
-      this.setProxyOutput(message, 'error');
+      this.setProxyOutput(message, "error");
       this.diagnostic = message;
     }
   }
 
-  async loadSettings():Promise<void> {if(this.settingsBusy)return;this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');this.populateSettings(state);this.applyTheme(state.preferences.theme,state.workspace);this.settingsText='Changes reverted.';}catch(error:unknown){this.settingsError='Settings could not be loaded: '+describeError(error);}finally{this.settingsBusy=false;}}
-  async saveSettings(event:Event):Promise<void> {event.preventDefault();if(this.settingsBusy)return;const data=new FormData(this.settingsForm);this.settingsBusy=true;this.settingsError='';try {const state=await invoke<ProductState>('product_state');state.preferences.theme=String(data.get('theme')) as ProductState['preferences']['theme'];state.preferences.decryptHttps=data.get('decryptHttps')==='on';state.preferences.allowRemoteClients=data.get('allowRemoteClients')==='on';const port=data.get('customProxyPort')==='on'?Number(data.get('proxyPort')):null;if(port!==null&&(!Number.isSafeInteger(port)||port<1||port>65535))throw new Error('Choose a proxy port between 1 and 65535.');state.preferences.proxyPort=port;state.preferences.isolateOutboundConnections=data.get('isolateOutbound')==='on';state.privacy.bufferLimit=this.bufferMode==='custom'?{mode:'custom',bytes:Math.round(Number(data.get('bufferSize'))*1073741824)}:{mode:this.bufferMode==='unlimited'?'unlimited':'automatic'};const entryLimit=data.get('limitEntries')==='on'?Number(data.get('maxEntries')):null;if(entryLimit!==null&&(!Number.isSafeInteger(entryLimit)||entryLimit<1))throw new Error('Choose a positive whole number of live entries.');state.privacy.maxLiveEntries=entryLimit;state.privacy.terminateWebsocketsOnClear=data.get('terminateWebsocketsOnClear')==='on';state.privacy.retainRequestBodies=data.get('requestBodies')==='on';const bodyMode=String(data.get('requestBodyLimit'));const customMb=Number(data.get('customRequestBodyLimit'));if(bodyMode==='custom'&&(!Number.isFinite(customMb)||customMb<1||customMb>1000000))throw new Error('Enter a body limit from 1 to 1,000,000 MB (1 TB).');state.privacy.requestBodyLimit=bodyMode==='unlimited'?null:bodyMode==='custom'?Math.round(customMb*1000000):25000000;state.privacy.customRequestBodyLimit=bodyMode==='custom';state.privacy.redactSensitiveHeaders=data.get('redactHeaders')==='on';state.privacy.retainResponseBodies=data.get('defaultBodies')==='on';state.privacy.retainBodySamples=data.get('captureBodies')==='on';state.privacy.rememberRecentArtifacts=data.get('rememberArtifacts')==='on';state.privacy.includePathsInSupportBundles=data.get('supportPaths')==='on';const saved=await invoke<ProductState>('save_product_state',{productState:state});this.populateSettings(saved);this.applyTheme(saved.preferences.theme,saved.workspace);await this.refreshBufferStatus();this.settingsText=this.proxyLifecycle==='running'||this.proxyLifecycle==='draining'?'Settings saved. HTTPS decryption, remote access and port changes apply to the next new proxy run.':'Settings saved.';}catch(error:unknown){this.settingsError='Settings save failed: '+describeError(error);}finally{this.settingsBusy=false;}}
+  async loadSettings(): Promise<void> {
+    if (this.settingsBusy) {
+      return;
+    }
+    this.settingsBusy = true;
+    this.settingsError = "";
+    try {
+      const state = await invoke<ProductState>("product_state");
+      this.populateSettings(state);
+      this.applyTheme(state.preferences.theme, state.workspace);
+      this.settingsText = "Changes reverted.";
+    } catch (error: unknown) {
+      this.settingsError = "Settings could not be loaded: " + describeError(error);
+    } finally {
+      this.settingsBusy = false;
+    }
+  }
+  async saveSettings(event: Event): Promise<void> {
+    event.preventDefault();
+    if (this.settingsBusy) {
+      return;
+    }
+    const data = new FormData(this.settingsForm);
+    this.settingsBusy = true;
+    this.settingsError = "";
+    try {
+      const state = await invoke<ProductState>("product_state");
+      state.preferences.theme = String(data.get("theme")) as ProductState["preferences"]["theme"];
+      state.preferences.decryptHttps = data.get("decryptHttps") === "on";
+      state.preferences.allowRemoteClients = data.get("allowRemoteClients") === "on";
+      const port = data.get("customProxyPort") === "on" ? Number(data.get("proxyPort")) : null;
+      if (port !== null && (!Number.isSafeInteger(port) || port < 1 || port > 65535)) {
+        throw new Error("Choose a proxy port between 1 and 65535.");
+      }
+      state.preferences.proxyPort = port;
+      state.preferences.isolateOutboundConnections = data.get("isolateOutbound") === "on";
+      state.privacy.bufferLimit =
+        this.bufferMode === "custom"
+          ? { mode: "custom", bytes: Math.round(Number(data.get("bufferSize")) * 1073741824) }
+          : { mode: this.bufferMode === "unlimited" ? "unlimited" : "automatic" };
+      const entryLimit = data.get("limitEntries") === "on" ? Number(data.get("maxEntries")) : null;
+      if (entryLimit !== null && (!Number.isSafeInteger(entryLimit) || entryLimit < 1)) {
+        throw new Error("Choose a positive whole number of live entries.");
+      }
+      state.privacy.maxLiveEntries = entryLimit;
+      state.privacy.terminateWebsocketsOnClear = data.get("terminateWebsocketsOnClear") === "on";
+      state.privacy.retainRequestBodies = data.get("requestBodies") === "on";
+      const bodyMode = String(data.get("requestBodyLimit"));
+      const customMb = Number(data.get("customRequestBodyLimit"));
+      if (
+        bodyMode === "custom" &&
+        (!Number.isFinite(customMb) || customMb < 1 || customMb > 1000000)
+      ) {
+        throw new Error("Enter a body limit from 1 to 1,000,000 MB (1 TB).");
+      }
+      state.privacy.requestBodyLimit =
+        bodyMode === "unlimited"
+          ? null
+          : bodyMode === "custom"
+            ? Math.round(customMb * 1000000)
+            : 25000000;
+      state.privacy.customRequestBodyLimit = bodyMode === "custom";
+      state.privacy.redactSensitiveHeaders = data.get("redactHeaders") === "on";
+      state.privacy.retainResponseBodies = data.get("defaultBodies") === "on";
+      state.privacy.retainBodySamples = data.get("captureBodies") === "on";
+      state.privacy.rememberRecentArtifacts = data.get("rememberArtifacts") === "on";
+      state.privacy.includePathsInSupportBundles = data.get("supportPaths") === "on";
+      const saved = await invoke<ProductState>("save_product_state", { productState: state });
+      this.populateSettings(saved);
+      this.applyTheme(saved.preferences.theme, saved.workspace);
+      await this.refreshBufferStatus();
+      this.settingsText =
+        this.proxyLifecycle === "running" || this.proxyLifecycle === "draining"
+          ? "Settings saved. HTTPS decryption, remote access and port changes apply to the next new proxy run."
+          : "Settings saved.";
+    } catch (error: unknown) {
+      this.settingsError = "Settings save failed: " + describeError(error);
+    } finally {
+      this.settingsBusy = false;
+    }
+  }
 
-  async refreshDiagnostics():Promise<void> {await this.runSupport(async()=>{try {const report=await invoke<{applicationVersion:string;runtime:{operatingSystem:string;architecture:string;webviewVersion:string|null};events:Array<{level:string}>;privacyNotice:string}>('diagnostics_report');this.supportFacts=[{label:'Transmog version',value:report.applicationVersion},{label:'Operating system',value:report.runtime.operatingSystem},{label:'Architecture',value:report.runtime.architecture},{label:'WebView2',value:report.runtime.webviewVersion??'Unavailable'},{label:'Recent events',value:String(report.events.length)},{label:'Warnings / errors',value:String(report.events.filter(event=>event.level!=='info').length)},{label:'Privacy',value:report.privacyNotice}];this.supportDetails=JSON.stringify(report,null,2);this.supportText='Diagnostics refreshed.';}catch(error:unknown){this.supportText='Diagnostics unavailable: '+describeError(error);}});}
-  async createSupportBundle(event:Event):Promise<void> {event.preventDefault();const data=new FormData(this.supportForm);await this.runSupport(async()=>{try {const destination=await invoke<string|null>('pick_support_path');if(destination===null){this.supportText='Support bundle canceled.';return;}const result=await invoke<{destination:string;bytes:number;includedRecentPaths:boolean}>('create_support_bundle',{destination,includeRecentPaths:data.get('includePaths')==='on'});this.supportFacts=[{label:'Saved to',value:result.destination},{label:'Size',value:result.bytes.toLocaleString()+' bytes'},{label:'Recent paths',value:result.includedRecentPaths?'Included by your saved privacy preference':'Excluded'}];this.supportDetails=JSON.stringify(result,null,2);this.supportText='Support bundle saved.';}catch(error:unknown){this.supportText='Support bundle failed: '+describeError(error);await this.showError('Support bundle could not be saved',describeError(error));}});}
-  async prepareUpdate():Promise<void> {await this.runSupport(async()=>{try {await invoke<AppStatus>('prepare_update_handoff');this.acceptAppStatus(await invoke<AppStatus>('app_status'));this.supportText='Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.';}catch(error:unknown){this.supportText='Update handoff failed: '+describeError(error);}});}
+  async refreshDiagnostics(): Promise<void> {
+    await this.runSupport(async () => {
+      try {
+        const report = await invoke<{
+          applicationVersion: string;
+          runtime: { operatingSystem: string; architecture: string; webviewVersion: string | null };
+          events: Array<{ level: string }>;
+          privacyNotice: string;
+        }>("diagnostics_report");
+        this.supportFacts = [
+          { label: "Transmog version", value: report.applicationVersion },
+          { label: "Operating system", value: report.runtime.operatingSystem },
+          { label: "Architecture", value: report.runtime.architecture },
+          { label: "WebView2", value: report.runtime.webviewVersion ?? "Unavailable" },
+          { label: "Recent events", value: String(report.events.length) },
+          {
+            label: "Warnings / errors",
+            value: String(report.events.filter((event) => event.level !== "info").length),
+          },
+          { label: "Privacy", value: report.privacyNotice },
+        ];
+        this.supportDetails = JSON.stringify(report, null, 2);
+        this.supportText = "Diagnostics refreshed.";
+      } catch (error: unknown) {
+        this.supportText = "Diagnostics unavailable: " + describeError(error);
+      }
+    });
+  }
+  async createSupportBundle(event: Event): Promise<void> {
+    event.preventDefault();
+    const data = new FormData(this.supportForm);
+    await this.runSupport(async () => {
+      try {
+        const destination = await invoke<string | null>("pick_support_path");
+        if (destination === null) {
+          this.supportText = "Support bundle canceled.";
+          return;
+        }
+        const result = await invoke<{
+          destination: string;
+          bytes: number;
+          includedRecentPaths: boolean;
+        }>("create_support_bundle", {
+          destination,
+          includeRecentPaths: data.get("includePaths") === "on",
+        });
+        this.supportFacts = [
+          { label: "Saved to", value: result.destination },
+          { label: "Size", value: result.bytes.toLocaleString() + " bytes" },
+          {
+            label: "Recent paths",
+            value: result.includedRecentPaths
+              ? "Included by your saved privacy preference"
+              : "Excluded",
+          },
+        ];
+        this.supportDetails = JSON.stringify(result, null, 2);
+        this.supportText = "Support bundle saved.";
+      } catch (error: unknown) {
+        this.supportText = "Support bundle failed: " + describeError(error);
+        await this.showError("Support bundle could not be saved", describeError(error));
+      }
+    });
+  }
+  async prepareUpdate(): Promise<void> {
+    await this.runSupport(async () => {
+      try {
+        await invoke<AppStatus>("prepare_update_handoff");
+        this.acceptAppStatus(await invoke<AppStatus>("app_status"));
+        this.supportText =
+          "Proxy, recording, breakpoints and Windows host changes are stopped. Close Transmog before running the installer.";
+      } catch (error: unknown) {
+        this.supportText = "Update handoff failed: " + describeError(error);
+      }
+    });
+  }
 
   async refreshStatus(): Promise<string | null> {
     const revision = this.statusRevision;
     try {
-      const status = await invoke<AppStatus>('app_status');
-      if (revision === this.statusRevision) this.acceptAppStatus(status);
+      const status = await invoke<AppStatus>("app_status");
+      if (revision === this.statusRevision) {
+        this.acceptAppStatus(status);
+      }
       return null;
     } catch (error: unknown) {
       const message = `Status unavailable: ${describeError(error)}`;
@@ -455,40 +825,66 @@ export class SettingsWorkspace extends WorkspaceElement {
   }
 
   private populateSettings(state: ProductState): void {
-    this.settingsDirty=false;this.supportPathsAllowed=state.privacy.includePathsInSupportBundles;
+    this.settingsDirty = false;
+    this.supportPathsAllowed = state.privacy.includePathsInSupportBundles;
     const elements = this.settingsForm.elements;
-    this.customPortEnabled=state.preferences.proxyPort!=null;
-    (elements.namedItem('customProxyPort') as HTMLInputElement).checked=this.customPortEnabled;
-    (elements.namedItem('proxyPort') as HTMLInputElement).value=String(state.preferences.proxyPort??8080);
-    (elements.namedItem('allowRemoteClients') as HTMLInputElement).checked=state.preferences.allowRemoteClients??false;
+    this.customPortEnabled = state.preferences.proxyPort != null;
+    (elements.namedItem("customProxyPort") as HTMLInputElement).checked = this.customPortEnabled;
+    (elements.namedItem("proxyPort") as HTMLInputElement).value = String(
+      state.preferences.proxyPort ?? 8080,
+    );
+    (elements.namedItem("allowRemoteClients") as HTMLInputElement).checked =
+      state.preferences.allowRemoteClients ?? false;
     this.decryptHttps = state.preferences.decryptHttps ?? true;
-    if(this.certificateBootstrap)this.updateCertificateState(this.certificateBootstrap);
-    (elements.namedItem('decryptHttps') as HTMLInputElement).checked = this.decryptHttps;
-    (elements.namedItem('isolateOutbound') as HTMLInputElement).checked = state.preferences.isolateOutboundConnections ?? true;
-    this.bufferMode=state.privacy.bufferLimit.mode;
-    this.entryLimitEnabled=state.privacy.maxLiveEntries!==null;
-    (elements.namedItem('limitEntries') as HTMLInputElement).checked=this.entryLimitEnabled;
-    (elements.namedItem('maxEntries') as HTMLInputElement).value=String(state.privacy.maxLiveEntries??10000);
-    (elements.namedItem('bufferMode') as HTMLSelectElement).value=this.bufferMode;
-    (elements.namedItem('bufferSize') as HTMLInputElement).value=String(state.privacy.bufferLimit.mode==='custom'?state.privacy.bufferLimit.bytes/1073741824:1);
-    (elements.namedItem('theme') as HTMLSelectElement).value = state.preferences.theme;
-    (elements.namedItem('terminateWebsocketsOnClear') as HTMLInputElement).checked = state.privacy.terminateWebsocketsOnClear;
-    (elements.namedItem('requestBodies') as HTMLInputElement).checked = state.privacy.retainRequestBodies;
-    this.requestBodyMode=state.privacy.requestBodyLimit===null?'unlimited':state.privacy.customRequestBodyLimit||state.privacy.requestBodyLimit!==25000000?'custom':'25000000';
-    (elements.namedItem('requestBodyLimit') as HTMLSelectElement).value=this.requestBodyMode;
-    (elements.namedItem('customRequestBodyLimit') as HTMLInputElement).value=String((state.privacy.requestBodyLimit??25000000)/1000000);
-    (elements.namedItem('redactHeaders') as HTMLInputElement).checked = state.privacy.redactSensitiveHeaders;
-    (elements.namedItem('defaultBodies') as HTMLInputElement).checked = state.privacy.retainResponseBodies;
-    (elements.namedItem('captureBodies') as HTMLInputElement).checked = state.privacy.retainBodySamples;
-    (elements.namedItem('rememberArtifacts') as HTMLInputElement).checked = state.privacy.rememberRecentArtifacts;
-    (elements.namedItem('supportPaths') as HTMLInputElement).checked = state.privacy.includePathsInSupportBundles;
+    if (this.certificateBootstrap) {
+      this.updateCertificateState(this.certificateBootstrap);
+    }
+    (elements.namedItem("decryptHttps") as HTMLInputElement).checked = this.decryptHttps;
+    (elements.namedItem("isolateOutbound") as HTMLInputElement).checked =
+      state.preferences.isolateOutboundConnections ?? true;
+    this.bufferMode = state.privacy.bufferLimit.mode;
+    this.entryLimitEnabled = state.privacy.maxLiveEntries !== null;
+    (elements.namedItem("limitEntries") as HTMLInputElement).checked = this.entryLimitEnabled;
+    (elements.namedItem("maxEntries") as HTMLInputElement).value = String(
+      state.privacy.maxLiveEntries ?? 10000,
+    );
+    (elements.namedItem("bufferMode") as HTMLSelectElement).value = this.bufferMode;
+    (elements.namedItem("bufferSize") as HTMLInputElement).value = String(
+      state.privacy.bufferLimit.mode === "custom"
+        ? state.privacy.bufferLimit.bytes / 1073741824
+        : 1,
+    );
+    (elements.namedItem("theme") as HTMLSelectElement).value = state.preferences.theme;
+    (elements.namedItem("terminateWebsocketsOnClear") as HTMLInputElement).checked =
+      state.privacy.terminateWebsocketsOnClear;
+    (elements.namedItem("requestBodies") as HTMLInputElement).checked =
+      state.privacy.retainRequestBodies;
+    this.requestBodyMode =
+      state.privacy.requestBodyLimit === null
+        ? "unlimited"
+        : state.privacy.customRequestBodyLimit || state.privacy.requestBodyLimit !== 25000000
+          ? "custom"
+          : "25000000";
+    (elements.namedItem("requestBodyLimit") as HTMLSelectElement).value = this.requestBodyMode;
+    (elements.namedItem("customRequestBodyLimit") as HTMLInputElement).value = String(
+      (state.privacy.requestBodyLimit ?? 25000000) / 1000000,
+    );
+    (elements.namedItem("redactHeaders") as HTMLInputElement).checked =
+      state.privacy.redactSensitiveHeaders;
+    (elements.namedItem("defaultBodies") as HTMLInputElement).checked =
+      state.privacy.retainResponseBodies;
+    (elements.namedItem("captureBodies") as HTMLInputElement).checked =
+      state.privacy.retainBodySamples;
+    (elements.namedItem("rememberArtifacts") as HTMLInputElement).checked =
+      state.privacy.rememberRecentArtifacts;
+    (elements.namedItem("supportPaths") as HTMLInputElement).checked =
+      state.privacy.includePathsInSupportBundles;
   }
 
-  private setProxyOutput(message: string, kind: 'progress' | 'success' | 'error'): void {
+  private setProxyOutput(message: string, kind: "progress" | "success" | "error"): void {
     this.proxyText = message;
     this.proxyKind = kind;
   }
-
 }
 
-SettingsWorkspace.define('settings-workspace');
+SettingsWorkspace.define("settings-workspace");

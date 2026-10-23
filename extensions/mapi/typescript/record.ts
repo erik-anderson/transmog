@@ -1,4 +1,4 @@
-import { BinaryReader } from "./reader.js";
+import type { BinaryReader } from "./reader.js";
 import type { IntegerType } from "./reader.js";
 import type { FieldValue, ParsedField } from "./model.js";
 

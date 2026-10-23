@@ -1,24 +1,30 @@
-import './stream-inspector/stream-inspector.js';
-import './inspection-copy-menu/inspection-copy-menu.js';
-import './converter-host/converter-host.js';
-import './certificate-inspector/certificate-inspector.js';
-import '@microsoft/webui-framework/lazy-hydration.js';
-import './proxy-toggle/proxy-toggle.js';
-import './pane-divider/pane-divider.js';
-import './trace-drop-target/trace-drop-target.js';
-import './app-shell/app-shell.js';
-import './traffic-workspace/traffic-workspace.js';
-import './message-inspector/message-inspector.js';
-import './auth-inspector/auth-inspector.js';
-import './extension-visualizer/extension-visualizer.js';
-import './hex-viewer/hex-viewer.js';
-import './certificate-viewer/certificate-viewer.js';
-import './settings-workspace/settings-workspace.js';
-import { invoke } from '@tauri-apps/api/core';
-import { describeError } from './utilities.js';
+import "./stream-inspector/stream-inspector.js";
+import "./inspection-copy-menu/inspection-copy-menu.js";
+import "./converter-host/converter-host.js";
+import "./certificate-inspector/certificate-inspector.js";
+import "@microsoft/webui-framework/lazy-hydration.js";
+import "./proxy-toggle/proxy-toggle.js";
+import "./pane-divider/pane-divider.js";
+import "./trace-drop-target/trace-drop-target.js";
+import "./app-shell/app-shell.js";
+import "./traffic-workspace/traffic-workspace.js";
+import "./message-inspector/message-inspector.js";
+import "./auth-inspector/auth-inspector.js";
+import "./extension-visualizer/extension-visualizer.js";
+import "./hex-viewer/hex-viewer.js";
+import "./certificate-viewer/certificate-viewer.js";
+import "./settings-workspace/settings-workspace.js";
+import { invoke } from "@tauri-apps/api/core";
+import { describeError } from "./utilities.js";
 
 const report = (code: string, value: unknown): void => {
-  void invoke<void>('record_frontend_diagnostic', { code, message: describeError(value) }).catch(() => undefined);
+  void invoke<void>("record_frontend_diagnostic", { code, message: describeError(value) }).catch(
+    () => undefined,
+  );
 };
-window.addEventListener('error', (event) => report('unhandled-error', event.error ?? event.message));
-window.addEventListener('unhandledrejection', (event) => report('unhandled-rejection', event.reason));
+window.addEventListener("error", (event) =>
+  report("unhandled-error", event.error ?? event.message),
+);
+window.addEventListener("unhandledrejection", (event) =>
+  report("unhandled-rejection", event.reason),
+);

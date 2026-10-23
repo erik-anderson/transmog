@@ -1,3 +1,8 @@
+# Prettier checks TypeScript with LF endings on every platform.
+*.ts text eol=lf
+*.tsx text eol=lf
+*.mts text eol=lf
+*.cts text eol=lf
 fuzz/*.sh text eol=lf
 fuzz/corpus/** binary
 fuzz/seeds/** -text

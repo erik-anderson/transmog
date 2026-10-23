@@ -3,8 +3,9 @@ import { header, latin1, notice } from "./shared.js";
 
 export function visualize(input: VisualizationInput): DocumentStep {
   const message = input[input.direction];
-  if (!message)
+  if (!message) {
     return notice("MAPI/HTTP headers", "unavailable", "This message has no retained headers.");
+  }
   const operation = header(input.request, "x-requesttype");
   const limited = message.headers.some((field) => (field.value?.length ?? 0) > 16_384);
   return {

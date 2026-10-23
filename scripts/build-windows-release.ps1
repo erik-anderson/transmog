@@ -69,6 +69,7 @@ try {
         $policyArguments = @('--snapshot',$snapshot,'--output',(Join-Path $payloadRoot 'evidence/policy'))
         if (-not $PolicySnapshot) { $policyArguments += '--prepare' }
         Invoke-TransmogPython 'release-policy.py' $policyArguments
+        & npm run check
         & npm --prefix apps/desktop/ui run check
     }
     Invoke-BuildPhase 'Browser' { & npm --prefix apps/desktop/ui run test:workspaces }

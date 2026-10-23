@@ -23,6 +23,7 @@
 !crates/app/tests/fixtures/certificates/root.pem
 /session.tmcap
 /transmog-support.zip
+/node_modules/
 e2e/playwright/node_modules/
 e2e/playwright/test-results/
 e2e/playwright/playwright-report/

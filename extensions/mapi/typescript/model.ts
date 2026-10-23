@@ -106,8 +106,9 @@ export class ParseBudget {
   private inputBytes = 0;
   private encodedBytes = 0;
   private expandedBytes = 0;
-  private readonly categories = {reads: 0, fields: 0, loops: 0, decodedBytes: 0};
-  private readonly scopes: {name: string; range: ByteRange; start: number; children: number}[] = [];
+  private readonly categories = { reads: 0, fields: 0, loops: 0, decodedBytes: 0 };
+  private readonly scopes: { name: string; range: ByteRange; start: number; children: number }[] =
+    [];
   private largest: ParserBudgetReport["largest"];
 
   constructor(
@@ -124,11 +125,7 @@ export class ParseBudget {
     this.step(range, 1, "fields");
   }
 
-  step(
-    range: ByteRange,
-    units = 1,
-    category: keyof ParseBudget["categories"] = "reads",
-  ): void {
+  step(range: ByteRange, units = 1, category: keyof ParseBudget["categories"] = "reads"): void {
     if (!Number.isSafeInteger(units) || units < 1) {
       throw new RangeError("Invalid parser work count");
     }
@@ -161,9 +158,12 @@ export class ParseBudget {
       return parse();
     } finally {
       this.scopes.pop();
-      const total = this.work - scope.start, own = total - scope.children;
+      const total = this.work - scope.start,
+        own = total - scope.children;
       const parent = this.scopes.at(-1);
-      if (parent) parent.children += total;
+      if (parent) {
+        parent.children += total;
+      }
       if (!this.largest || own > this.largest.work) {
         this.largest = { name, range, work: own };
       }

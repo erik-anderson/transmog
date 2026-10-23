@@ -43,8 +43,7 @@ interface ReadTask {
 }
 
 type Pending =
-  | { token: string; kind: "bytes" | "decoded"; task: ReadTask }
-  | { token: string; kind: "context" };
+  { token: string; kind: "bytes" | "decoded"; task: ReadTask } | { token: string; kind: "context" };
 
 interface VisualizerState {
   readonly selected: string;
@@ -66,7 +65,9 @@ let active: VisualizerState | undefined;
 let epoch = 0;
 
 function state(): VisualizerState {
-  if (!active) throw new Error("No active MAPI visualizer");
+  if (!active) {
+    throw new Error("No active MAPI visualizer");
+  }
   return active;
 }
 
@@ -79,8 +80,9 @@ function title(): string {
 }
 
 function warning(code: string, message: string): void {
-  if (!state().diagnostics.some((item) => item.code === code))
+  if (!state().diagnostics.some((item) => item.code === code)) {
     state().diagnostics.push({ code, message });
+  }
 }
 
 function problem(source: RetainedBody, code: string, message: string): void {
@@ -102,7 +104,9 @@ function diagnostics(): Diagnostic[] {
         (source?.bytes && source.reference.availability !== "complete"
           ? { code: "body-incomplete", message: "Some retained body data is incomplete." }
           : undefined);
-      if (issue && !result.some((item) => item.code === issue.code)) result.push(issue);
+      if (issue && !result.some((item) => item.code === issue.code)) {
+        result.push(issue);
+      }
     }
   }
   return result;
@@ -112,7 +116,9 @@ function upsert(input: VisualizationInput): void {
   const current = state();
   let record = current.records.get(input.exchangeId);
   if (!record) {
-    if (current.records.size >= maximumContext + 1) return;
+    if (current.records.size >= maximumContext + 1) {
+      return;
+    }
     record = { input, sides: { request: null, response: null } };
     current.records.set(input.exchangeId, record);
   }
@@ -132,9 +138,12 @@ function upsert(input: VisualizationInput): void {
       old.original.length === body.length &&
       old.original.availability === body.availability &&
       metadata(record.input) === metadata(input)
-    )
+    ) {
       continue;
-    if (old) current.bytes -= old.offset;
+    }
+    if (old) {
+      current.bytes -= old.offset;
+    }
     record.sides[side] = body
       ? {
           original: body,
@@ -148,8 +157,9 @@ function upsert(input: VisualizationInput): void {
       : null;
   }
   record.input = input;
-  if (input.exchangeId === current.selected)
+  if (input.exchangeId === current.selected) {
     current.operation = header(input.request, "x-requesttype");
+  }
 }
 
 function orderedRecords(): RetainedExchange[] {
@@ -172,10 +182,13 @@ function nextTask(): ReadTask | undefined {
         record === selected &&
         side !== current.direction &&
         (current.operation !== "Execute" || current.direction === "request")
-      )
+      ) {
         continue;
+      }
       const source = record.sides[side];
-      if (source && !source.skipped && !source.bytes) return { record, side, source };
+      if (source && !source.skipped && !source.bytes) {
+        return { record, side, source };
+      }
     }
   }
   return undefined;
@@ -200,20 +213,23 @@ function takeRead(token: string, kind: "bytes" | "decoded"): ReadTask {
 
 function pump(): VisualizationStep {
   const current = state();
-  if (!current.operation)
+  if (!current.operation) {
     return showNotice("unavailable", "The request operation is unavailable or redacted.");
+  }
   if (current.direction === "response") {
     const code = header(current.records.get(current.selected)!.input.response, "x-responsecode");
-    if (!code)
+    if (!code) {
       return showNotice(
         "unavailable",
         "The MAPI response status is unavailable or redacted. Inspect the retained headers and raw body.",
       );
-    if (code.trim() !== "0")
+    }
+    if (code.trim() !== "0") {
       return showNotice(
         "partial",
         `The server returned X-ResponseCode ${code.slice(0, 64)}. Inspect the retained headers and raw body for details.`,
       );
+    }
   }
   for (let task = nextTask(); task; task = nextTask()) {
     const { record, side, source } = task;
@@ -313,16 +329,18 @@ function render(): VisualizationStep {
   const current = state();
   const selected = current.records.get(current.selected)!;
   const body = selected.sides[current.direction];
-  if (!body?.bytes)
+  if (!body?.bytes) {
     return showNotice(
       body?.issue?.code === "input-limit" ? "limited" : "unavailable",
       body?.issue?.message ?? "The selected body is unavailable within the visualizer input limit.",
     );
-  if (body.bytes.length === 0)
+  }
+  if (body.bytes.length === 0) {
     return showNotice(
       body.reference.availability === "complete" ? "partial" : "unavailable",
       "The selected body has no retained bytes yet. Live updates can follow it while this visualizer remains active.",
     );
+  }
   const ordered = orderedRecords();
   const messages: Exchange[] = ordered.map((record, index) => {
     const message: {
@@ -336,8 +354,9 @@ function render(): VisualizationStep {
     };
     for (const side of directions) {
       const source = record.sides[side];
-      if (source?.bytes)
+      if (source?.bytes) {
         message[side] = { sourceId: source.reference.sourceId, bytes: source.bytes };
+      }
     }
     return message;
   });
@@ -345,8 +364,9 @@ function render(): VisualizationStep {
   try {
     decoded = decode(messages, ordered.indexOf(selected) + 1, current.direction);
   } catch (error) {
-    if (error instanceof ParseError && error.kind === "limit")
+    if (error instanceof ParseError && error.kind === "limit") {
       return showNotice("limited", error.message);
+    }
     if (current.operation === "Execute" && !current.historyRequested) {
       current.historyRequested = true;
       return pump();
@@ -361,11 +381,14 @@ function render(): VisualizationStep {
     return pump();
   }
   const origins: [string, number][] = [];
-  for (const record of ordered)
+  for (const record of ordered) {
     for (const side of directions) {
       const source = record.sides[side];
-      if (source?.bytes) origins.push([source.reference.sourceId, source.bytes.length]);
+      if (source?.bytes) {
+        origins.push([source.reference.sourceId, source.bytes.length]);
+      }
     }
+  }
   current.presentation = present(
     decoded,
     origins,
@@ -406,16 +429,22 @@ export function resume(token: string, pages: readonly BytePage[]): Visualization
     page.sourceId !== source.reference.sourceId ||
     page.offset !== String(source.offset) ||
     page.bytes.length === 0
-  )
+  ) {
     throw new Error("Incomplete MAPI byte page");
-  if (page.bytes.length > Math.min(65_536, Number(source.reference.length) - source.offset))
+  }
+  if (page.bytes.length > Math.min(65_536, Number(source.reference.length) - source.offset)) {
     throw new Error("Invalid MAPI byte page");
+  }
   source.chunks.push(Array.from(page.bytes));
   source.offset += page.bytes.length;
   state().bytes += page.bytes.length;
   if (source.offset === Number(source.reference.length)) {
     source.bytes = [];
-    for (const chunk of source.chunks) for (const byte of chunk) source.bytes.push(byte);
+    for (const chunk of source.chunks) {
+      for (const byte of chunk) {
+        source.bytes.push(byte);
+      }
+    }
     source.chunks = [];
   }
   return pump();
@@ -424,28 +453,32 @@ export function resume(token: string, pages: readonly BytePage[]): Visualization
 export function resumeDecoded(token: string, result: DecodeContinuation): VisualizationStep {
   const { source } = takeRead(token, "decoded");
   source.decoded = true;
-  if (result.kind === "ready") source.reference = result.decoded.body;
-  else
+  if (result.kind === "ready") {
+    source.reference = result.decoded.body;
+  } else {
     problem(
       source,
       `http-decoding-${result.reason}`,
       `HTTP content decoding is ${result.reason}. Encoded bytes were not interpreted as MAPI.`,
     );
+  }
   return pump();
 }
 
 export function resumeContext(token: string, page: ContextPage): VisualizationStep {
   const current = state();
-  if (current.pending?.kind !== "context" || current.pending.token !== token)
+  if (current.pending?.kind !== "context" || current.pending.token !== token) {
     throw new Error("Expired MAPI continuation");
+  }
   current.pending = null;
   const anchor = order(current.records.get(current.selected)!.input);
   for (const exchange of page.exchanges) {
     if (
       order(exchange.input) < anchor &&
       header(exchange.input.request, "x-requesttype") === "Execute"
-    )
+    ) {
       upsert(exchange.input);
+    }
   }
   current.cursor = page.nextCursor ?? null;
   current.historyDone =
@@ -464,7 +497,9 @@ export function resumeContext(token: string, page: ContextPage): VisualizationSt
 }
 
 export function expand(token: string): VisualizationStep {
-  if (!state().presentation) throw new Error("No MAPI structure");
+  if (!state().presentation) {
+    throw new Error("No MAPI structure");
+  }
   return state().presentation!.expand(token);
 }
 
@@ -474,19 +509,21 @@ export function onTraffic(
 ): VisualizationStep {
   const current = state();
   let changed = info.missedHints !== "0";
-  if (changed)
+  if (changed) {
     warning(
       "missed-live-data",
       "Some live updates were coalesced or missed. Open a fresh visualizer to rebuild retained context.",
     );
+  }
   const anchor = order(current.records.get(current.selected)!.input);
   for (const event of batch) {
     if (
       order(event.input) > anchor ||
       (header(event.input.request, "x-requesttype") !== "Execute" &&
         event.exchangeId !== current.selected)
-    )
+    ) {
       continue;
+    }
     if (!current.records.has(event.exchangeId) && current.records.size >= maximumContext + 1) {
       if (!current.diagnostics.some((item) => item.code === "live-context-limit")) {
         warning(
@@ -499,7 +536,9 @@ export function onTraffic(
     }
     const revision = BigInt(event.revision);
     const previous = current.revisions.get(event.exchangeId);
-    if (previous !== undefined && revision <= previous) continue;
+    if (previous !== undefined && revision <= previous) {
+      continue;
+    }
     current.revisions.set(event.exchangeId, revision);
     upsert(event.input);
     changed = true;

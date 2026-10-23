@@ -9,6 +9,10 @@ dot-source `scripts/dev-env.ps1` in PowerShell. `TRANSMOG_PYTHON` can select an
 explicit interpreter for wrappers. Do not rely on a Windows Store alias that
 cannot execute Python.
 
+For TypeScript changes, install the root tooling with `npm ci --ignore-scripts`
+and run `npm run check` from the repository root. `npm run lint:fix` applies
+ESLint fixes and Prettier formatting across the maintained TypeScript sources.
+
 Before dispatching a signed release, complete the
 [local release qualification](docs/windows-release.md#local-release-qualification-before-dispatch)
 on the candidate commit. All required checks must pass, including formatting,

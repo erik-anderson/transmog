@@ -3,7 +3,9 @@ import type { DocumentStep, Message, ParseStatus } from "./host.js";
 /** Header-only entries import this small module without importing the decoder. */
 export function header(message: Message | null | undefined, name: string): string | null {
   const fields = (message?.headers ?? []).filter((field) => field.name.toLowerCase() === name);
-  if (fields.length === 0 || fields.some((field) => field.redacted || !field.value)) return null;
+  if (fields.length === 0 || fields.some((field) => field.redacted || !field.value)) {
+    return null;
+  }
   return fields.map((field) => latin1(field.value!)).join(", ");
 }
 

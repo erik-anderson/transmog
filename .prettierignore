@@ -1,0 +1,14 @@
+# Keep this aligned with the generated/vendor exclusions in eslint.config.mjs.
+**/node_modules/
+**/dist/
+**/target/
+**/bin/
+**/obj/
+.tools/
+.local/
+artifacts/
+third-party/
+third_party/
+apps/desktop/gen/
+e2e/playwright/test-results/
+e2e/playwright/playwright-report/

@@ -170,7 +170,9 @@ export function readAuxiliaryBody(record: RecordReader, type: number, version: n
   for (const [field, type] of Object.entries(layout)) {
     if (typeof type === "string") {
       const value = record.scalar(field, type);
-      if (typeof value === "number") numbers.set(field, value);
+      if (typeof value === "number") {
+        numbers.set(field, value);
+      }
     } else if ("enum" in type) {
       readEnum(record, field, type.enum);
     } else {
@@ -178,7 +180,9 @@ export function readAuxiliaryBody(record: RecordReader, type: number, version: n
     }
   }
   const readAt = (name: string, offset: number, length?: number): void => {
-    if (offset === 0) return;
+    if (offset === 0) {
+      return;
+    }
     const absolute = record.field.range.offset + offset;
     if (absolute < record.reader.offset) {
       throw new ParseError(
@@ -188,8 +192,11 @@ export function readAuxiliaryBody(record: RecordReader, type: number, version: n
       );
     }
     const child = new RecordReader(record.reader.at(absolute), name);
-    if (length === undefined) child.string(name, true);
-    else child.bytes(name, length);
+    if (length === undefined) {
+      child.string(name, true);
+    } else {
+      child.bytes(name, length);
+    }
     record.add(child.finish());
   };
   for (const field of strings[name!] ?? []) {

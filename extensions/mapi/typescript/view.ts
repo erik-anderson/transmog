@@ -19,12 +19,16 @@ function serializedSize(value: unknown): number {
   let bytes = 0;
   for (let index = 0; index < text.length; index++) {
     const code = text.charCodeAt(index);
-    if (code < 0x80) bytes++;
-    else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) {
+    if (code < 0x80) {
+      bytes++;
+    } else if (code < 0x800) {
+      bytes += 2;
+    } else if (code >= 0xd800 && code <= 0xdbff) {
       bytes += 4;
       index++;
-    } else bytes += 3;
+    } else {
+      bytes += 3;
+    }
   }
   return bytes;
 }
@@ -43,14 +47,17 @@ function budgetDiagnostic(report: ParserBudgetReport): Diagnostic {
   const largest = report.largest;
   return {
     code: "mapi-parser-budget",
-    message: `${report.phase}: ${report.inputBytes} input bytes; ` +
+    message:
+      `${report.phase}: ${report.inputBytes} input bytes; ` +
       `${report.work}/${report.maximumWork} work units; ${report.fields}/${report.maximumFields} fields; ` +
       `peak depth ${report.peakDepth}/${report.maximumDepth}. ` +
       `Work: ${report.reads} reader checks, ${report.loops} loop iterations, ` +
       `${report.decodedBytes} LZ77 copy work units. ` +
       `Completed RPC transforms: ${report.encodedBytes} encoded bytes to ${report.expandedBytes} decoded bytes.` +
-      (largest ? ` Largest operation: ${largest.name} (${largest.work} own work units; ` +
-        `source ${largest.range.sourceId}, offset ${largest.range.offset}).` : ""),
+      (largest
+        ? ` Largest operation: ${largest.name} (${largest.work} own work units; ` +
+          `source ${largest.range.sourceId}, offset ${largest.range.offset}).`
+        : ""),
   };
 }
 
@@ -113,7 +120,9 @@ export function present(
 
     const boundedText = (value: string, maximum: number): string => {
       const room = Math.max(0, Math.min(maximum, Math.floor((textBudget - textBytes) / 3)));
-      if (value.length > room) limited = true;
+      if (value.length > room) {
+        limited = true;
+      }
       const text = value.slice(0, room);
       textBytes += text.length * 3;
       return text;
@@ -131,14 +140,18 @@ export function present(
           });
         }
       }
-      if (field.name === "RopBufferTooSmall response") partial = true;
+      if (field.name === "RopBufferTooSmall response") {
+        partial = true;
+      }
       field.children.forEach(inspect);
     };
     inspect(decoded.root);
 
     const value = (field: ParsedField): HostValue | undefined => {
       const parsed = field.value;
-      if (!parsed) return field.children.length ? { kind: "object" } : undefined;
+      if (!parsed) {
+        return field.children.length ? { kind: "object" } : undefined;
+      }
       switch (parsed.kind) {
         case "string":
           return { kind: "string", value: boundedText(parsed.value, 16_384) };
@@ -186,13 +199,27 @@ export function present(
         },
       };
       const parsed = value(field);
-      if (parsed) result.value = parsed;
-      if (field.encoding) result.format.charset = field.encoding;
-      if (field.units) result.format.units = field.units;
-      if (field.type === "f32" || field.type === "f64") result.format.encoding = "IEEE 754";
-      if (field.value?.kind === "enum") result.format.radix = 16;
-      if (field.value?.kind === "bytes") result.presentation = "hex";
-      if (field.value?.kind === "string") result.presentation = "text";
+      if (parsed) {
+        result.value = parsed;
+      }
+      if (field.encoding) {
+        result.format.charset = field.encoding;
+      }
+      if (field.units) {
+        result.format.units = field.units;
+      }
+      if (field.type === "f32" || field.type === "f64") {
+        result.format.encoding = "IEEE 754";
+      }
+      if (field.value?.kind === "enum") {
+        result.format.radix = 16;
+      }
+      if (field.value?.kind === "bytes") {
+        result.presentation = "hex";
+      }
+      if (field.value?.kind === "string") {
+        result.presentation = "text";
+      }
       const length = known.get(field.range.sourceId);
       if (
         length !== undefined &&
@@ -215,7 +242,9 @@ export function present(
             format: { units: "100 ns since 1601-01-01 UTC", byteOrder: "little-endian" },
             spans: result.spans ?? [],
           });
-        } else limited = true;
+        } else {
+          limited = true;
+        }
       }
       if (field.children.length !== 0) {
         if (depth >= 31) {
@@ -237,18 +266,20 @@ export function present(
         if (
           field.children.length > 1 &&
           field.children.every((child) => child.type === "PropertyRow")
-        )
+        ) {
           result.presentation = "table";
+        }
       }
       return result;
     };
     const roots = [node(decoded.root, 0)];
-    if (limited)
+    if (limited) {
       issues.push({
         code: "display-limit",
         message:
           "Some display values or decoded byte sources exceed the visualizer limit. Original retained bytes remain available in Hex.",
       });
+    }
     const status = limited
       ? "limited"
       : malformed && !incompleteInput
@@ -279,7 +310,9 @@ export function present(
       // Keep original source spans when transformed bytes and their parent
       // metadata alone cannot fit. The limited result still exposes Raw/Hex.
       sources.length = 0;
-      for (const source of decoded.derivedSources) known.delete(source.id);
+      for (const source of decoded.derivedSources) {
+        known.delete(source.id);
+      }
       return document(nodeBudget, textBudget, true);
     }
     return { step, tokens };
@@ -293,7 +326,9 @@ export function present(
     },
     expand(token: string): DocumentStep {
       const field = current.tokens.get(token);
-      if (!field) throw new Error("Expired MAPI expansion");
+      if (!field) {
+        throw new Error("Expired MAPI expansion");
+      }
       expanded.add(identities.get(field)!);
       current = document();
       return current.step;

@@ -7,6 +7,7 @@ from repo_tools import ROOT, command, development_environment, main_guard
 def main():
     argparse.ArgumentParser(description=__doc__).parse_args()
     env = development_environment()
+    command(["npm", "run", "check"], env=env)
     command([sys.executable, ROOT / "scripts/release-policy.py", "--prepare",
              "--snapshot", ROOT / "artifacts/release-policy/local-snapshot",
              "--output", ROOT / "artifacts/release-policy/local-check"], env=env)

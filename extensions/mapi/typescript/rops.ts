@@ -7,8 +7,8 @@ import {
   readObjectId,
   repeat,
 } from "./common.js";
-import { Conversation, numberField } from "./conversation.js";
-import type { RopRequest } from "./conversation.js";
+import { numberField } from "./conversation.js";
+import type { RopRequest, Conversation } from "./conversation.js";
 import { enums } from "./constants.js";
 import { ParseError } from "./model.js";
 import { readNotification } from "./notifications.js";

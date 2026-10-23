@@ -149,9 +149,10 @@ jobs:
           ./scripts/setup-release-validation-tools.ps1
       - name: Check committed release versions before building
         run: python ./scripts/set-release-version.py --check
-      - name: Install locked UI and browser-test dependencies
+      - name: Install locked lint, UI and browser-test dependencies
         run: |
           ./scripts/setup-windows-webview-ci.ps1
+          npm ci --ignore-scripts
           npm ci --prefix apps/desktop/ui
           npm ci --prefix e2e/playwright
           Push-Location e2e/playwright

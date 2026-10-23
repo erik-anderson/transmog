@@ -63,13 +63,21 @@ export class DecodeSession {
 
   prepare(includeSelectedRequest: boolean): void {
     for (const exchange of [...this.exchanges].sort((left, right) => left.id - right.id)) {
-      if (exchange.id >= this.selectedId) break;
+      if (exchange.id >= this.selectedId) {
+        break;
+      }
       this.conversation.beginExchange();
-      if (!this.replay(exchange, "request", this.historyBudget)) break;
-      if (!this.replay(exchange, "response", this.historyBudget)) break;
+      if (!this.replay(exchange, "request", this.historyBudget)) {
+        break;
+      }
+      if (!this.replay(exchange, "response", this.historyBudget)) {
+        break;
+      }
     }
     this.conversation.beginExchange();
-    if (includeSelectedRequest) this.replay(this.selected, "request", this.requestBudget);
+    if (includeSelectedRequest) {
+      this.replay(this.selected, "request", this.requestBudget);
+    }
   }
 
   record(name: string, offset = 0, count?: number): RecordReader {
@@ -98,7 +106,9 @@ export class DecodeSession {
         );
       }
     } catch (error) {
-      if (!(error instanceof ParseError)) throw error;
+      if (!(error instanceof ParseError)) {
+        throw error;
+      }
       record.add({
         name: error.message,
         type: "Parse issue",
@@ -122,14 +132,18 @@ export class DecodeSession {
 
   private replay(exchange: Exchange, side: Direction, budget: ParseBudget): boolean {
     const body = exchange[side];
-    if (!body?.bytes.length) return true;
+    if (!body?.bytes.length) {
+      return true;
+    }
     budget.input(body.bytes.length);
     const reader = new BinaryReader(body.bytes, body.sourceId, budget);
     try {
       const record = new RecordReader(reader, `${exchange.requestType} ${side}`);
       this.readMessage(record, exchange.requestType, side);
     } catch (error) {
-      if (!(error instanceof ParseError)) throw error;
+      if (!(error instanceof ParseError)) {
+        throw error;
+      }
       if (error.kind === "limit") {
         this.preparationIssues.push(error);
         return false;

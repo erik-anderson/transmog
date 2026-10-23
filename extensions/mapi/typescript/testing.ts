@@ -24,7 +24,9 @@ function propertyFixture(record: RecordReader, type: string, arguments_: readonl
     record.boolean("Value", "i16");
   } else {
     const dataType = enums.PropertyDataType!.values[type];
-    if (dataType === undefined) throw new Error(`Unknown fixture type ${type}`);
+    if (dataType === undefined) {
+      throw new Error(`Unknown fixture type ${type}`);
+    }
     if (type === "PtypBinary") {
       readPropertyValue(
         record,
@@ -53,11 +55,14 @@ export function decodeFixture(
     options.count || undefined,
   );
   return session.capture(record, () => {
-    if (type === "ExtendedBuffer")
+    if (type === "ExtendedBuffer") {
       session.rpc.read(record, record.reader.remaining, true, direction);
-    else if (type?.startsWith("Rop"))
+    } else if (type?.startsWith("Rop")) {
       readRop(record, direction, [], session.conversation, session.payloadReaders);
-    else if (type) propertyFixture(record, type, options.arguments ?? []);
-    else session.readMessage(record, session.selected.requestType, direction);
+    } else if (type) {
+      propertyFixture(record, type, options.arguments ?? []);
+    } else {
+      session.readMessage(record, session.selected.requestType, direction);
+    }
   });
 }

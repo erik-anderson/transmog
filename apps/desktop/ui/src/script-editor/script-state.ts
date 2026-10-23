@@ -1,24 +1,65 @@
-import type { ScriptDraft, ScriptRevision, ScriptStatus } from '../models.js';
+import type { ScriptDraft, ScriptRevision, ScriptStatus } from "../models.js";
 
 /** Revision numbers do not describe whether the source or its authority changed. */
 export function scriptFingerprint(draft: ScriptDraft): string {
-  return JSON.stringify({ source:draft.source, handlers:[...new Set(draft.handlers)].sort(),
-    prefilter:draft.prefilter, capabilities:{...draft.capabilities,writeHeaders:[...new Set(draft.capabilities.writeHeaders.map(name=>name.toLowerCase()))].sort()},
-    limits:draft.limits, priority:draft.priority });
+  return JSON.stringify({
+    source: draft.source,
+    handlers: [...new Set(draft.handlers)].sort(),
+    prefilter: draft.prefilter,
+    capabilities: {
+      ...draft.capabilities,
+      writeHeaders: [
+        ...new Set(draft.capabilities.writeHeaders.map((name) => name.toLowerCase())),
+      ].sort(),
+    },
+    limits: draft.limits,
+    priority: draft.priority,
+  });
 }
 
 export function activeDraft(revision: ScriptRevision): ScriptDraft {
-  const {id,revision:version,handlers,prefilter,capabilities,limits,priority}=revision.manifest;
-  return {id,revision:version,source:revision.source,handlers,prefilter,capabilities,limits,priority};
+  const {
+    id,
+    revision: version,
+    handlers,
+    prefilter,
+    capabilities,
+    limits,
+    priority,
+  } = revision.manifest;
+  return {
+    id,
+    revision: version,
+    source: revision.source,
+    handlers,
+    prefilter,
+    capabilities,
+    limits,
+    priority,
+  };
 }
 
 /** Older clients saved and activated separately; prefer active on equal revisions. */
-export function editingDraft(status: ScriptStatus, id = 'user-script'): ScriptDraft | undefined {
-  const saved=status.saved.filter(item=>item.id===id).sort((a,b)=>b.revision-a.revision)[0];
-  const active=status.active.find(item=>item.manifest.id===id);
-  return active && (!saved || active.manifest.revision>=saved.revision) ? activeDraft(active) : saved;
+export function editingDraft(status: ScriptStatus, id = "user-script"): ScriptDraft | undefined {
+  const saved = status.saved
+    .filter((item) => item.id === id)
+    .sort((a, b) => b.revision - a.revision)[0];
+  const active = status.active.find((item) => item.manifest.id === id);
+  return active && (!saved || active.manifest.revision >= saved.revision)
+    ? activeDraft(active)
+    : saved;
 }
 
 export function scriptSettings(draft: ScriptDraft): string {
-  return JSON.stringify({handlers:draft.handlers,prefilter:draft.prefilter,capabilities:draft.capabilities,limits:draft.limits,priority:draft.priority},null,2);
+  return JSON.stringify(
+    {
+      handlers: draft.handlers,
+      prefilter: draft.prefilter,
+      capabilities: draft.capabilities,
+      limits: draft.limits,
+      priority: draft.priority,
+    },
+    null,
+    2,
+  );
 }

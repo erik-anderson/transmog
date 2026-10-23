@@ -142,7 +142,9 @@ export class RpcDecoder {
       try {
         bytes = decompressLz77(new BinaryReader(bytes, parent.sourceId, reader.budget), actualSize);
       } catch (error) {
-        if (!(error instanceof ParseError)) throw error;
+        if (!(error instanceof ParseError)) {
+          throw error;
+        }
         // The temporary reader starts at zero and is not a granted source.
         // Failed decompression can only reference its enclosing encoded bytes.
         throw new ParseError(

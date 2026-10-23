@@ -1,246 +1,697 @@
-import {WebUIElement,attr,observable} from '@microsoft/webui-framework';
-import type {TrafficTimelineRow,TraceMetadata} from '../models.js';
-import {milliseconds} from '../timings.js';
-import {clampWindow,intervalEnd,overlaps,requestAddress,timelineTime,timelineRange} from './timeline-model.js';
-import initialState from '../initial-state.json';
-import {markerGroups,type TraceMarker,type MarkerGroup} from '../markers.js';
-import {isTextEditing} from '../list-selection.js';
-import {stateText} from '../table-model.js';
+import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
+import type { TrafficTimelineRow, TraceMetadata } from "../models.js";
+import { milliseconds } from "../timings.js";
+import {
+  clampWindow,
+  intervalEnd,
+  overlaps,
+  requestAddress,
+  timelineTime,
+  timelineRange,
+} from "./timeline-model.js";
+import initialState from "../initial-state.json";
+import { markerGroups, type TraceMarker, type MarkerGroup } from "../markers.js";
+import { isTextEditing } from "../list-selection.js";
+import { stateText } from "../table-model.js";
 
-type DisplayRow=TrafficTimelineRow&{label:string;stateLabel:string;source:string;host:string;duration:string;description:string;x:number;width:number;responseX:number;responseWidth:number;plottable:boolean;hasResponse:boolean};
+type DisplayRow = TrafficTimelineRow & {
+  label: string;
+  stateLabel: string;
+  source: string;
+  host: string;
+  duration: string;
+  description: string;
+  x: number;
+  width: number;
+  responseX: number;
+  responseWidth: number;
+  plottable: boolean;
+  hasResponse: boolean;
+};
 
 export class TrafficTimeline extends WebUIElement {
-  @observable entries:TrafficTimelineRow[]=[];
-  @observable chosen:string[]=[];
-  @observable sources:TraceMetadata[]=[];
-  @observable compact=true;
-  @attr current='';
-  @attr markerCurrent='';
-  @observable markers:TraceMarker[]=[];
-  @observable overviewMarkers:MarkerGroup[]=[];
-  @observable rangeMarkers:MarkerGroup[]=[];
-  @observable markerChoices:TraceMarker[]=[];
-  markerPicker!:HTMLDialogElement;
-  private markerReturn:HTMLElement|null=null;
-  @observable timelineDisplay={...initialState.timelineDisplay,rows:[] as DisplayRow[]};
-  viewport!:HTMLElement;
-  overview!:SVGSVGElement;
-  rowMetric!:HTMLElement;
-  helpButton!:HTMLButtonElement;
-  helpPanel!:HTMLElement;
-  private helpPinned=false;
-  private helpClosing=false;
-  private helpCloseTimer:number|undefined;
-  private observer:ResizeObserver|null=null;
-  private scoped:TrafficTimelineRow[]=[];
-  private matching:TrafficTimelineRow[]=[];
-  private from=0;
-  private to=1;
-  private minimum=0;
-  private maximum=1;
-  private adjusted=false;
-  private markerNavigation=false;
-  private order='start';
-  private rowHeight=32;
-  private rebuildPending=false;
-  private drag:{pointer:number;target:Element;part:string;x:number;from:number;to:number;adjusted:boolean;scale:number;minimum:number;maximum:number}|null=null;
+  @observable entries: TrafficTimelineRow[] = [];
+  @observable chosen: string[] = [];
+  @observable sources: TraceMetadata[] = [];
+  @observable compact = true;
+  @attr current = "";
+  @attr markerCurrent = "";
+  @observable markers: TraceMarker[] = [];
+  @observable overviewMarkers: MarkerGroup[] = [];
+  @observable rangeMarkers: MarkerGroup[] = [];
+  @observable markerChoices: TraceMarker[] = [];
+  markerPicker!: HTMLDialogElement;
+  private markerReturn: HTMLElement | null = null;
+  @observable timelineDisplay = { ...initialState.timelineDisplay, rows: [] as DisplayRow[] };
+  viewport!: HTMLElement;
+  overview!: SVGSVGElement;
+  rowMetric!: HTMLElement;
+  helpButton!: HTMLButtonElement;
+  helpPanel!: HTMLElement;
+  private helpPinned = false;
+  private helpClosing = false;
+  private helpCloseTimer: number | undefined;
+  private observer: ResizeObserver | null = null;
+  private scoped: TrafficTimelineRow[] = [];
+  private matching: TrafficTimelineRow[] = [];
+  private from = 0;
+  private to = 1;
+  private minimum = 0;
+  private maximum = 1;
+  private adjusted = false;
+  private markerNavigation = false;
+  private order = "start";
+  private rowHeight = 32;
+  private rebuildPending = false;
+  private drag: {
+    pointer: number;
+    target: Element;
+    part: string;
+    x: number;
+    from: number;
+    to: number;
+    adjusted: boolean;
+    scale: number;
+    minimum: number;
+    maximum: number;
+  } | null = null;
 
-  protected hydratedCallback():void {this.observer=new ResizeObserver(()=>this.renderRows());this.observer.observe(this.viewport);this.observer.observe(this.rowMetric);this.rebuild();}
-  entriesChanged():void {if(this.drag)this.rebuildPending=true;else this.rebuild();}
-  chosenChanged():void {this.markerNavigation=false;this.rebuild();}
-  markerCurrentChanged():void{this.renderRange();}
-  sourcesChanged():void {this.renderRows();}
-  markersChanged():void {this.rebuild();}
-  compactChanged():void {
-    if(this.rowMetric){this.$flushUpdates();this.renderRows();}
+  protected hydratedCallback(): void {
+    this.observer = new ResizeObserver(() => this.renderRows());
+    this.observer.observe(this.viewport);
+    this.observer.observe(this.rowMetric);
+    this.rebuild();
   }
-  private rebuild():void {
-    // Deliberate scope changes cancel a gesture; live snapshots wait for its end.
-    if(this.drag)this.cancelDrag();
-    const selected=new Set(this.chosen);
-    this.scoped=this.entries.filter(row=>this.markerNavigation||!selected.size||selected.has(row.id));
-    let first=Infinity,last=-Infinity;
-    for(const row of this.scoped)if(row.startMillis!=null){first=Math.min(first,row.startMillis);last=Math.max(last,intervalEnd(row)??row.startMillis);}
-    for(const marker of this.markers){first=Math.min(first,marker.unixMillis);last=Math.max(last,marker.unixMillis);}
-    if(!Number.isFinite(first)){first=0;last=1;}
-    this.minimum=this.adjusted?Math.min(first,this.from):first;
-    this.maximum=Math.max(this.minimum+1,this.adjusted?Math.max(last,this.to):last);
-    if(!this.adjusted){this.from=this.minimum;this.to=this.maximum;}
+  entriesChanged(): void {
+    if (this.drag) {
+      this.rebuildPending = true;
+    } else {
+      this.rebuild();
+    }
+  }
+  chosenChanged(): void {
+    this.markerNavigation = false;
+    this.rebuild();
+  }
+  markerCurrentChanged(): void {
     this.renderRange();
   }
-  resetRange():void {this.markerNavigation=false;this.adjusted=false;this.rebuild();}
-  changeOrder(event:Event):void {this.order=(event.currentTarget as HTMLSelectElement).value;this.renderRange();}
-  private renderRange():void {
-    this.matching=this.scoped.filter(row=>overlaps(row,this.from,this.to)).sort((a,b)=>this.order==='duration'?
-      (b.durationMicros??-1)-(a.durationMicros??-1)||(a.startMillis??Infinity)-(b.startMillis??Infinity):
-      (a.startMillis??Infinity)-(b.startMillis??Infinity));
-    const extent=this.maximum-this.minimum,counts=new Int32Array(201);
-    for(const row of this.scoped){const end=intervalEnd(row);if(row.startMillis==null||end==null)continue;
-      const start=Math.max(0,Math.min(199,Math.floor((row.startMillis-this.minimum)/extent*200)));
-      const finish=Math.max(start,Math.min(199,Math.floor((end-this.minimum)/extent*200)));
-      counts[start]!++;counts[finish+1]!--;
-    }
-    const bins:number[]=[];let count=0,peak=1;
-    for(let i=0;i<200;i++){count+=counts[i]!;bins.push(count);peak=Math.max(peak,count);}
-    const unavailable=this.scoped.filter(row=>row.startMillis==null||row.durationMicros==null).length;
-    const clocks=new Set(this.scoped.map(row=>row.traceId??'live'));
-    const axis=this.markerNavigation?{fromLabel:clockTime(this.from),toLabel:clockTime(this.to),range:clockTime(this.from)+' – '+clockTime(this.to)}:timelineRange((this.from-this.minimum)*1000,(this.to-this.minimum)*1000);
-    this.timelineDisplay={...this.timelineDisplay,
-      densityPath:bins.map((value,index)=>value?`M${index*5} 40V${40-value/peak*36}H${index*5+5}V40Z`:'').join(''),
-      windowX:(this.from-this.minimum)/extent*1000,windowWidth:(this.to-this.from)/extent*1000,
-      startHandle:(this.from-this.minimum)/extent*1000-4,endHandle:(this.to-this.minimum)/extent*1000-4,
-      fromValue:(this.from-this.minimum)/extent*1000,toValue:(this.to-this.minimum)/extent*1000,
-      ...axis,
-      origin:this.minimum>0?timestamp(this.markerNavigation?this.from:this.minimum):'Start time unavailable',
-      summary:(this.matching.length===this.scoped.length?`${this.scoped.length.toLocaleString()}${this.chosen.length&&!this.markerNavigation?' selected':''} request${this.scoped.length===1?'':'s'}`:`${this.matching.length.toLocaleString()} of ${this.scoped.length.toLocaleString()}${this.chosen.length&&!this.markerNavigation?' selected':''} requests in range`)+(unavailable?` · ${unavailable.toLocaleString()} without timing`:''),
-      clocks:clocks.size>1?'Recorded source clocks may differ; alignment does not establish cross-source chronology.':this.markerNavigation?'Recorded source time at the selected marker.':'Times are relative to the first recorded start in this scope.',
-      selected:this.chosen.length>0&&!this.markerNavigation,empty:this.matching.length===0,mixedClocks:clocks.size>1};
-    const pixels=this.overview?.clientWidth??600;
-    this.overviewMarkers=markerGroups(this.markers,this.minimum,this.maximum,pixels).map(g=>({...g,selected:g.markers.some(m=>m.key===this.markerCurrent)}));
-    this.rangeMarkers=markerGroups(this.markers,this.from,this.to,pixels*.6).map(g=>({...g,selected:g.markers.some(m=>m.key===this.markerCurrent)}));
+  sourcesChanged(): void {
     this.renderRows();
   }
-  closeMarkerPicker():void{this.markerPicker.close();}
-  chooseMarker(key:string,overview:boolean,event:Event):void{
-    event.stopPropagation();const group=(overview?this.overviewMarkers:this.rangeMarkers).find(g=>g.key===key);if(!group)return;
-    if(group.markers.length===1){this.$emit('timeline-marker',group.markers[0]!.key);return;}
-    this.markerReturn=event.currentTarget as HTMLElement;this.markerChoices=group.markers;this.$flushUpdates();this.markerPicker.showModal();
+  markersChanged(): void {
+    this.rebuild();
   }
-  pickMarker(key:string):void{this.markerPicker.close();this.$emit('timeline-marker',key);}
-  markerPickerClosed():void{if(this.markerReturn?.isConnected)this.markerReturn.focus({preventScroll:true});this.markerReturn=null;}
-  markerKey(key:string,overview:boolean,event:KeyboardEvent):void{
-    if(event.key==='Enter'||event.key===' '){event.preventDefault();this.chooseMarker(key,overview,event);return;}
-    if(!['ArrowLeft','ArrowRight','Home','End'].includes(event.key))return;
-    event.preventDefault();event.stopPropagation();const groups=overview?this.overviewMarkers:this.rangeMarkers,index=groups.findIndex(g=>g.key===key),next=event.key==='Home'?0:event.key==='End'?groups.length-1:Math.max(0,Math.min(groups.length-1,index+(event.key==='ArrowLeft'?-1:1)));
-    const group=groups[next];if(group)(this.getRootNode() as ShadowRoot).getElementById((overview?'marker-overview-':'marker-range-')+group.key)?.focus({preventScroll:true});
-  }
-  goToTime(time:number,id?:string,focus=false):void{
-    this.markerNavigation=true;
-    const width=Math.max(2000,Math.min(60000,this.to-this.from));this.from=time-width/2;this.to=time+width/2;this.adjusted=true;this.rebuild();
-    if(id){const index=this.matching.findIndex(row=>row.id===id);if(index>=0){this.viewport.scrollTop=index*this.rowHeight;this.renderRows();if(focus)this.reveal(id);}}
-  }
-  renderRows(scroll=this.viewport?.scrollTop??0):void {
-    // The CSS metric tracks rem-based density even when only text size changes.
-    const measured=this.rowMetric?.getClientRects().length?parseFloat(getComputedStyle(this.rowMetric).height):0;
-    const resized=measured>0&&Math.abs(measured-this.rowHeight)>.01;
-    if(resized){scroll=scroll/this.rowHeight*measured;this.rowHeight=measured;}
-    const height=this.viewport?.clientHeight??300,rowHeight=this.rowHeight;
-    const start=Math.max(0,Math.min(this.matching.length,Math.floor(scroll/rowHeight)-5)),end=Math.min(this.matching.length,start+Math.ceil(height/rowHeight)+11);
-    const extent=this.to-this.from,sourceNames=new Map(this.sources.map(source=>[source.id,source.name]));
-    const active=this.getRootNode() instanceof ShadowRoot?(this.getRootNode() as ShadowRoot).activeElement:document.activeElement;
-    if(active instanceof HTMLElement&&active.closest('.timeline-row')){
-      const index=this.matching.findIndex(row=>row.id===active.dataset.id);
-      if(index<start||index>=end)this.viewport?.focus({preventScroll:true});
+  compactChanged(): void {
+    if (this.rowMetric) {
+      this.$flushUpdates();
+      this.renderRows();
     }
-    const rows=this.matching.slice(start,end).map(row=>{
-      const finish=intervalEnd(row),plottable=finish!=null&&row.startMillis!=null;
-      const x=plottable?Math.max(0,Math.min(1000,(row.startMillis!-this.from)/extent*1000)):0;
-      const right=plottable?Math.max(0,Math.min(1000,(finish-this.from)/extent*1000)):0;
-      const response=row.startMillis!=null&&row.responseMicros!=null?row.startMillis+row.responseMicros/1000:null;
-      const responseX=response==null?right:Math.max(x,Math.min(right,(response-this.from)/extent*1000));
-      const source=row.traceId?sourceNames.get(row.traceId)??'Imported capture':'Live traffic';
-      const address=requestAddress(row.url),label=`#${row.requestNumber} ${row.method} ${address.path}`,duration=timelineTime(row.durationMicros);
-      return {...row,label,stateLabel:stateText(row.terminal),host:address.host,source,duration,x,width:Math.max(0,right-x),responseX,responseWidth:Math.max(0,right-responseX),plottable,hasResponse:response!=null,
-        description:`#${row.requestNumber} ${row.method} ${row.url} · ${milliseconds(row.durationMicros)} · ${stateText(row.terminal)} · ${source} · ${row.basis}${row.startMillis==null?' · Start time unavailable':' · '+timestamp(row.startMillis)}`};
-    });
-    this.timelineDisplay={...this.timelineDisplay,rows,top:start*rowHeight+'px',bottom:Math.max(0,this.matching.length-end)*rowHeight+'px'};
-    if(resized){this.$flushUpdates();if(this.viewport)this.viewport.scrollTop=scroll;}
   }
-  inspect(id:string):void {this.$emit('timeline-inspect',id);}
-  clearSelection():void {this.$emit('timeline-clear-selection');}
-  refresh():void {this.$emit('timeline-refresh');}
-  selectAll():void {this.$emit('timeline-select',this.matching.map(row=>row.id));}
-  showHelp():void {window.clearTimeout(this.helpCloseTimer);if(!this.helpPanel.matches(':popover-open'))this.helpPanel.showPopover();}
-  focusHelp():void {if(!this.helpClosing)this.showHelp();}
-  pinHelp():void {this.helpPinned=true;this.showHelp();}
-  scheduleHelpClose():void {
-    window.clearTimeout(this.helpCloseTimer);
-    this.helpCloseTimer=window.setTimeout(()=>{
-      const root=this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
-      if(!this.helpPinned&&!this.helpButton.matches(':hover')&&!this.helpPanel.matches(':hover')&&active!==this.helpButton&&!this.helpPanel.contains(active))this.helpPanel.hidePopover();
-    },200);
+  private rebuild(): void {
+    // Deliberate scope changes cancel a gesture; live snapshots wait for its end.
+    if (this.drag) {
+      this.cancelDrag();
+    }
+    const selected = new Set(this.chosen);
+    this.scoped = this.entries.filter(
+      (row) => this.markerNavigation || !selected.size || selected.has(row.id),
+    );
+    let first = Infinity,
+      last = -Infinity;
+    for (const row of this.scoped) {
+      if (row.startMillis != null) {
+        first = Math.min(first, row.startMillis);
+        last = Math.max(last, intervalEnd(row) ?? row.startMillis);
+      }
+    }
+    for (const marker of this.markers) {
+      first = Math.min(first, marker.unixMillis);
+      last = Math.max(last, marker.unixMillis);
+    }
+    if (!Number.isFinite(first)) {
+      first = 0;
+      last = 1;
+    }
+    this.minimum = this.adjusted ? Math.min(first, this.from) : first;
+    this.maximum = Math.max(this.minimum + 1, this.adjusted ? Math.max(last, this.to) : last);
+    if (!this.adjusted) {
+      this.from = this.minimum;
+      this.to = this.maximum;
+    }
+    this.renderRange();
   }
-  helpToggled(event:ToggleEvent):void {if(event.newState==='closed'){this.helpPinned=false;window.clearTimeout(this.helpCloseTimer);}}
-  closeHelp(restoreFocus=true):void {
-    const root=this.getRootNode(),active=root instanceof ShadowRoot?root.activeElement:document.activeElement;
-    const restore=restoreFocus&&this.helpPanel.contains(active);
-    this.helpPinned=false;window.clearTimeout(this.helpCloseTimer);this.helpClosing=true;
-    this.helpPanel.hidePopover();if(restore)this.helpButton.focus({preventScroll:true});this.helpClosing=false;
+  resetRange(): void {
+    this.markerNavigation = false;
+    this.adjusted = false;
+    this.rebuild();
   }
-  timelineKey(event:KeyboardEvent):void {
-    if(this.helpPanel.matches(':popover-open')&&event.key==='Escape'){event.preventDefault();event.stopPropagation();this.closeHelp();return;}
-    if(this.helpPanel.contains(event.target as Node)){
-      event.stopPropagation();
-      // Native Undo/Redo can reactivate a previously edited field outside help.
-      if(!isTextEditing(event)&&(event.key==='Delete'||((event.ctrlKey||event.metaKey)&&['a','z','y'].includes(event.key.toLowerCase()))))event.preventDefault();
+  changeOrder(event: Event): void {
+    this.order = (event.currentTarget as HTMLSelectElement).value;
+    this.renderRange();
+  }
+  private renderRange(): void {
+    this.matching = this.scoped
+      .filter((row) => overlaps(row, this.from, this.to))
+      .sort((a, b) =>
+        this.order === "duration"
+          ? (b.durationMicros ?? -1) - (a.durationMicros ?? -1) ||
+            (a.startMillis ?? Infinity) - (b.startMillis ?? Infinity)
+          : (a.startMillis ?? Infinity) - (b.startMillis ?? Infinity),
+      );
+    const extent = this.maximum - this.minimum,
+      counts = new Int32Array(201);
+    for (const row of this.scoped) {
+      const end = intervalEnd(row);
+      if (row.startMillis == null || end == null) {
+        continue;
+      }
+      const start = Math.max(
+        0,
+        Math.min(199, Math.floor(((row.startMillis - this.minimum) / extent) * 200)),
+      );
+      const finish = Math.max(
+        start,
+        Math.min(199, Math.floor(((end - this.minimum) / extent) * 200)),
+      );
+      counts[start]!++;
+      counts[finish + 1]!--;
+    }
+    const bins: number[] = [];
+    let count = 0,
+      peak = 1;
+    for (let i = 0; i < 200; i++) {
+      count += counts[i]!;
+      bins.push(count);
+      peak = Math.max(peak, count);
+    }
+    const unavailable = this.scoped.filter(
+      (row) => row.startMillis == null || row.durationMicros == null,
+    ).length;
+    const clocks = new Set(this.scoped.map((row) => row.traceId ?? "live"));
+    const axis = this.markerNavigation
+      ? {
+          fromLabel: clockTime(this.from),
+          toLabel: clockTime(this.to),
+          range: clockTime(this.from) + " – " + clockTime(this.to),
+        }
+      : timelineRange((this.from - this.minimum) * 1000, (this.to - this.minimum) * 1000);
+    this.timelineDisplay = {
+      ...this.timelineDisplay,
+      densityPath: bins
+        .map((value, index) =>
+          value ? `M${index * 5} 40V${40 - (value / peak) * 36}H${index * 5 + 5}V40Z` : "",
+        )
+        .join(""),
+      windowX: ((this.from - this.minimum) / extent) * 1000,
+      windowWidth: ((this.to - this.from) / extent) * 1000,
+      startHandle: ((this.from - this.minimum) / extent) * 1000 - 4,
+      endHandle: ((this.to - this.minimum) / extent) * 1000 - 4,
+      fromValue: ((this.from - this.minimum) / extent) * 1000,
+      toValue: ((this.to - this.minimum) / extent) * 1000,
+      ...axis,
+      origin:
+        this.minimum > 0
+          ? timestamp(this.markerNavigation ? this.from : this.minimum)
+          : "Start time unavailable",
+      summary:
+        (this.matching.length === this.scoped.length
+          ? `${this.scoped.length.toLocaleString()}${this.chosen.length && !this.markerNavigation ? " selected" : ""} request${this.scoped.length === 1 ? "" : "s"}`
+          : `${this.matching.length.toLocaleString()} of ${this.scoped.length.toLocaleString()}${this.chosen.length && !this.markerNavigation ? " selected" : ""} requests in range`) +
+        (unavailable ? ` · ${unavailable.toLocaleString()} without timing` : ""),
+      clocks:
+        clocks.size > 1
+          ? "Recorded source clocks may differ; alignment does not establish cross-source chronology."
+          : this.markerNavigation
+            ? "Recorded source time at the selected marker."
+            : "Times are relative to the first recorded start in this scope.",
+      selected: this.chosen.length > 0 && !this.markerNavigation,
+      empty: this.matching.length === 0,
+      mixedClocks: clocks.size > 1,
+    };
+    const pixels = this.overview?.clientWidth ?? 600;
+    this.overviewMarkers = markerGroups(this.markers, this.minimum, this.maximum, pixels).map(
+      (g) => ({ ...g, selected: g.markers.some((m) => m.key === this.markerCurrent) }),
+    );
+    this.rangeMarkers = markerGroups(this.markers, this.from, this.to, pixels * 0.6).map((g) => ({
+      ...g,
+      selected: g.markers.some((m) => m.key === this.markerCurrent),
+    }));
+    this.renderRows();
+  }
+  closeMarkerPicker(): void {
+    this.markerPicker.close();
+  }
+  chooseMarker(key: string, overview: boolean, event: Event): void {
+    event.stopPropagation();
+    const group = (overview ? this.overviewMarkers : this.rangeMarkers).find((g) => g.key === key);
+    if (!group) {
       return;
     }
-    if(event.defaultPrevented||isTextEditing(event))return;
-    if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='a'){
-      event.preventDefault();event.stopPropagation();this.selectAll();
-    }else if(event.key==='Escape'){
-      event.preventDefault();event.stopPropagation();
-      if(this.drag)this.cancelDrag();else this.clearSelection();
+    if (group.markers.length === 1) {
+      this.$emit("timeline-marker", group.markers[0]!.key);
+      return;
+    }
+    this.markerReturn = event.currentTarget as HTMLElement;
+    this.markerChoices = group.markers;
+    this.$flushUpdates();
+    this.markerPicker.showModal();
+  }
+  pickMarker(key: string): void {
+    this.markerPicker.close();
+    this.$emit("timeline-marker", key);
+  }
+  markerPickerClosed(): void {
+    if (this.markerReturn?.isConnected) {
+      this.markerReturn.focus({ preventScroll: true });
+    }
+    this.markerReturn = null;
+  }
+  markerKey(key: string, overview: boolean, event: KeyboardEvent): void {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      this.chooseMarker(key, overview, event);
+      return;
+    }
+    if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const groups = overview ? this.overviewMarkers : this.rangeMarkers,
+      index = groups.findIndex((g) => g.key === key),
+      next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? groups.length - 1
+            : Math.max(
+                0,
+                Math.min(groups.length - 1, index + (event.key === "ArrowLeft" ? -1 : 1)),
+              );
+    const group = groups[next];
+    if (group) {
+      (this.getRootNode() as ShadowRoot)
+        .getElementById((overview ? "marker-overview-" : "marker-range-") + group.key)
+        ?.focus({ preventScroll: true });
     }
   }
-  reveal(id:string):void {
+  goToTime(time: number, id?: string, focus = false): void {
+    this.markerNavigation = true;
+    const width = Math.max(2000, Math.min(60000, this.to - this.from));
+    this.from = time - width / 2;
+    this.to = time + width / 2;
+    this.adjusted = true;
+    this.rebuild();
+    if (id) {
+      const index = this.matching.findIndex((row) => row.id === id);
+      if (index >= 0) {
+        this.viewport.scrollTop = index * this.rowHeight;
+        this.renderRows();
+        if (focus) {
+          this.reveal(id);
+        }
+      }
+    }
+  }
+  renderRows(scroll = this.viewport?.scrollTop ?? 0): void {
+    // The CSS metric tracks rem-based density even when only text size changes.
+    const measured = this.rowMetric?.getClientRects().length
+      ? parseFloat(getComputedStyle(this.rowMetric).height)
+      : 0;
+    const resized = measured > 0 && Math.abs(measured - this.rowHeight) > 0.01;
+    if (resized) {
+      scroll = (scroll / this.rowHeight) * measured;
+      this.rowHeight = measured;
+    }
+    const height = this.viewport?.clientHeight ?? 300,
+      rowHeight = this.rowHeight;
+    const start = Math.max(0, Math.min(this.matching.length, Math.floor(scroll / rowHeight) - 5)),
+      end = Math.min(this.matching.length, start + Math.ceil(height / rowHeight) + 11);
+    const extent = this.to - this.from,
+      sourceNames = new Map(this.sources.map((source) => [source.id, source.name]));
+    const active =
+      this.getRootNode() instanceof ShadowRoot
+        ? (this.getRootNode() as ShadowRoot).activeElement
+        : document.activeElement;
+    if (active instanceof HTMLElement && active.closest(".timeline-row")) {
+      const index = this.matching.findIndex((row) => row.id === active.dataset.id);
+      if (index < start || index >= end) {
+        this.viewport?.focus({ preventScroll: true });
+      }
+    }
+    const rows = this.matching.slice(start, end).map((row) => {
+      const finish = intervalEnd(row),
+        plottable = finish != null && row.startMillis != null;
+      const x = plottable
+        ? Math.max(0, Math.min(1000, ((row.startMillis! - this.from) / extent) * 1000))
+        : 0;
+      const right = plottable
+        ? Math.max(0, Math.min(1000, ((finish - this.from) / extent) * 1000))
+        : 0;
+      const response =
+        row.startMillis != null && row.responseMicros != null
+          ? row.startMillis + row.responseMicros / 1000
+          : null;
+      const responseX =
+        response == null
+          ? right
+          : Math.max(x, Math.min(right, ((response - this.from) / extent) * 1000));
+      const source = row.traceId
+        ? (sourceNames.get(row.traceId) ?? "Imported capture")
+        : "Live traffic";
+      const address = requestAddress(row.url),
+        label = `#${row.requestNumber} ${row.method} ${address.path}`,
+        duration = timelineTime(row.durationMicros);
+      return {
+        ...row,
+        label,
+        stateLabel: stateText(row.terminal),
+        host: address.host,
+        source,
+        duration,
+        x,
+        width: Math.max(0, right - x),
+        responseX,
+        responseWidth: Math.max(0, right - responseX),
+        plottable,
+        hasResponse: response != null,
+        description: `#${row.requestNumber} ${row.method} ${row.url} · ${milliseconds(row.durationMicros)} · ${stateText(row.terminal)} · ${source} · ${row.basis}${row.startMillis == null ? " · Start time unavailable" : " · " + timestamp(row.startMillis)}`,
+      };
+    });
+    this.timelineDisplay = {
+      ...this.timelineDisplay,
+      rows,
+      top: start * rowHeight + "px",
+      bottom: Math.max(0, this.matching.length - end) * rowHeight + "px",
+    };
+    if (resized) {
+      this.$flushUpdates();
+      if (this.viewport) {
+        this.viewport.scrollTop = scroll;
+      }
+    }
+  }
+  inspect(id: string): void {
+    this.$emit("timeline-inspect", id);
+  }
+  clearSelection(): void {
+    this.$emit("timeline-clear-selection");
+  }
+  refresh(): void {
+    this.$emit("timeline-refresh");
+  }
+  selectAll(): void {
+    this.$emit(
+      "timeline-select",
+      this.matching.map((row) => row.id),
+    );
+  }
+  showHelp(): void {
+    window.clearTimeout(this.helpCloseTimer);
+    if (!this.helpPanel.matches(":popover-open")) {
+      this.helpPanel.showPopover();
+    }
+  }
+  focusHelp(): void {
+    if (!this.helpClosing) {
+      this.showHelp();
+    }
+  }
+  pinHelp(): void {
+    this.helpPinned = true;
+    this.showHelp();
+  }
+  scheduleHelpClose(): void {
+    window.clearTimeout(this.helpCloseTimer);
+    this.helpCloseTimer = window.setTimeout(() => {
+      const root = this.getRootNode(),
+        active = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
+      if (
+        !this.helpPinned &&
+        !this.helpButton.matches(":hover") &&
+        !this.helpPanel.matches(":hover") &&
+        active !== this.helpButton &&
+        !this.helpPanel.contains(active)
+      ) {
+        this.helpPanel.hidePopover();
+      }
+    }, 200);
+  }
+  helpToggled(event: ToggleEvent): void {
+    if (event.newState === "closed") {
+      this.helpPinned = false;
+      window.clearTimeout(this.helpCloseTimer);
+    }
+  }
+  closeHelp(restoreFocus = true): void {
+    const root = this.getRootNode(),
+      active = root instanceof ShadowRoot ? root.activeElement : document.activeElement;
+    const restore = restoreFocus && this.helpPanel.contains(active);
+    this.helpPinned = false;
+    window.clearTimeout(this.helpCloseTimer);
+    this.helpClosing = true;
+    this.helpPanel.hidePopover();
+    if (restore) {
+      this.helpButton.focus({ preventScroll: true });
+    }
+    this.helpClosing = false;
+  }
+  timelineKey(event: KeyboardEvent): void {
+    if (this.helpPanel.matches(":popover-open") && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeHelp();
+      return;
+    }
+    if (this.helpPanel.contains(event.target as Node)) {
+      event.stopPropagation();
+      // Native Undo/Redo can reactivate a previously edited field outside help.
+      if (
+        !isTextEditing(event) &&
+        (event.key === "Delete" ||
+          ((event.ctrlKey || event.metaKey) && ["a", "z", "y"].includes(event.key.toLowerCase())))
+      ) {
+        event.preventDefault();
+      }
+      return;
+    }
+    if (event.defaultPrevented || isTextEditing(event)) {
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "a") {
+      event.preventDefault();
+      event.stopPropagation();
+      this.selectAll();
+    } else if (event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      if (this.drag) {
+        this.cancelDrag();
+      } else {
+        this.clearSelection();
+      }
+    }
+  }
+  reveal(id: string): void {
     this.renderRows();
-    const index=this.matching.findIndex(row=>row.id===id);
-    if(index<0){this.viewport.focus({preventScroll:true});return;}
-    const top=index*this.rowHeight;
-    if(top<this.viewport.scrollTop)this.viewport.scrollTop=top;
-    else if(top+this.rowHeight>this.viewport.scrollTop+this.viewport.clientHeight)this.viewport.scrollTop=top+this.rowHeight-this.viewport.clientHeight;
-    this.renderRows();this.$flushUpdates();
-    (this.getRootNode() as ShadowRoot).getElementById('timeline-'+id)?.focus({preventScroll:true});
-  }
-  rowKey(id:string,event:KeyboardEvent):void {
-    if(!['ArrowDown','ArrowUp','Home','End'].includes(event.key))return;
-    event.preventDefault();event.stopPropagation();
-    const index=this.matching.findIndex(row=>row.id===id),next=event.key==='Home'?0:event.key==='End'?this.matching.length-1:Math.max(0,Math.min(this.matching.length-1,index+(event.key==='ArrowDown'?1:-1)));
-    const row=this.matching[next];if(!row)return;
-    this.reveal(row.id);this.inspect(row.id);
-  }
-  startDrag(event:PointerEvent):void {
-    if(event.button!==0||!this.scoped.some(row=>intervalEnd(row)!=null)&&!this.markers.length)return;
-    event.preventDefault();event.stopPropagation();
-    const target=event.target as Element,part=target.getAttribute('data-part')??'new';
-    (target instanceof SVGElement&&target.hasAttribute('tabindex')?target:this.overview).focus({preventScroll:true});
-    const bounds=this.overview.getBoundingClientRect(),scale=(this.maximum-this.minimum)/Math.max(1,bounds.width);
-    this.drag={pointer:event.pointerId,target:this.overview,part,x:event.clientX,from:this.from,to:this.to,adjusted:this.adjusted,scale,minimum:this.minimum,maximum:this.maximum};
-    this.overview.setPointerCapture(event.pointerId);
-    if(part==='new'){const minimumWidth=Math.min(1,Math.max(.001,(this.maximum-this.minimum)/1000));this.from=Math.min(this.maximum-minimumWidth,this.minimum+Math.max(0,Math.min(bounds.width,event.clientX-bounds.left))*scale);this.to=this.from+minimumWidth;this.adjusted=true;this.renderRange();}
-  }
-  moveDrag(event:PointerEvent):void {
-    const drag=this.drag;if(!drag||drag.pointer!==event.pointerId)return;
-    const delta=(event.clientX-drag.x)*drag.scale;
-    if(drag.part==='new'){
-      const bounds=this.overview.getBoundingClientRect(),anchor=drag.minimum+Math.max(0,Math.min(bounds.width,drag.x-bounds.left))*drag.scale;
-      const point=Math.max(drag.minimum,Math.min(drag.maximum,anchor+delta));
-      const minimumWidth=Math.min(1,Math.max(.001,(drag.maximum-drag.minimum)/1000));
-      this.from=Math.min(drag.maximum-minimumWidth,Math.min(anchor,point));this.to=Math.min(drag.maximum,Math.max(this.from+minimumWidth,Math.max(anchor,point)));
-    }else [this.from,this.to]=clampWindow(drag.from,drag.to,drag.minimum,drag.maximum,drag.part,delta);
-    this.adjusted=true;this.renderRange();
-  }
-  finishDrag(event:PointerEvent):void {if(this.drag?.pointer===event.pointerId)this.releaseDrag();}
-  cancelDrag():void {const drag=this.drag;if(!drag)return;this.from=drag.from;this.to=drag.to;this.adjusted=drag.adjusted;this.releaseDrag();this.renderRange();}
-  private releaseDrag():void {const drag=this.drag;this.drag=null;if(drag?.target.hasPointerCapture(drag.pointer))drag.target.releasePointerCapture(drag.pointer);if(this.rebuildPending){this.rebuildPending=false;this.rebuild();}}
-  rangeKey(part:string,event:KeyboardEvent):void {
-    if(event.key==='Escape'&&this.drag){event.preventDefault();event.stopPropagation();this.cancelDrag();return;}
-    if(!['ArrowLeft','ArrowRight','Home','End','+','-','0'].includes(event.key))return;
-    event.preventDefault();event.stopPropagation();
-    if(event.key==='0'){this.resetRange();return;}
-    const extent=this.maximum-this.minimum;
-    if(event.key==='+'||event.key==='-'){
-      const width=Math.min(extent,Math.max(Math.min(1,extent),(this.to-this.from)*(event.key==='+'?.8:1.25))),center=(this.from+this.to)/2;
-      this.from=Math.max(this.minimum,Math.min(this.maximum-width,center-width/2));this.to=this.from+width;
-    }else {
-      const delta=event.key==='Home'?-extent:event.key==='End'?extent:extent*(event.shiftKey?.1:.01)*(event.key==='ArrowLeft'?-1:1);
-      [this.from,this.to]=clampWindow(this.from,this.to,this.minimum,this.maximum,part,delta);
+    const index = this.matching.findIndex((row) => row.id === id);
+    if (index < 0) {
+      this.viewport.focus({ preventScroll: true });
+      return;
     }
-    this.adjusted=true;this.renderRange();
+    const top = index * this.rowHeight;
+    if (top < this.viewport.scrollTop) {
+      this.viewport.scrollTop = top;
+    } else if (top + this.rowHeight > this.viewport.scrollTop + this.viewport.clientHeight) {
+      this.viewport.scrollTop = top + this.rowHeight - this.viewport.clientHeight;
+    }
+    this.renderRows();
+    this.$flushUpdates();
+    (this.getRootNode() as ShadowRoot)
+      .getElementById("timeline-" + id)
+      ?.focus({ preventScroll: true });
   }
-  disconnectedCallback():void {window.clearTimeout(this.helpCloseTimer);this.releaseDrag();this.observer?.disconnect();super.disconnectedCallback();}
+  rowKey(id: string, event: KeyboardEvent): void {
+    if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const index = this.matching.findIndex((row) => row.id === id),
+      next =
+        event.key === "Home"
+          ? 0
+          : event.key === "End"
+            ? this.matching.length - 1
+            : Math.max(
+                0,
+                Math.min(this.matching.length - 1, index + (event.key === "ArrowDown" ? 1 : -1)),
+              );
+    const row = this.matching[next];
+    if (!row) {
+      return;
+    }
+    this.reveal(row.id);
+    this.inspect(row.id);
+  }
+  startDrag(event: PointerEvent): void {
+    if (
+      event.button !== 0 ||
+      (!this.scoped.some((row) => intervalEnd(row) != null) && !this.markers.length)
+    ) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const target = event.target as Element,
+      part = target.getAttribute("data-part") ?? "new";
+    (target instanceof SVGElement && target.hasAttribute("tabindex")
+      ? target
+      : this.overview
+    ).focus({ preventScroll: true });
+    const bounds = this.overview.getBoundingClientRect(),
+      scale = (this.maximum - this.minimum) / Math.max(1, bounds.width);
+    this.drag = {
+      pointer: event.pointerId,
+      target: this.overview,
+      part,
+      x: event.clientX,
+      from: this.from,
+      to: this.to,
+      adjusted: this.adjusted,
+      scale,
+      minimum: this.minimum,
+      maximum: this.maximum,
+    };
+    this.overview.setPointerCapture(event.pointerId);
+    if (part === "new") {
+      const minimumWidth = Math.min(1, Math.max(0.001, (this.maximum - this.minimum) / 1000));
+      this.from = Math.min(
+        this.maximum - minimumWidth,
+        this.minimum + Math.max(0, Math.min(bounds.width, event.clientX - bounds.left)) * scale,
+      );
+      this.to = this.from + minimumWidth;
+      this.adjusted = true;
+      this.renderRange();
+    }
+  }
+  moveDrag(event: PointerEvent): void {
+    const drag = this.drag;
+    if (!drag || drag.pointer !== event.pointerId) {
+      return;
+    }
+    const delta = (event.clientX - drag.x) * drag.scale;
+    if (drag.part === "new") {
+      const bounds = this.overview.getBoundingClientRect(),
+        anchor =
+          drag.minimum + Math.max(0, Math.min(bounds.width, drag.x - bounds.left)) * drag.scale;
+      const point = Math.max(drag.minimum, Math.min(drag.maximum, anchor + delta));
+      const minimumWidth = Math.min(1, Math.max(0.001, (drag.maximum - drag.minimum) / 1000));
+      this.from = Math.min(drag.maximum - minimumWidth, Math.min(anchor, point));
+      this.to = Math.min(drag.maximum, Math.max(this.from + minimumWidth, Math.max(anchor, point)));
+    } else {
+      [this.from, this.to] = clampWindow(
+        drag.from,
+        drag.to,
+        drag.minimum,
+        drag.maximum,
+        drag.part,
+        delta,
+      );
+    }
+    this.adjusted = true;
+    this.renderRange();
+  }
+  finishDrag(event: PointerEvent): void {
+    if (this.drag?.pointer === event.pointerId) {
+      this.releaseDrag();
+    }
+  }
+  cancelDrag(): void {
+    const drag = this.drag;
+    if (!drag) {
+      return;
+    }
+    this.from = drag.from;
+    this.to = drag.to;
+    this.adjusted = drag.adjusted;
+    this.releaseDrag();
+    this.renderRange();
+  }
+  private releaseDrag(): void {
+    const drag = this.drag;
+    this.drag = null;
+    if (drag?.target.hasPointerCapture(drag.pointer)) {
+      drag.target.releasePointerCapture(drag.pointer);
+    }
+    if (this.rebuildPending) {
+      this.rebuildPending = false;
+      this.rebuild();
+    }
+  }
+  rangeKey(part: string, event: KeyboardEvent): void {
+    if (event.key === "Escape" && this.drag) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.cancelDrag();
+      return;
+    }
+    if (!["ArrowLeft", "ArrowRight", "Home", "End", "+", "-", "0"].includes(event.key)) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    if (event.key === "0") {
+      this.resetRange();
+      return;
+    }
+    const extent = this.maximum - this.minimum;
+    if (event.key === "+" || event.key === "-") {
+      const width = Math.min(
+          extent,
+          Math.max(Math.min(1, extent), (this.to - this.from) * (event.key === "+" ? 0.8 : 1.25)),
+        ),
+        center = (this.from + this.to) / 2;
+      this.from = Math.max(this.minimum, Math.min(this.maximum - width, center - width / 2));
+      this.to = this.from + width;
+    } else {
+      const delta =
+        event.key === "Home"
+          ? -extent
+          : event.key === "End"
+            ? extent
+            : extent * (event.shiftKey ? 0.1 : 0.01) * (event.key === "ArrowLeft" ? -1 : 1);
+      [this.from, this.to] = clampWindow(
+        this.from,
+        this.to,
+        this.minimum,
+        this.maximum,
+        part,
+        delta,
+      );
+    }
+    this.adjusted = true;
+    this.renderRange();
+  }
+  disconnectedCallback(): void {
+    window.clearTimeout(this.helpCloseTimer);
+    this.releaseDrag();
+    this.observer?.disconnect();
+    super.disconnectedCallback();
+  }
 }
-function clockTime(value:number):string{return new Date(value).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit',second:'2-digit',fractionalSecondDigits:3,timeZoneName:'short'});}
-function timestamp(value:number):string {const date=new Date(value);return Number.isFinite(date.getTime())?date.toISOString():'Outside supported calendar range';}
-TrafficTimeline.define('traffic-timeline');
+function clockTime(value: number): string {
+  return new Date(value).toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    fractionalSecondDigits: 3,
+    timeZoneName: "short",
+  });
+}
+function timestamp(value: number): string {
+  const date = new Date(value);
+  return Number.isFinite(date.getTime()) ? date.toISOString() : "Outside supported calendar range";
+}
+TrafficTimeline.define("traffic-timeline");

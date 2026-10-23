@@ -97,6 +97,7 @@ python ./scripts/set-release-version.py --check
 cargo fmt --all -- --check
 python ./scripts/release-policy.py --prepare --snapshot artifacts/release-policy/local-snapshot --output artifacts/release-policy/local-check
 cargo fetch --locked
+npm ci --ignore-scripts
 npm ci --prefix apps/desktop/ui
 npm ci --prefix e2e/playwright
 Push-Location e2e/playwright
@@ -112,6 +113,7 @@ browser and Windows acceptance checks:
 
 ```powershell
 ./scripts/test-release-safety.ps1
+npm run check
 npm --prefix apps/desktop/ui run check
 npm --prefix apps/desktop/ui run test:workspaces
 cargo clippy --workspace --all-targets --all-features --locked -- -D warnings

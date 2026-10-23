@@ -1,9 +1,99 @@
-export interface ExtensionStatus {entries:ExtensionEntry[];warning:string|null;managementBlocked?:boolean;}
-export interface ExtensionAccess {headers:string[];body:'none'|'optional'|'required';decodeHttpContent?:boolean;}
-export interface ExtensionRule {direction:'request'|'response';contentTypes:string[];methods:string[];pathPrefixes:string[];statuses:number[];headers:Array<{direction:string;name:string;test:{op:string;value?:string}}>;}
-export interface ExtensionContribution {automatic?:boolean;id:string;name:string;entry:string;surfaces:Array<'headers'|'body'>;inputs:{request:ExtensionAccess;response:ExtensionAccess};matches:ExtensionRule[];inputMatches:ExtensionRule[];liveUpdates:{events:string[];bodyProgress:boolean}|null;context:{headers:Array<{direction:string;name:string}>;maxExchanges:number;lookAhead?:boolean}|null;limits:{inputBytes:number;outputBytes:number;heapBytes:number;durationMs:number;nodes:number};}
-export interface ExtensionEntry {catalog:{manifest:{id:string;name:string;version:string;runtime:string;apiVersion:number;visualizers:ExtensionContribution[];trafficColumns?:ExtensionColumn[]};digest:string;enabled:boolean;origin:'bundled'|'installed'|'development'};directory:string|null;hotReload:boolean;}
-export interface ExtensionRow {id:string;name:string;version:string;origin:string;enabled:boolean;bundled:boolean;development:boolean;directory:string;hotReload:boolean;runtime:string;revision:string;visualizers:ContributionRow[];columns:ExtensionColumnRow[];}
-export interface ContributionRow {id:string;name:string;surfaces:string;requestHeaders:string;responseHeaders:string;requestBody:string;responseBody:string;matches:string[];live:string;context:string;}
-export interface ExtensionColumn {id:string;name:string;inputs:ExtensionContribution['inputs'];values:Array<{value:string;matches:ExtensionRule[]}>;}
-export interface ExtensionColumnRow {id:string;name:string;requestHeaders:string;responseHeaders:string;values:Array<{value:string;matches:string[]}>;}
+export interface ExtensionStatus {
+  entries: ExtensionEntry[];
+  warning: string | null;
+  managementBlocked?: boolean;
+}
+export interface ExtensionAccess {
+  headers: string[];
+  body: "none" | "optional" | "required";
+  decodeHttpContent?: boolean;
+}
+export interface ExtensionRule {
+  direction: "request" | "response";
+  contentTypes: string[];
+  methods: string[];
+  pathPrefixes: string[];
+  statuses: number[];
+  headers: Array<{ direction: string; name: string; test: { op: string; value?: string } }>;
+}
+export interface ExtensionContribution {
+  automatic?: boolean;
+  id: string;
+  name: string;
+  entry: string;
+  surfaces: Array<"headers" | "body">;
+  inputs: { request: ExtensionAccess; response: ExtensionAccess };
+  matches: ExtensionRule[];
+  inputMatches: ExtensionRule[];
+  liveUpdates: { events: string[]; bodyProgress: boolean } | null;
+  context: {
+    headers: Array<{ direction: string; name: string }>;
+    maxExchanges: number;
+    lookAhead?: boolean;
+  } | null;
+  limits: {
+    inputBytes: number;
+    outputBytes: number;
+    heapBytes: number;
+    durationMs: number;
+    nodes: number;
+  };
+}
+export interface ExtensionEntry {
+  catalog: {
+    manifest: {
+      id: string;
+      name: string;
+      version: string;
+      runtime: string;
+      apiVersion: number;
+      visualizers: ExtensionContribution[];
+      trafficColumns?: ExtensionColumn[];
+    };
+    digest: string;
+    enabled: boolean;
+    origin: "bundled" | "installed" | "development";
+  };
+  directory: string | null;
+  hotReload: boolean;
+}
+export interface ExtensionRow {
+  id: string;
+  name: string;
+  version: string;
+  origin: string;
+  enabled: boolean;
+  bundled: boolean;
+  development: boolean;
+  directory: string;
+  hotReload: boolean;
+  runtime: string;
+  revision: string;
+  visualizers: ContributionRow[];
+  columns: ExtensionColumnRow[];
+}
+export interface ContributionRow {
+  id: string;
+  name: string;
+  surfaces: string;
+  requestHeaders: string;
+  responseHeaders: string;
+  requestBody: string;
+  responseBody: string;
+  matches: string[];
+  live: string;
+  context: string;
+}
+export interface ExtensionColumn {
+  id: string;
+  name: string;
+  inputs: ExtensionContribution["inputs"];
+  values: Array<{ value: string; matches: ExtensionRule[] }>;
+}
+export interface ExtensionColumnRow {
+  id: string;
+  name: string;
+  requestHeaders: string;
+  responseHeaders: string;
+  values: Array<{ value: string; matches: string[] }>;
+}

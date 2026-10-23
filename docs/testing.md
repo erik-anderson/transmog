@@ -7,6 +7,21 @@ test selection and commands. Install [build prerequisites](building.md) first;
 [Windows release](windows-release.md#local-release-qualification-before-dispatch)
 owns the mandatory candidate qualification sequence.
 
+## TypeScript lint and formatting
+
+From the repository root, run `npm run check` to check every maintained TypeScript
+file, including desktop UI, Playwright tests, MAPI sources, and SDK declarations.
+ESLint uses the recommended JavaScript and TypeScript rules, type-only imports,
+mandatory braces, and at most one statement per line. Prettier owns formatting:
+two spaces, double quotes, semicolons, trailing commas, and a 100-column target.
+Vendored sources and generated build output are excluded from both tools.
+
+Run `npm run lint:fix` to apply safe ESLint fixes and format the sources. Use
+`npm run format` for formatting alone, or `npm run lint` for lint alone. Both
+checks run in the portable repository gate and the signed release UI gate.
+The root tooling pins a TypeScript version supported by typescript-eslint;
+application type checking continues to use the desktop package's compiler.
+
 ## Repository gate
 
 Python 3.11 or newer is mandatory. The runner configures native tools for its
@@ -14,13 +29,15 @@ child processes; on Windows this is the LLVM/Ninja environment. Run:
 
 ```powershell
 python ./scripts/dev-env.py --check
+npm ci --ignore-scripts
 python ./scripts/test.py
 ```
 
-The gate checks formatting, strict workspace Clippy, locked tests, dependency
-policy, the single-TLS-family graph and generated supply-chain artifacts. It does
-not install certificates or modify system proxy settings. Tests define individual
-cases; this guide describes which gates to use instead of copying their inventory.
+The gate checks TypeScript lint and formatting, Rust formatting, strict workspace
+Clippy, locked tests, dependency policy, the single-TLS-family graph and generated
+supply-chain artifacts. It does not install certificates or modify system proxy
+settings. Tests define individual cases; this guide describes which gates to use
+instead of copying their inventory.
 
 Before a signed release dispatch, complete
 [local release qualification](windows-release.md#local-release-qualification-before-dispatch).

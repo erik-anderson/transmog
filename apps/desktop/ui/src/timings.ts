@@ -1,64 +1,472 @@
-import { responseEvidence } from './response-evidence.js';
-import type { SessionDetail } from './models.js';
-import { isOpaqueConnectTransport } from './connection-evidence.js';
-export interface TimingRow {id:string;label:string;value:string;note:string;}
-export interface WaterfallRow {id:string;label:string;start:number;width:number;value:string;note:string;repeated:boolean;minor:boolean;}
-export interface TimelineRow {id:string;label:string;time:string;offset:string;}
-export interface TransportView {id:string;title:string;summary:string;fields:TimingRow[];}
-const labels:Record<string,string>={
- 'upstream-request-first-body-queued':'First request body queued upstream','upstream-response-first-body':'First upstream response body observed','client-response-first-body-queued':'First client response body queued',
- 'client-connected':'Client TCP accepted','client-first-byte':'First client socket read','client-identity-done':'Client identification finished','client-tls-begin':'Client TLS handshake began','client-tls-done':'Client TLS handshake finished','request-headers':'Client request headers received','client-request-done':'Client request body received','route-begin':'Routing began','route-done':'Routing finished','upstream-begin':'Request submitted upstream','upstream-connected':'Upstream connection assigned','upstream-request-consumed':'Outgoing body consumed by HTTP adapter','response-headers':'Upstream response headers received','upstream-response-done':'Upstream response body received','client-response-begin':'Client response headers committed','client-response-queued':'Client response body queued','exchange-done':'Exchange processing finished'};
-export function milliseconds(micros:number|null|undefined):string {return micros==null?'Unavailable':(micros/1000).toLocaleString(undefined,{maximumFractionDigits:3})+' ms';}
-function bytes(value:number|null|undefined):string {return value==null?'Unavailable':value.toLocaleString()+' bytes';}
-export function timingView(detail:SessionDetail):{summary:string;phases:TimingRow[];timeline:TimelineRow[];transports:TransportView[];saved:TimingRow[];waterfall:WaterfallRow[];work:TimingRow[];minor:WaterfallRow[];range:string;report:string} {
- const points=detail.performance?.points??[], transports=detail.performance?.transports??[];
- const point=(id:string)=>points.find(p=>p.milestone===id)?.offsetMicros;
- const headers=point('response-headers'),assigned=point('upstream-connected'),sent=point('upstream-request-consumed');
- // One definition owns each label, boundary and explanation in every presentation.
- const definitions=[
-  {id:'total',label:'Request duration',begin:point('request-headers'),end:point('exchange-done'),note:'From complete client request headers to local proxy completion; client receipt is not confirmed.'},
-  {id:'upload',label:'Client upload',begin:point('request-headers'),end:point('client-request-done'),note:'Receiving the client request body. May overlap forwarding upstream.'},
-  {id:'route',label:'Routing',begin:point('route-begin'),end:point('route-done'),note:'Local proxy policy selection.'},
-  {id:'setup',label:'Connection wait',begin:point('upstream-begin'),end:assigned,note:'Pool queueing and connection readiness, including setup when needed.'},
-  {id:'send',label:'Forwarding request body',begin:assigned,end:sent,note:'Body consumed by the upstream HTTP adapter; server receipt is not confirmed.'},
-  {id:'wait',label:'Waiting for response',begin:assigned==null||sent==null?undefined:Math.max(assigned,sent),end:headers,note:'Until upstream response headers, after connection assignment and body consumption. Includes network, server and queueing time; not a first-byte measurement.'},
-  {id:'receive',label:'Receiving response',begin:headers,end:point('upstream-response-done'),note:'Receiving the upstream body, including backpressure and local processing.'},
-  {id:'forward',label:'Queueing to client',begin:point('client-response-begin'),end:point('client-response-queued'),note:'Queueing the client response, including streaming waits; delivery may finish later.'}
- ];
- const phases:TimingRow[]=definitions.map(row=>({id:row.id,label:row.label,note:row.note,value:milliseconds(row.begin==null||row.end==null||row.end<row.begin?undefined:row.end-row.begin)}));
- const work=(detail.performance?.work??[]).map(row=>({id:row.kind+':'+row.label,label:row.label,value:milliseconds(row.busyNanos/1000),note:row.calls.toLocaleString()+(row.calls===1?' call':' calls')}));
- const intervals:Array<{id:string;label:string;begin:number;end:number;value:string;note:string;repeated:boolean;minor?:boolean}>=[];
- for(const row of definitions)if(row.begin!=null&&row.end!=null&&row.end>=row.begin)intervals.push({...row,begin:row.begin,end:row.end,value:milliseconds(row.end-row.begin),repeated:false,minor:row.id==='route'&&row.end-row.begin<1000});
- for(const row of detail.performance?.work??[])intervals.push({minor:row.busyNanos<1000000,id:'work:'+row.kind+':'+row.label,label:row.label,begin:row.beganOffsetMicros,end:row.endedOffsetMicros,value:milliseconds(row.busyNanos/1000)+' / '+row.calls.toLocaleString()+(row.calls===1?' call':' calls'),note:'Measured call time. '+(row.calls>1?'The dashed window includes gaps between calls. ':'')+'Can overlap other rows; includes waits within the operation.',repeated:row.calls>1});
- const maximum=Math.max(0,...points.map(point=>point.offsetMicros),...intervals.map(interval=>interval.end)),scale=Math.max(1,maximum);
- const waterfall=intervals.filter(interval=>interval.end>=0).map(row=>({id:row.id,label:row.label,start:Math.max(0,row.begin)/scale*1000,width:Math.max(0,row.end-Math.max(0,row.begin))/scale*1000,value:row.value,note:row.note,repeated:row.repeated,minor:row.minor??false}));
- const timeline=points.slice().sort((a,b)=>a.offsetMicros-b.offsetMicros).map(p=>{const date=new Date(p.unixMillis);return {id:p.milestone,label:labels[p.milestone]??p.milestone,time:p.unixMillis>0&&Number.isFinite(date.getTime())?date.toISOString():'Unavailable',offset:milliseconds(p.offsetMicros)};});
- const views=transports.map(t=>{
- const fields:TimingRow[]=[];const add=(label:string,value:string,note='')=>fields.push({id:label,label,value,note});
- const opaque=isOpaqueConnectTransport(t);
- const setup=t.setupTimings??[],quic=Boolean(t.quic)||setup.some(phase=>phase.phase==='quic')||Boolean(t.alpn?.startsWith('h3'));
- const relative=(offset:number)=>milliseconds(Math.abs(offset))+(offset<0?' before request headers':' after request headers');
- const phaseNote=(phase:string)=>{const timing=setup.find(item=>item.phase===phase);return timing?'Original connection phase '+milliseconds(timing.endedOffsetMicros-timing.beganOffsetMicros)+'. Started '+relative(timing.beganOffsetMicros)+'; finished '+relative(timing.endedOffsetMicros)+'.':'Original setup start was not recorded; a per-request wait cannot be calculated.';};
- if(setup.length){const began=Math.min(...setup.map(item=>item.beganOffsetMicros)),ended=Math.max(...setup.map(item=>item.endedOffsetMicros));add('Connection setup started',relative(began),'Calculated on this request’s zero timestamp, including a reused connection.');add('Connection setup elapsed',milliseconds(ended-began),'Whole connection/session setup, across its measured phases.');}
- add('Peer',t.peer??'Unavailable');add('Local endpoint',t.local??'Unavailable');add(setup.length?'DNS wait for this request':'DNS lookup (connection)',milliseconds(t.dnsMicros),phaseNote('dns'));if(!quic)add(setup.length?'TCP wait for this request':'TCP connect (connection)',milliseconds(t.tcpMicros),phaseNote('tcp'));if(!opaque)add((quic?'QUIC / TLS':'TLS')+(setup.length?' wait for this request':' handshake (connection)'),milliseconds(t.tlsMicros),phaseNote(quic?'quic':'tls'));
- const certificate=setup.find(item=>item.phase==='certificate');if(certificate)add('Certificate preparation wait',milliseconds(certificate.requestWaitMicros),phaseNote('certificate'));
- if(t.tunnelDestination)add('CONNECT destination',t.tunnelDestination,opaque?'Opaque TCP tunnel; contents and tunneled protocol are not inspected.':'Recorded CONNECT authority for this connection.');
- if(!opaque){add('TLS version',t.tlsVersion??'Unavailable');add('Session resumed',t.tlsResumed==null?'Unavailable':t.tlsResumed?'Yes':'No');add('Cipher',t.cipher??'Unavailable');add('ALPN',t.alpn??'Unavailable');}add('Received',bytes(t.bytesRead));add('Sent',bytes(t.bytesWritten));
- if(t.socketIo){add('Socket write / flush wait',milliseconds(t.socketIo.writeWaitMicros),t.socketIo.writeWaits.toLocaleString()+' pending episodes on this physical connection, including outstanding waits.');if(t.socketIo.lastWriteOffsetMicros!=null)add('Last socket write accepted',relative(t.socketIo.lastWriteOffsetMicros),'Kernel acceptance; does not confirm remote receipt.');if(t.socketIo.lastFlushOffsetMicros!=null)add('Last local socket flush',relative(t.socketIo.lastFlushOffsetMicros),'Local flush; does not confirm acknowledgment or complete delivery.');}
- if(t.tcp){
-  if(t.tcpSampledOffsetMicros!=null)add('TCP statistics sampled',relative(t.tcpSampledOffsetMicros),'Kernel snapshot time; values belong to all traffic on this connection.');
-  const tcp=t.tcp;const duration=(label:string,value:number|null)=>{if(value!=null)add(label,milliseconds(value));};const size=(label:string,value:number|null)=>{if(value!=null)add(label,bytes(value));};const count=(label:string,value:number|null)=>{if(value!=null)add(label,value.toLocaleString());};
-  duration('TCP estimated round trip',tcp.rttMicros);duration('TCP minimum round trip',tcp.minRttMicros);
-  size('TCP congestion window',tcp.congestionWindow);size('Peer advertised window',tcp.sendWindow);size('Local advertised window',tcp.receiveWindow);size('Unacknowledged sent data',tcp.unacknowledgedBytes);size('Retransmitted TCP data',tcp.retransmittedBytes);size('TCP maximum segment',tcp.mss);
-  count('Retransmitted TCP segments',tcp.retransmittedSegments);count('Fast retransmission episodes',tcp.fastRetransmissions);count('Duplicate acknowledgments',tcp.duplicateAcks);count('TCP timeout episodes',tcp.timeoutEpisodes);
-  if(tcp.connectionAgeMillis!=null)add('Kernel connection age',milliseconds(tcp.connectionAgeMillis*1000));
- }else if(!quic)add('TCP statistics','Unavailable','This platform, socket, or capture did not expose kernel TCP statistics.');
- if(t.quic){add('Smoothed round trip',milliseconds(t.quic.rttMicros));add('Congestion window',bytes(t.quic.congestionWindow));add('Packets sent / received',t.quic.packetsSent.toLocaleString()+' / '+t.quic.packetsReceived.toLocaleString());add('Packets declared lost',t.quic.packetsLost.toLocaleString());add('Retransmitted stream data',bytes(t.quic.retransmittedBytes));}
- return {id:t.leg+':'+t.connectionId,title:t.leg==='client'?'Client ↔ proxy':'Proxy ↔ upstream',summary:(detail.savedEvidence?.['NetLog source']?'Imported Chromium connection':t.shared?'Reused / shared connection':'First observed exchange on connection')+' · '+t.outcome.replaceAll('-',' ')+' · sample at '+milliseconds(t.sampledOffsetMicros)+' · '+t.connectionId,fields};});
- const saved=Object.entries(detail.savedEvidence??{}).map(([label,value])=>({id:label,label,value,note:''}));
- const summary=points.length?'Times use one monotonic clock, relative to complete client request headers. Negative offsets belong to earlier connection events. Wall times are UTC. Setup costs show this request’s wait after upstream admission; completed reused phases cost zero.':'This capture has no measured proxy timeline. Original imported timers, when present, are shown below.';
- const request=detail.requests[0],response=detail.responses[0];
- const snapshotRows=responseEvidence(detail);
- const report=[(request?.method??'Request')+' '+(request?.target??'')+' → '+(response?.status??'No response'),...(detail.traceId?['Source trace: '+detail.traceId]:[]),'Entry: '+(detail.originalId??detail.id),...(snapshotRows.length?['','Response file evidence',...snapshotRows.map(row=>row.label+': '+row.value+(row.note?' — '+row.note:''))]:[]),summary,'','Latency phases',...phases.map(row=>row.label+': '+row.value+' — '+row.note),'','Measured proxy work',...(work.length?work.map(row=>row.label+': '+row.value+' — '+row.note):['No measured operation records.']),'','Proxy timeline',...timeline.map(row=>row.label+': '+row.time+' ('+row.offset+')'),...views.flatMap(view=>['',view.title,view.summary,...view.fields.map(row=>row.label+': '+row.value+(row.note?' — '+row.note:''))]),...(saved.length?['','Original imported evidence',...saved.map(row=>row.label+': '+row.value)]:[])].join('\r\n');
- return {summary,phases,timeline,transports:views,saved,waterfall:waterfall.filter(row=>!row.minor),minor:waterfall.filter(row=>row.minor),work,range:milliseconds(maximum),report};
+import { responseEvidence } from "./response-evidence.js";
+import type { SessionDetail } from "./models.js";
+import { isOpaqueConnectTransport } from "./connection-evidence.js";
+export interface TimingRow {
+  id: string;
+  label: string;
+  value: string;
+  note: string;
+}
+export interface WaterfallRow {
+  id: string;
+  label: string;
+  start: number;
+  width: number;
+  value: string;
+  note: string;
+  repeated: boolean;
+  minor: boolean;
+}
+export interface TimelineRow {
+  id: string;
+  label: string;
+  time: string;
+  offset: string;
+}
+export interface TransportView {
+  id: string;
+  title: string;
+  summary: string;
+  fields: TimingRow[];
+}
+const labels: Record<string, string> = {
+  "upstream-request-first-body-queued": "First request body queued upstream",
+  "upstream-response-first-body": "First upstream response body observed",
+  "client-response-first-body-queued": "First client response body queued",
+  "client-connected": "Client TCP accepted",
+  "client-first-byte": "First client socket read",
+  "client-identity-done": "Client identification finished",
+  "client-tls-begin": "Client TLS handshake began",
+  "client-tls-done": "Client TLS handshake finished",
+  "request-headers": "Client request headers received",
+  "client-request-done": "Client request body received",
+  "route-begin": "Routing began",
+  "route-done": "Routing finished",
+  "upstream-begin": "Request submitted upstream",
+  "upstream-connected": "Upstream connection assigned",
+  "upstream-request-consumed": "Outgoing body consumed by HTTP adapter",
+  "response-headers": "Upstream response headers received",
+  "upstream-response-done": "Upstream response body received",
+  "client-response-begin": "Client response headers committed",
+  "client-response-queued": "Client response body queued",
+  "exchange-done": "Exchange processing finished",
+};
+export function milliseconds(micros: number | null | undefined): string {
+  return micros == null
+    ? "Unavailable"
+    : (micros / 1000).toLocaleString(undefined, { maximumFractionDigits: 3 }) + " ms";
+}
+function bytes(value: number | null | undefined): string {
+  return value == null ? "Unavailable" : value.toLocaleString() + " bytes";
+}
+export function timingView(detail: SessionDetail): {
+  summary: string;
+  phases: TimingRow[];
+  timeline: TimelineRow[];
+  transports: TransportView[];
+  saved: TimingRow[];
+  waterfall: WaterfallRow[];
+  work: TimingRow[];
+  minor: WaterfallRow[];
+  range: string;
+  report: string;
+} {
+  const points = detail.performance?.points ?? [],
+    transports = detail.performance?.transports ?? [];
+  const point = (id: string) => points.find((p) => p.milestone === id)?.offsetMicros;
+  const headers = point("response-headers"),
+    assigned = point("upstream-connected"),
+    sent = point("upstream-request-consumed");
+  // One definition owns each label, boundary and explanation in every presentation.
+  const definitions = [
+    {
+      id: "total",
+      label: "Request duration",
+      begin: point("request-headers"),
+      end: point("exchange-done"),
+      note: "From complete client request headers to local proxy completion; client receipt is not confirmed.",
+    },
+    {
+      id: "upload",
+      label: "Client upload",
+      begin: point("request-headers"),
+      end: point("client-request-done"),
+      note: "Receiving the client request body. May overlap forwarding upstream.",
+    },
+    {
+      id: "route",
+      label: "Routing",
+      begin: point("route-begin"),
+      end: point("route-done"),
+      note: "Local proxy policy selection.",
+    },
+    {
+      id: "setup",
+      label: "Connection wait",
+      begin: point("upstream-begin"),
+      end: assigned,
+      note: "Pool queueing and connection readiness, including setup when needed.",
+    },
+    {
+      id: "send",
+      label: "Forwarding request body",
+      begin: assigned,
+      end: sent,
+      note: "Body consumed by the upstream HTTP adapter; server receipt is not confirmed.",
+    },
+    {
+      id: "wait",
+      label: "Waiting for response",
+      begin: assigned == null || sent == null ? undefined : Math.max(assigned, sent),
+      end: headers,
+      note: "Until upstream response headers, after connection assignment and body consumption. Includes network, server and queueing time; not a first-byte measurement.",
+    },
+    {
+      id: "receive",
+      label: "Receiving response",
+      begin: headers,
+      end: point("upstream-response-done"),
+      note: "Receiving the upstream body, including backpressure and local processing.",
+    },
+    {
+      id: "forward",
+      label: "Queueing to client",
+      begin: point("client-response-begin"),
+      end: point("client-response-queued"),
+      note: "Queueing the client response, including streaming waits; delivery may finish later.",
+    },
+  ];
+  const phases: TimingRow[] = definitions.map((row) => ({
+    id: row.id,
+    label: row.label,
+    note: row.note,
+    value: milliseconds(
+      row.begin == null || row.end == null || row.end < row.begin ? undefined : row.end - row.begin,
+    ),
+  }));
+  const work = (detail.performance?.work ?? []).map((row) => ({
+    id: row.kind + ":" + row.label,
+    label: row.label,
+    value: milliseconds(row.busyNanos / 1000),
+    note: row.calls.toLocaleString() + (row.calls === 1 ? " call" : " calls"),
+  }));
+  const intervals: Array<{
+    id: string;
+    label: string;
+    begin: number;
+    end: number;
+    value: string;
+    note: string;
+    repeated: boolean;
+    minor?: boolean;
+  }> = [];
+  for (const row of definitions) {
+    if (row.begin != null && row.end != null && row.end >= row.begin) {
+      intervals.push({
+        ...row,
+        begin: row.begin,
+        end: row.end,
+        value: milliseconds(row.end - row.begin),
+        repeated: false,
+        minor: row.id === "route" && row.end - row.begin < 1000,
+      });
+    }
+  }
+  for (const row of detail.performance?.work ?? []) {
+    intervals.push({
+      minor: row.busyNanos < 1000000,
+      id: "work:" + row.kind + ":" + row.label,
+      label: row.label,
+      begin: row.beganOffsetMicros,
+      end: row.endedOffsetMicros,
+      value:
+        milliseconds(row.busyNanos / 1000) +
+        " / " +
+        row.calls.toLocaleString() +
+        (row.calls === 1 ? " call" : " calls"),
+      note:
+        "Measured call time. " +
+        (row.calls > 1 ? "The dashed window includes gaps between calls. " : "") +
+        "Can overlap other rows; includes waits within the operation.",
+      repeated: row.calls > 1,
+    });
+  }
+  const maximum = Math.max(
+      0,
+      ...points.map((point) => point.offsetMicros),
+      ...intervals.map((interval) => interval.end),
+    ),
+    scale = Math.max(1, maximum);
+  const waterfall = intervals
+    .filter((interval) => interval.end >= 0)
+    .map((row) => ({
+      id: row.id,
+      label: row.label,
+      start: (Math.max(0, row.begin) / scale) * 1000,
+      width: (Math.max(0, row.end - Math.max(0, row.begin)) / scale) * 1000,
+      value: row.value,
+      note: row.note,
+      repeated: row.repeated,
+      minor: row.minor ?? false,
+    }));
+  const timeline = points
+    .slice()
+    .sort((a, b) => a.offsetMicros - b.offsetMicros)
+    .map((p) => {
+      const date = new Date(p.unixMillis);
+      return {
+        id: p.milestone,
+        label: labels[p.milestone] ?? p.milestone,
+        time:
+          p.unixMillis > 0 && Number.isFinite(date.getTime()) ? date.toISOString() : "Unavailable",
+        offset: milliseconds(p.offsetMicros),
+      };
+    });
+  const views = transports.map((t) => {
+    const fields: TimingRow[] = [];
+    const add = (label: string, value: string, note = "") =>
+      fields.push({ id: label, label, value, note });
+    const opaque = isOpaqueConnectTransport(t);
+    const setup = t.setupTimings ?? [],
+      quic =
+        Boolean(t.quic) ||
+        setup.some((phase) => phase.phase === "quic") ||
+        Boolean(t.alpn?.startsWith("h3"));
+    const relative = (offset: number) =>
+      milliseconds(Math.abs(offset)) +
+      (offset < 0 ? " before request headers" : " after request headers");
+    const phaseNote = (phase: string) => {
+      const timing = setup.find((item) => item.phase === phase);
+      return timing
+        ? "Original connection phase " +
+            milliseconds(timing.endedOffsetMicros - timing.beganOffsetMicros) +
+            ". Started " +
+            relative(timing.beganOffsetMicros) +
+            "; finished " +
+            relative(timing.endedOffsetMicros) +
+            "."
+        : "Original setup start was not recorded; a per-request wait cannot be calculated.";
+    };
+    if (setup.length) {
+      const began = Math.min(...setup.map((item) => item.beganOffsetMicros)),
+        ended = Math.max(...setup.map((item) => item.endedOffsetMicros));
+      add(
+        "Connection setup started",
+        relative(began),
+        "Calculated on this request’s zero timestamp, including a reused connection.",
+      );
+      add(
+        "Connection setup elapsed",
+        milliseconds(ended - began),
+        "Whole connection/session setup, across its measured phases.",
+      );
+    }
+    add("Peer", t.peer ?? "Unavailable");
+    add("Local endpoint", t.local ?? "Unavailable");
+    add(
+      setup.length ? "DNS wait for this request" : "DNS lookup (connection)",
+      milliseconds(t.dnsMicros),
+      phaseNote("dns"),
+    );
+    if (!quic) {
+      add(
+        setup.length ? "TCP wait for this request" : "TCP connect (connection)",
+        milliseconds(t.tcpMicros),
+        phaseNote("tcp"),
+      );
+    }
+    if (!opaque) {
+      add(
+        (quic ? "QUIC / TLS" : "TLS") +
+          (setup.length ? " wait for this request" : " handshake (connection)"),
+        milliseconds(t.tlsMicros),
+        phaseNote(quic ? "quic" : "tls"),
+      );
+    }
+    const certificate = setup.find((item) => item.phase === "certificate");
+    if (certificate) {
+      add(
+        "Certificate preparation wait",
+        milliseconds(certificate.requestWaitMicros),
+        phaseNote("certificate"),
+      );
+    }
+    if (t.tunnelDestination) {
+      add(
+        "CONNECT destination",
+        t.tunnelDestination,
+        opaque
+          ? "Opaque TCP tunnel; contents and tunneled protocol are not inspected."
+          : "Recorded CONNECT authority for this connection.",
+      );
+    }
+    if (!opaque) {
+      add("TLS version", t.tlsVersion ?? "Unavailable");
+      add("Session resumed", t.tlsResumed == null ? "Unavailable" : t.tlsResumed ? "Yes" : "No");
+      add("Cipher", t.cipher ?? "Unavailable");
+      add("ALPN", t.alpn ?? "Unavailable");
+    }
+    add("Received", bytes(t.bytesRead));
+    add("Sent", bytes(t.bytesWritten));
+    if (t.socketIo) {
+      add(
+        "Socket write / flush wait",
+        milliseconds(t.socketIo.writeWaitMicros),
+        t.socketIo.writeWaits.toLocaleString() +
+          " pending episodes on this physical connection, including outstanding waits.",
+      );
+      if (t.socketIo.lastWriteOffsetMicros != null) {
+        add(
+          "Last socket write accepted",
+          relative(t.socketIo.lastWriteOffsetMicros),
+          "Kernel acceptance; does not confirm remote receipt.",
+        );
+      }
+      if (t.socketIo.lastFlushOffsetMicros != null) {
+        add(
+          "Last local socket flush",
+          relative(t.socketIo.lastFlushOffsetMicros),
+          "Local flush; does not confirm acknowledgment or complete delivery.",
+        );
+      }
+    }
+    if (t.tcp) {
+      if (t.tcpSampledOffsetMicros != null) {
+        add(
+          "TCP statistics sampled",
+          relative(t.tcpSampledOffsetMicros),
+          "Kernel snapshot time; values belong to all traffic on this connection.",
+        );
+      }
+      const tcp = t.tcp;
+      const duration = (label: string, value: number | null) => {
+        if (value != null) {
+          add(label, milliseconds(value));
+        }
+      };
+      const size = (label: string, value: number | null) => {
+        if (value != null) {
+          add(label, bytes(value));
+        }
+      };
+      const count = (label: string, value: number | null) => {
+        if (value != null) {
+          add(label, value.toLocaleString());
+        }
+      };
+      duration("TCP estimated round trip", tcp.rttMicros);
+      duration("TCP minimum round trip", tcp.minRttMicros);
+      size("TCP congestion window", tcp.congestionWindow);
+      size("Peer advertised window", tcp.sendWindow);
+      size("Local advertised window", tcp.receiveWindow);
+      size("Unacknowledged sent data", tcp.unacknowledgedBytes);
+      size("Retransmitted TCP data", tcp.retransmittedBytes);
+      size("TCP maximum segment", tcp.mss);
+      count("Retransmitted TCP segments", tcp.retransmittedSegments);
+      count("Fast retransmission episodes", tcp.fastRetransmissions);
+      count("Duplicate acknowledgments", tcp.duplicateAcks);
+      count("TCP timeout episodes", tcp.timeoutEpisodes);
+      if (tcp.connectionAgeMillis != null) {
+        add("Kernel connection age", milliseconds(tcp.connectionAgeMillis * 1000));
+      }
+    } else if (!quic) {
+      add(
+        "TCP statistics",
+        "Unavailable",
+        "This platform, socket, or capture did not expose kernel TCP statistics.",
+      );
+    }
+    if (t.quic) {
+      add("Smoothed round trip", milliseconds(t.quic.rttMicros));
+      add("Congestion window", bytes(t.quic.congestionWindow));
+      add(
+        "Packets sent / received",
+        t.quic.packetsSent.toLocaleString() + " / " + t.quic.packetsReceived.toLocaleString(),
+      );
+      add("Packets declared lost", t.quic.packetsLost.toLocaleString());
+      add("Retransmitted stream data", bytes(t.quic.retransmittedBytes));
+    }
+    return {
+      id: t.leg + ":" + t.connectionId,
+      title: t.leg === "client" ? "Client ↔ proxy" : "Proxy ↔ upstream",
+      summary:
+        (detail.savedEvidence?.["NetLog source"]
+          ? "Imported Chromium connection"
+          : t.shared
+            ? "Reused / shared connection"
+            : "First observed exchange on connection") +
+        " · " +
+        t.outcome.replaceAll("-", " ") +
+        " · sample at " +
+        milliseconds(t.sampledOffsetMicros) +
+        " · " +
+        t.connectionId,
+      fields,
+    };
+  });
+  const saved = Object.entries(detail.savedEvidence ?? {}).map(([label, value]) => ({
+    id: label,
+    label,
+    value,
+    note: "",
+  }));
+  const summary = points.length
+    ? "Times use one monotonic clock, relative to complete client request headers. Negative offsets belong to earlier connection events. Wall times are UTC. Setup costs show this request’s wait after upstream admission; completed reused phases cost zero."
+    : "This capture has no measured proxy timeline. Original imported timers, when present, are shown below.";
+  const request = detail.requests[0],
+    response = detail.responses[0];
+  const snapshotRows = responseEvidence(detail);
+  const report = [
+    (request?.method ?? "Request") +
+      " " +
+      (request?.target ?? "") +
+      " → " +
+      (response?.status ?? "No response"),
+    ...(detail.traceId ? ["Source trace: " + detail.traceId] : []),
+    "Entry: " + (detail.originalId ?? detail.id),
+    ...(snapshotRows.length
+      ? [
+          "",
+          "Response file evidence",
+          ...snapshotRows.map(
+            (row) => row.label + ": " + row.value + (row.note ? " — " + row.note : ""),
+          ),
+        ]
+      : []),
+    summary,
+    "",
+    "Latency phases",
+    ...phases.map((row) => row.label + ": " + row.value + " — " + row.note),
+    "",
+    "Measured proxy work",
+    ...(work.length
+      ? work.map((row) => row.label + ": " + row.value + " — " + row.note)
+      : ["No measured operation records."]),
+    "",
+    "Proxy timeline",
+    ...timeline.map((row) => row.label + ": " + row.time + " (" + row.offset + ")"),
+    ...views.flatMap((view) => [
+      "",
+      view.title,
+      view.summary,
+      ...view.fields.map(
+        (row) => row.label + ": " + row.value + (row.note ? " — " + row.note : ""),
+      ),
+    ]),
+    ...(saved.length
+      ? ["", "Original imported evidence", ...saved.map((row) => row.label + ": " + row.value)]
+      : []),
+  ].join("\r\n");
+  return {
+    summary,
+    phases,
+    timeline,
+    transports: views,
+    saved,
+    waterfall: waterfall.filter((row) => !row.minor),
+    minor: waterfall.filter((row) => row.minor),
+    work,
+    range: milliseconds(maximum),
+    report,
+  };
 }

@@ -72,8 +72,12 @@ export function readPropertyValue(
   const scalar = scalarProperties[type];
   if (scalar) {
     const value = record.scalar("Value", scalar);
-    if (type === 0x0006) record.field.children.at(-1)!.units = "1/10000 currency unit";
-    if (type === 0x0007) record.field.children.at(-1)!.units = "OLE Automation DATE";
+    if (type === 0x0006) {
+      record.field.children.at(-1)!.units = "1/10000 currency unit";
+    }
+    if (type === 0x0007) {
+      record.field.children.at(-1)!.units = "OLE Automation DATE";
+    }
     if (type === 0x0040) {
       record.field.children.at(-1)!.units = "100 ns since 1601-01-01 UTC";
       const timestamp = filetime(value as bigint);

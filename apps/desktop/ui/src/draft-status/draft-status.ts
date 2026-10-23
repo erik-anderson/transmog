@@ -1,4 +1,4 @@
-import {WebUIElement, observable} from '@microsoft/webui-framework';
+import { WebUIElement, observable } from "@microsoft/webui-framework";
 
 /** Shared presentation; the owning editor determines equality and persistence. */
 export class DraftStatus extends WebUIElement {
@@ -7,4 +7,4 @@ export class DraftStatus extends WebUIElement {
   @observable newDraft = false;
   @observable failed = false;
 }
-DraftStatus.define('draft-status');
+DraftStatus.define("draft-status");
