@@ -338,7 +338,7 @@ fn request_body_hash(
         let content = match request.Content() {
             Ok(content) => content,
             Err(error) if error.code() == E_POINTER || matches!(method, "GET" | "HEAD") => {
-                return Ok(Some(format!("{:x}", Sha256::digest([]))));
+                return Ok(Some(hex::encode(Sha256::digest([]))));
             }
             Err(error) => return Err(error),
         };
@@ -369,6 +369,6 @@ fn request_body_hash(
             }
             digest.update(&buffer[..count]);
         }
-        Ok(Some(format!("{:x}", digest.finalize())))
+        Ok(Some(hex::encode(digest.finalize())))
     }
 }

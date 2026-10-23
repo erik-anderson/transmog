@@ -4,12 +4,12 @@ use std::{num::NonZeroUsize, sync::OnceLock, time::Duration};
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
+use tokio::runtime::{Builder, Runtime};
 use transmog_content::{
     ContentCodecError, ContentCoding, ContentCodingStack, ContentDecoder, ContentEncoder,
     ContentLimits, ContentWorkLimits,
 };
 use transmog_core::{BodyFrame, HeaderBlock, HeaderField};
-use tokio::runtime::{Builder, Runtime};
 
 const CODINGS: [ContentCoding; 4] = [
     ContentCoding::Gzip,

@@ -76,7 +76,7 @@ fn canonical(context: &ConnectionContext) -> Result<Vec<u8>, CaptureError> {
     Ok(serde_json::to_vec(&value)?)
 }
 fn identity(context: &ConnectionContext) -> Result<String, CaptureError> {
-    Ok(format!("{:x}", Sha256::digest(canonical(context)?)))
+    Ok(hex::encode(Sha256::digest(canonical(context)?)))
 }
 fn charge(context: &ConnectionContext) -> Result<usize, CaptureError> {
     // Bound both JSON size and dictionary/object overhead, including tiny definitions.

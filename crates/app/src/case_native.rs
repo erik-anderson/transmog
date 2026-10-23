@@ -391,7 +391,7 @@ fn describe(
             .ok_or_else(|| invalid("Object length overflow"))?;
     }
     Ok(wire::Object {
-        sha256: format!("{:x}", hash.finalize()),
+        sha256: hex::encode(hash.finalize()),
         bytes: bytes.to_string(),
         role: role.into(),
         media_type: media.into(),

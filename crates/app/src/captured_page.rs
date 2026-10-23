@@ -1033,9 +1033,9 @@ mod tests {
             .prepare_captured_page(id.clone(), Arc::new(AtomicBool::new(false)))
             .await
             .unwrap();
-        let empty = format!("{:x}", Sha256::digest([]));
-        let beta = format!("{:x}", Sha256::digest(b"beta"));
-        let alpha = format!("{:x}", Sha256::digest(b"alpha"));
+        let empty = hex::encode(Sha256::digest([]));
+        let beta = hex::encode(Sha256::digest(b"beta"));
+        let alpha = hex::encode(Sha256::digest(b"alpha"));
         let headers = vec![("x-theme".into(), "dark".into())];
         let response = scene
             .resolve(

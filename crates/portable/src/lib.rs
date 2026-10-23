@@ -80,7 +80,7 @@ pub fn valid_id(value: &str) -> bool {
 /// SHA-256 of exact object bytes, in canonical lowercase hexadecimal.
 pub fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest as _;
-    format!("{:x}", sha2::Sha256::digest(bytes))
+    hex::encode(sha2::Sha256::digest(bytes))
 }
 
 /// Whether a digest is exactly 64 lowercase hexadecimal digits.

@@ -8,6 +8,7 @@ use std::{
 
 use bytes::Bytes;
 use libfuzzer_sys::fuzz_target;
+use tokio::runtime::{Builder, Runtime};
 use transmog_content::{
     ContentBodyPipeline, ContentCoding, ContentCodingStack, ContentDecoder, ContentDecoderOptions,
     ContentEncoder, ContentLimits, ContentOutput, ContentPipelineError, ContentWorkLimits,
@@ -22,7 +23,6 @@ use transmog_core::{
         InterceptorRequirement, RequestBodyAction, RequestBodyEvent, RequestHeadOutcome,
     },
 };
-use tokio::runtime::{Builder, Runtime};
 
 const CODINGS: [ContentCoding; 4] = [
     ContentCoding::Gzip,

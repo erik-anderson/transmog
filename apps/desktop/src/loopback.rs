@@ -173,7 +173,7 @@ pub(crate) fn request_change(change: &ExemptionChange) -> Result<Vec<AppContaine
         .env("TRANSMOG_LOOPBACK_DELTA", encoded)
         .env(
             "TRANSMOG_LOOPBACK_DIGEST",
-            format!("{:x}", sha2::Sha256::digest(&json)),
+            hex::encode(sha2::Sha256::digest(&json)),
         )
         .output()
         .map_err(|_| "Windows approval could not be requested. Try again.".to_owned())?;
@@ -251,7 +251,7 @@ fn read_change(encoded: &str, digest: &str) -> Result<ExemptionChange, ()> {
     // Bind the helper to the exact selection prepared before Windows approval,
     // even if another process edits or replaces the temporary data file.
     if bytes.len() > 1_048_576
-        || !format!("{:x}", sha2::Sha256::digest(&bytes)).eq_ignore_ascii_case(digest)
+        || !hex::encode(sha2::Sha256::digest(&bytes)).eq_ignore_ascii_case(digest)
     {
         return Err(());
     }
@@ -276,7 +276,7 @@ mod tests {
         input.write_all(&bytes).unwrap();
         input.flush().unwrap();
         let encoded = STANDARD.encode(input.path().to_str().unwrap());
-        let digest = format!("{:x}", sha2::Sha256::digest(&bytes));
+        let digest = hex::encode(sha2::Sha256::digest(&bytes));
         assert_eq!(read_change(&encoded, &digest).unwrap().sids.len(), 512);
         let edited = serde_json::to_vec(&ExemptionChange {
             enabled: false,
@@ -288,7 +288,7 @@ mod tests {
         assert!(read_change(&encoded, "invalid").is_err());
         assert!(read_change("not a path", &digest).is_err());
         assert!(
-            !read_change(&encoded, &format!("{:x}", sha2::Sha256::digest(&edited)))
+            !read_change(&encoded, &hex::encode(sha2::Sha256::digest(&edited)))
                 .unwrap()
                 .enabled
         );

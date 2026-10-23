@@ -176,7 +176,7 @@ impl<W: Write> ArtifactWriter<W> {
         let descriptor = ArtifactDescriptor {
             media_type: self.media.clone(),
             bytes: self.logical,
-            sha256: format!("{:x}", self.hash.clone().finalize()),
+            sha256: hex::encode(self.hash.clone().finalize()),
         };
         let json = serde_json::to_vec(&descriptor)?;
         let mut index = Vec::with_capacity(4 + json.len() + ENTRY * self.chunks.len());
@@ -383,7 +383,7 @@ impl<R: Read + Seek> ArtifactReader<R> {
             }
             hash.update(&buffer[..count]);
         }
-        if format!("{:x}", hash.finalize()) != self.descriptor.sha256 {
+        if hex::encode(hash.finalize()) != self.descriptor.sha256 {
             return Err(invalid());
         }
         self.seek(SeekFrom::Start(0))?;

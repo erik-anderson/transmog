@@ -1126,13 +1126,10 @@ impl ResponseAssetStore {
         let result = crate::response_file::ResponseFile::preview(bytes, codings)
             .write_to_cancellable(destination, limit, canceled)
             .await?;
-        let sha256 = format!(
-            "{:x}",
-            Sha256::digest(
-                std::fs::read(destination)
-                    .map_err(|_| unavailable("Frozen response is unavailable"))?
-            )
-        );
+        let sha256 = hex::encode(Sha256::digest(
+            std::fs::read(destination)
+                .map_err(|_| unavailable("Frozen response is unavailable"))?,
+        ));
         Ok((asset, result.bytes, sha256))
     }
 
@@ -1788,7 +1785,7 @@ mod preview_snapshot_tests {
         }
         assert_eq!(received, original);
         assert_eq!(snapshot.body_bytes, received.len() as u64);
-        assert_eq!(snapshot.sha256, format!("{:x}", Sha256::digest(&received)));
+        assert_eq!(snapshot.sha256, hex::encode(Sha256::digest(&received)));
         assert!(
             ResponseAssetResolver::resolve(&store, &asset.asset_ref(), &AtomicBool::new(true))
                 .unwrap_err()
@@ -1832,7 +1829,7 @@ mod preview_snapshot_tests {
             .await
             .unwrap();
         assert_eq!(bytes, payload.len() as u64);
-        assert_eq!(hash, format!("{:x}", Sha256::digest(&payload)));
+        assert_eq!(hash, hex::encode(Sha256::digest(&payload)));
         std::fs::write(&file, b"edited").unwrap();
         assert_eq!(std::fs::read(&output).unwrap(), payload);
         assert!(

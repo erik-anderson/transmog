@@ -46,7 +46,7 @@ fn invalid(message: &str) -> Error {
 /// SHA-256 of exact bytes, encoded as lowercase hexadecimal.
 pub fn sha256(bytes: &[u8]) -> String {
     use sha2::Digest as _;
-    format!("{:x}", sha2::Sha256::digest(bytes))
+    hex::encode(sha2::Sha256::digest(bytes))
 }
 
 /// Whether an identifier is portable and bounded.

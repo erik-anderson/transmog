@@ -819,7 +819,7 @@ fn copy_hashed(
             .map_err(|_| unavailable())?;
         hasher.update(&buffer[..size]);
     }
-    Ok((total, format!("{:x}", hasher.finalize())))
+    Ok((total, hex::encode(hasher.finalize())))
 }
 fn store_immutable(path: &Path, bytes: &[u8]) -> Result<(), AppError> {
     if path.exists() {
@@ -870,7 +870,7 @@ fn valid_id(value: &str) -> bool {
     value.len() == 32 && value.bytes().all(|b| b.is_ascii_hexdigit())
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 fn random_id() -> Result<String, AppError> {
     let mut bytes = [0_u8; 16];

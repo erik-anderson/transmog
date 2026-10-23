@@ -182,7 +182,7 @@ impl FrameCodec {
                 Aes256Gcm::new_from_slice(&*key).map_err(|_| CaptureError::AuthenticationFailed)?;
             cipher
                 .encrypt(
-                    Nonce::from_slice(&self.nonce(ordinal % 65_536)),
+                    &Nonce::from(self.nonce(ordinal % 65_536)),
                     Payload {
                         msg: plain,
                         aad: &aad,
@@ -214,7 +214,7 @@ impl FrameCodec {
                 Aes256Gcm::new_from_slice(&*key).map_err(|_| CaptureError::AuthenticationFailed)?;
             cipher
                 .decrypt(
-                    Nonce::from_slice(&self.nonce(ordinal % 65_536)),
+                    &Nonce::from(self.nonce(ordinal % 65_536)),
                     Payload {
                         msg: encoded,
                         aad: &aad,
@@ -254,7 +254,7 @@ impl FrameCodec {
             result.extend(
                 cipher
                     .encrypt(
-                        Nonce::from_slice(&[0; 12]),
+                        &Nonce::from([0; 12]),
                         Payload {
                             msg: &plain,
                             aad: &aad,
@@ -288,7 +288,7 @@ impl FrameCodec {
                 Aes256Gcm::new_from_slice(&*key).map_err(|_| CaptureError::AuthenticationFailed)?;
             cipher
                 .decrypt(
-                    Nonce::from_slice(&[0; 12]),
+                    &Nonce::from([0; 12]),
                     Payload {
                         msg: &encoded[16..],
                         aad: &aad,
@@ -494,7 +494,7 @@ impl FrameCodec {
             .map_err(|_| CaptureError::Crypto("Invalid encryption key"))?;
         cipher
             .encrypt(
-                Nonce::from_slice(&self.nonce(counter)),
+                &Nonce::from(self.nonce(counter)),
                 Payload {
                     msg: bytes,
                     aad: &self.aad(counter, head),
@@ -510,7 +510,7 @@ impl FrameCodec {
             .map_err(|_| CaptureError::Crypto("Invalid decryption key"))?;
         cipher
             .decrypt(
-                Nonce::from_slice(&self.nonce(counter)),
+                &Nonce::from(self.nonce(counter)),
                 Payload {
                     msg: bytes,
                     aad: &self.aad(counter, head),

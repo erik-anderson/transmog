@@ -592,7 +592,7 @@ fn key(entry: &Entry, options: &PairingOptions) -> Option<String> {
     Some(value)
 }
 fn hex(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 pub(super) fn normalize_url(text: &str, excluded: &[String]) -> Option<String> {
     let parsed = url::Url::parse(text).ok()?;

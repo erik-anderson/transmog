@@ -114,7 +114,7 @@ pub(super) fn owned(mut file: tempfile::NamedTempFile, limit: u64) -> Result<Sna
     Ok(Snapshot {
         file,
         bytes,
-        sha256: format!("{:x}", hash.finalize()),
+        sha256: hex::encode(hash.finalize()),
     })
 }
 
@@ -202,7 +202,7 @@ fn acquire_checked(
     Ok(Snapshot {
         file: output,
         bytes,
-        sha256: format!("{digest:x}"),
+        sha256: hex::encode(digest),
     })
 }
 

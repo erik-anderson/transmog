@@ -52,10 +52,11 @@ repository = "https://github.com/erik-anderson/transmog"
 
 [workspace.dependencies]
 rpassword = "=7.5.4"
-aes-gcm = "=0.10.3"
-argon2 = "=0.5.3"
+# Callers supply keys/nonces and derive raw key bytes; omit RNG and PHC helpers.
+aes-gcm = { version = "=0.11.1", default-features = false, features = ["aes", "alloc"] }
+argon2 = { version = "=0.6.0", default-features = false, features = ["alloc"] }
 zeroize = "=1.9.1"
-sysinfo = { version = "=0.37.2", default-features = false, features = ["system"] }
+sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 async-compression = { version = "=0.4.51", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 base64 = "0.22.1"
 boring = { version = "=5.2.0", features = ["credential"] }
@@ -69,6 +70,7 @@ crc32fast = "1.5.2"
 flate2 = "1.1.10"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 getrandom = "0.4.3"
+hex = "=0.4.3"
 http = "1.3.1"
 http-body = "1.0.1"
 http-body-util = "0.1.3"
@@ -89,8 +91,8 @@ serde_json = "1.0.154"
 regex = "1.13.1"
 unicode-normalization = "=0.1.26"
 quick-xml = "=0.42.0"
-sha1 = "0.10.6"
-sha2 = "0.10.9"
+sha1 = "0.11.0"
+sha2 = "0.11.1"
 sourcemap = "=9.3.2"
 thiserror = "2.0.17"
 tempfile = "=3.27.0"

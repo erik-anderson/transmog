@@ -344,7 +344,7 @@ fn certificates_are_shared_across_contexts_and_survive_resaving() {
     .to_der()
     .unwrap();
     let certificate = transmog_core::PublicCertificate {
-        sha256: format!("{:x}", Sha256::digest(&der)),
+        sha256: hex::encode(Sha256::digest(&der)),
         der: der.into(),
     };
     let password = CapturePassword::new("shared certificate".into());

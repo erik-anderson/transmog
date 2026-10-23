@@ -17,8 +17,9 @@ zstd.workspace = true
 getrandom.workspace = true
 zeroize.workspace = true
 crc32fast.workspace = true
+hex.workspace = true
 sha2.workspace = true
-hkdf = "=0.12.4"
+hkdf = "=0.13.0"
 transmog-core = { version = "=0.1.11", path = "../proxy-core" }
 serde.workspace = true
 serde_json = { workspace = true, features = ["raw_value"] }

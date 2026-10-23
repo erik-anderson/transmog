@@ -190,7 +190,7 @@ impl Package {
                     context.extend_from_slice(&buffer[..count]);
                 }
             }
-            if format!("{:x}", hash.finalize()) != object.sha256 || crc.finalize() != member.crc {
+            if hex::encode(hash.finalize()) != object.sha256 || crc.finalize() != member.crc {
                 return Err(invalid("Package object SHA-256/CRC mismatch"));
             }
             if object.role == "context" {

@@ -593,7 +593,7 @@ async fn representation_and_prefix_verdicts_do_not_claim_full_equality() {
             evidence.response.as_mut().unwrap().body = Body {
                 path: Some(path.into()),
                 length: Some(bytes.len() as u64),
-                digest: Some(format!("{:x}", Sha256::digest(bytes))),
+                digest: Some(hex::encode(Sha256::digest(bytes))),
                 complete,
                 representation: "encoded entity bytes".into(),
                 codings: vec![],

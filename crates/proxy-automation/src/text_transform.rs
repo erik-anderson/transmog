@@ -63,7 +63,7 @@ pub fn is_text_transform_rule(rule: &Rule) -> bool {
         && rule.response.abort_reason.is_none()
 }
 fn hash(bytes: &[u8]) -> String {
-    format!("{:x}", Sha256::digest(bytes))
+    hex::encode(Sha256::digest(bytes))
 }
 fn pending() -> BodyEditReport {
     BodyEditReport {

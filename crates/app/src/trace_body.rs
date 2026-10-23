@@ -146,7 +146,7 @@ impl SourceReader {
         {
             return Err(io::Error::other("Original trace changed while hashing"));
         }
-        let digest = format!("{:x}", hash.finalize());
+        let digest = hex::encode(hash.finalize());
         *self
             .digest
             .lock()

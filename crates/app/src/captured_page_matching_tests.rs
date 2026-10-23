@@ -132,7 +132,7 @@ fn fixture(path: &std::path::Path, rows: Vec<Row>) {
     writer.seal().unwrap();
 }
 fn response(scene: &CapturedPage, path: &str, headers: &[(String, String)]) -> String {
-    let body = format!("{:x}", sha2::Sha256::digest([]));
+    let body = hex::encode(sha2::Sha256::digest([]));
     let resource = scene
         .resolve(
             "GET",

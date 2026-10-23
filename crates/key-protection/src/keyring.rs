@@ -78,7 +78,7 @@ fn protect_with(bytes: &[u8], store: &impl WrappingStore) -> io::Result<Vec<u8>>
     let cipher = Aes256Gcm::new_from_slice(key.as_ref()).map_err(|_| invalid())?;
     let ciphertext = cipher
         .encrypt(
-            Nonce::from_slice(&nonce),
+            &Nonce::from(nonce),
             Payload {
                 msg: bytes,
                 aad: &id,
@@ -107,9 +107,10 @@ fn unprotect_with(bytes: &[u8], store: &impl WrappingStore) -> io::Result<Zeroiz
     let (id, nonce, ciphertext) = split(bytes)?;
     let key = store.get(id)?;
     let cipher = Aes256Gcm::new_from_slice(&key).map_err(|_| invalid())?;
+    let nonce = nonce.try_into().map_err(|_| invalid())?;
     cipher
         .decrypt(
-            Nonce::from_slice(nonce),
+            nonce,
             Payload {
                 msg: ciphertext,
                 aad: id,
@@ -147,6 +148,30 @@ mod tests {
             self.0.lock().unwrap().remove(id);
             Ok(())
         }
+    }
+    #[test]
+    fn version_one_envelope_decrypts_independent_ciphertext() {
+        // Fixed AES-256-GCM vector from Python cryptography 50.0.2, independent
+        // of the RustCrypto writer. These are public synthetic key bytes.
+        let id = [0x24; ID_BYTES];
+        let nonce = [0x7e; NONCE_BYTES];
+        let key = [0x42; 32];
+        let ciphertext = [
+            0xf1, 0x01, 0xc1, 0x5c, 0xfd, 0x0b, 0xdc, 0x8c, 0xa7, 0x46, 0x13, 0x73, 0xa3, 0xc2,
+            0x38, 0xab, 0x04, 0x9d, 0xb7, 0x8e, 0xe6, 0x66, 0x3e, 0x78, 0xc8, 0x00, 0xa4, 0x16,
+            0x07, 0x76, 0x29, 0x3e, 0xbd, 0x9c, 0xa1, 0x19, 0xc9, 0x6f, 0xcf, 0x20, 0x2f, 0x74,
+            0x42, 0xf5, 0x86, 0xba, 0x54, 0xa3, 0xbd, 0xae, 0x8f, 0xe5, 0x68, 0x11, 0xc1, 0xd7,
+            0x3e, 0xe1, 0xe3, 0x91, 0xe1,
+        ];
+        let store = Store::default();
+        store.set(&id, &key).unwrap();
+        let mut payload = id.to_vec();
+        payload.extend_from_slice(&nonce);
+        payload.extend_from_slice(&ciphertext);
+        assert_eq!(
+            &*unprotect_with(&envelope(BACKEND, &payload), &store).unwrap(),
+            b"-----BEGIN PRIVATE KEY-----\nAES fixture only\n"
+        );
     }
     #[test]
     fn wrapping_key_stays_out_of_the_file_and_authenticates_all_material() {

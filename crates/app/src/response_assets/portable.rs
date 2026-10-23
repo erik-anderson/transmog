@@ -104,7 +104,7 @@ impl ResponseAssetStore {
             }
             hash.update(&buffer[..count]);
         }
-        if format!("{:x}", hash.finalize()) != sha {
+        if hex::encode(hash.finalize()) != sha {
             return Err(invalid(
                 "Existing response blob failed integrity verification",
             ));

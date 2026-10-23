@@ -375,7 +375,7 @@ fn large_case_objects_stream_in_bounded_chunks() {
     for _ in 0..136 {
         hash.update(&zeros);
     }
-    let digest = format!("{:x}", hash.finalize());
+    let digest = hex::encode(hash.finalize());
     let original = manifest("simple-css");
     let prior = &original.sources[0].artifact_sha256;
     let bytes = String::from_utf8(original.encode().unwrap())

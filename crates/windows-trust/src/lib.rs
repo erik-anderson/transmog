@@ -59,7 +59,7 @@ impl LocalCertificates {
                 digest.update(der);
             }
         }
-        self.sha256 = format!("{:x}", digest.finalize());
+        self.sha256 = hex::encode(digest.finalize());
         self
     }
 }
@@ -230,6 +230,8 @@ impl LocalTrustMonitor {
     pub fn start_chromium() -> Result<Self, LocalTrustError> {
         Self::start_with_os_distrust(false)
     }
+    // Windows starts fallible OS workers; preserve the same API on other hosts.
+    #[cfg_attr(not(windows), allow(clippy::unnecessary_wraps))]
     fn start_with_os_distrust(include_os_distrust: bool) -> Result<Self, LocalTrustError> {
         let state = Arc::new(State::new());
         #[cfg(windows)]
@@ -253,11 +255,12 @@ impl LocalTrustMonitor {
     }
     /// Current notification generation, including an in-progress refresh.
     pub fn generation(&self) -> u64 {
+        #[cfg(windows)]
         self.observe_notification();
         self.state.epoch.load(Ordering::Acquire)
     }
+    #[cfg(windows)]
     fn observe_notification(&self) {
-        #[cfg(windows)]
         if self
             .control
             .as_ref()
@@ -270,6 +273,7 @@ impl LocalTrustMonitor {
     /// # Errors
     /// Returns refresh, read or shutdown state rather than an outdated inventory.
     pub fn current(&self) -> Result<Arc<LocalCertificates>, LocalTrustError> {
+        #[cfg(windows)]
         self.observe_notification();
         self.state.current()
     }

@@ -162,7 +162,7 @@ fn connection_records(data: &[u8]) -> Option<Vec<u8>> {
             let payload = stored.get_mut("payload")?.as_object_mut()?;
             let context = payload.get_mut("context")?;
             context.sort_all_objects();
-            let digest = format!("{:x}", Sha256::digest(serde_json::to_vec(context).ok()?));
+            let digest = hex::encode(Sha256::digest(serde_json::to_vec(context).ok()?));
             // Repair hashes so mutations reach definition validation and reference resolution.
             payload.insert("sha256".into(), digest.clone().into());
             identities.push(digest);
@@ -481,7 +481,7 @@ pub(crate) fn fixture(input: &[u8]) -> Option<Vec<u8>> {
             record_file(stored, &encoded)
         }
         8 => {
-            let digest = format!("{:x}", Sha256::digest(data));
+            let digest = hex::encode(Sha256::digest(data));
             record_file(
                 json!({"revision":transmog_capture::CAPTURE_FORMAT_REVISION,"sequence":0,"exchange_id":0,"kind":"public-certificate",
                 "payload":{"sha256":digest,"der":data}}),

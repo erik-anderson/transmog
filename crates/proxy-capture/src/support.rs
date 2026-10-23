@@ -157,7 +157,7 @@ impl SupportProfile {
     /// Returns invalid input, an unsupported schema, or unavailable OS randomness.
     pub fn digest(&self) -> io::Result<String> {
         let bytes = serde_json::to_vec(self).map_err(io::Error::other)?;
-        Ok(format!("{:x}", Sha256::digest(bytes)))
+        Ok(hex::encode(Sha256::digest(bytes)))
     }
     pub fn relevant(&self, host: &str) -> bool {
         self.relevant_hosts.iter().any(|entry| entry.matches(host))

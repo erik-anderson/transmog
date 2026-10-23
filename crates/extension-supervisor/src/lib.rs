@@ -4,7 +4,7 @@ use std::{
     collections::{BTreeMap, BTreeSet},
     io::BufReader,
     path::PathBuf,
-    process::{Child, ChildStdin, ChildStdout, Command, Stdio},
+    process::{Child, ChildStdin, ChildStdout},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -784,7 +784,10 @@ fn launch(config: &HostConfig, heap: usize) -> Result<Child, Failure> {
     }
     #[cfg(windows)]
     {
-        use std::os::windows::process::CommandExt as _;
+        use std::{
+            os::windows::process::CommandExt as _,
+            process::{Command, Stdio},
+        };
         let mut command = Command::new(&config.executable);
         command
             .creation_flags(0x0800_0000)

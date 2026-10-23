@@ -131,7 +131,7 @@ impl RequestFile {
         if self.length_known && total != self.bytes {
             return Err(unavailable("Captured request body is incomplete"));
         }
-        Ok(Some((format!("{:x}", digest.finalize()), total)))
+        Ok(Some((hex::encode(digest.finalize()), total)))
     }
 
     /// Stages a retained request in an anonymous, automatically removed file for

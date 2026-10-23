@@ -263,7 +263,7 @@ pub(crate) fn revision(
         hash.update(serde_json::to_vec(&metadata).map_err(|_| unavailable())?);
     }
     hash.update(snapshot.request_number.to_le_bytes());
-    Ok(format!("{:x}", hash.finalize()))
+    Ok(hex::encode(hash.finalize()))
 }
 #[allow(clippy::too_many_lines)] // One bounded selected-message read/HTTP-decoding admission path.
 async fn input(

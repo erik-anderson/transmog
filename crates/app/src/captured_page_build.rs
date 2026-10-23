@@ -307,13 +307,10 @@ async fn materialize(
         CapturedResource {
             sha256: {
                 use sha2::{Digest, Sha256};
-                format!(
-                    "{:x}",
-                    Sha256::digest(
-                        std::fs::read(path)
-                            .map_err(|_| error("Frozen response could not be hashed"))?
-                    )
-                )
+                hex::encode(Sha256::digest(
+                    std::fs::read(path)
+                        .map_err(|_| error("Frozen response could not be hashed"))?,
+                ))
             },
             status: candidate.head.status,
             reason,

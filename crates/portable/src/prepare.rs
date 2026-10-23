@@ -146,7 +146,7 @@ pub(crate) fn copy_object(
         hash.update(&buffer[..read]);
         output.write_all(&buffer[..read])?;
     }
-    if total != expected || format!("{:x}", hash.finalize()) != object.sha256 {
+    if total != expected || hex::encode(hash.finalize()) != object.sha256 {
         return Err(invalid("Response object length or SHA-256 mismatch"));
     }
     Ok(())

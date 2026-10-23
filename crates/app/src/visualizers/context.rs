@@ -362,7 +362,7 @@ fn index_key(
     field(&mut hash, format!("{:?}", selected.request).as_bytes());
     transmog_extensions::Scope {
         capture: capture.into(),
-        conversation: format!("{:x}", hash.finalize()),
+        conversation: hex::encode(hash.finalize()),
     }
 }
 pub(super) fn live_index_scope(

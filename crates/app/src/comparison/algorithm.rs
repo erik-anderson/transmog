@@ -526,8 +526,16 @@ async fn bodies(
         } else {
             ComparisonState::Different
         },
-        format!("{} bytes · {:x}", a_bytes.len(), Sha256::digest(&a_bytes)),
-        format!("{} bytes · {:x}", b_bytes.len(), Sha256::digest(&b_bytes)),
+        format!(
+            "{} bytes · {}",
+            a_bytes.len(),
+            hex::encode(Sha256::digest(&a_bytes))
+        ),
+        format!(
+            "{} bytes · {}",
+            b_bytes.len(),
+            hex::encode(Sha256::digest(&b_bytes))
+        ),
         "Decoded bytes may be equal despite different content coding",
     );
     let (Some(mut left), Some(mut right)) = (

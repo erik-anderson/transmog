@@ -1666,7 +1666,7 @@ fn finalize_exchange(
             }
         }
         if record.retained_bytes > 0 {
-            record.sha256 = Some(format!("{:x}", record.hasher.clone().finalize()));
+            record.sha256 = Some(hex::encode(record.hasher.clone().finalize()));
             state.terminal_order.push_back(key);
         }
         if record.availability == BodyAvailability::Capturing {
@@ -2287,7 +2287,7 @@ mod tests {
             assert_eq!(body.reason, None);
             assert_eq!(
                 body.sha256.as_deref(),
-                Some(format!("{:x}", Sha256::digest(BODY)).as_str())
+                Some(hex::encode(Sha256::digest(BODY)).as_str())
             );
             let mut retained = Vec::new();
             store
@@ -2351,7 +2351,7 @@ mod tests {
                     assert_eq!(metadata.wire_body_bytes, None);
                     assert_eq!(
                         metadata.sha256.as_deref(),
-                        Some(format!("{:x}", Sha256::digest(b"tail")).as_str())
+                        Some(hex::encode(Sha256::digest(b"tail")).as_str())
                     );
                     assert!(store.open_complete(ExchangeId(1), boundary).is_err());
                     let retained = store.read_range(ExchangeId(1), boundary, 0, 4).unwrap();

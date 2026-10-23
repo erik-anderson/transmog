@@ -152,7 +152,7 @@ impl Overlay {
 }
 fn empty_hash() -> String {
     use sha2::{Digest, Sha256};
-    format!("{:x}", Sha256::digest([]))
+    hex::encode(Sha256::digest([]))
 }
 
 fn selected_rules(

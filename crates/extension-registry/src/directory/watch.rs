@@ -84,6 +84,8 @@ impl Watch {
     pub(crate) fn update(&mut self, paths: &[String]) {
         self.changes.update(paths);
     }
+    // Native Windows polling is fallible; keep its contract on other hosts.
+    #[cfg_attr(not(windows), allow(clippy::unnecessary_wraps))]
     pub(crate) fn poll(&mut self) -> Result<bool, Error> {
         #[cfg(windows)]
         if let Some(notifications) = self.native.poll()?

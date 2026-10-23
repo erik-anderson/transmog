@@ -342,7 +342,7 @@ fn native_charges_shared_certificate_der_once_per_import() {
             connection_id: "shared".into(),
             tls: Some(transmog_core::TlsEvidence {
                 server_chain: vec![transmog_core::PublicCertificate {
-                    sha256: format!("{:x}", Sha256::digest(&der)),
+                    sha256: hex::encode(Sha256::digest(&der)),
                     der: der.into(),
                 }],
                 ..Default::default()

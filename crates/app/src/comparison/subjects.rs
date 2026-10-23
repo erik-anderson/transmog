@@ -440,7 +440,7 @@ pub(super) async fn acquire(
                 body = Body {
                     path: Some(file_path),
                     length: Some(bytes.len() as u64),
-                    digest: Some(format!("{:x}", Sha256::digest(bytes))),
+                    digest: Some(hex::encode(Sha256::digest(bytes))),
                     complete: true,
                     representation: "decoded bytes".into(),
                     codings: vec![],
@@ -625,7 +625,7 @@ fn freeze_reader(mut file: File, destination: &Path, op: &Operation) -> Result<B
         || length != limit
         || before.len() != after.len()
         || before.modified().ok() != after.modified().ok()
-        || format!("{:x}", verified.finalize()) != digest
+        || hex::encode(verified.finalize()) != digest
     {
         return Err(error("Response file changed during acquisition; retry"));
     }
@@ -669,7 +669,7 @@ fn copy(mut reader: impl Read, path: &Path, op: &Operation) -> Result<(u64, Stri
             .map_err(|_| error("Snapshot storage full"))?;
         hasher.update(&buffer[..size]);
     }
-    Ok((length, format!("{:x}", hasher.finalize())))
+    Ok((length, hex::encode(hasher.finalize())))
 }
 fn charset(headers: &HeaderBlock) -> Option<String> {
     headers
