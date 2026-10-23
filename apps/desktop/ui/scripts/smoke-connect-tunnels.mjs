@@ -15,9 +15,10 @@ export async function smokeConnectTunnels(viewer) {
       workspace.applyDetail(detail);
       const inspector=workspace.querySelector('message-inspector[side="response"]');
       inspector.viewer='auto';inspector.showMode('body');await inspector.inspectBody();inspector.$flushUpdates();
-      return {text:inspector.bodyNotice,rendered:inspector.textContent};
+      return {text:inspector.bodyText,notice:inspector.bodyNotice,rendered:inspector.textContent};
     })()`);
     assert.equal(decrypted.text,'saved viewer response');
+    assert.equal(decrypted.notice,'');
     assert.match(decrypted.rendered,/saved viewer response/);
     assert.doesNotMatch(decrypted.rendered,/HTTPS decryption was disabled/);
     const opaque=await viewer.evaluate(`(async()=>{
@@ -26,9 +27,13 @@ export async function smokeConnectTunnels(viewer) {
       detail.performance.transports=[{leg:'upstream',connectionId:'native-opaque',tunnelDestination:'media.stores.com:443'}];
       workspace.applyDetail(detail);
       const inspector=workspace.querySelector('message-inspector[side="response"]');
-      await inspector.inspectBody();inspector.$flushUpdates();return inspector.bodyNotice;
+      await inspector.inspectBody();inspector.$flushUpdates();
+      return {text:inspector.bodyText,notice:inspector.bodyNotice,rendered:inspector.textContent};
     })()`);
-    assert.match(opaque,/Opaque CONNECT tunnel to media.stores.com:443/);
+    assert.equal(opaque.text,'');
+    assert.match(opaque.notice,/Opaque CONNECT tunnel to media.stores.com:443/);
+    assert.match(opaque.rendered,/Opaque CONNECT tunnel to media.stores.com:443/);
+    assert.doesNotMatch(opaque.rendered,/saved viewer response/);
   } finally {
     await viewer.evaluate(`(async()=>{
       const original=${JSON.stringify(original)},workspace=document.querySelector('app-shell').traffic;
