@@ -119,7 +119,7 @@ Transmog includes the following third-party software.
 | cssparser-macros | 0.7.1 | MPL-2.0 | https://github.com/servo/rust-cssparser |
 | ctor | 1.0.13 | Apache-2.0 OR MIT | https://github.com/mmastrac/linktime |
 | ctr | 0.10.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/block-modes |
-| ctutils | 0.4.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
+| ctutils | 0.4.4 | Apache-2.0 OR MIT | https://github.com/RustCrypto/utils |
 | darling | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | darling_core | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | darling_macro | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
@@ -529,7 +529,7 @@ Transmog includes the following third-party software.
 | swc_ecma_ast | 18.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_codegen | 20.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_codegen_macros | 2.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_parser | 27.0.7 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_parser | 27.0.7 | Apache-2.0 | https://static.crates.io/crates/swc_ecma_parser/swc_ecma_parser-27.0.7.crate |
 | swc_ecma_transforms_base | 30.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_transforms_react | 33.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_transforms_typescript | 33.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
@@ -734,7 +734,7 @@ Transmog includes the following third-party software.
 | zvariant_utils | 2.1.0 | MIT | https://github.com/dbus2/zbus/ |
 | zvariant_utils | 4.2.0 | MIT | https://github.com/z-galaxy/zbus/ |
 
-## Patched Rust transport dependencies
+## Patched Rust dependencies
 
 The registry archives below are vendored with local patches. Original license and copyright texts are included in the desktop Credits.
 
@@ -743,6 +743,7 @@ The registry archives below are vendored with local patches. Original license an
 | h2 | ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16 | [third_party/rust-transport/patches/h2.patch](third_party/rust-transport/patches/h2.patch) | ac2771bb502d4449fc1fc24c9046b4a97b645be7830f6feb0f7246b1f32a6014 |
 | hyper | 27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43 | [third_party/rust-transport/patches/hyper.patch](third_party/rust-transport/patches/hyper.patch) | 87b8870bd0a78c31498f5fba20b96a5a08a3e685cb53b79dedba602fb80a9843 |
 | quiche | 52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a | [third_party/rust-transport/patches/quiche.patch](third_party/rust-transport/patches/quiche.patch) | eda5505fa0c32aab58a1f79606ef7c5b5693b33e49321d6a5ca2d4d488a36484 |
+| swc_ecma_parser | 7f1a51af1a92cd4904c073b293e491bbc0918400a45d58227b34c961dd6f52d7 | [third_party/swc-ecma-parser/parser.patch](third_party/swc-ecma-parser/parser.patch) | 8312dd9292c30dd8442a4d3cc7e70d44bc0b60762da4e724a0a863fb4133424f |
 
 ## Desktop npm production packages
 
