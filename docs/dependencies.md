@@ -114,11 +114,18 @@ claim which patches are applied.
 | Native desktop shell | `tauri`, Wry, Evergreen WebView2 | Window lifecycle, native commands, and the Windows system WebView. Transmog expects Evergreen WebView2 to be present rather than bundling a browser runtime. |
 | UI component model | `@microsoft/webui-framework`, `@microsoft/webui` | Rust-oriented WebUI projection and the browser-side component runtime used by the desktop interface. |
 | Code editing | `monaco-editor` | TypeScript automation editing and diagnostics in the desktop UI. |
-| Sandboxed script execution | `deno_core` and V8 | Executes user automation in a separate capability-restricted process with explicit time and memory containment. |
-| TypeScript parsing/transpilation | `deno_ast` | Validates and transpiles the supported TypeScript subset before isolated execution. |
-| Protocol visualizers | `deno_core`, V8 and `deno_ast` | Executes JavaScript ES2022 in an isolated read-only worker; validates static modules without runtime transpilation. Bundled MAPI is authored in TypeScript and compiled at build time. |
+| Sandboxed script execution | `v8` (`rusty_v8`) | An application-owned embedding executes user automation in a separate capability-restricted process with explicit time and memory containment. No Deno runtime or host ops are installed. |
+| TypeScript parsing/transpilation | Direct SWC crates | A runtime-free compiler validates and transpiles the supported TypeScript subset, preserving separate source maps before isolated execution. |
+| Protocol visualizers | `v8` and direct SWC crates | Executes JavaScript ES2022 in an isolated read-only worker; validates static modules without runtime transpilation. Bundled MAPI is authored in TypeScript and compiled at build time. |
 | Browser-side code | TypeScript and `esbuild` | Typed UI components, browser interactions and projections. Generated bundles are reproducibly verified from the npm lockfile. |
 | Windows integration | `windows-sys` | Current-user proxy settings, process attribution, AppContainer and Job Object sandboxing, console suppression, and related host APIs. |
+
+`transmog-js-runtime` owns V8 platform and isolate lifetime, in-memory module
+linking, explicit microtask checkpoints and bounded diagnostics/output. It is
+used only by the isolated hosts. `transmog-script-compiler` owns the pinned SWC
+configuration without depending on V8, so SDK consumers do not acquire an
+embedded engine. Both hosts retain their authenticated IPC and external process
+watchdogs; V8 heap limits supplement AppContainer and Job Object containment.
 
 The desktop updater uses Tauri's separate HTTPS client, scoped to signed update
 retrieval. Its Rustls/Reqwest dependencies are allowed only on that desktop edge;

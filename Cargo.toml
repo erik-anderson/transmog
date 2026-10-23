@@ -33,6 +33,8 @@ members = [
     "crates/extension-registry",
     "crates/directory-watch",
     "crates/proxy-script",
+    "crates/script-compiler",
+    "crates/js-runtime",
     "crates/script-host",
     "crates/script-supervisor",
     "crates/preview-worker",
@@ -64,8 +66,15 @@ boring-sys = "=5.2.0"
 foreign-types = "=0.5.0"
 brotli = "=9.0.0"
 bytes = { version = "1.11.1", features = ["serde"] }
-deno_ast = { version = "=0.53.3", features = ["transpiling"] }
-deno_core = "=0.412.0"
+swc_common = { version = "=17.0.1", features = ["sourcemap"] }
+swc_ecma_ast = "=18.0.0"
+swc_ecma_parser = "=27.0.7"
+swc_ecma_codegen = "=20.0.2"
+swc_ecma_transforms_base = { version = "=30.0.1", features = ["inline-helpers"] }
+swc_ecma_transforms_typescript = "=33.0.0"
+swc_ecma_visit = "=18.0.1"
+url = "=2.5.8"
+v8 = { version = "=150.4.0", default-features = false, features = ["simdutf"] }
 crc32fast = "1.5.2"
 flate2 = "1.1.10"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }

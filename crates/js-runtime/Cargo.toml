@@ -1,0 +1,23 @@
+[package]
+name = "transmog-js-runtime"
+description = "Capability-free direct V8 embedding shared by isolated JavaScript hosts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+percent-encoding.workspace = true
+url.workspace = true
+v8.workspace = true
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_docs = "warn"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"

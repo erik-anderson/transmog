@@ -9,14 +9,15 @@ repository.workspace = true
 build = "build.rs"
 
 [dependencies]
-deno_core.workspace = true
 serde_json.workspace = true
-tokio = { workspace = true, features = ["rt", "time"] }
+transmog-js-runtime = { version = "=0.1.11", path = "../js-runtime" }
+url.workspace = true
 transmog-process-sandbox = { version = "=0.1.11", path = "../process-sandbox" }
 transmog-script = { version = "=0.1.11", path = "../proxy-script" }
 transmog-extension-host = { version = "=0.1.11", path = "../extension-host" }
 
 [dev-dependencies]
+tokio.workspace = true
 transmog-script-supervisor = { version = "=0.1.11", path = "../script-supervisor" }
 base64.workspace = true
 tempfile.workspace = true

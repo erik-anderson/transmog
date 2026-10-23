@@ -5,12 +5,14 @@
 
 use std::io::{Read, Write};
 
-use deno_core::{JsRuntime, ModuleSpecifier, RuntimeOptions, v8};
+use std::collections::BTreeMap;
+use transmog_js_runtime::{ErrorKind, Runtime};
 use transmog_script::{
     SCRIPT_HOST_PROTOCOL_VERSION, ScriptAction, ScriptFailure, ScriptFailureCategory,
     ScriptHostReply, ScriptHostRequest, ScriptInvocation, ScriptManifest, read_host_frame,
     write_host_frame,
 };
+use url::Url;
 
 const BOOTSTRAP: &str = r#"
 const __transmogDeepFreeze = (value, seen = new WeakSet()) => {
@@ -124,21 +126,21 @@ fn is_eof(error: &transmog_script::ScriptProtocolError) -> bool {
 }
 
 struct ScriptRuntime {
-    runtime: JsRuntime,
+    runtime: Runtime,
     manifest: ScriptManifest,
 }
 
 impl ScriptRuntime {
     fn new(manifest: &ScriptManifest, javascript: String) -> Result<Self, ScriptFailure> {
-        let create_params = v8::CreateParams::default().heap_limits(
+        let mut runtime = Runtime::new(
             (manifest.limits.max_heap_bytes / 8).max(1024 * 1024),
             manifest.limits.max_heap_bytes,
-        );
-        let mut runtime = JsRuntime::try_new(RuntimeOptions {
-            create_params: Some(create_params),
-            ..RuntimeOptions::default()
-        })
+        )
         .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
+        // Restrictions apply before any user top-level code executes.
+        runtime
+            .execute_script("transmog:script-bootstrap", BOOTSTRAP)
+            .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
         let handlers = manifest
             .handlers
             .iter()
@@ -148,29 +150,13 @@ impl ScriptRuntime {
             })
             .collect::<Vec<_>>()
             .join(",");
-        let module = format!(
-            "{javascript}\nglobalThis.__transmogHandlers = Object.freeze({{{handlers}}});\n{BOOTSTRAP}"
-        );
-        let specifier = ModuleSpecifier::parse("file:///transmog-script/main.js")
+        let module =
+            format!("{javascript}\nglobalThis.__transmogHandlers = Object.freeze({{{handlers}}});");
+        let specifier = Url::parse("file:///transmog-script/main.js")
             .expect("constant module specifier is valid");
-        let local = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
-        local.block_on(async {
-            let id = runtime
-                .load_main_es_module_from_code(&specifier, module)
-                .await
-                .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))?;
-            let evaluation = runtime.mod_evaluate(id);
-            runtime
-                .run_event_loop(Default::default())
-                .await
-                .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))?;
-            evaluation
-                .await
-                .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))
-        })?;
+        runtime
+            .evaluate_modules(&specifier, BTreeMap::from([(specifier.clone(), module)]))
+            .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))?;
         Ok(Self {
             runtime,
             manifest: manifest.clone(),
@@ -190,27 +176,21 @@ impl ScriptRuntime {
         let json_string = serde_json::to_string(&json)
             .map_err(|error| failure(ScriptFailureCategory::Protocol, &error.to_string()))?;
         let source = format!("globalThis.__transmogInvoke({handler:?}, {json_string})");
-        let value = self
+        let output = self
             .runtime
-            .execute_script("transmog:invoke", source)
-            .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))?;
-        deno_core::scope!(scope, &mut self.runtime);
-        let value = v8::Local::new(scope, value);
-        let output = value
-            .to_string(scope)
-            .ok_or_else(|| {
-                failure(
-                    ScriptFailureCategory::InvalidAction,
-                    "handler result is not a string",
-                )
-            })?
-            .to_rust_string_lossy(scope);
-        if output.len() > self.manifest.limits.max_output_bytes {
-            return Err(failure(
-                ScriptFailureCategory::ResourceLimit,
-                "handler output exceeded its declared byte limit",
-            ));
-        }
+            .execute_string(
+                "transmog:invoke",
+                &source,
+                self.manifest.limits.max_output_bytes,
+            )
+            .map_err(|error| {
+                let category = match error.kind {
+                    ErrorKind::OutputLimit => ScriptFailureCategory::ResourceLimit,
+                    ErrorKind::NotString => ScriptFailureCategory::InvalidAction,
+                    _ => ScriptFailureCategory::Exception,
+                };
+                failure(category, &error.to_string())
+            })?;
         serde_json::from_str(&output)
             .map_err(|error| failure(ScriptFailureCategory::InvalidAction, &error.to_string()))
     }
@@ -252,7 +232,7 @@ mod location_tests {
 
 /// Applies process-global V8 flags before the first isolate is created.
 pub fn configure_v8() {
-    v8::V8::set_flags_from_string("--disallow-code-generation-from-strings");
+    transmog_js_runtime::initialize();
 }
 
 /// Launches the actual host inside a zero-capability Windows AppContainer.

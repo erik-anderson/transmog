@@ -13,7 +13,7 @@ use transmog_extensions::{
 
 /// Disables alternate JavaScript string code-generation paths before creating isolates.
 pub fn configure_v8() {
-    deno_core::v8::V8::set_flags_from_string("--disallow-code-generation-from-strings");
+    transmog_js_runtime::initialize();
 }
 
 /// Creates the same zero-capability AppContainer/Job Object boundary for every extension.

@@ -16,14 +16,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use deno_ast::{
-    EmitOptions, MediaType, ParseParams, SourceMapOption, TranspileModuleOptions, TranspileOptions,
-    parse_module,
-    swc::{
-        ast::{CallExpr, Callee, Decl, Expr, ModuleDecl, ModuleItem, NewExpr},
-        ecma_visit::{Visit, VisitWith},
-    },
-};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
@@ -36,6 +28,12 @@ use transmog_core::{
         RequestHeadAction, RequestHeadEvent, ResponseBodyAction, ResponseBodyEvent,
         ResponseHeadAction, ResponseHeadEvent,
     },
+};
+use transmog_script_compiler::{
+    ModuleSyntax,
+    ast::{CallExpr, Callee, Decl, Expr, ModuleDecl, ModuleItem, NewExpr},
+    parse_module,
+    visit::{Visit, VisitWith},
 };
 
 /// Initial unstable script API revision.
@@ -340,22 +338,14 @@ pub fn compile_typescript(
     if manifest.source_hash != actual_hash {
         return Err(ScriptCompileError::SourceHashMismatch);
     }
-    let specifier = deno_ast::ModuleSpecifier::parse(&format!(
-        "file:///transmog-scripts/{}/main.ts",
-        manifest.id
-    ))
-    .map_err(|_| ScriptCompileError::InvalidManifest("script module identity is invalid"))?;
-    let parsed = parse_module(ParseParams {
-        specifier,
-        text: Arc::<str>::from(source),
-        media_type: MediaType::TypeScript,
-        capture_tokens: false,
-        scope_analysis: false,
-        maybe_syntax: None,
-    })
-    .map_err(|error| ScriptCompileError::Parse(bounded(&error.to_string(), 512)))?;
+    let specifier = url::Url::parse(&format!("file:///transmog-scripts/{}/main.ts", manifest.id))
+        .map_err(|_| {
+        ScriptCompileError::InvalidManifest("script module identity is invalid")
+    })?;
+    let parsed = parse_module(specifier, source, ModuleSyntax::TypeScript)
+        .map_err(|error| ScriptCompileError::Parse(bounded(&error, 512)))?;
     let mut exports = BTreeMap::new();
-    for item in &parsed.program_ref().unwrap_module().body {
+    for item in &parsed.module().body {
         match item {
             ModuleItem::ModuleDecl(ModuleDecl::Import(import))
                 if import.type_only && import.src.value == *"transmog:api/v1" => {}
@@ -379,7 +369,7 @@ pub fn compile_typescript(
         }
     }
     let mut forbidden = ForbiddenSyntax::default();
-    parsed.program_ref().visit_with(&mut forbidden);
+    parsed.module().visit_with(&mut forbidden);
     if forbidden.dynamic_import || forbidden.string_codegen {
         return Err(ScriptCompileError::ForbiddenCapability);
     }
@@ -402,22 +392,12 @@ pub fn compile_typescript(
         }
     }
     let output = parsed
-        .transpile(
-            &TranspileOptions::default(),
-            &TranspileModuleOptions { module_kind: None },
-            &EmitOptions {
-                source_map: SourceMapOption::Separate,
-                inline_sources: true,
-                remove_comments: false,
-                ..EmitOptions::default()
-            },
-        )
-        .map_err(|error| ScriptCompileError::Transpile(bounded(&error.to_string(), 512)))?
-        .into_source();
+        .transpile_typescript()
+        .map_err(|error| ScriptCompileError::Transpile(bounded(&error, 512)))?;
     Ok(CompiledScript {
         manifest,
         javascript: output.text,
-        source_map: output.source_map.unwrap_or_default().into_bytes(),
+        source_map: output.source_map,
     })
 }
 

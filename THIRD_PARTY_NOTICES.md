@@ -42,7 +42,6 @@ Transmog includes the following third-party software.
 | base64-simd | 0.8.0 | MIT | https://github.com/Nugine/simd |
 | base64ct | 1.8.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | better_scoped_tls | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| bindgen | 0.70.1 | BSD-3-Clause | https://github.com/rust-lang/rust-bindgen |
 | bindgen | 0.72.1 | BSD-3-Clause | https://github.com/rust-lang/rust-bindgen |
 | bit-set | 0.8.0 | Apache-2.0 OR MIT | https://github.com/contain-rs/bit-set |
 | bit-vec | 0.8.0 | Apache-2.0 OR MIT | https://github.com/contain-rs/bit-vec |
@@ -57,7 +56,6 @@ Transmog includes the following third-party software.
 | blocking | 1.7.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/blocking |
 | boring | 5.2.0 | Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
 | boring-sys | 5.2.0 | MIT | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
-| boxed_error | 0.2.3 | MIT | https://github.com/denoland/boxed_error |
 | brotli | 9.0.0 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli |
 | brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor |
 | bs58 | 0.5.1 | MIT/Apache-2.0 | https://github.com/Nullus157/bs58-rs |
@@ -71,8 +69,6 @@ Transmog includes the following third-party software.
 | cairo-sys-rs | 0.18.2 | MIT | https://github.com/gtk-rs/gtk-rs-core |
 | calendrical_calculations | 0.2.4 | Apache-2.0 | https://github.com/unicode-org/icu4x |
 | camino | 1.2.6 | MIT OR Apache-2.0 | https://github.com/camino-rs/camino |
-| capacity_builder | 0.5.0 | MIT | https://github.com/dsherret/capacity_builder |
-| capacity_builder_macros | 0.3.0 | MIT | https://github.com/dsherret/capacity_builder |
 | cargo_metadata | 0.19.2 | MIT | https://github.com/oli-obk/cargo_metadata |
 | cargo_toml | 1.0.1 | Apache-2.0 OR MIT | https://gitlab.com/lib.rs/cargo_toml |
 | cargo-platform | 0.1.9 | MIT OR Apache-2.0 | https://github.com/rust-lang/cargo |
@@ -100,7 +96,6 @@ Transmog includes the following third-party software.
 | concurrent-queue | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/concurrent-queue |
 | const-oid | 0.10.2 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
 | constant_time_eq | 0.6.1 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://codeberg.org/cesarb/constant_time_eq |
-| cooked-waker | 5.0.0 | MPL-2.0 | https://github.com/Lucretiel/cooked-waker |
 | cookie | 0.18.2 | MIT OR Apache-2.0 | https://github.com/SergioBenitez/cookie-rs |
 | core_maths | 0.1.1 | MIT | https://github.com/robertbastian/core_maths |
 | core-foundation | 0.10.1 | MIT OR Apache-2.0 | https://github.com/servo/core-foundation-rs |
@@ -129,7 +124,6 @@ Transmog includes the following third-party software.
 | darling_core | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | darling_macro | 0.24.1 | MIT | https://github.com/TedDriggs/darling |
 | data-encoding | 2.11.1 | MIT | https://github.com/ia0/data-encoding |
-| data-url | 0.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url |
 | dbus | 0.9.12 | Apache-2.0/MIT | https://github.com/diwic/dbus-rs |
 | dbus-secret-service | 4.1.0 | MIT OR Apache-2.0 | https://github.com/brotskydotcom/dbus-secret-service.git |
 | debug_panic | 0.2.1 | MIT | https://github.com/kellytk/debug_panic |
@@ -137,16 +131,6 @@ Transmog includes the following third-party software.
 | defmt | 1.1.1 | MIT OR Apache-2.0 | https://github.com/knurling-rs/defmt |
 | defmt-macros | 1.1.1 | MIT OR Apache-2.0 | https://github.com/knurling-rs/defmt |
 | defmt-parser | 1.0.0 | MIT OR Apache-2.0 | https://github.com/knurling-rs/defmt |
-| deno_ast | 0.53.3 | MIT | https://github.com/denoland/deno_ast |
-| deno_core | 0.412.0 | MIT | https://github.com/denoland/deno |
-| deno_error | 0.7.1 | MIT | https://github.com/denoland/deno_error |
-| deno_error_macro | 0.7.1 | MIT | https://github.com/denoland/deno_error |
-| deno_media_type | 0.4.0 | MIT | https://github.com/denoland/deno_media_type |
-| deno_ops | 0.288.0 | MIT | https://github.com/denoland/deno |
-| deno_path_util | 0.6.4 | MIT | https://github.com/denoland/deno_path_util |
-| deno_terminal | 0.2.3 | MIT | https://github.com/denoland/deno_terminal |
-| deno_unsync | 0.4.4 | MIT | https://github.com/denoland/deno_unsync |
-| deno_v8 | 0.4.0 | MIT | https://github.com/denoland/deno |
 | deranged | 0.5.8 | MIT OR Apache-2.0 | https://github.com/jhpratt/deranged |
 | derive_more | 2.1.1 | MIT | https://github.com/JelteF/derive_more |
 | derive_more-impl | 2.1.1 | MIT | https://github.com/JelteF/derive_more |
@@ -163,7 +147,6 @@ Transmog includes the following third-party software.
 | dlopen2_derive | 0.4.3 | MIT | https://github.com/OpenByteDev/dlopen2 |
 | dom_query | 0.28.0 | MIT | https://github.com/niklak/dom_query |
 | dpi | 0.1.2 | Apache-2.0 AND MIT | https://github.com/rust-windowing/winit |
-| dprint-swc-ext | 0.26.1 | MIT | https://github.com/dprint/dprint-swc-ext |
 | dtoa | 1.0.11 | MIT OR Apache-2.0 | https://github.com/dtolnay/dtoa |
 | dtoa-short | 0.3.5 | MPL-2.0 | https://github.com/upsuper/dtoa-short |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://gitlab.com/kornelski/dunce |
@@ -197,7 +180,6 @@ Transmog includes the following third-party software.
 | fs_extra | 1.3.0 | MIT | https://github.com/webdesus/fs_extra |
 | fslock | 0.2.1 | MIT | https://github.com/brunoczim/fslock |
 | funty | 2.0.0 | MIT | https://github.com/myrrlyn/funty |
-| futures | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-channel | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-core | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
 | futures-executor | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/futures-rs |
@@ -284,7 +266,6 @@ Transmog includes the following third-party software.
 | inout | 0.1.4 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | inout | 0.2.2 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | intrusive-collections | 0.10.3 | MIT OR Apache-2.0 | https://github.com/Amanieu/intrusive-rs |
-| inventory | 0.3.24 | MIT OR Apache-2.0 | https://github.com/dtolnay/inventory |
 | ipconfig | 0.3.4 | MIT/Apache-2.0 | https://github.com/liranringel/ipconfig |
 | ipnet | 2.12.2 | MIT OR Apache-2.0 | https://github.com/krisprice/ipnet |
 | is-macro | 0.3.8 | Apache-2.0 | https://github.com/dudykr/ddbase.git |
@@ -400,7 +381,6 @@ Transmog includes the following third-party software.
 | parking_lot_core | 0.9.12 | MIT OR Apache-2.0 | https://github.com/Amanieu/parking_lot |
 | password-hash | 0.6.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/traits |
 | paste | 1.0.15 | MIT OR Apache-2.0 | https://github.com/dtolnay/paste |
-| pathdiff | 0.2.3 | MIT/Apache-2.0 | https://github.com/Manishearth/pathdiff |
 | pbkdf2 | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
 | percent-encoding | 2.3.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-url/ |
 | phc | 0.6.1 | Apache-2.0 OR MIT | https://github.com/RustCrypto/formats |
@@ -413,8 +393,6 @@ Transmog includes the following third-party software.
 | phf_macros | 0.13.1 | MIT | https://github.com/rust-phf/rust-phf |
 | phf_shared | 0.11.3 | MIT | https://github.com/rust-phf/rust-phf |
 | phf_shared | 0.13.1 | MIT | https://github.com/rust-phf/rust-phf |
-| pin-project | 1.1.13 | Apache-2.0 OR MIT | https://github.com/taiki-e/pin-project |
-| pin-project-internal | 1.1.13 | Apache-2.0 OR MIT | https://github.com/taiki-e/pin-project |
 | pin-project-lite | 0.2.17 | Apache-2.0 OR MIT | https://github.com/taiki-e/pin-project-lite |
 | piper | 0.2.5 | MIT OR Apache-2.0 | https://github.com/smol-rs/piper |
 | pkg-config | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/pkg-config-rs |
@@ -471,7 +449,6 @@ Transmog includes the following third-party software.
 | rpassword | 7.5.4 | Apache-2.0 | https://github.com/conradkleinespel/rpassword |
 | rtoolbox | 0.0.6 | Apache-2.0 | https://github.com/conradkleinespel/rtoolbox |
 | rustc_version | 0.4.1 | MIT OR Apache-2.0 | https://github.com/djc/rustc-version-rs |
-| rustc-hash | 1.1.0 | Apache-2.0/MIT | https://github.com/rust-lang-nursery/rustc-hash |
 | rustc-hash | 2.1.3 | Apache-2.0 OR MIT | https://github.com/rust-lang/rustc-hash |
 | rustix | 0.38.44 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
 | rustix | 1.1.5 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/rustix |
@@ -507,7 +484,6 @@ Transmog includes the following third-party software.
 | serde_repr | 0.1.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/serde-repr |
 | serde_spanned | 0.6.9 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
 | serde_spanned | 1.1.1 | MIT OR Apache-2.0 | https://github.com/toml-rs/toml |
-| serde_v8 | 0.321.0 | MIT | https://github.com/denoland/deno |
 | serde_with | 3.24.0 | MIT OR Apache-2.0 | https://github.com/jonasbb/serde_with/ |
 | serde_with_macros | 3.24.0 | MIT OR Apache-2.0 | https://github.com/jonasbb/serde_with/ |
 | serde-untagged | 0.1.9 | MIT OR Apache-2.0 | https://github.com/dtolnay/serde-untagged |
@@ -543,10 +519,7 @@ Transmog includes the following third-party software.
 | string_cache | 0.9.0 | MIT OR Apache-2.0 | https://github.com/servo/string-cache |
 | string_cache_codegen | 0.6.1 | MIT OR Apache-2.0 | https://github.com/servo/string-cache |
 | string_enum | 1.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| stringcase | 0.4.0 | MIT | https://github.com/sttk/stringcase-rust |
 | strsim | 0.11.1 | MIT | https://github.com/rapidfuzz/strsim-rs |
-| strum | 0.27.2 | MIT | https://github.com/Peternator7/strum |
-| strum_macros | 0.27.2 | MIT | https://github.com/Peternator7/strum |
 | subtle | 2.6.1 | BSD-3-Clause | https://github.com/dalek-cryptography/subtle |
 | swc_allocator | 4.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_atoms | 9.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
@@ -556,13 +529,8 @@ Transmog includes the following third-party software.
 | swc_ecma_ast | 18.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_codegen | 20.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_codegen_macros | 2.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_lexer | 26.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_loader | 17.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_parser | 27.0.7 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_transforms_base | 30.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_transforms_classes | 30.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_transforms_macros | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_transforms_proposal | 30.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_transforms_react | 33.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_transforms_typescript | 33.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_utils | 24.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
@@ -575,11 +543,8 @@ Transmog includes the following third-party software.
 | syn | 1.0.109 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 2.0.119 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 3.0.6 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
-| syn-match | 0.3.1 | MIT | https://github.com/crowlKats/syn-match |
 | sync_wrapper | 1.0.2 | Apache-2.0 | https://github.com/Actyx/sync_wrapper |
 | synstructure | 0.14.0 | MIT | https://github.com/mystor/synstructure |
-| sys_traits | 0.1.29 | MIT | https://github.com/dsherret/sys_traits |
-| sys_traits_macros | 0.1.0 | MIT | https://github.com/dsherret/sys_traits |
 | sysinfo | 0.39.6 | MIT | https://github.com/GuillaumeGomez/sysinfo |
 | system-configuration | 0.7.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
 | system-configuration-sys | 0.6.0 | MIT OR Apache-2.0 | https://github.com/mullvad/system-configuration-rs |
@@ -605,8 +570,6 @@ Transmog includes the following third-party software.
 | temporal_capi | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
 | temporal_rs | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
 | tendril | 0.5.1 | MIT OR Apache-2.0 | https://github.com/servo/html5ever |
-| termcolor | 1.4.1 | Unlicense OR MIT | https://github.com/BurntSushi/termcolor |
-| text_lines | 0.6.0 | MIT | registry+https://github.com/rust-lang/crates.io-index |
 | thiserror | 1.0.69 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror |
 | thiserror | 2.0.21 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror |
 | thiserror-impl | 1.0.69 | MIT OR Apache-2.0 | https://github.com/dtolnay/thiserror |
@@ -660,7 +623,6 @@ Transmog includes the following third-party software.
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
 | uuid | 1.27.0 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
 | v8 | 150.4.0 | MIT | https://github.com/denoland/rusty_v8 |
-| v8x | 149.4.0-rc.4 | MIT OR Apache-2.0 | https://github.com/littledivy/v8x |
 | valuable | 0.1.1 | MIT | https://github.com/tokio-rs/valuable |
 | version_check | 0.9.5 | MIT/Apache-2.0 | https://github.com/SergioBenitez/version_check |
 | version-compare | 0.2.1 | MIT | https://gitlab.com/timvisee/version-compare |
@@ -671,7 +633,6 @@ Transmog includes the following third-party software.
 | want | 0.3.1 | MIT | https://github.com/seanmonstar/want |
 | wasi | 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wasi |
 | wasip2 | 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wasi-rs |
-| wasm_dep_analyzer | 0.4.0 | MIT | https://github.com/denoland/wasm_dep_analyzer |
 | wasm-bindgen | 0.2.129 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen |
 | wasm-bindgen-futures | 0.4.79 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/futures |
 | wasm-bindgen-macro | 0.2.129 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen/tree/master/crates/macro |

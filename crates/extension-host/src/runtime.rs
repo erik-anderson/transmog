@@ -1,22 +1,18 @@
-use deno_ast::{
-    MediaType, ParseParams, parse_module,
-    swc::{
-        ast::{
-            CallExpr, Callee, Decl, ExportSpecifier, Expr, Module, ModuleDecl, ModuleExportName,
-            ModuleItem, NewExpr, Stmt,
-        },
-        ecma_visit::{Visit, VisitWith},
-    },
-};
-use deno_core::{JsRuntime, ModuleSpecifier, RuntimeOptions, StaticModuleLoader, v8};
-use std::{
-    collections::{BTreeMap, BTreeSet},
-    rc::Rc,
-    sync::Arc,
-};
+use std::collections::{BTreeMap, BTreeSet};
 use transmog_extensions::{
     Failure, FailureKind, Invocation, Snapshot, VisualizationStep, Visualizer,
 };
+use transmog_js_runtime::{ErrorKind, Runtime as Engine};
+use transmog_script_compiler::{
+    ModuleSyntax,
+    ast::{
+        CallExpr, Callee, Decl, ExportSpecifier, Expr, Module, ModuleDecl, ModuleExportName,
+        ModuleItem, NewExpr, Stmt,
+    },
+    parse_module,
+    visit::{Visit, VisitWith},
+};
+use url::Url as ModuleSpecifier;
 
 const BOOTSTRAP: &str = r"
 (() => {
@@ -49,10 +45,7 @@ const BOOTSTRAP: &str = r"
 ";
 
 pub(super) struct Runtime {
-    engine: JsRuntime,
-    // V8 retains this executor's handle for delayed foreground work, including GC.
-    // Drop the isolate first, then its executor. This does not expose JS timers.
-    executor: tokio::runtime::Runtime,
+    engine: Engine,
     visualizer: Visualizer,
 }
 impl Runtime {
@@ -65,32 +58,13 @@ impl Runtime {
             .ok_or_else(|| fail(FailureKind::Validation, "Unknown visualizer contribution"))?
             .clone();
         let (entry, modules) = load_modules(snapshot, &visualizer)?;
-        let executor = tokio::runtime::Builder::new_current_thread()
-            .enable_time()
-            .build()
-            .map_err(|_| {
+        let mut runtime =
+            Engine::new(8 * 1024 * 1024, visualizer.limits.heap_bytes).map_err(|_| {
                 fail(
                     FailureKind::Unavailable,
-                    "The worker executor is unavailable",
+                    "The visualizer runtime could not initialize",
                 )
             })?;
-        // deno_core captures Handle::try_current when registering the isolate.
-        // Without this context, sufficiently large modules abort on delayed GC.
-        let context = executor.enter();
-        let mut runtime = JsRuntime::try_new(RuntimeOptions {
-            create_params: Some(
-                v8::CreateParams::default()
-                    .heap_limits(8 * 1024 * 1024, visualizer.limits.heap_bytes),
-            ),
-            module_loader: Some(Rc::new(StaticModuleLoader::new(modules))),
-            ..RuntimeOptions::default()
-        })
-        .map_err(|_| {
-            fail(
-                FailureKind::Unavailable,
-                "The visualizer runtime could not initialize",
-            )
-        })?;
         // Install capability restrictions before executing any extension module initializer.
         runtime
             .execute_script("transmog:extension-bootstrap", BOOTSTRAP)
@@ -100,24 +74,15 @@ impl Runtime {
                     "Runtime restrictions could not initialize",
                 )
             })?;
-        executor.block_on(async {
-            let id = runtime
-                .load_main_es_module(&entry)
-                .await
-                .map_err(|_| fail(FailureKind::Validation, "Package module loading failed"))?;
-            let pending = runtime.mod_evaluate(id);
-            runtime
-                .run_event_loop(deno_core::PollEventLoopOptions::default())
-                .await
-                .map_err(|_| fail(FailureKind::Exception, "Extension initialization failed"))?;
-            pending
-                .await
-                .map_err(|_| fail(FailureKind::Exception, "Extension initialization failed"))
+        runtime.evaluate_modules(&entry, modules).map_err(|error| {
+            if error.kind == ErrorKind::Module {
+                fail(FailureKind::Validation, "Package module loading failed")
+            } else {
+                fail(FailureKind::Exception, "Extension initialization failed")
+            }
         })?;
-        drop(context);
         Ok(Self {
             engine: runtime,
-            executor,
             visualizer,
         })
     }
@@ -134,55 +99,26 @@ impl Runtime {
             .map_err(|_| fail(FailureKind::Protocol, "Invocation serialization failed"))?;
         let literal = serde_json::to_string(&input)
             .map_err(|_| fail(FailureKind::Protocol, "Invocation encoding failed"))?;
-        // Drive ready foreground work once without waiting for future GC delays.
-        // A hidden instance still has no executor or worker to poll.
-        self.executor.block_on(async {
-            tokio::task::yield_now().await;
-            std::future::poll_fn(|context| {
-                std::task::Poll::Ready(
-                    match self
-                        .engine
-                        .poll_event_loop(context, deno_core::PollEventLoopOptions::default())
-                    {
-                        std::task::Poll::Ready(Err(_)) => Err(fail(
-                            FailureKind::Exception,
-                            "The visualizer operation failed",
-                        )),
-                        _ => Ok(()),
-                    },
-                )
-            })
-            .await
-        })?;
-        let _context = self.executor.enter();
-        let result = self
-            .engine
-            .execute_script(
-                "transmog:extension-invoke",
-                format!("globalThis.__tmInvoke({literal})"),
-            )
+        self.engine
+            .poll_tasks()
             .map_err(|_| fail(FailureKind::Exception, "The visualizer operation failed"))?;
-        deno_core::scope!(scope, &mut self.engine);
-        let result = v8::Local::new(scope, result);
-        let output = result.to_string(scope).ok_or_else(|| {
-            fail(
-                FailureKind::Validation,
-                "Visualizer output must be serializable",
+        let output = self
+            .engine
+            .execute_string(
+                "transmog:extension-invoke",
+                &format!("globalThis.__tmInvoke({literal})"),
+                self.visualizer.limits.output_bytes,
             )
-        })?;
-        if output.length() > self.visualizer.limits.output_bytes {
-            return Err(fail(
-                FailureKind::Limit,
-                "Visualizer output exceeds its limit",
-            ));
-        }
-        let output = output.to_rust_string_lossy(scope);
-        if output.len() > self.visualizer.limits.output_bytes {
-            return Err(fail(
-                FailureKind::Limit,
-                "Visualizer output exceeds its limit",
-            ));
-        }
+            .map_err(|error| match error.kind {
+                ErrorKind::OutputLimit => {
+                    fail(FailureKind::Limit, "Visualizer output exceeds its limit")
+                }
+                ErrorKind::NotString => fail(
+                    FailureKind::Validation,
+                    "Visualizer output must be serializable",
+                ),
+                _ => fail(FailureKind::Exception, "The visualizer operation failed"),
+            })?;
         serde_json::from_str(&output).map_err(|_| {
             fail(
                 FailureKind::Validation,
@@ -231,16 +167,9 @@ fn load_modules(
                     "Package module is missing or not UTF-8",
                 )
             })?;
-        let parsed = parse_module(ParseParams {
-            specifier: specifier.clone(),
-            text: Arc::<str>::from(source),
-            media_type: MediaType::JavaScript,
-            capture_tokens: false,
-            scope_analysis: false,
-            maybe_syntax: None,
-        })
-        .map_err(|_| fail(FailureKind::Validation, "JavaScript parsing failed"))?;
-        for item in &parsed.program_ref().unwrap_module().body {
+        let parsed = parse_module(specifier.clone(), source, ModuleSyntax::JavaScript)
+            .map_err(|_| fail(FailureKind::Validation, "JavaScript parsing failed"))?;
+        for item in &parsed.module().body {
             let dependency = match item {
                 ModuleItem::ModuleDecl(ModuleDecl::Import(i)) if i.type_only => None,
                 ModuleItem::ModuleDecl(ModuleDecl::Import(i)) => {
@@ -280,7 +209,7 @@ fn load_modules(
             }
         }
         let mut forbidden = Forbidden::default();
-        parsed.program_ref().visit_with(&mut forbidden);
+        parsed.module().visit_with(&mut forbidden);
         if forbidden.0 {
             return Err(fail(
                 FailureKind::Validation,
@@ -290,7 +219,7 @@ fn load_modules(
         let mut javascript = source.to_string();
         if specifier == entry {
             javascript.push_str(&entry_handlers(
-                parsed.program_ref().unwrap_module(),
+                parsed.module(),
                 visualizer.live_updates.is_some(),
             )?);
         }

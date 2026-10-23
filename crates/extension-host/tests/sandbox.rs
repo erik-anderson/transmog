@@ -27,6 +27,21 @@ fn snapshot(source: &str) -> Snapshot {
     )
     .unwrap()
 }
+
+fn snapshot_with_modules(source: &str, modules: &[(&str, &str)]) -> Snapshot {
+    let mut candidate = snapshot(source);
+    for &(path, source) in modules {
+        candidate.manifest.files.push(Payload {
+            path: path.into(),
+            bytes: source.len() as u64,
+            sha256: None,
+        });
+        candidate
+            .files
+            .insert(path.into(), Arc::<[u8]>::from(source.as_bytes()));
+    }
+    Snapshot::new(candidate.manifest, candidate.files).unwrap()
+}
 fn start(snapshot: Snapshot) -> Result<Arc<Runner>, Failure> {
     Runner::start(
         &HostConfig {
@@ -275,6 +290,297 @@ function visualize(input) {
     runner.stop();
     assert!(runner.is_stopped());
 }
+
+#[tokio::test]
+async fn cyclic_static_graphs_preserve_module_identity_live_bindings_and_evaluation_order() {
+    let shared = r"
+globalThis.order = ['shared'];
+export const identity = {};
+export let counter = 0;
+export function next() { return ++counter; }
+";
+    let left = r"
+import {identity, next} from './shared.mjs';
+import {rightName} from './right.mjs';
+globalThis.order.push('left');
+export {identity, next};
+export function leftName() { return 'left'; }
+export function readRight() { return rightName(); }
+";
+    let right = r"
+import {leftName} from './left.mjs';
+import {identity} from './shared.mjs';
+globalThis.order.push('right');
+export {identity};
+export function rightName() { return leftName() + '-right'; }
+";
+    let source = r"
+import * as left from './left.mjs';
+import * as right from './right.mjs';
+import {identity, counter} from './nested/../shared.mjs';
+globalThis.order.push('main');
+export function visualize() {
+  if (identity !== left.identity || identity !== right.identity) throw new Error('module instantiated twice');
+  const next = left.next();
+  if (counter !== next) throw new Error('export lost its live binding');
+  return {kind:'document',document:{title:globalThis.order.join(',') + ':' + counter + ':' + left.readRight(),status:'complete',presentation:'tree',roots:[]}};
+}
+";
+    let runner = start(snapshot_with_modules(
+        source,
+        &[
+            ("src/shared.mjs", shared),
+            ("src/left.mjs", left),
+            ("src/right.mjs", right),
+        ],
+    ))
+    .unwrap();
+    for counter in 1..=2 {
+        let VisualizationStep::Document { document } = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("document required");
+        };
+        assert_eq!(
+            document.title,
+            format!("shared,right,left,main:{counter}:left-right")
+        );
+    }
+}
+
+#[tokio::test]
+async fn dependency_initializers_cannot_generate_code_and_can_await_resolved_promises() {
+    let dependency = r"
+for (const name of ['Function', 'eval', 'fetch', 'Deno', 'process', 'require', 'WebAssembly', 'setTimeout', 'queueMicrotask']) {
+  if (globalThis[name] !== undefined) throw new Error('ambient authority before entry');
+}
+for (const constructor of [
+  (() => 0).constructor,
+  (async () => 0).constructor,
+  (function* () {}).constructor,
+  (async function* () {}).constructor,
+]) {
+  let denied = false;
+  try { constructor('return 1'); } catch { denied = true; }
+  if (!denied) throw new Error('dependency string generation available');
+}
+export const initialized = await Promise.resolve('ready');
+";
+    let source = r"
+import {initialized} from './restricted.mjs';
+export function visualize() {
+  return {kind:'document',document:{title:initialized,status:'complete',presentation:'tree',roots:[]}};
+}
+";
+    let runner = start(snapshot_with_modules(
+        source,
+        &[("src/restricted.mjs", dependency)],
+    ))
+    .unwrap();
+    let VisualizationStep::Document { document } = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("document required");
+    };
+    assert_eq!(document.title, "ready");
+}
+
+#[test]
+fn rejected_top_level_await_fails_extension_initialization() {
+    let source = format!(
+        "await Promise.reject(new Error('initialization rejected')); \
+         export function visualize(){{return {DOCUMENT};}}"
+    );
+    assert_eq!(
+        start(snapshot(&source))
+            .err()
+            .expect("a rejected module must not become ready")
+            .kind,
+        FailureKind::Exception
+    );
+}
+
+#[test]
+fn unsettled_top_level_await_never_becomes_ready_and_remains_cancelable() {
+    let source =
+        format!("await new Promise(() => {{}}); export function visualize(){{return {DOCUMENT};}}");
+    let started = std::time::Instant::now();
+    let result = Runner::start_cancellable(
+        &HostConfig {
+            executable: support::host_executable().into(),
+        },
+        snapshot(&source),
+        "view",
+        || started.elapsed() >= std::time::Duration::from_millis(150),
+    );
+    assert!(result.is_err(), "an unsettled module must not become ready");
+    assert!(started.elapsed() < std::time::Duration::from_secs(3));
+    // A failed or canceled module must leave the next activation usable.
+    let runner = start(snapshot(&format!(
+        "export function visualize(){{return {DOCUMENT};}}"
+    )))
+    .unwrap();
+    runner.stop();
+}
+
+#[tokio::test]
+async fn queued_microtasks_run_before_the_next_extension_invocation() {
+    let source = r"
+let calls = 0;
+let completed = 0;
+export function visualize() {
+  if (completed !== calls) throw new Error('queued microtask was not processed');
+  calls++;
+  Promise.resolve().then(() => completed++);
+  return {kind:'document',document:{title:calls + ':' + completed,status:'complete',presentation:'tree',roots:[]}};
+}
+";
+    let runner = start(snapshot(source)).unwrap();
+    for calls in 1..=3 {
+        let VisualizationStep::Document { document } = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("document required");
+        };
+        assert_eq!(document.title, format!("{calls}:{}", calls - 1));
+    }
+}
+
+#[test]
+fn unhandled_promise_rejections_fail_extension_initialization() {
+    let source = format!(
+        "Promise.reject(new Error('unhandled initialization')); \
+         export function visualize(){{return {DOCUMENT};}}"
+    );
+    assert_eq!(
+        start(snapshot(&source))
+            .err()
+            .expect("an unhandled rejection must not become ready")
+            .kind,
+        FailureKind::Exception
+    );
+}
+
+#[tokio::test]
+async fn handled_rejections_are_allowed_and_unhandled_rejections_surface_before_the_next_call() {
+    let source = r"
+let calls = 0;
+let handled = 0;
+Promise.reject(new Error('handled initialization')).catch(() => handled++);
+export function visualize() {
+  calls++;
+  if (calls === 1) Promise.reject(new Error('handled callback')).catch(() => handled++);
+  if (calls === 2) Promise.reject(new Error('unhandled callback'));
+  return {kind:'document',document:{title:calls + ':' + handled,status:'complete',presentation:'tree',roots:[]}};
+}
+";
+    let runner = start(snapshot(source)).unwrap();
+    for expected in ["1:1", "2:2"] {
+        let VisualizationStep::Document { document } = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("document required");
+        };
+        assert_eq!(document.title, expected);
+    }
+    assert_eq!(
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap_err()
+            .kind,
+        FailureKind::Exception
+    );
+    let VisualizationStep::Document { document } = runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap()
+    else {
+        panic!("document required");
+    };
+    assert_eq!(document.title, "3:2");
+}
+
+#[tokio::test]
+async fn promises_and_thenables_are_rejected_without_poisoning_the_extension() {
+    for result in [
+        format!("Promise.resolve({DOCUMENT})"),
+        "{then() {}}".to_owned(),
+    ] {
+        let source = format!(
+            "let calls = 0; export function visualize(){{ \
+             if (++calls === 1) return {result}; return {DOCUMENT}; }}"
+        );
+        let runner = start(snapshot(&source)).unwrap();
+        assert_eq!(
+            runner
+                .invoke(Invocation::Visualize {
+                    input: Box::new(input()),
+                })
+                .await
+                .unwrap_err()
+                .kind,
+            FailureKind::Exception
+        );
+        assert!(matches!(
+            runner
+                .invoke(Invocation::Visualize {
+                    input: Box::new(input()),
+                })
+                .await
+                .unwrap(),
+            VisualizationStep::Document { .. }
+        ));
+    }
+}
+
+#[tokio::test]
+async fn large_modules_and_repeated_allocations_keep_the_engine_available() {
+    let source = format!(
+        "const payload = '{}'; let calls = 0; \
+         export function visualize(){{ \
+           const scratch = new Array(400_000).fill(payload.length); \
+           if(scratch[399_999] !== 262_144) throw new Error('corrupt allocation'); \
+           return {{kind:'document',document:{{title:String(++calls),status:'complete',presentation:'tree',roots:[]}}}}; \
+         }}",
+        "x".repeat(262_144)
+    );
+    let runner = start(snapshot(&source)).unwrap();
+    for calls in 1..=24 {
+        let VisualizationStep::Document { document } = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap()
+        else {
+            panic!("document required");
+        };
+        assert_eq!(document.title, calls.to_string());
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+}
+
 #[test]
 fn commonjs_and_non_synchronous_named_handlers_are_rejected() {
     for source in [
