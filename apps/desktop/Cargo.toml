@@ -22,12 +22,12 @@ name = "transmog"
 path = "src/main.rs"
 
 [dependencies]
-transmog-app = { version = "=0.1.11", path = "../../crates/app" }
-transmog-portable = { version = "=0.1.11", path = "../../crates/portable" }
-transmog-capture = { version = "=0.1.11", path = "../../crates/proxy-capture" }
+transmog-app = { version = "=0.1.12", path = "../../crates/app" }
+transmog-portable = { version = "=0.1.12", path = "../../crates/portable" }
+transmog-capture = { version = "=0.1.12", path = "../../crates/proxy-capture" }
 getrandom.workspace = true
-transmog-app-webui = { version = "=0.1.11", path = "../../crates/app-webui" }
-transmog-session = { version = "=0.1.11", path = "../../crates/proxy-session" }
+transmog-app-webui = { version = "=0.1.12", path = "../../crates/app-webui" }
+transmog-session = { version = "=0.1.12", path = "../../crates/proxy-session" }
 tokio.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -49,25 +49,25 @@ hyper = { workspace = true, optional = true }
 hyper-util = { workspace = true, optional = true }
 quiche = { workspace = true, optional = true }
 tokio-boring = { workspace = true, optional = true }
-transmog-core = { version = "=0.1.11", path = "../../crates/proxy-core", optional = true }
-transmog-http = { version = "=0.1.11", path = "../../crates/proxy-http", optional = true }
-transmog-tls = { version = "=0.1.11", path = "../../crates/proxy-tls" }
-transmog-webview-preview-windows = { version = "=0.1.11", path = "../../crates/webview-preview-windows" }
+transmog-core = { version = "=0.1.12", path = "../../crates/proxy-core", optional = true }
+transmog-http = { version = "=0.1.12", path = "../../crates/proxy-http", optional = true }
+transmog-tls = { version = "=0.1.12", path = "../../crates/proxy-tls" }
+transmog-webview-preview-windows = { version = "=0.1.12", path = "../../crates/webview-preview-windows" }
 rfd = { version = "=0.17.2", default-features = false }
 tauri = { version = "=2.12.4", default-features = false, features = ["wry"] }
 tauri-plugin-single-instance = "=2.5.4"
 tauri-plugin-updater = { version = "=2.14.0", default-features = false, features = ["rustls-tls", "system-proxy"] }
 # Configure the updater's existing client without introducing another TLS stack.
 reqwest = { version = "=0.13.5", default-features = false }
-transmog-host-windows = { version = "=0.1.11", path = "../../crates/host-windows" }
+transmog-host-windows = { version = "=0.1.12", path = "../../crates/host-windows" }
 
 [target.'cfg(windows)'.dev-dependencies]
 tauri = { version = "=2.12.4", default-features = false, features = ["test"] }
-transmog-automation = { version = "=0.1.11", path = "../../crates/proxy-automation" }
-transmog-core = { version = "=0.1.11", path = "../../crates/proxy-core" }
+transmog-automation = { version = "=0.1.12", path = "../../crates/proxy-automation" }
+transmog-core = { version = "=0.1.12", path = "../../crates/proxy-core" }
 
 [build-dependencies]
-transmog-extensions = { version = "=0.1.11", path = "../../crates/extensions" }
+transmog-extensions = { version = "=0.1.12", path = "../../crates/extensions" }
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.3", features = [] }

@@ -2202,7 +2202,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-auth"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "flate2",
@@ -2215,7 +2215,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-capture"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -2237,7 +2237,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-content"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "async-compression",
  "bytes",
@@ -2274,7 +2274,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-core"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "bytes",
  "http",
@@ -2285,7 +2285,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extensions"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "crc32fast",
@@ -2299,7 +2299,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-package-zip"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "crc32fast",
  "thiserror",
@@ -2308,7 +2308,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "bytes",
  "serde",
@@ -2322,7 +2322,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script-compiler"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "stacker",
  "swc_common",
@@ -2337,7 +2337,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-websocket"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "bytes",
