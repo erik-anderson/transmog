@@ -12,7 +12,7 @@ base64.workspace = true
 getrandom.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
-transmog-extensions = { version = "=0.1.10", path = "../extensions" }
+transmog-extensions = { version = "=0.1.11", path = "../extensions" }
 
 [lints]
 workspace = true
