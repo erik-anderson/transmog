@@ -3,6 +3,7 @@ import {createRequire} from 'node:module';
 import {readFile,writeFile} from 'node:fs/promises';
 import {resolve} from 'node:path';
 import {deflateRawSync} from 'node:zlib';
+import {checkInspectorShortcutFocus} from './check-window-shortcuts.mjs';
 const {chromium}=createRequire(new URL('../../../../e2e/playwright/package.json',import.meta.url))('playwright');
 const argument=name=>process.argv[process.argv.indexOf(name)+1];
 const output=resolve(argument('--output'));
@@ -29,6 +30,7 @@ try {
   });
   await page.evaluate(async path=>{const shell=document.querySelector('app-shell');await shell.activateView('traffic');await shell.traffic.importTrace(path);const row=shell.traffic.sessions.find(row=>row.path==='/token');if(!row)throw new Error('Auth fixture did not import');await shell.traffic.inspectSession(row);},fixture);
   const request=page.locator('message-inspector[side="request"]'),response=page.locator('message-inspector[side="response"]');
+  await checkInspectorShortcutFocus(page);
   await response.locator('auth-inspector').getByText('JWT / JWS',{exact:true}).waitFor({state:'attached'});
   await request.locator('.message-tabs').getByRole('button',{name:/^Auth/}).click();
   const auth=request.locator('auth-inspector');await auth.locator('.auth-finding > summary > strong').filter({hasText:/^Basic$/}).waitFor();
@@ -185,7 +187,7 @@ try {
     await page.screenshot({path:resolve(output,'copy-native-mapi.png')});
   }
   await cdp.detach();assert.deepEqual(errors,[]);
-  await writeFile(resolve(output,'auth-native.json'),JSON.stringify({masked:true,revealCopy:true,ownerAuthorization:true,staleRejection:true,jwtSamlNtlmKerberos:true,nestedArtifacts:true,expandedInspector:true,compactZoom:true,accessibility:true,copyMenus:true,mapiSubtree:process.argv.includes('--mapi'),trafficContext:process.argv.includes('--mapi')},null,2));
+  await writeFile(resolve(output,'auth-native.json'),JSON.stringify({masked:true,revealCopy:true,ownerAuthorization:true,staleRejection:true,jwtSamlNtlmKerberos:true,nestedArtifacts:true,expandedInspector:true,inspectorShortcutFocus:true,compactZoom:true,accessibility:true,copyMenus:true,mapiSubtree:process.argv.includes('--mapi'),trafficContext:process.argv.includes('--mapi')},null,2));
   console.log('Native Auth parsing, masking, clipboard, authorization, accessibility and layouts verified.');
 } catch(error) {
   await page.screenshot({path:resolve(output,'copy-native-failure.png')}).catch(()=>undefined);

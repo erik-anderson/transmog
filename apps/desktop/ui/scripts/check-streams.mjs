@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { resolve } from 'node:path';
+import {checkInspectorShortcutFocus} from './check-window-shortcuts.mjs';
 export async function checkStreams(page,root) {
   const saved=await page.evaluate(()=>({preferences:document.querySelector('app-shell').traffic.preferences,sessions:globalThis.__workspaceFixture.sessions,evictedIds:globalThis.__workspaceFixture.evictedIds,dismissedIds:globalThis.__workspaceFixture.dismissedIds}));
   await page.setViewportSize({width:1440,height:900});
@@ -13,6 +14,7 @@ export async function checkStreams(page,root) {
   const inspector=page.locator('stream-inspector');await inspector.locator('.stream-row').last().waitFor();
   const socketRow=page.locator('#session-socket');
   await socketRow.locator('.stream-identity').waitFor();
+  await checkInspectorShortcutFocus(page);
   assert.equal(await socketRow.locator('.stream-identity').textContent(),'WebSocket⌄');
   assert.match(await socketRow.getAttribute('aria-label'),/WebSocket · In progress/);
   assert.equal(await socketRow.locator('[data-column-id="path"] .stream-identity').count(),0);

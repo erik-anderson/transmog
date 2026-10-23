@@ -18,6 +18,7 @@ import { WebUIElement, attr, observable } from '@microsoft/webui-framework';
 import { invoke } from '@tauri-apps/api/core';
 import type { TrafficRuleRequest, AppStatus, AutomationStatus, Notice, NoticeAction, ProductState, ResponsePreviewIntent, SelectedResponse, SessionDetail, ViewName, WorkspacePreferences, TracePasswordPrompt, OperationError } from '../models.js';
 import { defaultWorkspace, normalizeWorkspace } from '../table-model.js';
+import {isTextEditing} from '../list-selection.js';
 import type { TrafficWorkspace } from '../traffic-workspace/traffic-workspace.js';
 import type { SettingsWorkspace } from '../settings-workspace/settings-workspace.js';
 import type { AutomationWorkspace } from '../automation-workspace/automation-workspace.js';
@@ -179,10 +180,15 @@ export class AppShell extends WebUIElement {
   private saveTimer: number | undefined;
   private saving = false;
   private saveAgain = false;
+  private readonly inspectorShortcut = (event:KeyboardEvent):void => {
+    // Reserve the layout command before list/button Enter handlers; editors get first refusal.
+    if(this.activeView==='traffic'&&!isTextEditing(event))this.traffic.inspectorKeyboard(event);
+  };
   private readonly shortcutListener = (event:KeyboardEvent):void => {
     if(event.defaultPrevented || event.isComposing || !(event.ctrlKey || event.metaKey) || event.altKey)return;
     // Let dialogs and editors own their input before handling application commands.
     if(event.composedPath().some(node=>node instanceof HTMLDialogElement && node.open))return;
+    if(this.activeView==='traffic'&&this.traffic.inspectorKeyboard(event))return;
     const key=event.key.toLowerCase();
     if(event.shiftKey && key!=='f')return;
     const traffic=this.activeView==='traffic';
@@ -209,6 +215,10 @@ export class AppShell extends WebUIElement {
     catch(error:unknown){this.diagnosticText='Viewer could not be closed: '+describeError(error);}
   }
   workspaceChanged():void { this.navigationExpanded = this.workspace.sidebarCollapsed ? 'false' : 'true'; }
+  connectedCallback():void {
+    super.connectedCallback();
+    this.addEventListener('keydown',this.inspectorShortcut,true);
+  }
   protected hydratedCallback():void {
     this.capturedPreviewController=this.traffic;
     document.addEventListener('keydown',this.shortcutListener);
@@ -454,7 +464,7 @@ export class AppShell extends WebUIElement {
   async onReplay(event: CustomEvent<SessionDetail>): Promise<void> {
     if (await this.activateView('composer')) await this.composer.populateRequest(event.detail);
   }
-  disconnectedCallback(): void { document.removeEventListener('keydown',this.shortcutListener);window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); for(const error of this.operationErrors)error.resolve();this.operationErrors=[];super.disconnectedCallback(); }
+  disconnectedCallback(): void { this.removeEventListener('keydown',this.inspectorShortcut,true);document.removeEventListener('keydown',this.shortcutListener);window.clearTimeout(this.saveTimer); this.resolveUpdateDrafts?.(false); for(const error of this.operationErrors)error.resolve();this.operationErrors=[];super.disconnectedCallback(); }
 
 }
 

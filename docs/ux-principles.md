@@ -90,6 +90,8 @@ when changing the experience.
   or in its tooltip. Scope window and workspace commands to their context; let
   dialogs and editors handle their own keys first. Holding a shortcut must not
   repeatedly open windows or file dialogs.
+  Reserve workspace layout shortcuts before ordinary list navigation or button
+  activation so their behavior does not depend on which control has focus.
 - Application chrome and selectable lists do not select text during pointer or
   range selection. Editors and inspection evidence, including headers, bodies,
   full URLs and reports, retain ordinary text selection and copying.

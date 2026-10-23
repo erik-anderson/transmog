@@ -1750,10 +1750,13 @@ export class TrafficWorkspace extends WorkspaceElement {
     this.clearTrafficSelection();
     this.trafficTable.focus({preventScroll:true});
   }
+  inspectorKeyboard(event:KeyboardEvent):boolean {
+    if(event.defaultPrevented||event.isComposing||this.view!=='traffic'||!event.ctrlKey||!event.shiftKey||event.altKey||event.key!=='Enter'||!this.selectedSessionId&&!this.inspectorExpanded)return false;
+    if((this.getRootNode() as ShadowRoot).querySelector('dialog[open],[popover]:popover-open'))return false;
+    if(event.composedPath().some(node=>node instanceof HTMLElement&&node.matches('dialog,[popover],.monaco-editor')))return false;
+    event.preventDefault();event.stopPropagation();if(!event.repeat)this.toggleInspector();return true;
+  }
   trafficKeyboard(event:KeyboardEvent):void {
-    if(!event.defaultPrevented&&event.ctrlKey&&event.shiftKey&&!event.altKey&&event.key==='Enter'&&!this.querySelector('dialog[open],[popover]:popover-open')){
-      event.preventDefault();if(!event.repeat)this.toggleInspector();return;
-    }
     if(event.defaultPrevented||event.key!=='Escape'||isTextEditing(event)||!this.selectedTrafficCount)return;
     if(this.querySelector('dialog[open],[popover]:popover-open'))return;
     if(event.composedPath().some(node=>node instanceof HTMLElement&&node.matches('dialog,[popover]')))return;

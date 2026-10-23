@@ -24,6 +24,9 @@ exchange. **Restore** returns to the list and its prior scroll position. Use
 inspection scroll position are preserved; expansion and its request/response
 resize do not overwrite saved split positions. Wide windows retain both messages,
 while compact windows retain the Request/Response switch.
+While Traffic is active, the shortcut works from list, inspector and app header
+controls, including focused buttons. Open menus and dialogs retain their keys,
+and text editors can handle the shortcut themselves.
 The search shortcuts **Ctrl+F** and **Ctrl+Shift+F** restore Traffic before
 focusing the filter or content search field.
 
