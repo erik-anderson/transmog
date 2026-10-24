@@ -74,6 +74,8 @@ and Microsoft's [Compact Binary encoding reference](https://github.com/microsoft
 In **Compare requests and responses**, open **Compare structured body fields**,
 choose a body and format, then **Compare fields**. This uses the comparison's
 frozen complete bodies, including HTTP content decoding, up to 2 MiB per side.
+Completion feedback stays beside the action; results appear below without
+moving focus.
 The ordinary enabled extension readers parse each side in isolated workers;
 native code then matches encoded map keys or field labels and ordered duplicate
 occurrences. It reports changes in typed values or wire encoding, including

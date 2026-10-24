@@ -430,7 +430,7 @@ export class ComparisonWorkspace extends WorkspaceElement {
         this.isConnected
       ) {
         this.comparisonFields = result;
-        this.comparisonFieldsStatus = "";
+        this.comparisonFieldsStatus = "Field comparison ready. Results are below.";
       }
     } catch (error: unknown) {
       if (revision === this.fieldRevision) {

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
 export async function checkComparison(page, root) {
+  await page.setViewportSize({ width: 800, height: 600 });
   await page.addInitScript(() => sessionStorage.setItem("startup-update-tested", "true"));
   await page.goto("https://workspace.test/");
   await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
@@ -26,7 +27,19 @@ export async function checkComparison(page, root) {
     () => globalThis.__workspaceFixture.visualizerStarts?.length ?? 0,
   );
   await dialog.getByRole("button", { name: "Compare fields", exact: true }).click();
+  await fieldDetails
+    .getByRole("status")
+    .filter({ hasText: "Field comparison ready. Results are below." })
+    .waitFor();
+  assert.equal(
+    await dialog
+      .getByRole("button", { name: "Compare fields", exact: true })
+      .evaluate((element) => element === element.getRootNode().activeElement),
+    true,
+    "Completing the comparison stole focus from its action",
+  );
   const shared = fieldDetails.locator("extension-visualizer");
+  await shared.scrollIntoViewIfNeeded();
   await shared
     .locator(".visualizer-heading > strong")
     .filter({ hasText: "field comparison" })
@@ -82,6 +95,7 @@ export async function checkComparison(page, root) {
     false,
     "Continuing keyboard navigation reopened dismissed details",
   );
+  await page.keyboard.press("Home");
   await page.evaluate(() =>
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
