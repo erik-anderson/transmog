@@ -16,9 +16,13 @@ export async function checkBinaryVisualizers(page, root) {
     ["protobuf", []],
     ...referenceCases
       .filter((item) => !item.name.endsWith("-right"))
-      .map((item) => [item.name.split("-")[0], Array.from(Buffer.from(item.bodyHex, "hex"))]),
+      .map((item) => [
+        item.name.split("-")[0],
+        Array.from(Buffer.from(item.bodyHex, "hex")),
+        item.contentType,
+      ]),
   ];
-  for (const [index, [kind, bytes]] of fixtures.entries()) {
+  for (const [index, [kind, bytes, contentType]] of fixtures.entries()) {
     const parser = await import(pathToFileURL(resolve(binary, `dist/runtime/${kind}.js`)).href);
     const body = { sourceId: "body", length: String(bytes.length), availability: "complete" };
     let step = parser.visualize({
@@ -27,7 +31,20 @@ export async function checkBinaryVisualizers(page, root) {
       requestNumber: "1",
       generation: "1",
       direction: "response",
-      response: { evidenceId: "first", headers: [], body },
+      response: {
+        evidenceId: "first",
+        headers: contentType
+          ? [
+              {
+                index: 0,
+                name: "content-type",
+                redacted: false,
+                value: Array.from(Buffer.from(contentType)),
+              },
+            ]
+          : [],
+        body,
+      },
     });
     while (step.kind === "needInput") {
       step = parser.resume(

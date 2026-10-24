@@ -22,7 +22,7 @@ comparison-workspace .comparison-warning,comparison-workspace .comparison-counte
 comparison-workspace footer{flex:none;border-top:1px solid #8888;padding-top:.5rem}
 comparison-workspace button{white-space:normal}
 comparison-workspace progress{max-width:8rem}
-comparison-workspace .comparison-field-view{height:24rem;min-height:12rem;max-height:65dvh;border:1px solid var(--line);margin-block:.5rem}
+comparison-workspace .comparison-field-view{height:24rem;min-height:8rem;max-height:max(8rem,calc(100dvh - 22rem));border:1px solid var(--line);margin-block:.5rem}
 comparison-workspace .comparison-fields > p{font-size:.8rem;max-width:80ch}
 @media(max-width:850px){comparison-workspace .comparison-values{grid-template-columns:1fr}comparison-workspace .comparison-values pre:first-child::before{content:'Left\A';font-weight:bold}comparison-workspace .comparison-values pre:last-child::before{content:'Right\A';font-weight:bold}}
 @media(forced-colors:active){comparison-workspace article[data-state=different]{border-color:Highlight}}

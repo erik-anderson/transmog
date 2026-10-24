@@ -48,6 +48,33 @@ export async function checkComparison(page, root) {
   await shared.getByRole("combobox", { name: "Structure view" }).selectOption("table");
   await shared.getByRole("combobox", { name: "Structure view" }).selectOption("text");
   await page.keyboard.press("Escape");
+  await page.evaluate(() =>
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: {
+        writeText: async (text) => {
+          globalThis.__fieldCopied = text;
+        },
+      },
+    }),
+  );
+  const selectedField = await tree.getAttribute("aria-activedescendant");
+  const finding = shared
+    .getByRole("treeitem")
+    .filter({ has: page.locator(".visualizer-field", { hasText: /^greeting/ }) });
+  await finding.click({ button: "right" });
+  await page
+    .getByRole("menu", { name: "Copy inspection value", exact: true })
+    .getByRole("menuitem", { name: "Copy subtree", exact: true })
+    .click();
+  await page.waitForFunction(() =>
+    globalThis.__fieldCopied?.includes("Right: <script>inert</script>"),
+  );
+  assert.equal(
+    await tree.getAttribute("aria-activedescendant"),
+    selectedField,
+    "Native context copying changed the selected field",
+  );
   await shared.getByRole("button", { name: "About this visualizer", exact: true }).click();
   await shared
     .getByRole("dialog", { name: "About this visualizer" })
@@ -62,6 +89,24 @@ export async function checkComparison(page, root) {
     await page.setViewportSize({ width, height });
     await shared.scrollIntoViewIfNeeded();
     assert.ok(await tree.isVisible());
+    const viewport = await dialog.locator(".comparison-scroll").first().boundingBox();
+    const treeBounds = await tree.boundingBox();
+    assert.ok(
+      treeBounds.y >= viewport.y - 2 &&
+        treeBounds.y + treeBounds.height <= viewport.y + viewport.height + 2,
+      "Native structure tree extends beyond its visible comparison viewport",
+    );
+    await tree.focus();
+    await page.keyboard.press("End");
+    const selected = shared.getByRole("treeitem", { selected: true });
+    await selected.waitFor();
+    const selectedBounds = await selected.boundingBox();
+    assert.ok(
+      selectedBounds.y >= viewport.y - 2 &&
+        selectedBounds.y + selectedBounds.height <= viewport.y + viewport.height + 2,
+      "Keyboard navigation placed a native field outside the visible scroll area",
+    );
+    await page.keyboard.press("Home");
     await page.screenshot({
       path: resolve(root, `../../../target/ui-check/native-fields-${width}.png`),
     });

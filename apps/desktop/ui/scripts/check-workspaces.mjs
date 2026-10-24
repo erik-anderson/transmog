@@ -1397,7 +1397,7 @@ await page.addInitScript(
                 updates: "final",
                 presentation: "tree",
                 summary:
-                  "1 finding · 3 equal fields. Frozen snapshots; ordered duplicate occurrences.",
+                  "13 findings · 3 equal fields. Frozen snapshots; ordered duplicate occurrences.",
                 sources: [],
                 diagnostics: [],
                 roots: [
@@ -1422,6 +1422,13 @@ await page.addInitScript(
                       },
                     ],
                   },
+                  ...Array.from({ length: 12 }, (_, index) => ({
+                    id: "extra." + index,
+                    name: "Additional field " + index + " · changed",
+                    value: { kind: "string", value: "Changed value" },
+                    spans: [],
+                    children: [],
+                  })),
                 ],
               },
             };

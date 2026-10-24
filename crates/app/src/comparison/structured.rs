@@ -118,7 +118,7 @@ impl Application {
             let bytes = crate::visualizers::decoding::decode(&body.codings, encoded, MAX_BYTES, MAX_BYTES)
                 .await.map_err(|_| error("HTTP decoding failed or exceeded the field comparison limit; encoded bytes were not interpreted"))?;
             op.check()?;
-            let document = parse(self.extensions(), format, &bytes, &op).await?;
+            let document = parse(self.extensions(), format, &bytes, &message.headers, &op).await?;
             parsed.push((document, bytes));
         }
         let (left, left_bytes) = &parsed[0];
@@ -136,6 +136,7 @@ async fn parse(
     registry: Registry,
     format: &str,
     bytes: &[u8],
+    headers: &transmog_core::HeaderBlock,
     op: &Operation,
 ) -> Result<VisualizationDocument, AppError> {
     let owner = format!("comparison-{}", token()?);
@@ -161,26 +162,18 @@ async fn parse(
         .registry
         .runner(&worker.owner, &instance.id)
         .map_err(|_| error("Format reader unavailable"))?;
-    let input = VisualizationInput {
-        instance_id: instance.id,
-        exchange_id: "comparison".into(),
-        request_number: "1".into(),
-        generation: "1".into(),
-        direction: Direction::Response,
-        request: None,
-        response: Some(MessageInput {
-            evidence_id: "frozen".into(),
-            headers: vec![],
-            body: Some(BodyReference {
-                source_id: "body".into(),
-                length: bytes.len().to_string(),
-                availability: "complete".into(),
-            }),
-            method: None,
-            path: None,
-            status: None,
-        }),
-    };
+    let input = reader_input(
+        instance.id,
+        bytes.len(),
+        content_types(
+            headers,
+            instance
+                .declaration
+                .inputs
+                .response
+                .permits_header("content-type"),
+        )?,
+    );
     let mut invocation = Invocation::Visualize {
         input: Box::new(input),
     };
@@ -232,10 +225,72 @@ async fn parse(
     Err(error("Format reader exceeded the continuation limit"))
 }
 
+fn reader_input(
+    instance_id: String,
+    byte_length: usize,
+    headers: Vec<transmog_extensions::Header>,
+) -> VisualizationInput {
+    VisualizationInput {
+        instance_id,
+        exchange_id: "comparison".into(),
+        request_number: "1".into(),
+        generation: "1".into(),
+        direction: Direction::Response,
+        request: None,
+        response: Some(MessageInput {
+            evidence_id: "frozen".into(),
+            headers,
+            body: Some(BodyReference {
+                source_id: "body".into(),
+                length: byte_length.to_string(),
+                availability: "complete".into(),
+            }),
+            method: None,
+            path: None,
+            status: None,
+        }),
+    }
+}
+
 struct Field<'a> {
     name: String,
     node: &'a Node,
     wire: String,
+}
+
+fn content_types(
+    block: &transmog_core::HeaderBlock,
+    permitted: bool,
+) -> Result<Vec<transmog_extensions::Header>, AppError> {
+    if !permitted {
+        return Ok(vec![]);
+    }
+    let mut headers = Vec::new();
+    let mut bytes = 0usize;
+    for (index, field) in block
+        .iter()
+        .enumerate()
+        .filter(|(_, field)| field.name().eq_ignore_ascii_case(b"content-type"))
+    {
+        bytes = bytes.saturating_add(field.value().len());
+        if headers.len() >= 16 || bytes > 65_536 {
+            return Err(error(
+                "Content-type metadata exceeds the field comparison limit",
+            ));
+        }
+        headers.push(transmog_extensions::Header {
+            source_id: None,
+            index: u32::try_from(index)
+                .map_err(|_| error("Header index exceeds the field comparison limit"))?,
+            name: String::from_utf8_lossy(field.name()).into_owned(),
+            value: (!field.is_redacted()).then(|| field.value().to_vec()),
+            redacted: field.is_redacted(),
+            original_bytes: field
+                .original_value_bytes()
+                .map(|length| length.to_string()),
+        });
+    }
+    Ok(headers)
 }
 
 fn comparable(document: &VisualizationDocument) -> bool {
@@ -547,6 +602,27 @@ fn compare(
 mod tests {
     use super::*;
     use transmog_extensions::Span;
+
+    #[test]
+    fn comparison_retains_only_declared_format_metadata_without_reapplying_codings() {
+        let mut hidden =
+            transmog_core::HeaderField::try_new("Content-Type", "application/cbor-seq").unwrap();
+        hidden.redact_value();
+        let block = transmog_core::HeaderBlock::from_fields(vec![
+            transmog_core::HeaderField::try_new("Content-Type", "application/cbor-seq").unwrap(),
+            transmog_core::HeaderField::try_new("Content-Encoding", "gzip").unwrap(),
+            transmog_core::HeaderField::try_new("Authorization", "private").unwrap(),
+            hidden,
+        ]);
+        assert_eq!(content_types(&block, false).unwrap(), []);
+        let projected = content_types(&block, true).unwrap();
+        assert_eq!(projected.len(), 2);
+        assert_eq!(
+            projected[0].value.as_deref(),
+            Some(b"application/cbor-seq".as_slice())
+        );
+        assert!(projected[1].redacted && projected[1].value.is_none());
+    }
 
     #[test]
     fn partial_containers_align_known_children_without_losing_changed_values() {

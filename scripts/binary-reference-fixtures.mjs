@@ -14,6 +14,12 @@ const packed = protobuf
   )
   .root.lookupType("Sample");
 export const referenceCases = [
+  ["cbor-seq-empty", "application/cbor-seq", new Uint8Array()],
+  [
+    "bond-reference",
+    "application/bond-compact-binary",
+    Uint8Array.from([0x29, 3, 0x33, 0x2e, 0x30, 0]),
+  ],
   ["msgpack", "application/msgpack", msgpack(sample)],
   [
     "msgpack-right",

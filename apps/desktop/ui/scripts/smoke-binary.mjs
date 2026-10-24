@@ -68,13 +68,13 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     await show('protobuf-negative-zero','request',false);await show('bond-negative-zero','response',false);
     await show('protobuf-duplicate-identity','request',false);await show('protobuf-invalid-identity','response',false);
     await show('bond-version-limited','request',false);await show('bond-framing-limited','response',false);
-    for(const name of ['msgpack','msgpack-extension','cbor','bson','protobuf-packed'])await show(name,'response');
+    for(const name of ['msgpack','msgpack-extension','cbor','cbor-seq-empty','bson','protobuf-packed'])await show(name,'response');
     await show('protobuf','request',false);await show('bond','response',false);
     globalThis.__binaryProbe.inspectors=inspectors;
   })()`);
   const qualification = await evaluate(`(async()=>{
     const invoke=(name,args={})=>window.__TAURI_INTERNALS__.invoke(name,args),results=[];
-    for(const sample of ${JSON.stringify(referenceCases.filter((item) => ["msgpack", "cbor", "bson", "protobuf-packed"].includes(item.name)))}){
+    for(const sample of ${JSON.stringify(referenceCases.filter((item) => ["bond-reference", "msgpack", "cbor", "bson", "protobuf-packed"].includes(item.name)))}){
       const response=await invoke('execute_composer',{request:{method:'GET',url:${JSON.stringify(serviceUrl)}+'/'+sample.name,headers:[],body:''}});
       if(response.status!==200)throw new Error('Local reference service failed');
       const pageId=await invoke('visualizer_page'),format=sample.name.split('-')[0],slot='binary-service-'+sample.name;
@@ -87,7 +87,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       if(actual!==sample.bodyHex)throw new Error('Retained service bytes differ from independent encoder');
       await invoke('deactivate_visualizer',{slot,generation:'2',pageId});
       if(await invoke('visualizer_active',{handle:view.handle}))throw new Error('Service reader remained active');
-      results.push({format,status:view.document.status,decodedBytes:Number(source.length),transport:'live localhost HTTP with gzip',encoder:'independent reference library'});
+      results.push({format,status:view.document.status,decodedBytes:Number(source.length),transport:'live localhost HTTP with gzip',encoder:format==='bond'?'Microsoft reference wire example':'independent reference library'});
     }
     const shell=document.querySelector('app-shell'),c=shell.comparison;
     const find=async name=>(await invoke('query_sessions',{query:{search:'https://binary.invalid/'+name,limit:100,offset:0}})).sessions.find(row=>row.url==='https://binary.invalid/'+name).id;
@@ -109,6 +109,10 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       if(await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:await invoke('visualizer_page'),operationId:'binary-queued-'+format}).then(()=>false,()=>true)!==true)throw new Error('Pre-start field cancellation was forgotten');
       await invoke('close_comparison',{id:snapshot.id});
     }
+    const empty=await find('cbor-seq-empty'),emptyPair=await invoke('compare_evidence',{input:{operationId:'empty-cbor-pair',left:{kind:'exchange',id:empty},right:{kind:'exchange',id:empty}}});
+    const emptyFields=await invoke('comparison_fields',{id:emptyPair.id,section:'Response',format:'cbor',pageId:await invoke('visualizer_page'),operationId:'empty-cbor-fields'});
+    if(emptyFields.document.status!=='complete'||emptyFields.document.roots[0]?.name!=='No field changes')throw new Error('Empty CBOR sequence comparison lost its content type');
+    await invoke('close_comparison',{id:emptyPair.id});
     return results;
   })()`);
   for (const [name, width, height] of [
@@ -120,6 +124,36 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       height,
       deviceScaleFactor: 1,
       mobile: false,
+    });
+    await evaluate(
+      `(()=>{const c=document.querySelector('app-shell').comparison;c.comparisonDialog.querySelector('.comparison-field-view').scrollIntoView({block:'center'});c.comparisonDialog.querySelector('extension-visualizer').treeViewport.focus();})()`,
+    );
+    await call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "End",
+      code: "End",
+      windowsVirtualKeyCode: 35,
+    });
+    await call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "End",
+      code: "End",
+      windowsVirtualKeyCode: 35,
+    });
+    await evaluate(
+      `(()=>{const c=document.querySelector('app-shell').comparison,viewer=c.comparisonDialog.querySelector('extension-visualizer'),viewport=c.comparisonScroll.getBoundingClientRect(),tree=viewer.treeViewport.getBoundingClientRect(),selected=viewer.treeViewport.querySelector('[aria-selected=true]').getBoundingClientRect();if(tree.top<viewport.top-2||tree.bottom>viewport.bottom+2||selected.top<viewport.top-2||selected.bottom>viewport.bottom+2)throw new Error('Native field tree or keyboard selection escaped its visible viewport');})()`,
+    );
+    await call("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Home",
+      code: "Home",
+      windowsVirtualKeyCode: 36,
+    });
+    await call("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Home",
+      code: "Home",
+      windowsVirtualKeyCode: 36,
     });
     if (screenshotPath)
       await writeFile(
@@ -150,6 +184,10 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
           productionServiceCaptures: "not supplied",
           nativeComparison: true,
           sharedPresentation: true,
+          viewportAndKeyboard: true,
+          stalePageRejected: true,
+          queuedCancellation: true,
+          emptyCborSequence: true,
         },
         null,
         2,

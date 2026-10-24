@@ -4,7 +4,20 @@ import test from "node:test";
 import vm from "node:vm";
 import { encode as pack } from "@msgpack/msgpack";
 import { encode as cbor } from "cborg";
-import { BSON, Binary, Code, Decimal128, Double, Long, ObjectId, Timestamp } from "bson";
+import {
+  BSON,
+  Binary,
+  BSONRegExp,
+  BSONSymbol,
+  Code,
+  Decimal128,
+  Double,
+  Long,
+  MaxKey,
+  MinKey,
+  ObjectId,
+  Timestamp,
+} from "bson";
 import protobuf from "protobufjs";
 
 const sources = Object.fromEntries(
@@ -328,6 +341,65 @@ test("BSON validates declared sizes, strings, Boolean values and array indexes",
     assert.equal((await host("bson", hex(bytes))).document.status, "malformed", bytes);
   }
   assert.equal((await host("bson", hex("05000000000500000000"))).document.roots.length, 2);
+});
+
+test("reference encoders cover integer boundaries and deprecated BSON scalar families", async () => {
+  const integers = [
+    -33,
+    -129,
+    -32769,
+    -2147483649n,
+    128,
+    256,
+    65536,
+    4294967296n,
+    -9223372036854775808n,
+    18446744073709551615n,
+  ];
+  const { document: message } = await host("msgpack", pack(integers, { useBigInt64: true }));
+  assert.equal(message.status, "complete");
+  assert.deepEqual(
+    message.roots[0].children.map((node) => node.value.value),
+    integers.map(String),
+  );
+  const bson = BSON.serialize({
+    oldBinary: new Binary(Buffer.from([0xaa, 0xbb]), 2),
+    regex: new BSONRegExp("a/b", "im"),
+    symbol: new BSONSymbol("symbol"),
+    code: new Code("inert()"),
+    min: new MinKey(),
+    max: new MaxKey(),
+  });
+  const { document } = await host("bson", bson);
+  assert.equal(document.status, "complete");
+  const all = nodes(document);
+  const payload = all.find((node) => node.name === "Binary subtype 2 payload");
+  assert.deepEqual(
+    payload.spans.flatMap((span) =>
+      Array.from(bson.slice(Number(span.offset), Number(span.offset) + Number(span.length))),
+    ),
+    [0xaa, 0xbb],
+  );
+  assert.ok(all.some((node) => node.name === "Pattern (inert)" && node.value.value === "a/b"));
+  assert.ok(all.some((node) => node.name === "Options" && node.value.value === "im"));
+  assert.ok(all.some((node) => node.value?.value?.name === "MinKey"));
+  assert.ok(all.some((node) => node.value?.value?.name === "MaxKey"));
+});
+
+test("floating widths and MessagePack timestamp64/96 retain their wire values", async () => {
+  const cbor = (await host("cbor", hex("fa3fc00000 fb8000000000000000"))).document;
+  assert.deepEqual(
+    cbor.roots.map((node) => node.value.value),
+    [1.5, "-0"],
+  );
+  const message = (
+    await host("msgpack", hex("d7ff0000000400000001 c70cff00000001ffffffffffffffff"))
+  ).document;
+  assert.equal(message.status, "complete");
+  assert.deepEqual(
+    message.roots.map((node) => node.value.value),
+    ["1 seconds + 1 ns since Unix epoch", "-1 seconds + 1 ns since Unix epoch"],
+  );
 });
 
 test("packed Protobuf previews agree with an independent schema-based serializer", async () => {

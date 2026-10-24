@@ -49,7 +49,7 @@ remain partial, so Auto cannot silently choose between the framings.
 If a competing version or framing reaches a parser limit, it remains unresolved;
 the result stays limited even if another interpretation completes.
 
-Both viewers request HTTP content decoding from the host, including its
+All viewers request HTTP content decoding from the host, including its
 raw-DEFLATE compatibility. Failed decoding is explained and never replaced with
 an interpretation of compressed bytes. Fields link to exact byte ranges in the
 original or host-decoded source. Incomplete retained evidence is partial even
@@ -103,3 +103,9 @@ required. Parser qualification uses synthetic wire-format fixtures and malformed
 inputs. Independent reference serializers are development-only dependencies;
 none are shipped in the extension. Production service-capture qualification is
 reported separately from synthetic and local-service fixtures.
+
+Windows acceptance also exercises live localhost HTTP responses with gzip for
+all five formats and compares retained, decoded bytes with the supplied payloads.
+MessagePack, CBOR, BSON and Protobuf use independent encoders; Bond uses the
+Microsoft reference wire example. This qualifies local transport and parser
+integration without claiming coverage of production service traffic.

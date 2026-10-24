@@ -1,7 +1,7 @@
 # Binary formats
 
-Select **Protobuf**, **Bond Compact Binary**, **MessagePack**, **CBOR** or **BSON** in the request or response Body
-viewer. Auto tries them for their declared binary content types and uses only
+Select **Protobuf**, **Bond Compact Binary**, **MessagePack**, **CBOR** or **BSON**
+in the request or response Body viewer. Auto tries their declared content types and uses only
 structurally complete results. Explicit selection also shows partial results.
 No schemas are required. These viewers do not support gRPC framing, schema
 imports, Bond Fast Binary or Bond Simple Binary.
@@ -11,9 +11,9 @@ preserving order and duplicate fields. Signed, ZigZag, Boolean, floating point,
 UTF-8 and embedded-message views are labeled **Possible**. They are alternative
 interpretations, not recovered schema types. Length-delimited data can also be
 arbitrary bytes or packed numbers. Nested/text probes are limited to 64 KiB;
-Possible packed-array previews consider payloads up to 4 KiB and show the first
-128 items after validating the full candidate payload.
-larger fields remain available as bytes. The body is interpreted as one message;
+larger fields remain available as bytes. Possible packed-array previews consider
+payloads up to 4 KiB and show the first 128 items after validating the full
+candidate payload. The body is interpreted as one message;
 Protobuf itself cannot establish boundaries between concatenated messages.
 
 Bond shows encoded field IDs and types, structs, base boundaries, lists, sets
