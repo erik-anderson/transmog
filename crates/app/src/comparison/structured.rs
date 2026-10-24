@@ -1,5 +1,5 @@
 //! Native comparison over frozen snapshots, using the ordinary isolated format readers.
-use super::{AppError, Application, CancelOnDrop, Operation, error, short, token};
+use super::{AppError, Application, CancelOnDrop, Operation, error, token};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -48,6 +48,7 @@ impl Application {
         section: &str,
         format: &str,
         operation_id: &str,
+        page_id: &str,
     ) -> Result<StructuredComparison, AppError> {
         if !["protobuf", "bond", "msgpack", "cbor", "bson"].contains(&format) {
             return Err(error("Choose a supported binary format"));
@@ -66,6 +67,9 @@ impl Application {
         };
         let op = self.comparisons.begin(&format!("fields:{operation_id}"))?;
         let _cancel = CancelOnDrop(op.canceled.clone());
+        if !self.visualizer_snapshot_current(page_id) {
+            return Err(error("The comparison page is hidden, closed or expired"));
+        }
         let mut parsed = Vec::new();
         for message in messages {
             op.check()?;
@@ -189,6 +193,11 @@ async fn parse(
         op.check()?;
         match step {
             VisualizationStep::Document { document } => {
+                if !comparable(&document) {
+                    return Err(error(
+                        "Field comparison requires materialized fields over the frozen body; derived or deferred evidence remains available in its source viewer",
+                    ));
+                }
                 worker.finished = true;
                 return Ok(document);
             }
@@ -227,6 +236,20 @@ struct Field<'a> {
     name: String,
     node: &'a Node,
     wire: String,
+}
+
+fn comparable(document: &VisualizationDocument) -> bool {
+    if !document.sources.is_empty() {
+        return false;
+    }
+    let mut pending = document.roots.iter().collect::<Vec<_>>();
+    while let Some(node) = pending.pop() {
+        if node.children_token.is_some() || node.spans.iter().any(|span| span.source_id != "body") {
+            return false;
+        }
+        pending.extend(&node.children);
+    }
+    true
 }
 async fn wait_canceled(op: &Operation) -> AppError {
     loop {
@@ -272,15 +295,16 @@ fn flatten<'a>(
 ) {
     let mut occurrences = BTreeMap::<String, usize>::new();
     for node in nodes {
+        let label_name = node.name.strip_prefix("Partial ").unwrap_or(&node.name);
         let key = node.children.iter().find(|child| child.name == "Key");
         let name = if let Some(key) = key {
             // Full encoded keys, including previewed/non-string keys, establish identity.
             format!("key:{}", wire(key, bytes, false))
         } else {
-            node.name
+            label_name
                 .split(" · ")
                 .next()
-                .unwrap_or(&node.name)
+                .unwrap_or(label_name)
                 .to_owned()
         };
         let occurrence = occurrences.entry(name.clone()).or_default();
@@ -288,19 +312,17 @@ fn flatten<'a>(
         let next = format!("{path}/{name}#{}", *occurrence);
         let display = format!(
             "{label}/{} [{}]",
-            node.name.split(" · ").next().unwrap_or(&node.name),
+            label_name.split(" · ").next().unwrap_or(label_name),
             *occurrence
         );
-        {
-            result.insert(
-                next.clone(),
-                Field {
-                    name: display.clone(),
-                    node,
-                    wire: wire(node, bytes, true),
-                },
-            );
-        }
+        result.insert(
+            next.clone(),
+            Field {
+                name: display.clone(),
+                node,
+                wire: wire(node, bytes, true),
+            },
+        );
         flatten(&node.children, bytes, &next, &display, result);
     }
 }
@@ -348,6 +370,12 @@ fn field_value(field: Option<&Field<'_>>, complete: bool) -> Value {
     )
 }
 
+fn side_node(id: String, name: &str, field: Option<&Field<'_>>, complete: bool) -> Node {
+    let mut result = node(id, name.into(), Some(field_value(field, complete)), vec![]);
+    result.format = field.and_then(|field| field.node.format.clone());
+    result
+}
+
 fn finding(
     index: usize,
     left: Option<&Field<'_>>,
@@ -386,30 +414,23 @@ fn finding(
     };
     node(
         id.clone(),
-        short(&format!("{name} · {state}"))
-            .chars()
-            .take(120)
-            .collect(),
+        format!("{} · {state}", name.chars().take(100).collect::<String>()),
         None,
         vec![
+            node(
+                format!("{id}.path"),
+                "Field path".into(),
+                Some(Value::String(name.to_owned())),
+                vec![],
+            ),
             node(
                 format!("{id}.reason"),
                 "Change".into(),
                 Some(Value::String(reason.into())),
                 vec![],
             ),
-            node(
-                format!("{id}.left"),
-                "Left".into(),
-                Some(field_value(left, complete)),
-                vec![],
-            ),
-            node(
-                format!("{id}.right"),
-                "Right".into(),
-                Some(field_value(right, complete)),
-                vec![],
-            ),
+            side_node(format!("{id}.left"), "Left", left, complete),
+            side_node(format!("{id}.right"), "Right", right, complete),
             node(
                 format!("{id}.source"),
                 "Source ranges".into(),
@@ -526,6 +547,82 @@ fn compare(
 mod tests {
     use super::*;
     use transmog_extensions::Span;
+
+    #[test]
+    fn partial_containers_align_known_children_without_losing_changed_values() {
+        let left = doc(
+            vec![field(
+                "Value 1",
+                Value::Array,
+                0,
+                3,
+                vec![field("Item 1", Value::Integer("1".into()), 1, 1, vec![])],
+            )],
+            ParseStatus::Complete,
+        );
+        let right = doc(
+            vec![field(
+                "Partial Value 1",
+                Value::Array,
+                0,
+                3,
+                vec![field("Item 1", Value::Integer("2".into()), 1, 1, vec![])],
+            )],
+            ParseStatus::Malformed,
+        );
+        let result = compare(
+            &left,
+            &[0x82, 1, 3],
+            &right,
+            &[0x82, 2, 255],
+            "Response",
+            "cbor",
+        )
+        .unwrap();
+        assert_eq!(result.status, ParseStatus::Partial);
+        assert!(
+            result
+                .roots
+                .iter()
+                .any(|node| node.name.contains("Item 1") && node.name.ends_with("changed"))
+        );
+    }
+    #[test]
+    fn finding_labels_keep_the_state_and_complete_path_when_shortened() {
+        let name = "long".repeat(100);
+        let left = doc(
+            vec![field(&name, Value::Integer("1".into()), 0, 1, vec![])],
+            ParseStatus::Complete,
+        );
+        let right = doc(
+            vec![field(&name, Value::Integer("2".into()), 0, 1, vec![])],
+            ParseStatus::Complete,
+        );
+        let result = compare(&left, &[1], &right, &[2], "Response", "protobuf").unwrap();
+        assert!(result.roots[0].name.ends_with("changed"));
+        assert!(
+            matches!(&result.roots[0].children[0].value, Some(Value::String(value)) if value.contains(&name))
+        );
+    }
+    #[test]
+    fn parser_limits_remain_limited_in_native_findings() {
+        let value = doc(vec![], ParseStatus::Limited);
+        assert_eq!(
+            compare(&value, &[], &value, &[], "Response", "bond")
+                .unwrap()
+                .status,
+            ParseStatus::Limited
+        );
+    }
+    #[test]
+    fn deferred_or_foreign_sources_cannot_prove_field_equality() {
+        let mut node = field("Field 1", Value::Object, 0, 1, vec![]);
+        node.children_token = Some("deferred".into());
+        assert!(!comparable(&doc(vec![node.clone()], ParseStatus::Complete)));
+        node.children_token = None;
+        node.spans[0].source_id = "derived".into();
+        assert!(!comparable(&doc(vec![node], ParseStatus::Complete)));
+    }
 
     fn field(name: &str, value: Value, offset: usize, length: usize, children: Vec<Node>) -> Node {
         let mut result = node(
@@ -757,5 +854,12 @@ mod tests {
         registry.cancel_fields();
         assert!(fields.check().is_err());
         assert!(ordinary.check().is_ok());
+    }
+    #[test]
+    fn cancellation_before_field_startup_is_not_forgotten() {
+        let app = Application::new(crate::AppConfig::default()).unwrap();
+        app.cancel_comparison("queued-fields");
+        assert!(app.comparisons.begin("fields:queued-fields").is_err());
+        assert!(app.comparisons.begin("ordinary").is_ok());
     }
 }

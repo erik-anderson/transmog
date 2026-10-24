@@ -81,6 +81,25 @@ export async function checkComparison(page, root) {
   );
   await fieldDetails.locator("summary").click();
   await page.setViewportSize({ width: 1440, height: 900 });
+  await fieldDetails.locator("summary").click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferFields = true;
+    globalThis.__workspaceFixture.releaseFields = null;
+  });
+  await dialog.getByRole("button", { name: "Compare fields", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.releaseFields);
+  await dialog.getByRole("button", { name: "Cancel field comparison", exact: true }).click();
+  await fieldDetails
+    .getByText("Field comparison canceled; the previous completed result is preserved.", {
+      exact: true,
+    })
+    .waitFor();
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseFields());
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").comparison.comparisonFields),
+    null,
+  );
+  await fieldDetails.locator("summary").click();
   await dialog.getByRole("button", { name: "Next change", exact: true }).click();
   assert.match(await dialog.textContent(), /Change at evidence row 3 of 70/);
   await dialog.getByRole("button", { name: "Next change", exact: true }).click();

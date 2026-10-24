@@ -102,8 +102,11 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     for(const format of ['cbor','bson']){
       const a=await find(format),b=await find(format+'-right');
       const snapshot=await invoke('compare_evidence',{input:{operationId:'binary-compare-'+format,left:{kind:'exchange',id:a},right:{kind:'exchange',id:b}}});
-      const fields=await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,operationId:'binary-fields-'+format});
+      const fields=await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:await invoke('visualizer_page'),operationId:'binary-fields-'+format});
       if(fields.document.status!=='complete'||!fields.document.roots.some(node=>node.name.includes('greeting')))throw new Error('Native '+format+' comparison failed');
+      if(await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:'0',operationId:'binary-stale-'+format}).then(()=>false,()=>true)!==true)throw new Error('Expired page started a native field reader');
+      await invoke('cancel_comparison',{operationId:'binary-queued-'+format});
+      if(await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,pageId:await invoke('visualizer_page'),operationId:'binary-queued-'+format}).then(()=>false,()=>true)!==true)throw new Error('Pre-start field cancellation was forgotten');
       await invoke('close_comparison',{id:snapshot.id});
     }
     return results;

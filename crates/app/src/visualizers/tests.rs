@@ -14,6 +14,23 @@ use transmog_core::{
 use transmog_extension_registry::InstanceResources;
 use transmog_extensions::{BodyAccess, Direction, Manifest};
 
+#[test]
+fn native_document_admission_requires_the_current_visible_page() {
+    let app = Application::new(AppConfig::default()).unwrap();
+    let page = app.visualizer_page();
+    assert!(app.visualizer_snapshot_current(&page));
+    app.set_visualizers_visible(false);
+    assert!(!app.visualizer_snapshot_current(&page));
+    app.set_visualizers_visible(true);
+    assert!(app.visualizer_snapshot_current(&page));
+    app.reset_visualizer_document();
+    assert!(!app.visualizer_snapshot_current(&page));
+    let current = app.visualizer_page();
+    assert!(app.visualizer_snapshot_current(&current));
+    app.deactivate_visualizers();
+    assert!(!app.visualizer_snapshot_current(&current));
+}
+
 pub(super) fn declaration() -> transmog_extensions::Visualizer {
     serde_json::from_value::<Manifest>(serde_json::json!({
         "formatVersion":1,"apiVersion":1,"runtime":"javascript-es2022","id":"example.evidence","version":"1.0.0","name":"Evidence",

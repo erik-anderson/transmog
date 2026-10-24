@@ -39,12 +39,13 @@ pub(super) async fn comparison_fields(
     section: String,
     format: String,
     operation_id: String,
+    page_id: String,
     window: WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<StructuredComparison, AppError> {
     state
         .window_application(&window)?
-        .comparison_fields(&id, &section, &format, &operation_id)
+        .comparison_fields(&id, &section, &format, &operation_id, &page_id)
         .await
 }
 #[tauri::command]

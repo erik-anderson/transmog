@@ -176,6 +176,7 @@ pub(crate) struct ComparisonRegistry(Arc<Mutex<Registry>>);
 struct Registry {
     results: VecDeque<Arc<Snapshot>>,
     operations: HashMap<String, Arc<AtomicBool>>,
+    canceled_fields: VecDeque<String>,
     captures: VecDeque<pairing::CaptureSnapshot>,
 }
 
@@ -289,6 +290,9 @@ impl ComparisonRegistry {
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state.canceled_fields.iter().any(|canceled| canceled == id) {
+            return Err(error("Comparison canceled before startup"));
+        }
         if state.operations.len() >= 2 || state.operations.contains_key(id) {
             return Err(error(
                 "Two comparisons are already running, or this operation ID is in use",
@@ -420,12 +424,21 @@ impl Application {
     }
     /// Requests cancellation without discarding an earlier completed result.
     pub fn cancel_comparison(&self, id: &str) {
+        if id.is_empty() || id.len() > 128 {
+            return;
+        }
         let field_id = format!("fields:{id}");
-        let state = self
+        let mut state = self
             .comparisons
             .0
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !state.canceled_fields.contains(&field_id) {
+            if state.canceled_fields.len() >= 128 {
+                state.canceled_fields.pop_front();
+            }
+            state.canceled_fields.push_back(field_id.clone());
+        }
         for key in [id, &field_id] {
             if let Some(canceled) = state.operations.get(key) {
                 canceled.store(true, Ordering::Release);

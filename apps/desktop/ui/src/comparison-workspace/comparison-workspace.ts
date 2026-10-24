@@ -389,6 +389,8 @@ export class ComparisonWorkspace extends WorkspaceElement {
   cancelFields(): void {
     if (this.fieldOperation) {
       void invoke("cancel_comparison", { operationId: this.fieldOperation }).catch(() => {});
+      this.comparisonFieldsStatus =
+        "Field comparison canceled; the previous completed result is preserved.";
     }
     this.fieldRevision++;
     this.fieldOperation = "";
@@ -410,11 +412,16 @@ export class ComparisonWorkspace extends WorkspaceElement {
     this.comparisonFieldsBusy = true;
     this.comparisonFieldsStatus = "Parsing frozen bodies and comparing fields…";
     try {
+      const pageId = await invoke<string>("visualizer_page");
+      if (revision !== this.fieldRevision) {
+        return;
+      }
       const result = await invoke<StructuredSnapshot>("comparison_fields", {
         id,
         section: this.comparisonFieldsSection,
         format: this.comparisonFieldsFormat,
         operationId,
+        pageId,
       });
       if (
         revision === this.fieldRevision &&

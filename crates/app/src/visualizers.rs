@@ -804,19 +804,24 @@ impl Application {
     pub fn visualizer_page(&self) -> String {
         self.visualizers.page_id.load(Ordering::Acquire).to_string()
     }
+    pub(crate) fn visualizer_snapshot_current(&self, page_id: &str) -> bool {
+        !self.visualizers.closed.load(Ordering::Acquire)
+            && self.visualizers.visible.load(Ordering::Acquire)
+            && self.visualizers.current_page(page_id)
+    }
     /// Invalidates the prior `WebView` document's workers, queued starts and source capabilities.
     pub fn reset_visualizer_document(&self) {
-        self.comparisons.cancel_fields();
         self.auth.reset(None);
         self.visualizers.reset_document();
+        self.comparisons.cancel_fields();
     }
     /// Native visibility gate. Hiding/minimizing stops all workers; focus changes alone do not.
     pub fn set_visualizers_visible(&self, visible: bool) {
+        self.auth.reset(Some(visible));
+        self.visualizers.visible(visible);
         if !visible {
             self.comparisons.cancel_fields();
         }
-        self.auth.reset(Some(visible));
-        self.visualizers.visible(visible);
     }
     /// Whether an exact visible binding still owns a ready worker.
     pub fn visualizer_active(&self, handle: &VisualizerHandle) -> bool {
@@ -834,9 +839,9 @@ impl Application {
     }
     /// Unloads every visible or starting instance when this application/window closes.
     pub fn deactivate_visualizers(&self) {
-        self.comparisons.cancel_fields();
         self.auth.reset(Some(false));
         self.visualizers.cancel_all();
+        self.comparisons.cancel_fields();
     }
 
     pub(crate) fn visualizer_evidence(
