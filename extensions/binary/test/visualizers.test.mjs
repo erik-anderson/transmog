@@ -776,6 +776,73 @@ test("wide Bond branches cannot consume the projection budget before a later ran
   assert.ok(nodes(expanded.document).length < 1500);
 });
 
+test("indexed Bond v1/v2 preserve wide list integers and typed Unicode map keys", async () => {
+  const maximum = (1n << 64n) - 1n;
+  for (const version of [1, 2]) {
+    const fields = [11, 6, ...varint(5000), ...Array(4999).fill(0), ...varint(maximum)];
+    const bytes = binary(bondHeader(version), bondStruct(version, fields));
+    const list = await host("bond", bytes);
+    assert.equal(list.document.status, "complete");
+    const value = expandAt(
+      list,
+      bytes.length - 11,
+      (node) => node.name === "[4999] · uint64",
+    ).found;
+    assert.equal(value.value.value, String(maximum));
+    const key = [4, 0xf0, 0x9f, 0x98, 0x80];
+    const mapFields = [
+      13,
+      9,
+      17,
+      ...varint(1001),
+      ...Array(1000)
+        .fill([...key, 0])
+        .flat(),
+      ...key,
+      ...varint(maximum),
+    ];
+    const mapBytes = binary(bondHeader(version), bondStruct(version, mapFields));
+    const map = await host("bond", mapBytes);
+    // Some v2 envelopes also form a complete raw v1 struct. The version
+    // declarations do not justify hiding a valid competing framing.
+    if (map.document.status !== "complete") {
+      assert.equal(map.document.status, "partial");
+      assert.ok(map.document.diagnostics.some((item) => item.code === "ambiguous-framing"));
+    }
+    const signed = expandAt(
+      map,
+      mapBytes.length - 11,
+      (node) => node.name === "Value · int64" && node.value?.value === "-9223372036854775808",
+    );
+    assert.ok(
+      nodes(signed.document).some(
+        (node) => node.name === "Key · string" && node.value?.value === "😀",
+      ),
+    );
+  }
+});
+
+test("deep Bond list ranges reach virtual bytes without exceeding the host's document depth", async () => {
+  const count = 100_000;
+  const fields = [
+    11,
+    ...Array(63).fill([11, 1]).flat(),
+    3,
+    ...varint(count),
+    ...Array(count - 1).fill(0),
+    91,
+  ];
+  const bytes = binary(bondHeader(1), bondStruct(1, fields));
+  const result = await host("bond", bytes);
+  assert.equal(result.document.status, "complete");
+  const last = expandAt(
+    result,
+    bytes.length - 2,
+    (node) => node.name === `[${count - 1}] · uint8`,
+  ).found;
+  assert.equal(last.value.value, "91");
+});
+
 test("large Bond strings and fixed-width lists validate beyond previews and expose final bytes", async () => {
   const count = 3 * 1024 * 1024;
   for (const string of [false, true]) {
@@ -807,12 +874,23 @@ test("Bond deep descendants remain inspectable with honest depth labels and fini
   const bytes = binary(bondHeader(1), Array(64).fill(10), [0x23, 42], Array(65).fill(0));
   const result = await host("bond", bytes);
   assert.equal(result.document.status, "complete");
-  const found = expandAt(
+  const expanded = expandAt(
     result,
     68,
     (node) => node.name.includes("Field 1 · uint8") && node.value?.value === "42",
-  ).found;
+  );
+  const found = expanded.found;
   assert.match(found.name, /Depth 64/);
+  const flattened = nodes(expanded.document).find((node) =>
+    node.name.includes("wire bytes (descendants shown separately)"),
+  );
+  assert.ok(flattened, "Flattened containers must identify their encoded-byte representation");
+  assert.equal(flattened.value.kind, "bytes");
+  const span = flattened.spans[0];
+  const encoded = bytes.slice(Number(span.offset), Number(span.offset) + Number(span.length));
+  assert.equal(encoded[0], 10);
+  assert.equal(encoded.at(-1), 0);
+  assert.ok(encoded.includes(42), "Copyable wire bytes omitted the nested scalar");
   assert.equal(
     (await host("bond", binary(bondHeader(1), Array(65).fill(10), [0], Array(65).fill(0)))).document
       .status,

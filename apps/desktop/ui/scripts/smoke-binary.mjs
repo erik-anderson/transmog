@@ -82,7 +82,21 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     const deep=await show('bond-deep-structure','request');
     for(let count=0;count<20;count++){
       const all=deep.view.document.roots.flatMap(walk),last=all.find(node=>node.name.includes('Field 1 · uint8')&&node.value?.value==='42');
-      if(last){if(!last.name.includes('Depth 64'))throw new Error('Flattened deep Bond field lost its nesting depth');break;}
+      if(last){
+        if(!last.name.includes('Depth 64'))throw new Error('Flattened deep Bond field lost its nesting depth');
+        const wire=all.find(node=>node.name.includes('wire bytes (descendants shown separately)'));
+        if(!wire||wire.value?.kind!=='bytes')throw new Error('Flattened Bond container can copy as an empty object');
+        deep.selectNode(wire.id,false);const tree=deep.treeViewport;tree.focus();
+        let request;const receive=event=>{event.stopImmediatePropagation();request=event.detail;};
+        tree.addEventListener('inspection-copy-request',receive,{once:true});
+        try{tree.dispatchEvent(new KeyboardEvent('keydown',{key:'ContextMenu',bubbles:true,cancelable:true}));}finally{tree.removeEventListener('inspection-copy-request',receive);}
+        if(!request||request.actions.some(action=>action.id==='subtree'))throw new Error('Flattened wire value offered an empty subtree copy');
+        const action=request.actions.find(action=>action.id==='value');if(!action||action.disabled)throw new Error('Flattened wire value has no copy action');
+        const actual=await action.read(()=>request.current()),span=wire.spans[0],body=[67,66,1,0,...Array(64).fill(10),35,42,...Array(65).fill(0)];
+        const expected=body.slice(Number(span.offset),Number(span.offset)+Number(span.length)).map(byte=>byte.toString(16).padStart(2,'0').toUpperCase()).join(' ');
+        if(actual!==expected)throw new Error('Flattened container copy omitted encoded descendants');
+        break;
+      }
       const pending=all.find(node=>node.childrenToken&&node.spans.some(span=>Number(span.offset)<=68&&Number(span.offset)+Number(span.length)>68));
       if(!pending)throw new Error('No range reaches deep Bond value');await deep.toggleNode(pending.id);
       if(count===19)throw new Error('Deep Bond expansion made no progress');
@@ -258,6 +272,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
           bondRawSequence: true,
           bondLargeString: true,
           bondRecordRanges: true,
+          bondFlattenedCopy: true,
         },
         null,
         2,

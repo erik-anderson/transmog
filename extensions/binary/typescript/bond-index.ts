@@ -611,6 +611,14 @@ export class BondIndexViewer {
       if ([11, 12, 13].includes(kind)) {
         node.name += ` · ${index.get(id, Column.Count)} ${kind === 13 ? "entries" : "items"}`;
       }
+      if (flat && index.get(id, Column.First)) {
+        // Descendants are peer rows in this projection, not children of this
+        // node. Expose its full encoded value rather than an apparently empty
+        // object whose Copy subtree action would silently omit those peers.
+        node.value = { kind: "bytes" };
+        node.name += " · wire bytes (descendants shown separately)";
+        return node;
+      }
       if (!flat || !index.get(id, Column.First)) {
         const count = index.get(id, Column.Count);
         if (count) {

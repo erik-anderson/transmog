@@ -71,6 +71,8 @@ offsets without allocating a node per item. Large strings are validated in full,
 with a bounded preview and access to their complete source bytes in Hex. Copy a
 smaller range if a whole subtree cannot be materialized; copying never silently
 omits unloaded children.
+In flattened deep views, container rows expose their full wire bytes for copying;
+their decoded descendants appear as separate rows, rather than an empty subtree.
 The host's HTTP decoding and expansion limits still apply to compressed bodies.
 
 Other readers limit each selected decoded body to 2 MiB. Additional work, nesting, node,

@@ -39,9 +39,11 @@ source byte ranges. A decoding failure leaves original bytes available in Hex.
 Bond accepts bodies up to 16 MiB, indexes up to 500,000 values and supports
 64 levels of nesting. Large structures load field/item ranges on expansion;
 opening another range replaces the previously loaded range. Deep descendants
-are flattened in wire order with explicit nesting depths. Fixed-width lists
-retain byte ranges without allocating a node for every item. Full strings are
-validated even when only a preview is shown. Use Hex for complete value bytes;
+are flattened in wire order with explicit nesting depths. Flattened container
+rows expose complete wire bytes for copying; their decoded descendants remain
+separate rows. Fixed-width lists retain byte ranges without allocating a node
+for every item. Full strings are validated even when only a preview is shown.
+Use Hex for complete value bytes;
 copy a smaller range when a whole subtree cannot be materialized.
 Other readers accept bodies up to 2 MiB, with separate work, nesting, node and text limits.
 Text previews show at most 1,024 UTF-16 code units. Negative zero is displayed as

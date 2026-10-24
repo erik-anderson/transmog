@@ -54,6 +54,9 @@ Copy subtree includes collapsed and deferred descendants. Explicit copying may
 load deferred children while retaining the visible expansion set, selection,
 view mode and scroll position. It does not rerun discovery across other traffic.
 Duplicate names and the extension's ordering are preserved.
+When a deep binary view flattens descendants into separate rows, the enclosing
+container row is explicitly labeled as wire bytes. Copy value reads its complete
+encoded range; it does not offer an empty decoded subtree.
 
 ## Auth and headers
 
