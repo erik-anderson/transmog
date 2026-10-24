@@ -753,6 +753,29 @@ test("large Bond record and field ranges reach the final values with bounded doc
   }
 });
 
+test("wide Bond branches cannot consume the projection budget before a later range opens", async () => {
+  const tree = (depth) =>
+    depth === 0
+      ? Array.from({ length: 6 }, (_, id) => [id * 32 + 3, id])
+          .flat()
+          .concat(0)
+      : Array.from({ length: 6 }, (_, id) => [id * 32 + 10, ...tree(depth - 1)])
+          .flat()
+          .concat(0);
+  const record = tree(3);
+  const bytes = binary(...Array(6).fill(record));
+  const result = await host("bond", bytes);
+  assert.equal(result.document.status, "complete");
+  const target = bytes.length - 6;
+  const expanded = expandAt(
+    result,
+    target,
+    (node) => node.name.endsWith("Field 5 · uint8") && node.spans[0].offset === String(target),
+  );
+  assert.equal(expanded.found.value.value, "5");
+  assert.ok(nodes(expanded.document).length < 1500);
+});
+
 test("large Bond strings and fixed-width lists validate beyond previews and expose final bytes", async () => {
   const count = 3 * 1024 * 1024;
   for (const string of [false, true]) {

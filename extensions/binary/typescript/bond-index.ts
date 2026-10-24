@@ -614,11 +614,14 @@ export class BondIndexViewer {
       if (!flat || !index.get(id, Column.First)) {
         const count = index.get(id, Column.Count);
         if (count) {
-          const leafFields =
-            count <= 6 &&
+          // Automatic expansion must not grow with the branching factor. A
+          // single scalar costs the same as a deferred-range placeholder; all
+          // other nested branches require an explicit range expansion.
+          const singleLeaf =
+            count === 1 &&
             index.get(id, Column.First) > 0 &&
             this.ids(index, id, false).every((child) => index.get(child, Column.Count) === 0);
-          if ((depth < 3 || leafFields) && count <= 6 && this.nodes < 1500) {
+          if ((depth < 1 || singleLeaf) && count <= 6 && this.nodes < 1500) {
             node.children = this.children(index, id, path, depth + 1);
           } else {
             const flatten = depth >= 12;
