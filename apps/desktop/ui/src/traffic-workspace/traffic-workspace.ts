@@ -1088,13 +1088,15 @@ export class TrafficWorkspace extends WorkspaceElement {
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) {
       return;
     }
-    const items = Array.from(menu.children).filter(
+    navigateMenu(event, this.actionMenuItems(menu), event.target as Element);
+  }
+  private actionMenuItems(menu: HTMLElement): Array<HTMLButtonElement | ActionSubmenu> {
+    return Array.from(menu.children).filter(
       (item): item is HTMLButtonElement | ActionSubmenu =>
         (item instanceof HTMLButtonElement || item instanceof ActionSubmenu) &&
         !item.hidden &&
         !(item instanceof HTMLButtonElement && item.disabled),
     );
-    navigateMenu(event, items, event.target as Element);
   }
   @observable detailsTimingsSelected = "true";
   @observable detailsConnectionSelected = "false";
@@ -1708,7 +1710,11 @@ export class TrafficWorkspace extends WorkspaceElement {
   trafficMenuToggled(event: ToggleEvent): void {
     if (event.newState === "open") {
       this.trafficMenuPlacement.open(this.trafficMenuAnchor);
-      this.trafficMenu.querySelector<HTMLElement>("button:not(:disabled)")?.focus();
+      // Autofocus owns keys immediately. A queued toggle must not reset a
+      // navigation key already handled by the menu or reclaim focus elsewhere.
+      if ((this.getRootNode() as ShadowRoot).activeElement === this.trafficMenu) {
+        this.actionMenuItems(this.trafficMenu)[0]?.focus({ preventScroll: true });
+      }
     } else {
       this.trafficMenuPlacement.close();
     }
@@ -6791,7 +6797,14 @@ export class TrafficWorkspace extends WorkspaceElement {
       this.exportReviewNote = "";
       this.exportReviewSummary = "";
     }
-    this.filesMenuButton.focus({ preventScroll: true });
+    // Native close restores the opener before this queued event. Preserve any
+    // newer focus, such as a search shortcut used immediately after dismissal.
+    const active = (this.getRootNode() as Document | ShadowRoot).activeElement;
+    if (!active || active === document.body || this.saveTraceDialog.contains(active)) {
+      (this.inspectorExpanded ? this.inspectorExpandButton : this.filesMenuButton).focus({
+        preventScroll: true,
+      });
+    }
   }
   async saveTrafficTrace(event: Event): Promise<void> {
     event.preventDefault();

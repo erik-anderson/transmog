@@ -58,7 +58,11 @@ export function navigateMenu(
       ? 0
       : event.key === "End"
         ? items.length - 1
-        : (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
+        : index < 0
+          ? event.key === "ArrowDown"
+            ? 0
+            : items.length - 1
+          : (index + (event.key === "ArrowDown" ? 1 : items.length - 1)) % items.length;
   items[next]?.focus();
 }
 

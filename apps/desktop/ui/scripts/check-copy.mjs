@@ -1,6 +1,82 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
+async function checkTrafficMenuFocus(traffic) {
+  const result = await traffic.evaluate(async (element) => {
+    const menu = element.trafficMenu;
+    const opened = new Promise((resolve) =>
+      menu.addEventListener("toggle", resolve, { once: true }),
+    );
+    element.querySelector('tr[data-session-id="second"]').dispatchEvent(
+      new MouseEvent("contextmenu", {
+        button: 2,
+        clientX: 300,
+        clientY: 240,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+    const root = menu.getRootNode();
+    const focusedWhenOpened = menu.contains(root.activeElement);
+    root.activeElement.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowUp", bubbles: true, cancelable: true }),
+    );
+    const firstUp = root.activeElement.textContent.trim();
+    root.activeElement.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true, cancelable: true }),
+    );
+    const firstDown = root.activeElement.textContent.trim();
+    root.activeElement.dispatchEvent(
+      new KeyboardEvent("keydown", { key: "End", bubbles: true, cancelable: true }),
+    );
+    const endItem = root.activeElement;
+    await opened;
+    const navigationPreserved = endItem === root.activeElement && menu.contains(endItem);
+    for (const key of ["Home", "Escape"])
+      root.activeElement.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+      );
+    return {
+      focusedWhenOpened,
+      firstUp,
+      firstDown,
+      navigationPreserved,
+      closed: !menu.matches(":popover-open"),
+      selected: [...element.trafficSelection.ids],
+    };
+  });
+  assert.equal(result.focusedWhenOpened, true, "Traffic menu opened without keyboard focus");
+  assert.equal(result.firstUp, "Clear selection", "Immediate ArrowUp missed the last menu action");
+  assert.equal(result.firstDown, "Edit and replay", "ArrowDown did not wrap to the first action");
+  assert.equal(result.navigationPreserved, true, "Queued menu toggle stole keyboard navigation");
+  assert.equal(result.closed, true, "Immediate Escape did not dismiss the Traffic menu");
+  assert.deepEqual(result.selected, ["second"], "Immediate menu keys changed Traffic selection");
+  await traffic.locator('tr[data-session-id="first"]').click();
+  await traffic.locator('tr[data-session-id="second"]').click({ modifiers: ["Control"] });
+  const more = traffic.locator('.traffic-selection-bar button[popovertarget="traffic-entry-menu"]');
+  await more.waitFor();
+  const multiple = await more.evaluate((button) => {
+    const element = button.closest("traffic-workspace");
+    button.click();
+    const menu = element.trafficMenu;
+    const root = menu.getRootNode();
+    const focusedWhenOpened = menu.contains(root.activeElement);
+    for (const key of ["End", "Home", "Escape"])
+      root.activeElement.dispatchEvent(
+        new KeyboardEvent("keydown", { key, bubbles: true, cancelable: true }),
+      );
+    return {
+      focusedWhenOpened,
+      closed: !menu.matches(":popover-open"),
+      selected: [...element.trafficSelection.ids].sort(),
+    };
+  });
+  assert.equal(multiple.focusedWhenOpened, true, "Traffic More menu opened without keyboard focus");
+  assert.equal(multiple.closed, true, "Immediate Escape did not dismiss the Traffic More menu");
+  assert.deepEqual(multiple.selected, ["first", "second"], "Menu keys changed multiselection");
+  await traffic.locator('tr[data-session-id="first"]').click();
+}
+
 export async function checkCopy(page, root) {
   await checkTextMenus(page, root);
   await page.goto("https://workspace.test/");
@@ -270,6 +346,7 @@ export async function checkCopy(page, root) {
   );
   await page.locator('tr[data-session-id="first"]').click();
   const traffic = page.locator("traffic-workspace");
+  await checkTrafficMenuFocus(traffic);
   await traffic
     .locator('tr[data-session-id="second"] td[data-column-id="path"]')
     .click({ button: "right" });

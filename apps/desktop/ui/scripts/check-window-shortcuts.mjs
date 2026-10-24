@@ -1,6 +1,32 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 
+async function checkDelayedSaveCloseFocus(traffic) {
+  const result = await traffic.evaluate(async (element) => {
+    const selected = element.selectedSessionId;
+    element.toggleInspector();
+    element.showSaveTrace();
+    const closed = new Promise((resolve) =>
+      element.saveTraceDialog.addEventListener("close", resolve, { once: true }),
+    );
+    element.saveTraceDialog.close();
+    await element.focusSearch();
+    const root = element.getRootNode();
+    const focusedBeforeClose = root.activeElement === element.searchInput;
+    await closed;
+    return {
+      focusedBeforeClose,
+      focusedAfterClose: root.activeElement === element.searchInput,
+      restored: !element.inspectorExpanded,
+      selectionPreserved: element.selectedSessionId === selected,
+    };
+  });
+  assert.equal(result.focusedBeforeClose, true, "Search did not receive focus before queued close");
+  assert.equal(result.focusedAfterClose, true, "Late Save copy close stole restored search focus");
+  assert.equal(result.restored, true);
+  assert.equal(result.selectionPreserved, true);
+}
+
 export async function checkInspectorShortcutFocus(page) {
   const traffic = page.locator("traffic-workspace");
   await page.waitForFunction(() => {
@@ -149,6 +175,7 @@ export async function checkWindowShortcuts(page, root) {
     await traffic.locator(".session-link").first().click();
     const inspected = await traffic.evaluate((element) => element.selectedSessionId);
     await checkInspectorShortcutFocus(page);
+    await checkDelayedSaveCloseFocus(traffic);
     await view.click();
     const menuOpens = await count("open_trace_viewer");
     await traffic.getByRole("button", { name: "Open new viewer window", exact: true }).focus();
