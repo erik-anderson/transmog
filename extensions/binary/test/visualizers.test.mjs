@@ -742,6 +742,7 @@ test("large Bond record and field ranges reach the final values with bounded doc
     const result = await host("bond", bytes);
     assert.equal(result.document.status, "complete");
     assert.ok(nodes(result.document).some((node) => node.childrenToken));
+    assert.ok(result.document.roots.every((node) => node.name.includes("inferred")));
     const offset = (count - 1) * (records ? 3 : 2);
     const last = expandAt(
       result,

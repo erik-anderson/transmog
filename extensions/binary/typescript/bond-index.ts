@@ -586,7 +586,9 @@ export class BondIndexViewer {
     const label = index.get(id, Column.Label);
     const name =
       role === Role.Root
-        ? `Compact Binary v${index.version}`
+        ? index.get(0, Column.Count) > 1
+          ? `Struct ${label + 1} · Compact Binary v${index.version}`
+          : `Compact Binary v${index.version}`
         : role === Role.Field
           ? `Field ${label} · ${names[kind]}`
           : role === Role.Key
@@ -612,7 +614,11 @@ export class BondIndexViewer {
       if (!flat || !index.get(id, Column.First)) {
         const count = index.get(id, Column.Count);
         if (count) {
-          if (depth < 3 && count <= 6 && this.nodes < 1500) {
+          const leafFields =
+            count <= 6 &&
+            index.get(id, Column.First) > 0 &&
+            this.ids(index, id, false).every((child) => index.get(child, Column.Count) === 0);
+          if ((depth < 3 || leafFields) && count <= 6 && this.nodes < 1500) {
             node.children = this.children(index, id, path, depth + 1);
           } else {
             const flatten = depth >= 12;

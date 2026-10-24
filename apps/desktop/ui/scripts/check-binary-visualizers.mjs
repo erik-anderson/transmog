@@ -165,7 +165,7 @@ export async function checkBinaryVisualizers(page, root) {
             return (
               selected &&
               !element.view.document.roots.flatMap(walk).some((node) => node.id === selected) &&
-              !selected.startsWith("__")
+              selected !== "$document"
             );
           }, pending.id);
           if (evicted && offset === 0) {

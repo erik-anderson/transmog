@@ -71,6 +71,7 @@ offsets without allocating a node per item. Large strings are validated in full,
 with a bounded preview and access to their complete source bytes in Hex. Copy a
 smaller range if a whole subtree cannot be materialized; copying never silently
 omits unloaded children.
+The host's HTTP decoding and expansion limits still apply to compressed bodies.
 
 Other readers limit each selected decoded body to 2 MiB. Additional work, nesting, node,
 collection and total text limits bound parsing and speculative probes. Protobuf

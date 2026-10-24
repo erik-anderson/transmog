@@ -17,7 +17,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
   await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell'),traffic=shell.traffic,invoke=(name,args={})=>window.__TAURI_INTERNALS__.invoke(name,args);
     const wait=async(test,label)=>{const end=Date.now()+30000;while(!test()){if(Date.now()>end)throw new Error('Bundled binary viewer did not settle: '+label);await new Promise(resolve=>setTimeout(resolve,25));}};
-    globalThis.__binaryProbe={preferences:traffic.preferences,handles:[]};
+    globalThis.__binaryProbe={preferences:traffic.preferences,inspectorSide:traffic.inspectorSide,handles:[]};
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     await traffic.importTrace(${JSON.stringify(path)});
     traffic.preferences={...traffic.preferences,layout:'stacked',listSplit:30};
@@ -98,11 +98,12 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       const previous=ranged.visualizerRows.find(row=>row.selected)?.id;
       await ranged.toggleNode(pending.id);
       if(offset&&ranged.visualizerDetailsOpen)throw new Error('Paging reopened closed Bond details');
-      if(previous&&!ranged.view.document.roots.flatMap(walk).some(node=>node.id===previous)&&ranged.visualizerRows.find(row=>row.selected)?.id!==pending.id)throw new Error('Paging lost the explicit expansion target');
+      if(previous&&previous!=='$document'&&!ranged.view.document.roots.flatMap(walk).some(node=>node.id===previous)&&ranged.visualizerRows.find(row=>row.selected)?.id!==pending.id)throw new Error('Paging lost the explicit expansion target');
       if(count===19)throw new Error('Bond range expansion made no progress');
     }
     if(ranged.view.document.roots.flatMap(walk).length>1600)throw new Error('Bond range projection grew without bound');
     globalThis.__binaryProbe.ranged=ranged;
+    traffic.showInspectorSide('request');
     globalThis.__binaryProbe.inspectors=inspectors;
   })()`);
   for (const [width, height] of [
@@ -237,7 +238,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     const end=Date.now()+10000;
     while((await Promise.all(probe.handles.map(handle=>window.__TAURI_INTERNALS__.invoke('visualizer_active',{handle})))).some(Boolean)){if(Date.now()>end)throw new Error('Hidden binary workers remained active');await new Promise(resolve=>setTimeout(resolve,25));}
     for(const inspector of Object.values(probe.inspectors))if([...(inspector.shadowRoot??inspector).querySelectorAll('extension-visualizer')].some(view=>view.view||view.visualizerRows.length))throw new Error('Hidden binary viewer retained captured data');
-    shell.traffic.preferences=probe.preferences;delete globalThis.__binaryProbe;
+    shell.traffic.preferences=probe.preferences;shell.traffic.showInspectorSide(probe.inspectorSide);delete globalThis.__binaryProbe;
   })()`);
   await call("Emulation.clearDeviceMetricsOverride");
   if (screenshotPath)

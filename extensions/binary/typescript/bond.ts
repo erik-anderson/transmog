@@ -398,6 +398,8 @@ function rawDocument(
   for (const [index, root] of doc.roots.entries()) {
     if (root.value?.kind === "object") {
       root.name = `Possible Compact Binary v${version} (${doc.status === "complete" ? "inferred" : "incomplete interpretation"})${doc.roots.length > 1 ? ` · Struct ${index + 1}` : ""}`;
+    } else if (root.value?.kind === "array") {
+      root.name = `Possible v${version} (${doc.status === "complete" ? "inferred" : "incomplete interpretation"}) · ${root.name.replace(/^Compact Binary v[12] · /, "")}`;
     }
   }
   doc.summary +=
