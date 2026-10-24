@@ -363,7 +363,13 @@ fn flatten<'a>(
     let mut occurrences = BTreeMap::<String, usize>::new();
     for node in nodes {
         let label_name = node.name.strip_prefix("Partial ").unwrap_or(&node.name);
-        let key = node.children.iter().find(|child| child.name == "Key");
+        let ordinal_entry = label_name
+            .strip_prefix('[')
+            .and_then(|name| name.strip_suffix(']'))
+            .is_some_and(|index| index.parse::<usize>().is_ok());
+        let key = node.children.iter().find(|child| {
+            child.name == "Key" || (ordinal_entry && child.name.split(" · ").next() == Some("Key"))
+        });
         let name = if let Some(key) = key {
             // Full encoded keys, including previewed/non-string keys, establish identity.
             format!("key:{}", wire(key, bytes, false))
@@ -817,6 +823,95 @@ mod tests {
                 .iter()
                 .any(|node| node.name.contains("Key a [2]"))
         );
+    }
+    #[test]
+    fn typed_bond_map_keys_match_across_entry_reordering() {
+        let pair = |index, key: u8, value: u8, offset| {
+            field(
+                &format!("[{index}]"),
+                Value::Object,
+                offset,
+                2,
+                vec![
+                    field(
+                        "Key · uint8",
+                        Value::Integer(key.to_string()),
+                        offset,
+                        1,
+                        vec![],
+                    ),
+                    field(
+                        "Value · uint8",
+                        Value::Integer(value.to_string()),
+                        offset + 1,
+                        1,
+                        vec![],
+                    ),
+                ],
+            )
+        };
+        let map = |pairs| {
+            doc(
+                vec![field("Field 0 · map", Value::Array, 0, 8, pairs)],
+                ParseStatus::Complete,
+            )
+        };
+        let left = map(vec![pair(0, 1, 11, 4), pair(1, 2, 22, 6)]);
+        let right = map(vec![pair(0, 2, 22, 4), pair(1, 1, 11, 6)]);
+        let result = compare(
+            &left,
+            &[13, 3, 3, 2, 1, 11, 2, 22, 0],
+            &right,
+            &[13, 3, 3, 2, 2, 22, 1, 11, 0],
+            "Response",
+            "bond",
+        )
+        .unwrap();
+        assert_eq!(result.roots[0].name, "No field changes");
+    }
+    #[test]
+    fn a_bson_field_named_key_does_not_become_its_documents_identity() {
+        let left = doc(
+            vec![field(
+                "Value 1",
+                Value::Object,
+                0,
+                21,
+                vec![
+                    field(
+                        "Key · int32",
+                        Value::Object,
+                        4,
+                        9,
+                        vec![
+                            field("Key", Value::String("Key".into()), 5, 4, vec![]),
+                            field("Value", Value::Integer("1".into()), 9, 4, vec![]),
+                        ],
+                    ),
+                    field(
+                        "x · int32",
+                        Value::Object,
+                        13,
+                        7,
+                        vec![
+                            field("Key", Value::String("x".into()), 14, 2, vec![]),
+                            field("Value", Value::Integer("2".into()), 16, 4, vec![]),
+                        ],
+                    ),
+                ],
+            )],
+            ParseStatus::Complete,
+        );
+        let mut right = left.clone();
+        right.roots[0].children[0].children[1].value = Some(Value::Integer("3".into()));
+        let left_bytes = [
+            21, 0, 0, 0, 16, b'K', b'e', b'y', 0, 1, 0, 0, 0, 16, b'x', 0, 2, 0, 0, 0, 0,
+        ];
+        let mut right_bytes = left_bytes;
+        right_bytes[9] = 3;
+        let result = compare(&left, &left_bytes, &right, &right_bytes, "Response", "bson").unwrap();
+        assert_eq!(result.roots.len(), 1);
+        assert!(result.roots[0].name.ends_with("changed"));
     }
     #[test]
     fn comparison_covers_bytes_beyond_the_string_preview() {

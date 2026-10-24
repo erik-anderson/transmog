@@ -124,6 +124,17 @@ export async function checkBinaryVisualizers(page, root) {
         .waitFor();
     if (index === 2)
       await viewer.getByRole("tree").getByText("Unparsed bytes", { exact: true }).waitFor();
+    if (kind === "cbor" && document.roots[0]?.value?.kind === "object") {
+      await viewer.evaluate((element) => element.selectNode(element.view.document.roots[0].id));
+      await viewer.getByRole("combobox", { name: "Structure view" }).selectOption("table");
+      const headings = await viewer.locator(".visualizer-table thead th").allTextContents();
+      assert.equal(
+        headings.filter((name) => name === "Value").length,
+        1,
+        "Map tables mixed a redundant container Value column with the actual Value field",
+      );
+      await viewer.getByRole("button", { name: "Close structure details" }).click();
+    }
     if (index < 2 || index >= 4) {
       for (const [width, height] of [
         [1440, 900],

@@ -1395,7 +1395,7 @@ await page.addInitScript(
                 title: "Response · MessagePack field comparison",
                 status: "complete",
                 updates: "final",
-                presentation: "tree",
+                presentation: state.fieldPresentation ?? "tree",
                 summary: "13 field findings · 3 equal parsed fields. Both bodies fully parsed.",
                 sources: [],
                 diagnostics: [],

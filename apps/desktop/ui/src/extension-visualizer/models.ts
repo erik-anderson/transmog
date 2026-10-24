@@ -276,7 +276,10 @@ export function tablePage(
 } {
   const structured = node.children.some((child) => child.children.length);
   const columns: Array<{ id: string; name: string }> = [];
-  if (!structured || node.children.some((child) => child.value)) {
+  if (
+    !structured ||
+    node.children.some((child) => child.value && !["object", "array"].includes(child.value.kind))
+  ) {
     columns.push({ id: "value", name: "Value" });
   }
   if (!structured || node.children.some((child) => formatText(child.format))) {

@@ -877,7 +877,11 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerValue = valueText(node.value);
     this.visualizerFormat = formatText(node.format);
     if (!preserveMode) {
-      this.visualizerMode = node.presentation ?? this.view?.document.presentation ?? "tree";
+      this.visualizerMode =
+        node.presentation ??
+        this.snapshot?.document.presentation ??
+        this.view?.document.presentation ??
+        "tree";
     }
     this.visualizerSpans = node.spans.map((span, i) => ({
       id: String(i),

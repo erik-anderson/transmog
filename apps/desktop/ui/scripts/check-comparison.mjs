@@ -7,6 +7,7 @@ export async function checkComparison(page, root) {
   await page.goto("https://workspace.test/");
   await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
   await page.evaluate(() => {
+    globalThis.__workspaceFixture.fieldPresentation = "text";
     const traffic = document.querySelector("app-shell").traffic;
     traffic.trafficSelection.ids = new Set(["first", "second"]);
     traffic.updateTrafficSelection();
@@ -64,6 +65,11 @@ export async function checkComparison(page, root) {
   );
   await page.keyboard.press("Enter");
   await shared.getByRole("region", { name: "Selected structure" }).waitFor();
+  assert.equal(
+    await shared.getByRole("combobox", { name: "Structure view" }).inputValue(),
+    "text",
+    "A native document's default presentation was ignored for child fields",
+  );
   assert.equal(
     await shared.locator('.visualizer-node option[value="hex"]').count(),
     0,
