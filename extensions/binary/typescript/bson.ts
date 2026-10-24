@@ -2,6 +2,7 @@ import type { Node, Value } from "transmog:extensions/v1";
 import { Reader, ParseError, integer, text } from "./reader.js";
 import {
   float,
+  finishNode,
   hex,
   literal,
   mapEntry,
@@ -166,7 +167,7 @@ function field(reader: Reader, type: number, name: string, depth: number): Node 
   } else {
     throw new ParseError("malformed", "Unknown BSON element type", start);
   }
-  const node = reader.node(name, start, value, children);
+  const node = finishNode(reader, name, start, value, children);
   node.format = { protocol: `BSON ${types[type]}` };
   return node;
 }
@@ -220,7 +221,7 @@ function readDocument(reader: Reader, name: string, depth: number, array = false
   } catch (error) {
     retainPartial(error, payload, name, start, children, array);
   }
-  return reader.node(name, start, { kind: array ? "array" : "object" }, children);
+  return finishNode(reader, name, start, { kind: array ? "array" : "object" }, children);
 }
 
 export function parse(bytes: Uint8Array, sourceId: string) {

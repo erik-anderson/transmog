@@ -311,11 +311,54 @@ test("Bond partial map values preserve their key and bounded collection previews
 });
 
 test("failed speculative embedded messages never expose partial groups as wire facts", async () => {
-  for (const nested of [hex("0b 10 07 00"), binary(Array(12).fill(11), [16, 7])]) {
+  for (const nested of [
+    hex("0b 10 07 00"),
+    binary(Array(12).fill(11), [16, 7]),
+    binary([11], Array.from({ length: 1999 }, () => [16, 2]).flat(), [12]),
+  ]) {
     const payload = binary(field(1, 2, [...varint(nested.length), ...nested]));
     const { document } = await host("protobuf", payload);
-    assert.ok(!nodes(document).some((node) => node.name.startsWith("Partial ")));
+    assert.ok(
+      !nodes(document).some(
+        (node) => node.name.startsWith("Partial ") && node.name.includes(" · group"),
+      ),
+    );
+    assert.ok(!nodes(document).some((node) => node.name === "Possible embedded message"));
   }
+});
+
+test("completing a container at the node limit preserves all completed children", async () => {
+  for (const [kind, payload, name, count] of [
+    ["msgpack", binary([0xdc, 0x0f, 0xa0], Array(4000).fill(2)), "Partial Value 1", 4000],
+    ["cbor", binary([0x99, 0x0f, 0xa0], Array(4000).fill(2)), "Partial Value 1", 4000],
+    [
+      "protobuf",
+      binary([11], Array.from({ length: 2000 }, () => [16, 2]).flat(), [12]),
+      "Partial Field 1 · group",
+      2000,
+    ],
+    ...[1, 65537].map((length) => [
+      "protobuf",
+      binary(
+        Array.from({ length: 1333 }, () => [8, 1]).flat(),
+        field(2, 2, [...varint(length), ...Array(length).fill(65)]),
+      ),
+      `Partial Field 2 · length-delimited · ${length} bytes`,
+      1,
+    ]),
+  ]) {
+    const { document } = await host(kind, payload);
+    assert.equal(document.status, "limited");
+    const partial = nodes(document).find((node) => node.name === name);
+    assert.ok(partial, `${kind} lost its children when the parent exceeded the node limit`);
+    assert.equal(partial.children.length, count);
+  }
+  const inner = Object.fromEntries(
+    Array.from({ length: 1333 }, (_, index) => ["f" + index, index + 2]),
+  );
+  const { document } = await host("bson", BSON.serialize({ nested: inner }));
+  assert.equal(document.status, "limited");
+  assert.ok(nodes(document).some((node) => node.name === "Key" && node.value?.value === "f1332"));
 });
 
 test("MessagePack decodes independent serializer output with exact integers and inert keys", async () => {

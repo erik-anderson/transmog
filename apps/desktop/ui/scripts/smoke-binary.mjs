@@ -42,6 +42,9 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       globalThis.__binaryProbe.handles.push(viewer.view.handle);
       if(name==='protobuf-malformed'){
         if(doc.status!=='malformed'||!nodes.some(node=>node.name==='Unparsed bytes'))throw new Error('Malformed Protobuf lost partial evidence');
+      }else if(name==='protobuf-node-limit'){
+        const group=nodes.find(node=>node.name==='Partial Field 1 · group');
+        if(doc.status!=='limited'||group?.children?.length!==2000)throw new Error('Parent display limit discarded completed group fields');
       }else if(name.endsWith('-negative-zero')){
         if(doc.status!=='complete'||nodes.filter(node=>node.value?.kind==='string'&&node.value.value==='-0').length!==2)throw new Error('Binary float sign was lost at the native JSON boundary');
       }else if(name==='protobuf-duplicate-identity'||name==='protobuf-invalid-identity'){
@@ -64,6 +67,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     await show('protobuf','request');await show('protobuf-gzip','response');
     await show('bond','request');await show('bond-deflate','response');
     await show('bond-v2','response',false);await show('protobuf-malformed','request',false);
+    await show('protobuf-node-limit','response',false);
     await show('bond-ambiguous','response',false);await show('bond-framing','response',false);
     await show('protobuf-negative-zero','request',false);await show('bond-negative-zero','response',false);
     await show('protobuf-duplicate-identity','request',false);await show('protobuf-invalid-identity','response',false);
@@ -190,6 +194,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
           stalePageRejected: true,
           queuedCancellation: true,
           emptyCborSequence: true,
+          nodeLimitRetention: true,
         },
         null,
         2,

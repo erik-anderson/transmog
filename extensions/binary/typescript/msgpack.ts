@@ -4,6 +4,7 @@ import { ParseError, integer } from "./reader.js";
 import {
   count,
   entryName,
+  finishNode,
   float,
   literal,
   mapEntry,
@@ -109,7 +110,7 @@ function read(reader: Reader, name: string, depth: number): Node {
       retainPartial(error, reader, name, start, children, kind === "array");
     }
   }
-  return reader.node(name, start, value, children);
+  return finishNode(reader, name, start, value, children);
 }
 
 export function parse(bytes: Uint8Array, sourceId: string) {

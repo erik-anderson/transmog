@@ -24,6 +24,7 @@ def main():
         ("bond-ambiguous", "application/bond-compact-binary", bytes.fromhex("020100"), ""),
         ("bond-framing", "application/bond-compact-binary", bytes.fromhex("43420200062903332e3000"), ""),
         ("protobuf-malformed", "application/protobuf", bytes.fromhex("0801120561"), ""),
+        ("protobuf-node-limit", "application/protobuf", bytes([11]) + bytes([16, 2]) * 2000 + bytes([12]), ""),
         ("protobuf-negative-zero", "application/protobuf", bytes.fromhex("0d00000080110000000000000080"), ""),
         ("bond-negative-zero", "application/bond-compact-binary", bytes.fromhex("43420100070000008028000000000000008000"), ""),
         ("protobuf-duplicate-identity", "application/protobuf", protobuf, ("identity", "identity")),

@@ -153,65 +153,66 @@ function fields(
         throw new ParseError("malformed", "Invalid Protobuf length", valueStart);
       }
       const payload = reader.take(length);
-      const rawStart = payload.offset;
-      const raw = new Reader(reader.bytes, reader.sourceId, reader.budget, rawStart, payload.end);
-      raw.offset = payload.end;
-      children.push(raw.node("Raw payload", rawStart, { kind: "bytes" }));
-      // Large payloads remain inspectable as bytes; speculative decoding is bounded.
-      if (length <= 65_536) {
-        try {
-          const decoded = text(
-            new Reader(reader.bytes, reader.sourceId, reader.budget, rawStart, payload.end),
-          );
-          children.push(
-            raw.node(
-              decoded.clipped
-                ? "Possible UTF-8 text preview (first 1,024 characters)"
-                : "Possible UTF-8 text",
-              rawStart,
-              { kind: "string", value: decoded.value },
-            ),
-          );
-        } catch (error) {
-          if (!(error instanceof ParseError) || error.status === "limited") {
-            throw error;
-          }
-        }
-        if (length && depth < 10) {
-          const candidate: Node[] = [];
+      const name = `Field ${field} · length-delimited · ${length} bytes`;
+      try {
+        const rawStart = payload.offset;
+        const raw = new Reader(reader.bytes, reader.sourceId, reader.budget, rawStart, payload.end);
+        raw.offset = payload.end;
+        children.push(raw.node("Raw payload", rawStart, { kind: "bytes" }));
+        // Large payloads remain inspectable as bytes; speculative decoding is bounded.
+        if (length <= 65_536) {
           try {
-            fields(payload, candidate, depth + 1, undefined, false);
+            const decoded = text(
+              new Reader(reader.bytes, reader.sourceId, reader.budget, rawStart, payload.end),
+            );
             children.push(
-              raw.node("Possible embedded message", rawStart, { kind: "object" }, candidate),
+              raw.node(
+                decoded.clipped
+                  ? "Possible UTF-8 text preview (first 1,024 characters)"
+                  : "Possible UTF-8 text",
+                rawStart,
+                { kind: "string", value: decoded.value },
+              ),
             );
           } catch (error) {
             if (!(error instanceof ParseError) || error.status === "limited") {
               throw error;
             }
           }
+          if (length && depth < 10) {
+            const candidate: Node[] = [];
+            try {
+              fields(payload, candidate, depth + 1, undefined, false);
+              children.push(
+                raw.node("Possible embedded message", rawStart, { kind: "object" }, candidate),
+              );
+            } catch (error) {
+              if (!(error instanceof ParseError) || error.status === "limited") {
+                throw error;
+              }
+            }
+          }
         }
+        if (length && length <= 4_096) {
+          children.push(...packed(reader, rawStart, payload.end));
+        }
+        output.push(reader.node(name, start, { kind: "object" }, children));
+      } catch (error) {
+        if (keepPartial) {
+          retainPartial(error, reader, name, start, children);
+        }
+        throw error;
       }
-      if (length && length <= 4_096) {
-        children.push(...packed(reader, rawStart, payload.end));
-      }
-      output.push(
-        reader.node(
-          `Field ${field} · length-delimited · ${length} bytes`,
-          start,
-          { kind: "object" },
-          children,
-        ),
-      );
     } else {
       try {
         fields(reader, children, depth + 1, field, keepPartial);
+        output.push(reader.node(`Field ${field} · group`, start, { kind: "object" }, children));
       } catch (error) {
         if (keepPartial) {
           retainPartial(error, reader, `Field ${field} · group`, start, children);
         }
         throw error;
       }
-      output.push(reader.node(`Field ${field} · group`, start, { kind: "object" }, children));
     }
   }
   if (group !== undefined) {

@@ -55,6 +55,21 @@ export function entryName(key: Node, index: number): string {
     : `Entry ${index + 1}`;
 }
 
+/** Parent display allocation must not discard already completed children. */
+export function finishNode(
+  reader: Reader,
+  name: string,
+  start: number,
+  value: Value,
+  children: Node[],
+): Node {
+  try {
+    return reader.node(name, start, value, children);
+  } catch (error) {
+    retainPartial(error, reader, name, start, children, value.kind === "array");
+  }
+}
+
 /** Keep a decoded key attached to its value, including incomplete nested values. */
 export function mapEntry(
   reader: Reader,
@@ -69,7 +84,7 @@ export function mapEntry(
   } catch (error) {
     retainPartial(error, reader, name, start, children);
   }
-  return reader.node(name, start, { kind: "object" }, children);
+  return finishNode(reader, name, start, { kind: "object" }, children);
 }
 
 /** Retain only completed children; the enclosing value is explicitly partial. */
