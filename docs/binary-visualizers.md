@@ -1,7 +1,7 @@
 # Schema-free binary body visualizers
 
-Choose **Protobuf** or **Bond Compact Binary** in a request or response's **Body
-viewer**. The bundled **Protobuf and Bond** extension is managed in Settings →
+Choose **Protobuf**, **Bond Compact Binary**, **MessagePack**, **CBOR** or **BSON**
+in a request or response's **Body viewer**. The bundled **Binary formats** extension is managed in Settings →
 Extensions and uses the ordinary isolated, read-only extension system. It reads
 only the selected message side and needs no schema files.
 
@@ -12,6 +12,17 @@ Choose a viewer explicitly to inspect partial, malformed or limited results.
 Discovery and traffic-list rendering do not execute these parsers. No generic
 binary sniffing is performed.
 
+Auto also recognizes MessagePack's `application/msgpack`, `application/x-msgpack`
+and `application/vnd.msgpack`, CBOR's `application/cbor` and
+`application/cbor-seq`, and BSON's `application/bson` and `application/x-bson`.
+These readers show consecutive self-delimiting values/documents in wire order.
+Map keys and duplicate occurrences remain visible. MessagePack extension types
+are opaque except for the standard timestamp. CBOR tags are preserved without
+claiming application semantics; indefinite strings retain their chunks. BSON
+shows encoded names and specialized types, with Decimal128 preserved as raw bits.
+JavaScript source and regular expressions remain inert text. MongoDB's TCP
+protocol, SignalR and Socket.IO envelopes are outside the body viewers' scope.
+
 Protobuf preserves field order and duplicate occurrences. Field numbers, wire
 types, lengths and raw unsigned integers are wire evidence. Signed, ZigZag,
 Boolean, float/double, UTF-8 and nested-message alternatives are labeled
@@ -20,6 +31,11 @@ numbers. These viewers cannot recover field names, enum labels, default values,
 map/oneof declarations or a root message's identity. Protobuf bodies are treated
 as one message; concatenated message boundaries cannot be recovered without
 external framing.
+
+Payloads up to 4 KiB also offer **Possible packed** varint, ZigZag, fixed32,
+fixed64 and floating-point arrays when their complete payload parses. Each array
+previews its first 128 items and retains its full byte range. These alternatives
+do not establish a repeated-field declaration or replace the raw payload.
 
 Bond Compact Binary includes scalar and container types, so its view shows
 strings, numbers, structs, base boundaries, lists, sets and maps by field ID.
@@ -63,7 +79,9 @@ python scripts/test-binary-visualizers.py
 ```
 
 Desktop builds generate and embed the ordinary `.tmext` bundle. The package
-contains two readable ES2022 runtime modules and its runtime README; authoring
+contains five readable ES2022 runtime modules and its runtime README; authoring
 sources, tests and tools are excluded. No extra runtime or network access is
 required. Parser qualification uses synthetic wire-format fixtures and malformed
-inputs; it does not claim validation against real service captures.
+inputs. Independent reference serializers are development-only dependencies;
+none are shipped in the extension. Production service-capture qualification is
+reported separately from synthetic and local-service fixtures.

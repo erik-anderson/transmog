@@ -75,7 +75,7 @@ mod tests {
                 .into_iter()
                 .map(|(id, _)| id)
                 .collect::<Vec<_>>(),
-            ["net.transmog.binary"; 4]
+            ["net.transmog.binary"; 10]
         );
         assert!(
             !reopened
@@ -104,14 +104,19 @@ mod tests {
                 archive: no_archive,
             }],
         );
-        assert_eq!(registry.enabled_visualizers().len(), 4);
+        assert_eq!(registry.enabled_visualizers().len(), 10);
         assert!(!root.path().join("catalog.json").exists());
         let registry = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
         let snapshot = registry.snapshot("net.transmog.binary").unwrap();
-        assert_eq!(snapshot.files.len(), 3);
+        assert_eq!(snapshot.files.len(), 6);
         assert!(snapshot.files.keys().all(|name| matches!(
             name.as_str(),
-            "dist/runtime/protobuf.js" | "dist/runtime/bond.js" | "README.runtime.md"
+            "dist/runtime/protobuf.js"
+                | "dist/runtime/bond.js"
+                | "dist/runtime/msgpack.js"
+                | "dist/runtime/cbor.js"
+                | "dist/runtime/bson.js"
+                | "README.runtime.md"
         )));
         assert!(
             snapshot

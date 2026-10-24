@@ -16,7 +16,12 @@ execFileSync(process.execPath, [compiler, "--project", root], {
 });
 const result = await esbuild.build({
   absWorkingDir: root,
-  entryPoints: { protobuf: "typescript/protobuf-entry.ts", bond: "typescript/bond-entry.ts" },
+  entryPoints: Object.fromEntries(
+    ["protobuf", "bond", "msgpack", "cbor", "bson"].map((name) => [
+      name,
+      `typescript/${name}-entry.ts`,
+    ]),
+  ),
   outdir: "dist/runtime",
   bundle: true,
   format: "esm",
@@ -65,4 +70,4 @@ await publish(
   resolve(root, "dist/package-manifest.json"),
   Buffer.from(JSON.stringify(manifest, null, 2) + "\n"),
 );
-process.stdout.write("Built schema-free Protobuf and Bond Compact Binary visualizers.\n");
+process.stdout.write("Built bundled binary format visualizers.\n");

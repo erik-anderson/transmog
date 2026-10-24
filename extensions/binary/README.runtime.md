@@ -1,4 +1,4 @@
-# Protobuf and Bond Compact Binary
+# Binary formats
 
 Select **Protobuf** or **Bond Compact Binary** in the request or response Body
 viewer. Auto tries them for their declared binary content types and uses only

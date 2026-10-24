@@ -13,6 +13,61 @@ import {
 const summary =
   "Schema-free wire view. Field names and declared types are unknown. Possible interpretations are alternatives, not schema facts. Length-delimited values may be text, bytes, messages or packed numbers.";
 
+function packed(reader: Reader, start: number, end: number): Node[] {
+  const result: Node[] = [];
+  // Full structural validation precedes a bounded preview; no candidate is a schema fact.
+  const candidates = [
+    "varints",
+    "ZigZag integers",
+    "fixed32 integers",
+    "float32",
+    "fixed64 integers",
+    "float64",
+  ];
+  for (const kind of candidates) {
+    const width = kind.includes("32") ? 4 : kind.includes("64") ? 8 : 0;
+    if (width && (end - start) % width) {
+      continue;
+    }
+    const payload = new Reader(reader.bytes, reader.sourceId, reader.budget, start, end);
+    const values: Node[] = [];
+    let count = 0;
+    try {
+      while (payload.remaining) {
+        const offset = payload.offset;
+        const raw = width
+          ? kind.startsWith("float")
+            ? floating(payload.floating(width as 4 | 8))
+            : integer(payload.fixed(width))
+          : payload.varint();
+        count++;
+        if (count <= 128) {
+          const value =
+            typeof raw === "bigint"
+              ? integer(kind === "ZigZag integers" ? (raw >> 1n) ^ -(raw & 1n) : raw)
+              : raw;
+          values.push(payload.node(`Item ${count}`, offset, value));
+        }
+      }
+      if (count) {
+        result.push(
+          payload.node(
+            `Possible packed ${kind}${count > 128 ? " (preview; first 128 items)" : ""}`,
+            start,
+            { kind: "array" },
+            values,
+          ),
+        );
+      }
+    } catch (error) {
+      if (!(error instanceof ParseError) || error.status === "limited") {
+        throw error;
+      }
+    }
+  }
+  return result;
+}
+
 function fields(reader: Reader, output: Node[], depth: number, group?: number): void {
   reader.budget.depth(depth, reader.offset);
   while (reader.remaining) {
@@ -128,6 +183,9 @@ function fields(reader: Reader, output: Node[], depth: number, group?: number): 
             }
           }
         }
+      }
+      if (length && length <= 4_096) {
+        children.push(...packed(reader, rawStart, payload.end));
       }
       output.push(
         reader.node(

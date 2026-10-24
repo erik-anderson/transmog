@@ -2,10 +2,14 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import vm from "node:vm";
+import { encode as pack } from "@msgpack/msgpack";
+import { encode as cbor } from "cborg";
+import { BSON, Binary, Code, Decimal128, Double, Long, ObjectId, Timestamp } from "bson";
+import protobuf from "protobufjs";
 
 const sources = Object.fromEntries(
   await Promise.all(
-    ["protobuf", "bond"].map(async (name) => [
+    ["protobuf", "bond", "msgpack", "cbor", "bson"].map(async (name) => [
       name,
       await readFile(new URL(`../dist/runtime/${name}.js`, import.meta.url), "utf8"),
     ]),
@@ -161,6 +165,161 @@ const bondHeader = (version) => [0x43, 0x42, version, 0];
 const bondStruct = (version, fields) =>
   version === 1 ? [...fields, 0] : [...varint(fields.length + 1), ...fields, 0];
 
+test("MessagePack decodes independent serializer output with exact integers and inert keys", async () => {
+  const payload = pack(
+    {
+      name: "<script>inert</script>",
+      values: [null, true, -33, 256, 1.25, -0],
+      wide: 18446744073709551615n,
+      bytes: new Uint8Array([1, 2]),
+      time: new Date("2024-01-01T00:00:00Z"),
+    },
+    { useBigInt64: true, forceIntegerToFloat: true },
+  );
+  const { document } = await host("msgpack", payload);
+  assert.equal(document.status, "complete");
+  const all = nodes(document);
+  assert.ok(all.some((node) => node.value?.value === "18446744073709551615"));
+  assert.ok(all.some((node) => node.value?.value === "<script>inert</script>"));
+  assert.ok(all.some((node) => node.value?.kind === "timestamp"));
+  assert.ok(all.some((node) => node.value?.value === "-0"));
+});
+
+test("MessagePack preserves unknown extensions, duplicate keys and consecutive values", async () => {
+  const { document } = await host("msgpack", hex("82 a1 78 01 a1 78 02 d4 2a ff c0"));
+  assert.equal(document.status, "complete");
+  assert.equal(document.roots.length, 3);
+  assert.equal(document.roots[0].children.length, 2);
+  assert.ok(nodes(document).some((node) => node.name === "Extension payload"));
+  for (const bytes of ["c1", "d4 ff 00", "c7 0c ff ffffffff 0000000000000000", "91", "a1 ff"]) {
+    assert.equal((await host("msgpack", hex(bytes))).document.status, "malformed");
+  }
+});
+
+test("CBOR decodes independent serializer output and retains non-string map keys", async () => {
+  const payload = cbor(
+    new Map([
+      ["text", "hello"],
+      [42, [1, -2, 18446744073709551615n]],
+      [false, new Uint8Array([0xff])],
+    ]),
+  );
+  const { document } = await host("cbor", payload);
+  assert.equal(document.status, "complete");
+  assert.ok(nodes(document).some((node) => node.name === "Key" && node.value?.kind === "boolean"));
+  assert.ok(nodes(document).some((node) => node.value?.value === "18446744073709551615"));
+});
+
+test("CBOR preserves tags, indefinite chunks, simple values and IEEE754 edge cases", async () => {
+  const { document } = await host(
+    "cbor",
+    hex("d9d9f7 9f 7f 626869 6121 ff 5f 420102 4103 ff f98000 f97c00 f97e00 f820 ff"),
+  );
+  assert.equal(document.status, "complete");
+  const all = nodes(document);
+  assert.ok(all.some((node) => node.value?.value?.name === "Tag 55799"));
+  assert.ok(all.some((node) => node.value?.value === "hi!"));
+  assert.ok(all.some((node) => node.value?.value === "-0"));
+  assert.ok(all.some((node) => node.value?.value === "Infinity"));
+  assert.ok(all.some((node) => node.value?.value === "NaN"));
+  for (const bytes of ["ff", "1f", "f818", "7f7fff", "bf0102ffff", "7f61c361a9ff", "9f01"]) {
+    assert.equal((await host("cbor", hex(bytes))).document.status, "malformed", bytes);
+  }
+});
+
+test("BSON decodes independent serializer output and preserves specialized values", async () => {
+  const payload = BSON.serialize({
+    text: "hello",
+    list: [1, false, null],
+    wide: Long.MIN_VALUE,
+    bits: Decimal128.fromString("1.234567890123456789"),
+    id: new ObjectId("507f1f77bcf86cd799439011"),
+    date: new Date(-1),
+    zero: new Double(-0),
+    binary: new Binary(Buffer.from([1, 2, 3]), 0x80),
+    code: new Code("<script>inert</script>", { x: 42 }),
+    timestamp: Timestamp.fromBits(2, 3),
+  });
+  const { document } = await host("bson", payload);
+  assert.equal(document.status, "complete");
+  const all = nodes(document);
+  assert.ok(all.some((node) => node.value?.value === "-9223372036854775808"));
+  assert.ok(all.some((node) => node.value?.value === "507f1f77bcf86cd799439011"));
+  assert.ok(all.some((node) => node.value?.value === "-0"));
+  assert.ok(all.some((node) => node.value?.value === "<script>inert</script>"));
+  assert.ok(all.some((node) => node.value?.value?.includes?.("Decimal128 bits")));
+});
+
+test("BSON validates declared sizes, strings, Boolean values and array indexes", async () => {
+  for (const bytes of [
+    "0400000000",
+    "0500000001",
+    "090000000878000200",
+    "0d00000002780002000000610100",
+    "140000000461000c000000103100010000000000",
+  ]) {
+    assert.equal((await host("bson", hex(bytes))).document.status, "malformed", bytes);
+  }
+  assert.equal((await host("bson", hex("05000000000500000000"))).document.roots.length, 2);
+});
+
+test("packed Protobuf previews agree with an independent schema-based serializer", async () => {
+  const type = protobuf
+    .parse(
+      'syntax="proto3"; message Sample { repeated sint32 numbers = 1; repeated float values = 2; }',
+    )
+    .root.lookupType("Sample");
+  const payload = type
+    .encode(type.create({ numbers: [-1, 2, -3], values: [1.5, -0, Infinity] }))
+    .finish();
+  const { document } = await host("protobuf", payload);
+  assert.equal(document.status, "complete");
+  const all = nodes(document);
+  const candidate = all.find((node) => node.name === "Possible packed ZigZag integers");
+  assert.deepEqual(
+    candidate.children.map((node) => node.value.value),
+    ["-1", "2", "-3"],
+  );
+  const floats = all.find((node) => node.name === "Possible packed float32");
+  assert.deepEqual(
+    floats.children.map((node) => node.value.value),
+    [1.5, "-0", "Infinity"],
+  );
+});
+
+test("all new readers bound malformed input, nesting and HTTP continuations", async () => {
+  for (const [kind, good] of [
+    ["msgpack", pack({ x: "hello" })],
+    ["cbor", cbor({ x: "hello" })],
+    ["bson", BSON.serialize({ x: "hello" })],
+  ]) {
+    assert.equal((await host(kind, good, { compressed: true })).document.status, "complete");
+    assert.equal(
+      (await host(kind, good, { availability: "truncated" })).document.status,
+      "partial",
+    );
+    assert.equal(
+      (await host(kind, good, { compressed: true, decodeFailure: "malformed" })).document.status,
+      "unavailable",
+    );
+    for (let index = 0; index < good.length; index++)
+      assert.equal((await host(kind, good.slice(0, index))).document.status, "malformed");
+    for (let seed = 0; seed < 80; seed++) {
+      let n = seed + 1;
+      const bytes = Uint8Array.from({ length: seed % 35 }, () => {
+        n = (Math.imul(n, 1664525) + 1013904223) >>> 0;
+        return n >>> 24;
+      });
+      await host(kind, bytes);
+    }
+  }
+  for (const [kind, bytes] of [
+    ["msgpack", binary(Array(20).fill(0x91), 0)],
+    ["cbor", binary(Array(20).fill(0x81), 0)],
+  ])
+    assert.equal((await host(kind, bytes)).document.status, "limited");
+});
+
 test("published Protobuf examples retain duplicate order and label alternatives", async () => {
   const payload = hex("08 96 01 12 07 74 65 73 74 69 6e 67 08 01 1a 03 08 96 01");
   const { document } = await host("protobuf", payload);
@@ -225,10 +384,8 @@ test("Protobuf groups validate matching tags; invalid nested probes leave opaque
   }
   const { document } = await host("protobuf", hex("12 04 ff 80 c0 af"));
   assert.equal(document.status, "complete");
-  assert.deepEqual(
-    document.roots[0].children.map((node) => node.name),
-    ["Raw payload"],
-  );
+  assert.equal(document.roots[0].children[0].name, "Raw payload");
+  assert.ok(!nodes(document).some((node) => node.name === "Possible embedded message"));
 });
 
 test("malformed input preserves earlier complete fields and exposes the exact remainder", async () => {
