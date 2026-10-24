@@ -314,29 +314,41 @@ async fn wait_canceled(op: &Operation) -> AppError {
         tokio::time::sleep(std::time::Duration::from_millis(25)).await;
     }
 }
-fn wire(node: &Node, bytes: &[u8], header_only: bool) -> String {
+fn wire(node: &Node, bytes: &[u8], framing_only: bool) -> String {
     let mut hash = Sha256::new();
     for span in &node.spans {
         let start = span.offset.parse::<usize>().unwrap_or(usize::MAX);
-        let mut length = span.length.parse::<usize>().unwrap_or(usize::MAX);
-        if header_only
-            && matches!(node.value, Some(Value::Object | Value::Array))
-            && !node.children.is_empty()
-            && let Some(first) = node
-                .children
-                .iter()
-                .flat_map(|child| &child.spans)
-                .filter(|child| child.source_id == span.source_id)
-                .filter_map(|child| child.offset.parse::<usize>().ok())
-                .min()
-        {
-            length = length.min(first.saturating_sub(start));
+        let length = span.length.parse::<usize>().unwrap_or(usize::MAX);
+        let Some(end) = start.checked_add(length).filter(|end| *end <= bytes.len()) else {
+            continue;
+        };
+        // Exclude child values, preserving every framing byte, including trailers
+        // and gaps between children. Overlapping alternative spans count once.
+        let mut covered =
+            if framing_only && matches!(node.value, Some(Value::Object | Value::Array)) {
+                node.children
+                    .iter()
+                    .flat_map(|child| &child.spans)
+                    .filter(|child| child.source_id == span.source_id)
+                    .filter_map(|child| {
+                        let offset = child.offset.parse::<usize>().ok()?;
+                        let length = child.length.parse::<usize>().ok()?;
+                        Some((offset.max(start), offset.checked_add(length)?.min(end)))
+                    })
+                    .filter(|(start, end)| start < end)
+                    .collect::<Vec<_>>()
+            } else {
+                vec![]
+            };
+        covered.sort_unstable();
+        let mut cursor = start;
+        for (start, end) in covered {
+            if cursor < start {
+                hash.update(&bytes[cursor..start]);
+            }
+            cursor = cursor.max(end);
         }
-        if let Some(end) = start.checked_add(length)
-            && let Some(value) = bytes.get(start..end)
-        {
-            hash.update(value);
-        }
+        hash.update(&bytes[cursor..end]);
     }
     hex::encode(hash.finalize())
 }
@@ -838,6 +850,45 @@ mod tests {
         assert!(
             matches!(&result.roots[0].children.iter().find(|child| child.name == "Right").unwrap().value, Some(Value::String(value)) if value.contains("Unresolved"))
         );
+    }
+    #[test]
+    fn container_framing_includes_trailers_without_repeating_child_changes() {
+        let group = |size, value: &str| {
+            doc(
+                vec![field(
+                    "Field 1",
+                    Value::Object,
+                    0,
+                    size,
+                    vec![field("Field 2", Value::Integer(value.into()), 1, 2, vec![])],
+                )],
+                ParseStatus::Complete,
+            )
+        };
+        let left = group(4, "1");
+        let right = group(5, "1");
+        let result = compare(
+            &left,
+            &[11, 16, 1, 12],
+            &right,
+            &[11, 16, 1, 140, 0],
+            "Response",
+            "protobuf",
+        )
+        .unwrap();
+        assert!(result.roots[0].name.ends_with("changed"));
+        let right = group(4, "2");
+        let result = compare(
+            &left,
+            &[11, 16, 1, 12],
+            &right,
+            &[11, 16, 2, 12],
+            "Response",
+            "protobuf",
+        )
+        .unwrap();
+        assert_eq!(result.roots.len(), 1);
+        assert!(result.roots[0].name.contains("Field 2"));
     }
     #[test]
     fn empty_containers_and_wire_encoding_changes_are_findings() {

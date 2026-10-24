@@ -6,6 +6,7 @@ import {
   entryName,
   float,
   literal,
+  mapEntry,
   parseValues,
   retainPartial,
   string,
@@ -75,34 +76,38 @@ function read(reader: Reader, name: string, depth: number): Node {
       let combined = "",
         clipped = false,
         index = 0;
-      while (reader.remaining && reader.bytes[reader.offset] !== 0xff) {
-        const chunkStart = reader.offset,
-          chunkTag = reader.byte();
-        if (chunkTag >> 5 !== major || (chunkTag & 31) === 31) {
-          throw new ParseError("malformed", "Invalid indefinite string chunk", chunkStart);
-        }
-        const length = count(argument(reader, chunkTag & 31)!, reader);
-        const payload = reader.take(length);
-        let chunkValue: Value = { kind: "bytes" };
-        if (major === 3) {
-          const decoded = text(payload);
-          chunkValue = {
-            kind: "string",
-            value: decoded.value + (decoded.clipped ? "… [preview]" : ""),
-          };
-          if (combined.length + decoded.value.length <= 1024 && !clipped) {
-            combined += decoded.value;
-          } else {
-            clipped = true;
+      try {
+        while (reader.remaining && reader.bytes[reader.offset] !== 0xff) {
+          const chunkStart = reader.offset,
+            chunkTag = reader.byte();
+          if (chunkTag >> 5 !== major || (chunkTag & 31) === 31) {
+            throw new ParseError("malformed", "Invalid indefinite string chunk", chunkStart);
           }
-          clipped ||= decoded.clipped;
+          const length = count(argument(reader, chunkTag & 31)!, reader);
+          const payload = reader.take(length);
+          let chunkValue: Value = { kind: "bytes" };
+          if (major === 3) {
+            const decoded = text(payload);
+            chunkValue = {
+              kind: "string",
+              value: decoded.value + (decoded.clipped ? "… [preview]" : ""),
+            };
+            if (combined.length + decoded.value.length <= 1024 && !clipped) {
+              combined += decoded.value;
+            } else {
+              clipped = true;
+            }
+            clipped ||= decoded.clipped;
+          }
+          children.push(
+            reader.node(`Chunk ${++index}`, major === 2 ? payload.start : chunkStart, chunkValue),
+          );
         }
-        children.push(
-          reader.node(`Chunk ${++index}`, major === 2 ? payload.start : chunkStart, chunkValue),
-        );
-      }
-      if (reader.byte() !== 0xff) {
-        throw new ParseError("malformed", "Missing string break", start);
+        if (reader.byte() !== 0xff) {
+          throw new ParseError("malformed", "Missing string break", start);
+        }
+      } catch (error) {
+        retainPartial(error, reader, name, start, children);
       }
       value =
         major === 3
@@ -110,23 +115,23 @@ function read(reader: Reader, name: string, depth: number): Node {
           : literal("Indefinite byte string", 2);
     }
   } else if (major === 4 || major === 5) {
-    const length = size === null ? null : count(size, reader);
-    if (length !== null && length > reader.remaining / (major === 5 ? 2 : 1)) {
-      throw new ParseError("malformed", "Truncated collection", start);
-    }
+    const length = size;
     let index = 0;
     try {
       while (
-        length === null ? reader.remaining && reader.bytes[reader.offset] !== 0xff : index < length
+        length === null
+          ? reader.remaining && reader.bytes[reader.offset] !== 0xff
+          : BigInt(index) < length
       ) {
         if (major === 4) {
           children.push(read(reader, `Item ${index + 1}`, depth + 1));
         } else {
           const entryStart = reader.offset,
-            key = read(reader, "Key", depth + 1),
-            item = read(reader, "Value", depth + 1);
+            key = read(reader, "Key", depth + 1);
           children.push(
-            reader.node(entryName(key, index), entryStart, { kind: "object" }, [key, item]),
+            mapEntry(reader, entryName(key, index), entryStart, key, () =>
+              read(reader, "Value", depth + 1),
+            ),
           );
         }
         index++;

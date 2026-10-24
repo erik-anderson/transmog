@@ -55,6 +55,23 @@ export function entryName(key: Node, index: number): string {
     : `Entry ${index + 1}`;
 }
 
+/** Keep a decoded key attached to its value, including incomplete nested values. */
+export function mapEntry(
+  reader: Reader,
+  name: string,
+  start: number,
+  key: Node,
+  read: () => Node,
+): Node {
+  const children = [key];
+  try {
+    children.push(read());
+  } catch (error) {
+    retainPartial(error, reader, name, start, children);
+  }
+  return reader.node(name, start, { kind: "object" }, children);
+}
+
 /** Retain only completed children; the enclosing value is explicitly partial. */
 export function retainPartial(
   error: unknown,

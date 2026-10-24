@@ -1,6 +1,15 @@
 import type { Node, Value } from "transmog:extensions/v1";
 import { Reader, ParseError, integer, text } from "./reader.js";
-import { float, hex, literal, parseValues, retainPartial, string, unsigned } from "./values.js";
+import {
+  float,
+  hex,
+  literal,
+  mapEntry,
+  parseValues,
+  retainPartial,
+  string,
+  unsigned,
+} from "./values.js";
 
 function length(reader: Reader): number {
   const start = reader.offset,
@@ -169,7 +178,8 @@ function readDocument(reader: Reader, name: string, depth: number, array = false
   if (size < 5) {
     throw new ParseError("malformed", "Invalid BSON document size", start);
   }
-  const payload = reader.take(size - 4),
+  const truncated = size - 4 > reader.remaining;
+  const payload = reader.take(Math.min(size - 4, reader.remaining)),
     children: Node[] = [];
   try {
     while (payload.remaining > 1) {
@@ -191,15 +201,18 @@ function readDocument(reader: Reader, name: string, depth: number, array = false
         kind: "string",
         value: key.value + (key.clipped ? "… [preview]" : ""),
       });
-      const item = field(payload, type, "Value", depth + 1);
       children.push(
-        payload.node(
+        mapEntry(
+          payload,
           `${Array.from(key.value).slice(0, 72).join("")}${key.clipped || Array.from(key.value).length > 72 ? "…" : ""} · ${types[type]}`,
           entryStart,
-          { kind: "object" },
-          [keyNode, item],
+          keyNode,
+          () => field(payload, type, "Value", depth + 1),
         ),
       );
+    }
+    if (truncated) {
+      throw new ParseError("malformed", "Truncated BSON document", payload.offset);
     }
     if (payload.byte() !== 0 || payload.remaining) {
       throw new ParseError("malformed", "Missing BSON document terminator", payload.offset - 1);

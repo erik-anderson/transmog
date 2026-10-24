@@ -6,6 +6,7 @@ import {
   entryName,
   float,
   literal,
+  mapEntry,
   parseValues,
   retainPartial,
   string,
@@ -54,7 +55,7 @@ function read(reader: Reader, name: string, depth: number): Node {
     value = literal("Binary", 0);
   } else if (tag >= 0xdc && tag <= 0xdf) {
     kind = tag <= 0xdd ? "array" : "map";
-    length = count(unsigned(reader, tag % 2 === 0 ? 2 : 4, true), reader);
+    length = Number(unsigned(reader, tag % 2 === 0 ? 2 : 4, true));
     value = { kind: kind === "array" ? "array" : "object" };
   } else if ((tag >= 0xc7 && tag <= 0xc9) || (tag >= 0xd4 && tag <= 0xd8)) {
     length =
@@ -90,9 +91,6 @@ function read(reader: Reader, name: string, depth: number): Node {
     throw new ParseError("malformed", "Reserved or invalid MessagePack tag", start);
   }
   if (kind) {
-    if (length > reader.remaining / (kind === "map" ? 2 : 1)) {
-      throw new ParseError("malformed", "Truncated collection", start);
-    }
     try {
       for (let index = 0; index < length; index++) {
         if (kind === "array") {
@@ -100,9 +98,10 @@ function read(reader: Reader, name: string, depth: number): Node {
         } else {
           const entryStart = reader.offset;
           const key = read(reader, "Key", depth + 1);
-          const item = read(reader, "Value", depth + 1);
           children.push(
-            reader.node(entryName(key, index), entryStart, { kind: "object" }, [key, item]),
+            mapEntry(reader, entryName(key, index), entryStart, key, () =>
+              read(reader, "Value", depth + 1),
+            ),
           );
         }
       }

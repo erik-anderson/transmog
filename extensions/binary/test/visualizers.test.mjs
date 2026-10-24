@@ -214,6 +214,49 @@ test("byte-value spans contain payload bytes without binary encoding headers", a
   }
 });
 
+test("truncated collection counts preserve complete available items", async () => {
+  for (const [kind, payload] of [
+    ["msgpack", hex("93 01 02")],
+    ["msgpack", hex("dc 0003 01 02")],
+    ["cbor", hex("83 01 02")],
+    ["cbor", hex("98 03 01 02")],
+  ]) {
+    const { document } = await host(kind, payload);
+    assert.equal(document.status, "malformed");
+    const partial = document.roots.find((node) => node.name === "Partial Value 1");
+    assert.ok(partial, `${kind} discarded the complete items`);
+    assert.deepEqual(
+      partial.children.map((node) => node.value.value),
+      ["1", "2"],
+    );
+  }
+});
+
+test("partial map values retain their encoded key and completed nested fields", async () => {
+  for (const [kind, payload] of [
+    ["msgpack", pack({ a: 1, b: [2, 3] }).slice(0, -1)],
+    ["cbor", cbor({ a: 1, b: [2, 3] }).slice(0, -1)],
+    ["bson", BSON.serialize({ a: 1, b: { c: 2, d: 3 } }).slice(0, -5)],
+  ]) {
+    const { document } = await host(kind, payload);
+    assert.equal(document.status, "malformed");
+    const entry = nodes(document).find((node) =>
+      node.children?.some((child) => child.name === "Key" && child.value?.value === "b"),
+    );
+    assert.ok(entry, `${kind} lost the key of its partial value`);
+    assert.ok(nodes({ roots: [entry] }).some((node) => node.value?.value === "2"));
+  }
+});
+
+test("truncated BSON and indefinite CBOR strings retain complete fields or chunks", async () => {
+  const bson = (await host("bson", BSON.serialize({ a: 1, b: 2 }).slice(0, -1))).document;
+  assert.equal(bson.status, "malformed");
+  assert.ok(nodes(bson).some((node) => node.value?.value === "2"));
+  const chunks = (await host("cbor", hex("7f 62 6162"))).document;
+  assert.equal(chunks.status, "malformed");
+  assert.ok(nodes(chunks).some((node) => node.name === "Chunk 1" && node.value?.value === "ab"));
+});
+
 test("malformed collections retain earlier complete fields as an explicitly partial value", async () => {
   const bson = BSON.serialize({ first: 1, bad: true });
   bson[bson.length - 2] = 2;
