@@ -32,6 +32,7 @@ export async function checkComparison(page, root) {
     .filter({ hasText: "field comparison" })
     .waitFor();
   assert.equal(await shared.locator("script").count(), 0);
+  await shared.getByRole("status").filter({ hasText: "13 field findings" }).waitFor();
   assert.equal(await shared.evaluate((element) => element.view), null);
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.visualizerStarts?.length ?? 0),
@@ -43,11 +44,44 @@ export async function checkComparison(page, root) {
   await page.keyboard.press("ArrowDown");
   await page.keyboard.press("ArrowRight");
   await page.keyboard.press("ArrowDown");
+  assert.equal(
+    await shared.locator(".visualizer-node").isVisible(),
+    false,
+    "Keyboard browsing opened details without an explicit action",
+  );
   await page.keyboard.press("Enter");
   await shared.getByRole("region", { name: "Selected structure" }).waitFor();
+  assert.equal(
+    await shared.locator('.visualizer-node option[value="hex"]').count(),
+    0,
+    "Native results offered a Hex view without byte sources",
+  );
+  await shared
+    .getByRole("treeitem")
+    .filter({
+      has: page.locator(".visualizer-field", { hasText: /^greeting/ }),
+    })
+    .click();
   await shared.getByRole("combobox", { name: "Structure view" }).selectOption("table");
+  await shared
+    .locator("tbody tr")
+    .filter({ hasText: /^Left/ })
+    .getByText("hello", { exact: true })
+    .waitFor();
+  await shared
+    .locator("tbody tr")
+    .filter({ hasText: /^Right/ })
+    .getByText("<script>inert</script>", { exact: true })
+    .waitFor();
   await shared.getByRole("combobox", { name: "Structure view" }).selectOption("text");
   await page.keyboard.press("Escape");
+  await page.keyboard.press("Home");
+  await page.keyboard.press("End");
+  assert.equal(
+    await shared.locator(".visualizer-node").isVisible(),
+    false,
+    "Continuing keyboard navigation reopened dismissed details",
+  );
   await page.evaluate(() =>
     Object.defineProperty(navigator, "clipboard", {
       configurable: true,
@@ -81,6 +115,9 @@ export async function checkComparison(page, root) {
     .getByText("Built-in field comparison", { exact: true })
     .waitFor();
   await page.keyboard.press("Escape");
+  await tree.getByRole("button", { name: "Expand Evidence", exact: true }).click();
+  await tree.getByText("Field path", { exact: true }).waitFor();
+  await tree.getByRole("button", { name: "Collapse Evidence", exact: true }).click();
   for (const [width, height] of [
     [1440, 900],
     [960, 720],

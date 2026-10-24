@@ -29,6 +29,7 @@ export async function checkLiveVisualizers(page, root, visualizer, selector, tre
   );
   await tree.focus();
   await page.keyboard.press("End");
+  await page.keyboard.press("Enter");
   await visualizer
     .getByRole("combobox", { name: "Structure view", exact: true })
     .selectOption("text");
@@ -145,6 +146,7 @@ export async function checkLiveVisualizers(page, root, visualizer, selector, tre
     "Removing a selected field left the replacement selection outside the tree window",
   );
   await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
   await visualizer
     .locator(".visualizer-node-heading > strong")
     .filter({ hasText: "Field 0" })
@@ -299,6 +301,8 @@ export async function checkLiveVisualizers(page, root, visualizer, selector, tre
   await tree.focus();
   await page.keyboard.press("Home");
   await page.keyboard.press("ArrowDown");
+  if (!(await visualizer.locator(".visualizer-node").isVisible()))
+    await page.keyboard.press("Enter");
   if (!(await visualizer.locator(".visualizer-ranges").evaluate((element) => element.open)))
     await visualizer.getByText("Source ranges (1)", { exact: true }).click();
   await visualizer

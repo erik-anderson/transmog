@@ -1,6 +1,7 @@
 extension-visualizer { display:block; min-height:0; min-width:0; height:100%; overflow:hidden; container-type:inline-size; }
 .extension-visualizer { display:flex; flex-direction:column; height:100%; min-height:0; overflow:hidden; font-size:.75rem; anchor-scope:--visualizer-about; }
 .visualizer-feedback { margin:.4rem .5rem; white-space:pre-wrap; overflow-wrap:anywhere; }
+.visualizer-outcome { flex:0 0 auto; margin:.35rem .5rem; overflow-wrap:anywhere; }
 .visualizer-heading,.visualizer-node-heading { display:flex; flex-wrap:wrap; align-items:baseline; gap:.4rem; padding:.3rem .5rem; border-bottom:1px solid var(--line); }
 .visualizer-heading > strong,.visualizer-node-heading > strong { min-width:0; overflow-wrap:anywhere; margin-right:auto; }
 .visualizer-heading { flex:0 0 auto; max-height:50%; overflow:auto; }

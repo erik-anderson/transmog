@@ -1396,8 +1396,7 @@ await page.addInitScript(
                 status: "complete",
                 updates: "final",
                 presentation: "tree",
-                summary:
-                  "13 findings · 3 equal fields. Frozen snapshots; ordered duplicate occurrences.",
+                summary: "13 field findings · 3 equal parsed fields. Both bodies fully parsed.",
                 sources: [],
                 diagnostics: [],
                 roots: [
@@ -1419,6 +1418,23 @@ await page.addInitScript(
                         value: { kind: "string", value: "<script>inert</script>" },
                         spans: [],
                         children: [],
+                      },
+                      {
+                        id: "field.0.evidence",
+                        name: "Evidence",
+                        spans: [],
+                        children: [
+                          {
+                            id: "field.0.path",
+                            name: "Field path",
+                            value: {
+                              kind: "string",
+                              value: '/Value 1 [1]/Key "greeting" [1]/Value [1]',
+                            },
+                            spans: [],
+                            children: [],
+                          },
+                        ],
                       },
                     ],
                   },

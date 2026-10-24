@@ -29,6 +29,7 @@ export async function checkHttpVisualizers(page, visualizer, selector, tree) {
     await visualizer.locator(".visualizer-heading > strong").waitFor();
     await tree.focus();
     await page.keyboard.press("ArrowDown");
+    await page.keyboard.press("Enter");
     if (!(await visualizer.locator(".visualizer-ranges").evaluate((element) => element.open)))
       await visualizer.getByText("Source ranges (1)", { exact: true }).click();
     await visualizer

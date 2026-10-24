@@ -79,13 +79,20 @@ native code then matches encoded map keys or field labels and ordered duplicate
 occurrences. It reports changes in typed values or wire encoding, including
 changes beyond displayed text previews. Incomplete/ambiguous parses never prove
 that an unmatched field is absent. Findings are limited to the first 512; the
-summary reports additional findings. Source offsets refer to decoded snapshot
-bodies, while **Original byte ranges** retains the frozen original representation.
+visible summary reports counts, parse coverage and additional findings. Each
+finding starts with **Left** and **Right** values; expand **Evidence** for the
+complete field path, change reason and source ranges. Source offsets refer to
+decoded snapshot bodies, while **Original byte ranges** retains the frozen
+original representation.
 
 The native field-comparison producer and JavaScript readers share the same inert
 structured-document contract and host UI: virtualized tree, keyboard navigation,
 field details, table/text presentation and inspection copy menus. A native
 snapshot has no extension instance, live feed or source-reading capability.
+Tree navigation preserves the available reading width: arrow keys, Home and End
+move selection, while Enter or a click opens details. Escape closes details;
+continuing to navigate keeps them closed. Hex is offered only when the result
+has a byte source; native comparisons retain **Original byte ranges** separately.
 The UI does not parse binary formats. Workers close after parsing, and closing or
 refreshing the comparison cancels obsolete work and rejects late results.
 

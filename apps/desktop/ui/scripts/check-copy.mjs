@@ -121,7 +121,7 @@ export async function checkCopy(page, root) {
     .locator(".visualizer-table tbody tr")
     .filter({ has: page.getByRole("button", { name: "Branch", exact: true }) })
     .locator("td")
-    .first();
+    .filter({ hasText: /^hello/ });
   await longCell.click({ button: "right" });
   await menu.getByRole("menuitem", { name: "Copy value", exact: true }).click();
   await page.waitForFunction(() => globalThis.__copied === "hello\\nworld" + "x".repeat(600));

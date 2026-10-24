@@ -181,6 +181,9 @@ when changing the experience.
   Native structured documents and extension results share host-owned navigation,
   field details and copying. Their producers retain separate snapshot and worker
   lifecycles; rendering a native document does not create an extension instance.
+  Tree navigation preserves the user's choice to close details; opening them is
+  explicit. Show result counts and coverage beside structured comparisons, with
+  changed values ahead of expandable technical evidence.
 - Count and match filter choices with the same definitions. Common choices must
   not hide unfamiliar observed values; expose a counted Other choice when useful
   and distinguish it from missing evidence. Use canonical names for app-owned

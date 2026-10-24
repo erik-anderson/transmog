@@ -130,6 +130,12 @@ export async function checkVisualizers(page, root) {
     assert.equal(fullWidth, true, "The unselected structure did not use the pane width");
     await tree.focus();
     await page.keyboard.press("ArrowDown");
+    assert.equal(
+      await visualizer.locator(".visualizer-node").isVisible(),
+      false,
+      "Keyboard browsing opened an empty details pane",
+    );
+    await page.keyboard.press("Enter");
     await visualizer.getByText("9007199254740993", { exact: true }).last().waitFor();
     await visualizer
       .getByText("Example protocol · little-endian · Base 16", { exact: true })

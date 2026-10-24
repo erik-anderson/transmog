@@ -98,6 +98,8 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     if(!c.comparisonFields||c.comparisonFields.document.status!=='complete'||!c.comparisonFields.document.roots.some(node=>node.name.includes('greeting')))throw new Error('Native field comparison missing changed fields: '+c.comparisonFieldsStatus);
     const wait=async()=>{const end=Date.now()+10000;while(!c.querySelector('extension-visualizer')?.visualizerTitle){if(Date.now()>end)throw new Error('Native document did not reach shared presentation');await new Promise(resolve=>setTimeout(resolve,25));}};await wait();
     const shared=c.querySelector('extension-visualizer');if(shared.view||shared.choice||!shared.snapshot)throw new Error('Native document fabricated an extension instance');
+    if(!shared.querySelector('.visualizer-outcome')?.textContent.includes('field findings'))throw new Error('Native field counts are hidden');
+    if(shared.querySelector('.visualizer-node option[value=hex]'))throw new Error('Native result offered Hex without sources');
     for(const node of c.comparisonFields.document.roots)await shared.toggleNode(node.id);
     for(const format of ['cbor','bson']){
       const a=await find(format),b=await find(format+'-right');
@@ -141,7 +143,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       windowsVirtualKeyCode: 35,
     });
     await evaluate(
-      `(()=>{const c=document.querySelector('app-shell').comparison,viewer=c.comparisonDialog.querySelector('extension-visualizer'),viewport=c.comparisonScroll.getBoundingClientRect(),tree=viewer.treeViewport.getBoundingClientRect(),selected=viewer.treeViewport.querySelector('[aria-selected=true]').getBoundingClientRect();if(tree.top<viewport.top-2||tree.bottom>viewport.bottom+2||selected.top<viewport.top-2||selected.bottom>viewport.bottom+2)throw new Error('Native field tree or keyboard selection escaped its visible viewport');})()`,
+      `(()=>{const c=document.querySelector('app-shell').comparison,viewer=c.comparisonDialog.querySelector('extension-visualizer'),viewport=c.comparisonScroll.getBoundingClientRect(),tree=viewer.treeViewport.getBoundingClientRect(),selected=viewer.treeViewport.querySelector('[aria-selected=true]').getBoundingClientRect();if(tree.top<viewport.top-2||tree.bottom>viewport.bottom+2||selected.top<viewport.top-2||selected.bottom>viewport.bottom+2)throw new Error('Native field tree or keyboard selection escaped its visible viewport');if(viewer.visualizerDetailsOpen)throw new Error('Keyboard browsing opened native details without an explicit action');})()`,
     );
     await call("Input.dispatchKeyEvent", {
       type: "keyDown",

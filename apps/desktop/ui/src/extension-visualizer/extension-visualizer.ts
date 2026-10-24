@@ -794,11 +794,11 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerActiveRow =
       this.visualizerRows.find((row) => row.id === this.selected)?.domId ?? "";
   }
-  selectNode(id: string): void {
+  selectNode(id: string, openDetails = true): void {
     if (!this.nodes.has(id)) {
       return;
     }
-    this.visualizerDetailsOpen = true;
+    this.visualizerDetailsOpen = openDetails;
     this.selected = id;
     this.tableOffset = 0;
     this.updateRows(true);
@@ -1016,7 +1016,7 @@ export class ExtensionVisualizer extends WebUIElement {
         return;
     }
     event.preventDefault();
-    this.selectNode(this.allRows[target]!.id);
+    this.selectNode(this.allRows[target]!.id, this.visualizerDetailsOpen);
   }
   changeMode(event: Event): void {
     this.visualizerMode = (event.currentTarget as HTMLSelectElement).value as Presentation;

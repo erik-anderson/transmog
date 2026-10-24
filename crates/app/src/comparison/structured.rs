@@ -472,32 +472,53 @@ fn finding(
         format!("{} · {state}", name.chars().take(100).collect::<String>()),
         None,
         vec![
-            node(
-                format!("{id}.path"),
-                "Field path".into(),
-                Some(Value::String(name.to_owned())),
-                vec![],
-            ),
-            node(
-                format!("{id}.reason"),
-                "Change".into(),
-                Some(Value::String(reason.into())),
-                vec![],
-            ),
             side_node(format!("{id}.left"), "Left", left, complete),
             side_node(format!("{id}.right"), "Right", right, complete),
             node(
-                format!("{id}.source"),
-                "Source ranges".into(),
-                Some(Value::String(format!(
-                    "Left: {}\nRight: {}",
-                    source(left),
-                    source(right)
-                ))),
-                vec![],
+                format!("{id}.evidence"),
+                "Evidence".into(),
+                None,
+                vec![
+                    node(
+                        format!("{id}.path"),
+                        "Field path".into(),
+                        Some(Value::String(name.to_owned())),
+                        vec![],
+                    ),
+                    node(
+                        format!("{id}.reason"),
+                        "Change".into(),
+                        Some(Value::String(reason.into())),
+                        vec![],
+                    ),
+                    node(
+                        format!("{id}.source"),
+                        "Source ranges".into(),
+                        Some(Value::String(format!(
+                            "Left: {}\nRight: {}",
+                            source(left),
+                            source(right)
+                        ))),
+                        vec![],
+                    ),
+                ],
             ),
         ],
     )
+}
+
+fn outcome(changes: usize, equal: usize, complete: bool) -> String {
+    let findings = if changes > MAX_FINDINGS {
+        format!("Showing {MAX_FINDINGS} of {changes} field findings")
+    } else {
+        format!("{changes} field findings")
+    };
+    let coverage = if complete {
+        "Both bodies fully parsed."
+    } else {
+        "Coverage incomplete; unmatched fields remain unresolved."
+    };
+    format!("{findings} · {equal} equal parsed fields. {coverage}")
 }
 
 fn compare(
@@ -575,10 +596,7 @@ fn compare(
                 _ => "Protobuf",
             }
         ),
-        summary: Some(format!(
-            "{changes} findings · {equal} equal fields. Left: {:?}; right: {:?}. Matches encoded keys/field labels and ordered duplicate occurrences. Values and wire encodings are compared; Possible interpretations remain alternatives. Source offsets refer to decoded snapshot bodies; original byte ranges remain in the comparison.",
-            left.status, right.status
-        )),
+        summary: Some(outcome(changes, equal, complete)),
         status: if limited {
             ParseStatus::Limited
         } else if complete {
@@ -676,8 +694,13 @@ mod tests {
         );
         let result = compare(&left, &[1], &right, &[2], "Response", "protobuf").unwrap();
         assert!(result.roots[0].name.ends_with("changed"));
+        let evidence = result.roots[0]
+            .children
+            .iter()
+            .find(|child| child.name == "Evidence")
+            .unwrap();
         assert!(
-            matches!(&result.roots[0].children[0].value, Some(Value::String(value)) if value.contains(&name))
+            matches!(&evidence.children.iter().find(|child| child.name == "Field path").unwrap().value, Some(Value::String(value)) if value.contains(&name))
         );
     }
     #[test]
@@ -811,6 +834,7 @@ mod tests {
         let result = compare(&left, &[1], &right, &[255], "Response", "protobuf").unwrap();
         assert_eq!(result.status, ParseStatus::Partial);
         assert!(result.roots[0].name.ends_with("unresolved"));
+        assert!(result.summary.unwrap().contains("Coverage incomplete"));
         assert!(
             matches!(&result.roots[0].children.iter().find(|child| child.name == "Right").unwrap().value, Some(Value::String(value)) if value.contains("Unresolved"))
         );
@@ -920,7 +944,12 @@ mod tests {
         let result = compare(&a, &vec![1; 600], &b, &[], "Response", "protobuf").unwrap();
         assert_eq!(result.roots.len(), 512);
         assert_eq!(result.status, ParseStatus::Limited);
-        assert!(result.summary.unwrap().starts_with("600 findings"));
+        assert!(
+            result
+                .summary
+                .unwrap()
+                .starts_with("Showing 512 of 600 field findings")
+        );
     }
     #[test]
     fn visibility_cancels_field_operations_without_canceling_ordinary_comparisons() {

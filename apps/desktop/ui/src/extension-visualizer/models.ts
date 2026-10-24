@@ -276,6 +276,12 @@ export function tablePage(
 } {
   const structured = node.children.some((child) => child.children.length);
   const columns: Array<{ id: string; name: string }> = [];
+  if (!structured || node.children.some((child) => child.value)) {
+    columns.push({ id: "value", name: "Value" });
+  }
+  if (!structured || node.children.some((child) => formatText(child.format))) {
+    columns.push({ id: "format", name: "Format" });
+  }
   let limited = false;
   if (structured) {
     const keys = new Set<string>();
@@ -295,8 +301,6 @@ export function tablePage(
         }
       }
     }
-  } else {
-    columns.push({ id: "value", name: "Value" }, { id: "format", name: "Format" });
   }
   const offset =
     Math.max(0, Math.min(page, Math.max(0, Math.ceil(node.children.length / 50) - 1))) * 50;
@@ -308,25 +312,23 @@ export function tablePage(
       counts.set(field.name, ordinal + 1);
       values.set(JSON.stringify([field.name, ordinal]), field);
     }
-    const copyCells: TableCopyCell[] = structured
-      ? columns.map((column) => {
-          const field = values.get(column.id);
-          return {
-            nodeId: field?.id ?? "",
-            name: column.name,
-            value: valueText(field?.value).slice(0, 512),
-            full: null,
-          };
-        })
-      : [
-          { nodeId: row.id, name: row.name, value: valueText(row.value).slice(0, 512), full: null },
-          {
-            nodeId: "",
-            name: "Format",
-            value: formatText(row.format),
-            full: formatText(row.format),
-          },
-        ];
+    const copyCells: TableCopyCell[] = columns.map((column) => {
+      if (column.id === "format") {
+        return {
+          nodeId: "",
+          name: "Format",
+          value: formatText(row.format),
+          full: formatText(row.format),
+        };
+      }
+      const field = column.id === "value" ? row : values.get(column.id);
+      return {
+        nodeId: field?.id ?? "",
+        name: column.id === "value" ? row.name : column.name,
+        value: valueText(field?.value).slice(0, 512),
+        full: null,
+      };
+    });
     return { id: row.id, name: row.name, cells: copyCells.map((cell) => cell.value), copyCells };
   });
   return {
