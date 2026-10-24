@@ -275,6 +275,49 @@ test("malformed collections retain earlier complete fields as an explicitly part
   }
 });
 
+test("explicit Protobuf groups and Bond structs retain completed nested fields", async () => {
+  for (const [kind, payload, group, child] of [
+    ["protobuf", hex("0b 10 07"), "Partial Field 1 · group", "Field 2 · varint (raw unsigned)"],
+    ["bond", binary(bondHeader(1), [10, 0x23, 7]), "Partial Field 0 · struct", "Field 1 · uint8"],
+    [
+      "bond",
+      binary(bondHeader(2), [6, 10, 3, 0x23, 7]),
+      "Partial Field 0 · struct",
+      "Field 1 · uint8",
+    ],
+  ]) {
+    const { document } = await host(kind, payload);
+    assert.equal(document.status, "malformed");
+    const partial = nodes(document).find((node) => node.name === group);
+    assert.ok(partial, `${kind} discarded its incomplete nested structure`);
+    assert.ok(partial.children.some((node) => node.name === child && node.value?.value === "7"));
+  }
+});
+
+test("Bond partial map values preserve their key and bounded collection previews", async () => {
+  const partial = (await host("bond", binary(bondHeader(1), [13, 3, 11, 1, 9, 3, 2, 7]))).document;
+  assert.equal(partial.status, "malformed");
+  const entry = nodes(partial).find((node) => node.name === "Partial [0]");
+  assert.ok(entry);
+  assert.ok(
+    entry.children.some((node) => node.name === "Key · uint8" && node.value?.value === "9"),
+  );
+  assert.ok(nodes({ roots: [entry] }).some((node) => node.value?.value === "7"));
+  const limited = (
+    await host("bond", binary(bondHeader(1), [13, 3, 3], varint(1001), Array(2002).fill(0), [0]))
+  ).document;
+  assert.equal(limited.status, "limited");
+  assert.equal(nodes(limited).filter((node) => node.name === "Key · uint8").length, 1000);
+});
+
+test("failed speculative embedded messages never expose partial groups as wire facts", async () => {
+  for (const nested of [hex("0b 10 07 00"), binary(Array(12).fill(11), [16, 7])]) {
+    const payload = binary(field(1, 2, [...varint(nested.length), ...nested]));
+    const { document } = await host("protobuf", payload);
+    assert.ok(!nodes(document).some((node) => node.name.startsWith("Partial ")));
+  }
+});
+
 test("MessagePack decodes independent serializer output with exact integers and inert keys", async () => {
   const payload = pack(
     {

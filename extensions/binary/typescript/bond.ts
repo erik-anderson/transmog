@@ -9,6 +9,7 @@ import {
   integer,
   text,
 } from "./reader.js";
+import { mapEntry, retainPartial } from "./values.js";
 
 // Wire tags from BondDataType; this reader has no dependency on the retired Bond runtime.
 const names = [
@@ -53,82 +54,86 @@ function value(
   reader.budget.depth(depth, reader.offset);
   const children: Node[] = [];
   let result: Node;
-  if (kind === 2) {
-    const byte = reader.byte();
-    if (byte > 1) {
-      throw new ParseError("malformed", "Invalid Bond Boolean", reader.offset - 1);
+  try {
+    if (kind === 2) {
+      const byte = reader.byte();
+      if (byte > 1) {
+        throw new ParseError("malformed", "Invalid Bond Boolean", reader.offset - 1);
+      }
+      result = reader.node(name, start, { kind: "boolean", value: byte === 1 });
+    } else if (kind === 3 || kind === 14) {
+      const raw = reader.byte();
+      result = reader.node(name, start, integer(kind === 14 && raw >= 128 ? raw - 256 : raw));
+    } else if ([4, 5, 6, 15, 16, 17].includes(kind)) {
+      const bits = kind === 4 || kind === 15 ? 16 : kind === 5 || kind === 16 ? 32 : 64;
+      const raw = reader.varint(bits);
+      result = reader.node(name, start, integer(kind >= 15 ? (raw >> 1n) ^ -(raw & 1n) : raw));
+    } else if (kind === 7 || kind === 8) {
+      result = reader.node(name, start, floating(reader.floating(kind === 7 ? 4 : 8)));
+    } else if (kind === 9 || kind === 18) {
+      const count = Number(reader.varint(32));
+      const data = reader.take(count * (kind === 18 ? 2 : 1));
+      const decoded = text(data, kind === 18);
+      result = reader.node(
+        decoded.clipped ? name + " · preview (first 1,024 characters)" : name,
+        start,
+        { kind: "string", value: decoded.value },
+      );
+      result.format = { charset: kind === 18 ? "utf-16le" : "utf-8" };
+    } else if (kind === 10) {
+      structure(reader, children, version, depth + 1);
+      result = reader.node(name, start, { kind: "object" }, children);
+    } else if (kind === 11 || kind === 12) {
+      const header = reader.byte();
+      const element = type(reader, header & 31);
+      if (version === 1 && header > 31) {
+        throw new ParseError("malformed", "Invalid Bond v1 container type", reader.offset - 1);
+      }
+      const count = version === 2 && header >>> 5 ? (header >>> 5) - 1 : Number(reader.varint(32));
+      for (let index = 0; index < count; index++) {
+        if (index >= 4_000) {
+          throw new ParseError("limited", "Collection display limit reached", reader.offset);
+        }
+        children.push(value(reader, element, `[${index}] · ${names[element]}`, version, depth + 1));
+      }
+      result = reader.node(`${name} · ${count} items`, start, { kind: "array" }, children);
+    } else if (kind === 13) {
+      const key = type(reader, reader.byte());
+      const mapped = type(reader, reader.byte());
+      const count = Number(reader.varint(32));
+      for (let index = 0; index < count; index++) {
+        if (index >= 1_000) {
+          throw new ParseError("limited", "Map display limit reached", reader.offset);
+        }
+        const itemStart = reader.offset;
+        const keyNode = value(reader, key, `Key · ${names[key]}`, version, depth + 1);
+        children.push(
+          mapEntry(reader, `[${index}]`, itemStart, keyNode, () =>
+            value(reader, mapped, `Value · ${names[mapped]}`, version, depth + 1),
+          ),
+        );
+      }
+      result = reader.node(`${name} · ${count} entries`, start, { kind: "array" }, children);
+    } else {
+      throw new ParseError("malformed", "Unsupported Bond type", reader.offset);
     }
-    result = reader.node(name, start, { kind: "boolean", value: byte === 1 });
-  } else if (kind === 3 || kind === 14) {
-    const raw = reader.byte();
-    result = reader.node(name, start, integer(kind === 14 && raw >= 128 ? raw - 256 : raw));
-  } else if ([4, 5, 6, 15, 16, 17].includes(kind)) {
-    const bits = kind === 4 || kind === 15 ? 16 : kind === 5 || kind === 16 ? 32 : 64;
-    const raw = reader.varint(bits);
-    result = reader.node(name, start, integer(kind >= 15 ? (raw >> 1n) ^ -(raw & 1n) : raw));
-  } else if (kind === 7 || kind === 8) {
-    result = reader.node(name, start, floating(reader.floating(kind === 7 ? 4 : 8)));
-  } else if (kind === 9 || kind === 18) {
-    const count = Number(reader.varint(32));
-    const data = reader.take(count * (kind === 18 ? 2 : 1));
-    const decoded = text(data, kind === 18);
-    result = reader.node(
-      decoded.clipped ? name + " · preview (first 1,024 characters)" : name,
-      start,
-      { kind: "string", value: decoded.value },
-    );
-    result.format = { charset: kind === 18 ? "utf-16le" : "utf-8" };
-  } else if (kind === 10) {
-    structure(reader, children, version, depth + 1);
-    result = reader.node(name, start, { kind: "object" }, children);
-  } else if (kind === 11 || kind === 12) {
-    const header = reader.byte();
-    const element = type(reader, header & 31);
-    if (version === 1 && header > 31) {
-      throw new ParseError("malformed", "Invalid Bond v1 container type", reader.offset - 1);
-    }
-    const count = version === 2 && header >>> 5 ? (header >>> 5) - 1 : Number(reader.varint(32));
-    // Every encoded element occupies at least one byte. Check before looping or allocating.
-    reader.require(count);
-    if (count > 4_000) {
-      throw new ParseError("limited", "Collection display limit reached", reader.offset);
-    }
-    for (let index = 0; index < count; index++) {
-      children.push(value(reader, element, `[${index}] · ${names[element]}`, version, depth + 1));
-    }
-    result = reader.node(`${name} · ${count} items`, start, { kind: "array" }, children);
-  } else if (kind === 13) {
-    const key = type(reader, reader.byte());
-    const mapped = type(reader, reader.byte());
-    const count = Number(reader.varint(32));
-    reader.require(count * 2);
-    if (count > 1_000) {
-      throw new ParseError("limited", "Map display limit reached", reader.offset);
-    }
-    for (let index = 0; index < count; index++) {
-      const itemStart = reader.offset;
-      const pair = [
-        value(reader, key, `Key · ${names[key]}`, version, depth + 1),
-        value(reader, mapped, `Value · ${names[mapped]}`, version, depth + 1),
-      ];
-      children.push(reader.node(`[${index}]`, itemStart, { kind: "object" }, pair));
-    }
-    result = reader.node(`${name} · ${count} entries`, start, { kind: "array" }, children);
-  } else {
-    throw new ParseError("malformed", "Unsupported Bond type", reader.offset);
+    return result;
+  } catch (error) {
+    retainPartial(error, reader, name, start, children, [11, 12, 13].includes(kind));
   }
-  return result;
 }
 
 function structure(reader: Reader, children: Node[], version: number, depth: number): void {
   reader.budget.depth(depth, reader.offset);
-  const fields = version === 2 ? reader.take(Number(reader.varint(32))) : reader;
+  const length = version === 2 ? Number(reader.varint(32)) : reader.remaining;
+  const truncated = length > reader.remaining;
+  const fields = version === 2 ? reader.take(Math.min(length, reader.remaining)) : reader;
   while (fields.remaining) {
     const start = fields.offset;
     const header = fields.byte();
     const kind = header & 31;
     if (kind === 0) {
-      if (header !== 0 || (version === 2 && fields.remaining)) {
+      if (header !== 0 || (version === 2 && (fields.remaining || truncated))) {
         throw new ParseError("malformed", "Invalid Bond struct terminator or length", start);
       }
       return;
@@ -170,7 +175,23 @@ function candidate(
     }
   } catch (error) {
     const last = children.at(-1)?.spans?.[0];
-    failure(doc, error, reader, last ? Number(last.offset) + Number(last.length) : start);
+    const partial = error instanceof ParseError ? error.partial : undefined;
+    if (partial) {
+      children.push(partial);
+    }
+    failure(
+      doc,
+      error,
+      reader,
+      partial
+        ? Number(partial.spans?.[0]?.offset ?? start)
+        : last
+          ? Number(last.offset) + Number(last.length)
+          : start,
+    );
+    if (partial) {
+      doc.roots.at(-1)!.name = "Incomplete value bytes";
+    }
   }
   doc.roots.unshift({
     id: `${reader.budget.prefix}.root`,

@@ -9,6 +9,7 @@ import {
   integer,
   text,
 } from "./reader.js";
+import { retainPartial } from "./values.js";
 
 const summary =
   "Schema-free wire view. Field names and declared types are unknown. Possible interpretations are alternatives, not schema facts. Length-delimited values may be text, bytes, messages or packed numbers.";
@@ -68,7 +69,13 @@ function packed(reader: Reader, start: number, end: number): Node[] {
   return result;
 }
 
-function fields(reader: Reader, output: Node[], depth: number, group?: number): void {
+function fields(
+  reader: Reader,
+  output: Node[],
+  depth: number,
+  group?: number,
+  keepPartial = true,
+): void {
   reader.budget.depth(depth, reader.offset);
   while (reader.remaining) {
     const start = reader.offset;
@@ -173,7 +180,7 @@ function fields(reader: Reader, output: Node[], depth: number, group?: number): 
         if (length && depth < 10) {
           const candidate: Node[] = [];
           try {
-            fields(payload, candidate, depth + 1);
+            fields(payload, candidate, depth + 1, undefined, false);
             children.push(
               raw.node("Possible embedded message", rawStart, { kind: "object" }, candidate),
             );
@@ -196,7 +203,14 @@ function fields(reader: Reader, output: Node[], depth: number, group?: number): 
         ),
       );
     } else {
-      fields(reader, children, depth + 1, field);
+      try {
+        fields(reader, children, depth + 1, field, keepPartial);
+      } catch (error) {
+        if (keepPartial) {
+          retainPartial(error, reader, `Field ${field} · group`, start, children);
+        }
+        throw error;
+      }
       output.push(reader.node(`Field ${field} · group`, start, { kind: "object" }, children));
     }
   }
@@ -212,7 +226,23 @@ export function parse(bytes: Uint8Array, sourceId: string): VisualizationDocumen
     fields(reader, doc.roots, 0);
   } catch (error) {
     const end = doc.roots.at(-1)?.spans?.[0];
-    failure(doc, error, reader, end ? Number(end.offset) + Number(end.length) : 0);
+    const partial = error instanceof ParseError ? error.partial : undefined;
+    if (partial) {
+      doc.roots.push(partial);
+    }
+    failure(
+      doc,
+      error,
+      reader,
+      partial
+        ? Number(partial.spans?.[0]?.offset ?? 0)
+        : end
+          ? Number(end.offset) + Number(end.length)
+          : 0,
+    );
+    if (partial) {
+      doc.roots.at(-1)!.name = "Incomplete value bytes";
+    }
   }
   return doc;
 }

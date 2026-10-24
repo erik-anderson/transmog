@@ -55,6 +55,8 @@ an interpretation of compressed bytes. Fields link to exact byte ranges in the
 original or host-decoded source. Incomplete retained evidence is partial even
 when it ends at a valid field boundary. Earlier complete fields remain available
 when later bytes are malformed; the remainder links to its original byte range.
+Complete children of partial collections, groups and structs remain inspectable.
+Speculative Protobuf message probes still require a complete parse.
 
 Each selected decoded body is limited to 2 MiB. Additional work, nesting, node,
 collection and total text limits bound parsing and speculative probes. Protobuf
