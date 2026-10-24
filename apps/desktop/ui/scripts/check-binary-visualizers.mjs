@@ -21,8 +21,14 @@ export async function checkBinaryVisualizers(page, root) {
         Array.from(Buffer.from(item.bodyHex, "hex")),
         item.contentType,
       ]),
+    [
+      "bond",
+      Array.from({ length: 50_000 }, () => [0x23, 7, 0]).flat(),
+      "application/bond-compact-binary",
+      true,
+    ],
   ];
-  for (const [index, [kind, bytes, contentType]] of fixtures.entries()) {
+  for (const [index, [kind, bytes, contentType, ranges]] of fixtures.entries()) {
     const parser = await import(pathToFileURL(resolve(binary, `dist/runtime/${kind}.js`)).href);
     const body = { sourceId: "body", length: String(bytes.length), availability: "complete" };
     let step = parser.visualize({
@@ -124,6 +130,65 @@ export async function checkBinaryVisualizers(page, root) {
         .waitFor();
     if (index === 2)
       await viewer.getByRole("tree").getByText("Unparsed bytes", { exact: true }).waitFor();
+    if (ranges) {
+      const walk = (node) => [node, ...(node.children ?? []).flatMap(walk)];
+      let current = document;
+      for (const offset of [149997, 0]) {
+        for (let count = 0; count < 20; count++) {
+          const all = current.roots.flatMap(walk);
+          const field = all.find(
+            (node) => node.name === "Field 1 · uint8" && node.spans[0].offset === String(offset),
+          );
+          if (field) {
+            assert.equal(field.value.value, "7");
+            await viewer.evaluate((element, id) => element.selectNode(id, false), field.id);
+            break;
+          }
+          const pending = all.find(
+            (node) =>
+              node.childrenToken &&
+              node.spans.some(
+                (span) =>
+                  Number(span.offset) <= offset &&
+                  Number(span.offset) + Number(span.length) > offset,
+              ),
+          );
+          assert.ok(pending, "No range reaches the requested Bond field");
+          current = parser.expand(pending.childrenToken).document;
+          await page.evaluate((doc) => {
+            globalThis.__workspaceFixture.nextExpandedDocument = doc;
+          }, current);
+          const evicted = await viewer.evaluate(async (element, id) => {
+            const selected = element.visualizerRows.find((row) => row.selected)?.id;
+            await element.toggleNode(id);
+            const walk = (node) => [node, ...(node.children ?? []).flatMap(walk)];
+            return (
+              selected &&
+              !element.view.document.roots.flatMap(walk).some((node) => node.id === selected) &&
+              !selected.startsWith("__")
+            );
+          }, pending.id);
+          if (evicted && offset === 0) {
+            assert.equal(
+              await viewer.evaluate(
+                (element) => element.visualizerRows.find((row) => row.selected)?.id,
+              ),
+              pending.id,
+            );
+            assert.equal(
+              await viewer.locator(".visualizer-node").isVisible(),
+              false,
+              "Paging reopened closed details",
+            );
+          }
+          assert.ok(
+            (await viewer.getByRole("treeitem").count()) < 100,
+            "Large Bond display stopped virtualizing rows",
+          );
+          assert.ok(count < 19, "Range expansion made no progress");
+        }
+      }
+    }
     if (kind === "cbor" && document.roots[0]?.value?.kind === "object") {
       await viewer.evaluate((element) => element.selectNode(element.view.document.roots[0].id));
       await viewer.getByRole("combobox", { name: "Structure view" }).selectOption("table");
@@ -144,7 +209,10 @@ export async function checkBinaryVisualizers(page, root) {
         await page.setViewportSize({ width, height });
         assert.equal(await viewer.locator(".visualizer-heading > strong").isVisible(), true);
         await page.screenshot({
-          path: resolve(root, `../../../target/ui-check/binary-${kind}-${width}.png`),
+          path: resolve(
+            root,
+            `../../../target/ui-check/binary-${kind}${ranges ? "-ranges" : ""}-${width}.png`,
+          ),
         });
       }
     }

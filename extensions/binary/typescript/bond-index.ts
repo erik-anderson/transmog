@@ -235,17 +235,24 @@ class Index {
         this.set(id, Column.Data, this.offset);
         const stride = fixedWidth(element);
         if (stride) {
-          this.require(count * stride);
+          if (count && depth >= 64) {
+            throw new ParseError("limited", "Bond nesting limit reached (64 levels)", this.offset);
+          }
+          const available = Math.min(count, Math.floor((this.end - this.offset) / stride));
+          this.set(id, Column.Count, available);
           if (element === 2) {
-            for (let index = 0; index < count; index++) {
+            for (let index = 0; index < available; index++) {
               if (this.byte() > 1) {
+                this.set(id, Column.Count, index);
                 this.fail("Invalid Bond Boolean", this.offset - 1);
               }
             }
           } else {
-            this.offset += count * stride;
+            this.offset += available * stride;
           }
-          this.set(id, Column.Count, count);
+          if (available < count) {
+            this.fail("Truncated value");
+          }
         } else {
           for (let index = 0; index < count; index++) {
             this.value(id, element, Role.Item, index, depth + 1);
@@ -520,9 +527,14 @@ export class BondIndexViewer {
       ? index.get(ids[from]!, Column.Start)
       : index.get(parent, Column.Data) +
         from * fixedWidth((index.get(parent, Column.Meta) >>> 16) & 255);
-    const end = ids
+    let end = ids
       ? index.get(ids[to - 1]!, Column.End)
       : start + (to - from) * fixedWidth((index.get(parent, Column.Meta) >>> 16) & 255);
+    if (flat && ids) {
+      for (let at = from; at < to; at++) {
+        end = Math.max(end, index.get(ids[at]!, Column.End));
+      }
+    }
     const node: Node = {
       id: token,
       name: `${unit} ${from + 1}–${to}${flat ? " · flattened in wire order" : ""}`,

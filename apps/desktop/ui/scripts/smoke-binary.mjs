@@ -51,7 +51,7 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
         if(doc.status!=='unavailable'||doc.roots.length||!doc.diagnostics.some(item=>item.message.includes('metadataUnavailable')))throw new Error('Invalid identity bypassed host content-coding validation');
       }else if(name==='bond-version-limited'||name==='bond-framing-limited'){
         if(doc.status!=='partial'||!doc.diagnostics.some(item=>item.code===(name==='bond-version-limited'?'ambiguous-version':'ambiguous-framing')))throw new Error('Indexed Bond lost an unresolved interpretation');
-      }else if(name==='bond-record-ranges'){
+      }else if(name==='bond-record-ranges'||name==='bond-deep-structure'){
         if(doc.status!=='complete'||!nodes.some(node=>node.childrenToken))throw new Error('Large Bond records were not indexed into deferred ranges');
       }else if(name==='bond-large-string'){
         if(doc.status!=='complete'||!nodes.some(node=>node.name.includes('preview')&&node.value?.value.length===1024))throw new Error('Large Bond string preview missing');
@@ -79,15 +79,26 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     await show('protobuf-duplicate-identity','request',false);await show('protobuf-invalid-identity','response',false);
     await show('bond-version-limited','request',false);await show('bond-framing-limited','response',false);
     await show('bond-sequence-deflate','request');await show('bond-large-string','response');
+    const deep=await show('bond-deep-structure','request');
+    for(let count=0;count<20;count++){
+      const all=deep.view.document.roots.flatMap(walk),last=all.find(node=>node.name.includes('Field 1 · uint8')&&node.value?.value==='42');
+      if(last){if(!last.name.includes('Depth 64'))throw new Error('Flattened deep Bond field lost its nesting depth');break;}
+      const pending=all.find(node=>node.childrenToken&&node.spans.some(span=>Number(span.offset)<=68&&Number(span.offset)+Number(span.length)>68));
+      if(!pending)throw new Error('No range reaches deep Bond value');await deep.toggleNode(pending.id);
+      if(count===19)throw new Error('Deep Bond expansion made no progress');
+    }
     for(const name of ['msgpack','msgpack-extension','cbor','cbor-seq-empty','bson','protobuf-packed'])await show(name,'response');
     await show('protobuf','request',false);await show('bond','response',false);
     const ranged=await show('bond-record-ranges','request');
-    for(let count=0;count<20;count++){
-      const all=ranged.view.document.roots.flatMap(walk),last=all.find(node=>node.name==='Field 1 · uint8'&&node.spans[0].offset==='149997');
-      if(last){if(last.value.value!=='7')throw new Error('Final Bond record value changed');ranged.selectNode(last.id);break;}
-      const pending=all.find(node=>node.childrenToken&&node.spans.some(span=>Number(span.offset)<=149997&&Number(span.offset)+Number(span.length)>149997));
-      if(!pending)throw new Error('No deferred range leads to final Bond record');
+    for(const offset of [0,149997])for(let count=0;count<20;count++){
+      const all=ranged.view.document.roots.flatMap(walk),last=all.find(node=>node.name==='Field 1 · uint8'&&node.spans[0].offset===String(offset));
+      if(last){if(last.value.value!=='7')throw new Error('Bond record value changed');ranged.selectNode(last.id,offset===149997);break;}
+      const pending=all.find(node=>node.childrenToken&&node.spans.some(span=>Number(span.offset)<=offset&&Number(span.offset)+Number(span.length)>offset));
+      if(!pending)throw new Error('No deferred range leads to Bond record');
+      const previous=ranged.visualizerRows.find(row=>row.selected)?.id;
       await ranged.toggleNode(pending.id);
+      if(offset&&ranged.visualizerDetailsOpen)throw new Error('Paging reopened closed Bond details');
+      if(previous&&!ranged.view.document.roots.flatMap(walk).some(node=>node.id===previous)&&ranged.visualizerRows.find(row=>row.selected)?.id!==pending.id)throw new Error('Paging lost the explicit expansion target');
       if(count===19)throw new Error('Bond range expansion made no progress');
     }
     if(ranged.view.document.roots.flatMap(walk).length>1600)throw new Error('Bond range projection grew without bound');

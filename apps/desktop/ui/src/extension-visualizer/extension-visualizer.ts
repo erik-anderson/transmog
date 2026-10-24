@@ -942,8 +942,15 @@ export class ExtensionVisualizer extends WebUIElement {
         if (revision !== this.revision || !this.visible) {
           return;
         }
+        const retainSelection = nodeIndex(documentNode(view.document)).has(this.selected);
+        const detailsOpen = this.visualizerDetailsOpen;
         this.expanded.add(id);
         this.accept(view);
+        if (!retainSelection) {
+          // Paged producers can unload the previous selection. Keep the user's
+          // explicit expansion target visible instead of jumping to the root.
+          this.selectNode(id, detailsOpen);
+        }
       } catch (error: unknown) {
         if (revision === this.revision) {
           this.fail(describeError(error));

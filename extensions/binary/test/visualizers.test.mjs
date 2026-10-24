@@ -857,6 +857,32 @@ test("a competing Bond interpretation that exceeds the structural index remains 
   assert.ok(nodes(result.document).some((node) => node.childrenToken));
 });
 
+test("large truncated Bond lists and v2 structs retain available fields without treating invalid Boolean bytes as values", async () => {
+  const count = 3 * 1024 * 1024;
+  const bytes = binary(bondHeader(1), [11, 3], varint(count + 10), Array(count).fill(7));
+  const result = await host("bond", bytes, { availability: "truncated" });
+  assert.equal(result.document.status, "partial");
+  const expanded = expandAt(
+    result,
+    bytes.length - 1,
+    (node) => node.name === `[${count - 1}] · uint8`,
+  );
+  assert.equal(expanded.document.status, "partial");
+  assert.ok(expanded.document.diagnostics.some((item) => item.code === "incomplete-evidence"));
+  assert.equal(expanded.found.value.value, "7");
+  const fields = [0x23, 7, 9, ...varint(count), ...Array(count).fill(120), 0];
+  const v2 = (await host("bond", binary(bondHeader(2), varint(fields.length + 10), fields)))
+    .document;
+  assert.equal(v2.status, "malformed");
+  assert.ok(nodes(v2).some((node) => node.name === "Field 1 · uint8" && node.value.value === "7"));
+  const bools = binary(bondHeader(1), [11, 2], varint(5000), Array(4999).fill(1), [2, 0]);
+  const invalid = await host("bond", bools);
+  assert.equal(invalid.document.status, "malformed");
+  const last = expandAt(invalid, bools.length - 3, (node) => node.name === "[4998] · bool");
+  assert.equal(last.found.value.value, true);
+  assert.ok(!nodes(last.document).some((node) => node.name === "[4999] · bool"));
+});
+
 test("Bond marshaled v1 and v2 decode types, extended IDs and base boundaries", async () => {
   for (const version of [1, 2]) {
     const fields = [
