@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ES2022",
+    "moduleResolution": "Bundler",
+    "lib": ["ES2022"],
+    "strict": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noUncheckedIndexedAccess": true,
+    "exactOptionalPropertyTypes": true,
+    "verbatimModuleSyntax": true,
+    "rootDir": "typescript",
+    "outDir": "dist/types",
+    "noEmit": true
+  },
+  "include": ["typescript/**/*.ts", "../../crates/extensions/sdk/transmog-extensions.d.ts"]
+}

@@ -1,0 +1,69 @@
+# Schema-free binary body visualizers
+
+Choose **Protobuf** or **Bond Compact Binary** in a request or response's **Body
+viewer**. The bundled **Protobuf and Bond** extension is managed in Settings →
+Extensions and uses the ordinary isolated, read-only extension system. It reads
+only the selected message side and needs no schema files.
+
+Auto tries Protobuf for `application/protobuf`, `application/x-protobuf` and
+`application/vnd.google.protobuf`, and Bond for `application/bond-compact-binary`.
+Only a structurally complete result replaces the normal body representation.
+Choose a viewer explicitly to inspect partial, malformed or limited results.
+Discovery and traffic-list rendering do not execute these parsers. No generic
+binary sniffing is performed.
+
+Protobuf preserves field order and duplicate occurrences. Field numbers, wire
+types, lengths and raw unsigned integers are wire evidence. Signed, ZigZag,
+Boolean, float/double, UTF-8 and nested-message alternatives are labeled
+**Possible**. A length-delimited value might instead be arbitrary bytes or packed
+numbers. These viewers cannot recover field names, enum labels, default values,
+map/oneof declarations or a root message's identity. Protobuf bodies are treated
+as one message; concatenated message boundaries cannot be recovered without
+external framing.
+
+Bond Compact Binary includes scalar and container types, so its view shows
+strings, numbers, structs, base boundaries, lists, sets and maps by field ID.
+Marshaled v1/v2 headers establish the protocol version. Raw bodies are tried as
+both v1 and v2, with the chosen interpretation labeled **inferred**. If both parse
+completely, both **Possible** versions appear in an explicitly selected viewer;
+the result is partial and Auto falls back. Names, enum labels, and aliases such
+as blobs or nullable values need a schema. Fast and Simple Binary are unsupported.
+Protocol-header bytes that also parse as raw fields are explicitly ambiguous and
+remain partial, so Auto cannot silently choose between the framings.
+If a competing version or framing reaches a parser limit, it remains unresolved;
+the result stays limited even if another interpretation completes.
+
+Both viewers request HTTP content decoding from the host, including its
+raw-DEFLATE compatibility. Failed decoding is explained and never replaced with
+an interpretation of compressed bytes. Fields link to exact byte ranges in the
+original or host-decoded source. Incomplete retained evidence is partial even
+when it ends at a valid field boundary. Earlier complete fields remain available
+when later bytes are malformed; the remainder links to its original byte range.
+
+Each selected decoded body is limited to 2 MiB. Additional work, nesting, node,
+collection and total text limits bound parsing and speculative probes. Protobuf
+text/nested-message probes consider payloads up to 64 KiB. Text values preview
+up to 1,024 UTF-16 code units; larger values remain available through their byte
+ranges. Wide integers use exact decimal strings; nonfinite floating point values
+use `NaN`/`Infinity` text, and negative zero uses `-0` text to preserve its sign
+through JSON. Captured strings are inert. No related traffic or live
+subscription is requested. **ⓘ** explains schema limitations and parser diagnostics.
+
+gRPC framing/compression, schema imports, schema inference and message editing
+are deferred. These visualizers do not add a dependency on the retired Bond
+framework. Their independently implemented readers follow the
+[Protobuf encoding specification](https://protobuf.dev/programming-guides/encoding/)
+and Microsoft's [Compact Binary encoding reference](https://github.com/microsoft/bond/blob/master/cpp/inc/bond/protocol/compact_binary.h).
+
+Build and verify with Python 3.11 or newer:
+
+```text
+python scripts/build-binary-extension.py
+python scripts/test-binary-visualizers.py
+```
+
+Desktop builds generate and embed the ordinary `.tmext` bundle. The package
+contains two readable ES2022 runtime modules and its runtime README; authoring
+sources, tests and tools are excluded. No extra runtime or network access is
+required. Parser qualification uses synthetic wire-format fixtures and malformed
+inputs; it does not claim validation against real service captures.

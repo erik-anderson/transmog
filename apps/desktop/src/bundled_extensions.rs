@@ -1,13 +1,23 @@
 //! Small app metadata is available without touching the ordinary tmext resource.
 use transmog_app::extensions::BundledExtension;
 
-pub(super) static RESOURCES: [BundledExtension; 1] = [BundledExtension {
-    previous_ids: &["com.transmog.mapi"],
-    manifest: include_bytes!(concat!(env!("OUT_DIR"), "/mapi-manifest.json")),
-    archive: mapi_archive,
-}];
+pub(super) static RESOURCES: [BundledExtension; 2] = [
+    BundledExtension {
+        previous_ids: &["com.transmog.mapi"],
+        manifest: include_bytes!(concat!(env!("OUT_DIR"), "/mapi-manifest.json")),
+        archive: mapi_archive,
+    },
+    BundledExtension {
+        previous_ids: &[],
+        manifest: include_bytes!(concat!(env!("OUT_DIR"), "/binary-manifest.json")),
+        archive: binary_archive,
+    },
+];
 fn mapi_archive() -> &'static [u8] {
     include_bytes!(concat!(env!("OUT_DIR"), "/mapi.tmext"))
+}
+fn binary_archive() -> &'static [u8] {
+    include_bytes!(concat!(env!("OUT_DIR"), "/binary.tmext"))
 }
 
 #[cfg(test)]
@@ -65,8 +75,60 @@ mod tests {
                 .into_iter()
                 .map(|(id, _)| id)
                 .collect::<Vec<_>>(),
-            [] as [String; 0]
+            ["net.transmog.binary"; 4]
         );
-        assert!(!reopened.status().entries[0].catalog.enabled);
+        assert!(
+            !reopened
+                .status()
+                .entries
+                .iter()
+                .find(|entry| entry.catalog.manifest.id == "net.transmog.mapi")
+                .unwrap()
+                .catalog
+                .enabled
+        );
+    }
+
+    #[test]
+    fn bundled_binary_formats_use_the_ordinary_lazy_package_contract() {
+        fn no_archive() -> &'static [u8] {
+            panic!("Discovery opened the binary archive")
+        }
+        let root = tempfile::tempdir().unwrap();
+        let registry = Registry::load_with_bundled(
+            root.path().into(),
+            None,
+            &[BundledExtension {
+                previous_ids: &[],
+                manifest: RESOURCES[1].manifest,
+                archive: no_archive,
+            }],
+        );
+        assert_eq!(registry.enabled_visualizers().len(), 4);
+        assert!(!root.path().join("catalog.json").exists());
+        let registry = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
+        let snapshot = registry.snapshot("net.transmog.binary").unwrap();
+        assert_eq!(snapshot.files.len(), 3);
+        assert!(snapshot.files.keys().all(|name| matches!(
+            name.as_str(),
+            "dist/runtime/protobuf.js" | "dist/runtime/bond.js" | "README.runtime.md"
+        )));
+        assert!(
+            snapshot
+                .manifest
+                .visualizers
+                .iter()
+                .all(|viewer| viewer.automatic
+                    && viewer.context.is_none()
+                    && viewer.live_updates.is_none())
+        );
+        registry.set_enabled("net.transmog.binary", false).unwrap();
+        let reopened = Registry::load_with_bundled(root.path().into(), None, &RESOURCES);
+        assert!(
+            reopened
+                .enabled_visualizers()
+                .iter()
+                .all(|(id, _)| id == "net.transmog.mapi")
+        );
     }
 }

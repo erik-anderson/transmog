@@ -176,6 +176,8 @@ when changing the experience.
 - Distinguish observed behavior from configured intent, and original evidence
   from generated summaries or previews. Opening a capture does not reverify its
   historical connections. Preserve original values when display requires escaping.
+  Schema-free protocol viewers distinguish wire evidence from possible type or
+  version interpretations and preserve access to the corresponding source bytes.
 - Count and match filter choices with the same definitions. Common choices must
   not hide unfamiliar observed values; expose a counted Other choice when useful
   and distinguish it from missing evidence. Use canonical names for app-owned

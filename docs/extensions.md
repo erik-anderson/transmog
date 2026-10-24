@@ -17,6 +17,11 @@ package and sandbox contracts, with an independent TypeScript parser qualified
 against synthetic Microsoft-reference cases. Its header viewer has no body-parser
 dependency. Real Office end-to-end validation remains deferred.
 
+The bundled **Protobuf and Bond** extension adds schema-free Protobuf and Bond
+Compact Binary request/response body viewers. It uses the same package, sandbox,
+HTTP decoding and source-span contracts. See [binary visualizers](binary-visualizers.md)
+for interpretations, supported encodings and limits.
+
 An extension is a versioned package containing independently identified visualizer
 contributions. Each contribution declares its entry module, host surfaces, native
 matching rules and exact request/response input access. Both sides require an

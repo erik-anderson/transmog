@@ -6,6 +6,7 @@ import { checkReloadVisualizers } from "./check-reload-visualizers.mjs";
 import { checkVisualizerSelection } from "./check-visualizer-selection.mjs";
 import { checkAutomaticVisualizers } from "./check-automatic-visualizers.mjs";
 import { checkVisualizerPanes } from "./check-visualizer-panes.mjs";
+import { checkBinaryVisualizers } from "./check-binary-visualizers.mjs";
 
 export async function checkVisualizers(page, root) {
   await page.locator('a[data-view="traffic"]').click();
@@ -539,6 +540,7 @@ export async function checkVisualizers(page, root) {
       "A matching exchange forgot the explicit protocol choice",
     );
     await checkAutomaticVisualizers(page, root);
+    await checkBinaryVisualizers(page, root);
   } finally {
     await page.evaluate((preferences) => {
       const s = globalThis.__workspaceFixture;

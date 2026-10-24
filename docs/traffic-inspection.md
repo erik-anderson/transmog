@@ -109,6 +109,8 @@ declared header names and conditions in [Extensions settings](extensions.md).
 The Body viewer's **Auto** option can show a matching extension after it reports a
 complete parse. Failed or incomplete automatic parses fall back to the ordinary
 body representation; choose the extension explicitly to inspect a partial result.
+Bundled [Protobuf and Bond Compact Binary viewers](binary-visualizers.md) expose
+schema-free fields and byte ranges, with ambiguous interpretations labeled.
 Only the selected, visible message is parsed. Request and response panes remember
 their viewer and Headers/Body/Split choice independently. If a protocol viewer is
 unavailable on another request, the pane uses its normal mode and restores the

@@ -1,0 +1,97 @@
+{
+  "formatVersion": 1,
+  "apiVersion": 1,
+  "runtime": "javascript-es2022",
+  "id": "net.transmog.binary",
+  "version": "0.1.0",
+  "name": "Protobuf and Bond",
+  "visualizers": [
+    {
+      "id": "protobuf-request",
+      "name": "Protobuf",
+      "entry": "dist/runtime/protobuf.js",
+      "surfaces": ["body"],
+      "automatic": true,
+      "inputs": {
+        "request": {
+          "headers": ["content-type", "content-encoding"],
+          "body": "required",
+          "decodeHttpContent": true
+        },
+        "response": { "headers": [], "body": "none" }
+      },
+      "matches": [
+        {
+          "direction": "request",
+          "contentTypes": [
+            "application/protobuf",
+            "application/x-protobuf",
+            "application/vnd.google.protobuf"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "protobuf-response",
+      "name": "Protobuf",
+      "entry": "dist/runtime/protobuf.js",
+      "surfaces": ["body"],
+      "automatic": true,
+      "inputs": {
+        "request": { "headers": [], "body": "none" },
+        "response": {
+          "headers": ["content-type", "content-encoding"],
+          "body": "required",
+          "decodeHttpContent": true
+        }
+      },
+      "matches": [
+        {
+          "direction": "response",
+          "contentTypes": [
+            "application/protobuf",
+            "application/x-protobuf",
+            "application/vnd.google.protobuf"
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bond-request",
+      "name": "Bond Compact Binary",
+      "entry": "dist/runtime/bond.js",
+      "surfaces": ["body"],
+      "automatic": true,
+      "inputs": {
+        "request": {
+          "headers": ["content-type", "content-encoding"],
+          "body": "required",
+          "decodeHttpContent": true
+        },
+        "response": { "headers": [], "body": "none" }
+      },
+      "matches": [{ "direction": "request", "contentTypes": ["application/bond-compact-binary"] }]
+    },
+    {
+      "id": "bond-response",
+      "name": "Bond Compact Binary",
+      "entry": "dist/runtime/bond.js",
+      "surfaces": ["body"],
+      "automatic": true,
+      "inputs": {
+        "request": { "headers": [], "body": "none" },
+        "response": {
+          "headers": ["content-type", "content-encoding"],
+          "body": "required",
+          "decodeHttpContent": true
+        }
+      },
+      "matches": [{ "direction": "response", "contentTypes": ["application/bond-compact-binary"] }]
+    }
+  ],
+  "files": [
+    { "path": "dist/runtime/protobuf.js" },
+    { "path": "dist/runtime/bond.js" },
+    { "path": "README.runtime.md" }
+  ]
+}
