@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import ntpath
 import os
 import platform as host_platform
@@ -47,14 +48,40 @@ def command(arguments, *, cwd=ROOT, env=None, capture=False, check=True, input=N
         argv = [executable("node", env), str(cli), *argv[1:]]
     else:
         argv[0] = tool
-    if Path(cwd).resolve() == ROOT and Path(tool).name.lower() in {"cargo", "cargo.exe"}:
+    if Path(tool).name.lower() in {"cargo", "cargo.exe"}:
         from build_cache import automatic, is_build_command
         if is_build_command(argv[1:]):
+            env = dict(os.environ if env is None else env)
+            env["TRANSMOG_SOURCE_STATE"] = json.dumps({
+                "root": str(ROOT.resolve()), "state": source_state(ROOT, env),
+            })
+        if is_build_command(argv[1:]) and Path(cwd).resolve() == ROOT:
             from tls_dependencies import preflight
             preflight(tool, argv[1:], cwd, os.environ if env is None else env)
             automatic(os.environ if env is None else env, arguments=argv[1:])
     return subprocess.run(argv, cwd=cwd, env=env, check=check, text=True,
                           encoding="utf-8", errors="replace", capture_output=capture, input=input)
+
+
+def source_state(root: Path, environment: dict[str, str]) -> str:
+    """Invalidate build identity after commits and untracked source changes."""
+    git = shutil.which("git", path=environment.get("PATH"))
+    if git is None:
+        return "unavailable"
+    env = dict(environment, GIT_OPTIONAL_LOCKS="0")
+    digest = hashlib.sha256()
+    for arguments in (("rev-parse", "--verify", "HEAD"),
+                      ("status", "--porcelain=v1", "-z", "--untracked-files=normal")):
+        try:
+            result = subprocess.run([git, "-C", str(root), *arguments], env=env,
+                                    capture_output=True, check=False)
+        except OSError:
+            return "unavailable"
+        if result.returncode:
+            return "unavailable"
+        digest.update(result.stdout)
+        digest.update(b"\0")
+    return digest.hexdigest()
 
 
 def native_name(name: str) -> str:

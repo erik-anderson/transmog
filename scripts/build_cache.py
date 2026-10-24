@@ -291,5 +291,6 @@ def is_build_command(arguments) -> bool:
         elif argument.startswith(("-", "+")):
             continue
         else:
-            return argument in {"build", "check", "clippy", "test", "run", "bench"}
+            return argument in {"build", "check", "clippy", "test", "run", "bench", "doc", "rustc", "rustdoc",
+                                "b", "c", "t", "r", "d"}
     return False

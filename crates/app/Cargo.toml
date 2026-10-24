@@ -52,7 +52,10 @@ transmog-session = { version = "=0.1.12", path = "../proxy-session" }
 transmog-tls = { version = "=0.1.12", path = "../proxy-tls" }
 
 [build-dependencies]
+hex.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
 
 [lints]
 workspace = true

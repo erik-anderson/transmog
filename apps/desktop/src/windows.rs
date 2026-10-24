@@ -2192,6 +2192,13 @@ pub fn run() {
         .with_client_certificate_resolver(certificates.resolver(), "composer:main")
         .expect("Composer certificate transport must initialize");
     let application = Application::new(AppConfig {
+        host_build_info: Some(
+            serde_json::from_str(include_str!(concat!(
+                env!("OUT_DIR"),
+                "/host-build-info.json"
+            )))
+            .expect("generated desktop build metadata"),
+        ),
         #[cfg(feature = "desktop-test-fixtures")]
         upstream_trust: certificate_test_fixture
             .as_ref()

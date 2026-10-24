@@ -5,6 +5,10 @@ use std::{
     sync::{Arc, atomic::AtomicBool},
 };
 
+#[allow(dead_code)]
+#[path = "../../build-support/diagnostics.rs"]
+mod diagnostics;
+
 fn extension_bundle(name: &str, sources: &[&str]) {
     let root =
         PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"))
@@ -54,6 +58,10 @@ fn extension_bundle(name: &str, sources: &[&str]) {
 }
 
 fn main() {
+    let root =
+        PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("Cargo manifest directory"))
+            .join("../..");
+    diagnostics::desktop(&root);
     println!("cargo:rerun-if-changed=tauri.conf.json");
     println!("cargo:rerun-if-changed=capabilities");
     extension_bundle(

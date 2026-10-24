@@ -166,7 +166,14 @@ before reaching memory or disk. Diagnostic write failures are non-fatal.
 
 **Settings → Support → Technical details** shows the active log path and a report
 with app/dependency versions, OS, native WebView runtime, state schema and recent
-events. It contains no captured traffic. A support bundle is a create-new ZIP
+events. Technical details also include the compiled source commit (unavailable
+for source archives), modified state (unavailable without a fresh snapshot from
+the portable build runner), target, Cargo profile, Rust compiler, scripting
+compiler/runtime versions and bundled TLS/Chromium source
+and policy baselines. Desktop library versions come from the desktop host;
+SDK reports do not claim desktop-only dependencies. Installed WebView and
+effective runtime settings remain runtime observations.
+It contains no captured traffic. A support bundle is a create-new ZIP
 with `diagnostics.json` and `product-state-summary.json`; it excludes bodies,
 HTTP header values, credentials and private keys. Recent paths require both the
 saved privacy opt-in and an opt-in for this export.

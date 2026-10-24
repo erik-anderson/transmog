@@ -4,6 +4,7 @@ import { smokeHexViewer } from "./smoke-hex-viewer.mjs";
 import { smokeNetworkSettings } from "./smoke-network-settings.mjs";
 import { smokeExtensions } from "./smoke-extensions.mjs";
 import { smokeAbout } from "./smoke-about.mjs";
+import { smokeBuildInfo } from "./smoke-build-info.mjs";
 import { smokeLoopback } from "./smoke-loopback.mjs";
 import { smokeUserAgent } from "./smoke-user-agent.mjs";
 import { smokeStreams } from "./smoke-streams.mjs";
@@ -874,6 +875,7 @@ try {
   result.networkSettings = await smokeNetworkSettings(call, evaluate, screenshotPath);
   result.extensions = await smokeExtensions(call, evaluate, screenshotPath, visualizerTracePath);
   result.about = await smokeAbout(call, evaluate, screenshotPath);
+  result.buildInfo = await smokeBuildInfo(call, evaluate, screenshotPath);
   result.autoResponseFiles = await smokeAutoResponseFiles(call, evaluate, screenshotPath);
   result.autoResponseDragging = await smokeAutoResponseDragging(call, evaluate, screenshotPath);
   result.loopback = await smokeLoopback(call, evaluate, screenshotPath);

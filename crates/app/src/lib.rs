@@ -14,6 +14,7 @@ mod autoresponse_batch;
 mod body_ranges;
 mod body_store;
 mod breakpoints;
+mod build_info;
 mod captured_page;
 mod captured_page_choices;
 mod captured_page_overlay;
@@ -114,6 +115,7 @@ pub use body_store::{
 pub use breakpoints::{
     BreakpointDecision, BreakpointPhaseInput, BreakpointSettings, BreakpointStatus, PausedExchange,
 };
+pub use build_info::{BuildDependency, BuildIdentity, BuildInfo, BundledSource, HostBuildInfo};
 pub use captured_page::{CapturedPage, CapturedResource};
 pub use captured_page_choices::{CapturedPageChoice, CapturedPageChoices};
 pub use captured_page_report::PreviewRuleSnapshot;
@@ -325,6 +327,8 @@ pub struct AppConfig {
     pub product_state_path: Option<PathBuf>,
     /// Optional bounded JSON-lines operational log.
     pub diagnostics_log_path: Option<PathBuf>,
+    /// Optional immutable build metadata supplied by the embedding executable.
+    pub host_build_info: Option<HostBuildInfo>,
     /// Optional product-layer on-disk response-body cache.
     pub body_store: Option<BodyStoreConfig>,
     /// Optional crash-recoverable built-in automation workspace prefix.
@@ -356,6 +360,7 @@ impl std::fmt::Debug for AppConfig {
             .field("replay_executor", &self.replay_executor.is_some())
             .field("product_state_path", &self.product_state_path)
             .field("diagnostics_log_path", &self.diagnostics_log_path)
+            .field("host_build_info", &self.host_build_info)
             .field("body_store", &self.body_store)
             .field("automation_path", &self.automation_path)
             .field("response_asset_root", &self.response_asset_root)
@@ -480,7 +485,8 @@ impl Application {
         let build_id = Arc::clone(&config.service.control_build_id);
         let entry_preferences = config.service.sessions.max_sessions.is_none();
         let service = ApplicationSessionService::new(config.service).map_err(AppError::from)?;
-        let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path);
+        let diagnostics = diagnostics::DiagnosticLog::new(config.diagnostics_log_path)
+            .with_host_build_info(config.host_build_info);
         if let Some(failure) = saved_demo_warning {
             diagnostics.record(
                 diagnostics::DiagnosticLevel::Warning,

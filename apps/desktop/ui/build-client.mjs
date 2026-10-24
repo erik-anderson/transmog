@@ -1,5 +1,6 @@
 import { copyFile, mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import * as esbuild from "esbuild";
 import { esbuildProjection } from "@microsoft/webui/projection.js";
@@ -7,6 +8,21 @@ import { buildCredits } from "./scripts/build-credits.mjs";
 
 const workingDirectory = fileURLToPath(new URL("./", import.meta.url));
 const outputDirectory = resolve(workingDirectory, "dist");
+
+async function installedVersion(name) {
+  let directory = dirname(fileURLToPath(import.meta.resolve(name)));
+  for (;;) {
+    try {
+      const metadata = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
+      if (metadata.name === name && typeof metadata.version === "string") return metadata.version;
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+    const parent = dirname(directory);
+    if (parent === directory) throw new Error("Missing installed package metadata: " + name);
+    directory = parent;
+  }
+}
 for (const file of await readdir(join(workingDirectory, "src"), { recursive: true })) {
   if (!file.endsWith(".html")) continue;
   const template = await readFile(join(workingDirectory, "src", file), "utf8");
@@ -98,6 +114,32 @@ await writeFile(
 await writeFile(
   join(outputDirectory, "client-metafile.json"),
   JSON.stringify(client.metafile, null, 2) + "\n",
+);
+// Bind frontend versions to this exact set of bundled assets for native diagnostics.
+await writeFile(
+  join(outputDirectory, "client-build-info.json"),
+  JSON.stringify(
+    {
+      dependencies: Object.fromEntries(
+        await Promise.all(
+          ["@microsoft/webui-framework", "@tauri-apps/api"].map(async (name) => [
+            name,
+            await installedVersion(name),
+          ]),
+        ),
+      ),
+      assets: await Promise.all(
+        assets.map(async (asset) => ({
+          file: asset.file,
+          sha256: createHash("sha256")
+            .update(await readFile(join(outputDirectory, asset.file)))
+            .digest("hex"),
+        })),
+      ),
+    },
+    null,
+    2,
+  ) + "\n",
 );
 await copyFile(join(workingDirectory, "src/document.css"), join(outputDirectory, "document.css"));
 

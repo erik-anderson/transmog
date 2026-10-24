@@ -67,7 +67,11 @@ transmog-automation = { version = "=0.1.12", path = "../../crates/proxy-automati
 transmog-core = { version = "=0.1.12", path = "../../crates/proxy-core" }
 
 [build-dependencies]
+hex.workspace = true
 transmog-extensions = { version = "=0.1.12", path = "../../crates/extensions" }
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
 
 [target.'cfg(windows)'.build-dependencies]
 tauri-build = { version = "=2.7.4", features = [] }

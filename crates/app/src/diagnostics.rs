@@ -10,7 +10,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use zip::{CompressionMethod, ZipWriter, write::SimpleFileOptions};
 
-use crate::{AppError, ErrorCategory, ProductState};
+use crate::{AppError, BuildInfo, ErrorCategory, HostBuildInfo, ProductState};
 
 const MAX_EVENTS: usize = 256;
 const MAX_LOG_BYTES: u64 = 1024 * 1024;
@@ -63,6 +63,8 @@ pub struct DiagnosticsReport {
     pub application_version: String,
     /// Rust package versions important to support.
     pub dependencies: Vec<String>,
+    /// Immutable source, toolchain, dependency and bundled-data build identities.
+    pub build: BuildInfo,
     /// Native runtime facts.
     pub runtime: RuntimeDiagnostics,
     /// Persisted state schema.
@@ -102,6 +104,7 @@ pub struct SupportBundleResult {
 pub(crate) struct DiagnosticLog {
     events: Arc<Mutex<VecDeque<DiagnosticEvent>>>,
     path: Option<PathBuf>,
+    build: Arc<BuildInfo>,
 }
 
 impl DiagnosticLog {
@@ -109,7 +112,13 @@ impl DiagnosticLog {
         Self {
             events: Arc::new(Mutex::new(VecDeque::with_capacity(MAX_EVENTS))),
             path,
+            build: Arc::new(BuildInfo::embedded(None)),
         }
+    }
+
+    pub(crate) fn with_host_build_info(mut self, host: Option<HostBuildInfo>) -> Self {
+        self.build = Arc::new(BuildInfo::embedded(host));
+        self
     }
 
     pub(crate) fn record(
@@ -151,12 +160,9 @@ impl DiagnosticLog {
         runtime.webview_version = runtime.webview_version.map(|value| bounded(&value, 128));
         DiagnosticsReport {
             application_version: crate::application_version().to_owned(),
-            dependencies: vec![
-                format!("transmog-app {}", env!("CARGO_PKG_VERSION")),
-                "Tauri 2.12.5".to_owned(),
-                "Microsoft WebUI 3.0.4".to_owned(),
-                format!("BoringSSL via boring {}", env!("TRANSMOG_BORING_VERSION")),
-            ],
+            dependencies: self.build.dependencies.iter()
+                .map(|dependency| format!("{} {}", dependency.label, dependency.version)).collect(),
+            build: (*self.build).clone(),
             runtime,
             product_state_schema: state.schema_version,
             events: self.events.lock().unwrap().iter().cloned().collect(),
@@ -308,6 +314,50 @@ mod tests {
         ))
     }
 
+    fn assert_exported_build_info(report: &serde_json::Value) {
+        let metadata: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../third_party/boringssl-pki/manifest.json"
+        ))
+        .unwrap();
+        assert!(
+            report["dependencies"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(format!(
+                    "BoringSSL via boring {}",
+                    metadata["boring_version"].as_str().unwrap()
+                )))
+        );
+        let build: BuildInfo = serde_json::from_value(report["build"].clone()).unwrap();
+        assert!(
+            build
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.name == "v8")
+        );
+        assert!(
+            build
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.name == "swc_ecma_parser")
+        );
+        assert!(
+            !build.dependencies.iter().any(
+                |dependency| dependency.name == "tauri" || dependency.name == "microsoft-webui"
+            )
+        );
+        assert_eq!(
+            build
+                .bundled_sources
+                .iter()
+                .find(|source| source.name == "BoringSSL")
+                .unwrap()
+                .revision
+                .as_deref(),
+            metadata["revision"].as_str()
+        );
+    }
+
     #[test]
     fn log_is_bounded_and_redacts_credentials_keys_and_paths() {
         let log = DiagnosticLog::new(None);
@@ -370,19 +420,7 @@ mod tests {
             .read_to_string(&mut diagnostics)
             .unwrap();
         let report: serde_json::Value = serde_json::from_str(&diagnostics).unwrap();
-        let metadata: serde_json::Value = serde_json::from_str(include_str!(
-            "../../../third_party/boringssl-pki/manifest.json"
-        ))
-        .unwrap();
-        assert!(
-            report["dependencies"]
-                .as_array()
-                .unwrap()
-                .contains(&serde_json::json!(format!(
-                    "BoringSSL via boring {}",
-                    metadata["boring_version"].as_str().unwrap()
-                )))
-        );
+        assert_exported_build_info(&report);
         let mut text = String::new();
         archive
             .by_name("product-state-summary.json")
@@ -414,5 +452,47 @@ mod tests {
             .is_err()
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn host_metadata_is_included_without_replacing_runtime_observations() {
+        let identity = crate::BuildIdentity {
+            source_commit: Some("a".repeat(40)),
+            source_dirty: Some(false),
+            target: "host-target".into(),
+            profile: "release".into(),
+            rustc: "host-rustc".into(),
+        };
+        let log = DiagnosticLog::new(None).with_host_build_info(Some(HostBuildInfo {
+            identity: identity.clone(),
+            dependencies: vec![crate::BuildDependency {
+                name: "tauri".into(),
+                label: "Tauri".into(),
+                version: "test-host-version".into(),
+            }],
+        }));
+        let runtime = RuntimeDiagnostics {
+            operating_system: "observed OS".into(),
+            architecture: "observed architecture".into(),
+            webview_version: Some("observed WebView".into()),
+        };
+        let report = log.report(runtime.clone(), &ProductState::default());
+        assert_eq!(report.build.identity, identity);
+        assert_eq!(report.runtime, runtime);
+        assert!(
+            report
+                .dependencies
+                .contains(&"Tauri test-host-version".into())
+        );
+        assert!(
+            report
+                .build
+                .dependencies
+                .iter()
+                .any(|dependency| dependency.name == "boring")
+        );
+        let json = serde_json::to_value(&report).unwrap();
+        assert!(json["build"]["identity"].get("sourceCommit").is_some());
+        assert!(json["build"].get("bundledSources").is_some());
     }
 }

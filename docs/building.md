@@ -44,6 +44,10 @@ configure their child processes without changing the parent shell. For a direct
 command, use `python scripts/dev-env.py --run cargo check --workspace --locked`.
 Dot-sourcing `scripts/dev-env.ps1` remains convenient for interactive PowerShell;
 it obtains the same native environment from Python.
+Use the Python Cargo runner when the diagnostics report needs the source's full
+modified state, including untracked files. Direct Cargo calls retain the source
+commit but report the modified state as unavailable, because Cargo's cached
+build scripts cannot detect newly created untracked files.
 
 ## Development cache maintenance
 
