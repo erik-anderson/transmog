@@ -272,6 +272,72 @@ fn head(target: String) -> CaptureRecord {
     })
 }
 
+#[tokio::test]
+async fn native_raw_deflate_request_opens_in_the_body_inspector() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("raw-deflate.tmcap");
+    // Synthetic Compact Binary field 1 = "3.0", followed by BT_STOP.
+    let decoded = [0x29, 0x03, b'3', b'.', b'0', 0x00];
+    let encoded = vec![0xd3, 0x64, 0x36, 0xd6, 0x33, 0x60, 0x00, 0x00];
+    let mut request_head = head("https://example.invalid/telemetry".into());
+    if let CaptureRecordKind::RequestHead { headers, .. } = &mut request_head.kind {
+        *headers = vec![
+            header("content-type", "application/bond-compact-binary"),
+            header("content-encoding", "deflate"),
+            header("content-length", &encoded.len().to_string()),
+        ];
+    }
+    let mut records = vec![
+        request_head,
+        body(encoded.len(), Some(encoded.clone())),
+        record(CaptureRecordKind::Completed),
+    ];
+    for (index, record) in records.iter_mut().enumerate() {
+        record.sequence = index as u64 + 1;
+    }
+    write_records(&path, records);
+    let workspace = app(root.path());
+    workspace
+        .import_trace(request(&path), Arc::new(|_| {}))
+        .await
+        .unwrap();
+    let row = workspace
+        .query_sessions(crate::SessionQueryInput::default())
+        .unwrap()
+        .sessions
+        .remove(0);
+    for decode_content in [true, false] {
+        let inspection = workspace
+            .inspect_body(crate::BodyInspectionRequest {
+                session_id: row.id.clone(),
+                boundary: "client-request".into(),
+                representation: crate::BodyRepresentation::Auto,
+                decode_content,
+                offset: 0,
+                max_bytes: None,
+            })
+            .await
+            .unwrap();
+        assert_eq!(inspection.representation, "bytes");
+        assert_eq!(inspection.decoded, decode_content);
+        assert_eq!(inspection.warning, None);
+        let expected = if decode_content {
+            &decoded[..]
+        } else {
+            &encoded[..]
+        };
+        assert_eq!(inspection.display_bytes, expected.len());
+        assert_eq!(
+            inspection.bytes_base64.as_deref(),
+            Some(
+                base64::Engine::encode(&base64::engine::general_purpose::STANDARD, expected)
+                    .as_str()
+            )
+        );
+        assert_eq!(inspection.metadata.retained_bytes, encoded.len() as u64);
+    }
+}
+
 #[test]
 fn native_rejects_retained_bytes_exceeding_segment_observation() {
     let root = tempfile::tempdir().unwrap();

@@ -286,8 +286,12 @@ pub(crate) async fn decode(
     let stack = stored_stack(codings)?;
     let mut current = encoded;
     for coding in stack.decode_order() {
-        let mut codec =
-            ContentDecoder::new(coding, limits).map_err(|error| codec_failure(&error))?;
+        let mut codec = ContentDecoder::with_options(
+            coding,
+            limits,
+            crate::inspector::INSPECTION_DECODER_OPTIONS,
+        )
+        .map_err(|error| codec_failure(&error))?;
         let mut frames = codec
             .on_frame(BodyFrame::Data(Bytes::from(current)))
             .await

@@ -133,6 +133,21 @@ fn ready(result: HttpDecodeResult) -> DecodedBody {
 }
 
 #[tokio::test]
+async fn raw_deflate_decodes_for_protocol_visualizers() {
+    let raw = vec![0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00];
+    assert_eq!(
+        decode(&["deflate".into()], raw.clone(), 1024, 1024)
+            .await
+            .unwrap(),
+        b"hello"
+    );
+    assert!(matches!(
+        decode(&["deflate".into()], raw, 1024, 4).await,
+        Err(DecodeFailure::Limited)
+    ));
+}
+
+#[tokio::test]
 async fn http_sources_are_lazy_separate_bounded_and_revoked_on_unload() {
     for codings in [
         vec!["gzip"],

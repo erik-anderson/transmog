@@ -3,7 +3,10 @@ use std::{fmt::Write as _, num::NonZeroUsize};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bytes::Bytes;
 use serde::{Deserialize, Serialize};
-use transmog_content::{ContentCodingStack, ContentDecoder, ContentEncoder, ContentLimits};
+use transmog_content::{
+    ContentCodingStack, ContentDecoder, ContentDecoderOptions, ContentEncoder, ContentLimits,
+    DeflateCompatibility,
+};
 use transmog_core::{
     BodyFrame, HeaderBlock, HeaderField, intercept::HookEffectAction, observe::ExchangeBoundary,
 };
@@ -19,6 +22,12 @@ use crate::{
 const MAX_DISPLAY_BYTES: usize = 64 * 1024;
 const MAX_FIELD_CHARS: usize = 2 * 1024;
 const MAX_DIAGNOSTICS: usize = 64;
+
+// Inspect legacy senders such as OneCollector without changing runtime decoding
+// policy or the retained wire bytes. The codec probes the header before decoding;
+// malformed zlib streams never trigger a speculative raw-DEFLATE retry.
+pub(crate) const INSPECTION_DECODER_OPTIONS: ContentDecoderOptions =
+    ContentDecoderOptions::new().with_deflate_compatibility(DeflateCompatibility::AllowRaw);
 
 /// Display-safe ordered header field.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -1200,7 +1209,7 @@ pub(crate) async fn decode_content(
         .map_err(|error| AppError::new(ErrorCategory::InvalidInput, error.to_string(), false))?;
     let mut current = encoded;
     for coding in stack.decode_order() {
-        let mut codec = ContentDecoder::new(coding, limits)
+        let mut codec = ContentDecoder::with_options(coding, limits, INSPECTION_DECODER_OPTIONS)
             .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.to_string(), false))?;
         let mut frames = codec
             .on_frame(BodyFrame::Data(Bytes::from(current)))
@@ -1920,6 +1929,39 @@ mod tests {
                     .unwrap(),
                 b"encoded preview"
             );
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_decoder_accepts_raw_deflate_and_coding_stacks() {
+        // Raw RFC 1951 stream, as sent by OneCollector with Content-Encoding: deflate.
+        let raw = vec![0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00];
+        assert_eq!(
+            decode_content(&["deflate".into()], raw.clone())
+                .await
+                .unwrap(),
+            b"hello"
+        );
+        let stacked = encode_content(&["gzip".into()], raw).await.unwrap();
+        assert_eq!(
+            decode_content(&["deflate".into(), "gzip".into()], stacked)
+                .await
+                .unwrap(),
+            b"hello"
+        );
+    }
+
+    #[tokio::test]
+    async fn preview_decoder_rejects_damaged_deflate_streams() {
+        for invalid in [
+            vec![0xcb, 0x48, 0xcd],             // Truncated raw stream.
+            vec![0x78, 0x9c, 0xcb, 0x48, 0xcd], // Truncated zlib stream.
+            vec![
+                0x78, 0x9c, 0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0, 0, 0, 0,
+            ], // Bad checksum.
+            vec![0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00, 0xff], // Trailing data.
+        ] {
+            assert!(decode_content(&["deflate".into()], invalid).await.is_err());
         }
     }
 

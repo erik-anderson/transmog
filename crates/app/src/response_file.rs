@@ -294,7 +294,14 @@ fn response_decoders(
     .map_err(|error| unavailable(error.to_string()))?;
     stack
         .decode_order()
-        .map(|coding| ContentDecoder::new(coding, limits).map_err(|error| decode_error(&error)))
+        .map(|coding| {
+            ContentDecoder::with_options(
+                coding,
+                limits,
+                crate::inspector::INSPECTION_DECODER_OPTIONS,
+            )
+            .map_err(|error| decode_error(&error))
+        })
         .collect()
 }
 
@@ -421,6 +428,20 @@ mod tests {
             );
         }
         assert_eq!(std::fs::read_dir(root.path()).unwrap().count(), 1);
+    }
+
+    #[tokio::test]
+    async fn saves_raw_deflate_response_bytes() {
+        let root = tempfile::tempdir().unwrap();
+        let encoded = vec![0xcb, 0x48, 0xcd, 0xc9, 0xc9, 0x07, 0x00];
+        let response = ResponseFile {
+            name: "response.txt".into(),
+            metadata: metadata(encoded.len(), vec!["deflate".into()]),
+            reader: Box::new(std::io::Cursor::new(encoded)),
+        };
+        let destination = root.path().join("response.txt");
+        response.save_to(destination.clone()).await.unwrap();
+        assert_eq!(std::fs::read(destination).unwrap(), b"hello");
     }
 
     #[tokio::test]

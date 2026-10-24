@@ -38,6 +38,14 @@ limit in one disclosure. **Copy body preview** copies only the displayed evidenc
 metadata** identifies the metadata view. **Save as…** saves the full retained
 response with content decoding, independently of the displayed preview limit.
 
+Retained-body decoding accepts both zlib-wrapped and raw DEFLATE for
+`Content-Encoding: deflate`, including in protocol visualizers and saved response
+files. This handles senders such as OneCollector that omit the zlib wrapper.
+The initial bytes select the format; a zlib checksum failure remains an error.
+Turning Decode off shows the original retained bytes.
+In Auto, Decode remains available while viewing raw binary bytes, so it can be
+turned back on without changing viewers.
+
 Cancellation appears as **Cancelled** in the Status column, inspector, State
 column, Timeline and copied request summary. Cancellation uses a neutral badge;
 the retained diagnostics explain whether the caller stopped waiting or the

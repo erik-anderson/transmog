@@ -39,7 +39,8 @@ extensions belong in the [roadmap](roadmap.md).
   must choose identity output or restoration of the original coding stack with
   an explicit finite `ContentPolicy`.
 - Content processing does not transcode character sets, parse semantic media
-  formats, or negotiate dictionaries. Raw-DEFLATE compatibility is opt-in and
+  formats, or negotiate dictionaries. Raw-DEFLATE compatibility is opt-in for
+  runtime content processing and enabled for retained-body inspection. It is
   selected only from the initial zlib-header probe; it never retries after
   releasing decoded bytes.
 - Byte, expansion, coding-depth, decoder-window, work-quantum, and active-time

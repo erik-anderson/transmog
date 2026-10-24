@@ -22,6 +22,7 @@ import { checkResponseFiles } from "./check-response-files.mjs";
 import { checkResponseSetGuide } from "./check-response-set-guide.mjs";
 import { checkPreviewPrerequisites } from "./check-preview-prerequisites.mjs";
 import { checkBodyRefresh } from "./check-body-refresh.mjs";
+import { checkBodyDecoding } from "./check-body-decoding.mjs";
 import { checkResponseSetPreview } from "./check-response-set-preview.mjs";
 import { checkTextEdits } from "./check-text-edits.mjs";
 import { checkHeaderRules } from "./check-header-rules.mjs";
@@ -4246,6 +4247,13 @@ try {
     process.stdout.write(
       "Auth masking, reveal/copy, stale replies, coverage, keyboard and layouts verified.\n",
     );
+    process.exit(0);
+  }
+  if (process.argv.includes("--body-decoding-only")) {
+    await checkBodyDecoding(page);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Binary body Decode controls verified.\n");
     process.exit(0);
   }
   if (process.argv.includes("--hex-only")) {
@@ -9714,6 +9722,7 @@ try {
   await checkTrafficPresentation(page, root);
   await checkTrafficClassifications(page, root);
   await checkBodyRefresh(page, root);
+  await checkBodyDecoding(page);
   await checkRequestOrder(page, root);
   await checkTrafficNavigation(page);
   await page.goto("https://workspace.test/");
