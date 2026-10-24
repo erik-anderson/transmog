@@ -58,7 +58,7 @@ test("field actions read the real value on demand and disable unavailable values
   );
 });
 
-test("subtree copy stops when loading one range evicts an earlier range", async () => {
+test("subtree copy rejects eviction loops and allows progressive children", async () => {
   const bundled = await build({
     entryPoints: [
       new URL("../src/extension-visualizer/copy.ts", import.meta.url).pathname.replace(
@@ -151,6 +151,34 @@ test("subtree copy stops when loading one range evicts an earlier range", async 
       ),
       /Value: 7/,
     );
+    let pages = 0;
+    const progressive = (count) => {
+      const result = view();
+      result.document.roots[0].children = Array.from({ length: count }, (_, index) => ({
+        id: `child-${index}`,
+        name: `Child ${index}`,
+        value: { kind: "integer", value: String(index) },
+        spans: [],
+        children: [],
+      }));
+      result.document.roots[0].childrenToken = count < 2 ? "more" : null;
+      return result;
+    };
+    globalThis.__copyRangeHost = async (command, args) => {
+      assert.equal(command, "expand_visualizer");
+      assert.equal(args.token, "more");
+      return progressive(++pages);
+    };
+    assert.equal(
+      await visualizerCopyTree(
+        "root",
+        progressive(0),
+        () => true,
+        () => {},
+      ),
+      "Root\n  Child 0: 0\n  Child 1: 1",
+    );
+    assert.equal(pages, 2);
   } finally {
     delete globalThis.__copyRangeHost;
   }

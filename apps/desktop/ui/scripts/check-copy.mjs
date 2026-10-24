@@ -62,6 +62,11 @@ export async function checkCopy(page, root) {
     state.expandedVisualizerDocument.roots[1].children = [
       node("child", "Child", { kind: "string", value: "hello\nworld" + "x".repeat(600) }),
     ];
+    state.nextExpandedDocument = structuredClone(state.expandedVisualizerDocument);
+    state.nextExpandedDocument.roots[1].childrenToken = "deferred";
+    state.expandedVisualizerDocument.roots[1].children.push(
+      node("continued", "Continued", { kind: "string", value: "second page" }),
+    );
     state.emitNative("extensions-changed");
     await t.refreshSessions(undefined, true);
   });
@@ -101,7 +106,14 @@ export async function checkCopy(page, root) {
   );
   await menu.getByRole("menuitem", { name: "Copy subtree", exact: true }).click();
   await page.waitForFunction(
-    () => globalThis.__copied === "Branch\n  Child: hello\\nworld" + "x".repeat(600),
+    () =>
+      globalThis.__copied ===
+      "Branch\n  Child: hello\\nworld" + "x".repeat(600) + "\n  Continued: second page",
+  );
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.calls.expand_visualizer),
+    2,
+    "Copying rejected progressive children under a stable node/token",
   );
   assert.equal(await row("Branch").getAttribute("aria-expanded"), "false");
   assert.equal(await visualizer.getByRole("tree").getAttribute("aria-activedescendant"), selected);

@@ -104,12 +104,15 @@ export async function visualizerCopyTree(
       if (!pending) {
         break;
       }
-      if (visited.has(pending.id)) {
+      // A producer may append children under a stable node and reuse its token.
+      // Reject a repeated load state, while allowing additional materialization.
+      const state = JSON.stringify([pending.id, pending.childrenToken, nodeIndex(pending).size]);
+      if (visited.has(state)) {
         throw new CopyError(
           "This subtree loads in ranges. Copy a smaller field range or use the source bytes in Hex.",
         );
       }
-      visited.add(pending.id);
+      visited.add(state);
       if (++expansions > 256) {
         throw new CopyError("The subtree exceeds the deferred expansion limit.");
       }
