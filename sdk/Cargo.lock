@@ -400,8 +400,8 @@ dependencies = [
 
 [[package]]
 name = "boring"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"
 dependencies = [
  "bitflags",
  "boring-sys",
@@ -412,8 +412,8 @@ dependencies = [
 
 [[package]]
 name = "boring-sys"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"
 dependencies = [
  "bindgen",
  "cmake",
@@ -716,9 +716,9 @@ dependencies = [
 
 [[package]]
 name = "crc32fast"
-version = "1.5.2"
+version = "1.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "01a7799fd6b852db0e61728dde9a204c423b44d689dbd432522543614b490e78"
+checksum = "0ba106e844045ddc02c20768ac4b0b7cb45f2cc2ecbd833ac9f5dacb183c2055"
 dependencies = [
  "cfg-if",
 ]
@@ -1202,7 +1202,7 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "h2"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -1427,7 +1427,7 @@ dependencies = [
 
 [[package]]
 name = "hyper"
-version = "1.11.1"
+version = "1.12.0"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -3507,9 +3507,9 @@ checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
 
 [[package]]
 name = "tokio"
-version = "1.53.3"
+version = "1.54.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce3335fa71841cda333a58d7615b03901380ecf09d59b3296d21f8bbac0dde4e"
+checksum = "b52fd3255258d26fac7264ab5a76b53c13367136dc011d3d6ad4f8ed070396a3"
 dependencies = [
  "bytes",
  "libc",
@@ -3523,8 +3523,8 @@ dependencies = [
 
 [[package]]
 name = "tokio-boring"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"
 dependencies = [
  "boring",
  "boring-sys",
@@ -3625,7 +3625,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-app"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "boring",
@@ -3673,7 +3673,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-auth"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "flate2",
@@ -3686,7 +3686,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-automation"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "bytes",
  "hex",
@@ -3701,7 +3701,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-capture"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -3723,7 +3723,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-client-certificates"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "sha2 0.11.1",
  "windows-sys 0.61.2",
@@ -3731,7 +3731,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-client-identity"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "transmog-core",
  "windows-sys 0.61.2",
@@ -3739,7 +3739,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-content"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "async-compression",
  "bytes",
@@ -3750,7 +3750,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-control-model"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "serde",
  "thiserror",
@@ -3758,7 +3758,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-control-transport"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "thiserror",
  "tokio",
@@ -3767,7 +3767,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-core"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "bytes",
  "http",
@@ -3778,14 +3778,14 @@ dependencies = [
 
 [[package]]
 name = "transmog-directory-watch"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "transmog-extension-registry"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "getrandom 0.4.3",
  "rustix",
@@ -3800,7 +3800,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extension-supervisor"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "getrandom 0.4.3",
@@ -3811,7 +3811,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extensions"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "crc32fast",
@@ -3825,7 +3825,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-h3"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "boring",
  "bytes",
@@ -3840,7 +3840,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-http"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "boring",
  "bytes",
@@ -3862,7 +3862,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-key-protection"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "aes-gcm",
  "dbus",
@@ -3875,7 +3875,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-network"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "futures-util",
  "serde",
@@ -3887,7 +3887,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-package-zip"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "crc32fast",
  "thiserror",
@@ -3896,7 +3896,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-portable"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "crc32fast",
@@ -3916,7 +3916,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-preview-worker"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "image",
  "transmog-process-sandbox",
@@ -3924,14 +3924,14 @@ dependencies = [
 
 [[package]]
 name = "transmog-process-sandbox"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "transmog-runtime"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "boring",
  "bytes",
@@ -3956,7 +3956,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-saz"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "boring",
  "flate2",
@@ -3975,7 +3975,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "bytes",
  "serde",
@@ -3989,7 +3989,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script-compiler"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "stacker",
  "swc_common",
@@ -4004,7 +4004,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script-supervisor"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "getrandom 0.4.3",
  "sourcemap",
@@ -4048,7 +4048,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-session"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "bytes",
  "http",
@@ -4065,7 +4065,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-socket-info"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "libc",
  "transmog-core",
@@ -4074,7 +4074,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-tls"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "async-compression",
  "boring",
@@ -4101,7 +4101,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-tls-native"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "boring",
  "boring-sys",
@@ -4115,7 +4115,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-websocket"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "base64",
  "bytes",
@@ -4129,7 +4129,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-windows-trust"
-version = "0.1.11"
+version = "0.1.12"
 dependencies = [
  "hex",
  "sha2 0.11.1",
@@ -4271,9 +4271,9 @@ dependencies = [
 
 [[package]]
 name = "want"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bfa7760aed19e106de2c7c0b581b509f2f25d3dacaf737cb82ac61bc6d760b0e"
+checksum = "ec4cdd0dd910afe868b7ef477227d8d538b46b3075031afee8a9f2acb0a2ed0b"
 dependencies = [
  "try-lock",
 ]
@@ -4918,5 +4918,5 @@ dependencies = [
 
 [[patch.unused]]
 name = "hyper-boring"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"

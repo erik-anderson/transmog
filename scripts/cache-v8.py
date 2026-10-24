@@ -11,8 +11,8 @@ from repo_tools import main_guard
 import platform
 
 ARCHIVES = {
-    "x86_64-pc-windows-msvc": "f231f82cbacb9aefe6d9af57e6df2e8959a40e001f79306485133e3c075b98f0",
-    "aarch64-pc-windows-msvc": "c37857a36357a48ed163a917e4505000f0844b2cc65b64aa2167f47bfb97b919",
+    "x86_64-pc-windows-msvc": "0b17ca072bae37dd4ff00e6014d2b413becb031c9342ee11cb8226a5881f62b2",
+    "aarch64-pc-windows-msvc": "cad105f510f59dd38a9cbcc8f6f78263d9bb8f009d0c111f972fbd529de92273",
 }
 
 
@@ -21,7 +21,7 @@ def main():
     parser.add_argument("--archive-path", type=Path)
     parser.add_argument("--target", choices=ARCHIVES, default="aarch64-pc-windows-msvc" if platform.machine().lower() in {"arm64", "aarch64"} else "x86_64-pc-windows-msvc")
     args = parser.parse_args()
-    url = f"https://github.com/denoland/rusty_v8/releases/download/v150.4.0/rusty_v8_simdutf_release_{args.target}.lib.gz"
+    url = f"https://github.com/denoland/rusty_v8/releases/download/v152.2.0/rusty_v8_release_{args.target}.lib.gz"
     cache = Path(os.environ.get("CARGO_HOME", str(Path.home() / ".cargo"))) / ".rusty_v8"
     target = cache / re.sub(r"[^A-Za-z0-9]", "_", url)
     cache.mkdir(parents=True, exist_ok=True)
@@ -40,7 +40,7 @@ def main():
             raise ValueError(f"rusty_v8 archive SHA-256 mismatch: {digest}")
         if source is None or source.resolve() != target.resolve():
             staged.replace(target)
-    print(f"rusty_v8 150.4.0: SHA-256 verified; cache path {target}")
+    print(f"rusty_v8 152.2.0: SHA-256 verified; cache path {target}")
 
 
 if __name__ == "__main__":

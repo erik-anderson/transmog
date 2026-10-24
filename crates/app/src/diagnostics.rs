@@ -153,7 +153,7 @@ impl DiagnosticLog {
             application_version: crate::application_version().to_owned(),
             dependencies: vec![
                 format!("transmog-app {}", env!("CARGO_PKG_VERSION")),
-                "Tauri 2.12.4".to_owned(),
+                "Tauri 2.12.5".to_owned(),
                 "Microsoft WebUI 0.0.30".to_owned(),
                 "BoringSSL via boring 5.2.0".to_owned(),
             ],

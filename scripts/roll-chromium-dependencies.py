@@ -112,16 +112,18 @@ def prepare(args, environment):
         raise ValueError("Use a new output directory with no links, outside the workspace's parents")
     output.mkdir(parents=True)
     candidate = output / "candidate"
-    command(["git", "clone", "--quiet", "--no-hardlinks", ROOT, candidate], env=environment)
+    command(["git", "clone", "--config", "core.autocrlf=false", "--quiet", "--no-hardlinks", ROOT, candidate], env=environment)
     # Do not allow the review checkout to push to the source workspace.
     command(["git", "remote", "remove", "origin"], cwd=candidate, env=environment)
     before = check(ROOT, environment)
     source = args.boring_source
     if args.boring_revision:
         source = output / "boring-source"
-        command(["git", "clone", "--quiet", "--filter=blob:none", "--no-checkout", REPOSITORY, source], env=environment)
+        # Snapshot hashes describe upstream bytes; Windows checkout conversion
+        # must not make a receipt disagree with the subsequently exported patch.
+        command(["git", "clone", "--config", "core.autocrlf=false", "--quiet", "--filter=blob:none", "--no-checkout", REPOSITORY, source], env=environment)
         command(["git", "checkout", "--quiet", "--detach", args.boring_revision], cwd=source, env=environment)
-        command(["git", "submodule", "update", "--init", "--recursive"], cwd=source, env=environment)
+        command(["git", "-c", "core.autocrlf=false", "submodule", "update", "--init", "--recursive"], cwd=source, env=environment)
     if source is not None:
         source = source.resolve(strict=True)
         revision = git(source, "rev-parse", "HEAD")

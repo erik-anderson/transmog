@@ -78,8 +78,8 @@ checksum = "3ded4057c258ba199e2d26386d3af3780957ecaee6c4ef4041c6b4b8b97c0b06"
 
 [[package]]
 name = "boring"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"
 dependencies = [
  "bitflags",
  "boring-sys",
@@ -90,8 +90,8 @@ dependencies = [
 
 [[package]]
 name = "boring-sys"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"
 dependencies = [
  "bindgen",
  "cmake",
@@ -418,7 +418,7 @@ checksum = "e4eba85ea1d0a966a983acd07deee566e67395d2d96b6fb39e62b5a833f1eb0b"
 
 [[package]]
 name = "h2"
-version = "0.4.19"
+version = "0.4.20"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -513,7 +513,7 @@ checksum = "15cdd26707701c53297e2fa6afb323d55fbc1d0810c3aec078ae3ef0424c3c15"
 
 [[package]]
 name = "hyper"
-version = "1.11.1"
+version = "1.12.0"
 dependencies = [
  "atomic-waker",
  "bytes",
@@ -676,7 +676,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -784,7 +784,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1613,7 +1613,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -1845,10 +1845,10 @@ checksum = "29666d0abbfad1e3dc4dcf6144730dd3a3ab225bbbdac83319345b1b44ccfc1b"
 
 [[patch.unused]]
 name = "hyper-boring"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"
 
 [[patch.unused]]
 name = "tokio-boring"
-version = "5.2.0"
-source = "git+https://github.com/cloudflare/boring?rev=9c57211afd4e99479e4fbba73cd603128726275b#9c57211afd4e99479e4fbba73cd603128726275b"
+version = "5.3.0"
+source = "git+https://github.com/cloudflare/boring?rev=2bea8245d9b21776bc9f767b4e82dc2a78a5a262#2bea8245d9b21776bc9f767b4e82dc2a78a5a262"

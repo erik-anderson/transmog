@@ -1,10 +1,10 @@
 {
-  "chromiumVersion": "154.0.8037.99",
-  "source": "https://raw.githubusercontent.com/chromium/chromium/154.0.8037.99/net/base/registry_controlled_domains/effective_tld_names.dat",
+  "chromiumVersion": "158.0.8117.2",
+  "source": "https://raw.githubusercontent.com/chromium/chromium/158.0.8117.2/net/base/registry_controlled_domains/effective_tld_names.dat",
   "sha256": {
-    "effective_tld_names.dat": "4155611645690529d1bbea0cfe653b0c45f63b028e0ba039de29a97edc3204ca",
-    "icann-rules.txt": "ec860604509ef41f23bbfa54f2bf543303514ccc51ae69f8cfeae15f6d81163b",
-    "all-rules.txt": "f9daff7f8c5533250e1ba1de2e6db81fe391191d8b9ef76a95976cb5cca8af6a",
+    "effective_tld_names.dat": "d4d5c24befb4a21306ace7f28cb04d35121d90f300f8c56c442937f9d1b5e278",
+    "icann-rules.txt": "a6000d8c3d9fc23a5f43622af8a61b69b21d8c2e4bac94b7d6132db439dcd89d",
+    "all-rules.txt": "10fe2eddb7976f00e10030808cff15f09ed04c07db1f8da6181a071414c740a9",
     "LICENSE": "66a3107d5ad6a058aab753eaac2047ccb2ed0e39465dd0fe5844da3e300d5172"
   }
 }

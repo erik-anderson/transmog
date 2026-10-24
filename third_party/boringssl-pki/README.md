@@ -2,7 +2,7 @@
 
 The unmodified PKI target from BoringSSL commit
 `427ec40cc8edc545253289232e885708c409e5ea`, the submodule used by our
-`cloudflare/boring` revision `9c57211afd4e99479e4fbba73cd603128726275b`.
+`cloudflare/boring` revision `2bea8245d9b21776bc9f767b4e82dc2a78a5a262`.
 Chromium uses this PKI implementation for certificate path building and RFC 5280
 verification. The Rust binding currently builds SSL and crypto but does not
 expose this separate target. We compile PKI only and link it to that same crypto

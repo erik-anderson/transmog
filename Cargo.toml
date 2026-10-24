@@ -61,8 +61,8 @@ zeroize = "=1.9.1"
 sysinfo = { version = "=0.39.6", default-features = false, features = ["system"] }
 async-compression = { version = "=0.4.51", default-features = false, features = ["brotli", "deflate", "gzip", "tokio", "zlib", "zstd"] }
 base64 = "0.22.1"
-boring = { version = "=5.2.0", features = ["credential"] }
-boring-sys = "=5.2.0"
+boring = { version = "=5.3.0", features = ["credential"] }
+boring-sys = "=5.3.0"
 foreign-types = "=0.5.0"
 brotli = "=9.0.0"
 bytes = { version = "1.11.1", features = ["serde"] }
@@ -75,8 +75,8 @@ swc_ecma_transforms_base = { version = "=30.0.1", features = ["inline-helpers"] 
 swc_ecma_transforms_typescript = "=33.0.0"
 swc_ecma_visit = "=18.0.1"
 url = "=2.5.8"
-v8 = { version = "=150.4.0", default-features = false, features = ["simdutf"] }
-crc32fast = "1.5.2"
+v8 = { version = "=152.2.0", default-features = false, features = ["simdutf"] }
+crc32fast = "1.5.3"
 flate2 = "1.1.10"
 futures-util = { version = "0.3.34", default-features = false, features = ["std"] }
 getrandom = "0.4.3"
@@ -89,9 +89,9 @@ image = { version = "=0.25.10", default-features = false, features = ["gif", "ic
 libc = "=0.2.191"
 percent-encoding = "2.3.2"
 prost = "=0.14.4"
-hyper = { version = "=1.11.1", features = ["client", "http1", "http2", "server"] }
-h2 = "=0.4.19"
-hyper-boring = "=5.2.0"
+hyper = { version = "=1.12.0", features = ["client", "http1", "http2", "server"] }
+h2 = "=0.4.20"
+hyper-boring = "=5.3.0"
 hickory-resolver = { version = "=0.26.3", default-features = false, features = ["tokio", "system-config"] }
 hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server", "service", "tokio"] }
 quiche = { version = "=0.30.0", default-features = false, features = ["boringssl-boring-crate", "custom-client-dcid"] }
@@ -107,8 +107,8 @@ sourcemap = "=9.3.2"
 thiserror = "2.0.17"
 tempfile = "=3.27.0"
 time = { version = "=0.3.55", features = ["parsing", "formatting"] }
-tokio = { version = "1.53.3", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
-tokio-boring = "=5.2.0"
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-boring = "=5.3.0"
 tower-service = "0.3.3"
 tracing = "0.1.41"
 tracing-subscriber = { version = "0.3.20", features = ["env-filter", "fmt", "json"] }
@@ -121,12 +121,12 @@ swc_ecma_parser = { path = "third_party/swc-ecma-parser" }
 h2 = { path = "third_party/rust-transport/vendor/h2" }
 hyper = { path = "third_party/rust-transport/vendor/hyper" }
 quiche = { path = "third_party/rust-transport/vendor/quiche" }
-# Unreleased BoringSSL update supplies signature-algorithm GREASE. Keep the
-# entire family on one immutable revision, including quiche's transitive TLS.
-boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
-boring-sys = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
-hyper-boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
-tokio-boring = { git = "https://github.com/cloudflare/boring", rev = "9c57211afd4e99479e4fbba73cd603128726275b" }
+# Keep the Boring 5.3.0 release on one immutable revision so native source
+# verification and quiche use the same qualified TLS provider.
+boring = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b21776bc9f767b4e82dc2a78a5a262" }
+boring-sys = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b21776bc9f767b4e82dc2a78a5a262" }
+hyper-boring = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b21776bc9f767b4e82dc2a78a5a262" }
+tokio-boring = { git = "https://github.com/cloudflare/boring", rev = "2bea8245d9b21776bc9f767b4e82dc2a78a5a262" }
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

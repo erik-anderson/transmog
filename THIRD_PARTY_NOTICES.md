@@ -54,8 +54,8 @@ Transmog includes the following third-party software.
 | block-padding | 0.3.3 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | block2 | 0.6.2 | MIT | https://github.com/madsmtm/objc2 |
 | blocking | 1.7.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/blocking |
-| boring | 5.2.0 | Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
-| boring-sys | 5.2.0 | MIT | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
+| boring | 5.3.0 | Apache-2.0 | https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262 |
+| boring-sys | 5.3.0 | MIT | https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262 |
 | brotli | 9.0.0 | BSD-3-Clause AND MIT | https://github.com/dropbox/rust-brotli |
 | brotli-decompressor | 6.0.1 | BSD-3-Clause/MIT | https://github.com/dropbox/rust-brotli-decompressor |
 | bs58 | 0.5.1 | MIT/Apache-2.0 | https://github.com/Nullus157/bs58-rs |
@@ -106,7 +106,7 @@ Transmog includes the following third-party software.
 | cpubits | 0.1.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.2.17 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
 | cpufeatures | 0.3.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/utils |
-| crc32fast | 1.5.2 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast |
+| crc32fast | 1.5.3 | MIT OR Apache-2.0 | https://github.com/srijs/rust-crc32fast |
 | critical-section | 1.2.0 | MIT OR Apache-2.0 | https://github.com/rust-embedded/critical-section |
 | crossbeam-channel | 0.5.17 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
 | crossbeam-deque | 0.8.8 | MIT OR Apache-2.0 | https://github.com/crossbeam-rs/crossbeam |
@@ -211,7 +211,7 @@ Transmog includes the following third-party software.
 | gtk-sys | 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs |
 | gtk3-macros | 0.18.2 | MIT | https://github.com/gtk-rs/gtk3-rs |
 | gzip-header | 1.1.0 | MIT/Apache-2.0 | https://github.com/oyvindln/gzip-header |
-| h2 | 0.4.19 | MIT | https://static.crates.io/crates/h2/h2-0.4.19.crate |
+| h2 | 0.4.20 | MIT | https://static.crates.io/crates/h2/h2-0.4.20.crate |
 | hashbrown | 0.12.3 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.14.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
 | hashbrown | 0.17.1 | MIT OR Apache-2.0 | https://github.com/rust-lang/hashbrown |
@@ -236,13 +236,13 @@ Transmog includes the following third-party software.
 | httparse | 1.10.1 | MIT OR Apache-2.0 | https://github.com/seanmonstar/httparse |
 | httpdate | 1.0.3 | MIT OR Apache-2.0 | https://github.com/pyfisch/httpdate |
 | hybrid-array | 0.4.15 | MIT OR Apache-2.0 | https://github.com/RustCrypto/hybrid-array |
-| hyper | 1.11.1 | MIT | https://static.crates.io/crates/hyper/hyper-1.11.1.crate |
-| hyper-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
+| hyper | 1.12.0 | MIT | https://static.crates.io/crates/hyper/hyper-1.12.0.crate |
+| hyper-boring | 5.3.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262 |
 | hyper-rustls | 0.27.10 | Apache-2.0 OR ISC OR MIT | https://github.com/rustls/hyper-rustls |
 | hyper-util | 0.1.21 | MIT | https://github.com/hyperium/hyper-util |
 | iana-time-zone | 0.1.65 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
 | iana-time-zone-haiku | 0.1.2 | MIT OR Apache-2.0 | https://github.com/strawlab/iana-time-zone |
-| ico | 0.5.0 | MIT | https://github.com/mdsteele/rust-ico |
+| ico | 0.6.0 | MIT | https://github.com/mdsteele/rust-ico |
 | icu_calendar | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_calendar_data | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | icu_collections | 2.3.0 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
@@ -397,7 +397,6 @@ Transmog includes the following third-party software.
 | piper | 0.2.5 | MIT OR Apache-2.0 | https://github.com/smol-rs/piper |
 | pkg-config | 0.3.34 | MIT OR Apache-2.0 | https://github.com/rust-lang/pkg-config-rs |
 | plist | 1.10.1 | MIT | https://github.com/ebarnard/rust-plist/ |
-| png | 0.17.16 | MIT OR Apache-2.0 | https://github.com/image-rs/image-png |
 | png | 0.18.1 | MIT OR Apache-2.0 | https://github.com/image-rs/image-png |
 | polling | 3.11.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/polling |
 | polyval | 0.7.3 | Apache-2.0 OR MIT | https://github.com/RustCrypto/universal-hashes |
@@ -555,17 +554,17 @@ Transmog includes the following third-party software.
 | tap | 1.0.1 | MIT | https://github.com/myrrlyn/tap |
 | tar | 0.4.46 | MIT OR Apache-2.0 | https://github.com/composefs/tar-rs |
 | target-lexicon | 0.12.16 | Apache-2.0 WITH LLVM-exception | https://github.com/bytecodealliance/target-lexicon |
-| tauri | 2.12.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-build | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-codegen | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-macros | 2.7.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri | 2.12.5 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-build | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-codegen | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-macros | 2.7.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-plugin | 2.7.1 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-plugin-single-instance | 2.5.4 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-plugin-updater | 2.14.0 | Apache-2.0 OR MIT | https://github.com/tauri-apps/plugins-workspace |
 | tauri-runtime | 2.12.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-runtime-wry | 2.12.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
+| tauri-runtime-wry | 2.12.3 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
 | tauri-utils | 2.10.2 | Apache-2.0 OR MIT | https://github.com/tauri-apps/tauri |
-| tauri-winres | 0.3.6 | MIT | https://github.com/tauri-apps/winres |
+| tauri-winres | 0.3.7 | MIT | https://github.com/tauri-apps/winres |
 | tempfile | 3.27.0 | MIT OR Apache-2.0 | https://github.com/Stebalien/tempfile |
 | temporal_capi | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
 | temporal_rs | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
@@ -581,8 +580,8 @@ Transmog includes the following third-party software.
 | timezone_provider | 0.2.6 | MIT OR Apache-2.0 | https://github.com/boa-dev/temporal |
 | tinystr | 0.8.4 | Unicode-3.0 | https://github.com/unicode-org/icu4x |
 | tinyvec | 1.13.3 | Zlib OR Apache-2.0 OR MIT | https://github.com/Lokathor/tinyvec |
-| tokio | 1.53.3 | MIT | https://github.com/tokio-rs/tokio |
-| tokio-boring | 5.2.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b |
+| tokio | 1.54.1 | MIT | https://github.com/tokio-rs/tokio |
+| tokio-boring | 5.3.0 | MIT OR Apache-2.0 | https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262 |
 | tokio-macros | 2.7.2 | MIT | https://github.com/tokio-rs/tokio |
 | tokio-rustls | 0.26.6 | MIT OR Apache-2.0 | https://github.com/rustls/tokio-rustls |
 | tokio-util | 0.7.19 | MIT | https://github.com/tokio-rs/tokio |
@@ -622,7 +621,7 @@ Transmog includes the following third-party software.
 | urlpattern | 0.6.0 | MIT | https://github.com/denoland/rust-urlpattern |
 | utf8_iter | 1.0.4 | Apache-2.0 OR MIT | https://github.com/hsivonen/utf8_iter |
 | uuid | 1.27.0 | Apache-2.0 OR MIT | https://github.com/uuid-rs/uuid |
-| v8 | 150.4.0 | MIT | https://github.com/denoland/rusty_v8 |
+| v8 | 152.2.0 | MIT | https://github.com/denoland/rusty_v8 |
 | valuable | 0.1.1 | MIT | https://github.com/tokio-rs/valuable |
 | version_check | 0.9.5 | MIT/Apache-2.0 | https://github.com/SergioBenitez/version_check |
 | version-compare | 0.2.1 | MIT | https://gitlab.com/timvisee/version-compare |
@@ -630,7 +629,7 @@ Transmog includes the following third-party software.
 | vswhom | 0.1.0 | MIT | https://github.com/nabijaczleweli/vswhom.rs |
 | vswhom-sys | 0.1.3 | MIT | https://github.com/nabijaczleweli/vswhom-sys.rs |
 | walkdir | 2.5.0 | Unlicense/MIT | https://github.com/BurntSushi/walkdir |
-| want | 0.3.1 | MIT | https://github.com/seanmonstar/want |
+| want | 0.3.2 | MIT | https://github.com/seanmonstar/want |
 | wasi | 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wasi |
 | wasip2 | 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | https://github.com/bytecodealliance/wasi-rs |
 | wasm-bindgen | 0.2.129 | MIT OR Apache-2.0 | https://github.com/wasm-bindgen/wasm-bindgen |
@@ -740,8 +739,8 @@ The registry archives below are vendored with local patches. Original license an
 
 | Package | Archive SHA-256 | Local patch | Patch SHA-256 |
 |---|---|---|---|
-| h2 | ef8e5e5a340588f4452631496976cf8636d4a7ecf600239fdc27615d2530bc16 | [third_party/rust-transport/patches/h2.patch](third_party/rust-transport/patches/h2.patch) | ac2771bb502d4449fc1fc24c9046b4a97b645be7830f6feb0f7246b1f32a6014 |
-| hyper | 27b501faa50e7a26c3d3560ca625132f4078a17771f4810baf70475ae48cbe43 | [third_party/rust-transport/patches/hyper.patch](third_party/rust-transport/patches/hyper.patch) | 87b8870bd0a78c31498f5fba20b96a5a08a3e685cb53b79dedba602fb80a9843 |
+| h2 | 7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118 | [third_party/rust-transport/patches/h2.patch](third_party/rust-transport/patches/h2.patch) | ac2771bb502d4449fc1fc24c9046b4a97b645be7830f6feb0f7246b1f32a6014 |
+| hyper | 2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c | [third_party/rust-transport/patches/hyper.patch](third_party/rust-transport/patches/hyper.patch) | 2e736f88ed51aea63ffc14a48488e66b7bb4bc12476c0208b234cd4729f21113 |
 | quiche | 52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a | [third_party/rust-transport/patches/quiche.patch](third_party/rust-transport/patches/quiche.patch) | eda5505fa0c32aab58a1f79606ef7c5b5693b33e49321d6a5ca2d4d488a36484 |
 | swc_ecma_parser | 7f1a51af1a92cd4904c073b293e491bbc0918400a45d58227b34c961dd6f52d7 | [third_party/swc-ecma-parser/parser.patch](third_party/swc-ecma-parser/parser.patch) | 8312dd9292c30dd8442a4d3cc7e70d44bc0b60762da4e724a0a863fb4133424f |
 
@@ -1005,7 +1004,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ## Chromium Public Suffix List
 
-Chromium 154.0.8037.99's Public Suffix List is used for ICANN wildcard boundaries and fixed CA domain restrictions. Original source, generated ICANN and full rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.
+Chromium 158.0.8117.2's Public Suffix List is used for ICANN wildcard boundaries and fixed CA domain restrictions. Original source, generated ICANN and full rules, hashes and the MPL-2.0 license are in `third_party/chromium-suffix-list`.
 
 Mozilla Public License Version 2.0
 ==================================
@@ -1383,7 +1382,7 @@ Exhibit B - "Incompatible With Secondary Licenses" Notice
 
 ## Chromium certificate policy data
 
-Chromium 154.0.8037.99 certificate blocklist, public CT log list and wire schemas are in `third_party/chromium-certificate-policy`. The generated ct_config.pb supplies the shared verifier's CT baseline; installed browser component packages are not bundled.
+Chromium 158.0.8117.2 certificate blocklist, public CT log list and wire schemas are in `third_party/chromium-certificate-policy`. The generated ct_config.pb supplies the shared verifier's CT baseline; installed browser component packages are not bundled.
 
 // Copyright 2015 The Chromium Authors
 //
@@ -1475,14 +1474,14 @@ SOFTWARE.
 
 ## Qualified BoringSSL native source and patches
 
-SSL/crypto source: https://boringssl.googlesource.com/boringssl/+/427ec40cc8edc545253289232e885708c409e5ea. Rust bindings: https://github.com/cloudflare/boring/tree/9c57211afd4e99479e4fbba73cd603128726275b.
+SSL/crypto source: https://boringssl.googlesource.com/boringssl/+/427ec40cc8edc545253289232e885708c409e5ea. Rust bindings: https://github.com/cloudflare/boring/tree/2bea8245d9b21776bc9f767b4e82dc2a78a5a262.
 
 Only the patches marked applied below are included in this qualified native build.
 
 | Upstream patch | Applied | SHA-256 |
 |---|---|---|
-| [bad-cert-verification.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/bad-cert-verification.patch) | No | 1e5c0e034f8ba5bc6699fcfb7cf1768fa8ad162be513061d09285b5285fc8113 |
-| [boring-pq.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/boring-pq.patch) | Yes | 25bb5efaba76f5d0d3abcc335f081b258d408bbab416feca21e343cf89ebf2b3 |
-| [relax-cert-validation.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/relax-cert-validation.patch) | No | ae2b951654f6b79590af47ee9e3c263f5fe4d36f57428c4aeb7307e8d580ebe0 |
-| [rpk.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/rpk.patch) | No | 6051949fe7cb5cbb290b41830b1d8b0714d4eeb2d25a306f76716087a9caba0a |
-| [underscore-wildcards.patch](https://github.com/cloudflare/boring/blob/9c57211afd4e99479e4fbba73cd603128726275b/boring-sys/patches/underscore-wildcards.patch) | No | 6a410a73a6d5eb83f0d10305217089444a7ead52f386b6c8b9611347796a7385 |
+| [bad-cert-verification.patch](https://github.com/cloudflare/boring/blob/2bea8245d9b21776bc9f767b4e82dc2a78a5a262/boring-sys/patches/bad-cert-verification.patch) | No | 1e5c0e034f8ba5bc6699fcfb7cf1768fa8ad162be513061d09285b5285fc8113 |
+| [boring-pq.patch](https://github.com/cloudflare/boring/blob/2bea8245d9b21776bc9f767b4e82dc2a78a5a262/boring-sys/patches/boring-pq.patch) | Yes | 25bb5efaba76f5d0d3abcc335f081b258d408bbab416feca21e343cf89ebf2b3 |
+| [relax-cert-validation.patch](https://github.com/cloudflare/boring/blob/2bea8245d9b21776bc9f767b4e82dc2a78a5a262/boring-sys/patches/relax-cert-validation.patch) | No | ae2b951654f6b79590af47ee9e3c263f5fe4d36f57428c4aeb7307e8d580ebe0 |
+| [rpk.patch](https://github.com/cloudflare/boring/blob/2bea8245d9b21776bc9f767b4e82dc2a78a5a262/boring-sys/patches/rpk.patch) | No | 6051949fe7cb5cbb290b41830b1d8b0714d4eeb2d25a306f76716087a9caba0a |
+| [underscore-wildcards.patch](https://github.com/cloudflare/boring/blob/2bea8245d9b21776bc9f767b4e82dc2a78a5a262/boring-sys/patches/underscore-wildcards.patch) | No | 6a410a73a6d5eb83f0d10305217089444a7ead52f386b6c8b9611347796a7385 |

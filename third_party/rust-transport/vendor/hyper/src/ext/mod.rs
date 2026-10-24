@@ -26,10 +26,10 @@
 //!
 //! The extensions in this module can be grouped as follows:
 //!
-//! - **HTTP/1 Reason Phrase**: [`ReasonPhrase`] — Access non-canonical reason phrases in HTTP/1 responses.
-//! - **Informational Responses**: [`on_informational`] — Register callbacks for 1xx HTTP/1 responses on the client.
+//! - **HTTP/1 Reason Phrase**: [`ReasonPhrase`] â€” Access non-canonical reason phrases in HTTP/1 responses.
+//! - **Informational Responses**: [`on_informational`] â€” Register callbacks for 1xx HTTP/1 responses on the client.
 //! - **Header Case Tracking**: Internal types for tracking the original casing and order of headers as received.
-//! - **HTTP/2 Protocol Extensions**: [`Protocol`] — Access the `:protocol` pseudo-header for Extended CONNECT in HTTP/2.
+//! - **HTTP/2 Protocol Extensions**: [`Protocol`] â€” Access the `:protocol` pseudo-header for Extended CONNECT in HTTP/2.
 //!
 //! Some extensions are only available for specific protocols (HTTP/1 or HTTP/2) or use cases (client, server, FFI).
 //!
@@ -113,8 +113,8 @@ impl Protocol {
 }
 
 #[cfg(feature = "http2")]
-impl<'a> From<&'a str> for Protocol {
-    fn from(value: &'a str) -> Self {
+impl<'proto> From<&'proto str> for Protocol {
+    fn from(value: &'proto str) -> Self {
         Self {
             inner: h2::ext::Protocol::from(value),
         }
@@ -172,10 +172,10 @@ impl HeaderCaseMap {
     /// Returns a view of all spellings associated with that header name,
     /// in the order they were found.
     #[cfg(feature = "client")]
-    pub fn get_all<'a>(
-        &'a self,
+    pub fn get_all<'hdr>(
+        &'hdr self,
         name: &HeaderName,
-    ) -> impl Iterator<Item = impl AsRef<[u8]> + 'a> + 'a {
+    ) -> impl Iterator<Item = impl AsRef<[u8]> + 'hdr> + 'hdr {
         self.get_all_internal(name)
     }
 

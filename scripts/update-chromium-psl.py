@@ -1,6 +1,6 @@
 """Update or verify the PSL snapshot and certificate policy rules for a Chromium release.
 
-Update: python scripts/update-chromium-psl.py --chromium-version 154.0.8037.99
+Update: python scripts/update-chromium-psl.py --chromium-version 158.0.8117.2
 Offline: python scripts/update-chromium-psl.py --check
 """
 from __future__ import annotations

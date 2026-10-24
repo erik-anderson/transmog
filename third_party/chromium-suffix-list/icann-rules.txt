@@ -101,7 +101,6 @@ ac.rw
 ac.se
 ac.sz
 ac.th
-ac.tj
 ac.tz
 ac.ug
 ac.uk
@@ -137,6 +136,7 @@ ae
 aeg
 aejrie.no
 aero
+aero.in
 aero.mv
 aerobatic.aero
 aeroclub.aero
@@ -170,6 +170,7 @@ ah.cn
 ah.no
 ai
 ai.bd
+ai.id
 ai.in
 ai.jo
 ai.kr
@@ -237,6 +238,7 @@ alt.za
 alta.no
 alto-adige.it
 altoadige.it
+alumni.in
 alvdal.no
 am
 am.br
@@ -305,7 +307,6 @@ apple
 aq
 aq.it
 aquarelle
-aquila.it
 ar
 ar.it
 ar.us
@@ -407,7 +408,7 @@ auction
 audi
 audible
 audio
-audnedaln.no
+audnedal.no
 augustow.pl
 aukra.no
 aure.no
@@ -787,7 +788,6 @@ cc.mo.us
 cc.ms.us
 cc.mt.us
 cc.nc.us
-cc.nd.us
 cc.ne.us
 cc.nh.us
 cc.nj.us
@@ -1207,6 +1207,7 @@ cv.ua
 cw
 cx
 cy
+cyb.ge
 cymru
 cyou
 cz
@@ -1694,7 +1695,6 @@ fr.it
 frana.no
 fredrikstad.no
 free
-frei.no
 freight.aero
 fresenius
 friuli-v-giulia.it
@@ -1837,6 +1837,7 @@ gh
 gi
 gialai.vn
 giehtavuoatna.no
+gielda.no
 gift
 gifts
 gifu.gifu.jp
@@ -2401,6 +2402,7 @@ i.bg
 i.ng
 i.ph
 i.se
+ia.bo
 ia.br
 ia.us
 ia.ve
@@ -3261,7 +3263,6 @@ lib.mn.us
 lib.mo.us
 lib.mt.us
 lib.nc.us
-lib.nd.us
 lib.ne.us
 lib.nh.us
 lib.nj.us
@@ -3310,6 +3311,7 @@ living
 livorno.it
 lk
 llc
+llc.ge
 llp
 ln.cn
 lo.it
@@ -4395,6 +4397,7 @@ onion
 onjuku.chiba.jp
 onl
 online
+online.ge
 onna.okinawa.jp
 ono.fukui.jp
 ono.fukushima.jp
@@ -4920,6 +4923,7 @@ rc.it
 re
 re.it
 re.kr
+re.no
 read
 realestate
 realestate.pl
@@ -5191,6 +5195,7 @@ schmidt
 scholarships
 school
 school.ge
+school.in
 school.nz
 school.za
 schule
@@ -5532,7 +5537,10 @@ studio
 study
 style
 su
+su.it
 sucks
+sud-sardegna.it
+sudsardegna.it
 sue.fukuoka.jp
 suedtirol.it
 suginami.tokyo.jp
@@ -5552,6 +5560,7 @@ sumy.ua
 sunagawa.hokkaido.jp
 sund.no
 sunndal.no
+suohkan.no
 supplies
 supply
 support
@@ -5754,6 +5763,7 @@ tirol
 tj
 tj.cn
 tjeldsund.no
+tjielte.no
 tjmaxx
 tjome.no
 tjx
@@ -5778,6 +5788,7 @@ tmp.br
 tn
 tn.it
 tn.us
+tnx.ge
 to
 to.gov.br
 to.it
@@ -5927,7 +5938,6 @@ trentinoaltoadige.it
 trentinos-tirol.it
 trentinostirol.it
 trentinosud-tirol.it
-trentinosudtirol.it
 trentinosued-tirol.it
 trentinosuedtirol.it
 trentinsud-tirol.it
@@ -6017,6 +6027,7 @@ tz
 u.bg
 u.se
 ua
+ub.in
 ubank
 ube.yamaguchi.jp
 ubs
@@ -6032,6 +6043,7 @@ udono.mie.jp
 ueda.nagano.jp
 ueno.gunma.jp
 uenohara.yamanashi.jp
+uenorge.no
 ug
 ug.gov.pl
 ugim.gov.pl
@@ -6046,6 +6058,7 @@ ukiha.fukuoka.jp
 ullensaker.no
 ullensvang.no
 ulsan.kr
+ulstein.no
 ulvik.no
 um.gov.pl
 umaji.kochi.jp
@@ -6121,7 +6134,6 @@ vaksdal.no
 val-d-aosta.it
 val-daosta.it
 vald-aosta.it
-valdaosta.it
 valer.hedmark.no
 valer.ostfold.no
 valle-aosta.it
@@ -6161,6 +6173,7 @@ venice.it
 vennesla.no
 ventures
 verbania.it
+verbano-cusio-ossola.it
 vercelli.it
 verdal.no
 verisign
@@ -6268,6 +6281,7 @@ waw.pl
 wazuka.kyoto.jp
 weather
 weatherchannel
+web
 web.bo
 web.do
 web.gu
@@ -6499,6 +6513,7 @@ xn--h2breg3eve
 xn--h2brj9c
 xn--h2brj9c8c
 xn--h3cuzk1di.xn--o3cw4h
+xn--hamary-fya.no
 xn--hbmer-xqa.no
 xn--hcesuolo-7ya35b.no
 xn--hebda8b.xn--4dbrk0ce
@@ -6527,6 +6542,7 @@ xn--jlster-bya.no
 xn--jrpeland-54a.no
 xn--jvr189m
 xn--k7yn95e.jp
+xn--karlsy-fya.no
 xn--karmy-yua.no
 xn--kbrq7o.jp
 xn--kcrx77d1x4a

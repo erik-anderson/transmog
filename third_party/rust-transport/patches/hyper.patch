@@ -1,5 +1,19 @@
 --- a/src/ext/mod.rs
 +++ b/src/ext/mod.rs
+@@ -26,10 +26,10 @@
+ //!
+ //! The extensions in this module can be grouped as follows:
+ //!
+-//! - **HTTP/1 Reason Phrase**: [`ReasonPhrase`] — Access non-canonical reason phrases in HTTP/1 responses.
+-//! - **Informational Responses**: [`on_informational`] — Register callbacks for 1xx HTTP/1 responses on the client.
++//! - **HTTP/1 Reason Phrase**: [`ReasonPhrase`] â€” Access non-canonical reason phrases in HTTP/1 responses.
++//! - **Informational Responses**: [`on_informational`] â€” Register callbacks for 1xx HTTP/1 responses on the client.
+ //! - **Header Case Tracking**: Internal types for tracking the original casing and order of headers as received.
+-//! - **HTTP/2 Protocol Extensions**: [`Protocol`] — Access the `:protocol` pseudo-header for Extended CONNECT in HTTP/2.
++//! - **HTTP/2 Protocol Extensions**: [`Protocol`] â€” Access the `:protocol` pseudo-header for Extended CONNECT in HTTP/2.
+ //!
+ //! Some extensions are only available for specific protocols (HTTP/1 or HTTP/2) or use cases (client, server, FFI).
+ //!
 @@ -44,7 +44,7 @@
  use http::header::HeaderName;
  #[cfg(all(any(feature = "client", feature = "server"), feature = "http1"))]
@@ -30,11 +44,11 @@
      /// Returns a view of all spellings associated with that header name,
      /// in the order they were found.
      #[cfg(feature = "client")]
--    pub(crate) fn get_all<'a>(
-+    pub fn get_all<'a>(
-         &'a self,
+-    pub(crate) fn get_all<'hdr>(
++    pub fn get_all<'hdr>(
+         &'hdr self,
          name: &HeaderName,
-     ) -> impl Iterator<Item = impl AsRef<[u8]> + 'a> + 'a {
+     ) -> impl Iterator<Item = impl AsRef<[u8]> + 'hdr> + 'hdr {
 @@ -180,7 +187,8 @@
      }
  
@@ -89,7 +103,7 @@
      where
          N: IntoHeaderName + Into<HeaderName> + Clone,
      {
-@@ -252,47 +263,8 @@
+@@ -252,12 +263,8 @@
          self.entry_order.push((name, idx));
      }
  
@@ -98,41 +112,6 @@
 -    // here.
 -    /// This returns an iterator that provides header names and indexes
 -    /// in the original order received.
--    ///
--    /// # Examples
--    /// ```no_run
--    /// use hyper::ext::OriginalHeaderOrder;
--    /// use hyper::header::{HeaderName, HeaderValue, HeaderMap};
--    ///
--    /// let mut h_order = OriginalHeaderOrder::default();
--    /// let mut h_map = Headermap::new();
--    ///
--    /// let name1 = b"Set-CookiE";
--    /// let value1 = b"a=b";
--    /// h_map.append(name1);
--    /// h_order.append(name1);
--    ///
--    /// let name2 = b"Content-Encoding";
--    /// let value2 = b"gzip";
--    /// h_map.append(name2, value2);
--    /// h_order.append(name2);
--    ///
--    /// let name3 = b"SET-COOKIE";
--    /// let value3 = b"c=d";
--    /// h_map.append(name3, value3);
--    /// h_order.append(name3)
--    ///
--    /// let mut iter = h_order.get_in_order()
--    ///
--    /// let (name, idx) = iter.next();
--    /// assert_eq!(b"a=b", h_map.get_all(name).nth(idx).unwrap());
--    ///
--    /// let (name, idx) = iter.next();
--    /// assert_eq!(b"gzip", h_map.get_all(name).nth(idx).unwrap());
--    ///
--    /// let (name, idx) = iter.next();
--    /// assert_eq!(b"c=d", h_map.get_all(name).nth(idx).unwrap());
--    /// ```
 -    pub(crate) fn get_in_order(&self) -> impl Iterator<Item = &(HeaderName, usize)> {
 +    /// Iterates the original names and their occurrence indexes.
 +    pub fn get_in_order(&self) -> impl Iterator<Item = &(HeaderName, usize)> {
@@ -149,7 +128,7 @@
  use crate::ext::OriginalHeaderOrder;
  use crate::headers;
  use crate::proto::h1::{
-@@ -248,8 +247,10 @@
+@@ -253,8 +252,10 @@
              None
          };
  
@@ -161,7 +140,7 @@
              Some(OriginalHeaderOrder::default())
          } else {
              None
-@@ -334,8 +335,6 @@
+@@ -342,8 +343,6 @@
              if let Some(header_case_map) = &mut header_case_map {
                  header_case_map.append(&name, slice.slice(header.name.0..header.name.1));
              }
@@ -170,7 +149,7 @@
              if let Some(header_order) = &mut header_order {
                  header_order.append(&name);
              }
-@@ -357,8 +356,6 @@
+@@ -365,8 +364,6 @@
          if let Some(header_case_map) = header_case_map {
              extensions.insert(header_case_map);
          }
@@ -179,7 +158,7 @@
          if let Some(header_order) = header_order {
              extensions.insert(header_order);
          }
-@@ -1108,8 +1105,10 @@
+@@ -1123,8 +1120,10 @@
                  None
              };
  
@@ -191,7 +170,7 @@
                  Some(OriginalHeaderOrder::default())
              } else {
                  None
-@@ -1136,8 +1135,6 @@
+@@ -1153,8 +1152,6 @@
                  if let Some(header_case_map) = &mut header_case_map {
                      header_case_map.append(&name, slice.slice(header.name.0..header.name.1));
                  }
@@ -200,7 +179,7 @@
                  if let Some(header_order) = &mut header_order {
                      header_order.append(&name);
                  }
-@@ -1150,8 +1147,6 @@
+@@ -1167,8 +1164,6 @@
              if let Some(header_case_map) = header_case_map {
                  extensions.insert(header_case_map);
              }
@@ -209,7 +188,7 @@
              if let Some(header_order) = header_order {
                  extensions.insert(header_order);
              }
-@@ -1225,7 +1220,15 @@
+@@ -1243,7 +1238,15 @@
          }
          extend(dst, b"\r\n");
  
@@ -226,7 +205,7 @@
              write_headers_original_case(
                  &msg.head.headers,
                  orig_headers,
-@@ -1615,6 +1618,37 @@
+@@ -1636,6 +1639,37 @@
  }
  
  #[cold]

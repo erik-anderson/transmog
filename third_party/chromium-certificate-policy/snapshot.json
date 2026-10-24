@@ -1,9 +1,9 @@
 {
-  "chromiumVersion": "154.0.8037.99",
-  "source": "https://raw.githubusercontent.com/chromium/chromium/154.0.8037.99/",
+  "chromiumVersion": "158.0.8117.2",
+  "source": "https://raw.githubusercontent.com/chromium/chromium/158.0.8117.2/",
   "sha256": {
-    "cert_verify_proc_blocklist.inc": "5609dd4d604eeb48d5c7c5734d036cbae318cdfb7d2234d1760f051557d16b44",
-    "log_list.json": "1cee97f63af904825d0373751482feb1d84cda0d749b8f29d26002c548a2194e",
+    "cert_verify_proc_blocklist.inc": "e8f7f45ee96c940f41ec889f22072ca00c96877edf7ad38a331bf7fa23df9333",
+    "log_list.json": "a3532b8ca773b15e60f3d0438a3b2e7b99561b99edbbcbe1b28bb690caaa8d48",
     "certificate_transparency.proto": "b889a2341351c4f92617313234188b42597d9c0e5584b0d1607a3b7b78c526a4",
     "certificate_transparency_config.proto": "441779aade2ae305b73ff25487ee8b9b1f1463b4d3559bd570f39af52ae4f7f0",
     "ct_timestamp.proto": "9b94545c75c100c36288c4a3cb4bfc9999b3fa019a8280bedd39b5f54bdd6ff8",

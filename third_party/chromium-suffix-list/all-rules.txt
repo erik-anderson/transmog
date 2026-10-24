@@ -50,6 +50,7 @@
 *.airflow.us-east-2.on.aws
 *.airflow.us-west-1.on.aws
 *.airflow.us-west-2.on.aws
+*.aivencloud.com
 *.alces.network
 *.ap-east-1.airflow.amazonaws.com
 *.ap-east-1.rds.amazonaws.com
@@ -83,6 +84,9 @@
 *.appwrite.run
 *.at.playit.plus
 *.at.ply.gg
+*.atlassian-3p-us-gov-mod.com
+*.atlassian-3p.com
+*.atlassian-isolated-3p.com
 *.auiusercontent.com
 *.awdev.ca
 *.awsapprunner.com
@@ -91,6 +95,7 @@
 *.begetcdn.cloud
 *.build.run
 *.builder.code.com
+*.builtwithrocket.new
 *.bwcloud-os-instance.de
 *.c.ts.net
 *.ca-central-1.airflow.amazonaws.com
@@ -111,7 +116,8 @@
 *.compute.amazonaws.com
 *.compute.amazonaws.com.cn
 *.compute.estate
-*.cryptonomic.net
+*.compute.herokuapp.com
+*.cursorusercontent.com
 *.customer-oci.com
 *.d.crm.dev
 *.database.run
@@ -124,6 +130,8 @@
 *.elb.amazonaws.com
 *.elb.amazonaws.com.cn
 *.er
+*.eth.limo
+*.eth.link
 *.eu-central-1.airflow.amazonaws.com
 *.eu-central-1.r.cloud.int.apple
 *.eu-central-1.rds.amazonaws.com
@@ -176,6 +184,7 @@
 *.me-central-1.rds.amazonaws.com
 *.me-south-1.airflow.amazonaws.com
 *.me-south-1.rds.amazonaws.com
+*.metaaiusercontent.com
 *.migration.run
 *.mm
 *.moonscale.io
@@ -191,7 +200,6 @@
 *.oci.customer-oci.com
 *.ocp.customer-oci.com
 *.ocs.customer-oci.com
-*.on-acorn.io
 *.on-k3s.io
 *.on-rancher.cloud
 *.on-rio.io
@@ -200,6 +208,7 @@
 *.oraclegovcloudapps.uk
 *.otap.co
 *.owo.codes
+*.p.azurewebsites.net
 *.pa.crm.dev
 *.paywhirl.com
 *.pb.crm.dev
@@ -284,6 +293,7 @@
 *.xmit.co
 *.yokohama.jp
 *.zerops.app
+*.zerops.zone
 0.bg
 0am.jp
 0g0.jp
@@ -363,6 +373,7 @@ abbvie
 abc
 abc.br
 abeno.osaka.jp
+aberdeen.wa.us
 abg.ec
 abiko.chiba.jp
 abira.hokkaido.jp
@@ -417,7 +428,6 @@ ac.rw
 ac.se
 ac.sz
 ac.th
-ac.tj
 ac.tz
 ac.ug
 ac.uk
@@ -444,7 +454,6 @@ actor
 ad
 ad.jp
 adachi.tokyo.jp
-adaptable.app
 adimo.co.uk
 adm.br
 adm.ec
@@ -469,6 +478,7 @@ aem.network
 aem.page
 aem.reviews
 aero
+aero.in
 aero.mv
 aerobatic.aero
 aeroclub.aero
@@ -506,9 +516,11 @@ ah.cn
 ah.no
 ai
 ai.bd
+ai.id
 ai.in
 ai.jo
 ai.kr
+ai.studio
 ai.vn
 aibetsu.hokkaido.jp
 aichi.jp
@@ -530,7 +542,6 @@ airtraffic.aero
 aisai.aichi.jp
 aisho.shiga.jp
 aiven.app
-aivencloud.com
 aizubange.fukushima.jp
 aizumi.tokushima.jp
 aizumisato.fukushima.jp
@@ -584,7 +595,6 @@ allfinanz
 allstate
 ally
 alp1.ae.flow.ch
-alpha-myqnapcloud.com
 alsace
 alstahaug.no
 alstom
@@ -594,6 +604,7 @@ alta.no
 altervista.org
 alto-adige.it
 altoadige.it
+alumni.in
 alvdal.no
 alwaysdata.net
 am
@@ -617,6 +628,7 @@ amica
 amli.no
 amot.no
 amplifyapp.com
+ams.scw.site
 amsterdam
 an.it
 analytics
@@ -685,7 +697,6 @@ apartments
 api.br
 api.gov.uk
 api.lp.dev
-api.stdlib.com
 apigee.io
 app
 app-ionos.space
@@ -710,7 +721,6 @@ appwrite.network
 aq
 aq.it
 aquarelle
-aquila.it
 ar
 ar.it
 ar.us
@@ -830,7 +840,7 @@ auction
 audi
 audible
 audio
-audnedaln.no
+audnedal.no
 augustow.pl
 aukra.no
 aure.no
@@ -839,7 +849,12 @@ aurskog-holand.no
 aus.basketball
 auspost
 austevoll.no
+australiacentral-01.azurewebsites.net
+australiacentral2-01.azurewebsites.net
+australiaeast-01.azurewebsites.net
+australiasoutheast-01.azurewebsites.net
 austrheim.no
+austriaeast-01.azurewebsites.net
 auth-fips.us-east-1.amazoncognito.com
 auth-fips.us-east-2.amazoncognito.com
 auth-fips.us-gov-east-1.amazoncognito.com
@@ -942,6 +957,7 @@ bahcavuotna.no
 bahccavuotna.no
 baidar.no
 baidu
+bainbridge-isl.wa.us
 bajddar.no
 balashov.su
 balat.no
@@ -1048,6 +1064,8 @@ beer
 beiarn.no
 bel.tr
 belem.br
+belgiumcentral-01.azurewebsites.net
+bellevue.wa.us
 belluno.it
 benevento.it
 bentre.vn
@@ -1106,7 +1124,6 @@ birkenes.no
 bitbucket.io
 bitter.jp
 biz
-biz.at
 biz.az
 biz.bb
 biz.cy
@@ -1195,8 +1212,8 @@ bones.replit.dev
 boo
 boo.jp
 book
+book.online
 booking
-bookonline.app
 boomla.net
 bosch
 bostik
@@ -1231,7 +1248,10 @@ brasilia.me
 brave.app
 brave.dev
 brave.io
+brazilsouth-01.azurewebsites.net
+brazilsoutheast-01.azurewebsites.net
 bremanger.no
+bremerton.wa.us
 brescia.it
 bridgestone
 brindisi.it
@@ -1329,13 +1349,17 @@ campinagrande.br
 campinas.br
 campobasso.it
 can.re
+canadacentral-01.azurewebsites.net
+canadaeast-01.azurewebsites.net
 canary.replit.dev
 candypop.jp
 canon
 cantho.vn
 canva-apps.cn
 canva-apps.com
+canva-code.cn
 canva-hosted-embed.com
+canva.link
 canva.run
 canvacode.com
 caobang.vn
@@ -1410,7 +1434,6 @@ cc.mo.us
 cc.ms.us
 cc.mt.us
 cc.nc.us
-cc.nd.us
 cc.ne.us
 cc.nh.us
 cc.nj.us
@@ -1454,7 +1477,11 @@ ce.it
 ce.leg.br
 cechire.com
 center
+centralia.wa.us
+centralindia-01.azurewebsites.net
+centralus-01.azurewebsites.net
 centralus.azurestaticapps.net
+centraluseuap-01.azurewebsites.net
 ceo
 cern
 certification.aero
@@ -1479,9 +1506,11 @@ charity
 charter.aero
 chase
 chat
+chatgpt.site
 cheap
 cheap.jp
 chef.ec
+chehalis.wa.us
 cherkassy.ua
 cherkasy.ua
 chernigov.ua
@@ -1503,6 +1532,7 @@ chikuma.nagano.jp
 chikusei.ibaraki.jp
 chikushino.fukuoka.jp
 chikuzen.fukuoka.jp
+chilecentral-01.azurewebsites.net
 chillout.jp
 chimkent.su
 chino.nagano.jp
@@ -1557,6 +1587,8 @@ cl
 cl.it
 claims
 clan.rip
+claude.app
+claudeusercontent.com
 cleaning
 clerk.app
 clerkstage.app
@@ -1576,11 +1608,11 @@ cloud.fedoraproject.org
 cloud.goog
 cloud.interhostsolutions.be
 cloud.nospamproxy.com
+cloud.run
 cloud66.ws
 cloudaccess.host
 cloudaccess.net
 cloudapp.net
-cloudapps.digital
 cloudbeesusercontent.io
 cloudflare-ipfs.com
 cloudflare.app
@@ -1716,6 +1748,8 @@ cockpit.nl-ams.scw.cloud
 cockpit.pl-waw.scw.cloud
 cocotte.jp
 codeberg.page
+codepen.app
+codepen.dev
 codes
 codespot.com
 coffee
@@ -1979,6 +2013,7 @@ cx
 cx.ua
 cy
 cy.eu.org
+cyb.ge
 cymru
 cyon.link
 cyon.site
@@ -2031,14 +2066,17 @@ ddl.fr-par.scw.cloud
 ddl.nl-ams.scw.cloud
 ddl.pl-waw.scw.cloud
 ddns-ip.net
+ddns.berlin
 ddns.me
 ddns.net
+ddns.wtf
 ddnsfree.com
 ddnsgeek.com
 ddnsguru.com
 ddnsking.com
 ddnss.de
 ddnss.org
+ddnssec.de
 dds
 de
 de.com
@@ -2067,12 +2105,12 @@ dell-ogliastra.it
 dellogliastra.it
 deloitte
 delta
-demo.datacenter.fi
 demo.datadetect.com
 demo.jelastic.com
 democracia.bo
 democrat
 demon.nl
+denmarkeast-01.azurewebsites.net
 deno-staging.dev
 deno.dev
 deno.net
@@ -2080,6 +2118,8 @@ dent.ec
 dental
 dentist
 dep.no
+deployagent.com
+deployagent.space
 deporte.bo
 des.br
 desa.id
@@ -2087,14 +2127,12 @@ desi
 design
 design.aero
 det.br
-deta.app
-deta.dev
 deus-canvas.com
 deuxfleurs.eu
 deuxfleurs.page
 dev
-dev-myqnapcloud.com
 dev.br
+dev.cv
 dev.project-study.com
 development.run
 devices.resinstaging.io
@@ -2103,7 +2141,6 @@ df.leg.br
 dfirma.pl
 dgca.aero
 dgn.ec
-dh.bytemark.co.uk
 dhl
 diadem.cloud
 diamonds
@@ -2155,7 +2192,11 @@ dnsdojo.com
 dnsdojo.net
 dnsdojo.org
 dnsfor.me
+dnshome.at
+dnshome.cloud
 dnshome.de
+dnshome.eu
+dnshome.it
 dnsiskinky.com
 dnsking.ch
 dnsup.net
@@ -2226,6 +2267,7 @@ dyn.addr.tools
 dyn.cosidns.de
 dyn.ddnss.de
 dyn.home-webserver.de
+dyn.now
 dynalias.com
 dynalias.net
 dynalias.org
@@ -2254,6 +2296,7 @@ dyndns.org
 dyndns.tv
 dyndns.ws
 dyndns1.de
+dyndnssec.de
 dynns.com
 dynserv.org
 dynu.net
@@ -2272,8 +2315,14 @@ e2b.app
 e4.cz
 earth
 east-kazakhstan.su
+eastasia-01.azurewebsites.net
 eastasia.azurestaticapps.net
+eastasiastage-01.azurewebsites.net
+eastus-01.azurewebsites.net
+eastus2-01.azurewebsites.net
 eastus2.azurestaticapps.net
+eastus2euap-01.azurewebsites.net
+eastus3-01.azurewebsites.net
 easypanel.app
 easypanel.host
 eat
@@ -2463,6 +2512,7 @@ eidsvoll.no
 eigersund.no
 eiheiji.fukui.jp
 ekloges.cy
+elastic.k2.cloud
 elasticbeanstalk.com
 elblag.pl
 elementor.cloud
@@ -2679,6 +2729,7 @@ events
 evje-og-hornnes.no
 exchange
 exchange.aero
+exe.xyz
 execute-api.af-south-1.amazonaws.com
 execute-api.ap-east-1.amazonaws.com
 execute-api.ap-northeast-1.amazonaws.com
@@ -2878,6 +2929,7 @@ forex
 forgeblocks.com
 forgot.her.name
 forgot.his.name
+forks.wa.us
 forli-cesena.it
 forlicesena.it
 forms.ac
@@ -2900,6 +2952,7 @@ fr-par-2.baremetal.scw.cloud
 fr.eu.org
 fr.it
 fra1-de.cloudjiffy.net
+frame.claudeusercontent.com
 framer.ai
 framer.app
 framer.media
@@ -2908,6 +2961,8 @@ framer.website
 framer.wiki
 framercanvas.com
 frana.no
+francecentral-01.azurewebsites.net
+francesouth-01.azurewebsites.net
 fredrikstad.no
 free
 freebox-os.com
@@ -2920,7 +2975,6 @@ freedesktop.org
 freemyip.com
 freesite.host
 freetls.fastly.net
-frei.no
 freight.aero
 frenchkiss.jp
 fresenius
@@ -2999,6 +3053,7 @@ frontier
 frosinone.it
 frosta.no
 froya.no
+fspages.org
 fst.br
 ftpaccess.cc
 ftr
@@ -3130,6 +3185,8 @@ gentlentapis.com
 geo.br
 george
 georgia.su
+germanynorth-01.azurewebsites.net
+germanywestcentral-01.azurewebsites.net
 getmyip.com
 gets-it.net
 gf
@@ -3142,10 +3199,12 @@ gh.srv.us
 gi
 gialai.vn
 giehtavuoatna.no
+gielda.no
 gift
 gifts
 gifu.gifu.jp
 gifu.jp
+gig-harbor.wa.us
 giize.com
 gildeskal.no
 ginan.gifu.jp
@@ -3436,6 +3495,7 @@ grimstad.no
 gripe
 griw.gov.pl
 grocery
+grok.me
 groks-the.info
 groks-this.info
 grondar.za
@@ -3610,6 +3670,8 @@ health.vn
 healthcare
 heavy.jp
 heguri.nara.jp
+heimdns.de
+heimdns.online
 heiyu.space
 hekinan.aichi.jp
 helioho.st
@@ -3626,6 +3688,7 @@ hercules-app.com
 hercules-dev.com
 here
 here-for-more.info
+here.now
 hermes
 herokuapp.com
 heroy.more-og-romsdal.no
@@ -3751,6 +3814,7 @@ holy.jp
 home-webserver.de
 home.arpa
 home.dyndns.org
+home64.de
 homebuilt.aero
 homedepot
 homedns.org
@@ -3780,6 +3844,7 @@ honjyo.akita.jp
 hoplix.shop
 hopto.me
 hopto.org
+hoquiam.wa.us
 hornindal.no
 horokanai.hokkaido.jp
 horonobe.hokkaido.jp
@@ -3810,6 +3875,7 @@ hra.health
 hrsn.dev
 hs.kr
 hsbc
+hstgr.cloud
 ht
 httpbin.org
 hu
@@ -3829,12 +3895,12 @@ hyogo.jp
 hypernode.io
 hyuga.miyazaki.jp
 hyundai
-hzc.io
 i.bg
 i.ng
 i.ph
 i.se
 i234.me
+ia.bo
 ia.br
 ia.us
 ia.ve
@@ -3984,7 +4050,9 @@ independent-panel.uk
 independent-review.uk
 inderoy.no
 indevs.in
+indiasouthcentral-01.azurewebsites.net
 indigena.bo
+indonesiacentral-01.azurewebsites.net
 industria.bo
 industries
 ine.kyoto.jp
@@ -3994,7 +4062,6 @@ inf.mk
 inf.ua
 infiniti
 info
-info.at
 info.az
 info.bb
 info.bd
@@ -4085,6 +4152,8 @@ ipfs.storacha.link
 ipfs.w3s.link
 ipifony.net
 ipiranga
+ipv64.de
+ipv64.net
 iq
 ir
 ir.md
@@ -4201,6 +4270,8 @@ ishinomaki.miyagi.jp
 isla.pr
 ismaili
 ispmanager.name
+israelcentral-01.azurewebsites.net
+israelnorthwest-01.azurewebsites.net
 isshiki.aichi.jp
 issmarterthanyou.com
 ist
@@ -4219,6 +4290,7 @@ it1.jenv-aruba.cloud
 itabashi.tokyo.jp
 itako.ibaraki.jp
 itakura.gunma.jp
+italynorth-01.azurewebsites.net
 itami.hyogo.jp
 itano.tokushima.jp
 itau
@@ -4272,6 +4344,8 @@ jambyl.su
 jampa.br
 jan-mayen.no
 janeway.replit.dev
+japaneast-01.azurewebsites.net
+japanwest-01.azurewebsites.net
 java
 jaworzno.pl
 jc.neen.it
@@ -4305,6 +4379,8 @@ jewelry
 jgora.pl
 jinsekikogen.hiroshima.jp
 jio
+jioindiacentral-01.azurewebsites.net
+jioindiawest-01.azurewebsites.net
 jl.cn
 jll
 jls-sto1.elastx.net
@@ -4585,6 +4661,7 @@ kerryhotels
 kerryproperties
 ketrzyn.pl
 keymachine.de
+keyport.wa.us
 keyword-on.net
 kfh
 kg
@@ -4599,6 +4676,7 @@ kherson.ua
 khmelnitskiy.ua
 khmelnytskyi.ua
 khplay.nl
+khsj.cn
 ki
 kia
 kibichuo.okayama.jp
@@ -4626,6 +4704,7 @@ kimobetsu.hokkaido.jp
 kin.okinawa.jp
 kindle
 kinghost.net
+kingston.wa.us
 kinko.kagoshima.jp
 kinokawa.wakayama.jp
 kira.aichi.jp
@@ -4721,6 +4800,8 @@ koobin.events
 koori.fukushima.jp
 kop.id
 kopervik.no
+koreacentral-01.azurewebsites.net
+koreasouth-01.azurewebsites.net
 koriyama.fukushima.jp
 koryo.nara.jp
 kosai.shizuoka.jp
@@ -4925,6 +5006,8 @@ lawyer
 laz.it
 lazio.it
 lb
+lb.ru-msk.k2.cloud
+lb.ru-spb.k2.cloud
 lc
 lc.it
 lcube-server.de
@@ -5000,7 +5083,6 @@ lib.mn.us
 lib.mo.us
 lib.mt.us
 lib.nc.us
-lib.nd.us
 lib.ne.us
 lib.nh.us
 lib.nj.us
@@ -5062,6 +5144,7 @@ living
 livorno.it
 lk
 llc
+llc.ge
 llp
 ln.cn
 lo.it
@@ -5102,7 +5185,6 @@ lomza.pl
 lon-1.paas.massivegrid.net
 lon-2.paas.massivegrid.net
 london
-london.cloudapps.digital
 londrina.br
 longan.vn
 loppa.no
@@ -5201,6 +5283,7 @@ makeup
 makinohara.shizuoka.jp
 makurazaki.kagoshima.jp
 malatvuopmi.no
+malaysiawest-01.azurewebsites.net
 malbork.pl
 malopolska.pl
 malselv.no
@@ -5265,7 +5348,6 @@ matsuzaki.shizuoka.jp
 matta-varjjat.no
 mattel
 mayfirst.info
-mayfirst.org
 mazowsze.pl
 mazury.pl
 mb.ca
@@ -5346,6 +5428,7 @@ messina.it
 messwithdns.com
 meteorapp.com
 mex.com
+mexicocentral-01.azurewebsites.net
 mg
 mg.gov.br
 mg.leg.br
@@ -5546,6 +5629,7 @@ mjondalen.no
 mk
 mk.eu.org
 mk.ua
+mkm.fan
 mktg.ec
 ml
 mlb
@@ -5738,6 +5822,7 @@ myfritz.link
 myfritz.net
 myftp.biz
 myftp.org
+mygov.scot
 myhome-server.de
 myiphost.com
 myjino.ru
@@ -6093,6 +6178,7 @@ neustar
 new
 news
 news.hu
+newzealandnorth-01.azurewebsites.net
 next
 nextdirect
 nexus
@@ -6248,7 +6334,13 @@ nordre-land.no
 nordreisa.no
 nore-og-uvdal.no
 north-kazakhstan.su
+northcentralus-01.azurewebsites.net
+northcentralusstage-01.azurewebsites.net
+northeastus5-01.azurewebsites.net
+northeurope-01.azurewebsites.net
 norton
+norwayeast-01.azurewebsites.net
+norwaywest-01.azurewebsites.net
 nose.osaka.jp
 nosegawa.nara.jp
 noshiro.akita.jp
@@ -6465,6 +6557,7 @@ olecko.pl
 olkusz.pl
 ollo
 olsztyn.pl
+olympia.wa.us
 om
 omachi.nagano.jp
 omachi.saga.jp
@@ -6491,14 +6584,12 @@ on-vapor.com
 on-web.fr
 on.biz.ng
 on.ca
-on.crisp.email
 on.expo.app
 on.staging.expo.app
 onagawa.miyagi.jp
 oncilla.mythic-beasts.com
 ondigitalocean.app
 one
-onfabrica.com
 ong
 ong.br
 onga.fukuoka.jp
@@ -6509,6 +6600,8 @@ onion
 onjuku.chiba.jp
 onl
 online
+online-server.cloud
+online.ge
 online.th
 onna.okinawa.jp
 ono.fukui.jp
@@ -6528,8 +6621,10 @@ ooshika.nagano.jp
 oow.gov.pl
 opal.ne.jp
 open
+opencloud.me
 opencraft.hosting
 opensocial.site
+opentunnel.xyz
 operaunite.com
 opik.net
 opoczno.pl
@@ -6809,7 +6904,6 @@ pa.it
 pa.leg.br
 pa.us
 paas.beebyte.io
-paas.datacenter.fi
 paas.hosted-by-previder.com
 paas.massivegrid.com
 pabianice.pl
@@ -6823,7 +6917,6 @@ pages.it.hs-heilbronn.de
 pages.torproject.net
 pages.wiardweb.com
 pagespeedmobilizer.com
-pagexl.com
 palermo.it
 palmas.br
 panasonic
@@ -6848,6 +6941,7 @@ passenger-association.aero
 patria.bo
 pavia.it
 pay
+payload.dev
 paynow.cx
 pb.ao
 pb.gov.br
@@ -6911,6 +7005,7 @@ pics
 pictet
 pictures
 pid
+piebox.site
 piedmont.it
 piemonte.it
 pigboat.jp
@@ -6939,6 +7034,7 @@ pl.ua
 place
 platter-app.dev
 play
+playcode.site
 playit.plus
 playstation
 playstation-cloud.com
@@ -6975,6 +7071,7 @@ pokrovsk.su
 pol.dz
 pol.ht
 pol.tr
+polandcentral-01.azurewebsites.net
 police.uk
 politica.bo
 politie
@@ -6990,12 +7087,17 @@ porn
 porsanger.no
 porsangu.no
 porsgrunn.no
+port-angeles.wa.us
+port-ludlow.wa.us
+port-orchard.wa.us
+port-townsend.wa.us
 port.fr
 post
 post.in
 postman-echo.com
 potager.org
 potenza.it
+poulsbo.wa.us
 powiat.pl
 poznan.pl
 pp.az
@@ -7003,6 +7105,7 @@ pp.ru
 pp.se
 pp.ua
 ppg.br
+pplx.app
 pr
 pr.gov.br
 pr.gov.pl
@@ -7027,6 +7130,7 @@ presse.ml
 preview.csb.app
 preview.emergentagent.com
 preview.site
+prg1-zerops.zone
 pri.ee
 prime
 primetel.cloud
@@ -7066,7 +7170,6 @@ promo
 properties
 property
 protection
-protonet.io
 pru
 prudential
 pruszkow.pl
@@ -7101,6 +7204,9 @@ punyu.jp
 pup.gov.pl
 pupu.jp
 pussycat.jp
+puter.app
+puter.site
+puter.work
 pv.it
 pvh.br
 pvt.ge
@@ -7116,6 +7222,7 @@ pz.it
 q.bg
 qa
 qa2.com
+qatarcentral-01.azurewebsites.net
 qbuser.com
 qc.ca
 qcx.io
@@ -7183,6 +7290,7 @@ rdy.jp
 re
 re.it
 re.kr
+re.no
 read
 read-books.org
 readmyblog.org
@@ -7207,6 +7315,7 @@ recreation.aero
 red
 red.sv
 redirectme.net
+redmond.wa.us
 redumbrella
 reed.replit.dev
 reg.dk
@@ -7231,6 +7340,7 @@ rennebu.no
 rennesoy.no
 rent
 rentals
+renton.wa.us
 rep.br
 rep.kp
 repair
@@ -7249,9 +7359,9 @@ reservd.com
 reservd.dev.thingdust.io
 reservd.disrec.thingdust.io
 reservd.testing.thingdust.io
-reserve-online.com
 reserve-online.net
 resindevice.io
+resolve.bar
 rest
 restaurant
 restaurant.bj
@@ -7309,6 +7419,7 @@ ro.gov.br
 ro.it
 ro.leg.br
 roan.no
+rocketpreview.app
 rocks
 rocky.page
 rodeo
@@ -7674,10 +7785,13 @@ s3.fr-par.scw.cloud
 s3.il-central-1.amazonaws.com
 s3.isk01.sakurastorage.jp
 s3.isk02.sakurastorage.jp
+s3.k2.cloud
 s3.me-central-1.amazonaws.com
 s3.me-south-1.amazonaws.com
 s3.nl-ams.scw.cloud
 s3.pl-waw.scw.cloud
+s3.ru-msk.k2.cloud
+s3.ru-spb.k2.cloud
 s3.sa-east-1.amazonaws.com
 s3.teckids.org
 s3.us-east-1.amazonaws.com
@@ -7829,6 +7943,7 @@ scb
 scbl.fr-par.scw.cloud
 scbl.nl-ams.scw.cloud
 scbl.pl-waw.scw.cloud
+sch.ac
 sch.ae
 sch.bd
 sch.id
@@ -7849,6 +7964,7 @@ schokokeks.net
 scholarships
 school
 school.ge
+school.in
 school.nz
 school.za
 schoolbus.jp
@@ -7864,6 +7980,7 @@ scot
 scrapper-site.net
 scrapping.cc
 scrysec.com
+scw.site
 sd
 sd.cn
 sd.us
@@ -7874,8 +7991,10 @@ se.eu.org
 se.gov.br
 se.leg.br
 se.net
+sea.wa.us
 search
 seat
+seattle.wa.us
 sebastopol.ua
 sec.ps
 secret.jp
@@ -7918,6 +8037,8 @@ sener
 sennan.osaka.jp
 senseering.net
 seoul.kr
+seprox.hooc.me
+sequim.wa.us
 sera.hiroshima.jp
 seranishi.hiroshima.jp
 servebbs.com
@@ -7976,6 +8097,7 @@ shari.hokkaido.jp
 sharp
 sheezy.games
 shell
+shelton.wa.us
 shia
 shibata.miyagi.jp
 shibata.niigata.jp
@@ -8103,6 +8225,7 @@ sigdal.no
 siiites.com
 siljan.no
 silk
+silverdale.wa.us
 simple-url.com
 simplesite.com
 simplesite.com.br
@@ -8224,6 +8347,13 @@ sosa.chiba.jp
 sosnowiec.pl
 soundcast.me
 sourcecraft.site
+southafricanorth-01.azurewebsites.net
+southafricawest-01.azurewebsites.net
+southcentralus-01.azurewebsites.net
+southcentralus2-01.azurewebsites.net
+southeastasia-01.azurewebsites.net
+southeastus5-01.azurewebsites.net
+southindia-01.azurewebsites.net
 sowa.ibaraki.jp
 soy
 sp.gov.br
@@ -8232,6 +8362,7 @@ sp.leg.br
 spa
 space
 space-to-rent.com
+spaincentral-01.azurewebsites.net
 spawnbase.app
 spb.ru
 spb.su
@@ -8260,6 +8391,8 @@ srht.site
 srl
 srv.br
 srv.us
+srvdns.de
+sryze.cc
 ss
 ss.it
 ssl.origin.cdn77-secure.org
@@ -8309,6 +8442,7 @@ stord.no
 stordal.no
 store
 store.bb
+store.cv
 store.dk
 store.nf
 store.ro
@@ -8316,7 +8450,6 @@ store.st
 store.ve
 storebase.store
 storfjord.no
-storj.farm
 strand.no
 stranda.no
 strapiapp.com
@@ -8368,10 +8501,13 @@ stuff-4-sale.us
 stufftoread.com
 style
 su
+su.it
 sub.jp
 subsc-pay.com
 subsc-pay.net
 sucks
+sud-sardegna.it
+sudsardegna.it
 sue.fukuoka.jp
 suedtirol.it
 suginami.tokyo.jp
@@ -8394,6 +8530,7 @@ sunagawa.hokkaido.jp
 sund.no
 sunndal.no
 sunnyday.jp
+suohkan.no
 supabase.co
 supabase.in
 supabase.net
@@ -8421,12 +8558,16 @@ sveio.no
 svelvik.no
 svn-repos.de
 swatch
+swedencentral-01.azurewebsites.net
+swedensouth-01.azurewebsites.net
 sweetpepper.org
 swidnica.pl
 swidnik.pl
 swiebodzin.pl
 swinoujscie.pl
 swiss
+switzerlandnorth-01.azurewebsites.net
+switzerlandwest-01.azurewebsites.net
 sx
 sx.cn
 sy
@@ -8443,6 +8584,8 @@ szex.hu
 szkola.pl
 t.bg
 t.se
+t3.storage.dev
+t3.storageapi.dev
 ta.it
 taa.it
 tab
@@ -8470,6 +8613,8 @@ taishi.osaka.jp
 taishin.fukushima.jp
 taito.tokyo.jp
 taiwa.miyagi.jp
+taiwannorth-01.azurewebsites.net
+taiwannorthwest-01.azurewebsites.net
 tajimi.gifu.jp
 tajiri.osaka.jp
 taka.hyogo.jp
@@ -8633,6 +8778,7 @@ tirol
 tj
 tj.cn
 tjeldsund.no
+tjielte.no
 tjmaxx
 tjome.no
 tjx
@@ -8655,10 +8801,12 @@ tm.se
 tm.za
 tmall
 tmp.br
+tmp.now
 tn
 tn.it
 tn.oxa.cloud
 tn.us
+tnx.ge
 to
 to.gov.br
 to.it
@@ -8859,7 +9007,6 @@ trentinoaltoadige.it
 trentinos-tirol.it
 trentinostirol.it
 trentinosud-tirol.it
-trentinosudtirol.it
 trentinosued-tirol.it
 trentinosuedtirol.it
 trentinsud-tirol.it
@@ -8966,9 +9113,10 @@ tz
 u.bg
 u.channelsdvr.net
 u.se
-u2-local.xnbay.com
-u2.xnbay.com
 ua
+uaecentral-01.azurewebsites.net
+uaenorth-01.azurewebsites.net
+ub.in
 ubank
 ube.yamaguchi.jp
 uber.space
@@ -8985,6 +9133,7 @@ udono.mie.jp
 ueda.nagano.jp
 ueno.gunma.jp
 uenohara.yamanashi.jp
+uenorge.no
 ufcfan.org
 ug
 ug.gov.pl
@@ -9004,12 +9153,14 @@ uk.net
 uk.oxa.cloud
 uk.primetel.cloud
 uk.reclaim.cloud
-uk0.bigv.io
 uki.kumamoto.jp
 ukiha.fukuoka.jp
+uksouth-01.azurewebsites.net
+ukwest-01.azurewebsites.net
 ullensaker.no
 ullensvang.no
 ulsan.kr
+ulstein.no
 ulvik.no
 um.gov.pl
 umaji.kochi.jp
@@ -9134,7 +9285,6 @@ val-d-aosta.it
 val-daosta.it
 val.run
 vald-aosta.it
-valdaosta.it
 valer.hedmark.no
 valer.ostfold.no
 valle-aosta.it
@@ -9177,6 +9327,7 @@ venice.it
 vennesla.no
 ventures
 verbania.it
+verbano-cusio-ossola.it
 vercel.app
 vercel.dev
 vercel.run
@@ -9228,12 +9379,14 @@ vi
 vi.it
 vi.us
 viajes
+vibehost.space
 vibo-valentia.it
 vibovalentia.it
 vic.au
 vic.edu.au
 vic.gov.au
 vicenza.it
+vicp.fun
 video
 video.hu
 vig
@@ -9259,6 +9412,8 @@ vision
 vistablog.ir
 viterbo.it
 viva
+vivenushop.com
+vivenushop.dev
 vivian.jp
 vivo
 vix.br
@@ -9269,7 +9424,6 @@ vladikavkaz.su
 vladimir.ru
 vladimir.su
 vlog.br
-vm.bytemark.co.uk
 vn
 vn.ua
 voagat.no
@@ -9289,7 +9443,7 @@ vp4.me
 vpndns.net
 vpnplus.to
 vps-host.net
-vps.hrsn.au
+vps.hrsn.net
 vps.mcdir.ru
 vr.it
 vs.it
@@ -9339,10 +9493,12 @@ watch
 watches
 watson.jp
 waw.pl
+waw.scw.site
 wazuka.kyoto.jp
 we.bs
 weather
 weatherchannel
+web
 web.app
 web.bo
 web.core.usgovcloudapi.net
@@ -9375,7 +9531,10 @@ webhosting.be
 weblike.jp
 webredirect.org
 website
+website.k2.cloud
 website.one
+website.ru-msk.k2.cloud
+website.ru-spb.k2.cloud
 website.yandexcloud.net
 websitebuilder.online
 websozai.jp
@@ -9434,8 +9593,14 @@ weibo
 weir
 wesley.replit.dev
 west1-us.cloudjiffy.net
+westcentralus-01.azurewebsites.net
+westeurope-01.azurewebsites.net
 westeurope.azurestaticapps.net
+westindia-01.azurewebsites.net
+westus-01.azurewebsites.net
+westus2-01.azurewebsites.net
 westus2.azurestaticapps.net
+westus3-01.azurewebsites.net
 wf
 whitesnow.jp
 whm.fr-par.scw.cloud
@@ -9695,6 +9860,7 @@ xn--h2breg3eve
 xn--h2brj9c
 xn--h2brj9c8c
 xn--h3cuzk1di.xn--o3cw4h
+xn--hamary-fya.no
 xn--hbmer-xqa.no
 xn--hcesuolo-7ya35b.no
 xn--hebda8b.xn--4dbrk0ce
@@ -9727,6 +9893,7 @@ xn--jlster-bya.no
 xn--jrpeland-54a.no
 xn--jvr189m
 xn--k7yn95e.jp
+xn--karlsy-fya.no
 xn--karmy-yua.no
 xn--kbrq7o.jp
 xn--kcrx77d1x4a
@@ -9982,7 +10149,6 @@ xn--ystre-slidre-ujb.no
 xn--zbx025d.jp
 xn--zf0avx.hk
 xn--zfr164b
-xnbay.com
 xs4all.space
 xtooldevice.com
 xx.kg
@@ -10043,6 +10209,7 @@ yandex
 yandexcloud.net
 yao.osaka.jp
 yaotsu.gifu.jp
+yarrow-point.wa.us
 yasaka.nagano.jp
 yashio.saitama.jp
 yashiro.hyogo.jp
@@ -10059,6 +10226,7 @@ yawatahama.ehime.jp
 yazu.tottori.jp
 ye
 yenbai.vn
+yicp.fun
 yk.ca
 yn.cn
 ynh.fr
@@ -10139,6 +10307,7 @@ zgora.pl
 zgorzelec.pl
 zhitomir.ua
 zhytomyr.ua
+zicp.fun
 zip
 zj.cn
 zlg.br

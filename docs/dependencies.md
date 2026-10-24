@@ -27,11 +27,12 @@ Happy Eyeballs policy. Hyper performs the TCP race; the quiche adapter races
 complete, verified QUIC/TLS handshakes. See
 [origin connection racing](networking.md).
 
-The BoringSSL crate family is temporarily patched to one immutable upstream Git
-revision for the unreleased signature-algorithm GREASE API. The patch applies to
-all four crates, including quiche's transitive dependencies. The exact revision
-lives in the workspace manifest and lockfile; remove the patch when a published
-release provides the same native API. Dependency policy permits only this Git
+The BoringSSL crate family uses the immutable Git commit of a published Boring
+release. The patch applies to all four crates, including quiche's transitive
+dependencies, and preserves the qualified source, native submodule and patch
+verification used by build preflight. The exact revision lives in the workspace
+manifest and lockfile. Moving to registry archives also requires equivalent
+source-provenance verification. Dependency policy permits only this Git
 repository, and ordinary registry dependencies remain required elsewhere.
 `hyper-boring` remains a test-only comparison connector; production uses
 Transmog's connector and stream adapter. The crypto-graph check enforces this.

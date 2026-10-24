@@ -208,13 +208,18 @@ pool-refresh, saved-capture, Google interoperability and UI checks.
 
 ## Rolling the Public Suffix List
 
+The bundled certificate-policy and PSL data currently come from Chromium
+158.0.8117.2, which includes the eight compromised eMudhra intermediate-key
+blocks added on October 20, 2026. These policy data are maintained independently
+of the measured Chromium 154 transport profiles and the PKI source comparison.
+
 The exact PSL snapshot, generated ICANN rules and MPL-2.0 license live in
 `third_party/chromium-suffix-list`. The generated full rule set also supplies
 private registries to the fixed CA domain restriction. To update to an exact
 Chromium release:
 
 ```powershell
-python scripts/update-chromium-psl.py --chromium-version 154.0.8037.99
+python scripts/update-chromium-psl.py --chromium-version 158.0.8117.2
 python scripts/update-chromium-psl.py --check
 python scripts/test-chromium-psl.py
 python scripts/dev-env.py --run cargo test -p transmog-tls-native hostname
