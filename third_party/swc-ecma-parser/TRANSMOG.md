@@ -1,6 +1,6 @@
 # Pinned SWC parser safety patch
 
-This directory preserves the published `swc_ecma_parser` 27.0.7 crate, with a
+This directory preserves the published `swc_ecma_parser` 46.1.2 crate, with a
 narrow resource-safety patch. The archive and every local file are SHA-256
 recorded in `transmog-snapshot.json`; `parser.patch` contains the complete diff
 against the published archive. Do not edit the Cargo registry cache.
@@ -14,15 +14,18 @@ nested blocks and namespaces do not. This permits shallow bundles such as the
 shipped MAPI visualizer without allowing larger partially constructed trees.
 Cloned and speculative parser states share that latch. The Transmog wrapper
 checks it even if upstream error recovery produces a module. Targets without a
-supported native stack boundary fail closed.
+supported native stack boundary fail closed. Both ordinary token advances and
+escaped IdentifierName advances pass through the same budget check.
 
-Four iterative AST-wrapping loops are limited to 128 iterations: expression
-subscripts (member/call/non-null chains), binary/assertion chains, TypeScript
-qualified names and postfix array/index types. This bounds partial tree depth
-on parser error paths that otherwise build deeply nested trees on constant
-native stack. The shared token budget bounds partial AST construction when many
-short loops compose across grammar levels; per-loop caps alone are insufficient.
-Recursive grammar paths separately retain the stack reserve.
+Iterative AST-wrapping loops are limited to 128 iterations: JavaScript and
+TypeScript expression subscripts (member/call/non-null chains), binary chains,
+TypeScript assertion chains, qualified names and postfix array/index types.
+The assertion-chain loop is separate from binary parsing in this upstream
+version and needs its own cap. These limits bound partial tree depth on parser
+error paths that otherwise build deeply nested trees on constant native stack.
+The shared token budget bounds partial AST construction when many short loops
+compose across grammar levels; per-loop caps alone are insufficient. Recursive
+grammar paths separately retain the stack reserve.
 
 The first-party compiler also bounds source to 1 MiB, recursive AST families to
 128 levels and 100,000 nodes, runs compiler work on guarded stack space, and

@@ -12,8 +12,8 @@ build = "build.rs"
 base64.workspace = true
 brotli.workspace = true
 getrandom.workspace = true
-microsoft-webui = "=0.0.30"
-microsoft-webui-handler = "=0.0.30"
+microsoft-webui = "=3.0.4"
+microsoft-webui-handler = "=3.0.4"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
@@ -21,7 +21,7 @@ transmog-app = { version = "=0.1.12", path = "../app" }
 
 [build-dependencies]
 brotli.workspace = true
-microsoft-webui = "=0.0.30"
+microsoft-webui = "=3.0.4"
 serde_json.workspace = true
 
 [lints]

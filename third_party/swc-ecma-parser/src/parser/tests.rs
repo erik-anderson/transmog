@@ -36,6 +36,21 @@ fn assert_module_error(src: &'static str) -> Module {
     })
 }
 
+/// Assert that Parser.parse_program returns [Program::Script] and has errors.
+#[track_caller]
+fn assert_script_error(src: &'static str) -> Script {
+    test_parser(src, Default::default(), |p| {
+        let program = p.parse_program()?;
+
+        let errors = p.take_errors();
+        assert_ne!(errors, Vec::new());
+
+        let script = program.expect_script();
+
+        Ok(script)
+    })
+}
+
 #[test]
 fn parse_program_module_01() {
     module("import 'foo';");
@@ -47,6 +62,109 @@ fn parse_program_script_01() {
     script("let a = 5;");
     script("function foo() {}");
     script("const a = 00176;");
+}
+
+#[test]
+fn parse_program_unambiguous_await() {
+    for source in [
+        "await(undefined);",
+        "await + 0;",
+        "await - 0;",
+        "await * 2;",
+        "await ** 2;",
+        "await = 2;",
+        "await++;",
+        "await < 2;",
+        "await && value;",
+        "await\n0;",
+        "await[0];",
+        "await`template`;",
+        "await / 1 / u; var await = 1, u = 1;",
+        "await.foo;",
+        "await => 0;",
+        "await in object;",
+        "await instanceof Promise;",
+        "for (await of values) {}",
+        "function f() { await(undefined); }",
+        "function f(value = await(undefined)) {}",
+        "const f = () => await(undefined);",
+        "async function f() { await value; }",
+        "async function f() { for await (const value of values) {} }",
+        "class C { field = await(undefined); }",
+    ] {
+        script(source);
+    }
+
+    for source in [
+        "await value;",
+        "{ await value; }",
+        "for await (const value of values) {}",
+        "await + 0; export {};",
+        "await(undefined); export {};",
+    ] {
+        module(source);
+    }
+
+    assert_module_error("function f() { await(undefined); } export {};");
+    assert_module_error("class C { field = await(undefined); } export {};");
+    assert_module_error("async (x = await(undefined)) => {};");
+    assert_script_error("class C { field = await value; }");
+    assert_script_error("class C { static { await value; } }");
+
+    for source in [
+        "await as unknown;",
+        "await satisfies unknown;",
+        "await! + 1;",
+    ] {
+        test_parser(source, Syntax::Typescript(TsSyntax::default()), |p| {
+            p.parse_program().map(Program::expect_script)
+        });
+    }
+}
+
+#[test]
+fn parse_program_await_call_argument_as_script_call_expression() {
+    let script = script(
+        r#"
+        function await() {}
+        import("./fixture.js", await(undefined));
+        "#,
+    );
+
+    let Stmt::Expr(ExprStmt { expr, .. }) = &script.body[1] else {
+        panic!("expected a dynamic import expression statement")
+    };
+    let Expr::Call(import_call) = &**expr else {
+        panic!("expected a dynamic import call")
+    };
+    let Expr::Call(await_call) = &*import_call.args[1].expr else {
+        panic!("expected the second argument to be a call expression")
+    };
+    let Callee::Expr(callee) = &await_call.callee else {
+        panic!("expected an expression callee")
+    };
+    let Expr::Ident(callee) = &**callee else {
+        panic!("expected an identifier callee")
+    };
+
+    assert_eq!(callee.sym, "await");
+}
+
+#[test]
+fn parse_program_retry_preserves_comments_once() {
+    let comments = SingleThreadedComments::default();
+    test_parser_comment(
+        &comments,
+        "/* leading */ await(undefined); // trailing",
+        Default::default(),
+        |p| p.parse_program(),
+    );
+
+    let (leading, trailing) = comments.take_all();
+    let leading_count: usize = leading.borrow().values().map(Vec::len).sum();
+    let trailing_count: usize = trailing.borrow().values().map(Vec::len).sum();
+
+    assert_eq!(leading_count + trailing_count, 2);
 }
 
 #[test]
@@ -277,8 +395,9 @@ fn issue_2264_3() {
 #[test]
 fn issue_2339_1() {
     let c = SingleThreadedComments::default();
+    // Use `<T,>` instead of `<T>` because `<T>` is ambiguous with JSX in TSX mode
     let s = "
-        const t = <T>() => {
+        const t = <T,>() => {
             // 1
             /* 2 */
             test;
@@ -296,8 +415,214 @@ fn issue_2339_1() {
 
     let (leading, trailing) = c.take_all();
     assert_eq!(leading.borrow().len(), 1);
-    assert_eq!(leading.borrow().get(&BytePos(80)).unwrap().len(), 2);
+    // Adjusted byte position due to trailing comma in `<T,>`
+    assert_eq!(leading.borrow().get(&BytePos(81)).unwrap().len(), 2);
     assert!(trailing.borrow().is_empty());
+}
+
+/// Test that `<T>() => {}` is invalid in TSX mode (issue #10598)
+/// TypeScript treats `<T>` as JSX in .tsx files, so this syntax should fail.
+#[test]
+fn issue_10598() {
+    // In TSX mode, `<T>() => {}` should fail because `<T>` looks like JSX
+    let s = "const t = <T>() => { test; };";
+    let result = std::panic::catch_unwind(|| {
+        test_parser(
+            s,
+            Syntax::Typescript(TsSyntax {
+                tsx: true,
+                ..Default::default()
+            }),
+            |p| p.parse_typescript_module(),
+        )
+    });
+    // The parsing should fail (panic in test_parser or return an error)
+    assert!(
+        result.is_err(),
+        "Expected parsing to fail for <T>() => {{}} in TSX mode"
+    );
+}
+
+/// Verify that `<T,>() => {}` is valid in TSX mode (workaround syntax)
+#[test]
+fn issue_10598_valid_tsx_syntax() {
+    // `<T,>` with trailing comma is unambiguous and should parse successfully
+    let s = "const t = <T,>() => { test; };";
+    test_parser(
+        s,
+        Syntax::Typescript(TsSyntax {
+            tsx: true,
+            ..Default::default()
+        }),
+        |p| p.parse_typescript_module(),
+    );
+}
+
+/// Verify that `<T extends unknown>() => {}` is valid in TSX mode
+#[test]
+fn issue_10598_valid_tsx_syntax_with_constraint() {
+    // `<T extends unknown>` is unambiguous and should parse successfully
+    let s = "const t = <T extends unknown>() => { test; };";
+    test_parser(
+        s,
+        Syntax::Typescript(TsSyntax {
+            tsx: true,
+            ..Default::default()
+        }),
+        |p| p.parse_typescript_module(),
+    );
+}
+
+/// Verify that `<T>() => {}` is still valid in non-TSX TypeScript mode
+#[test]
+fn issue_10598_valid_non_tsx() {
+    // In regular .ts mode (not TSX), `<T>() => {}` should work
+    let s = "const t = <T>() => { test; };";
+    test_parser(
+        s,
+        Syntax::Typescript(TsSyntax {
+            tsx: false,
+            ..Default::default()
+        }),
+        |p| p.parse_typescript_module(),
+    );
+}
+
+#[test]
+fn this_parameters_are_split_from_params_during_recovery() {
+    test_parser(
+        "function valid(this: Context) {}
+function optional(this?: Context) {}
+function initialized(this = value) {}
+function optionalInitialized(this?: Context = value) {}
+function nestedObject({ this = value }) {}
+function nestedArray([this = value]) {}
+function misplaced(value: unknown, this: Context, this: OtherContext) {}
+function misplacedInitialized(value: unknown, this = fallback) {}
+class Accessors {
+    constructor(this = fallback) {}
+    get value(this?: Context) {
+        return fallback;
+    }
+    set value(this?: Context, value: number) {}
+}
+const object = {
+    get value(this?: Context) {
+        return fallback;
+    },
+    set value(this?: Context, value: number) {}
+};",
+        Syntax::Typescript(TsSyntax::default()),
+        |p| {
+            let module = p.parse_typescript_module()?;
+
+            let errors = p.take_errors();
+            assert_eq!(
+                errors
+                    .iter()
+                    .filter(|error| matches!(
+                        error.kind(),
+                        SyntaxError::Expected(expected, got)
+                            if expected == "," && got == "?"
+                    ))
+                    .count(),
+                6,
+                "errors: {errors:#?}"
+            );
+            assert_eq!(
+                errors
+                    .iter()
+                    .filter(|error| matches!(
+                        error.kind(),
+                        SyntaxError::Expected(expected, got)
+                            if expected == "," && got == "="
+                    ))
+                    .count(),
+                3,
+                "errors: {errors:#?}"
+            );
+            assert_eq!(
+                errors
+                    .iter()
+                    .filter(|error| matches!(error.kind(), SyntaxError::TS2680))
+                    .count(),
+                3,
+                "errors: {errors:#?}"
+            );
+            assert!(
+                errors
+                    .iter()
+                    .all(|error| !matches!(error.kind(), SyntaxError::TS1015)),
+                "errors: {errors:#?}"
+            );
+            assert_eq!(
+                errors
+                    .iter()
+                    .filter(|error| matches!(error.kind(), SyntaxError::GetterParam))
+                    .count(),
+                0,
+                "errors: {errors:#?}"
+            );
+            assert_eq!(
+                errors
+                    .iter()
+                    .filter(|error| matches!(error.kind(), SyntaxError::SetterParam))
+                    .count(),
+                0,
+                "errors: {errors:#?}"
+            );
+
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(valid))) = &module.body[0] else {
+                panic!("expected a function declaration")
+            };
+            assert!(valid.function.this_param.is_some());
+
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(optional))) = &module.body[1] else {
+                panic!("expected a function declaration")
+            };
+            assert!(optional.function.this_param.is_some());
+            assert!(optional.function.params.is_empty());
+
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(initialized))) = &module.body[2] else {
+                panic!("expected a function declaration")
+            };
+            assert!(initialized.function.this_param.is_some());
+            assert!(initialized.function.params.is_empty());
+
+            let ModuleItem::Stmt(Stmt::Decl(Decl::Fn(optional_initialized))) = &module.body[3]
+            else {
+                panic!("expected a function declaration")
+            };
+            assert!(optional_initialized.function.this_param.is_some());
+            assert!(optional_initialized.function.params.is_empty());
+
+            Ok(module)
+        },
+    );
+}
+
+#[test]
+fn type_signature_this_initializer_error() {
+    test_parser(
+        "type Signature = (this = fallback) => void;",
+        Syntax::Typescript(TsSyntax::default()),
+        |p| {
+            p.parse_typescript_module()
+                .expect_err("a function type parameter cannot have an initializer");
+
+            let errors = p.take_errors();
+            assert!(
+                errors.iter().any(|error| matches!(
+                    error.kind(),
+                    SyntaxError::Expected(expected, got)
+                        if expected == "," && got == "="
+                )),
+                "errors: {errors:#?}"
+            );
+
+            Ok(())
+        },
+    );
 }
 
 #[test]
@@ -540,7 +865,7 @@ fn async_arrow() {
             is_async: true,
             is_generator: false,
             params: Vec::new(),
-            body: Box::new(BlockStmtOrExpr::Expr(expr("foo"))),
+            body: Box::new(ArrowFunctionBody::Expr(expr("foo"))),
             ..Default::default()
         }))
     );
@@ -567,9 +892,9 @@ fn object_rest_pat() {
                 })],
                 type_ann: None
             })],
-            body: Box::new(BlockStmtOrExpr::BlockStmt(BlockStmt {
+            body: Box::new(ArrowFunctionBody::FunctionBody(FunctionBody {
                 span: DUMMY_SP,
-                ..Default::default()
+                stmts: Vec::new(),
             })),
             ..Default::default()
         }))
@@ -645,7 +970,7 @@ fn arrow_fn_no_args() {
             is_async: false,
             is_generator: false,
             params: Vec::new(),
-            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
+            body: Box::new(ArrowFunctionBody::Expr(expr("1"))),
             ..Default::default()
         }))
     );
@@ -659,7 +984,7 @@ fn arrow_fn() {
             is_async: false,
             is_generator: false,
             params: vec![Pat::Ident(Ident::new_no_ctxt(atom!("a"), DUMMY_SP).into())],
-            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
+            body: Box::new(ArrowFunctionBody::Expr(expr("1"))),
             ..Default::default()
         }))
     );
@@ -678,7 +1003,7 @@ fn arrow_fn_rest() {
                 arg: Box::new(Pat::Ident(Ident::new_no_ctxt(atom!("a"), DUMMY_SP).into())),
                 type_ann: None
             })],
-            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
+            body: Box::new(ArrowFunctionBody::Expr(expr("1"))),
 
             ..Default::default()
         }))
@@ -691,7 +1016,7 @@ fn arrow_fn_no_paren() {
         Box::new(Expr::Arrow(ArrowExpr {
             span: DUMMY_SP,
             params: vec![Pat::Ident(Ident::new_no_ctxt(atom!("a"), DUMMY_SP).into())],
-            body: Box::new(BlockStmtOrExpr::Expr(expr("1"))),
+            body: Box::new(ArrowFunctionBody::Expr(expr("1"))),
             ..Default::default()
         }))
     );

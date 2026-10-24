@@ -15,11 +15,10 @@ yanked = "deny"
 # Remove this exception before enabling the Linux desktop target.
 #
 # `paste` is an unmaintained proc-macro used only while building the pinned V8
-# runtime. `smartstring` is an unmaintained SWC parser dependency reached
-# through the pinned direct SWC toolchain. Neither advisory reports a security
-# vulnerability and neither dependency currently has a safe compatible upgrade.
-# Keep these exact exceptions only until the upstream V8 and SWC stacks
-# remove the dependencies; vulnerability advisories remain denied globally.
+# runtime. This advisory reports no security vulnerability and the pinned V8
+# stack has no compatible upgrade that removes it. Keep this exact exception
+# only until upstream removes the dependency; vulnerability advisories remain
+# denied globally.
 # Tauri single-instance still requires zbus 5 and its standalone crates.
 # These maintenance advisories describe their merge into zbus 6. Neither Windows
 # target reaches them. Remove the exceptions after the plugin migrates to zbus 6;
@@ -27,7 +26,6 @@ yanked = "deny"
 ignore = [
     "RUSTSEC-2024-0370",
     "RUSTSEC-2024-0436",
-    "RUSTSEC-2026-0249",
     "RUSTSEC-2026-0370",
     "RUSTSEC-2026-0371",
     "RUSTSEC-2026-0372",

@@ -20,7 +20,7 @@ Transmog includes the following third-party software.
 | ar_archive_writer | 0.5.3 | Apache-2.0 WITH LLVM-exception | https://github.com/rust-lang/ar_archive_writer |
 | argon2 | 0.6.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/password-hashes |
 | ascii | 1.1.0 | Apache-2.0 OR MIT | https://github.com/tomprogrammer/rust-ascii |
-| ast_node | 5.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| ast_node | 7.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | async-broadcast | 0.7.2 | MIT OR Apache-2.0 | https://github.com/smol-rs/async-broadcast |
 | async-channel | 2.5.0 | Apache-2.0 OR MIT | https://github.com/smol-rs/async-channel |
 | async-compression | 0.4.51 | MIT OR Apache-2.0 | https://github.com/Nullus157/async-compression |
@@ -147,6 +147,7 @@ Transmog includes the following third-party software.
 | dlopen2_derive | 0.4.3 | MIT | https://github.com/OpenByteDev/dlopen2 |
 | dom_query | 0.28.0 | MIT | https://github.com/niklak/dom_query |
 | dpi | 0.1.2 | Apache-2.0 AND MIT | https://github.com/rust-windowing/winit |
+| dragonbox_ecma | 0.1.12 | Apache-2.0 WITH LLVM-exception OR BSL-1.0 | https://github.com/magic-akari/dragonbox |
 | dtoa | 1.0.11 | MIT OR Apache-2.0 | https://github.com/dtolnay/dtoa |
 | dtoa-short | 0.3.5 | MPL-2.0 | https://github.com/upsuper/dtoa-short |
 | dunce | 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | https://gitlab.com/kornelski/dunce |
@@ -227,7 +228,7 @@ Transmog includes the following third-party software.
 | hmac | 0.12.1 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
 | hmac | 0.13.0 | MIT OR Apache-2.0 | https://github.com/RustCrypto/MACs |
 | home | 0.5.12 | MIT OR Apache-2.0 | https://github.com/rust-lang/cargo |
-| hstr | 3.0.6 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| hstr | 4.0.3 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | html-escape | 0.2.15 | MIT | https://github.com/magiclen/html-escape |
 | html5ever | 0.39.0 | MIT OR Apache-2.0 | https://github.com/servo/html5ever |
 | http | 1.5.0 | MIT OR Apache-2.0 | https://github.com/hyperium/http |
@@ -308,14 +309,14 @@ Transmog includes the following third-party software.
 | matchers | 0.2.0 | MIT | https://github.com/hawkw/matchers |
 | memchr | 2.8.3 | Unlicense OR MIT | https://github.com/BurntSushi/memchr |
 | memoffset | 0.9.1 | MIT | https://github.com/Gilnaa/memoffset |
-| microsoft-webui | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-discovery | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-expressions | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-handler | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-parser | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-protocol | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-state | 0.0.30 | MIT | https://github.com/microsoft/webui |
-| microsoft-webui-tokens | 0.0.30 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-discovery | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-expressions | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-handler | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-parser | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-protocol | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-state | 3.0.4 | MIT | https://github.com/microsoft/webui |
+| microsoft-webui-tokens | 3.0.4 | MIT | https://github.com/microsoft/webui |
 | mime | 0.3.17 | MIT OR Apache-2.0 | https://github.com/hyperium/mime |
 | minimal-lexical | 0.2.1 | MIT/Apache-2.0 | https://github.com/Alexhuszagh/minimal-lexical |
 | minisign-verify | 0.3.0 | MIT | https://github.com/jedisct1/rust-minisign-verify |
@@ -459,7 +460,6 @@ Transmog includes the following third-party software.
 | rustls-webpki | 0.103.16 | ISC | https://github.com/rustls/webpki |
 | rustversion | 1.0.23 | MIT OR Apache-2.0 | https://github.com/dtolnay/rustversion |
 | ryu | 1.0.23 | Apache-2.0 OR BSL-1.0 | https://github.com/dtolnay/ryu |
-| ryu-js | 1.0.3 | Apache-2.0 OR BSL-1.0 | https://github.com/boa-dev/ryu-js |
 | same-file | 1.0.6 | Unlicense/MIT | https://github.com/BurntSushi/same-file |
 | schannel | 0.1.29 | MIT | https://github.com/steffengy/schannel-rs |
 | schemars | 0.8.22 | MIT | https://github.com/GREsau/schemars |
@@ -504,7 +504,6 @@ Transmog includes the following third-party software.
 | siphasher | 1.0.4 | MIT OR Apache-2.0 | https://github.com/jedisct1/rust-siphash |
 | slab | 0.4.12 | MIT | https://github.com/tokio-rs/slab |
 | smallvec | 1.16.2 | MIT OR Apache-2.0 | https://github.com/servo/rust-smallvec |
-| smartstring | 1.0.1 | MPL-2.0+ | https://github.com/bodil/smartstring |
 | socket2 | 0.6.5 | MIT OR Apache-2.0 | https://github.com/rust-lang/socket2 |
 | softbuffer | 0.4.8 | MIT OR Apache-2.0 | https://github.com/rust-windowing/softbuffer |
 | soup3 | 0.5.0 | MIT | https://gitlab.gnome.org/World/Rust/soup3-rs |
@@ -520,24 +519,25 @@ Transmog includes the following third-party software.
 | string_enum | 1.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | strsim | 0.11.1 | MIT | https://github.com/rapidfuzz/strsim-rs |
 | subtle | 2.6.1 | BSD-3-Clause | https://github.com/dalek-cryptography/subtle |
-| swc_allocator | 4.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_atoms | 9.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_common | 17.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_config | 3.1.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_allocator | 5.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_atoms | 10.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_common | 26.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_config | 6.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_config_macro | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_ast | 18.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_codegen | 20.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_ast | 29.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_codegen | 32.0.5 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_ecma_codegen_macros | 2.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_parser | 27.0.7 | Apache-2.0 | https://static.crates.io/crates/swc_ecma_parser/swc_ecma_parser-27.0.7.crate |
-| swc_ecma_transforms_base | 30.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_transforms_react | 33.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_transforms_typescript | 33.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_utils | 24.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_ecma_visit | 18.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_hooks | 1.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_parser | 46.1.2 | Apache-2.0 | https://static.crates.io/crates/swc_ecma_parser/swc_ecma_parser-46.1.2.crate |
+| swc_ecma_transforms_base | 50.0.3 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_transforms_react | 56.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_transforms_typescript | 56.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_utils | 35.1.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_ecma_visit | 29.0.0 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_eq_ignore_macros | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swc_macros_common | 1.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
-| swc_sourcemap | 9.3.4 | BSD-3-Clause | https://github.com/swc-project/swc-sourcemap |
-| swc_visit | 2.0.1 | Apache-2.0 | https://github.com/swc-project/swc.git |
+| swc_sourcemap | 10.0.2 | BSD-3-Clause | https://github.com/swc-project/swc.git |
+| swc_visit | 2.0.2 | Apache-2.0 | https://github.com/swc-project/swc.git |
 | swift-rs | 1.0.9 | MIT OR Apache-2.0 | https://github.com/Brendonovich/swift-rs |
 | syn | 1.0.109 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
 | syn | 2.0.119 | MIT OR Apache-2.0 | https://github.com/dtolnay/syn |
@@ -742,13 +742,13 @@ The registry archives below are vendored with local patches. Original license an
 | h2 | 7d29020232d6aa3fb1daca64c1127cf662cf97f254ae16c18c05b8ab635fc118 | [third_party/rust-transport/patches/h2.patch](third_party/rust-transport/patches/h2.patch) | ac2771bb502d4449fc1fc24c9046b4a97b645be7830f6feb0f7246b1f32a6014 |
 | hyper | 2c3e324da4c95177d6291d4c8730197c0d1822f8a9766814a4a44fa5ab797c9c | [third_party/rust-transport/patches/hyper.patch](third_party/rust-transport/patches/hyper.patch) | 2e736f88ed51aea63ffc14a48488e66b7bb4bc12476c0208b234cd4729f21113 |
 | quiche | 52b35a721a2a56797347929745fa783fc99e680d9484b80324ce40106b75493a | [third_party/rust-transport/patches/quiche.patch](third_party/rust-transport/patches/quiche.patch) | eda5505fa0c32aab58a1f79606ef7c5b5693b33e49321d6a5ca2d4d488a36484 |
-| swc_ecma_parser | 7f1a51af1a92cd4904c073b293e491bbc0918400a45d58227b34c961dd6f52d7 | [third_party/swc-ecma-parser/parser.patch](third_party/swc-ecma-parser/parser.patch) | 8312dd9292c30dd8442a4d3cc7e70d44bc0b60762da4e724a0a863fb4133424f |
+| swc_ecma_parser | a032f869f6690d4eddd6e67757c8d849f2c8219d8c5f3bb05a7ec8b456867642 | [third_party/swc-ecma-parser/parser.patch](third_party/swc-ecma-parser/parser.patch) | 7fb96a5ca82d3c6398819742d37a012a3777182bf3b7e00f331d21608dda9d1e |
 
 ## Desktop npm production packages
 
 | Package | Version | License expression | Source |
 |---|---:|---|---|
-| @microsoft/webui-framework | 0.0.30 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-0.0.30.tgz |
+| @microsoft/webui-framework | 3.0.4 | MIT | https://registry.npmjs.org/@microsoft/webui-framework/-/webui-framework-3.0.4.tgz |
 | @tauri-apps/api | 2.12.4 | Apache-2.0 OR MIT | https://registry.npmjs.org/@tauri-apps/api/-/api-2.12.4.tgz |
 | @types/trusted-types | 2.0.7 | MIT | https://registry.npmjs.org/@types/trusted-types/-/trusted-types-2.0.7.tgz |
 | dompurify | 3.4.17 | (MPL-2.0 OR Apache-2.0) | https://registry.npmjs.org/dompurify/-/dompurify-3.4.17.tgz |

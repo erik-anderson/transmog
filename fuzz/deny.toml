@@ -4,10 +4,7 @@ targets = ["x86_64-unknown-linux-gnu"]
 
 [advisories]
 yanked = "deny"
-# The shipping policy already accepts this maintenance-only SWC dependency:
-# the pinned parser has no compatible upgrade that removes smartstring.
-# Keep fuzzing the same compiler graph; vulnerability advisories stay denied.
-ignore = ["RUSTSEC-2026-0249"]
+ignore = []
 
 [licenses]
 confidence-threshold = 0.93
@@ -18,7 +15,6 @@ allow = [
     "BSD-3-Clause",
     "ISC", # libloading through BoringSSL bindgen; also allowed by the shipping policy
     "MIT",
-    "MPL-2.0", # smartstring via the pinned SWC parser; also allowed by shipping policy
     "NCSA",
     "Unicode-3.0",
     "Zlib",

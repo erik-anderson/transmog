@@ -51,6 +51,9 @@ transmog-script-supervisor = { version = "=0.1.12", path = "../script-supervisor
 transmog-session = { version = "=0.1.12", path = "../proxy-session" }
 transmog-tls = { version = "=0.1.12", path = "../proxy-tls" }
 
+[build-dependencies]
+serde_json.workspace = true
+
 [lints]
 workspace = true
 

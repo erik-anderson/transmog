@@ -67,13 +67,13 @@ foreign-types = "=0.5.0"
 brotli = "=9.0.0"
 bytes = { version = "1.11.1", features = ["serde"] }
 stacker = "=0.1.25"
-swc_common = { version = "=17.0.1", features = ["sourcemap"] }
-swc_ecma_ast = "=18.0.0"
-swc_ecma_parser = "=27.0.7"
-swc_ecma_codegen = "=20.0.2"
-swc_ecma_transforms_base = { version = "=30.0.1", features = ["inline-helpers"] }
-swc_ecma_transforms_typescript = "=33.0.0"
-swc_ecma_visit = "=18.0.1"
+swc_common = { version = "=26.0.0", features = ["sourcemap"] }
+swc_ecma_ast = "=29.0.2"
+swc_ecma_parser = "=46.1.2"
+swc_ecma_codegen = "=32.0.5"
+swc_ecma_transforms_base = { version = "=50.0.3", features = ["inline-helpers"] }
+swc_ecma_transforms_typescript = "=56.0.1"
+swc_ecma_visit = "=29.0.0"
 url = "=2.5.8"
 v8 = { version = "=152.2.0", default-features = false, features = ["simdutf"] }
 crc32fast = "1.5.3"

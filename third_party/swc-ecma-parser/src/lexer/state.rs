@@ -1,19 +1,25 @@
 use std::mem::take;
 
-use swc_atoms::wtf8::CodePoint;
-use swc_common::BytePos;
+use swc_atoms::{
+    wtf8::{CodePoint, Wtf8, Wtf8Buf},
+    Wtf8Atom,
+};
+use swc_common::{BytePos, Span, Spanned};
 use swc_ecma_ast::EsVersion;
 
 use super::{Context, Input, Lexer};
 use crate::{
+    byte_search,
     error::{Error, SyntaxError},
     input::Tokens,
     lexer::{
         char_ext::CharExt,
         comments_buffer::{BufferedCommentKind, CommentsBufferCheckpoint},
+        search::SafeByteMatchTable,
         token::{Token, TokenAndSpan, TokenValue},
         LexResult,
     },
+    safe_byte_match_table,
     syntax::SyntaxFlags,
 };
 
@@ -24,6 +30,14 @@ bitflags::bitflags! {
     }
 }
 
+#[cfg(not(feature = "tsrx"))]
+static JSX_CHILD_TABLE: SafeByteMatchTable =
+    safe_byte_match_table!(|b| matches!(b, b'{' | b'}' | b'<' | b'>' | b'&'));
+
+#[cfg(feature = "tsrx")]
+static JSX_CHILD_TABLE: SafeByteMatchTable =
+    safe_byte_match_table!(|b| matches!(b, b'{' | b'}' | b'<' | b'>' | b'&' | b'@'));
+
 /// State of lexer.
 ///
 /// Ported from babylon.
@@ -31,13 +45,11 @@ bitflags::bitflags! {
 pub struct State {
     /// if line break exists between previous token and new token?
     pub had_line_break: bool,
-    /// TODO: Remove this field.
-    is_first: bool,
     pub next_regexp: Option<BytePos>,
     pub prev_hi: BytePos,
 
     pub(super) token_value: Option<TokenValue>,
-    token_type: Option<Token>,
+    token_type: Token,
 }
 
 pub struct LexerCheckpoint {
@@ -73,10 +85,13 @@ impl crate::input::Tokens for Lexer<'_> {
     }
 
     #[inline]
+    fn read_string(&self, span: Span) -> &str {
+        assert!(span.lo >= self.input.start_pos() && span.hi <= self.input.end_pos());
+        unsafe { self.input_slice_str(span.lo, span.hi) }
+    }
+
+    #[inline]
     fn set_ctx(&mut self, ctx: Context) {
-        if ctx.contains(Context::Module) && !self.module_errors.is_empty() {
-            self.errors.append(&mut self.module_errors);
-        }
         self.ctx = ctx
     }
 
@@ -127,12 +142,42 @@ impl crate::input::Tokens for Lexer<'_> {
 
     #[inline]
     fn take_errors(&mut self) -> Vec<Error> {
-        take(&mut self.errors)
+        let mut errors = take(&mut self.errors);
+        if self.ctx.contains(Context::Module) && !self.module_errors.is_empty() {
+            errors.append(&mut self.module_errors);
+        }
+        errors
+    }
+
+    #[inline]
+    fn has_errors(&self) -> bool {
+        !self.errors.is_empty()
+    }
+
+    #[inline]
+    fn diagnostic_checkpoint_save(&self) -> (usize, usize) {
+        (self.errors.len(), self.module_errors.len())
+    }
+
+    #[inline]
+    fn diagnostic_checkpoint_load(&mut self, checkpoint: (usize, usize)) {
+        self.errors.truncate(checkpoint.0);
+        self.module_errors.truncate(checkpoint.1);
     }
 
     #[inline]
     fn take_script_module_errors(&mut self) -> Vec<Error> {
         take(&mut self.module_errors)
+    }
+
+    #[inline]
+    fn set_defer_comments(&mut self, defer: bool) {
+        self.defer_comments = defer;
+    }
+
+    #[inline]
+    fn finalize_comments(&mut self) {
+        Lexer::finalize_comments(self);
     }
 
     #[inline]
@@ -166,11 +211,86 @@ impl crate::input::Tokens for Lexer<'_> {
         self.state.token_value.take()
     }
 
-    fn rescan_jsx_token(&mut self, allow_multiline_jsx_text: bool, reset: BytePos) -> TokenAndSpan {
+    fn first_token(&mut self) -> TokenAndSpan {
+        let mut start = self.cur_pos();
+        let token = match self.read_shebang() {
+            Ok(Some(shebang)) => {
+                self.state.set_token_value(TokenValue::Word(shebang));
+                Ok(Token::Shebang)
+            }
+            // Fallback to other tokens
+            Ok(None) => {
+                self.state.had_line_break = true;
+                self.skip_space();
+                start = self.input.cur_pos();
+                self.read_token()
+            }
+            Err(error) => Err(error),
+        };
+
+        let token = match token {
+            Ok(token) => token,
+            Err(error) => {
+                self.state.set_token_value(TokenValue::Error(error));
+                Token::Error
+            }
+        };
+        self.finish_next_token(self.span(start), token)
+    }
+
+    fn next_token(&mut self) -> TokenAndSpan {
+        // `read_next_token` always overwrites this out-parameter before
+        // returning, including the regexp path.
+        let mut start = BytePos(0);
+        let token = match self.read_next_token(&mut start) {
+            Ok(res) => res,
+            Err(error) => {
+                self.state.set_token_value(TokenValue::Error(error));
+                Token::Error
+            }
+        };
+        self.finish_next_token(self.span(start), token)
+    }
+
+    // Most type closers are already a single `>`. Keep suffix rescanning and
+    // speculative lookahead cleanup out of the common closer's call frame.
+    #[cold]
+    #[inline(never)]
+    fn rescan_type_gt(&mut self, span: Span) -> TokenAndSpan {
+        let start = span.lo;
+        let end = start + BytePos(1);
+        // Without lookahead, no diagnostics or comments can follow this
+        // punctuation token. Avoid scanning accumulated buffers on that path.
+        if self.cur_pos() > span.hi {
+            self.errors.retain(|error| error.span().lo < end);
+            self.module_errors.retain(|error| error.span().lo < end);
+            if let Some(comments) = self.comments_buffer.as_mut() {
+                comments.retain_before(end);
+            }
+        }
+        // The parser only calls this for an ASCII greater-than operator.
+        unsafe {
+            self.input.reset_to(end);
+        }
+        self.state.token_value = None;
+        self.state.next_regexp = None;
+        self.token_flags = TokenFlags::empty();
+        self.finish_next_token(Span::new_with_checked(start, end), Token::Gt)
+    }
+
+    fn rescan_jsx_token(&mut self, reset: BytePos) -> TokenAndSpan {
+        #[cfg(feature = "tsrx")]
+        {
+            self.errors.retain(|error| error.span().lo < reset);
+            self.module_errors.retain(|error| error.span().lo < reset);
+            if let Some(comments_buffer) = self.comments_buffer.as_mut() {
+                comments_buffer.retain_before(reset);
+            }
+        }
         unsafe {
             self.input.reset_to(reset);
         }
-        Tokens::scan_jsx_token(self, allow_multiline_jsx_text)
+        Tokens::scan_jsx_token(self)
     }
 
     fn rescan_jsx_open_el_terminal_token(&mut self, reset: BytePos) -> TokenAndSpan {
@@ -180,9 +300,9 @@ impl crate::input::Tokens for Lexer<'_> {
         Tokens::scan_jsx_open_el_terminal_token(self)
     }
 
-    fn scan_jsx_token(&mut self, allow_multiline_jsx_text: bool) -> TokenAndSpan {
+    fn scan_jsx_token(&mut self) -> TokenAndSpan {
         let start = self.cur_pos();
-        let res = match self.scan_jsx_token(allow_multiline_jsx_text) {
+        let res = match self.scan_jsx_token() {
             Ok(res) => Ok(res),
             Err(error) => {
                 self.state.set_token_value(TokenValue::Error(error));
@@ -193,21 +313,7 @@ impl crate::input::Tokens for Lexer<'_> {
             Ok(t) => t,
             Err(e) => e,
         };
-        let span = self.span(start);
-        if token != Token::Eof {
-            if let Some(comments) = self.comments_buffer.as_mut() {
-                comments.pending_to_comment(BufferedCommentKind::Leading, start);
-            }
-
-            self.state.set_token_type(token);
-            self.state.prev_hi = self.last_pos();
-        }
-        // Attach span to token.
-        TokenAndSpan {
-            token,
-            had_line_break: self.had_line_break_before_last(),
-            span,
-        }
+        self.finish_next_token(self.span(start), token)
     }
 
     fn scan_jsx_open_el_terminal_token(&mut self) -> TokenAndSpan {
@@ -224,50 +330,53 @@ impl crate::input::Tokens for Lexer<'_> {
             Ok(t) => t,
             Err(e) => e,
         };
-        let span = self.span(start);
-        if token != Token::Eof {
-            if let Some(comments) = self.comments_buffer.as_mut() {
-                comments.pending_to_comment(BufferedCommentKind::Leading, start);
-            }
-
-            self.state.set_token_type(token);
-            self.state.prev_hi = self.last_pos();
-        }
-        // Attach span to token.
-        TokenAndSpan {
-            token,
-            had_line_break: self.had_line_break_before_last(),
-            span,
-        }
+        self.finish_next_token(self.span(start), token)
     }
 
     fn scan_jsx_identifier(&mut self, start: BytePos) -> TokenAndSpan {
-        let token = self.state.token_type.unwrap();
+        let token = self.state.token_type;
         debug_assert!(token.is_word());
+        let prefix_end = self.cur_pos();
         let mut v = String::with_capacity(16);
         while let Some(ch) = self.input().cur() {
-            if ch == '-' {
-                v.push(ch);
-                self.bump();
-            } else {
-                let old_pos = self.cur_pos();
-                v.push_str(&self.scan_identifier_parts());
-                if self.cur_pos() == old_pos {
-                    break;
-                }
+            if ch == b'-' {
+                v.push('-');
+                self.bump(1); // `-`
+            } else if !self.scan_identifier_parts_into(&mut v) {
+                break;
             }
         }
         let v = if !v.is_empty() {
-            let v = if token.is_known_ident() || token.is_keyword() {
-                format!("{}{}", token.to_string(None), v)
-            } else if let Some(TokenValue::Word(value)) = self.state.token_value.take() {
-                format!("{value}{v}")
+            let mut value = String::new();
+            if token.is_known_ident() || token.is_keyword() {
+                let prefix = unsafe {
+                    // Safety: start and end are valid position because we got them from
+                    // `self.input`
+                    self.input_slice_str(start, prefix_end)
+                };
+                value.reserve(prefix.len() + v.len());
+                value.push_str(prefix);
+            } else if let Some(TokenValue::Word(prefix)) = self.state.token_value.take() {
+                value.reserve(prefix.len() + v.len());
+                value.push_str(&prefix);
             } else {
-                format!("{}{}", token.to_string(None), v)
-            };
-            self.atom(v)
+                let prefix = unsafe {
+                    // Safety: start and end are valid position because we got them from
+                    // `self.input`
+                    self.input_slice_str(start, prefix_end)
+                };
+                value.reserve(prefix.len() + v.len());
+                value.push_str(prefix);
+            }
+            value.push_str(&v);
+            self.atom(value)
         } else if token.is_known_ident() || token.is_keyword() {
-            self.atom(token.to_string(None))
+            let prefix = unsafe {
+                // Safety: start and end are valid position because we got them from
+                // `self.input`
+                self.input_slice_str(start, prefix_end)
+            };
+            self.atom(prefix)
         } else if let Some(TokenValue::Word(value)) = self.state.token_value.take() {
             value
         } else {
@@ -279,7 +388,7 @@ impl crate::input::Tokens for Lexer<'_> {
         self.state.set_token_value(TokenValue::Word(v));
         TokenAndSpan {
             token: Token::JSXName,
-            had_line_break: self.had_line_break_before_last(),
+            had_line_break: self.state.had_line_break,
             span: self.span(start),
         }
     }
@@ -289,22 +398,22 @@ impl crate::input::Tokens for Lexer<'_> {
             let start = self.cur_pos();
             return TokenAndSpan {
                 token: Token::Eof,
-                had_line_break: self.had_line_break_before_last(),
+                had_line_break: self.state.had_line_break,
                 span: self.span(start),
             };
         };
         let start = self.cur_pos();
 
         match cur {
-            '\'' | '"' => {
-                let token = self.read_jsx_str(cur);
+            b'\'' | b'"' => {
+                let token = self.read_jsx_str(cur as char);
                 let token = match token {
                     Ok(token) => token,
                     Err(e) => {
                         self.state.set_token_value(TokenValue::Error(e));
                         return TokenAndSpan {
                             token: Token::Error,
-                            had_line_break: self.had_line_break_before_last(),
+                            had_line_break: self.state.had_line_break,
                             span: self.span(start),
                         };
                     }
@@ -315,15 +424,11 @@ impl crate::input::Tokens for Lexer<'_> {
                 debug_assert!(token == Token::Str);
                 TokenAndSpan {
                     token,
-                    had_line_break: self.had_line_break_before_last(),
+                    had_line_break: self.state.had_line_break,
                     span: self.span(start),
                 }
             }
-            _ => self.next().unwrap_or_else(|| TokenAndSpan {
-                token: Token::Eof,
-                had_line_break: self.had_line_break_before_last(),
-                span: self.span(start),
-            }),
+            _ => self.next_token(),
         }
     }
 
@@ -347,225 +452,310 @@ impl crate::input::Tokens for Lexer<'_> {
             // `+ BytePos(1)` is used to skip `{`
             self.span(start + BytePos(1))
         };
-
-        if token != Token::Eof {
-            if let Some(comments) = self.comments_buffer.as_mut() {
-                comments.pending_to_comment(BufferedCommentKind::Leading, start);
-            }
-
-            self.state.set_token_type(token);
-            self.state.prev_hi = self.last_pos();
-        }
-        // Attach span to token.
-        TokenAndSpan {
-            token,
-            had_line_break: self.had_line_break_before_last(),
-            span,
-        }
+        self.finish_next_token(span, token)
     }
 }
 
 impl Lexer<'_> {
-    fn next_token(&mut self, start: &mut BytePos) -> Result<Token, Error> {
+    #[inline]
+    fn jsx_text_allows_raw_gt(&self, start: BytePos, pos: BytePos) -> bool {
+        let prefix = unsafe {
+            // Safety: `start..pos` is within the current token and `pos` comes from a
+            // JSX-safe search boundary.
+            self.input_slice_str(start, pos)
+        };
+
+        // Only allow raw `>` when it is already part of in-text arrow prose like `->`.
+        // A leading raw `>` immediately after the opening tag must keep producing the
+        // legacy JSX error from `tests/jsx/errors/issue-10635/index.js`.
+        prefix.as_bytes().last().copied() == Some(b'-')
+    }
+
+    fn read_next_token(&mut self, start: &mut BytePos) -> Result<Token, Error> {
         if let Some(next_regexp) = self.state.next_regexp {
             *start = next_regexp;
             return self.read_regexp(next_regexp);
         }
 
-        if self.state.is_first {
-            if let Some(shebang) = self.read_shebang()? {
-                self.state.set_token_value(TokenValue::Word(shebang));
-                return Ok(Token::Shebang);
-            }
-        }
-
-        self.state.had_line_break = self.state.is_first;
-        self.state.is_first = false;
-
+        self.state.had_line_break = false;
         self.skip_space();
         *start = self.input.cur_pos();
-
-        if self.input.last_pos() == self.input.end_pos() {
-            // End of input.
-            self.consume_pending_comments();
-            return Ok(Token::Eof);
-        }
 
         self.read_token()
     }
 
-    fn scan_jsx_token(&mut self, allow_multiline_jsx_text: bool) -> Result<Token, Error> {
-        debug_assert!(self.syntax.jsx());
-
-        if self.input_mut().as_str().is_empty() {
-            return Ok(Token::Eof);
-        };
-
-        if self.input.eat_byte(b'<') {
-            return Ok(if self.input.eat_byte(b'/') {
-                Token::LessSlash
+    #[inline(always)]
+    fn finish_next_token(&mut self, span: Span, token: Token) -> TokenAndSpan {
+        if self.comments_buffer.is_some() {
+            if token == Token::Eof {
+                self.consume_pending_comments();
             } else {
-                Token::Lt
-            });
-        } else if self.input.eat_byte(b'{') {
-            return Ok(Token::LBrace);
+                let Some(comments_buffer) = self.comments_buffer.as_mut() else {
+                    unreachable!();
+                };
+                if comments_buffer.has_pending() {
+                    comments_buffer.pending_to_comment(BufferedCommentKind::Leading, span.lo);
+                }
+            }
         }
 
+        self.state.set_token_type(token);
+        self.state.prev_hi = span.hi;
+        TokenAndSpan {
+            token,
+            had_line_break: self.state.had_line_break,
+            span,
+        }
+    }
+
+    fn scan_jsx_token(&mut self) -> Result<Token, Error> {
+        debug_assert!(self.syntax.jsx());
         let start = self.input.cur_pos();
-        let mut first_non_whitespace = 0;
-        let mut chunk_start = start;
-        let mut value = String::new();
-
-        while let Some(ch) = self.input_mut().cur() {
-            if ch == '{' {
-                break;
-            } else if ch == '<' {
-                // TODO: check git conflict mark
-                break;
+        match self.input.cur() {
+            Some(b'<') => {
+                self.bump(1);
+                match self.input.cur() {
+                    Some(b'/') => {
+                        self.bump(1);
+                        Ok(Token::LessSlash)
+                    }
+                    _ => Ok(Token::Lt),
+                }
             }
-
-            if ch == '>' {
-                self.emit_error(
-                    self.input().cur_pos(),
-                    SyntaxError::UnexpectedTokenWithSuggestions {
-                        candidate_list: vec!["`{'>'}`", "`&gt;`"],
-                    },
-                );
-            } else if ch == '}' {
-                self.emit_error(
-                    self.input().cur_pos(),
-                    SyntaxError::UnexpectedTokenWithSuggestions {
-                        candidate_list: vec!["`{'}'}`", "`&rbrace;`"],
-                    },
-                );
+            Some(b'{') => {
+                self.bump(1);
+                Ok(Token::LBrace)
             }
-
-            if first_non_whitespace == 0 && ch.is_line_terminator() {
-                first_non_whitespace = -1;
-            } else if !allow_multiline_jsx_text
-                && ch.is_line_terminator()
-                && first_non_whitespace > 0
+            #[cfg(feature = "tsrx")]
+            Some(b'@')
+                if self.syntax.tsrx()
+                    && crate::parser::tsrx::is_directive_start(self.input().as_str()) =>
             {
-                break;
-            } else if ch.is_whitespace() {
-                first_non_whitespace = self.cur_pos().0 as i32;
+                self.bump(1);
+                Ok(Token::At)
             }
+            Some(_) => {
+                // Fast path: we assume there's no `&` in the jsx child
+                byte_search! {
+                    lexer: self,
+                    table: JSX_CHILD_TABLE,
+                    continue_if: (matched_byte, pos_offset) {
+                        match matched_byte {
+                            b'>' => {
+                                let pos = start + BytePos(pos_offset as u32);
+                                if !self.jsx_text_allows_raw_gt(start, pos) {
+                                    self.emit_error_span(
+                                        Span::new_with_checked(pos, pos),
+                                        SyntaxError::UnexpectedTokenWithSuggestions {
+                                            candidate_list: vec!["`{'>'}`", "`&gt;`"],
+                                        },
+                                    );
+                                }
+                                true
+                            },
+                            b'}' => {
+                                let pos = start + BytePos(pos_offset as u32);
+                                self.emit_error_span(
+                                    Span::new_with_checked(pos, pos),
+                                    SyntaxError::UnexpectedTokenWithSuggestions {
+                                        candidate_list: vec!["`{'}'}`", "`&rbrace;`"],
+                                    },
+                                );
+                                true
+                            },
+                            // Encountered `&`, go to the slow path
+                            b'&' => return self.scan_jsx_token_with_jsx_entity(),
+                            #[cfg(feature = "tsrx")]
+                            b'@' => {
+                                let rest = &self.input().as_str()[pos_offset..];
+                                !self.syntax.tsrx()
+                                    || !crate::parser::tsrx::is_directive_start(rest)
+                            },
+                            _ => false,
+                        }
+                    },
+                    handle_eof: {
+                        let s = unsafe {
+                            // Safety: start and end are valid position because we got them from
+                            // `self.input`
+                            self.input_slice_str(start, self.cur_pos())
+                        };
 
-            if ch == '&' {
-                let s = unsafe {
-                    // Safety: We already checked for the range
-                    self.input_slice_to_cur(chunk_start)
+                        let value = self.wtf8_atom(Wtf8::from_str(s));
+                        self.state.set_token_value(TokenValue::JsxText(value));
+                        return Ok(Token::JSXText);
+                    },
                 };
-                value.push_str(s);
 
-                if let Ok(jsx_entity) = self.read_jsx_entity() {
-                    value.push(jsx_entity.0);
+                let s = unsafe {
+                    // Safety: start and end are valid position because we got them from
+                    // `self.input`
+                    self.input_slice_str(start, self.cur_pos())
+                };
 
+                let value = self.wtf8_atom(Wtf8::from_str(s));
+                self.state.set_token_value(TokenValue::JsxText(value));
+                Ok(Token::JSXText)
+            }
+            None => Ok(Token::Eof),
+        }
+    }
+
+    #[cold]
+    /// Slow path: we encountered `&` in the jsx child, so we need to scan and
+    /// resolve the jsx entity, which requires a dedicated string allocation.
+    fn scan_jsx_token_with_jsx_entity(&mut self) -> LexResult<Token> {
+        let mut buf = Wtf8Buf::new();
+        let mut chunk_start = self.input.cur_pos();
+
+        while let Some(ch) = self.input.cur_as_char() {
+            match ch {
+                '>' => {
+                    let error_pos = self.input().cur_pos();
+                    if !self.jsx_text_allows_raw_gt(chunk_start, error_pos) {
+                        self.emit_error(
+                            error_pos,
+                            SyntaxError::UnexpectedTokenWithSuggestions {
+                                candidate_list: vec!["`{'>'}`", "`&gt;`"],
+                            },
+                        );
+                    }
+                    self.bump(1);
+                }
+                '}' => {
+                    let error_pos = self.input().cur_pos();
+                    self.bump(1);
+                    self.emit_error(
+                        error_pos,
+                        SyntaxError::UnexpectedTokenWithSuggestions {
+                            candidate_list: vec!["`{'}'}`", "`&rbrace;`"],
+                        },
+                    );
+                }
+                '&' => {
+                    // Push the string before the `&` to the result
+                    let s = unsafe {
+                        // Safety: We already checked for the range
+                        self.input_slice_str(chunk_start, self.cur_pos())
+                    };
+                    buf.push_str(s);
+
+                    // Read the jsx entity and update the start of chunk
+                    let jsx_entity = self.read_jsx_entity();
+                    buf.push(jsx_entity);
                     chunk_start = self.input.cur_pos();
                 }
-            } else {
-                self.bump();
+                '<' | '{' => break,
+                #[cfg(feature = "tsrx")]
+                '@' if self.syntax.tsrx()
+                    && crate::parser::tsrx::is_directive_start(self.input().as_str()) =>
+                {
+                    break
+                }
+                c => {
+                    self.bump(c.len_utf8());
+                }
             }
         }
 
-        let raw = unsafe {
-            // Safety: Both of `start` and `end` are generated from `cur_pos()`
-            self.input_slice_to_cur(start)
-        };
-        let value = if value.is_empty() {
-            self.atom(raw)
-        } else {
-            let s = unsafe {
-                // Safety: We already checked for the range
-                self.input_slice_to_cur(chunk_start)
-            };
-            value.push_str(s);
-            self.atom(value)
+        let s = unsafe {
+            // Safety: start and end are valid position because we got them from
+            // `self.input`
+            self.input_slice_str(chunk_start, self.cur_pos())
         };
 
-        let raw: swc_atoms::Atom = self.atom(raw);
-
-        self.state.set_token_value(TokenValue::Str {
-            raw,
-            value: value.into(),
-        });
-
+        buf.push_str(s);
+        let value = Wtf8Atom::new(buf);
+        self.state.set_token_value(TokenValue::JsxText(value));
         Ok(Token::JSXText)
     }
 
     fn scan_jsx_attrs_terminal_token(&mut self) -> LexResult<Token> {
-        if self.input_mut().as_str().is_empty() {
-            Ok(Token::Eof)
-        } else if self.input.eat_byte(b'>') {
+        // Safety: b'>' and b'/' are ASCII.
+        if unsafe { self.input.eat_byte(b'>') } {
             Ok(Token::Gt)
-        } else if self.input.eat_byte(b'/') {
+        } else if unsafe { self.input.eat_byte(b'/') } {
             Ok(Token::Slash)
         } else {
             self.read_token()
         }
     }
 
-    fn scan_identifier_parts(&mut self) -> String {
-        let mut v = String::with_capacity(16);
+    #[allow(clippy::while_let_loop)]
+    fn scan_identifier_parts_into(&mut self, v: &mut String) -> bool {
+        let start = self.cur_pos();
         while let Some(ch) = self.input().cur() {
-            if ch.is_ident_part() {
-                v.push(ch);
-                self.input_mut().bump_bytes(ch.len_utf8());
-            } else if ch == '\\' {
-                self.bump(); // bump '\'
-                if !self.is(b'u') {
-                    self.emit_error(self.cur_pos(), SyntaxError::InvalidUnicodeEscape);
-                    continue;
-                }
-                self.bump(); // bump 'u'
-                let Ok(value) = self.read_unicode_escape() else {
-                    self.emit_error(self.cur_pos(), SyntaxError::InvalidUnicodeEscape);
-                    break;
-                };
-                if let Some(c) = CodePoint::from(value).to_char() {
-                    v.push(c);
+            // For ASCII, check if it's an identifier part quickly
+            if ch <= 0x7f {
+                if ch.is_ident_part() {
+                    let chunk_start = self.cur_pos();
+                    loop {
+                        let Some(chunk_ch) = self.input().cur() else {
+                            break;
+                        };
+                        if chunk_ch <= 0x7f && chunk_ch.is_ident_part() {
+                            unsafe {
+                                // Safety: `chunk_ch` is current ASCII byte.
+                                self.input_mut().bump_bytes(1);
+                            }
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let chunk = unsafe {
+                        // Safety: start and end are valid position because we got them from
+                        // `self.input`.
+                        self.input_slice_str(chunk_start, self.cur_pos())
+                    };
+                    v.push_str(chunk);
+                } else if ch == b'\\' {
+                    self.bump(1); // bump '\'
+                    if !self.is(b'u') {
+                        self.emit_error(self.cur_pos(), SyntaxError::InvalidUnicodeEscape);
+                        continue;
+                    }
+                    let Ok(value) = self.read_unicode_escape() else {
+                        self.emit_error(self.cur_pos(), SyntaxError::InvalidUnicodeEscape);
+                        break;
+                    };
+                    if let Some(c) = CodePoint::from(value).to_char() {
+                        v.push(c);
+                    } else {
+                        self.emit_error(self.cur_pos(), SyntaxError::InvalidUnicodeEscape);
+                    }
+                    self.token_flags |= TokenFlags::UNICODE;
                 } else {
-                    self.emit_error(self.cur_pos(), SyntaxError::InvalidUnicodeEscape);
+                    break;
                 }
-                self.token_flags |= TokenFlags::UNICODE;
             } else {
-                break;
+                // Non-ASCII byte - need to get full UTF-8 character
+                if let Some(c) = self.input().cur_as_char() {
+                    if c.is_ident_part() {
+                        v.push(c);
+                        self.bump(c.len_utf8());
+                    } else {
+                        break;
+                    }
+                } else {
+                    break;
+                }
             }
         }
-        v
+        self.cur_pos() != start
     }
 }
 
+/// Impl Iterator for Lexer for compatibility
 impl Iterator for Lexer<'_> {
     type Item = TokenAndSpan;
 
     fn next(&mut self) -> Option<Self::Item> {
-        let mut start = self.cur_pos();
-
-        let token = match self.next_token(&mut start) {
-            Ok(res) => res,
-            Err(error) => {
-                self.state.set_token_value(TokenValue::Error(error));
-                Token::Error
-            }
-        };
-
-        let span = self.span(start);
-        if token != Token::Eof {
-            if let Some(comments) = self.comments_buffer.as_mut() {
-                comments.pending_to_comment(BufferedCommentKind::Leading, start);
-            }
-
-            self.state.set_token_type(token);
-            self.state.prev_hi = self.last_pos();
-            // Attach span to token.
-            Some(TokenAndSpan {
-                token,
-                had_line_break: self.had_line_break_before_last(),
-                span,
-            })
-        } else {
+        let next_token = self.next_token();
+        if next_token.token == Token::Eof {
             None
+        } else {
+            Some(next_token)
         }
     }
 }
@@ -574,11 +764,10 @@ impl State {
     pub fn new(start_pos: BytePos) -> Self {
         State {
             had_line_break: false,
-            is_first: true,
             next_regexp: None,
             prev_hi: start_pos,
             token_value: None,
-            token_type: None,
+            token_type: Token::Eof,
         }
     }
 
@@ -589,43 +778,25 @@ impl State {
 
 impl State {
     #[inline(always)]
-    pub fn had_line_break(&self) -> bool {
-        self.had_line_break
-    }
-
-    #[inline(always)]
-    pub fn mark_had_line_break(&mut self) {
-        self.had_line_break = true;
-    }
-
-    #[inline(always)]
     pub fn set_token_type(&mut self, token_type: Token) {
-        self.token_type = Some(token_type);
+        self.token_type = token_type;
     }
 
     #[inline(always)]
-    pub fn token_type(&self) -> Option<Token> {
+    pub fn token_type(&self) -> Token {
         self.token_type
     }
 
-    #[inline(always)]
-    pub fn prev_hi(&self) -> BytePos {
-        self.prev_hi
-    }
-
     pub fn can_have_trailing_line_comment(&self) -> bool {
-        let Some(t) = self.token_type() else {
-            return true;
-        };
+        let t = self.token_type();
         !t.is_bin_op()
     }
 
     pub fn can_have_trailing_comment(&self) -> bool {
-        self.token_type().is_some_and(|t| {
-            !t.is_keyword()
-                && (t == Token::Semi
-                    || t == Token::LBrace
-                    || t.is_other_and_can_have_trailing_comment())
-        })
+        let t = self.token_type();
+        !t.is_keyword()
+            && (t == Token::Semi
+                || t == Token::LBrace
+                || t.is_other_and_can_have_trailing_comment())
     }
 }

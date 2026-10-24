@@ -8,8 +8,8 @@ from pathlib import Path
 from dependency_snapshots import snapshot_file
 from repo_tools import ROOT, main_guard
 
-VERSION = "27.0.7"
-ARCHIVE_SHA256 = "7f1a51af1a92cd4904c073b293e491bbc0918400a45d58227b34c961dd6f52d7"
+VERSION = "46.1.2"
+ARCHIVE_SHA256 = "a032f869f6690d4eddd6e67757c8d849f2c8219d8c5f3bb05a7ec8b456867642"
 DIRECTORY = "third_party/swc-ecma-parser"
 ARCHIVE_URL = f"https://static.crates.io/crates/swc_ecma_parser/swc_ecma_parser-{VERSION}.crate"
 

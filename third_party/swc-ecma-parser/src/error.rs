@@ -136,6 +136,9 @@ pub enum SyntaxError {
 
     NullishCoalescingWithLogicalOp,
 
+    /// Erasing a postfix TypeScript cast would change binary operator grouping.
+    TsAssertionBinaryOp,
+
     MultipleDefault {
         /// Span of the previous default case
         previous: Span,
@@ -181,6 +184,7 @@ pub enum SyntaxError {
     DecoratorOnExport,
 
     TsRequiredAfterOptional,
+    TsOptionalRestElement,
     TsInvalidParamPropPat,
 
     SpaceBetweenHashAndIdent,
@@ -199,6 +203,7 @@ pub enum SyntaxError {
     TaggedTplInOptChain,
 
     TrailingCommaInsideImport,
+    ImportRequiresOneOrTwoArgs,
 
     ExportDefaultWithOutFrom,
     ExportExpectFrom(Atom),
@@ -214,6 +219,8 @@ pub enum SyntaxError {
 
     DuplicatedRegExpFlags(char),
     UnknownRegExpFlags,
+    /// IdentifierPart in RegExp flags must not contain a UnicodeEscapeSequence.
+    UnicodeEscapeInRegExpFlags,
 
     TS1003,
     TS1005,
@@ -261,6 +268,7 @@ pub enum SyntaxError {
     TS1243(Atom, Atom),
     TS1244,
     TS1245,
+    TS1263,
     TS1267,
     TS1273(Atom),
     TS1274(Atom),
@@ -277,6 +285,7 @@ pub enum SyntaxError {
     TS2483,
     TS2491,
     TS2499,
+    TS2680,
     TS2703,
     TS4112,
     TS8038,
@@ -379,6 +388,10 @@ impl SyntaxError {
                 format!("Expected '{token}', got '{got}'").into()
             }
             SyntaxError::ExpectedSemiForExprStmt { .. } => "Expected ';', '}' or <eof>".into(),
+            SyntaxError::TsAssertionBinaryOp => "An unparenthesized `as` or `satisfies` \
+                                                 expression cannot be followed by an operator \
+                                                 that would bind differently after type erasure"
+                .into(),
 
             SyntaxError::AwaitStar => "await* has been removed from the async functions proposal. \
                                        Use Promise.all() instead."
@@ -467,6 +480,9 @@ impl SyntaxError {
             SyntaxError::TsRequiredAfterOptional => {
                 "A required element cannot follow an optional element.".into()
             }
+            SyntaxError::TsOptionalRestElement => {
+                "A tuple member cannot be both optional and rest.".into()
+            }
             SyntaxError::SuperCallOptional => "Super call cannot be optional".into(),
             SyntaxError::OptChainCannotFollowConstructorCall => {
                 "Constructor in/after an optional chaining is not allowed.".into()
@@ -500,6 +516,10 @@ impl SyntaxError {
 
             SyntaxError::TrailingCommaInsideImport => {
                 "Trailing comma is disallowed inside import(...) arguments".into()
+            }
+
+            SyntaxError::ImportRequiresOneOrTwoArgs => {
+                "`import()` requires exactly one or two arguments".into()
             }
 
             SyntaxError::ExportDefaultWithOutFrom => {
@@ -589,6 +609,9 @@ impl SyntaxError {
                 format!("Duplicated regular expression flag '{flag}'.").into()
             }
             SyntaxError::UnknownRegExpFlags => "Unknown regular expression flags.".into(),
+            SyntaxError::UnicodeEscapeInRegExpFlags => {
+                "Regular expression flags cannot contain unicode escapes.".into()
+            }
 
             SyntaxError::TS1003 => "Expected an identifier".into(),
             SyntaxError::TS1005 => "Expected a semicolon".into(),
@@ -667,6 +690,9 @@ impl SyntaxError {
                 format!("'{left}' modifier cannot be used with '{right}' modifier.").into()
             }
             SyntaxError::TS1245 => "Abstract method cannot have an implementation.".into(),
+            SyntaxError::TS1263 => "Declarations with initializers cannot also have definite \
+                                    assignment assertions."
+                .into(),
             SyntaxError::TS1267 => "Abstract property cannot have an initializer.".into(),
             SyntaxError::TS1273(word) => {
                 format!("'{word}' modifier cannot appear on a type parameter").into()
@@ -711,6 +737,7 @@ impl SyntaxError {
             SyntaxError::TS2499 => "An interface can only extend an identifier/qualified-name \
                                     with optional type arguments."
                 .into(),
+            SyntaxError::TS2680 => "A 'this' parameter must be the first parameter.".into(),
             SyntaxError::TS4112 => "This member cannot have an 'override' modifier because its \
                                     containing class does not extend another class."
                 .into(),
@@ -757,7 +784,7 @@ impl SyntaxError {
 impl Error {
     #[cold]
     #[inline(never)]
-    pub fn into_diagnostic(self, handler: &Handler) -> DiagnosticBuilder {
+    pub fn into_diagnostic(self, handler: &Handler) -> DiagnosticBuilder<'_> {
         if let SyntaxError::WithLabel { inner, note, span } = self.error.1 {
             let mut db = inner.into_diagnostic(handler);
             db.span_label(span, note);

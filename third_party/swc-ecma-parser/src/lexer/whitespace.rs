@@ -1,3 +1,5 @@
+use swc_common::input::Input;
+
 use crate::{byte_search, lexer::search::SafeByteMatchTable, safe_byte_match_table, Lexer};
 
 /// U+000B VERTICAL TAB, abbreviated `<VT>`.
@@ -91,7 +93,7 @@ const NLN: ByteHandler = |lexer| {
     static NOT_REGULAR_WHITESPACE_OR_LINE_BREAK_TABLE: SafeByteMatchTable =
         safe_byte_match_table!(|b| !matches!(b, b' ' | b'\t' | B_VT | B_FF | b'\r' | b'\n'));
 
-    lexer.state.mark_had_line_break();
+    lexer.state.had_line_break = true;
     byte_search! {
         lexer: lexer,
         table: NOT_REGULAR_WHITESPACE_OR_LINE_BREAK_TABLE,
@@ -114,31 +116,33 @@ const SPC: ByteHandler = |lexer| {
 };
 
 const SLH: ByteHandler = |lexer| match lexer.peek() {
-    Some('/') => {
+    Some(b'/') => {
         lexer.skip_line_comment(2);
         true
     }
-    Some('*') => {
+    Some(b'*') => {
         lexer.skip_block_comment();
         true
     }
     _ => false,
 };
 
-/// Unicode
+/// Unicode - handles multi-byte UTF-8 whitespace characters
 const UNI: ByteHandler = |lexer| {
-    let c = lexer.cur().unwrap();
-    match c {
-        c if is_irregular_whitespace(c) => {
-            lexer.bump();
-            true
-        }
-        c if is_irregular_line_terminator(c) => {
-            lexer.bump();
-            lexer.state.mark_had_line_break();
-            true
-        }
-        _ => false,
+    // For non-ASCII bytes, we need the full UTF-8 character
+    let Some(c) = lexer.cur_as_char() else {
+        return false;
+    };
+
+    if is_irregular_whitespace(c) {
+        lexer.bump(c.len_utf8());
+        true
+    } else if is_irregular_line_terminator(c) {
+        lexer.bump(c.len_utf8());
+        lexer.state.had_line_break = true;
+        true
+    } else {
+        false
     }
 };
 
@@ -149,10 +153,13 @@ impl<'a> Lexer<'a> {
     #[inline]
     pub fn skip_space(&mut self) {
         loop {
-            let byte = match self.input.as_str().as_bytes().first() {
-                Some(&v) => v,
+            let byte = match self.input.cur() {
+                Some(v) => v,
                 None => return,
             };
+            if byte.wrapping_sub(b'!') < 0x5f && byte != b'/' {
+                break;
+            }
 
             let handler = unsafe { *(&BYTE_HANDLERS as *const ByteHandler).offset(byte as isize) };
             if !handler(self) {

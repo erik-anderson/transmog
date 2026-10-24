@@ -295,7 +295,7 @@ pub mod token {
             name: Atom,
         },
         JSXText {
-            value: Atom,
+            value: Wtf8Atom,
             raw: Atom,
         },
         JSXTagStart,
@@ -931,7 +931,7 @@ pub mod token {
     }
 
     impl Word {
-        pub fn cow(&self) -> Cow<Atom> {
+        pub fn cow(&self) -> Cow<'_, Atom> {
             match self {
                 Word::Keyword(k) => Cow::Owned(k.into_atom()),
                 Word::Ident(IdentLike::Known(w)) => Cow::Owned((*w).into()),

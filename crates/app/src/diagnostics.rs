@@ -154,8 +154,8 @@ impl DiagnosticLog {
             dependencies: vec![
                 format!("transmog-app {}", env!("CARGO_PKG_VERSION")),
                 "Tauri 2.12.5".to_owned(),
-                "Microsoft WebUI 0.0.30".to_owned(),
-                "BoringSSL via boring 5.2.0".to_owned(),
+                "Microsoft WebUI 3.0.4".to_owned(),
+                format!("BoringSSL via boring {}", env!("TRANSMOG_BORING_VERSION")),
             ],
             runtime,
             product_state_schema: state.schema_version,
@@ -363,6 +363,26 @@ mod tests {
         .unwrap();
         assert!(!result.included_recent_paths);
         let mut archive = zip::ZipArchive::new(std::fs::File::open(&path).unwrap()).unwrap();
+        let mut diagnostics = String::new();
+        archive
+            .by_name("diagnostics.json")
+            .unwrap()
+            .read_to_string(&mut diagnostics)
+            .unwrap();
+        let report: serde_json::Value = serde_json::from_str(&diagnostics).unwrap();
+        let metadata: serde_json::Value = serde_json::from_str(include_str!(
+            "../../../third_party/boringssl-pki/manifest.json"
+        ))
+        .unwrap();
+        assert!(
+            report["dependencies"]
+                .as_array()
+                .unwrap()
+                .contains(&serde_json::json!(format!(
+                    "BoringSSL via boring {}",
+                    metadata["boring_version"].as_str().unwrap()
+                )))
+        );
         let mut text = String::new();
         archive
             .by_name("product-state-summary.json")

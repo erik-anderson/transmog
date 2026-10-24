@@ -1,0 +1,8 @@
+{
+  "package": "v8",
+  "version": "152.2.0",
+  "commit": "2768994f664e8a6e3aba27503606c58339136e2a",
+  "sources": [
+    "https://raw.githubusercontent.com/denoland/rusty_v8/2768994f664e8a6e3aba27503606c58339136e2a/LICENSE"
+  ]
+}

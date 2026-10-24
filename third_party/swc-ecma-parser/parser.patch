@@ -1,3 +1,4 @@
+diff --git a/src/error.rs b/src/error.rs
 --- a/src/error.rs
 +++ b/src/error.rs
 @@ -40,6 +40,8 @@
@@ -9,7 +10,7 @@
      Eof,
      DeclNotAllowed,
  
-@@ -298,6 +300,7 @@
+@@ -307,6 +309,7 @@
      #[inline(never)]
      pub fn msg(&self) -> Cow<'static, str> {
          match self {
@@ -17,9 +18,10 @@
              SyntaxError::PrivateNameInInterface => {
                  "private names are not allowed in interface".into()
              }
+diff --git a/src/lib.rs b/src/lib.rs
 --- a/src/lib.rs
 +++ b/src/lib.rs
-@@ -247,3 +247,16 @@
+@@ -290,3 +290,16 @@
  fn maybe_grow<R, F: FnOnce() -> R>(red_zone: usize, stack_size: usize, callback: F) -> R {
      stacker::maybe_grow(red_zone, stack_size, callback)
  }
@@ -36,24 +38,35 @@
 +    // These targets cannot establish the required native stack boundary.
 +    true
 +}
+diff --git a/src/parser/expr.rs b/src/parser/expr.rs
 --- a/src/parser/expr.rs
 +++ b/src/parser/expr.rs
-@@ -1062,12 +1062,13 @@
-             _ => unreachable!(),
-         };
+@@ -1276,7 +1276,7 @@
+         let syntax = self.input().syntax();
  
--        loop {
-+        for _ in 0..128 {
-             expr = match self.parse_subscript(start, expr, no_call, no_computed_member)? {
-                 (expr, false) => return Ok(expr),
-                 (expr, true) => expr,
+         if !syntax.typescript() {
+-            loop {
++            for _ in 0..128 {
+                 expr = match self
+                     .parse_subscript_without_type_args::<NO_COMPUTED>(expr, no_call, syntax)?
+                 {
+@@ -1286,13 +1286,14 @@
+             }
+         } else {
+             let start = expr.span_lo();
+-            loop {
++            for _ in 0..128 {
+                 expr = match self.parse_subscript::<NO_COMPUTED>(start, expr, no_call)? {
+                     (expr, false) => return Ok(expr),
+                     (expr, true) => expr,
+                 }
              }
          }
 +        syntax_error!(self, SyntaxError::ResourceLimit)
      }
  
      /// returned bool is true if this method should be called again.
-@@ -1706,7 +1707,7 @@
+@@ -2122,7 +2123,7 @@
          mut left: Box<Expr>,
          mut min_prec: u8,
      ) -> PResult<Box<Expr>> {
@@ -61,18 +74,32 @@
 +        for _ in 0..128 {
              let (next_left, next_prec) = self.parse_bin_op_recursively_inner(left, min_prec)?;
  
-             match &*next_left {
-@@ -1736,6 +1737,7 @@
- 
+             let Some(next_prec) = next_prec else {
+@@ -2132,6 +2133,7 @@
+             min_prec = next_prec;
              left = next_left;
          }
 +        syntax_error!(self, SyntaxError::ResourceLimit)
      }
  
      /// Returns `(left, Some(next_prec))` or `(expr, None)`.
+@@ -2172,7 +2174,12 @@
+                 let mut node = left;
+                 let mut cur = cur;
+ 
++                let mut nesting = 0;
+                 loop {
++                    nesting += 1;
++                    if nesting > 128 {
++                        syntax_error!(self, SyntaxError::ResourceLimit);
++                    }
+                     let start = node.span_lo();
+                     let expr = node;
+                     node = if cur == Token::As && peek!(self).is_some_and(|cur| cur == Token::Const)
+diff --git a/src/parser/input.rs b/src/parser/input.rs
 --- a/src/parser/input.rs
 +++ b/src/parser/input.rs
-@@ -79,6 +79,13 @@
+@@ -118,6 +118,13 @@
      pub cur: TokenAndSpan,
      /// Peeked token
      pub next: Option<NextTokenAndSpan>,
@@ -86,7 +113,7 @@
  }
  
  impl<I: Tokens> Buffer<I> {
-@@ -207,6 +214,9 @@
+@@ -256,6 +263,9 @@
              cur: TokenAndSpan::new(Token::Eof, prev_span, false),
              prev_span,
              next: None,
@@ -96,10 +123,10 @@
          }
      }
  
-@@ -283,6 +293,33 @@
-     }
+@@ -379,6 +389,33 @@
  
-     pub fn bump(&mut self) {
+     /// IdentifierName permits escaped reserved words, unlike keyword syntax.
+     pub(crate) fn bump_without_escape_check(&mut self) {
 +        let advances = self.token_advances.get();
 +        self.token_advances.set(advances.saturating_add(1));
 +        let item_advances = self.item_token_advances.get();
@@ -127,10 +154,10 @@
 +            self.set_cur(TokenAndSpan::new(token, span, true));
 +            return;
 +        }
-         let next = if let Some(next) = self.next.take() {
-             self.iter.set_token_value(next.value);
-             next.token_and_span
-@@ -295,6 +332,18 @@
+         let next = if self.next.is_none() {
+             self.iter.next_token()
+         } else {
+@@ -390,6 +427,18 @@
          };
          self.prev_span = self.cur.span;
          self.set_cur(next);
@@ -149,21 +176,21 @@
      }
  
      pub fn expect_word_token_and_bump(&mut self) -> Atom {
+diff --git a/src/parser/stmt.rs b/src/parser/stmt.rs
 --- a/src/parser/stmt.rs
 +++ b/src/parser/stmt.rs
-@@ -1351,6 +1351,9 @@
-             while is_stmt_start(p) {
-                 let stmt = p.parse_stmt_like(true, &handle_import_export)?;
-                 stmts.push(stmt);
-+                if end.is_none() {
+@@ -2347,6 +2347,7 @@
+                 while p.input().cur() != Token::Eof {
+                     let stmt = p.parse_stmt_like(Type::GRAMMAR, &handle_import_export)?;
+                     stmts.push(stmt);
 +                    p.input_mut().finish_top_level_item();
-+                }
+                 }
              }
-             Ok(())
-         };
+ 
+diff --git a/src/parser/typescript.rs b/src/parser/typescript.rs
 --- a/src/parser/typescript.rs
 +++ b/src/parser/typescript.rs
-@@ -421,7 +421,12 @@
+@@ -1072,7 +1072,12 @@
              self.emit_err(dot_span, SyntaxError::TS1005)
          }
          let mut entity = TsEntityName::Ident(init.into());
@@ -176,12 +203,18 @@
              let dot_start = self.input().cur_pos();
              let cur = self.input().cur();
              if cur != Token::Hash && !cur.is_word() {
-@@ -1885,7 +1890,12 @@
+@@ -3642,6 +3647,7 @@
  
          let mut ty = self.parse_ts_non_array_type()?;
  
 +        let mut nesting = 0;
-         while !self.input().had_line_break_before_cur() && self.input_mut().eat(Token::LBracket) {
+         while !self.input().had_line_break_before_cur() {
+             let has_index = if self.input_mut().eat(Token::LBracket) {
+                 true
+@@ -3674,6 +3680,10 @@
+                 break;
+             }
+ 
 +            nesting += 1;
 +            if nesting > 128 {
 +                syntax_error!(self, SyntaxError::ResourceLimit);

@@ -208,6 +208,7 @@ impl ParsedModule {
                                 import_export_assign_config: TsImportExportAssignConfig::Preserve,
                                 ts_enum_is_mutable: true,
                                 native_class_properties: false,
+                                flow_syntax: false,
                             },
                             unresolved,
                             top_level,
@@ -628,6 +629,41 @@ mod tests {
                 )
                 .unwrap();
                 drop(parsed);
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+    }
+
+    #[test]
+    fn assertion_chains_and_escaped_member_names_remain_bounded() {
+        std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                for suffix in [" as unknown", " satisfies unknown", " as const"] {
+                    for ending in [";", " + ;"] {
+                        let source = format!("const value=0{}{ending}", suffix.repeat(4096));
+                        let error = parse_module(
+                            Url::parse("file:///assertion-chain.ts").unwrap(),
+                            &source,
+                            ModuleSyntax::TypeScript,
+                        )
+                        .err()
+                        .expect("Assertion chains must remain bounded on success and error paths");
+                        assert_eq!(error, COMPLEXITY_LIMIT);
+                    }
+                }
+                for syntax in [ModuleSyntax::JavaScript, ModuleSyntax::TypeScript] {
+                    let source = format!("const value=object{};", ".\\u0069tem".repeat(4096));
+                    assert!(
+                        parse_module(
+                            Url::parse("file:///escaped-members.js").unwrap(),
+                            &source,
+                            syntax,
+                        )
+                        .is_err()
+                    );
+                }
             })
             .unwrap()
             .join()
