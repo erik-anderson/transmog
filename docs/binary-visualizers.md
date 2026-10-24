@@ -71,6 +71,24 @@ framework. Their independently implemented readers follow the
 [Protobuf encoding specification](https://protobuf.dev/programming-guides/encoding/)
 and Microsoft's [Compact Binary encoding reference](https://github.com/microsoft/bond/blob/master/cpp/inc/bond/protocol/compact_binary.h).
 
+In **Compare requests and responses**, open **Compare structured body fields**,
+choose a body and format, then **Compare fields**. This uses the comparison's
+frozen complete bodies, including HTTP content decoding, up to 2 MiB per side.
+The ordinary enabled extension readers parse each side in isolated workers;
+native code then matches encoded map keys or field labels and ordered duplicate
+occurrences. It reports changes in typed values or wire encoding, including
+changes beyond displayed text previews. Incomplete/ambiguous parses never prove
+that an unmatched field is absent. Findings are limited to the first 512; the
+summary reports additional findings. Source offsets refer to decoded snapshot
+bodies, while **Original byte ranges** retains the frozen original representation.
+
+The native field-comparison producer and JavaScript readers share the same inert
+structured-document contract and host UI: virtualized tree, keyboard navigation,
+field details, table/text presentation and inspection copy menus. A native
+snapshot has no extension instance, live feed or source-reading capability.
+The UI does not parse binary formats. Workers close after parsing, and closing or
+refreshing the comparison cancels obsolete work and rejects late results.
+
 Build and verify with Python 3.11 or newer:
 
 ```text

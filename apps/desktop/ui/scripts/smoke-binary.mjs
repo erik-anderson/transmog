@@ -1,8 +1,12 @@
 import { writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  referenceCases,
+  startReferenceService,
+} from "../../../../scripts/binary-reference-fixtures.mjs";
 
 /** Actual packaged modules, isolated workers, retained HTTP decoding and host rendering. */
-export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
+async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, serviceUrl) {
   const path = join(dirname(tracePath), "binary-fixture.saz");
   await call("Emulation.setDeviceMetricsOverride", {
     width: 1440,
@@ -26,7 +30,7 @@ export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
       const row=(await invoke('query_sessions',{query:{search:'https://binary.invalid/'+name,limit:100,offset:0}})).sessions.find(row=>row.url==='https://binary.invalid/'+name);
       if(!row)throw new Error('Binary fixture missing: '+name);
       await traffic.revealSession(row.id);
-      const inspector=inspectors[side],protocol=name.startsWith('protobuf')?'protobuf':'bond';
+      const inspector=inspectors[side],protocol=name.split('-')[0];
       await wait(()=>inspector.detail?.id===row.id&&inspector.bodyChoices.some(choice=>choice.extensionId==='net.transmog.binary'),name+' '+side+' choices');
       inspector.showMode('body');
       const select=local(inspector).querySelector('select[aria-label="Body viewer"]');
@@ -48,8 +52,10 @@ export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
         if(doc.status!=='partial'||!doc.diagnostics.some(item=>item.code===(name==='bond-ambiguous'?'ambiguous-version':'ambiguous-framing')))throw new Error('Ambiguous Bond interpretation was presented as established');
       }else{
         if(doc.status!=='complete')throw new Error('Binary parse failed: '+JSON.stringify(doc.diagnostics));
-        if(protocol==='protobuf'&&!nodes.some(node=>node.name==='Possible UTF-8 text'&&node.value?.value==='hello'))throw new Error('Schema-free Protobuf text or ambiguity label missing');
+        if(protocol==='protobuf'&&name!=='protobuf-packed'&&!nodes.some(node=>node.name==='Possible UTF-8 text'&&node.value?.value==='hello'))throw new Error('Schema-free Protobuf text or ambiguity label missing');
+        if(name==='protobuf-packed'&&!nodes.some(node=>node.name==='Possible packed ZigZag integers'))throw new Error('Packed Protobuf previews missing');
         if(protocol==='bond'&&!nodes.some(node=>node.name==='Field 1 · string'&&node.value?.value==='3.0'))throw new Error('Bond typed string missing');
+        if(['msgpack','cbor','bson'].includes(name)&&!nodes.some(node=>node.value?.value==='hello'))throw new Error('Independent serializer value missing');
       }
       if(name.includes('gzip')||name.includes('deflate'))if(!viewer.view.sources.some(source=>source.httpDecoded?.codings.length))throw new Error('Binary content decoding lacks provenance');
       for(const node of doc.roots)if(node.children?.length)await viewer.toggleNode(node.id);
@@ -62,8 +68,45 @@ export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
     await show('protobuf-negative-zero','request',false);await show('bond-negative-zero','response',false);
     await show('protobuf-duplicate-identity','request',false);await show('protobuf-invalid-identity','response',false);
     await show('bond-version-limited','request',false);await show('bond-framing-limited','response',false);
+    for(const name of ['msgpack','msgpack-extension','cbor','bson','protobuf-packed'])await show(name,'response');
     await show('protobuf','request',false);await show('bond','response',false);
     globalThis.__binaryProbe.inspectors=inspectors;
+  })()`);
+  const qualification = await evaluate(`(async()=>{
+    const invoke=(name,args={})=>window.__TAURI_INTERNALS__.invoke(name,args),results=[];
+    for(const sample of ${JSON.stringify(referenceCases.filter((item) => ["msgpack", "cbor", "bson", "protobuf-packed"].includes(item.name)))}){
+      const response=await invoke('execute_composer',{request:{method:'GET',url:${JSON.stringify(serviceUrl)}+'/'+sample.name,headers:[],body:''}});
+      if(response.status!==200)throw new Error('Local reference service failed');
+      const pageId=await invoke('visualizer_page'),format=sample.name.split('-')[0],slot='binary-service-'+sample.name;
+      const view=await invoke('activate_visualizer',{request:{slot,generation:'1',pageId,selection:{sessionId:response.detail.id,boundary:'client-response',surface:'body'},extensionId:'net.transmog.binary',visualizerId:format+'-response'}});
+      if(view.document.status!=='complete')throw new Error('Live service parse failed: '+JSON.stringify(view.document.diagnostics));
+      const source=view.sources.find(source=>source.httpDecoded?.codings.includes('gzip'));
+      if(!source)throw new Error('Live service decoding provenance missing');
+      const page=await invoke('visualizer_source',{handle:view.handle,request:{sourceId:source.id,offset:'0',maxBytes:Number(source.length)}});
+      const actual=Array.from(atob(page.bytesBase64),c=>c.charCodeAt(0).toString(16).padStart(2,'0')).join('');
+      if(actual!==sample.bodyHex)throw new Error('Retained service bytes differ from independent encoder');
+      await invoke('deactivate_visualizer',{slot,generation:'2',pageId});
+      if(await invoke('visualizer_active',{handle:view.handle}))throw new Error('Service reader remained active');
+      results.push({format,status:view.document.status,decodedBytes:Number(source.length),transport:'live localhost HTTP with gzip',encoder:'independent reference library'});
+    }
+    const shell=document.querySelector('app-shell'),c=shell.comparison;
+    const find=async name=>(await invoke('query_sessions',{query:{search:'https://binary.invalid/'+name,limit:100,offset:0}})).sessions.find(row=>row.url==='https://binary.invalid/'+name).id;
+    const left=await find('msgpack'),right=await find('msgpack-right');
+    await c.open({left:{kind:'exchange',id:left},right:{kind:'exchange',id:right}});
+    c.querySelector('.comparison-fields').open=true;c.comparisonFieldsOpen=true;c.comparisonFieldsFormat='msgpack';
+    await c.compareFields();
+    if(!c.comparisonFields||c.comparisonFields.document.status!=='complete'||!c.comparisonFields.document.roots.some(node=>node.name.includes('greeting')))throw new Error('Native field comparison missing changed fields: '+c.comparisonFieldsStatus);
+    const wait=async()=>{const end=Date.now()+10000;while(!c.querySelector('extension-visualizer')?.visualizerTitle){if(Date.now()>end)throw new Error('Native document did not reach shared presentation');await new Promise(resolve=>setTimeout(resolve,25));}};await wait();
+    const shared=c.querySelector('extension-visualizer');if(shared.view||shared.choice||!shared.snapshot)throw new Error('Native document fabricated an extension instance');
+    for(const node of c.comparisonFields.document.roots)await shared.toggleNode(node.id);
+    for(const format of ['cbor','bson']){
+      const a=await find(format),b=await find(format+'-right');
+      const snapshot=await invoke('compare_evidence',{input:{operationId:'binary-compare-'+format,left:{kind:'exchange',id:a},right:{kind:'exchange',id:b}}});
+      const fields=await invoke('comparison_fields',{id:snapshot.id,section:'Response',format,operationId:'binary-fields-'+format});
+      if(fields.document.status!=='complete'||!fields.document.roots.some(node=>node.name.includes('greeting')))throw new Error('Native '+format+' comparison failed');
+      await invoke('close_comparison',{id:snapshot.id});
+    }
+    return results;
   })()`);
   for (const [name, width, height] of [
     ["wide", 1440, 900],
@@ -87,6 +130,7 @@ export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
   }
   await evaluate(`(async()=>{
     const shell=document.querySelector('app-shell'),probe=globalThis.__binaryProbe;
+    shell.comparison.closeComparison();
     shell.shadowRoot.querySelector('a[data-view="settings"]').click();
     const end=Date.now()+10000;
     while((await Promise.all(probe.handles.map(handle=>window.__TAURI_INTERNALS__.invoke('visualizer_active',{handle})))).some(Boolean)){if(Date.now()>end)throw new Error('Hidden binary workers remained active');await new Promise(resolve=>setTimeout(resolve,25));}
@@ -94,5 +138,35 @@ export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
     shell.traffic.preferences=probe.preferences;delete globalThis.__binaryProbe;
   })()`);
   await call("Emulation.clearDeviceMetricsOverride");
-  return { bundled: true, schemas: false, httpDecoded: true, malformed: true, unloaded: true };
+  if (screenshotPath)
+    await writeFile(
+      screenshotPath.replace(/\.png$/i, "-binary-qualification.json"),
+      JSON.stringify(
+        {
+          localService: qualification,
+          productionServiceCaptures: "not supplied",
+          nativeComparison: true,
+          sharedPresentation: true,
+        },
+        null,
+        2,
+      ),
+    );
+  return {
+    bundled: true,
+    schemas: false,
+    httpDecoded: true,
+    malformed: true,
+    unloaded: true,
+    localService: qualification,
+  };
+}
+
+export async function smokeBinary(call, evaluate, screenshotPath, tracePath) {
+  const service = await startReferenceService();
+  try {
+    return await smokePackagedBinary(call, evaluate, screenshotPath, tracePath, service.url);
+  } finally {
+    await service.close();
+  }
 }

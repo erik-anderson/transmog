@@ -51,8 +51,40 @@ export function count(value: bigint, reader: Reader): number {
 export function entryName(key: Node, index: number): string {
   const value = key.value;
   return value && "value" in value && ["string", "integer", "boolean"].includes(value.kind)
-    ? `Key ${JSON.stringify(value.value).slice(0, 100)}`
+    ? `Key ${Array.from(JSON.stringify(value.value)).slice(0, 72).join("")}`
     : `Entry ${index + 1}`;
+}
+
+/** Retain only completed children; the enclosing value is explicitly partial. */
+export function retainPartial(
+  error: unknown,
+  reader: Reader,
+  name: string,
+  start: number,
+  children: Node[],
+  array = false,
+): never {
+  if (error instanceof ParseError) {
+    if (error.partial) {
+      children.push(error.partial);
+    }
+    if (children.length) {
+      error.partial = {
+        id: `${reader.budget.prefix}.partial.${start}`,
+        name: `Partial ${name}`,
+        value: { kind: array ? "array" : "object" },
+        spans: [
+          {
+            sourceId: reader.sourceId,
+            offset: String(start),
+            length: String(reader.offset - start),
+          },
+        ],
+        children,
+      };
+    }
+  }
+  throw error;
 }
 
 export function parseValues(
@@ -61,12 +93,13 @@ export function parseValues(
   title: string,
   summary: string,
   read: (reader: Reader, name: string, depth: number) => Node,
+  allowEmpty = false,
 ): VisualizationDocument {
   const doc = document(title, summary);
   const reader = new Reader(bytes, sourceId, new Budget(title.toLowerCase()));
   let start = 0;
   try {
-    if (!reader.remaining) {
+    if (!reader.remaining && !allowEmpty) {
       throw new ParseError("malformed", `Missing ${title} value`, 0);
     }
     while (reader.remaining) {
@@ -74,7 +107,13 @@ export function parseValues(
       doc.roots.push(read(reader, `Value ${doc.roots.length + 1}`, 0));
     }
   } catch (error) {
+    if (error instanceof ParseError && error.partial) {
+      doc.roots.push(error.partial);
+    }
     failure(doc, error, reader, start);
+    if (error instanceof ParseError && error.partial) {
+      doc.roots.at(-1)!.name = "Incomplete value bytes";
+    }
   }
   return doc;
 }

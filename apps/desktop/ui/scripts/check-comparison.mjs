@@ -19,6 +19,68 @@ export async function checkComparison(page, root) {
   assert.match(await dialog.textContent(), /fixture-left.saz/);
   assert.match(await dialog.textContent(), /No source body retained/);
   assert.equal(await dialog.locator("script").count(), 0);
+  const fieldDetails = dialog.locator(".comparison-fields");
+  await fieldDetails.locator("summary").click();
+  await dialog.getByRole("combobox", { name: "Field comparison format" }).selectOption("msgpack");
+  const starts = await page.evaluate(
+    () => globalThis.__workspaceFixture.visualizerStarts?.length ?? 0,
+  );
+  await dialog.getByRole("button", { name: "Compare fields", exact: true }).click();
+  const shared = fieldDetails.locator("extension-visualizer");
+  await shared
+    .locator(".visualizer-heading > strong")
+    .filter({ hasText: "field comparison" })
+    .waitFor();
+  assert.equal(await shared.locator("script").count(), 0);
+  assert.equal(await shared.evaluate((element) => element.view), null);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.visualizerStarts?.length ?? 0),
+    starts,
+    "Native presentation started an extension worker",
+  );
+  const tree = shared.getByRole("tree");
+  await tree.focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowRight");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Enter");
+  await shared.getByRole("region", { name: "Selected structure" }).waitFor();
+  await shared.getByRole("combobox", { name: "Structure view" }).selectOption("table");
+  await shared.getByRole("combobox", { name: "Structure view" }).selectOption("text");
+  await page.keyboard.press("Escape");
+  await shared.getByRole("button", { name: "About this visualizer", exact: true }).click();
+  await shared
+    .getByRole("dialog", { name: "About this visualizer" })
+    .getByText("Built-in field comparison", { exact: true })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await page.setViewportSize({ width, height });
+    await shared.scrollIntoViewIfNeeded();
+    assert.ok(await tree.isVisible());
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/native-fields-${width}.png`),
+    });
+  }
+  await page.evaluate(() => (globalThis.__workspaceFixture.deferFields = true));
+  await dialog.getByRole("button", { name: "Compare fields", exact: true }).click();
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.releaseFields);
+  await dialog.getByRole("combobox", { name: "Field comparison format" }).selectOption("bson");
+  await page.evaluate(() => globalThis.__workspaceFixture.releaseFields());
+  await page.waitForFunction(
+    () => !document.querySelector("app-shell").comparison.comparisonFieldsBusy,
+  );
+  assert.equal(
+    await page.evaluate(() => document.querySelector("app-shell").comparison.comparisonFields),
+    null,
+    "Late field results replaced a newer format choice",
+  );
+  await fieldDetails.locator("summary").click();
+  await page.setViewportSize({ width: 1440, height: 900 });
   await dialog.getByRole("button", { name: "Next change", exact: true }).click();
   assert.match(await dialog.textContent(), /Change at evidence row 3 of 70/);
   await dialog.getByRole("button", { name: "Next change", exact: true }).click();

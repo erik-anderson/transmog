@@ -1383,6 +1383,49 @@ await page.addInitScript(
           }
           case "comparison_stale":
             return false;
+          case "comparison_fields": {
+            state.fieldInput = structuredClone(args);
+            if (state.deferFields) {
+              state.deferFields = false;
+              await new Promise((resolve) => (state.releaseFields = resolve));
+            }
+            return {
+              id: args.operationId,
+              document: {
+                title: "Response · MessagePack field comparison",
+                status: "complete",
+                updates: "final",
+                presentation: "tree",
+                summary:
+                  "1 finding · 3 equal fields. Frozen snapshots; ordered duplicate occurrences.",
+                sources: [],
+                diagnostics: [],
+                roots: [
+                  {
+                    id: "field.0",
+                    name: "greeting [1] · changed",
+                    spans: [],
+                    children: [
+                      {
+                        id: "field.0.left",
+                        name: "Left",
+                        value: { kind: "string", value: "hello" },
+                        spans: [],
+                        children: [],
+                      },
+                      {
+                        id: "field.0.right",
+                        name: "Right",
+                        value: { kind: "string", value: "<script>inert</script>" },
+                        spans: [],
+                        children: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            };
+          }
           case "close_comparison":
           case "cancel_comparison":
           case "close_capture_comparison":

@@ -4,7 +4,9 @@
 mod algorithm;
 mod pairing;
 mod portable;
+mod structured;
 mod subjects;
+pub use structured::StructuredComparison;
 #[cfg(test)]
 mod tests;
 
@@ -268,6 +270,17 @@ impl Body {
 }
 
 impl ComparisonRegistry {
+    pub(crate) fn cancel_fields(&self) {
+        let state = self
+            .0
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for (id, canceled) in &state.operations {
+            if id.starts_with("fields:") {
+                canceled.store(true, Ordering::Release);
+            }
+        }
+    }
     fn begin(&self, id: &str) -> Result<Operation, AppError> {
         if id.is_empty() || id.len() > 128 {
             return Err(error("Invalid comparison operation ID"));
@@ -407,15 +420,16 @@ impl Application {
     }
     /// Requests cancellation without discarding an earlier completed result.
     pub fn cancel_comparison(&self, id: &str) {
-        if let Some(c) = self
+        let field_id = format!("fields:{id}");
+        let state = self
             .comparisons
             .0
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .operations
-            .get(id)
-        {
-            c.store(true, Ordering::Release);
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        for key in [id, &field_id] {
+            if let Some(canceled) = state.operations.get(key) {
+                canceled.store(true, Ordering::Release);
+            }
         }
     }
     /// Reads a bounded page of a frozen result.

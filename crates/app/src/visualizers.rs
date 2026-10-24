@@ -806,11 +806,15 @@ impl Application {
     }
     /// Invalidates the prior `WebView` document's workers, queued starts and source capabilities.
     pub fn reset_visualizer_document(&self) {
+        self.comparisons.cancel_fields();
         self.auth.reset(None);
         self.visualizers.reset_document();
     }
     /// Native visibility gate. Hiding/minimizing stops all workers; focus changes alone do not.
     pub fn set_visualizers_visible(&self, visible: bool) {
+        if !visible {
+            self.comparisons.cancel_fields();
+        }
         self.auth.reset(Some(visible));
         self.visualizers.visible(visible);
     }
@@ -830,6 +834,7 @@ impl Application {
     }
     /// Unloads every visible or starting instance when this application/window closes.
     pub fn deactivate_visualizers(&self) {
+        self.comparisons.cancel_fields();
         self.auth.reset(Some(false));
         self.visualizers.cancel_all();
     }

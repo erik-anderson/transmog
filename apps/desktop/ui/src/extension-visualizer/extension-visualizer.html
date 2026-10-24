@@ -1,5 +1,5 @@
 <template>
-  <section class="extension-visualizer" aria-label="Extension visualizer" aria-busy="{{visualizerBusy}}">
+  <section class="extension-visualizer" aria-label="Structured visualization" aria-busy="{{visualizerBusy}}">
     <p class="visualizer-feedback" role="status" ?hidden="{{!visualizerBusy}}"><if condition="visualizerReloading">Reloading…</if><if condition="!visualizerReloading">Visualizing…</if></p>
     <p class="visualizer-feedback" role="status" ?hidden="{{!visualizerReloadNotice}}">{{visualizerReloadNotice}}</p>
     <div class="visualizer-feedback" ?hidden="{{!visualizerError}}"><p role="status">{{visualizerError}}</p><button type="button" class="secondary compact-button" @click="{retry()}"><if condition="visualizerPaused">Open visualizer</if><if condition="!visualizerPaused">Retry visualizer</if></button></div>
@@ -7,8 +7,8 @@
     <if condition="visualizerTitle">
       <header class="visualizer-heading"><strong>{{visualizerTitle}}</strong><if condition="visualizerLiveSupported"><label class="visualizer-live"><input w-ref="{liveControl}" type="checkbox" checked="{{visualizerLive}}" ?disabled="{{visualizerBusy || visualizerFrozen || !visualizerLiveAvailable}}" @change="{setLive(e)}">Live updates</label></if><span class="status-badge">{{visualizerStatus}}</span><button w-ref="{aboutButton}" type="button" class="secondary visualizer-about-button" aria-label="About this visualizer" title="About this visualizer" aria-haspopup="dialog" popovertarget="{{visualizerAboutId}}"><span aria-hidden="true">ⓘ</span></button></header>
       <section w-ref="{aboutPanel}" id="{{visualizerAboutId}}" class="visualizer-about" popover="auto" role="dialog" aria-modal="false" aria-label="About this visualizer" @keydown="{aboutKey(e)}">
-        <header><strong>{{choice.name}}</strong><button type="button" class="secondary visualizer-close compact-button" aria-label="Close visualizer information" autofocus @click="{closeAbout()}">×</button></header>
-        <p class="visualizer-extension-id"><code>{{choice.extensionId}}</code></p>
+        <header><strong><if condition="snapshot">Built-in field comparison</if><if condition="!snapshot">{{choice.name}}</if></strong><button type="button" class="secondary visualizer-close compact-button" aria-label="Close visualizer information" autofocus @click="{closeAbout()}">×</button></header>
+        <if condition="!snapshot"><p class="visualizer-extension-id"><code>{{choice.extensionId}}</code></p></if>
         <p ?hidden="{{!visualizerSummary}}">{{visualizerSummary}}</p>
         <p class="visualizer-context">Read only · No network access</p>
         <for each="item in visualizerDiagnostics"><p data-copy-text data-copy-surface tabindex="0"><strong>{{item.code}}</strong> {{item.message}}</p></for>

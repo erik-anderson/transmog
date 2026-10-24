@@ -134,6 +134,12 @@ function validate(document, length, sourceId) {
   assert.ok(all.length <= 8_010);
   assert.equal(new Set(all.map((node) => node.id)).size, all.length);
   for (const node of all) {
+    assert.ok(node.name.isWellFormed(), "Field label split a Unicode character");
+    assert.ok(
+      Buffer.byteLength(node.name) <= 512,
+      "Field label exceeded the native document contract",
+    );
+    if (node.value?.kind === "string") assert.ok(node.value.value.isWellFormed());
     assert.match(node.id, /^[a-zA-Z0-9._-]+$/);
     if (node.value?.kind === "integer")
       assert.equal(String(BigInt(node.value.value)), node.value.value);
@@ -164,6 +170,54 @@ const binary = (...parts) => Uint8Array.from(parts.flat());
 const bondHeader = (version) => [0x43, 0x42, version, 0];
 const bondStruct = (version, fields) =>
   version === 1 ? [...fields, 0] : [...varint(fields.length + 1), ...fields, 0];
+
+test("map key previews preserve Unicode characters at native label boundaries", async () => {
+  const key = "x".repeat(70) + "😀".repeat(100);
+  for (const [kind, payload] of [
+    ["msgpack", pack({ [key]: 1 })],
+    ["cbor", cbor({ [key]: 1 })],
+    ["bson", BSON.serialize({ [key]: 1 })],
+  ]) {
+    assert.equal((await host(kind, payload)).document.status, "complete");
+  }
+});
+
+test("byte-value spans contain payload bytes without binary encoding headers", async () => {
+  for (const [kind, input] of [
+    ["msgpack", hex("c4 02 aabb")],
+    ["cbor", hex("42 aabb")],
+    ["cbor", hex("5f 42 aabb 41 cc ff")],
+  ]) {
+    const { document } = await host(kind, input);
+    assert.equal(document.status, "complete");
+    const values = nodes(document)
+      .filter((node) => node.value?.kind === "bytes")
+      .map((node) =>
+        node.spans.flatMap((span) =>
+          Array.from(input.slice(Number(span.offset), Number(span.offset) + Number(span.length))),
+        ),
+      );
+    assert.deepEqual(values, input[0] === 0x5f ? [[0xaa, 0xbb], [0xcc]] : [[0xaa, 0xbb]]);
+  }
+});
+
+test("malformed collections retain earlier complete fields as an explicitly partial value", async () => {
+  const bson = BSON.serialize({ first: 1, bad: true });
+  bson[bson.length - 2] = 2;
+  for (const [kind, payload] of [
+    ["msgpack", hex("92 01 c1")],
+    ["cbor", hex("82 01 ff")],
+    ["bson", bson],
+  ]) {
+    const { document } = await host(kind, payload);
+    assert.equal(document.status, "malformed");
+    assert.ok(document.roots.some((node) => node.name.startsWith("Partial ")));
+    assert.ok(
+      nodes(document).some((node) => node.value?.kind === "integer" && node.value.value === "1"),
+    );
+    assert.equal(document.roots.at(-1).name, "Incomplete value bytes");
+  }
+});
 
 test("MessagePack decodes independent serializer output with exact integers and inert keys", async () => {
   const payload = pack(
@@ -208,6 +262,19 @@ test("CBOR decodes independent serializer output and retains non-string map keys
   assert.equal(document.status, "complete");
   assert.ok(nodes(document).some((node) => node.name === "Key" && node.value?.kind === "boolean"));
   assert.ok(nodes(document).some((node) => node.value?.value === "18446744073709551615"));
+});
+
+test("an empty CBOR sequence is distinct from a missing standalone CBOR item", async () => {
+  const headers = [
+    {
+      index: 0,
+      name: "content-type",
+      redacted: false,
+      value: Array.from(Buffer.from("application/cbor-seq")),
+    },
+  ];
+  assert.equal((await host("cbor", new Uint8Array(), { headers })).document.status, "complete");
+  assert.equal((await host("cbor", new Uint8Array())).document.status, "malformed");
 });
 
 test("CBOR preserves tags, indefinite chunks, simple values and IEEE754 edge cases", async () => {

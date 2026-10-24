@@ -115,6 +115,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "comparison_page"
             | "comparison_stale"
             | "comparison_bytes"
+            | "comparison_fields"
             | "compare_captures"
             | "capture_comparison_page"
             | "capture_comparison_entries"

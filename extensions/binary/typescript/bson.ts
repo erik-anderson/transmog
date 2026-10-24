@@ -1,6 +1,6 @@
 import type { Node, Value } from "transmog:extensions/v1";
 import { Reader, ParseError, integer, text } from "./reader.js";
-import { float, hex, literal, parseValues, string, unsigned } from "./values.js";
+import { float, hex, literal, parseValues, retainPartial, string, unsigned } from "./values.js";
 
 function length(reader: Reader): number {
   const start = reader.offset,
@@ -96,12 +96,22 @@ function field(reader: Reader, type: number, name: string, depth: number): Node 
       value: `${BigInt.asIntN(64, unsigned(reader, 8))} ms since Unix epoch`,
     };
   } else if (type === 11) {
-    const pattern = cstring(reader),
-      options = cstring(reader);
-    value = {
-      kind: "string",
-      value: `/${pattern.value}/${options.value}${pattern.clipped || options.clipped ? "… [preview]" : ""}`,
-    };
+    const pattern = cstring(reader);
+    children.push(
+      reader.node("Pattern (inert)", start, {
+        kind: "string",
+        value: pattern.value + (pattern.clipped ? "… [preview]" : ""),
+      }),
+    );
+    const optionsStart = reader.offset;
+    const options = cstring(reader);
+    children.push(
+      reader.node("Options", optionsStart, {
+        kind: "string",
+        value: options.value + (options.clipped ? "… [preview]" : ""),
+      }),
+    );
+    value = { kind: "object" };
   } else if (type === 12) {
     const namespace = bsonString(reader);
     children.push(reader.node("Namespace", start, namespace));
@@ -161,37 +171,41 @@ function readDocument(reader: Reader, name: string, depth: number, array = false
   }
   const payload = reader.take(size - 4),
     children: Node[] = [];
-  while (payload.remaining > 1) {
-    const entryStart = payload.offset,
-      type = payload.byte();
-    if (!types[type]) {
-      throw new ParseError("malformed", "Invalid BSON element type", entryStart);
-    }
-    const keyStart = payload.offset,
-      key = cstring(payload);
-    if (array && (key.clipped || key.value !== String(children.length))) {
-      throw new ParseError(
-        "malformed",
-        "BSON array keys must be consecutive decimal indexes",
-        keyStart,
+  try {
+    while (payload.remaining > 1) {
+      const entryStart = payload.offset,
+        type = payload.byte();
+      if (!types[type]) {
+        throw new ParseError("malformed", "Invalid BSON element type", entryStart);
+      }
+      const keyStart = payload.offset,
+        key = cstring(payload);
+      if (array && (key.clipped || key.value !== String(children.length))) {
+        throw new ParseError(
+          "malformed",
+          "BSON array keys must be consecutive decimal indexes",
+          keyStart,
+        );
+      }
+      const keyNode = payload.node("Key", keyStart, {
+        kind: "string",
+        value: key.value + (key.clipped ? "… [preview]" : ""),
+      });
+      const item = field(payload, type, "Value", depth + 1);
+      children.push(
+        payload.node(
+          `${Array.from(key.value).slice(0, 72).join("")}${key.clipped || Array.from(key.value).length > 72 ? "…" : ""} · ${types[type]}`,
+          entryStart,
+          { kind: "object" },
+          [keyNode, item],
+        ),
       );
     }
-    const keyNode = payload.node("Key", keyStart, {
-      kind: "string",
-      value: key.value + (key.clipped ? "… [preview]" : ""),
-    });
-    const item = field(payload, type, "Value", depth + 1);
-    children.push(
-      payload.node(
-        `${key.value.slice(0, 100)}${key.clipped || key.value.length > 100 ? "…" : ""} · ${types[type]}`,
-        entryStart,
-        { kind: "object" },
-        [keyNode, item],
-      ),
-    );
-  }
-  if (payload.byte() !== 0 || payload.remaining) {
-    throw new ParseError("malformed", "Missing BSON document terminator", payload.offset - 1);
+    if (payload.byte() !== 0 || payload.remaining) {
+      throw new ParseError("malformed", "Missing BSON document terminator", payload.offset - 1);
+    }
+  } catch (error) {
+    retainPartial(error, payload, name, start, children, array);
   }
   return reader.node(name, start, { kind: array ? "array" : "object" }, children);
 }

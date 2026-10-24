@@ -1,7 +1,16 @@
-import type { Node, Value } from "transmog:extensions/v1";
+import type { Input, Node, Value } from "transmog:extensions/v1";
 import type { Reader } from "./reader.js";
 import { ParseError, floating, integer, text } from "./reader.js";
-import { count, entryName, float, literal, parseValues, string, unsigned } from "./values.js";
+import {
+  count,
+  entryName,
+  float,
+  literal,
+  parseValues,
+  retainPartial,
+  string,
+  unsigned,
+} from "./values.js";
 
 function argument(reader: Reader, info: number): bigint | null {
   if (info < 24) {
@@ -56,8 +65,10 @@ function read(reader: Reader, name: string, depth: number): Node {
       if (major === 3) {
         value = string(reader, length);
       } else {
+        const payloadStart = reader.offset;
         reader.take(length);
-        value = { kind: "bytes" };
+        children.push(reader.node("Byte string payload", payloadStart, { kind: "bytes" }));
+        value = literal("Byte string", 2);
       }
     } else {
       // Each chunk must be definite and independently valid UTF-8.
@@ -86,7 +97,9 @@ function read(reader: Reader, name: string, depth: number): Node {
           }
           clipped ||= decoded.clipped;
         }
-        children.push(reader.node(`Chunk ${++index}`, chunkStart, chunkValue));
+        children.push(
+          reader.node(`Chunk ${++index}`, major === 2 ? payload.start : chunkStart, chunkValue),
+        );
       }
       if (reader.byte() !== 0xff) {
         throw new ParseError("malformed", "Missing string break", start);
@@ -94,7 +107,7 @@ function read(reader: Reader, name: string, depth: number): Node {
       value =
         major === 3
           ? { kind: "string", value: combined + (clipped ? "… [preview]" : "") }
-          : { kind: "bytes" };
+          : literal("Indefinite byte string", 2);
     }
   } else if (major === 4 || major === 5) {
     const length = size === null ? null : count(size, reader);
@@ -102,23 +115,27 @@ function read(reader: Reader, name: string, depth: number): Node {
       throw new ParseError("malformed", "Truncated collection", start);
     }
     let index = 0;
-    while (
-      length === null ? reader.remaining && reader.bytes[reader.offset] !== 0xff : index < length
-    ) {
-      if (major === 4) {
-        children.push(read(reader, `Item ${index + 1}`, depth + 1));
-      } else {
-        const entryStart = reader.offset,
-          key = read(reader, "Key", depth + 1),
-          item = read(reader, "Value", depth + 1);
-        children.push(
-          reader.node(entryName(key, index), entryStart, { kind: "object" }, [key, item]),
-        );
+    try {
+      while (
+        length === null ? reader.remaining && reader.bytes[reader.offset] !== 0xff : index < length
+      ) {
+        if (major === 4) {
+          children.push(read(reader, `Item ${index + 1}`, depth + 1));
+        } else {
+          const entryStart = reader.offset,
+            key = read(reader, "Key", depth + 1),
+            item = read(reader, "Value", depth + 1);
+          children.push(
+            reader.node(entryName(key, index), entryStart, { kind: "object" }, [key, item]),
+          );
+        }
+        index++;
       }
-      index++;
-    }
-    if (length === null && reader.byte() !== 0xff) {
-      throw new ParseError("malformed", "Missing collection break", start);
+      if (length === null && reader.byte() !== 0xff) {
+        throw new ParseError("malformed", "Missing collection break", start);
+      }
+    } catch (error) {
+      retainPartial(error, reader, name, start, children, major === 4);
     }
     value = { kind: major === 4 ? "array" : "object" };
   } else if (major === 6) {
@@ -140,12 +157,25 @@ function read(reader: Reader, name: string, depth: number): Node {
   return reader.node(name, start, value, children);
 }
 
-export function parse(bytes: Uint8Array, sourceId: string) {
+export function parse(bytes: Uint8Array, sourceId: string, input?: Input) {
+  const types =
+    input?.[input.direction]?.headers.filter(
+      (field) => field.name.toLowerCase() === "content-type",
+    ) ?? [];
+  const type = types.length === 1 ? types[0] : undefined;
+  const sequence = !!(
+    type &&
+    !type.redacted &&
+    type.value &&
+    type.value.length <= 256 &&
+    /^[\t ]*application\/cbor-seq(?:[\t ]*;|[\t ]*$)/i.test(String.fromCharCode(...type.value))
+  );
   return parseValues(
     bytes,
     sourceId,
     "CBOR",
     "Encoded types, map keys, tags and string chunks. Tags are preserved without assuming application semantics. Consecutive data items are shown in wire order.",
     read,
+    sequence,
   );
 }

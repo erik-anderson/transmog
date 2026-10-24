@@ -1,6 +1,6 @@
 # Binary formats
 
-Select **Protobuf** or **Bond Compact Binary** in the request or response Body
+Select **Protobuf**, **Bond Compact Binary**, **MessagePack**, **CBOR** or **BSON** in the request or response Body
 viewer. Auto tries them for their declared binary content types and uses only
 structurally complete results. Explicit selection also shows partial results.
 No schemas are required. These viewers do not support gRPC framing, schema
@@ -11,6 +11,8 @@ preserving order and duplicate fields. Signed, ZigZag, Boolean, floating point,
 UTF-8 and embedded-message views are labeled **Possible**. They are alternative
 interpretations, not recovered schema types. Length-delimited data can also be
 arbitrary bytes or packed numbers. Nested/text probes are limited to 64 KiB;
+Possible packed-array previews consider payloads up to 4 KiB and show the first
+128 items after validating the full candidate payload.
 larger fields remain available as bytes. The body is interpreted as one message;
 Protobuf itself cannot establish boundaries between concatenated messages.
 
@@ -23,7 +25,14 @@ as blobs or nullable values cannot be recovered.
 Header bytes that also parse as raw fields are labeled as ambiguous framing;
 that result also remains partial.
 
-Both viewers use the host's HTTP content decoding and preserve links to exact
+MessagePack and CBOR show encoded maps, arrays and scalar types. Unknown
+MessagePack extensions remain opaque; standard timestamps retain nanoseconds.
+CBOR preserves tags and indefinite string chunks, with no application semantics
+inferred. BSON shows names and encoded types; JavaScript and regex data are inert,
+and Decimal128 is displayed as exact raw bits. Consecutive self-delimiting
+values/documents preserve wire order. Byte-value ranges contain payload bytes.
+
+All viewers use the host's HTTP content decoding and preserve links to exact
 source byte ranges. A decoding failure leaves original bytes available in Hex.
 Each body is limited to 2 MiB, with separate work, nesting, node and text limits.
 Text previews show at most 1,024 UTF-16 code units. Negative zero is displayed as
@@ -35,4 +44,4 @@ framing. Such results remain limited even if another interpretation completes.
 
 Only the selected side is read. There is no network access, related-traffic
 lookup or live subscription. The host owns the UI; captured text remains inert.
-Manage the bundled **Protobuf and Bond** extension in Settings → Extensions.
+Manage the bundled **Binary formats** extension in Settings → Extensions.

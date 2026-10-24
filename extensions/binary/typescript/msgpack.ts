@@ -1,7 +1,16 @@
 import type { Node, Value } from "transmog:extensions/v1";
 import type { Reader } from "./reader.js";
 import { ParseError, integer } from "./reader.js";
-import { count, entryName, float, literal, parseValues, string, unsigned } from "./values.js";
+import {
+  count,
+  entryName,
+  float,
+  literal,
+  parseValues,
+  retainPartial,
+  string,
+  unsigned,
+} from "./values.js";
 
 function read(reader: Reader, name: string, depth: number): Node {
   reader.budget.depth(depth, reader.offset);
@@ -39,8 +48,10 @@ function read(reader: Reader, name: string, depth: number): Node {
     value = string(reader, count(unsigned(reader, 2 ** (tag - 0xd9), true), reader));
   } else if (tag >= 0xc4 && tag <= 0xc6) {
     length = count(unsigned(reader, 2 ** (tag - 0xc4), true), reader);
+    const payloadStart = reader.offset;
     reader.take(length);
-    value = { kind: "bytes" };
+    children.push(reader.node("Binary payload", payloadStart, { kind: "bytes" }));
+    value = literal("Binary", 0);
   } else if (tag >= 0xdc && tag <= 0xdf) {
     kind = tag <= 0xdd ? "array" : "map";
     length = count(unsigned(reader, tag % 2 === 0 ? 2 : 4, true), reader);
@@ -82,17 +93,21 @@ function read(reader: Reader, name: string, depth: number): Node {
     if (length > reader.remaining / (kind === "map" ? 2 : 1)) {
       throw new ParseError("malformed", "Truncated collection", start);
     }
-    for (let index = 0; index < length; index++) {
-      if (kind === "array") {
-        children.push(read(reader, `Item ${index + 1}`, depth + 1));
-      } else {
-        const entryStart = reader.offset;
-        const key = read(reader, "Key", depth + 1);
-        const item = read(reader, "Value", depth + 1);
-        children.push(
-          reader.node(entryName(key, index), entryStart, { kind: "object" }, [key, item]),
-        );
+    try {
+      for (let index = 0; index < length; index++) {
+        if (kind === "array") {
+          children.push(read(reader, `Item ${index + 1}`, depth + 1));
+        } else {
+          const entryStart = reader.offset;
+          const key = read(reader, "Key", depth + 1);
+          const item = read(reader, "Value", depth + 1);
+          children.push(
+            reader.node(entryName(key, index), entryStart, { kind: "object" }, [key, item]),
+          );
+        }
       }
+    } catch (error) {
+      retainPartial(error, reader, name, start, children, kind === "array");
     }
   }
   return reader.node(name, start, value, children);

@@ -2381,6 +2381,7 @@ pub fn run() {
                 comparison::comparison_page,
                 comparison::comparison_stale,
                 comparison::comparison_bytes,
+                comparison::comparison_fields,
                 comparison::compare_captures,
                 comparison::reopen_case_capture_comparison,
                 comparison::capture_comparison_page,

@@ -14,13 +14,14 @@ type Pending = { kind: "bytes" | "decoded"; token: string; count: number };
 /** Only the selected side is read. No context, filesystem, network or live feed. */
 export function visualizer(
   title: string,
-  parse: (bytes: Uint8Array, sourceId: string) => VisualizationDocument,
+  parse: (bytes: Uint8Array, sourceId: string, input?: Input) => VisualizationDocument,
 ) {
   let body: BodyReference | undefined;
   let bytes = new Uint8Array(0);
   let offset = 0;
   let sequence = 0;
   let pending: Pending | undefined;
+  let metadata: Input | undefined;
 
   function show(status: "unavailable" | "limited" | "partial", message: string): Step {
     pending = undefined;
@@ -53,7 +54,7 @@ export function visualizer(
         reads: [{ sourceId: body.sourceId, offset: String(offset), maxBytes: count }],
       };
     }
-    const document = parse(bytes, body.sourceId);
+    const document = parse(bytes, body.sourceId, metadata);
     if (body.availability !== "complete") {
       if (document.status !== "limited") {
         document.status = "partial";
@@ -90,6 +91,7 @@ export function visualizer(
 
   return {
     visualize(input: Input): Step {
+      metadata = input;
       body = undefined;
       bytes = new Uint8Array(0);
       offset = 0;

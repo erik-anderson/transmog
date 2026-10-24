@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { referenceCases } from "../../../../scripts/binary-reference-fixtures.mjs";
 
 /** Render real parser output through the production host template under Trusted Types. */
 export async function checkBinaryVisualizers(page, root) {
@@ -13,6 +14,9 @@ export async function checkBinaryVisualizers(page, root) {
     ["bond", [0x29, 3, 51, 46, 48, 0]],
     ["protobuf", [8, 1, 18, 5, 97]],
     ["protobuf", []],
+    ...referenceCases
+      .filter((item) => !item.name.endsWith("-right"))
+      .map((item) => [item.name.split("-")[0], Array.from(Buffer.from(item.bodyHex, "hex"))]),
   ];
   for (const [index, [kind, bytes]] of fixtures.entries()) {
     const parser = await import(pathToFileURL(resolve(binary, `dist/runtime/${kind}.js`)).href);
@@ -103,7 +107,7 @@ export async function checkBinaryVisualizers(page, root) {
         .waitFor();
     if (index === 2)
       await viewer.getByRole("tree").getByText("Unparsed bytes", { exact: true }).waitFor();
-    if (index < 2) {
+    if (index < 2 || index >= 4) {
       for (const [width, height] of [
         [1440, 900],
         [960, 720],

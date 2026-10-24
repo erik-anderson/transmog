@@ -81,6 +81,11 @@ export interface VisualizerDocument {
   sources: DerivedSource[];
   diagnostics: Array<{ code: string; message: string; nodeId: string | null }>;
 }
+/** Native producers use the same inert document without an extension instance or worker. */
+export interface StructuredSnapshot {
+  id: string;
+  document: VisualizerDocument;
+}
 export interface LiveStatus {
   available: boolean;
   enabled: boolean;

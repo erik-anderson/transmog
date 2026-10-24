@@ -1,6 +1,8 @@
-"""Create synthetic Protobuf and Bond SAZ evidence for native bundled-viewer checks."""
+"""Create binary SAZ evidence, including independent reference-serializer outputs."""
 import gzip
+import json
 from pathlib import Path
+import subprocess
 import sys
 import zipfile
 import zlib
@@ -29,6 +31,9 @@ def main():
         ("bond-version-limited", "application/bond-compact-binary", limited_versions, ""),
         ("bond-framing-limited", "application/bond-compact-binary", bytes.fromhex("43420200") + limited_versions, ""),
     ]
+    reference_script = Path(__file__).with_name('binary-reference-fixtures.mjs')
+    references = json.loads(subprocess.check_output(['node', str(reference_script)], text=True))
+    cases.extend((case['name'], case['contentType'], bytes.fromhex(case['bodyHex']), '') for case in references)
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for number, (name, content_type, body, coding) in enumerate(cases, 1):

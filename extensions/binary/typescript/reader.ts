@@ -1,6 +1,7 @@
 import type { Node, ParseStatus, Value, VisualizationDocument } from "transmog:extensions/v1";
 
 export class ParseError extends Error {
+  partial?: Node;
   constructor(
     readonly status: "malformed" | "limited",
     message: string,

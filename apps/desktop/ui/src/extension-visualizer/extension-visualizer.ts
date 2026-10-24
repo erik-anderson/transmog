@@ -11,6 +11,8 @@ import {
   nameCopyAction,
   requestCopy,
   CopyError,
+  copyTree,
+  type CopyTreeNode,
 } from "../inspection-copy.js";
 import { selectedConverterText } from "../converter-selection.js";
 import { hasCopyValue, nodeCopyValue, visualizerCopyTree } from "./copy.js";
@@ -33,6 +35,7 @@ import {
   type VisualizerNode,
   type VisualizerSelection,
   type VisualizerView,
+  type StructuredSnapshot,
 } from "./models.js";
 
 let nextGeneration = 0n,
@@ -45,6 +48,8 @@ export class ExtensionVisualizer extends WebUIElement {
   @attr({ mode: "boolean" }) automatic = false;
   @observable selection: VisualizerSelection | null = null;
   @observable choice: VisualizerChoice | null = null;
+  /** A host-produced snapshot reuses presentation without starting an extension. */
+  @observable snapshot: StructuredSnapshot | null = null;
   @observable visualizerBusy = false;
   @observable visualizerReloading = false;
   @observable visualizerReloadNotice = "";
@@ -151,6 +156,9 @@ export class ExtensionVisualizer extends WebUIElement {
     }
     this.schedule();
   }
+  snapshotChanged(): void {
+    this.schedule();
+  }
   slotChanged(): void {
     this.updateLayout();
     this.schedule();
@@ -217,6 +225,17 @@ export class ExtensionVisualizer extends WebUIElement {
     );
   }
   private reconcile(): void {
+    if (this.snapshot) {
+      const signature = this.visible ? "native:" + this.snapshot.id : "";
+      if (signature !== this.signature) {
+        this.stop();
+        this.signature = signature;
+        if (signature) {
+          this.acceptSnapshot(this.snapshot);
+        }
+      }
+      return;
+    }
     const selection = this.selection,
       choice = this.choice;
     const signature =
@@ -744,6 +763,17 @@ export class ExtensionVisualizer extends WebUIElement {
       this.scrollSelectedRow();
     }
   }
+  private acceptSnapshot(snapshot: StructuredSnapshot): void {
+    const document = snapshot.document;
+    this.root = documentNode(document);
+    this.nodes = nodeIndex(this.root);
+    this.visualizerTitle = document.title;
+    this.visualizerStatus = document.status;
+    this.visualizerSummary = document.summary ?? "";
+    this.visualizerDiagnostics = document.diagnostics;
+    this.updateRows();
+    this.describeNode();
+  }
   private updateRows(revealSelection = false): void {
     this.allRows = this.root
       ? treeRows(this.root, this.expanded, this.selected, this.rendererId)
@@ -1025,6 +1055,29 @@ export class ExtensionVisualizer extends WebUIElement {
     }
     const node = this.nodes.get(id),
       revision = this.revision;
+    if (node && this.snapshot) {
+      const snapshot = this.snapshot;
+      const current = (): boolean =>
+        this.visible && revision === this.revision && this.snapshot === snapshot;
+      const convert = (item: VisualizerNode): CopyTreeNode => ({
+        name: item.name,
+        value: hasCopyValue(item) ? valueText(item.value) : null,
+        children: item.children.map(convert),
+      });
+      requestCopy(event, {
+        source: event.currentTarget as HTMLElement,
+        current,
+        actions: [
+          ...(hasCopyValue(node)
+            ? fieldCopyActions(node.name, () => valueText(node.value))
+            : [nameCopyAction(node.name)]),
+          ...(node.children.length
+            ? [{ id: "subtree", label: "Copy subtree", read: () => copyTree(convert(node)) }]
+            : []),
+        ],
+      });
+      return;
+    }
     let view = this.view;
     if (!node || !view) {
       return;

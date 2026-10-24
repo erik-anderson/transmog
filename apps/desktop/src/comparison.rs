@@ -5,7 +5,7 @@ use transmog_app::{
     AppError, ErrorCategory,
     comparison::{
         CaptureComparison, CaptureEntryChoice, ComparisonBytes, ComparisonPage, ComparisonRequest,
-        ComparisonResult, ComparisonScope, ComparisonSubject, PairingOptions,
+        ComparisonResult, ComparisonScope, ComparisonSubject, PairingOptions, StructuredComparison,
     },
 };
 
@@ -32,6 +32,20 @@ pub(super) async fn compare_evidence(
     let result = app.compare_evidence(input, [a.1, b.1]).await;
     drop((a.0, b.0));
     result
+}
+#[tauri::command]
+pub(super) async fn comparison_fields(
+    id: String,
+    section: String,
+    format: String,
+    operation_id: String,
+    window: WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<StructuredComparison, AppError> {
+    state
+        .window_application(&window)?
+        .comparison_fields(&id, &section, &format, &operation_id)
+        .await
 }
 #[tauri::command]
 pub(super) fn close_comparison(

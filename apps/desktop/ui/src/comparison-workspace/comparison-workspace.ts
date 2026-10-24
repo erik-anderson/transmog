@@ -2,6 +2,7 @@ import { observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import { describeError } from "../utilities.js";
+import type { StructuredSnapshot } from "../extension-visualizer/models.js";
 import type {
   ComparisonOpen,
   ComparisonSubject,
@@ -23,6 +24,14 @@ export class ComparisonWorkspace extends WorkspaceElement {
   private pageRevision = 0;
   private byteRevision = 0;
   private changeRevision = 0;
+  private fieldRevision = 0;
+  private fieldOperation = "";
+  @observable comparisonFields: StructuredSnapshot | null = null;
+  @observable comparisonFieldsBusy = false;
+  @observable comparisonFieldsStatus = "";
+  @observable comparisonFieldsFormat = "protobuf";
+  @observable comparisonFieldsSection = "Response";
+  @observable comparisonFieldsOpen = false;
   @observable comparisonCaseAvailable = false;
   @observable comparisonLeftTime = "";
   @observable comparisonRightTime = "";
@@ -194,6 +203,7 @@ export class ComparisonWorkspace extends WorkspaceElement {
       ? this.pageRows.find((row) => row.index === this.comparisonActive)
       : undefined;
     this.cancelPending();
+    this.clearFields();
     const revision = ++this.revision,
       operation = crypto.randomUUID();
     this.operation = operation;
@@ -238,6 +248,9 @@ export class ComparisonWorkspace extends WorkspaceElement {
       }
       const previous = this.comparisonResult?.id;
       this.comparisonResult = result;
+      if (!result.bodySections.includes(this.comparisonFieldsSection)) {
+        this.comparisonFieldsSection = result.bodySections[0] ?? "Response";
+      }
       pendingId = "";
       this.comparisonSummary =
         (result.different ? "Differences found" : "No differences in compared evidence") +
@@ -314,6 +327,7 @@ export class ComparisonWorkspace extends WorkspaceElement {
     }, 2000);
   }
   cancelPending(): void {
+    this.cancelFields();
     if (this.operation) {
       void invoke("cancel_comparison", { operationId: this.operation }).catch(() => {});
     }
@@ -328,6 +342,7 @@ export class ComparisonWorkspace extends WorkspaceElement {
       return;
     }
     this.cancelPending();
+    this.clearFields();
     this.revision++;
     this.comparisonBusy = false;
     this.operation = "";
@@ -356,6 +371,70 @@ export class ComparisonWorkspace extends WorkspaceElement {
   }
   closeComparison(): void {
     this.comparisonDialog.close();
+  }
+  chooseFieldFormat(event: Event): void {
+    this.clearFields();
+    this.comparisonFieldsFormat = (event.currentTarget as HTMLSelectElement).value;
+  }
+  toggleFieldComparison(event: Event): void {
+    this.comparisonFieldsOpen = (event.currentTarget as HTMLDetailsElement).open;
+    if (!this.comparisonFieldsOpen) {
+      this.cancelFields();
+    }
+  }
+  chooseFieldSection(event: Event): void {
+    this.clearFields();
+    this.comparisonFieldsSection = (event.currentTarget as HTMLSelectElement).value;
+  }
+  cancelFields(): void {
+    if (this.fieldOperation) {
+      void invoke("cancel_comparison", { operationId: this.fieldOperation }).catch(() => {});
+    }
+    this.fieldRevision++;
+    this.fieldOperation = "";
+    this.comparisonFieldsBusy = false;
+  }
+  clearFields(): void {
+    this.cancelFields();
+    this.comparisonFields = null;
+    this.comparisonFieldsStatus = "";
+  }
+  async compareFields(): Promise<void> {
+    const id = this.comparisonResult?.id;
+    if (!id || this.comparisonBusy || this.comparisonFieldsBusy) {
+      return;
+    }
+    const revision = ++this.fieldRevision;
+    const operationId = crypto.randomUUID();
+    this.fieldOperation = operationId;
+    this.comparisonFieldsBusy = true;
+    this.comparisonFieldsStatus = "Parsing frozen bodies and comparing fields…";
+    try {
+      const result = await invoke<StructuredSnapshot>("comparison_fields", {
+        id,
+        section: this.comparisonFieldsSection,
+        format: this.comparisonFieldsFormat,
+        operationId,
+      });
+      if (
+        revision === this.fieldRevision &&
+        this.comparisonResult?.id === id &&
+        this.comparisonDialog.open &&
+        this.isConnected
+      ) {
+        this.comparisonFields = result;
+        this.comparisonFieldsStatus = "";
+      }
+    } catch (error: unknown) {
+      if (revision === this.fieldRevision) {
+        this.comparisonFieldsStatus = describeError(error);
+      }
+    } finally {
+      if (revision === this.fieldRevision) {
+        this.comparisonFieldsBusy = false;
+        this.fieldOperation = "";
+      }
+    }
   }
   swapSides(): void {
     if (!this.subjects) {

@@ -1,4 +1,4 @@
-"""Build the bundled schema-free Protobuf and Bond Compact Binary visualizers."""
+"""Build the bundled binary format visualizers."""
 import subprocess
 from pathlib import Path
 
