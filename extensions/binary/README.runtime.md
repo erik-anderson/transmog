@@ -24,6 +24,8 @@ keeps the ordinary body view. Field names, enum labels and schema aliases such
 as blobs or nullable values cannot be recovered.
 Header bytes that also parse as raw fields are labeled as ambiguous framing;
 that result also remains partial.
+Raw bodies can contain consecutive structs, each with its own exact byte range.
+A leading protocol header frames one struct; it is not treated as a batch item.
 
 MessagePack and CBOR show encoded maps, arrays and scalar types. Unknown
 MessagePack extensions remain opaque; standard timestamps retain nanoseconds.
@@ -34,7 +36,14 @@ values/documents preserve wire order. Byte-value ranges contain payload bytes.
 
 All viewers use the host's HTTP content decoding and preserve links to exact
 source byte ranges. A decoding failure leaves original bytes available in Hex.
-Each body is limited to 2 MiB, with separate work, nesting, node and text limits.
+Bond accepts bodies up to 16 MiB, indexes up to 500,000 values and supports
+64 levels of nesting. Large structures load field/item ranges on expansion;
+opening another range replaces the previously loaded range. Deep descendants
+are flattened in wire order with explicit nesting depths. Fixed-width lists
+retain byte ranges without allocating a node for every item. Full strings are
+validated even when only a preview is shown. Use Hex for complete value bytes;
+copy a smaller range when a whole subtree cannot be materialized.
+Other readers accept bodies up to 2 MiB, with separate work, nesting, node and text limits.
 Text previews show at most 1,024 UTF-16 code units. Negative zero is displayed as
 `-0` text so JSON cannot erase its sign. Missing, malformed, incomplete
 and limited input is reported explicitly; a complete parse does not establish a

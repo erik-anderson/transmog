@@ -84,7 +84,14 @@
           "direction": "request",
           "contentTypes": ["application/bond-compact-binary"]
         }
-      ]
+      ],
+      "limits": {
+        "inputBytes": 67108864,
+        "outputBytes": 4194304,
+        "heapBytes": 268435456,
+        "durationMs": 10000,
+        "nodes": 20000
+      }
     },
     {
       "id": "bond-response",
@@ -108,7 +115,14 @@
           "direction": "response",
           "contentTypes": ["application/bond-compact-binary"]
         }
-      ]
+      ],
+      "limits": {
+        "inputBytes": 67108864,
+        "outputBytes": 4194304,
+        "heapBytes": 268435456,
+        "durationMs": 10000,
+        "nodes": 20000
+      }
     },
     {
       "id": "msgpack-request",

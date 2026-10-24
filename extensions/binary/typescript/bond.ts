@@ -12,7 +12,7 @@ import {
 import { mapEntry, retainPartial } from "./values.js";
 
 // Wire tags from BondDataType; this reader has no dependency on the retired Bond runtime.
-const names = [
+export const names = [
   "stop",
   "stop-base",
   "bool",
@@ -33,7 +33,7 @@ const names = [
   "int64",
   "wstring",
 ];
-const summary =
+export const summary =
   "Schema-free Compact Binary. Field IDs and wire types are available; field names, enum labels and schema aliases are unknown.";
 
 function type(reader: Reader, raw: number): number {
@@ -159,6 +159,7 @@ function candidate(
   sourceId: string,
   version: number,
   start: number,
+  sequence = false,
 ): VisualizationDocument {
   const doc = document("Bond Compact Binary", summary);
   const reader = new Reader(
@@ -167,17 +168,42 @@ function candidate(
     new Budget(`bond${version}.${start ? "marshaled" : "raw"}`),
     start,
   );
-  const children: Node[] = [];
+  let children: Node[] = [];
+  let structStart = start;
+  let ordinal = 0;
+  const root = (): void => {
+    doc.roots.push({
+      id: `${reader.budget.prefix}.root.${ordinal++}`,
+      name: `Compact Binary v${version}`,
+      value: { kind: "object" },
+      spans: [
+        { sourceId, offset: String(structStart), length: String(reader.offset - structStart) },
+      ],
+      children,
+    });
+  };
   try {
-    structure(reader, children, version, 0);
-    if (reader.remaining) {
-      throw new ParseError("malformed", "Trailing bytes after Bond struct", reader.offset);
-    }
+    do {
+      structStart = reader.offset;
+      children = [];
+      reader.budget.step(structStart);
+      // Empty structs must also consume the display budget.
+      reader.node("Struct", structStart);
+      structure(reader, children, version, 0);
+      root();
+      if (reader.remaining && !sequence) {
+        throw new ParseError("malformed", "Trailing bytes after Bond struct", reader.offset);
+      }
+    } while (reader.remaining);
   } catch (error) {
+    const completed = doc.roots.at(-1)?.children === children;
     const last = children.at(-1)?.spans?.[0];
     const partial = error instanceof ParseError ? error.partial : undefined;
     if (partial) {
       children.push(partial);
+    }
+    if (!completed) {
+      root();
     }
     failure(
       doc,
@@ -187,25 +213,27 @@ function candidate(
         ? Number(partial.spans?.[0]?.offset ?? start)
         : last
           ? Number(last.offset) + Number(last.length)
-          : start,
+          : structStart,
     );
     if (partial) {
       doc.roots.at(-1)!.name = "Incomplete value bytes";
     }
   }
-  doc.roots.unshift({
-    id: `${reader.budget.prefix}.root`,
-    name: `Compact Binary v${version}`,
-    value: { kind: "object" },
-    spans: [{ sourceId, offset: String(start), length: String(bytes.length - start) }],
-    children,
-  });
   return doc;
 }
 
-export function parse(bytes: Uint8Array, sourceId: string): VisualizationDocument {
-  const raw = rawDocument(bytes, sourceId);
-  if (bytes[0] === 0x43 && bytes[1] === 0x42) {
+export type CandidateReader = typeof candidate;
+
+export function parse(
+  bytes: Uint8Array,
+  sourceId: string,
+  read: CandidateReader = candidate,
+): VisualizationDocument {
+  const header = bytes[0] === 0x43 && bytes[1] === 0x42;
+  // A leading protocol header frames the whole body. Probe the existing raw
+  // single-struct alternative; do not count the header itself as a batch item.
+  const raw = rawDocument(bytes, sourceId, !header, read);
+  if (header) {
     // The protocol magic can also be a raw field header and value. Do not hide
     // a valid alternative or silently treat a damaged envelope as established raw data.
     const rawValid =
@@ -239,7 +267,7 @@ export function parse(bytes: Uint8Array, sourceId: string): VisualizationDocumen
         ],
       };
     }
-    const doc = candidate(bytes, sourceId, version, 4);
+    const doc = read(bytes, sourceId, version, 4);
     doc.summary += ` The marshaled header declares version ${version}.`;
     doc.roots.unshift({
       id: "bond.header",
@@ -302,9 +330,33 @@ function limitedInterpretation(
   return doc;
 }
 
-function rawDocument(bytes: Uint8Array, sourceId: string): VisualizationDocument {
-  const first = candidate(bytes, sourceId, 1, 0);
-  const second = candidate(bytes, sourceId, 2, 0);
+function rawDocument(
+  bytes: Uint8Array,
+  sourceId: string,
+  sequence: boolean,
+  read: CandidateReader,
+): VisualizationDocument {
+  const first = read(bytes, sourceId, 1, 0, sequence);
+  const second = read(bytes, sourceId, 2, 0, sequence);
+  if (sequence && first.status === "malformed" && second.status === "malformed") {
+    return {
+      ...document(
+        "Bond Compact Binary",
+        summary +
+          " Neither raw version parsed completely. Both incomplete interpretations are shown.",
+      ),
+      status: "malformed",
+      roots: [first, second].flatMap((doc, index) =>
+        doc.roots.map((root) => ({
+          ...root,
+          name: `Possible Compact Binary v${index + 1} (incomplete) · ${root.name}`,
+        })),
+      ),
+      diagnostics: [first, second].flatMap((doc, index) =>
+        doc.diagnostics!.map((item) => ({ ...item, message: `v${index + 1}: ${item.message}` })),
+      ),
+    };
+  }
   if (first.status === "complete" && second.status === "complete") {
     return {
       ...document(
@@ -313,8 +365,8 @@ function rawDocument(bytes: Uint8Array, sourceId: string): VisualizationDocument
       ),
       status: "partial",
       roots: [
-        { ...first.roots[0]!, name: "Possible Compact Binary v1" },
-        { ...second.roots[0]!, name: "Possible Compact Binary v2" },
+        ...first.roots.map((root) => ({ ...root, name: "Possible " + root.name })),
+        ...second.roots.map((root) => ({ ...root, name: "Possible " + root.name })),
       ],
       diagnostics: [
         {
@@ -343,7 +395,11 @@ function rawDocument(bytes: Uint8Array, sourceId: string): VisualizationDocument
       `The v${version === 1 ? 2 : 1} interpretation reached a parser limit and was not ruled out. Version remains unresolved.`,
     );
   }
-  doc.roots[0]!.name = `Possible Compact Binary v${version} (${doc.status === "complete" ? "inferred" : "incomplete interpretation"})`;
+  for (const [index, root] of doc.roots.entries()) {
+    if (root.value?.kind === "object") {
+      root.name = `Possible Compact Binary v${version} (${doc.status === "complete" ? "inferred" : "incomplete interpretation"})${doc.roots.length > 1 ? ` · Struct ${index + 1}` : ""}`;
+    }
+  }
   doc.summary +=
     doc.status === "complete"
       ? ` No protocol/version header was captured; v${version} is inferred from structure.`

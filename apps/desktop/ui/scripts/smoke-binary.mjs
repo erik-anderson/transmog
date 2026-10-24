@@ -50,7 +50,13 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
       }else if(name==='protobuf-duplicate-identity'||name==='protobuf-invalid-identity'){
         if(doc.status!=='unavailable'||doc.roots.length||!doc.diagnostics.some(item=>item.message.includes('metadataUnavailable')))throw new Error('Invalid identity bypassed host content-coding validation');
       }else if(name==='bond-version-limited'||name==='bond-framing-limited'){
-        if(doc.status!=='limited'||!doc.diagnostics.some(item=>item.code===(name==='bond-version-limited'?'version-limited':'framing-limited')))throw new Error('A parser limit established an unresolved Bond interpretation');
+        if(doc.status!=='partial'||!doc.diagnostics.some(item=>item.code===(name==='bond-version-limited'?'ambiguous-version':'ambiguous-framing')))throw new Error('Indexed Bond lost an unresolved interpretation');
+      }else if(name==='bond-record-ranges'){
+        if(doc.status!=='complete'||!nodes.some(node=>node.childrenToken))throw new Error('Large Bond records were not indexed into deferred ranges');
+      }else if(name==='bond-large-string'){
+        if(doc.status!=='complete'||!nodes.some(node=>node.name.includes('preview')&&node.value?.value.length===1024))throw new Error('Large Bond string preview missing');
+      }else if(name==='bond-sequence-deflate'){
+        if(doc.status!=='complete'||doc.roots.length!==4||doc.roots.some((node,index)=>node.spans[0].offset!==String(index*6)||node.spans[0].length!=='6'))throw new Error('Consecutive Bond struct boundaries missing after raw DEFLATE');
       }else if(name==='bond-ambiguous'||name==='bond-framing'){
         if(doc.status!=='partial'||!doc.diagnostics.some(item=>item.code===(name==='bond-ambiguous'?'ambiguous-version':'ambiguous-framing')))throw new Error('Ambiguous Bond interpretation was presented as established');
       }else{
@@ -72,10 +78,52 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
     await show('protobuf-negative-zero','request',false);await show('bond-negative-zero','response',false);
     await show('protobuf-duplicate-identity','request',false);await show('protobuf-invalid-identity','response',false);
     await show('bond-version-limited','request',false);await show('bond-framing-limited','response',false);
+    await show('bond-sequence-deflate','request');await show('bond-large-string','response');
     for(const name of ['msgpack','msgpack-extension','cbor','cbor-seq-empty','bson','protobuf-packed'])await show(name,'response');
     await show('protobuf','request',false);await show('bond','response',false);
+    const ranged=await show('bond-record-ranges','request');
+    for(let count=0;count<20;count++){
+      const all=ranged.view.document.roots.flatMap(walk),last=all.find(node=>node.name==='Field 1 · uint8'&&node.spans[0].offset==='149997');
+      if(last){if(last.value.value!=='7')throw new Error('Final Bond record value changed');ranged.selectNode(last.id);break;}
+      const pending=all.find(node=>node.childrenToken&&node.spans.some(span=>Number(span.offset)<=149997&&Number(span.offset)+Number(span.length)>149997));
+      if(!pending)throw new Error('No deferred range leads to final Bond record');
+      await ranged.toggleNode(pending.id);
+      if(count===19)throw new Error('Bond range expansion made no progress');
+    }
+    if(ranged.view.document.roots.flatMap(walk).length>1600)throw new Error('Bond range projection grew without bound');
+    globalThis.__binaryProbe.ranged=ranged;
     globalThis.__binaryProbe.inspectors=inspectors;
   })()`);
+  for (const [width, height] of [
+    [1440, 900],
+    [960, 720],
+    [800, 600],
+  ]) {
+    await call("Emulation.setDeviceMetricsOverride", {
+      width,
+      height,
+      deviceScaleFactor: 1,
+      mobile: false,
+    });
+    await evaluate(
+      `(()=>{const viewer=globalThis.__binaryProbe.ranged,root=viewer.shadowRoot??viewer;if(root.querySelectorAll('[role=treeitem]').length>100)throw new Error('Structured tree stopped virtualizing rendered rows');if(!viewer.visualizerDetailsOpen)throw new Error('Selected Bond field details missing');})()`,
+    );
+    if (screenshotPath)
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, `-bond-ranges-${width}.png`),
+        Buffer.from(
+          (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+            .data,
+          "base64",
+        ),
+      );
+  }
+  await call("Emulation.setDeviceMetricsOverride", {
+    width: 1440,
+    height: 900,
+    deviceScaleFactor: 1,
+    mobile: false,
+  });
   const qualification = await evaluate(`(async()=>{
     const invoke=(name,args={})=>window.__TAURI_INTERNALS__.invoke(name,args),results=[];
     for(const sample of ${JSON.stringify(referenceCases.filter((item) => ["bond-reference", "msgpack", "cbor", "bson", "protobuf-packed"].includes(item.name)))}){
@@ -195,6 +243,9 @@ async function smokePackagedBinary(call, evaluate, screenshotPath, tracePath, se
           queuedCancellation: true,
           emptyCborSequence: true,
           nodeLimitRetention: true,
+          bondRawSequence: true,
+          bondLargeString: true,
+          bondRecordRanges: true,
         },
         null,
         2,

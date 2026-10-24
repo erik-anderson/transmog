@@ -14,12 +14,19 @@ def main():
     bond = bytes.fromhex("2903332e3000")
     compressor = zlib.compressobj(wbits=-15)
     raw_deflate = compressor.compress(bond) + compressor.flush()
+    compressor = zlib.compressobj(wbits=-15)
+    sequence_deflate = compressor.compress(bond * 4) + compressor.flush()
+    many_records = (bytes.fromhex("230700") * 50000)
+    large_string = bytes.fromhex("43420100098080c001") + b"x" * (3 * 1024 * 1024) + bytes([0])
     limited_versions = bytes([0x85, 0x34]) + bytes([10, 1, 0]) * 2220 + bytes([0])
     cases = [
         ("protobuf", "application/protobuf", protobuf, ""),
         ("protobuf-gzip", "application/x-protobuf", gzip.compress(protobuf, mtime=0), "gzip"),
         ("bond", "application/bond-compact-binary", bond, ""),
         ("bond-deflate", "application/bond-compact-binary", raw_deflate, "deflate"),
+        ("bond-sequence-deflate", "application/bond-compact-binary", sequence_deflate, "deflate"),
+        ("bond-record-ranges", "application/bond-compact-binary", gzip.compress(many_records, mtime=0), "gzip"),
+        ("bond-large-string", "application/bond-compact-binary", gzip.compress(large_string, mtime=0), "gzip"),
         ("bond-v2", "application/bond-compact-binary", bytes.fromhex("43420200082903332e30420100"), ""),
         ("bond-ambiguous", "application/bond-compact-binary", bytes.fromhex("020100"), ""),
         ("bond-framing", "application/bond-compact-binary", bytes.fromhex("43420200062903332e3000"), ""),

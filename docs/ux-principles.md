@@ -184,6 +184,9 @@ when changing the experience.
   Tree navigation preserves the user's choice to close details; opening them is
   explicit. Show result counts and coverage beside structured comparisons, with
   changed values ahead of expandable technical evidence.
+  Large structured views may load explicit field ranges on demand. Keep source
+  bytes accessible, identify flattened nesting, and report when copying requires
+  a smaller range instead of silently omitting unloaded content.
 - Count and match filter choices with the same definitions. Common choices must
   not hide unfamiliar observed values; expose a counted Other choice when useful
   and distinguish it from missing evidence. Use canonical names for app-owned

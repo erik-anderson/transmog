@@ -90,6 +90,7 @@ export async function visualizerCopyTree(
   const deadline = performance.now() + 30000;
   const checked = (): boolean => current() && performance.now() < deadline;
   let changed = false;
+  const visited = new Set<string>();
   try {
     while (true) {
       if (!checked()) {
@@ -103,6 +104,12 @@ export async function visualizerCopyTree(
       if (!pending) {
         break;
       }
+      if (visited.has(pending.id)) {
+        throw new CopyError(
+          "This subtree loads in ranges. Copy a smaller field range or use the source bytes in Hex.",
+        );
+      }
+      visited.add(pending.id);
       if (++expansions > 256) {
         throw new CopyError("The subtree exceeds the deferred expansion limit.");
       }

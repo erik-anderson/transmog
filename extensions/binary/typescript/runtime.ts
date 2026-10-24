@@ -8,13 +8,13 @@ import type {
 } from "transmog:extensions/v1";
 import { notice } from "./reader.js";
 
-const maximumBytes = 2 * 1024 * 1024;
 type Pending = { kind: "bytes" | "decoded"; token: string; count: number };
 
 /** Only the selected side is read. No context, filesystem, network or live feed. */
 export function visualizer(
   title: string,
   parse: (bytes: Uint8Array, sourceId: string, input?: Input) => VisualizationDocument,
+  maximumBytes = 2 * 1024 * 1024,
 ) {
   let body: BodyReference | undefined;
   let bytes = new Uint8Array(0);
@@ -81,7 +81,7 @@ export function visualizer(
     if (length > BigInt(maximumBytes)) {
       return show(
         "limited",
-        "The body exceeds the visualizer's 2 MiB input limit. Inspect the retained bytes in Hex.",
+        `The body exceeds the visualizer's ${maximumBytes / (1024 * 1024)} MiB input limit. Inspect the retained bytes in Hex.`,
       );
     }
     bytes = new Uint8Array(Number(length));

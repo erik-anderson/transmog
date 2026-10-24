@@ -48,6 +48,10 @@ Protocol-header bytes that also parse as raw fields are explicitly ambiguous and
 remain partial, so Auto cannot silently choose between the framings.
 If a competing version or framing reaches a parser limit, it remains unresolved;
 the result stays limited even if another interpretation completes.
+Raw Bond bodies may contain consecutive structs. Each struct retains its own
+byte range and wire order. A leading protocol header frames a single struct;
+the header itself is not counted as a batch item. Both incomplete raw version
+interpretations remain available when neither version parses completely.
 
 All viewers request HTTP content decoding from the host, including its
 raw-DEFLATE compatibility. Failed decoding is explained and never replaced with
@@ -58,7 +62,17 @@ when later bytes are malformed; the remainder links to its original byte range.
 Complete children of partial collections, groups and structs remain inspectable.
 Speculative Protobuf message probes still require a complete parse.
 
-Each selected decoded body is limited to 2 MiB. Additional work, nesting, node,
+Bond accepts selected bodies up to 16 MiB, with a compact index of up to 500,000
+values and 64 levels of nesting. Large field, record and item collections load
+in ranges through the shared tree. Opening another range replaces the previously
+loaded range, keeping display memory bounded. Deep descendants appear flattened
+in wire order with explicit nesting depths. Fixed-width lists retain payload
+offsets without allocating a node per item. Large strings are validated in full,
+with a bounded preview and access to their complete source bytes in Hex. Copy a
+smaller range if a whole subtree cannot be materialized; copying never silently
+omits unloaded children.
+
+Other readers limit each selected decoded body to 2 MiB. Additional work, nesting, node,
 collection and total text limits bound parsing and speculative probes. Protobuf
 text/nested-message probes consider payloads up to 64 KiB. Text values preview
 up to 1,024 UTF-16 code units; larger values remain available through their byte
@@ -76,6 +90,8 @@ and Microsoft's [Compact Binary encoding reference](https://github.com/microsoft
 In **Compare requests and responses**, open **Compare structured body fields**,
 choose a body and format, then **Compare fields**. This uses the comparison's
 frozen complete bodies, including HTTP content decoding, up to 2 MiB per side.
+Field comparison requires materialized reader output; larger deferred Bond
+structures remain inspectable in their individual body viewers.
 Completion feedback stays beside the action; results appear below without
 moving focus.
 The ordinary enabled extension readers parse each side in isolated workers;

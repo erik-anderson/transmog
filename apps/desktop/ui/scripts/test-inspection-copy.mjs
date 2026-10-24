@@ -57,3 +57,101 @@ test("field actions read the real value on demand and disable unavailable values
     [false, true, true],
   );
 });
+
+test("subtree copy stops when loading one range evicts an earlier range", async () => {
+  const bundled = await build({
+    entryPoints: [
+      new URL("../src/extension-visualizer/copy.ts", import.meta.url).pathname.replace(
+        /^\/([A-Za-z]:)/,
+        "$1",
+      ),
+    ],
+    bundle: true,
+    platform: "node",
+    format: "esm",
+    write: false,
+    plugins: [
+      {
+        name: "copy-host",
+        setup(builder) {
+          builder.onResolve({ filter: /^@tauri-apps\/api\/core$/ }, () => ({
+            path: "host",
+            namespace: "copy-host",
+          }));
+          builder.onLoad({ filter: /.*/, namespace: "copy-host" }, () => ({
+            contents: "export const invoke=(...args)=>globalThis.__copyRangeHost(...args)",
+            loader: "js",
+          }));
+        },
+      },
+    ],
+  });
+  const { visualizerCopyTree } = await import(
+    "data:text/javascript;base64," + Buffer.from(bundled.outputFiles[0].text).toString("base64")
+  );
+  const range = (id, loaded = false) => ({
+    id,
+    name: id,
+    spans: [],
+    children: loaded
+      ? [
+          {
+            id: id + "-value",
+            name: "Value",
+            value: { kind: "integer", value: "7" },
+            spans: [],
+            children: [],
+          },
+        ]
+      : [],
+    ...(loaded ? {} : { childrenToken: id }),
+  });
+  const view = (loaded) => ({
+    handle: {},
+    document: {
+      title: "Paged body",
+      roots: [
+        {
+          id: "root",
+          name: "Root",
+          spans: [],
+          children: [range("A", loaded === "A"), range("B", loaded === "B")],
+        },
+      ],
+      sources: [],
+    },
+  });
+  let expansions = 0,
+    latest;
+  globalThis.__copyRangeHost = async (command, args) => {
+    assert.equal(command, "expand_visualizer");
+    expansions++;
+    return view(args.token);
+  };
+  try {
+    await assert.rejects(
+      visualizerCopyTree(
+        "root",
+        view(),
+        () => true,
+        (result) => {
+          latest = result;
+        },
+      ),
+      /loads in ranges.*smaller field range/,
+    );
+    assert.equal(expansions, 2);
+    assert.equal(latest.document.roots[0].children[1].children[0].value.value, "7");
+    assert.match(
+      await visualizerCopyTree(
+        "A",
+        view(),
+        () => true,
+        () => {},
+      ),
+      /Value: 7/,
+    );
+  } finally {
+    delete globalThis.__copyRangeHost;
+  }
+});

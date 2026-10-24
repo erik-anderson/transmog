@@ -49,7 +49,9 @@ async function host(kind, payload, options = {}) {
     context.method = method;
     context.args = freeze(args);
     return JSON.parse(
-      vm.runInContext("JSON.stringify(handlers[method](...args))", context, { timeout: 2_000 }),
+      vm.runInContext("JSON.stringify(handlers[method](...args))", context, {
+        timeout: kind === "bond" ? 10_000 : 2_000,
+      }),
     );
   }
   const direction = options.direction ?? "request";
@@ -88,7 +90,7 @@ async function host(kind, payload, options = {}) {
   let step = call("visualize", input);
   let reads = 0;
   let decodes = 0;
-  for (let count = 0; count < 100; count++) {
+  for (let count = 0; count < 512; count++) {
     if (step.kind === "needDecoded") {
       decodes++;
       assert.equal(step.sourceId, "encoded");
@@ -306,8 +308,8 @@ test("Bond partial map values preserve their key and bounded collection previews
   const limited = (
     await host("bond", binary(bondHeader(1), [13, 3, 3], varint(1001), Array(2002).fill(0), [0]))
   ).document;
-  assert.equal(limited.status, "limited");
-  assert.equal(nodes(limited).filter((node) => node.name === "Key · uint8").length, 1000);
+  assert.equal(limited.status, "complete");
+  assert.ok(nodes(limited).some((node) => node.childrenToken));
 });
 
 test("failed speculative embedded messages never expose partial groups as wire facts", async () => {
@@ -677,6 +679,184 @@ test("Bond raw v1 fixture decodes an encoded string, while labeling the inferred
   assert.ok(document.diagnostics.some((item) => item.code === "inferred-version"));
 });
 
+test("consecutive raw Bond structs retain exact boundaries and reject a damaged later record", async () => {
+  for (const version of [1, 2]) {
+    const one = bondStruct(version, [0x29, 3, 51, 46, 48, ...(version === 2 ? [0x42, 1, 1] : [])]);
+    const payload = binary(...Array(4).fill(one));
+    const { document } = await host("bond", payload, { compressed: true });
+    assert.equal(document.status, "complete");
+    assert.equal(document.roots.length, 4);
+    assert.deepEqual(
+      document.roots.map((node) => node.spans[0]),
+      Array.from({ length: 4 }, (_, index) => ({
+        sourceId: "decoded",
+        offset: String(index * one.length),
+        length: String(one.length),
+      })),
+    );
+    const damaged = (await host("bond", payload.slice(0, -1))).document;
+    assert.equal(damaged.status, "malformed");
+    assert.ok(nodes(damaged).filter((node) => node.value?.value === "3.0").length >= 3);
+    // A declared marshaled envelope still contains exactly one root struct.
+    assert.equal(
+      (await host("bond", binary(bondHeader(version), one, one))).document.status,
+      "malformed",
+    );
+  }
+});
+
+function expandAt(result, offset, predicate) {
+  let document = result.document;
+  const visited = new Set();
+  for (let count = 0; count < 32; count++) {
+    const all = nodes(document);
+    const found = all.find(predicate);
+    if (found) return { document, found };
+    const pending = all.find(
+      (node) =>
+        node.childrenToken &&
+        node.spans.some(
+          (span) =>
+            Number(span.offset) <= offset && Number(span.offset) + Number(span.length) > offset,
+        ),
+    );
+    assert.ok(pending, "No deferred range leads to the requested value");
+    assert.ok(!visited.has(pending.childrenToken), "Range expansion made no progress");
+    visited.add(pending.childrenToken);
+    const step = result.call("expand", pending.childrenToken);
+    assert.equal(step.kind, "document");
+    document = step.document;
+    validate(document, Number(result.input.request.body.length), "encoded");
+  }
+  assert.fail("Excessive deferred range depth");
+}
+
+test("large Bond record and field ranges reach the final values with bounded documents", async () => {
+  const count = 50_000;
+  for (const records of [false, true]) {
+    const bytes = Uint8Array.from(
+      Array.from({ length: count }, (_, index) => [0x23, index % 256, ...(records ? [0] : [])])
+        .flat()
+        .concat(records ? [] : [0]),
+    );
+    const result = await host("bond", bytes);
+    assert.equal(result.document.status, "complete");
+    assert.ok(nodes(result.document).some((node) => node.childrenToken));
+    const offset = (count - 1) * (records ? 3 : 2);
+    const last = expandAt(
+      result,
+      offset,
+      (node) => node.name.startsWith("Field 1 · uint8") && node.spans[0].offset === String(offset),
+    ).found;
+    assert.equal(last.value.value, String((count - 1) % 256));
+  }
+});
+
+test("large Bond strings and fixed-width lists validate beyond previews and expose final bytes", async () => {
+  const count = 3 * 1024 * 1024;
+  for (const string of [false, true]) {
+    const prefix = [...bondHeader(1), string ? 9 : 11, ...(string ? [] : [3]), ...varint(count)];
+    const bytes = new Uint8Array(prefix.length + count + 1);
+    bytes.set(prefix);
+    bytes.fill(120, prefix.length, bytes.length - 1);
+    const result = await host("bond", bytes);
+    assert.equal(result.document.status, "complete");
+    if (string) {
+      const preview = nodes(result.document).find((node) => node.name.includes("preview"));
+      assert.equal(preview.value.value.length, 1024);
+      assert.equal(Number(preview.spans[0].length), count + varint(count).length + 1);
+      bytes[bytes.length - 2] = 0xff;
+      assert.equal((await host("bond", bytes)).document.status, "malformed");
+    } else {
+      const last = expandAt(
+        result,
+        bytes.length - 2,
+        (node) => node.name === `[${count - 1}] · uint8`,
+      ).found;
+      assert.equal(last.value.value, "120");
+      assert.equal(last.spans[0].offset, String(bytes.length - 2));
+    }
+  }
+});
+
+test("Bond deep descendants remain inspectable with honest depth labels and finite nesting", async () => {
+  const bytes = binary(bondHeader(1), Array(64).fill(10), [0x23, 42], Array(65).fill(0));
+  const result = await host("bond", bytes);
+  assert.equal(result.document.status, "complete");
+  const found = expandAt(
+    result,
+    68,
+    (node) => node.name.includes("Field 1 · uint8") && node.value?.value === "42",
+  ).found;
+  assert.match(found.name, /Depth 64/);
+  assert.equal(
+    (await host("bond", binary(bondHeader(1), Array(65).fill(10), [0], Array(65).fill(0)))).document
+      .status,
+    "limited",
+  );
+  const pending = nodes(result.document).find((node) => node.childrenToken);
+  result.call("visualize", result.input);
+  assert.throws(() => result.call("expand", pending.childrenToken), /Expired Bond range/);
+});
+
+test("Bond accepts its full 16 MiB body ceiling without materializing byte-list items", async () => {
+  const bytes = new Uint8Array(16 * 1024 * 1024);
+  const count = bytes.length - 11;
+  bytes.set([...bondHeader(1), 11, 3, ...varint(count)]);
+  bytes[bytes.length - 2] = 73;
+  const result = await host("bond", bytes);
+  assert.equal(result.document.status, "complete");
+  assert.equal(result.reads, 256);
+  assert.ok(nodes(result.document).length < 100);
+  assert.equal(
+    expandAt(result, bytes.length - 2, (node) => node.name === `[${count - 1}] · uint8`).found.value
+      .value,
+    "73",
+  );
+});
+
+test("indexed Bond validates UTF-16 and Boolean tails and retains exact virtual float values", async () => {
+  const wideCount = 150_000;
+  const wide = binary(
+    bondHeader(1),
+    [18],
+    varint(wideCount),
+    Array(wideCount).fill([120, 0]).flat(),
+    [0],
+  );
+  assert.equal((await host("bond", wide)).document.status, "complete");
+  wide[wide.length - 3] = 0;
+  wide[wide.length - 2] = 0xd8;
+  assert.equal((await host("bond", wide)).document.status, "malformed");
+  const count = 5000;
+  const booleans = binary(bondHeader(1), [11, 2], varint(count), Array(count).fill(1), [0]);
+  booleans[booleans.length - 2] = 2;
+  assert.equal((await host("bond", booleans)).document.status, "malformed");
+  const floats = binary(
+    bondHeader(1),
+    [11, 7],
+    varint(count),
+    Array(count).fill([0, 0, 0, 128]).flat(),
+    [0],
+  );
+  const result = await host("bond", floats);
+  assert.equal(result.document.status, "complete");
+  assert.equal(
+    expandAt(result, floats.length - 5, (node) => node.name === `[${count - 1}] · float`).found
+      .value.value,
+    "-0",
+  );
+});
+
+test("a competing Bond interpretation that exceeds the structural index remains unresolved", async () => {
+  const count = 269_996;
+  const payload = binary(varint(count * 3 + 1), Array(count).fill([10, 1, 0]).flat(), [0]);
+  const result = await host("bond", payload);
+  assert.equal(result.document.status, "limited");
+  assert.ok(result.document.diagnostics.some((item) => item.code === "version-limited"));
+  assert.ok(nodes(result.document).some((node) => node.childrenToken));
+});
+
 test("Bond marshaled v1 and v2 decode types, extended IDs and base boundaries", async () => {
   for (const version of [1, 2]) {
     const fields = [
@@ -809,7 +989,7 @@ test("ambiguous Bond versions and header collisions remain explicitly partial", 
   );
 });
 
-test("Bond cannot resolve a version or framing by exhausting the alternative's budget", async () => {
+test("Bond indexing resolves old display limits while preserving version and framing ambiguity", async () => {
   // These bytes are valid raw v1 and v2. Each empty v2 struct is also a v1
   // struct with an empty base, costing twice as many v1 display nodes.
   const payload = binary(
@@ -818,14 +998,13 @@ test("Bond cannot resolve a version or framing by exhausting the alternative's b
     [0],
   );
   const v1 = (await host("bond", binary(bondHeader(1), Array.from(payload)))).document;
-  assert.equal(v1.status, "limited");
+  assert.equal(v1.status, "complete");
   const raw = (await host("bond", payload)).document;
-  assert.equal(raw.status, "limited");
-  assert.ok(raw.diagnostics.some((item) => item.code === "version-limited"));
-  assert.ok(nodes(raw).some((node) => node.name === "Field 0 · struct"));
+  assert.equal(raw.status, "partial");
+  assert.ok(raw.diagnostics.some((item) => item.code === "ambiguous-version"));
   const marshaled = (await host("bond", binary(bondHeader(2), Array.from(payload)))).document;
-  assert.equal(marshaled.status, "limited");
-  assert.ok(marshaled.diagnostics.some((item) => item.code === "framing-limited"));
+  assert.equal(marshaled.status, "partial");
+  assert.ok(marshaled.diagnostics.some((item) => item.code === "ambiguous-framing"));
 });
 
 test("selected-side paging, HTTP decoding and unavailable evidence stay distinct", async () => {
@@ -842,7 +1021,11 @@ test("selected-side paging, HTTP decoding and unavailable evidence stay distinct
       (await host(kind, data, { availability: "evicted" })).document.status,
       "unavailable",
     );
-    assert.equal((await host(kind, data, { length: 2_097_153 })).document.status, "limited");
+    assert.equal(
+      (await host(kind, data, { length: kind === "bond" ? 16_777_217 : 2_097_153 })).document
+        .status,
+      "limited",
+    );
     for (const reason of [
       "malformed",
       "unsupported",
@@ -939,7 +1122,7 @@ test("large collections, text, repeated fields and nesting hit explicit budgets"
   for (let index = 0; index < 12; index++) groups = [11, ...groups, 12];
   assert.equal((await host("protobuf", binary(groups))).document.status, "limited");
   const collection = binary(bondHeader(1), [11, 3, ...varint(4_001), ...Array(4_001).fill(0), 0]);
-  assert.equal((await host("bond", collection)).document.status, "limited");
+  assert.equal((await host("bond", collection)).document.status, "complete");
   const long = binary(bondHeader(1), [9, ...varint(2_000), ...Array(2_000).fill(120), 0]);
   const preview = nodes((await host("bond", long)).document).find((node) =>
     node.name.includes("preview"),
