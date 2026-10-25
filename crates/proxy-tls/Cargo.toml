@@ -11,9 +11,9 @@ repository.workspace = true
 test-fixtures = []
 
 [dependencies]
-transmog-core = { version = "=0.1.12", path = "../proxy-core" }
-transmog-tls-native = { version = "=0.1.12", path = "../tls-native" }
-transmog-windows-trust = { version = "=0.1.12", path = "../windows-trust" }
+transmog-core = { version = "=0.1.13", path = "../proxy-core" }
+transmog-tls-native = { version = "=0.1.13", path = "../tls-native" }
+transmog-windows-trust = { version = "=0.1.13", path = "../windows-trust" }
 boring.workspace = true
 hickory-resolver.workspace = true
 brotli.workspace = true
@@ -36,7 +36,7 @@ time.workspace = true
 workspace = true
 
 [target.'cfg(windows)'.dependencies]
-transmog-client-certificates = { version = "=0.1.12", path = "../client-certificates" }
+transmog-client-certificates = { version = "=0.1.13", path = "../client-certificates" }
 
 [dev-dependencies]
 transmog-tls = { path = ".", features = ["test-fixtures"] }

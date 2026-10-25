@@ -16,17 +16,17 @@ harness = false
 [dependencies]
 base64.workspace = true
 serde_json.workspace = true
-transmog-js-runtime = { version = "=0.1.12", path = "../js-runtime" }
-transmog-script-compiler = { version = "=0.1.12", path = "../script-compiler" }
+transmog-js-runtime = { version = "=0.1.13", path = "../js-runtime" }
+transmog-script-compiler = { version = "=0.1.13", path = "../script-compiler" }
 url.workspace = true
-transmog-extensions = { version = "=0.1.12", path = "../extensions" }
-transmog-process-sandbox = { version = "=0.1.12", path = "../process-sandbox" }
+transmog-extensions = { version = "=0.1.13", path = "../extensions" }
+transmog-process-sandbox = { version = "=0.1.13", path = "../process-sandbox" }
 
 [dev-dependencies]
 tokio.workspace = true
 tempfile.workspace = true
-transmog-extension-registry = { version = "=0.1.12", path = "../extension-registry" }
-transmog-extension-supervisor = { version = "=0.1.12", path = "../extension-supervisor" }
+transmog-extension-registry = { version = "=0.1.13", path = "../extension-registry" }
+transmog-extension-supervisor = { version = "=0.1.13", path = "../extension-supervisor" }
 
 [lints]
 workspace = true
