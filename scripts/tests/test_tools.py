@@ -87,7 +87,7 @@ class CommandTests(unittest.TestCase):
         for name in ("dev-env", "build-desktop", "build-dotnet-sample", "test", "test-live", "test-load", "test-interop",
                      "test-linux-docker", "fuzz-content-docker", "update-content-fuzz-corpus-docker", "generate-supply-chain-artifacts",
                      "set-release-version", "check-published-release-version", "sync-stable-update-release", "sync-canary-update-feed", "advance-release-version",
-                     "create-update-manifest", "cache-v8", "test-saz-interop", "benchmark-content", "setup-updater-signing", "trim-build-cache", "release-policy",
+                     "create-update-manifest", "cache-v8", "test-saz-interop", "benchmark-content", "setup-updater-signing", "trim-build-cache", "trim-test-outputs", "test-output-run", "release-policy",
                      "update-chromium-psl", "vendor-boringssl-pki", "roll-chromium-dependencies", "compare-chromium"):
             with self.subTest(name=name):
                 result = subprocess.run([sys.executable, SCRIPTS / (name + ".py"), "--help"], capture_output=True, text=True)

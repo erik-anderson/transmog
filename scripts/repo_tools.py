@@ -59,6 +59,12 @@ def command(arguments, *, cwd=ROOT, env=None, capture=False, check=True, input=N
             from tls_dependencies import preflight
             preflight(tool, argv[1:], cwd, os.environ if env is None else env)
             automatic(os.environ if env is None else env, arguments=argv[1:])
+            if not capture and input is None and argv[1] in {"build", "b", "check", "c", "clippy"} and not any(
+                arg == "--" or arg.startswith(("--message-format", "--manifest-path", "--config", "--target-dir", "-Z", "-C"))
+                for arg in argv[2:]
+            ):
+                from cargo_cache_usage import run
+                return run(argv, root=ROOT, cwd=cwd, env=env, check=check)
     return subprocess.run(argv, cwd=cwd, env=env, check=check, text=True,
                           encoding="utf-8", errors="replace", capture_output=capture, input=input)
 

@@ -58,8 +58,9 @@ fingerprints and excess incremental caches. Variants built within the last day
 are protected, and metadata-only checks do not displace retained rlib/PDB builds.
 Below 20 GiB free space, an extra check can trim excess recent
 variants while still retaining three. Active Cargo builds are skipped using
-Cargo's profile locks. Release outputs, native build-script output, unknown
-artifact layouts and target directories outside this repository are preserved.
+Cargo's profile locks, including related host and cross-target profiles. Automatic
+cleanup preserves release outputs, native build-script output, unknown artifact
+layouts and target directories outside this repository.
 
 Preview or run cleanup manually:
 
@@ -73,6 +74,66 @@ Use `--keep`, `--min-age-hours` and `--min-free-gib` to adjust manual retention.
 redirected/custom Cargo layouts skip automatic cleanup. Deleting an older
 variant may require recompiling that configuration next time it is used; removing
 its fingerprint together with its artifacts lets Cargo rebuild coherently.
+
+Additional tiers are manual and preview by default:
+
+```text
+python scripts/trim-build-cache.py --purge-incremental
+python scripts/trim-build-cache.py --build-scripts
+python scripts/trim-build-cache.py --registered --purge-incremental
+python scripts/trim-build-cache.py --target-dir sdk/target --target-triple x86_64-pc-windows-msvc
+```
+
+Add `--apply` to delete the previewed groups. `--purge-incremental` removes all
+unpinned incremental directories, regardless of age or variant count, while
+preserving compiled artifacts and fingerprints. The next changed-source build
+may take longer. `--build-scripts` removes complete build directories together
+with their fingerprints, retaining the dependency closure of other retained
+units. It preserves native output when the fingerprint graph is incomplete;
+deleting only an `out` directory can leave cached link paths pointing at missing
+libraries. Interrupted staging is recovered under the same profile locks.
+
+`--registered` visits only the workspace, SDK, fuzz, SDK model-codegen and
+SDK Crubit target roots declared in `scripts/build_cache.py`, including their
+cross-target profiles. Other experiments require an explicit `--target-dir`.
+Release cleanup additionally requires `--profile release`; signed bundles and
+other files outside recognized cache groups remain untouched. A file named
+`.transmog-cache-pin` in a target root, profile, fingerprint or incremental/build
+directory protects that scope. Pin release qualification caches while needed.
+There is no blanket cleanup of `.local`, `.tools` or `artifacts`.
+
+Ordinary configured root `cargo build`, `cargo check` and `cargo clippy` commands
+record successful use of recognized units, including fresh cache hits, without touching
+artifact timestamps. Matching use records supplement modification times for
+retention. Unhashed outputs with no provable unit identity, other commands and
+explicit Cargo message formats retain timestamp fallback behavior. JSON reports
+explain retention decisions and distinguish
+logical file sizes, unique content and estimated reclaimable content. Hardlinks
+outside a deletion plan retain their storage. The observed free-space change is
+reported separately; concurrent disk activity can affect it.
+
+### Test output retention
+
+```text
+python scripts/trim-test-outputs.py
+python scripts/trim-test-outputs.py --kind load --include-legacy
+python scripts/trim-test-outputs.py --kind load --include-legacy --apply
+```
+
+This separate, opt-in command prunes bulk captures and profiles only under
+`artifacts/load` and `artifacts/windows-desktop-validation`. Reports, diagnostic
+JSON, logs and screenshots remain. New load/native validation runs hold an OS
+lease and write a completion manifest after shutdown. Active, interrupted,
+unregistered, malformed and pinned runs are preserved. Existing load runs can
+be adopted with `--include-legacy` when their final report proves completion;
+old native outputs remain unregistered and protected.
+
+Defaults retain the two newest successes and three newest failures per run
+group, then prune excess data older than 14 days or beyond a 20 GiB budget per
+output root. Use `--keep-success`, `--keep-failures`, `--max-age-days` and
+`--max-gib` to adjust this policy. Protected evidence can exceed the budget.
+Place `.transmog-cache-pin` in a run directory to retain its bulk data, or in an
+output root to protect every run. Cleanup never deletes a whole run directory.
 
 ## Windows
 

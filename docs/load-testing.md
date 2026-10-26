@@ -142,7 +142,13 @@ memory or latency ceiling is claimed.
 
 Generated top-level CA files are removed at the end. Isolated profiles and
 captures remain for failure diagnosis; profiles contain an OS-protected key.
-Delete an individual run directory when its evidence is no longer needed.
+Runs hold an OS lease and publish a completion manifest after owned processes
+have stopped. Use the opt-in [test output retention command](building.md#test-output-retention)
+to prune excess profiles and captures while preserving reports, logs and
+screenshots. Pin needed evidence with `.transmog-cache-pin` in its run directory.
+Interrupted runs remain protected; legacy completed load reports require
+`--include-legacy`. Explicitly delete an individual run directory only when all
+of its evidence is no longer needed.
 An interrupted runner closes its control pipe so the process host stops its
 owned target. Forced termination is a failed cleanup, never a passing shutdown.
 

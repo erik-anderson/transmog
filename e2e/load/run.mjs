@@ -11,6 +11,7 @@ import os from "node:os";
 import { chromium } from "../playwright/node_modules/playwright/index.mjs";
 import { closeServer, listen, RESPONSE_SIZES, requestSize, startSite } from "./site.mjs";
 import { createServer } from "node:net";
+import { beginOutputRun } from "../output-run.mjs";
 
 const command = promisify(execFile);
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -884,6 +885,12 @@ async function main() {
     new Date().toISOString().replace(/[:.]/g, "-") + "-" + process.pid,
   );
   await mkdir(runRoot);
+  const finishOutput = await beginOutputRun(
+    runRoot,
+    "load",
+    config.python,
+    JSON.stringify([config.target, config.storage, config.smoke]),
+  );
   const ca = { cert: join(runRoot, "ca.pem"), key: join(runRoot, "ca.key") };
   const results = [];
   const report = {
@@ -933,29 +940,38 @@ async function main() {
       results.length === expectedTargets &&
       results.every((result) => result.passed);
     report.finishedAt = new Date().toISOString();
-    await writeFile(join(runRoot, "report.json"), JSON.stringify(report, null, 2));
-    const lines = [
-      "# Local Chromium load test",
-      "",
-      `Outcome: ${report.passed ? "PASS" : "FAIL"} (${config.smoke ? "smoke, not scale qualification" : "scale qualification"})`,
-      "",
-      "| Target | Verified exchanges | Request + response GiB | Seconds | p95 ms | Peak process tree MiB |",
-      "| --- | ---: | ---: | ---: | ---: | ---: |",
-    ];
-    for (const result of results) {
-      const measured = result.workload ?? result.partialWorkload;
-      lines.push(
-        `| ${result.target}: ${result.passed ? "PASS" : "FAIL"} | ${measured?.completed ?? 0} | ${((measured?.requestBytes + measured?.responseBytes || 0) / GiB).toFixed(2)} | ${result.elapsedMs ? (result.elapsedMs / 1000).toFixed(1) : "—"} | ${result.workload ? result.workload.latencyMs.p95.toFixed(1) : "—"} | ${result.memory ? (result.memory.peakTreeRss / 1024 ** 2).toFixed(1) : "—"} |`,
-      );
+    let outputCompleted = false;
+    try {
+      await writeFile(join(runRoot, "report.json"), JSON.stringify(report, null, 2));
+      const lines = [
+        "# Local Chromium load test",
+        "",
+        `Outcome: ${report.passed ? "PASS" : "FAIL"} (${config.smoke ? "smoke, not scale qualification" : "scale qualification"})`,
+        "",
+        "| Target | Verified exchanges | Request + response GiB | Seconds | p95 ms | Peak process tree MiB |",
+        "| --- | ---: | ---: | ---: | ---: | ---: |",
+      ];
+      for (const result of results) {
+        const measured = result.workload ?? result.partialWorkload;
+        lines.push(
+          `| ${result.target}: ${result.passed ? "PASS" : "FAIL"} | ${measured?.completed ?? 0} | ${((measured?.requestBytes + measured?.responseBytes || 0) / GiB).toFixed(2)} | ${result.elapsedMs ? (result.elapsedMs / 1000).toFixed(1) : "—"} | ${result.workload ? result.workload.latencyMs.p95.toFixed(1) : "—"} | ${result.memory ? (result.memory.peakTreeRss / 1024 ** 2).toFixed(1) : "—"} |`,
+        );
+      }
+      for (const result of results)
+        if (result.error) lines.push("", "```text", result.error, "```");
+      if (report.setupError) lines.push("", "```text", report.setupError, "```");
+      await writeFile(join(runRoot, "report.md"), lines.join("\n") + "\n");
+      // Remove only the fresh run's generated CA material. Profiles contain an
+      // OS-protected copy, retained for diagnosing failed native startups.
+      await rm(ca.key, { force: true });
+      await rm(ca.cert, { force: true });
+      console.log(`Report: ${join(runRoot, "report.md")}`);
+      outputCompleted = !results.some((result) => result.cleanupError);
+    } finally {
+      // runTarget has stopped its owned processes before returning. A failed
+      // shutdown remains incomplete so retention cannot remove live profiles.
+      await finishOutput(outputCompleted ? report.passed : null);
     }
-    for (const result of results) if (result.error) lines.push("", "```text", result.error, "```");
-    if (report.setupError) lines.push("", "```text", report.setupError, "```");
-    await writeFile(join(runRoot, "report.md"), lines.join("\n") + "\n");
-    // Remove only the fresh run's generated CA material. Profiles contain an
-    // OS-protected copy, retained for diagnosing failed native startups.
-    await rm(ca.key, { force: true });
-    await rm(ca.cert, { force: true });
-    console.log(`Report: ${join(runRoot, "report.md")}`);
   }
   if (!report.passed) process.exitCode = 1;
 }

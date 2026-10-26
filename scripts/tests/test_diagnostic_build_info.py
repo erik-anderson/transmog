@@ -87,7 +87,7 @@ class BuildInfoIntegrationTests(unittest.TestCase):
                      "third_party/swc-ecma-parser/.cargo_vcs_info.json", "third_party/chromium-certificate-policy/snapshot.json",
                      "third_party/chromium-root-store/snapshot.json", "third_party/chromium-suffix-list/snapshot.json",
                      "scripts/dev-env.ps1", "scripts/dev-env.py", "scripts/python-tools.ps1", "scripts/repo_tools.py",
-                     "scripts/build_cache.py"]
+                     "scripts/build_cache.py", "scripts/cargo_cache_usage.py"]
             for name in paths:
                 path = root / name
                 path.parent.mkdir(parents=True, exist_ok=True)

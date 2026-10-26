@@ -91,6 +91,12 @@ $debugArguments = "--remote-debugging-port=$debugPort --remote-debugging-address
 $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
 $probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
+. (Join-Path $PSScriptRoot 'test-output-run.ps1')
+$outputGroup = "startup=$StartupOnly;auth=$AuthChecks;cases=$PortableCaseChecks;converter=$FormatConverterChecks;viewer=$ViewerChecks;body=$BodySourceChecks;trace=$TraceSaveChecks;keys=$KeyRecoveryChecks"
+$outputLease = Start-TestOutputRun $probeRoot $outputGroup
+$outputPassed = $false
+$outputStopped = $false
+try {
 $env:LOCALAPPDATA = Join-Path $probeRoot 'profile'
 $extensionSource = $null
 $visualizerTrace = $null
@@ -311,6 +317,7 @@ try {
             & node scripts/smoke-auth.mjs --port "$DevToolsPort" --output $probeRoot --mapi $mapiCopyFixture
             if ($LASTEXITCODE -ne 0) { throw 'Native auth inspection checks failed.' }
         } finally { Pop-Location }
+        $outputPassed = $true
         return [pscustomobject]@{ AuthInspectionVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($PortableCaseChecks) {
@@ -319,6 +326,7 @@ try {
             & node scripts/smoke-portable-cases.mjs --port "$DevToolsPort" --output $probeRoot --process-id "$($process.Id)" --close-helper (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1')
             if ($LASTEXITCODE -ne 0) { throw 'Native portable case checks failed.' }
         } finally { Pop-Location }
+        $outputPassed = $true
         return [pscustomobject]@{ PortableCasesVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($FormatConverterChecks) {
@@ -327,11 +335,13 @@ try {
             & node scripts/smoke-format-converter.mjs --port "$DevToolsPort" --output $probeRoot --process-id "$($process.Id)" --executable $executable --close-helper (Join-Path $PSScriptRoot 'close-desktop-probe-window.ps1')
             if ($LASTEXITCODE -ne 0) { throw 'Native format converter checks failed.' }
         } finally { Pop-Location }
+        $outputPassed = $true
         return [pscustomobject]@{ FormatConverterVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($StartupOnly) {
         $result = [pscustomobject]@{ StartupVerified = $true; HostedPolicy = [bool]$HostedRunnerDevToolsPolicy; Runtime = (Invoke-RestMethod -Uri "http://127.0.0.1:$DevToolsPort/json/version").Browser }
         $result | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
+        $outputPassed = $true
         return $result
     }
 
@@ -410,6 +420,7 @@ try {
         throw 'Single-instance handoff terminated the primary process.'
     }
 
+    $outputPassed = $true
     [pscustomobject]@{
         StartupVerified = $true
         AccessibilityVerified = -not $ViewerChecks -or $TraceSaveChecks
@@ -445,4 +456,8 @@ try {
         $policyKey = Get-Item -LiteralPath $policyPath
         if ($policyKey.ValueCount -eq 0 -and $policyKey.SubKeyCount -eq 0) { Remove-Item -LiteralPath $policyPath }
     }
+    $outputStopped = $true
+}
+} finally {
+    Complete-TestOutputRun $outputLease $outputPassed $outputStopped
 }

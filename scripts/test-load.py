@@ -31,7 +31,7 @@ def main():
         command(["npm", "--prefix", "e2e/playwright", "ci"], env=env)
     if not args.skip_browser_install:
         command(["node", "e2e/playwright/node_modules/playwright/cli.js", "install", "chromium"], env=env)
-    command(["node", "--test", "e2e/load/harness.test.mjs"], env=env)
+    command(["node", "--test", "e2e/load/harness.test.mjs", "e2e/output-run.test.mjs"], env=env)
     command([args.python, "-m", "unittest", "discover", "-s", "e2e/load", "-p", "test_*.py"], env=env)
     output = cargo_output(env) / "release"
     argv = ["node", "e2e/load/run.mjs", "--target", args.target, "--storage", args.storage,
