@@ -43,6 +43,33 @@ try {
       assert.ok(output.includes("9007199254740993.125"));
       await page.screenshot({ path: resolve(argument("--output"), "converter-jwt-native.png") });
       const input = page.getByRole("textbox", { name: "Converter input", exact: true });
+      const ntlmBytes = Buffer.alloc(40);
+      ntlmBytes.write("NTLMSSP\0", "ascii");
+      ntlmBytes.writeUInt32LE(1, 8);
+      const ntlm = ntlmBytes.toString("base64");
+      for (const [operation, text, format] of [
+        ["auth-decode", "Authorization: Basic dXNlcjpwYXNz", "Basic"],
+        ["basic-decode", "dXNlcjpwYXNzOm1vcmU=", "Basic"],
+        ["digest-parse", 'Authentication-Info: rspauth="secret", qop=auth', "Digest"],
+        ["jws-decode", "eyJhbGciOiJub25lIn0._w.", "JWS"],
+        ["jwe-inspect", "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4R0NNIn0..aXY.Y2lwaGVy.dGFn", "JWE"],
+        ["ntlm-decode", ntlm, "NTLM"],
+        ["negotiate-decode", `Negotiate ${ntlm}`, "Negotiate"],
+      ]) {
+        await page.getByLabel("Conversion", { exact: true }).selectOption(operation);
+        await input.fill(text);
+        await page.waitForFunction(() => document.querySelector("converter-host").converterReady);
+        const result = JSON.parse(
+          await page.getByRole("textbox", { name: "Converter output", exact: true }).inputValue(),
+        );
+        assert.equal(result.format, format);
+        if (operation === "jwe-inspect") assert.equal(result.status, "encrypted");
+        if (operation === "jws-decode") assert.equal(result.decoded.payloadBytesBase64, "/w==");
+      }
+      await page.screenshot({
+        path: resolve(argument("--output"), "converter-authentication-native.png"),
+      });
+      await page.getByLabel("Conversion", { exact: true }).selectOption("jwt-decode");
       await input.fill("incomplete.jwt");
       await page
         .getByRole("alert")

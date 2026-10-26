@@ -35,12 +35,20 @@ interface Output {
   byteLength: number;
   encoding: Encoding;
 }
+interface AuthConversion {
+  id: string;
+  label: string;
+  hint: string;
+  acceptsBareBase64: boolean;
+}
 
 export class ConverterHost extends WebUIElement {
   @attr({ mode: "boolean" }) standalone = false;
   @attr({ attribute: "data-theme" }) converterTheme = "system";
   @observable converterInput = "";
   @observable converterOperation = "";
+  @observable authConversions: AuthConversion[] = [];
+  @observable converterAuthHint = "";
   @observable converterRepresentation: Representation = "text";
   @observable converterEncoding: Encoding = "utf8";
   @observable converterOutputMode: Representation = "text";
@@ -152,6 +160,7 @@ export class ConverterHost extends WebUIElement {
     );
   };
   protected hydratedCallback(): void {
+    void this.loadAuthConversions();
     document.addEventListener("contextmenu", this.contextListener);
     document.addEventListener("keydown", this.keyboardListener);
     document.addEventListener("format-converter-request", this.requestListener);
@@ -159,6 +168,25 @@ export class ConverterHost extends WebUIElement {
     if (this.standalone) {
       void this.receiveDraft();
     }
+  }
+  private async loadAuthConversions(): Promise<void> {
+    try {
+      const catalog = await invoke<AuthConversion[]>("auth_conversion_catalog");
+      if (!this.isConnected) {
+        return;
+      }
+      this.authConversions = catalog;
+      this.$flushUpdates();
+      this.operationSelect.value = this.converterOperation;
+      this.updateAuthHint();
+    } catch {
+      this.converterError =
+        "Authentication conversions could not be loaded. Reopen the converter to retry.";
+    }
+  }
+  private updateAuthHint(): void {
+    this.converterAuthHint =
+      this.authConversions.find((entry) => entry.id === this.converterOperation)?.hint ?? "";
   }
   disconnectedCallback(): void {
     this.menuPlacement.close();
@@ -230,6 +258,7 @@ export class ConverterHost extends WebUIElement {
     this.$flushUpdates();
     this.inputEditor.value = this.converterInput;
     this.operationSelect.value = this.converterOperation;
+    this.updateAuthHint();
     this.inputEditor.setSelectionRange(draft.selectionStart ?? 0, draft.selectionEnd ?? 0);
     this.inputEditor.scrollTop = draft.scrollTop ?? 0;
     this.pendingOutputScroll = draft.outputScrollTop ?? 0;
@@ -238,6 +267,9 @@ export class ConverterHost extends WebUIElement {
     if (this.panel.matches(":popover-open")) {
       this.close();
     } else {
+      if (!this.authConversions.length) {
+        void this.loadAuthConversions();
+      }
       this.restoreFocus = this.trigger;
       this.panel.showPopover();
       this.inputEditor.focus();
@@ -286,6 +318,7 @@ export class ConverterHost extends WebUIElement {
   }
   changeOperation(event: Event): void {
     this.converterOperation = (event.currentTarget as HTMLSelectElement).value;
+    this.updateAuthHint();
     this.schedule();
   }
   changeOutputMode(event: Event): void {
@@ -453,6 +486,7 @@ export class ConverterHost extends WebUIElement {
         this.converterOutput = "";
         this.outputEditor.value = "";
         this.converterOperation = "";
+        this.updateAuthHint();
         this.operationSelect.value = "";
         this.converterRepresentation = "text";
         this.converterEncoding = "utf8";

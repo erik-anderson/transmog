@@ -2337,6 +2337,7 @@ pub fn run() {
         .invoke_handler({
             let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 format_converter::convert_format,
+                format_converter::auth_conversion_catalog,
                 format_converter::cancel_format_conversion,
                 format_converter::open_converter_window,
                 format_converter::take_converter_draft,

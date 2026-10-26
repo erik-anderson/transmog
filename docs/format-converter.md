@@ -60,7 +60,7 @@ diagnostics. Normal app shutdown and software updates end converter sessions.
 | Hex | Bytes to/from hexadecimal |
 | HTML | Encode/decode character references as inert text |
 | Strings | Quote/unquote complete JSON strings |
-| Authentication | Decode JWT |
+| Authentication | Decode authentication (auto), Decode JWT, Decode JWS, Inspect JWE, Decode Basic, Parse Digest, Decode NTLM, Decode Negotiate / SPNEGO |
 | Hashes | MD5, SHA-1, SHA-256, SHA-384, SHA-512 |
 
 UTF-8 is the default encoding for text/byte boundaries. **Text encoding** exposes
@@ -95,12 +95,36 @@ choices. Hashes are one-way digests, displayed as lowercase hexadecimal text.
   decoded. This operation uses Unicode text and UTF-8 output, with a 1 MiB token
   limit and the Auth parser's depth and field limits.
 
+Authentication conversions also accept a complete header line, such as
+`Authorization: Bearer …`, or a scheme-prefixed value. Choose **Decode
+authentication (auto)** explicitly to recognize supported HTTP envelopes,
+multiple challenges, scheme-free Authentication-Info parameters, JOSE tokens,
+and recognizable NTLM/GSS/SPNEGO/Kerberos structures. Arbitrary bare Base64 is
+ambiguous; choose **Decode Basic**, **Decode NTLM** or **Decode Negotiate /
+SPNEGO** when its format is known. Editing input keeps the chosen operation.
+Pasted input works independently of captured traffic and the Auth view.
+
+Output is readable JSON and explicitly includes temporary input credentials.
+General authentication output carries format, structural status, ordered values,
+decoded content, child structures, diagnostics and transformation provenance.
+Duplicate Digest parameters and JSON members remain in their original order;
+exact JSON number spellings are preserved. Missing context leaves the role
+unknown. Opaque Bearer tokens and unsupported schemes are identified explicitly.
+**Decode JWS** retains non-claims and binary payloads losslessly. **Inspect JWE**
+shows the protected header and encrypted component lengths; claims remain
+encrypted. **Decode Basic** splits at the first colon, displays ASCII directly
+and preserves non-ASCII username/password bytes as Base64 with charset ambiguity
+explained. Windows mechanism tokens retain original decoded bytes. No operation
+fetches keys, decrypts, verifies, sends traffic or establishes successful login.
+Malformed, truncated and limited conversions preserve input and disable actions
+on the previous output. SAML scratch conversion is not currently included.
+
 Each conversion is limited to 8 MiB of input bytes and 32 MiB of output bytes.
 Hex editor text is additionally bounded to 24 MiB. Work runs off the UI thread;
 two workers are available across windows, without an unbounded queue. If they
 are occupied, **Convert** offers an explicit retry. Limits reject excess instead
 of truncating output. Undo retains up to twenty edits within a bounded history.
 
-Custom TypeScript formats, compression, format detection, file inputs and saving
+Custom TypeScript formats, compression, file inputs and saving
 output as traffic are outside v1. Conversion uses internal desktop commands;
 it does not extend network protocols or the external control protocol.

@@ -54,6 +54,7 @@ pub(super) fn command_allowed(command: &str) -> bool {
     matches!(
         command,
         "convert_format"
+            | "auth_conversion_catalog"
             | "cancel_format_conversion"
             | "open_converter_window"
             | "take_converter_draft"
@@ -61,6 +62,12 @@ pub(super) fn command_allowed(command: &str) -> bool {
             | "save_converter_output"
             | "close_converter_window"
     )
+}
+
+#[tauri::command]
+pub(super) fn auth_conversion_catalog() -> &'static [transmog_app::format_converter::AuthConversion]
+{
+    transmog_app::format_converter::AUTH_CONVERSIONS
 }
 
 #[tauri::command]

@@ -151,6 +151,16 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
             break;
         }
     }
+    if at < bytes.len() && !bytes[at..].iter().all(|b| b" \t,".contains(b)) {
+        let at_limit = result.len() == 64;
+        if let Some(last) = result.last_mut() {
+            if at_limit {
+                last.limited = true;
+            } else {
+                last.malformed = true;
+            }
+        }
+    }
     result
 }
 pub(crate) fn decode(
@@ -192,15 +202,39 @@ pub(crate) fn decode(
             "Authentication parameter budget reached; remaining envelope data was not interpreted.",
         );
     }
+    let param_size = item
+        .params
+        .iter()
+        .map(|(key, value)| key.len().saturating_add(value.len()))
+        .sum();
+    if context.charge(param_size) {
+        finding.content.push((
+            "parameters".into(),
+            crate::json::Node::Array(
+                item.params
+                    .iter()
+                    .map(|(key, value)| {
+                        crate::json::Node::Object(vec![
+                            ("name".into(), crate::json::Node::Text(key.clone())),
+                            ("value".into(), crate::json::Node::Text(value.clone())),
+                        ])
+                    })
+                    .collect(),
+            ),
+        ));
+    } else {
+        finding.issue(
+            "limited",
+            "Authentication parameters exceeded the document budget.",
+        );
+    }
     for (index, (key, value)) in item.params.iter().enumerate() {
         if item.params[..index]
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case(key))
         {
-            finding.issue(
-                "incomplete",
-                "Duplicate authentication parameters; no authoritative value selected.",
-            );
+            finding
+                .ambiguity("Duplicate authentication parameters; no authoritative value selected.");
         }
         let public = [
             "realm",
@@ -237,13 +271,37 @@ pub(crate) fn decode(
             true,
             "Explicit copy/reveal includes credential material.",
         );
-        if name == "Basic" && role.ends_with("credential") {
+        if name == "Basic" {
             match STANDARD.decode(&raw) {
                 Ok(bytes) => {
+                    if !context.charge(bytes.len().saturating_mul(3)) {
+                        finding.issue(
+                            "limited",
+                            "Basic credential bytes exceeded the decoded document budget.",
+                        );
+                        return finding;
+                    }
                     finding.source.transforms.push("Base64".into());
                     if let Some(colon) = bytes.iter().position(|b| *b == b':') {
-                        context.field(&mut finding, "Username", String::from_utf8_lossy(&bytes[..colon]), false, "Split at the first colon; non-ASCII charset may be ambiguous without an advertised UTF-8 challenge.");
-                        context.field(&mut finding, "Password", String::from_utf8_lossy(&bytes[colon + 1..]), true, "Captured bytes are also retained in Original credential; no password validation.");
+                        for (name, part, sensitive) in [
+                            ("Username", &bytes[..colon], false),
+                            ("Password", &bytes[colon + 1..], true),
+                        ] {
+                            let value = if part.is_ascii() {
+                                std::str::from_utf8(part).expect("ASCII").into()
+                            } else {
+                                format!("Base64 bytes: {}", STANDARD.encode(part))
+                            };
+                            context.field(&mut finding, name, value, sensitive, "Split at the first colon. Non-ASCII bytes have no authoritative charset here and are preserved as Base64 without replacement or guessing.");
+                        }
+                        finding.content.push((
+                            "usernameBytesBase64".into(),
+                            crate::json::Node::Text(STANDARD.encode(&bytes[..colon])),
+                        ));
+                        finding.content.push((
+                            "passwordBytesBase64".into(),
+                            crate::json::Node::Text(STANDARD.encode(&bytes[colon + 1..])),
+                        ));
                         context.field(
                             &mut finding,
                             "Decoded bytes (Base64)",
@@ -261,7 +319,9 @@ pub(crate) fn decode(
                 Err(_) => finding.issue("malformed", "Invalid Base64 in Basic credentials."),
             }
         } else {
-            finding.status = "opaque".into();
+            if finding.status == "decoded" {
+                finding.status = "opaque".into();
+            }
             if name == "NTLM" || name == "Negotiate" {
                 match STANDARD.decode(&raw) {
                     Ok(bytes) => {
@@ -287,6 +347,12 @@ pub(crate) fn decode(
                 finding.children.push(inner);
             }
         }
+    }
+    if name == "Unknown HTTP auth scheme" {
+        finding.issue(
+            "unsupported",
+            "The observed HTTP authentication scheme is not implemented.",
+        );
     }
     finding
 }

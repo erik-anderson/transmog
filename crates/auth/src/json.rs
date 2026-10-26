@@ -7,6 +7,8 @@ pub(crate) enum Node {
     Array(Vec<Node>),
     Scalar(String),
     Text(String),
+    /// Original uninterpreted bytes; scratch JSON chooses an explicit lossless representation.
+    Bytes(Vec<u8>),
 }
 impl Node {
     pub(crate) fn members(&self) -> Option<&[(String, Self)]> {
@@ -45,7 +47,7 @@ impl Node {
                 values[..i].iter().any(|(k, _)| k == key) || value.duplicate()
             }),
             Self::Array(values) => values.iter().any(Self::duplicate),
-            Self::Scalar(_) | Self::Text(_) => false,
+            Self::Scalar(_) | Self::Text(_) | Self::Bytes(_) => false,
         }
     }
 
@@ -93,6 +95,20 @@ impl Node {
                 Node::Scalar(value) => output.push_str(value),
                 Node::Text(value) => {
                     output.push_str(&serde_json::to_string(value).expect("JSON string"));
+                }
+                Node::Bytes(bytes) => {
+                    use base64::Engine as _;
+                    write(
+                        &Node::Object(vec![
+                            ("encoding".into(), Node::Text("base64".into())),
+                            (
+                                "data".into(),
+                                Node::Text(base64::engine::general_purpose::STANDARD.encode(bytes)),
+                            ),
+                        ]),
+                        depth,
+                        output,
+                    );
                 }
             }
         }
@@ -294,6 +310,16 @@ pub(crate) fn fields(
                     String::new()
                 };
             context.field(finding, prefix, value, secret, &interpretation);
+        }
+        Node::Bytes(bytes) => {
+            use base64::Engine as _;
+            context.field(
+                finding,
+                prefix,
+                base64::engine::general_purpose::STANDARD.encode(bytes),
+                true,
+                "Original bytes (Base64).",
+            );
         }
     }
 }

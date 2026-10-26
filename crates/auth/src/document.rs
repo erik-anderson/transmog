@@ -14,6 +14,7 @@ pub(crate) struct DecodedDocument {
     pub role: String,
     pub recognition: String,
     pub status: String,
+    pub complete: bool,
     pub verification: String,
     pub source: Source,
     pub values: Vec<DecodedValue>,
@@ -30,6 +31,7 @@ impl DecodedDocument {
                 role: finding.role,
                 recognition: finding.recognition,
                 status: finding.status,
+                complete: finding.complete,
                 verification: finding.verification,
                 source: finding.source,
                 values: finding

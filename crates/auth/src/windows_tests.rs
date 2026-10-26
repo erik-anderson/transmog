@@ -107,6 +107,23 @@ fn spnego_offered_selected_child_and_mic() {
         ]),
     );
     let result = token(&init, "Negotiate");
+    for operation in ["auth-decode", "negotiate-decode"] {
+        let decoded =
+            decode_authentication(&STANDARD.encode(&init), operation, &AtomicBool::new(false))
+                .unwrap();
+        let decoded: serde_json::Value = serde_json::from_str(&decoded).unwrap();
+        let decoded = if decoded["format"] == "Negotiate" {
+            &decoded["children"][0]
+        } else {
+            &decoded
+        };
+        assert_eq!(decoded["format"], "SPNEGO");
+        assert_eq!(decoded["children"][0]["format"], "NTLM");
+        assert_eq!(
+            decoded["decoded"]["mechanismBytes"]["data"],
+            STANDARD.encode(&init)
+        );
+    }
     let finding = &result.findings[0].children[0];
     assert_eq!(finding.format, "SPNEGO");
     assert_eq!(

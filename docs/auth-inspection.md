@@ -24,7 +24,8 @@ dot-separated structure and a Base64url JSON JOSE header, rather than a fixed
 `eyJhbGciOiJ` prefix; JSON whitespace and member order can change that prefix.
 Opaque custom values are skipped. Captured redaction, masking, source occurrence
 and inspection limits still apply. For explicit scratch decoding, use
-**Format converter → Decode JWT**; see [Format converter](format-converter.md).
+**Format converter → Authentication**, which accepts pasted headers and tokens
+from other applications too; see [Format converter](format-converter.md).
 
 Automatic detection also scans an eligible complete retained body in each visible
 selected message. Other rows and routine list refreshes do not read bodies.

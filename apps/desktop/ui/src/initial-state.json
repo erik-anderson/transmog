@@ -89,6 +89,8 @@
   "converterTheme": "system",
   "converterInput": "",
   "converterOperation": "",
+  "authConversions": [],
+  "converterAuthHint": "",
   "converterRepresentation": "text",
   "converterEncoding": "utf8",
   "converterOutputMode": "text",

@@ -125,10 +125,8 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
     );
     json::fields(context, &mut finding, &header, "JOSE", false);
     if header.duplicate() {
-        finding.issue(
-            "incomplete",
-            "Duplicate JOSE members are ambiguous; no authoritative member selected.",
-        );
+        finding
+            .ambiguity("Duplicate JOSE members are ambiguous; no authoritative member selected.");
     }
     if header.get("crit").is_some() {
         finding.issue(
@@ -274,10 +272,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
                 finding.format = "JWT / JWS".into();
             }
             if claims.duplicate() {
-                finding.issue(
-                    "incomplete",
-                    "Duplicate payload members are retained; claims are ambiguous.",
-                );
+                finding.ambiguity("Duplicate payload members are retained; claims are ambiguous.");
             }
             context.field(
                 &mut finding,

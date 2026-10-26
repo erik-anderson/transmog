@@ -10,6 +10,59 @@ export async function checkFormatConverter(page, root) {
   const input = host.getByRole("textbox", { name: "Converter input", exact: true }),
     output = host.getByRole("textbox", { name: "Converter output", exact: true });
   await trigger.click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host").authConversions
+        .length === 8,
+  );
+  assert.deepEqual(
+    await host
+      .locator('optgroup[label="Authentication"] option')
+      .evaluateAll((options) => options.map((option) => option.value)),
+    [
+      "auth-decode",
+      "jwt-decode",
+      "jws-decode",
+      "jwe-inspect",
+      "basic-decode",
+      "digest-parse",
+      "ntlm-decode",
+      "negotiate-decode",
+    ],
+  );
+  const basicInput = "Authorization: Basic dXNlcjpwYXNz";
+  const basicOutput = JSON.stringify(
+    { format: "Basic", status: "decoded", username: "user", password: "pass" },
+    null,
+    2,
+  );
+  await page.evaluate(
+    ({ basicInput, basicOutput }) => {
+      globalThis.__workspaceFixture.authConversionOutputs = {
+        "auth-decode": { [basicInput]: basicOutput },
+        "basic-decode": { [basicInput]: basicOutput },
+      };
+    },
+    { basicInput, basicOutput },
+  );
+  await input.fill(basicInput);
+  await host.getByLabel("Conversion", { exact: true }).selectOption("auth-decode");
+  await page.waitForFunction(
+    (expected) =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host")
+        .converterOutput === expected,
+    basicOutput,
+  );
+  await host.getByLabel("Conversion", { exact: true }).selectOption("basic-decode");
+  await input.fill("invalid Basic");
+  await host
+    .getByText("Authentication structure is malformed or unsupported.", { exact: true })
+    .waitFor();
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "basic-decode");
+  assert.equal(
+    await host.getByRole("button", { name: "Copy output", exact: true }).isEnabled(),
+    false,
+  );
   await input.fill("héllo");
   await host.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
   await page.waitForFunction(

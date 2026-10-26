@@ -8,6 +8,7 @@ use base64::{
 };
 use boring::hash::{Hasher, MessageDigest};
 use serde::{Deserialize, Serialize};
+pub use transmog_auth::{AUTH_CONVERSIONS, AuthConversion};
 
 /// Maximum decoded input bytes.
 pub const MAX_INPUT: usize = 8 * 1024 * 1024;
@@ -72,6 +73,20 @@ pub enum Operation {
     JsonQuote,
     /// Strict JSON string unquoting.
     JsonUnquote,
+    /// Detect and decode a supported authentication header or standalone token.
+    AuthDecode,
+    /// Decode a general compact JWS, including binary payloads.
+    JwsDecode,
+    /// Inspect encrypted compact JWE metadata.
+    JweInspect,
+    /// Decode Basic credentials without guessing their character set.
+    BasicDecode,
+    /// Parse ordered Digest parameters.
+    DigestParse,
+    /// Decode an NTLM mechanism token.
+    NtlmDecode,
+    /// Decode GSS/SPNEGO and confirmed nested mechanisms.
+    NegotiateDecode,
     /// Decode a compact JWT as unverified JSON header, payload and signature.
     JwtDecode,
     /// MD5 digest.
@@ -144,6 +159,13 @@ pub fn convert(
             | Operation::JsonQuote
             | Operation::JsonUnquote
             | Operation::JwtDecode
+            | Operation::AuthDecode
+            | Operation::JwsDecode
+            | Operation::JweInspect
+            | Operation::BasicDecode
+            | Operation::DigestParse
+            | Operation::NtlmDecode
+            | Operation::NegotiateDecode
     );
     let bytes = match input.representation {
         Representation::Text => encode_text(
@@ -198,7 +220,10 @@ pub fn convert(
         Operation::HtmlDecode => unescape_html(&literal_text()?, cancelled)?.into_bytes(),
         Operation::JsonQuote => serde_json::to_string(&literal_text()?).map_err(|_| "JSON quoting failed.")?.into_bytes(),
         Operation::JsonUnquote => serde_json::from_str::<String>(&literal_text()?).map_err(|_| "Expected a complete JSON string with valid escapes and paired Unicode surrogates.")?.into_bytes(),
-        Operation::JwtDecode => transmog_auth::decode_authentication(&literal_text()?, "jwt-decode", cancelled)?.into_bytes(),
+        operation @ (Operation::JwtDecode | Operation::AuthDecode | Operation::JwsDecode | Operation::JweInspect | Operation::BasicDecode | Operation::DigestParse | Operation::NtlmDecode | Operation::NegotiateDecode) => {
+            let id = serde_json::to_value(operation).map_err(|_| "Unsupported authentication conversion.")?;
+            transmog_auth::decode_authentication(&literal_text()?, id.as_str().ok_or("Unsupported authentication conversion.")?, cancelled)?.into_bytes()
+        },
         operation => {
             let digest = match operation {
                 Operation::Md5 => MessageDigest::md5(), Operation::Sha1 => MessageDigest::sha1(),
@@ -591,6 +616,44 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn authentication_catalog_dispatch_and_unicode_output_are_in_sync() {
+        for conversion in AUTH_CONVERSIONS {
+            let operation: Operation =
+                serde_json::from_value(serde_json::json!(conversion.id)).unwrap();
+            assert_eq!(serde_json::to_value(operation).unwrap(), conversion.id);
+        }
+        for (operation, input, expected) in [
+            (
+                Operation::AuthDecode,
+                "Authorization: Bearer opaque",
+                "Bearer",
+            ),
+            (Operation::BasicDecode, "dXNlcjpwYXNz", "Basic"),
+            (
+                Operation::DigestParse,
+                "realm=\"a,b\", nonce=\"one\", nonce=\"two\"",
+                "Digest",
+            ),
+            (
+                Operation::JweInspect,
+                "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4R0NNIn0..aXY.Y2lwaGVy.dGFn",
+                "JWE",
+            ),
+            (Operation::JwsDecode, "eyJhbGciOiJub25lIn0./w.", "JWS"),
+        ] {
+            // Use the proper JOSE Base64url alphabet for the binary fixture.
+            let input = input.replace("/w", "_w");
+            let mut input = request(operation, &input);
+            input.encoding = TextEncoding::Utf16be;
+            let output = convert(&input, &AtomicBool::new(false)).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&output.display).unwrap();
+            assert_eq!(value["format"], expected);
+            assert_eq!(output.display.as_bytes(), output.bytes);
+            assert!(matches!(output.encoding, TextEncoding::Utf8));
+        }
     }
 
     #[test]

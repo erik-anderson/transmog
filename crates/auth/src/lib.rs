@@ -1,6 +1,7 @@
 //! Deterministic offline inspection. Decoding never establishes trust or sends traffic.
 #![allow(clippy::missing_errors_doc, clippy::too_many_lines)]
 mod body;
+mod catalog;
 mod document;
 mod extract;
 mod http;
@@ -11,6 +12,7 @@ mod saml;
 mod scratch;
 mod windows;
 
+pub use catalog::{AUTH_CONVERSIONS, AuthConversion, conversion_for_format};
 pub use extract::is_candidate_header;
 pub use jose::decode_jwt;
 pub use scratch::decode_authentication;
@@ -96,6 +98,8 @@ pub struct Finding {
     // Only the explicit scratch adapter may expose this credential-bearing content.
     #[serde(skip)]
     pub(crate) content: Vec<(String, json::Node)>,
+    #[serde(skip)]
+    pub(crate) complete: bool,
 }
 impl Finding {
     pub(crate) fn new(format: &str, role: &str, source: Source) -> Self {
@@ -111,9 +115,13 @@ impl Finding {
             children: vec![],
             diagnostics: vec![],
             content: vec![],
+            complete: true,
         }
     }
     pub(crate) fn issue(&mut self, status: &str, note: &str) {
+        if ["malformed", "incomplete", "limited", "redacted"].contains(&status) {
+            self.complete = false;
+        }
         let rank = |status: &str| match status {
             "limited" => 8,
             "redacted" => 7,
@@ -130,6 +138,11 @@ impl Finding {
         if self.diagnostics.len() < 16 {
             self.diagnostics.push(note.into());
         }
+    }
+    pub(crate) fn ambiguity(&mut self, note: &str) {
+        let complete = self.complete;
+        self.issue("incomplete", note);
+        self.complete = complete;
     }
 }
 /// Coverage distinguishes unscanned and unavailable evidence from a completed negative result.

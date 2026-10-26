@@ -878,6 +878,17 @@ pub(crate) fn decode(
     } else {
         negotiate(context, bytes, source, 0)
     };
+    if context.charge(bytes.len()) {
+        finding.content.push((
+            "mechanismBytes".into(),
+            crate::json::Node::Bytes(bytes.to_vec()),
+        ));
+    } else {
+        finding.issue(
+            "limited",
+            "Mechanism bytes exceeded the retained document budget.",
+        );
+    }
     context.field(&mut finding, "Decoded mechanism bytes (hex prefix)", hex(&bytes[..bytes.len().min(4096)]), true, "At most the first 4 KiB of decoded mechanism bytes; full encoded material remains in the enclosing credential/source. Includes sensitive cryptographic data.");
     finding
 }

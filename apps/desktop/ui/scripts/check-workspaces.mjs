@@ -88,6 +88,16 @@ await checkRequestOrderModel(root);
 const filterCatalog = JSON.parse(
   await readFile(resolve(root, "../../../crates/app/src/sessions/filter-catalog.json"), "utf8"),
 );
+const authCatalogSource = await readFile(
+  resolve(root, "../../../crates/auth/src/catalog.rs"),
+  "utf8",
+);
+const authConversions = [
+  ...authCatalogSource.matchAll(
+    /id:\s*"([^"]+)"[\s\S]*?label:\s*"([^"]+)"[\s\S]*?hint:\s*"([^"]+)"[\s\S]*?accepts_bare_base64:\s*(true|false)/g,
+  ),
+].map(([, id, label, hint, bare]) => ({ id, label, hint, acceptsBareBase64: bare === "true" }));
+assert.equal(authConversions.length, 8);
 const initial = JSON.parse(await readFile(resolve(root, "src/initial-state.json"), "utf8"));
 const scriptDeclarations = await readFile(
   resolve(root, "../../../crates/proxy-script/generated/transmog-script.d.ts"),
@@ -191,7 +201,7 @@ await page.route("https://workspace.test/**", async (route) => {
 });
 await page.addInitScript(
   (configuration) => {
-    const { workspace, networkProfiles, scriptDeclarations } = configuration;
+    const { workspace, networkProfiles, scriptDeclarations, authConversions } = configuration;
     const caller = { kind: "local-process", processName: "Fixture", processId: 42 };
     const summary = (id, index = 0) => ({
       id,
@@ -1140,6 +1150,8 @@ await page.addInitScript(
               );
             return structuredClone(state.extensionStatus);
           }
+          case "auth_conversion_catalog":
+            return authConversions;
           case "cancel_format_conversion":
             return;
           case "convert_format": {
@@ -1161,6 +1173,14 @@ await page.addInitScript(
             if (input.operation === "jwt-decode") {
               const result = state.jwtConversions?.[input.input];
               if (!result) throw new Error("Expected a complete compact JWT.");
+              bytes = new TextEncoder().encode(result);
+            }
+            if (
+              authConversions.some((entry) => entry.id === input.operation) &&
+              input.operation !== "jwt-decode"
+            ) {
+              const result = state.authConversionOutputs?.[input.operation]?.[input.input];
+              if (!result) throw new Error("Authentication structure is malformed or unsupported.");
               bytes = new TextEncoder().encode(result);
             }
             let text = null;
@@ -4096,6 +4116,7 @@ await page.addInitScript(
   },
   {
     workspace: initial.workspace,
+    authConversions,
     networkProfiles: initial.networkProfiles,
     scriptDeclarations,
     filterCatalog,

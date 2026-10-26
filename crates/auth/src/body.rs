@@ -193,7 +193,7 @@ fn json_groups(
                 context.push(finding);
             }
         }
-        json::Node::Scalar(_) => {}
+        json::Node::Scalar(_) | json::Node::Bytes(_) => {}
     }
 }
 fn entities(value: &str) -> String {
