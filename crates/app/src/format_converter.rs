@@ -110,6 +110,21 @@ pub enum Operation {
     /// SHA-512 digest.
     Sha512,
 }
+impl Operation {
+    fn authentication(self) -> bool {
+        matches!(
+            self,
+            Self::AuthDecode
+                | Self::JwtDecode
+                | Self::JwsDecode
+                | Self::JweInspect
+                | Self::BasicDecode
+                | Self::DigestParse
+                | Self::NtlmDecode
+                | Self::NegotiateDecode
+        )
+    }
+}
 
 /// A complete conversion snapshot. Never persist or log its contents.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -131,6 +146,8 @@ pub struct ConversionInput {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversionOutput {
+    /// Decoded authentication JSON needs an explicitly chosen next conversion when chained.
+    pub requires_next_conversion: bool,
     /// Encoding that preserves the result bytes when chaining text output.
     pub encoding: TextEncoding,
     /// Complete displayed value.
@@ -287,6 +304,7 @@ fn finish_conversion(
     };
     check_cancelled(cancelled)?;
     Ok(ConversionOutput {
+        requires_next_conversion: input.operation.authentication(),
         encoding: if text_result {
             TextEncoding::Utf8
         } else {
@@ -602,6 +620,7 @@ mod tests {
         input.encoding = TextEncoding::Utf16be;
         let output = convert(&input, &AtomicBool::new(false)).unwrap();
         let decoded: serde_json::Value = serde_json::from_str(&output.display).unwrap();
+        assert!(output.requires_next_conversion);
         assert_eq!(decoded["payload"]["sub"], "user");
         assert_eq!(decoded["verification"], "Not checked");
         assert!(matches!(output.encoding, TextEncoding::Utf8));
@@ -660,6 +679,7 @@ mod tests {
             input.encoding = TextEncoding::Utf16be;
             let output = convert(&input, &AtomicBool::new(false)).unwrap();
             let value: serde_json::Value = serde_json::from_str(&output.display).unwrap();
+            assert!(output.requires_next_conversion);
             assert_eq!(value["format"], expected);
             assert_eq!(output.display.as_bytes(), output.bytes);
             assert!(matches!(output.encoding, TextEncoding::Utf8));
@@ -724,6 +744,7 @@ mod tests {
         let mut input = request(Operation::Base64Encode, "A");
         input.encoding = TextEncoding::Utf16le;
         let encoded = convert(&input, &AtomicBool::new(false)).unwrap();
+        assert!(!encoded.requires_next_conversion);
         assert_eq!(encoded.display, "QQA=");
         assert!(matches!(encoded.encoding, TextEncoding::Utf8));
         input.operation = Operation::Base64Decode;

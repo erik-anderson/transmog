@@ -1197,6 +1197,7 @@ await page.addInitScript(
             const representation =
               input.outputRepresentation === "hex" || text === null ? "hex" : "text";
             return {
+              requiresNextConversion: authConversions.some((entry) => entry.id === input.operation),
               display:
                 representation === "hex"
                   ? Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")

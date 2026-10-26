@@ -54,10 +54,12 @@ export async function checkFormatConverter(page, root) {
     basicOutput,
   );
   await host.getByLabel("Conversion", { exact: true }).selectOption("basic-decode");
+  assert.equal(await output.inputValue(), "", "Changing operation retained obsolete output");
   await input.fill("invalid Basic");
   await host
     .getByText("Authentication structure is malformed or unsupported.", { exact: true })
     .waitFor();
+  assert.equal(await output.inputValue(), "", "Failed conversion retained selectable old output");
   assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "basic-decode");
   assert.equal(
     await host.getByRole("button", { name: "Copy output", exact: true }).isEnabled(),
@@ -114,8 +116,20 @@ export async function checkFormatConverter(page, root) {
   );
   await host.getByRole("button", { name: "Use output as input", exact: true }).click();
   assert.equal(await input.inputValue(), decodedJwt);
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "");
+  assert.equal(await output.inputValue(), "");
+  await host
+    .getByText("Output moved to input. Choose the next conversion.", { exact: true })
+    .waitFor();
+  await page.waitForTimeout(300);
+  assert.equal(await host.evaluate((element) => element.converterError), "");
   await input.press("Control+z");
   assert.equal(await input.inputValue(), jwt);
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "jwt-decode");
+  await input.press("Control+y");
+  assert.equal(await input.inputValue(), decodedJwt);
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "");
+  await input.press("Control+z");
   await input.fill("incomplete.jwt");
   await host.getByText("Expected a complete compact JWT.", { exact: true }).waitFor();
   assert.equal(await input.inputValue(), "incomplete.jwt");
@@ -142,6 +156,7 @@ export async function checkFormatConverter(page, root) {
   });
   await input.fill("old");
   await page.waitForFunction(() => globalThis.__workspaceFixture.conversionPending);
+  assert.equal(await output.inputValue(), "", "Pending conversion retained selectable old output");
   await input.fill("new");
   await page.waitForFunction(
     () =>
@@ -150,6 +165,21 @@ export async function checkFormatConverter(page, root) {
   );
   await page.evaluate(() => globalThis.__workspaceFixture.finishConversion());
   assert.equal(await output.inputValue(), "bmV3");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferConversion = true;
+    globalThis.__workspaceFixture.conversionPending = false;
+  });
+  await host.getByRole("button", { name: "Convert", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.conversionPending);
+  assert.equal(await output.inputValue(), "");
+  await host.getByRole("button", { name: "Cancel", exact: true }).click();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishConversion());
+  await page.waitForTimeout(30);
+  assert.equal(await output.inputValue(), "", "Canceled or late conversion restored old output");
+  assert.equal(
+    await host.getByRole("button", { name: "Copy output", exact: true }).isEnabled(),
+    false,
+  );
   await input.fill("invalid");
   await host.getByText("Invalid conversion input.", { exact: true }).waitFor();
   assert.equal(

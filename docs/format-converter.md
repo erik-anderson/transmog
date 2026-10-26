@@ -8,11 +8,17 @@ compact windows show the icon with an accessible name and tooltip.
 Enter Input, choose a Conversion, and inspect the read-only Output. Choosing a
 conversion and subsequent input edits update the output after a short delay.
 **Convert** also runs it explicitly; **Cancel** stops the current work while
-preserving input. A pending or invalid conversion disables copying, saving and
-chaining the previous result. Late results cannot replace newer input.
+preserving input. Editing input or conversion choices, starting a conversion,
+cancellation and failure clear obsolete output immediately. Copying, saving and
+chaining become available when the current conversion succeeds. Late results
+cannot replace newer input.
 
 **Copy output** copies the displayed representation. **Use output as input**
 preserves the result's bytes and encoding, using Hex input for binary results.
+For authentication results it clears Conversion and prompts you to choose the
+next conversion, so decoded JSON is ready for the next task. Other conversions
+keep their operation for repeated chaining. Undo/Redo restores both input and
+operation together.
 This edit, input replacement and ordinary typing support Ctrl+Z/Ctrl+Y in the
 input editor. **Save output…** saves complete output bytes through a native file
 dialog, independently of the selected output presentation.
@@ -42,7 +48,9 @@ the handoff. Once copied, scratch input has no live capture dependency.
 
 If the flyout already contains input, choose **Replace input**, **Open in new
 window**, or **Cancel**. Replacing input, operation, representation and encoding
-is one undoable edit; Cancel preserves the complete previous draft. Captured-page browser
+is one undoable edit; Cancel preserves the complete previous draft. Cancel,
+Escape and closing the converter return keyboard focus to the original action's
+source while it remains available, including an Auth artifact heading. Captured-page browser
 previews remain isolated from application context actions.
 
 ## Independent windows and temporary work

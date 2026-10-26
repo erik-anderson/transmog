@@ -82,6 +82,45 @@ try {
       );
       await input.fill(jwt);
       await page.waitForFunction(() => document.querySelector("converter-host").converterReady);
+      const decodedInput = await page
+        .getByRole("textbox", { name: "Converter output", exact: true })
+        .inputValue();
+      await page.getByRole("button", { name: "Use output as input", exact: true }).click();
+      assert.equal(await page.getByLabel("Conversion", { exact: true }).inputValue(), "");
+      assert.equal(await input.inputValue(), decodedInput);
+      assert.equal(
+        await page.getByRole("textbox", { name: "Converter output", exact: true }).inputValue(),
+        "",
+      );
+      const pausedCreated = context.waitForEvent("page");
+      await page.getByRole("button", { name: "Open in new window", exact: true }).click();
+      const paused = await pausedCreated;
+      await paused.getByRole("textbox", { name: "Converter input", exact: true }).waitFor();
+      await paused.waitForFunction((expected) => {
+        const converter = document.querySelector("converter-host");
+        return (
+          converter?.converterInput === expected &&
+          converter.converterStatus === "Choose a conversion."
+        );
+      }, decodedInput);
+      assert.equal(await paused.getByLabel("Conversion", { exact: true }).inputValue(), "");
+      assert.equal(
+        await paused.getByRole("textbox", { name: "Converter input", exact: true }).inputValue(),
+        decodedInput,
+      );
+      assert.equal(
+        await paused.getByRole("textbox", { name: "Converter output", exact: true }).inputValue(),
+        "",
+      );
+      const pausedClosed = paused.waitForEvent("close");
+      await paused
+        .evaluate(() => window.__TAURI_INTERNALS__.invoke("close_converter_window"))
+        .catch(() => undefined);
+      await pausedClosed;
+      await input.press("Control+z");
+      assert.equal(await input.inputValue(), jwt);
+      assert.equal(await page.getByLabel("Conversion", { exact: true }).inputValue(), "jwt-decode");
+      await page.waitForFunction(() => document.querySelector("converter-host").converterReady);
     } else {
       assert.equal(output, Buffer.from(`native ${index}`).toString("base64"));
     }

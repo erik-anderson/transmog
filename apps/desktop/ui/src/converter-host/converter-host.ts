@@ -29,6 +29,7 @@ interface Draft extends Edit {
   theme: string;
 }
 interface Output {
+  requiresNextConversion: boolean;
   display: string;
   representation: Representation;
   textAvailable: boolean;
@@ -379,10 +380,17 @@ export class ConverterHost extends WebUIElement {
     const revision = ++this.revision;
     void invoke("cancel_format_conversion", { revision }).catch(() => undefined);
   }
+  private clearOutput(): void {
+    this.converterReady = false;
+    this.converterOutput = "";
+    this.outputEditor.value = "";
+    this.output = null;
+    this.resultInput = null;
+  }
   private schedule(): void {
     clearTimeout(this.timer);
     this.cancelWork();
-    this.converterReady = false;
+    this.clearOutput();
     this.converterBusy = false;
     this.converterError = "";
     this.converterStatus = this.converterOperation ? "Waiting to convert…" : "Choose a conversion.";
@@ -394,7 +402,7 @@ export class ConverterHost extends WebUIElement {
     clearTimeout(this.timer);
     this.cancelWork();
     this.converterBusy = false;
-    this.converterReady = false;
+    this.clearOutput();
     this.converterStatus = "Conversion canceled. Input preserved.";
   }
   async run(): Promise<void> {
@@ -404,7 +412,7 @@ export class ConverterHost extends WebUIElement {
     }
     const revision = ++this.revision,
       input = this.snapshot();
-    this.converterReady = false;
+    this.clearOutput();
     this.converterBusy = true;
     this.converterError = "";
     this.converterStatus = "Converting…";
@@ -441,12 +449,21 @@ export class ConverterHost extends WebUIElement {
     if (!this.converterReady || !this.output) {
       return;
     }
+    const output = this.output;
     this.remember();
-    this.converterInput = this.output.display;
+    this.converterInput = output.display;
     this.inputEditor.value = this.converterInput;
-    this.converterRepresentation = this.output.representation;
-    this.converterEncoding = this.output.encoding;
+    this.converterRepresentation = output.representation;
+    this.converterEncoding = output.encoding;
+    if (output.requiresNextConversion) {
+      this.converterOperation = "";
+      this.operationSelect.value = "";
+      this.updateAuthHint();
+    }
     this.schedule();
+    if (output.requiresNextConversion) {
+      this.converterStatus = "Output moved to input. Choose the next conversion.";
+    }
     this.inputEditor.focus();
   }
   async copyOutput(): Promise<void> {
@@ -607,7 +624,9 @@ export class ConverterHost extends WebUIElement {
     if (selection && this.panel.contains(selection.source) && !this.standalone) {
       this.panel.showPopover();
     }
-    restoreConverterSelection(selection);
+    if (!restoreConverterSelection(selection)) {
+      (this.standalone ? this.inputEditor : this.trigger).focus({ preventScroll: true });
+    }
   }
   cancelReplacement(event: Event): void {
     event.preventDefault();

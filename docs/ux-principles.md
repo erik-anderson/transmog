@@ -117,6 +117,8 @@ when changing the experience.
 - Scratch utilities preserve their draft when dismissed. Detaching transfers
   work only after its destination is ready; independent utility windows retain
   their own drafts and do not depend on the originating workspace's lifetime.
+  Clear obsolete derived output when its input changes. Chaining a structured
+  decoding result should leave it ready for an explicitly chosen next operation.
 
 - Protocol extensions offer visualizers through explicit selection or opt-in Auto
   parsing of the visible selected message, and declare

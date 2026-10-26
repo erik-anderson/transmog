@@ -60,11 +60,10 @@ export function selectedConverterText(
     : null;
 }
 
-export function restoreConverterSelection(selection: ConverterSelection | null): void {
-  if (!selection?.source.isConnected) {
-    return;
+export function restoreConverterSelection(selection: ConverterSelection | null): boolean {
+  if (!selection || !focusConverterSource(selection.source)) {
+    return false;
   }
-  focusConverterSource(selection.source);
   if (
     selection.source instanceof HTMLInputElement ||
     selection.source instanceof HTMLTextAreaElement
@@ -80,19 +79,31 @@ export function restoreConverterSelection(selection: ConverterSelection | null):
     current?.removeAllRanges();
     current?.addRange(selection.range);
   }
+  return true;
 }
 
 export function focusConverterSource(source: HTMLElement | null): boolean {
-  if (!source?.isConnected) {
+  if (
+    !source?.isConnected ||
+    !source.getClientRects().length ||
+    source.closest("[inert],[hidden]")
+  ) {
     return false;
   }
-  const target =
-    source.closest<HTMLElement>(
-      "input,textarea,select,button,a[href],[tabindex],[contenteditable]",
-    ) ?? source;
-  target.focus({ preventScroll: true });
-  const root = target.getRootNode();
-  return (root instanceof ShadowRoot ? root.activeElement : document.activeElement) === target;
+  const ancestor = source.closest<HTMLElement>(
+    "summary,input,textarea,select,button,a[href],[tabindex],[contenteditable]",
+  );
+  for (const target of new Set([source, ancestor])) {
+    if (!target || target.matches(":disabled") || !target.getClientRects().length) {
+      continue;
+    }
+    target.focus({ preventScroll: true });
+    const root = target.getRootNode();
+    if ((root instanceof ShadowRoot ? root.activeElement : document.activeElement) === target) {
+      return true;
+    }
+  }
+  return false;
 }
 
 export function requestFormatConverter(

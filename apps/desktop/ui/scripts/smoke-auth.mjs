@@ -403,10 +403,26 @@ try {
   await converter.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
   await converter.locator("details > summary").click();
   await page.keyboard.press("Escape");
-  await nested.locator(":scope > summary").click({ button: "right" });
+  const tokenHeading = nested.locator(":scope > summary");
+  await tokenHeading.focus();
+  await tokenHeading.press("Shift+F10");
   await menu.getByRole("menuitem", { name: "Open token in Format converter", exact: true }).click();
   await converter.getByRole("button", { name: "Cancel", exact: true }).click();
   assert.equal(await converter.evaluate((element) => element.converterInput), "4100");
+  assert.equal(
+    await tokenHeading.evaluate((element) => element.getRootNode().activeElement === element),
+    true,
+  );
+  await tokenHeading.press("Shift+F10");
+  await menu.getByRole("menuitem", { name: "Open token in Format converter", exact: true }).click();
+  await converter
+    .getByRole("dialog", { name: "Keep the current conversion?", exact: true })
+    .waitFor();
+  await page.keyboard.press("Escape");
+  assert.equal(
+    await tokenHeading.evaluate((element) => element.getRootNode().activeElement === element),
+    true,
+  );
   await nested.locator(":scope > summary").click({ button: "right" });
   await menu.getByRole("menuitem", { name: "Open token in Format converter", exact: true }).click();
   await converter.getByRole("button", { name: "Replace input", exact: true }).click();
@@ -437,6 +453,10 @@ try {
   );
   await page.screenshot({ path: resolve(output, "auth-token-converter-native.png") });
   await page.keyboard.press("Escape");
+  assert.equal(
+    await tokenHeading.evaluate((element) => element.getRootNode().activeElement === element),
+    true,
+  );
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 800,
     height: 600,

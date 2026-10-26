@@ -500,6 +500,31 @@ export async function checkAuth(page, root) {
     "jwt-decode",
   );
   await page.keyboard.press("Escape");
+  const tokenHeading = bearer.locator(":scope > summary");
+  assert.equal(
+    await tokenHeading.evaluate((element) => element.getRootNode().activeElement === element),
+    true,
+    "Converter dismissal lost artifact keyboard focus",
+  );
+  for (const cancel of ["Escape", "Cancel"]) {
+    await tokenHeading.focus();
+    await tokenHeading.press("Shift+F10");
+    await copyMenu
+      .getByRole("menuitem", { name: "Open token in Format converter", exact: true })
+      .click();
+    const replacement = converter.getByRole("dialog", {
+      name: "Keep the current conversion?",
+      exact: true,
+    });
+    await replacement.waitFor();
+    if (cancel === "Escape") await page.keyboard.press("Escape");
+    else await replacement.getByRole("button", { name: "Cancel", exact: true }).click();
+    assert.equal(
+      await tokenHeading.evaluate((element) => element.getRootNode().activeElement === element),
+      true,
+      `${cancel} lost artifact keyboard focus`,
+    );
+  }
   await bearer.locator(":scope > summary").click({ button: "right" });
   await copyMenu.getByRole("menuitem", { name: "Copy name", exact: true }).click();
   assert.match(
