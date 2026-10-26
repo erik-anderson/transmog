@@ -9,6 +9,9 @@ mod oauth;
 mod saml;
 mod windows;
 
+pub use extract::is_candidate_header;
+pub use jose::decode_jwt;
+
 use serde::{Deserialize, Serialize};
 use std::sync::{
     Arc,

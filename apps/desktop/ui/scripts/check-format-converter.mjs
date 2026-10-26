@@ -19,6 +19,62 @@ export async function checkFormatConverter(page, root) {
   );
   await host.getByRole("button", { name: "Copy output", exact: true }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "aMOpbGxv");
+  const jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";
+  const decodedJwt = JSON.stringify(
+    {
+      header: { alg: "none" },
+      payload: { sub: "user" },
+      signature: "",
+      verification: "Not checked",
+    },
+    null,
+    2,
+  );
+  await page.evaluate(
+    ({ jwt, decodedJwt }) => {
+      globalThis.__workspaceFixture.jwtConversions = { [jwt]: decodedJwt };
+    },
+    { jwt, decodedJwt },
+  );
+  await input.fill(jwt);
+  await host.getByLabel("Conversion", { exact: true }).selectOption("jwt-decode");
+  await page.waitForFunction(
+    (expected) =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host")
+        .converterOutput === expected,
+    decodedJwt,
+  );
+  await host
+    .getByText("Decodes the header and claims locally. Signatures are not verified.", {
+      exact: true,
+    })
+    .waitFor();
+  await host.getByRole("button", { name: "Copy output", exact: true }).click();
+  assert.equal(
+    (await page.evaluate(() => navigator.clipboard.readText())).replace(/\r\n/g, "\n"),
+    decodedJwt,
+  );
+  await host.getByRole("button", { name: "Save output…", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.converterSaved.operation),
+    "jwt-decode",
+  );
+  await host.getByRole("button", { name: "Use output as input", exact: true }).click();
+  assert.equal(await input.inputValue(), decodedJwt);
+  await input.press("Control+z");
+  assert.equal(await input.inputValue(), jwt);
+  await input.fill("incomplete.jwt");
+  await host.getByText("Expected a complete compact JWT.", { exact: true }).waitFor();
+  assert.equal(await input.inputValue(), "incomplete.jwt");
+  for (const name of ["Copy output", "Use output as input", "Save output…"]) {
+    assert.equal(await host.getByRole("button", { name, exact: true }).isEnabled(), false);
+  }
+  await input.fill("héllo");
+  await host.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host").converterReady,
+  );
   await page.keyboard.press("Escape");
   assert.equal(await panel.isVisible(), false);
   assert.equal(await trigger.evaluate((node) => node.getRootNode().activeElement === node), true);
@@ -236,8 +292,8 @@ export async function checkFormatConverter(page, root) {
     "another selection",
     "Context-menu edits must remain undoable",
   );
-  await input.fill("Conversion preview with a long input value: 你好 🦊 & <value>");
-  await host.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
+  await input.fill(jwt);
+  await host.getByLabel("Conversion", { exact: true }).selectOption("jwt-decode");
   await page.waitForFunction(
     () =>
       document.querySelector("app-shell").shadowRoot.querySelector("converter-host").converterReady,

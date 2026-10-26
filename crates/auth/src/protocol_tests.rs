@@ -185,6 +185,56 @@ fn compact(header: &str, payload: &str, signature: &str) -> String {
         encode(signature)
     )
 }
+
+#[test]
+fn jose_parser_limits_remain_partial_in_headers_bodies_and_explicit_interpretation() {
+    let protected = format!(
+        r#"{{"alg":"none","extra":[{}]}}"#,
+        vec!["0"; MAX_FIELDS].join(",")
+    );
+    let token = compact(&protected, "{}", "");
+    let input = || Input {
+        headers: vec![],
+        target: None,
+        body: Some(Body {
+            bytes: token.as_bytes().to_vec(),
+            media_type: "text/plain".into(),
+            transforms: vec![],
+        }),
+        body_status: "complete".into(),
+        captured_at: None,
+    };
+    let explicit = inspect_as(input(), Arc::new(AtomicBool::new(false)), "jose");
+    let automatic = body(
+        "application/json",
+        format!(r#"{{"token":"{token}"}}"#).into_bytes(),
+    );
+    for inspection in [explicit, automatic] {
+        assert_eq!(inspection.findings[0].status, "limited");
+        assert!(
+            inspection
+                .coverage
+                .iter()
+                .any(|source| source.source == "body" && source.status == "limited")
+        );
+    }
+    let mut input = input();
+    input.body = None;
+    input.headers.push(Header {
+        name: "Authorization".into(),
+        value: format!("Bearer {token}").into_bytes(),
+        redacted: false,
+        limited: false,
+    });
+    let inspection = inspect(input, Arc::new(AtomicBool::new(false)));
+    assert_eq!(inspection.findings[0].children[0].status, "limited");
+    assert!(
+        inspection
+            .coverage
+            .iter()
+            .any(|source| source.source == "headers" && source.status == "limited")
+    );
+}
 #[test]
 fn jose_precision_duplicate_members_time_and_encryption() {
     let token = compact(

@@ -17,6 +17,15 @@ duplicates and fields beyond the displayed page. Captured Location queries and
 fragments are eligible; browser fragments absent from HTTP requests cannot be
 recovered. Live and imported traffic use the same native analysis path.
 
+Header names containing `auth`, `access` or `token` (case-insensitive), including
+`X-Gerrit-Auth` and `MOCSI-AccessToken`, are also candidates for compact JWT/JWS/JWE
+decoding. Values may be bare tokens or have a `Bearer` prefix. Recognition uses
+dot-separated structure and a Base64url JSON JOSE header, rather than a fixed
+`eyJhbGciOiJ` prefix; JSON whitespace and member order can change that prefix.
+Opaque custom values are skipped. Captured redaction, masking, source occurrence
+and inspection limits still apply. For explicit scratch decoding, use
+**Format converter → Decode JWT**; see [Format converter](format-converter.md).
+
 Automatic detection also scans an eligible complete retained body in each visible
 selected message. Other rows and routine list refreshes do not read bodies.
 Failures offer **Retry inspection** directly. After a successful scan, use

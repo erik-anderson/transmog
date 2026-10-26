@@ -15,12 +15,15 @@ const host = main.locator("app-shell converter-host");
 const windows = [];
 let restarted, secondBrowser;
 try {
+  const jwt = `${Buffer.from('{"typ":"JWT","alg":"HS256"}').toString("base64url")}.${Buffer.from('{"sub":"native-user","exp":9007199254740993.125}').toString("base64url")}.c2ln`;
   for (let index = 0; index < 4; index++) {
     await host.getByRole("button", { name: "Format converter", exact: true }).click();
     await host
       .getByRole("textbox", { name: "Converter input", exact: true })
-      .fill(`native ${index}`);
-    await host.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
+      .fill(index === 0 ? `Bearer ${jwt}` : `native ${index}`);
+    await host
+      .getByLabel("Conversion", { exact: true })
+      .selectOption(index === 0 ? "jwt-decode" : "base64-encode");
     const created = context.waitForEvent("page");
     await host.getByRole("button", { name: "Open in new window", exact: true }).click();
     const page = await created;
@@ -29,12 +32,32 @@ try {
     await page.waitForFunction(() => document.querySelector("converter-host")?.converterReady);
     assert.equal(
       await page.getByRole("textbox", { name: "Converter input", exact: true }).inputValue(),
-      `native ${index}`,
+      index === 0 ? `Bearer ${jwt}` : `native ${index}`,
     );
-    assert.equal(
-      await page.getByRole("textbox", { name: "Converter output", exact: true }).inputValue(),
-      Buffer.from(`native ${index}`).toString("base64"),
-    );
+    const output = await page
+      .getByRole("textbox", { name: "Converter output", exact: true })
+      .inputValue();
+    if (index === 0) {
+      assert.equal(JSON.parse(output).payload.sub, "native-user");
+      assert.equal(JSON.parse(output).verification, "Not checked");
+      assert.ok(output.includes("9007199254740993.125"));
+      await page.screenshot({ path: resolve(argument("--output"), "converter-jwt-native.png") });
+      const input = page.getByRole("textbox", { name: "Converter input", exact: true });
+      await input.fill("incomplete.jwt");
+      await page
+        .getByRole("alert")
+        .filter({ hasText: "Expected a complete compact JWT" })
+        .waitFor();
+      assert.equal(await input.inputValue(), "incomplete.jwt");
+      assert.equal(
+        await page.getByRole("button", { name: "Copy output", exact: true }).isEnabled(),
+        false,
+      );
+      await input.fill(jwt);
+      await page.waitForFunction(() => document.querySelector("converter-host").converterReady);
+    } else {
+      assert.equal(output, Buffer.from(`native ${index}`).toString("base64"));
+    }
     for (const command of [
       "start_proxy",
       "query_sessions",
@@ -76,6 +99,7 @@ try {
       );
     }
   }
+  await windows[0].getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
   await windows[0]
     .getByRole("textbox", { name: "Converter input", exact: true })
     .fill("independent");
@@ -150,6 +174,13 @@ try {
   }
   secondBrowser = await chromium.connectOverCDP(`http://127.0.0.1:${argument("--port")}`);
   const fresh = secondBrowser.contexts()[0].pages()[0];
+  await fresh.waitForFunction(() => {
+    const shell = document.querySelector("app-shell");
+    return (
+      shell?.traffic?.isConnected &&
+      shell.shadowRoot.querySelector("converter-host")?.trigger?.isConnected
+    );
+  });
   await fresh.getByRole("button", { name: "Format converter", exact: true }).click();
   assert.equal(
     await fresh.getByRole("textbox", { name: "Converter input", exact: true }).inputValue(),
@@ -179,6 +210,13 @@ try {
   process.stdout.write(
     "Native converters preserve independent drafts, survive the origin, create more windows, deny unrelated commands, and clear contents after restart.\n",
   );
+} catch (error) {
+  const live =
+    secondBrowser?.contexts()[0]?.pages()[0] ?? windows.find((page) => !page.isClosed()) ?? main;
+  await live
+    .screenshot({ path: resolve(argument("--output"), "converter-native-failure.png") })
+    .catch(() => undefined);
+  throw error;
 } finally {
   await secondBrowser?.close();
   await browser.close();

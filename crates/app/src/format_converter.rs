@@ -72,6 +72,8 @@ pub enum Operation {
     JsonQuote,
     /// Strict JSON string unquoting.
     JsonUnquote,
+    /// Decode a compact JWT as unverified JSON header, payload and signature.
+    JwtDecode,
     /// MD5 digest.
     Md5,
     /// SHA-1 digest.
@@ -141,6 +143,7 @@ pub fn convert(
             | Operation::HtmlDecode
             | Operation::JsonQuote
             | Operation::JsonUnquote
+            | Operation::JwtDecode
     );
     let bytes = match input.representation {
         Representation::Text => encode_text(
@@ -195,6 +198,7 @@ pub fn convert(
         Operation::HtmlDecode => unescape_html(&literal_text()?, cancelled)?.into_bytes(),
         Operation::JsonQuote => serde_json::to_string(&literal_text()?).map_err(|_| "JSON quoting failed.")?.into_bytes(),
         Operation::JsonUnquote => serde_json::from_str::<String>(&literal_text()?).map_err(|_| "Expected a complete JSON string with valid escapes and paired Unicode surrogates.")?.into_bytes(),
+        Operation::JwtDecode => transmog_auth::decode_jwt(&literal_text()?)?.into_bytes(),
         operation => {
             let digest = match operation {
                 Operation::Md5 => MessageDigest::md5(), Operation::Sha1 => MessageDigest::sha1(),
@@ -554,6 +558,39 @@ mod tests {
         let controls = run(Operation::Base64Decode, "AAE=");
         assert_eq!(controls.display, "0001");
         assert_eq!(controls.representation, Representation::Hex);
+    }
+
+    #[test]
+    fn jwt_conversion_emits_utf8_json_and_preserves_output_bytes() {
+        let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";
+        let mut input = request(Operation::JwtDecode, token);
+        input.encoding = TextEncoding::Utf16be;
+        let output = convert(&input, &AtomicBool::new(false)).unwrap();
+        let decoded: serde_json::Value = serde_json::from_str(&output.display).unwrap();
+        assert_eq!(decoded["payload"]["sub"], "user");
+        assert_eq!(decoded["verification"], "Not checked");
+        assert!(matches!(output.encoding, TextEncoding::Utf8));
+        assert_eq!(output.bytes, output.display.as_bytes());
+        input.representation = Representation::Hex;
+        input.input = hex(&encode_text(token, input.encoding).unwrap());
+        input.output_representation = Representation::Hex;
+        let binary = convert(&input, &AtomicBool::new(false)).unwrap();
+        assert_eq!(binary.bytes, output.bytes);
+        assert_eq!(binary.display, hex(&output.bytes));
+        assert!(
+            convert(
+                &request(Operation::JwtDecode, "private-not-a-token"),
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
+        assert!(
+            convert(
+                &request(Operation::JwtDecode, token),
+                &AtomicBool::new(true)
+            )
+            .is_err()
+        );
     }
 
     #[test]

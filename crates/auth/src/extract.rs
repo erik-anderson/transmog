@@ -8,6 +8,33 @@ pub(crate) struct Pair {
     pub delimiter: bool,
     pub source: Source,
 }
+
+fn standard_header(name: &str) -> bool {
+    [
+        "authorization",
+        "proxy-authorization",
+        "www-authenticate",
+        "proxy-authenticate",
+        "authentication-info",
+        "proxy-authentication-info",
+        "location",
+    ]
+    .iter()
+    .any(|standard| name.eq_ignore_ascii_case(standard))
+}
+
+/// Whether a header can supply auth evidence, including custom token candidates.
+/// The name is only a hint; custom values still require recognizable JOSE structure.
+pub fn is_candidate_header(name: &str) -> bool {
+    standard_header(name)
+        || [b"auth".as_slice(), b"access", b"token"]
+            .iter()
+            .any(|part| {
+                name.as_bytes()
+                    .windows(part.len())
+                    .any(|window| window.eq_ignore_ascii_case(part))
+            })
+}
 fn percent(raw: &str, form: bool) -> Option<String> {
     let bytes = raw.as_bytes();
     let mut decoded = Vec::with_capacity(bytes.len());
@@ -155,7 +182,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             headers_complete = false;
             break;
         }
-        if header.limited {
+        if header.limited || header.name.len() > MAX_CANDIDATE {
             headers_complete = false;
             let mut finding = Finding::new(
                 "Auth source budget",
@@ -173,20 +200,21 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             context.push(finding);
             continue;
         }
-        let key = header.name.to_ascii_lowercase();
-        if ![
-            "authorization",
-            "proxy-authorization",
-            "www-authenticate",
-            "proxy-authenticate",
-            "authentication-info",
-            "proxy-authentication-info",
-            "location",
-        ]
-        .contains(&key.as_str())
-        {
+        let standard = standard_header(&header.name);
+        let custom_token = !standard && is_candidate_header(&header.name);
+        if !standard && !custom_token {
             continue;
         }
+        if !context.charge(header.name.len()) {
+            headers_complete = false;
+            context.coverage(
+                "headers",
+                "limited",
+                "An auth header name exceeded the inspection budget.",
+            );
+            continue;
+        }
+        let key = header.name.to_ascii_lowercase();
         let source = Source {
             kind: "header".into(),
             label: format!("{} · field {}", crate::clip(&header.name, 128), index + 1),
@@ -215,6 +243,9 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             continue;
         }
         let Ok(value) = std::str::from_utf8(&header.value) else {
+            if custom_token {
+                continue;
+            }
             let mut finding = Finding::new("HTTP auth", "header", source);
             finding.issue(
                 "unsupported",
@@ -223,6 +254,20 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             context.push(finding);
             continue;
         };
+        if custom_token {
+            let (token, offset) = crate::jose::candidate(value);
+            let mut source = source;
+            source.offset = Some(offset);
+            source.length = Some(token.len());
+            if let Some(mut finding) = crate::jose::decode(context, token, source) {
+                finding.role = "custom header token".into();
+                if finding.status == "limited" {
+                    headers_complete = false;
+                }
+                context.push(finding);
+            }
+            continue;
+        }
         if key == "location" {
             url(context, value, source, true);
             continue;
@@ -264,6 +309,7 @@ pub(crate) fn message(context: &mut Context, input: Input) {
             context.push(finding);
         }
     }
+    headers_complete &= context.result.diagnostics.is_empty();
     context.coverage(
         "headers",
         if headers_complete {

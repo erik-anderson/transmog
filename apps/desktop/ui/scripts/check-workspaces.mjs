@@ -1158,6 +1158,11 @@ await page.addInitScript(
               bytes = new TextEncoder().encode(btoa(String.fromCharCode(...bytes)));
             if (input.operation === "base64-decode")
               bytes = Uint8Array.from(atob(input.input), (character) => character.charCodeAt(0));
+            if (input.operation === "jwt-decode") {
+              const result = state.jwtConversions?.[input.input];
+              if (!result) throw new Error("Expected a complete compact JWT.");
+              bytes = new TextEncoder().encode(result);
+            }
             let text = null;
             try {
               text = new TextDecoder("utf-8", { fatal: true }).decode(bytes);

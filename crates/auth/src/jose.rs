@@ -2,7 +2,112 @@
 use crate::{Context, Finding, MAX_CANDIDATE, Source, json};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 
-pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Option<Finding> {
+/// Accept a complete token or a Bearer header value, retaining its source offset.
+pub(crate) fn candidate(raw: &str) -> (&str, usize) {
+    let trimmed = raw.trim_ascii();
+    let token = trimmed
+        .split_once([' ', '\t'])
+        .filter(|(scheme, _)| scheme.eq_ignore_ascii_case("Bearer"))
+        .map_or(trimmed, |(_, token)| token.trim_ascii_start());
+    (
+        token,
+        raw.len() - raw.trim_ascii_start().len() + trimmed.len() - token.len(),
+    )
+}
+
+fn payload_encoding(header: &json::Node) -> Option<bool> {
+    if !header.members()?.iter().any(|(name, _)| name == "b64") {
+        return Some(true);
+    }
+    match header.get("b64")? {
+        json::Node::Scalar(value) if value == "true" => Some(true),
+        json::Node::Scalar(value) if value == "false" => Some(false),
+        _ => None,
+    }
+}
+
+/// Decode a complete compact JWT into readable JSON, without verifying it.
+/// Accepts surrounding ASCII whitespace and an optional Bearer prefix.
+/// Duplicate JSON members, member order and numeric spellings are preserved.
+///
+/// # Errors
+/// Returns content-free errors for malformed, encrypted, unsupported or oversized input.
+pub fn decode_jwt(raw: &str) -> Result<String, &'static str> {
+    if raw.len() > MAX_CANDIDATE {
+        return Err("JWT input exceeds the 1 MiB token limit.");
+    }
+    let (token, _) = candidate(raw);
+    let parts: Vec<_> = token.split('.').take(6).collect();
+    if parts.len() != 3 && parts.len() != 5 {
+        return Err(
+            "Expected a complete compact JWT with three dot-separated parts, optionally prefixed by Bearer.",
+        );
+    }
+    let header = URL_SAFE_NO_PAD
+        .decode(parts[0])
+        .map_err(|_| "JWT header is not valid unpadded Base64url.")?;
+    let header = json::parse(&header)
+        .filter(|node| node.members().is_some())
+        .ok_or("JWT header must be a JSON object within the depth and field limits.")?;
+    let alg = header
+        .get("alg")
+        .and_then(json::Node::string)
+        .ok_or("JWT header requires one string alg member.")?;
+    if parts.len() == 5 {
+        return Err(
+            "This is an encrypted JWE token. Its claims cannot be decoded without decryption.",
+        );
+    }
+    match payload_encoding(&header) {
+        Some(true) => {}
+        Some(false) => {
+            return Err("Unencoded JWS payloads are not supported by the JWT converter.");
+        }
+        None => return Err("The JOSE b64 member must be one unambiguous JSON boolean."),
+    }
+    let payload = URL_SAFE_NO_PAD
+        .decode(parts[1])
+        .map_err(|_| "JWT payload is not valid unpadded Base64url.")?;
+    let payload = json::parse(&payload)
+        .filter(|node| node.members().is_some())
+        .ok_or("JWT payload must be a JSON claims object within the depth and field limits.")?;
+    let signature = URL_SAFE_NO_PAD
+        .decode(parts[2])
+        .map_err(|_| "JWT signature is not valid unpadded Base64url.")?;
+    if signature.is_empty() && alg != "none" {
+        return Err("JWT signature is empty for an algorithm other than none.");
+    }
+    if !signature.is_empty() && alg == "none" {
+        return Err("An unsecured JWT with alg none must have an empty signature.");
+    }
+    Ok(json::Node::Object(vec![
+        ("header".into(), header),
+        ("payload".into(), payload),
+        ("signature".into(), json::Node::Text(parts[2].into())),
+        (
+            "verification".into(),
+            json::Node::Text("Not checked".into()),
+        ),
+    ])
+    .pretty())
+}
+
+pub(crate) fn decode(context: &mut Context, raw: &str, source: Source) -> Option<Finding> {
+    let finding = decode_compact(context, raw, source)?;
+    if finding.status == "limited" {
+        let source = if finding.source.header_index.is_some() || finding.source.kind == "header" {
+            "headers"
+        } else {
+            &finding.source.kind
+        };
+        if !source.is_empty() {
+            context.coverage(source, "limited", "A compact JOSE token exceeded an inspection byte, work, JSON depth or field limit.");
+        }
+    }
+    Some(finding)
+}
+
+fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Option<Finding> {
     if raw.len() > MAX_CANDIDATE {
         return None;
     }
@@ -11,16 +116,6 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
         return None;
     }
     let header_bytes = URL_SAFE_NO_PAD.decode(parts[0]).ok()?;
-    if !context.charge(header_bytes.len()) {
-        return None;
-    }
-    let header = json::parse(&header_bytes)?;
-    header.members()?;
-    let alg = header.get("alg").and_then(json::Node::string);
-    // Duplicate alg remains a recognized ambiguous JOSE object, rather than selecting the last member.
-    if alg.is_none() && !header.members()?.iter().any(|(k, _)| k == "alg") {
-        return None;
-    }
     source
         .transforms
         .push("Base64url (compact JOSE; no padding)".into());
@@ -30,6 +125,32 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
         source,
     );
     finding.verification = "Not checked".into();
+    if !context.charge(header_bytes.len()) {
+        finding.recognition = "candidate".into();
+        finding.issue(
+            "limited",
+            "JOSE header decoding exceeded the inspection budget.",
+        );
+        return Some(finding);
+    }
+    let header = match json::parse_bounded(&header_bytes) {
+        Ok(header) => header,
+        Err(json::ParseError::Malformed) => return None,
+        Err(json::ParseError::Limited) => {
+            finding.recognition = "candidate".into();
+            finding.issue(
+                "limited",
+                "JOSE header exceeded the JSON depth or field limit.",
+            );
+            return Some(finding);
+        }
+    };
+    header.members()?;
+    let alg = header.get("alg").and_then(json::Node::string);
+    // Duplicate alg remains a recognized ambiguous JOSE object, rather than selecting the last member.
+    if alg.is_none() && !header.members()?.iter().any(|(k, _)| k == "alg") {
+        return None;
+    }
     if alg.is_none() {
         finding.issue(
             "malformed",
@@ -62,13 +183,6 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
             "unsupported",
             "Critical JOSE extensions are exposed but not implemented or validated.",
         );
-    }
-    if header.get("b64").and_then(json::Node::text) == Some("false") {
-        finding.issue(
-            "unsupported",
-            "Unencoded JWS payload serialization is not supported.",
-        );
-        return Some(finding);
     }
     if parts.len() == 5 {
         if header.get("enc").and_then(json::Node::string).is_none() {
@@ -113,6 +227,23 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
         finding.diagnostics.push("Claims, identities and expiry inside the encrypted payload are unavailable. No decryption or authentication is performed.".into());
         return Some(finding);
     }
+    match payload_encoding(&header) {
+        Some(true) => {}
+        Some(false) => {
+            finding.issue(
+                "unsupported",
+                "Unencoded JWS payload serialization is not supported.",
+            );
+            return Some(finding);
+        }
+        None => {
+            finding.issue(
+                "malformed",
+                "The JOSE b64 member must be one unambiguous JSON boolean.",
+            );
+            return Some(finding);
+        }
+    }
     let Ok(payload) = URL_SAFE_NO_PAD.decode(parts[1]) else {
         finding.issue("malformed", "Invalid JWS payload Base64url.");
         return Some(finding);
@@ -127,6 +258,12 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
                 finding.issue(
                     "incomplete",
                     "An empty signature was observed for an algorithm other than none.",
+                );
+            }
+            if !signature.is_empty() && alg == Some("none") {
+                finding.issue(
+                    "malformed",
+                    "An unsecured JWT with alg none must have an empty signature.",
                 );
             }
             context.field(
@@ -146,7 +283,18 @@ pub(crate) fn decode(context: &mut Context, raw: &str, mut source: Source) -> Op
         true,
         "Lossless payload, gated because it can contain secrets or personal data.",
     );
-    if let Some(claims) = json::parse(&payload) {
+    let claims = match json::parse_bounded(&payload) {
+        Ok(claims) => Some(claims),
+        Err(json::ParseError::Malformed) => None,
+        Err(json::ParseError::Limited) => {
+            finding.issue(
+                "limited",
+                "JWS payload exceeded the JSON depth or field limit.",
+            );
+            return Some(finding);
+        }
+    };
+    if let Some(claims) = claims {
         if claims.members().is_some() {
             if header
                 .get("typ")

@@ -60,6 +60,7 @@ diagnostics. Normal app shutdown and software updates end converter sessions.
 | Hex | Bytes to/from hexadecimal |
 | HTML | Encode/decode character references as inert text |
 | Strings | Quote/unquote complete JSON strings |
+| Authentication | Decode JWT |
 | Hashes | MD5, SHA-1, SHA-256, SHA-384, SHA-512 |
 
 UTF-8 is the default encoding for text/byte boundaries. **Text encoding** exposes
@@ -85,6 +86,14 @@ choices. Hashes are one-way digests, displayed as lowercase hexadecimal text.
 - JSON unquoting requires a complete quoted JSON string with valid escapes and
   paired surrogates. Empty input is valid for encodings and hashes; an empty JSON
   string is written as `""` when unquoting.
+- **Decode JWT** accepts a complete compact token, optionally prefixed by
+  `Bearer`, with surrounding ASCII whitespace. Output is readable JSON containing
+  the header, payload, Base64url signature and `verification: "Not checked"`.
+  Decoding never verifies signatures, fetches keys or establishes claim validity.
+  JSON member order, duplicates and exact number spellings are preserved.
+  Malformed tokens and non-object payloads fail; encrypted JWE claims cannot be
+  decoded. This operation uses Unicode text and UTF-8 output, with a 1 MiB token
+  limit and the Auth parser's depth and field limits.
 
 Each conversion is limited to 8 MiB of input bytes and 32 MiB of output bytes.
 Hex editor text is additionally bounded to 24 MiB. Work runs off the UI thread;

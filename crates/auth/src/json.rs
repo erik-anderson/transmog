@@ -48,15 +48,72 @@ impl Node {
             Self::Scalar(_) | Self::Text(_) => false,
         }
     }
+
+    /// Format syntax without losing duplicate members, order or number spellings.
+    pub(crate) fn pretty(&self) -> String {
+        fn write(node: &Node, depth: usize, output: &mut String) {
+            let indent = "  ".repeat(depth);
+            match node {
+                Node::Object(members) => {
+                    output.push('{');
+                    for (index, (key, value)) in members.iter().enumerate() {
+                        if index > 0 {
+                            output.push(',');
+                        }
+                        output.push('\n');
+                        output.push_str(&indent);
+                        output.push_str("  ");
+                        output.push_str(&serde_json::to_string(key).expect("JSON string"));
+                        output.push_str(": ");
+                        write(value, depth + 1, output);
+                    }
+                    if !members.is_empty() {
+                        output.push('\n');
+                        output.push_str(&indent);
+                    }
+                    output.push('}');
+                }
+                Node::Array(values) => {
+                    output.push('[');
+                    for (index, value) in values.iter().enumerate() {
+                        if index > 0 {
+                            output.push(',');
+                        }
+                        output.push('\n');
+                        output.push_str(&indent);
+                        output.push_str("  ");
+                        write(value, depth + 1, output);
+                    }
+                    if !values.is_empty() {
+                        output.push('\n');
+                        output.push_str(&indent);
+                    }
+                    output.push(']');
+                }
+                Node::Scalar(value) => output.push_str(value),
+                Node::Text(value) => {
+                    output.push_str(&serde_json::to_string(value).expect("JSON string"));
+                }
+            }
+        }
+        let mut output = String::new();
+        write(self, 0, &mut output);
+        output
+    }
 }
 struct Parser<'a> {
     bytes: &'a [u8],
     at: usize,
     nodes: usize,
+    limited: bool,
 }
 impl Parser<'_> {
     fn space(&mut self) {
-        while self.bytes.get(self.at).is_some_and(u8::is_ascii_whitespace) {
+        while self
+            .bytes
+            .get(self.at)
+            .is_some_and(|byte| b" \t\r\n".contains(byte))
+        {
             self.at += 1;
         }
     }
@@ -79,6 +136,7 @@ impl Parser<'_> {
     }
     fn node(&mut self, depth: usize) -> Option<Node> {
         if depth > MAX_DEPTH || self.nodes >= MAX_FIELDS {
+            self.limited = true;
             return None;
         }
         self.nodes += 1;
@@ -159,14 +217,33 @@ impl Parser<'_> {
     }
 }
 pub(crate) fn parse(bytes: &[u8]) -> Option<Node> {
+    parse_bounded(bytes).ok()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ParseError {
+    Malformed,
+    Limited,
+}
+
+pub(crate) fn parse_bounded(bytes: &[u8]) -> Result<Node, ParseError> {
     let mut parser = Parser {
         bytes,
         at: 0,
         nodes: 0,
+        limited: false,
     };
-    let node = parser.node(0)?;
+    let node = parser.node(0).ok_or(if parser.limited {
+        ParseError::Limited
+    } else {
+        ParseError::Malformed
+    })?;
     parser.space();
-    (parser.at == bytes.len()).then_some(node)
+    if parser.at == bytes.len() {
+        Ok(node)
+    } else {
+        Err(ParseError::Malformed)
+    }
 }
 pub(crate) fn fields(
     context: &mut Context,

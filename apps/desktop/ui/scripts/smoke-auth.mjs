@@ -98,6 +98,15 @@ await writeFile(
           { name: "WWW-Authenticate", value: "Negotiate " + kerberos.toString("base64") },
         ]),
         entry("standalone", [{ name: "Authorization", value: "Bearer " + jwt }], "text/plain", jwt),
+        entry(
+          "custom-jwt",
+          [
+            { name: "X-Gerrit-Auth", value: jwt },
+            { name: "MOCSI-AccessToken", value: "Bearer " + jwt },
+          ],
+          "text/plain",
+          "custom header evidence",
+        ),
       ],
     },
   }),
@@ -541,6 +550,29 @@ try {
     assert.equal(await viewer.getByRole("tree").getAttribute("aria-activedescendant"), selected);
     await page.screenshot({ path: resolve(output, "copy-native-mapi.png") });
   }
+  await page.evaluate(async () => {
+    const traffic = document.querySelector("app-shell").traffic;
+    const { sessions } = await window.__TAURI_INTERNALS__.invoke("query_sessions", {
+      query: { search: "/custom-jwt", limit: 100, offset: 0 },
+    });
+    const row = sessions.find((row) => row.path === "/custom-jwt");
+    if (!row) throw new Error("Custom JWT header fixture is missing");
+    await traffic.revealSession(row.id);
+  });
+  await request
+    .locator(".message-tabs")
+    .getByRole("button", { name: "Auth (2)", exact: true })
+    .click();
+  const custom = request.locator("auth-inspector .auth-scroll > .auth-finding");
+  await custom.getByText("JWT / JWS", { exact: true }).first().waitFor();
+  assert.equal(await custom.count(), 2);
+  assert.equal(await custom.getByText("JWT / JWS", { exact: true }).count(), 2);
+  assert.equal(await custom.getByText("synthetic-issuer", { exact: true }).count(), 2);
+  assert.equal(
+    await request.evaluate((element) => element.outerHTML.includes("native-private-nonce")),
+    false,
+  );
+  await page.screenshot({ path: resolve(output, "auth-native-custom-jwt.png") });
   await cdp.detach();
   assert.deepEqual(errors, []);
   await writeFile(
@@ -552,6 +584,7 @@ try {
         ownerAuthorization: true,
         staleRejection: true,
         jwtSamlNtlmKerberos: true,
+        customJwtHeaders: true,
         nestedArtifacts: true,
         expandedInspector: true,
         inspectorShortcutFocus: true,

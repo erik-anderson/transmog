@@ -205,6 +205,105 @@ async fn an_oversized_header_does_not_suppress_valid_siblings() {
 }
 
 #[tokio::test]
+async fn custom_jwt_headers_reach_native_inspection_with_their_original_ordinals() {
+    let app = application_fixture();
+    let snapshot = app.service.catalog().get(ExchangeId(1)).unwrap();
+    let mut head = snapshot.request_heads[0].head.clone();
+    let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";
+    let mut fields: Vec<_> = (0..520)
+        .map(|_| HeaderField::try_new("X-Unrelated", token).unwrap())
+        .collect();
+    for name in [
+        "X-Gerrit-Auth",
+        "MOCSI-AccessToken",
+        "X-Access-Key",
+        "X-Token",
+    ] {
+        fields.push(HeaderField::try_new(name, token).unwrap());
+    }
+    let mut redacted = HeaderField::try_new("X-Gerrit-Auth", token).unwrap();
+    redacted.redact_value();
+    fields.push(redacted);
+    fields.push(
+        HeaderField::try_new(
+            "MOCSI-AccessToken",
+            vec![b'A'; transmog_auth::MAX_CANDIDATE + 1],
+        )
+        .unwrap(),
+    );
+    head.headers = HeaderBlock::from_fields(fields);
+    app.service.catalog().apply(ObserverEvent {
+        exchange_id: ExchangeId(1),
+        sequence: 4,
+        kind: ObserverEventKind::RequestHeadObserved {
+            boundary: ExchangeBoundary::ClientRequest,
+            head,
+        },
+    });
+    let view = app.inspect_auth(request(&app, "1")).await.unwrap();
+    for (index, finding) in view.inspection.findings[..4].iter().enumerate() {
+        assert_eq!(finding.format, "JWT / JWS");
+        assert_eq!(finding.source.header_index, Some(520 + index));
+        let raw = finding
+            .fields
+            .iter()
+            .find(|f| f.name == "Compact token")
+            .unwrap();
+        assert_eq!(app.auth_value(&view.handle, &raw.id).unwrap(), token);
+    }
+    assert_eq!(view.inspection.findings[4].status, "redacted");
+    assert_eq!(view.inspection.findings[5].status, "limited");
+    assert!(!serde_json::to_string(&view).unwrap().contains(token));
+}
+
+#[tokio::test]
+async fn custom_header_names_share_the_native_input_byte_budget() {
+    let app = application_fixture();
+    let snapshot = app.service.catalog().get(ExchangeId(1)).unwrap();
+    let mut head = snapshot.request_heads[0].head.clone();
+    let long_name = format!("X-Auth-{}", "a".repeat(50 * 1024));
+    let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";
+    let mut fields: Vec<_> = (0..200)
+        .map(|_| HeaderField::try_new(long_name.as_bytes(), token).unwrap())
+        .collect();
+    fields.push(HeaderField::try_new("MOCSI-AccessToken", token).unwrap());
+    head.headers = HeaderBlock::from_fields(fields);
+    app.service.catalog().apply(ObserverEvent {
+        exchange_id: ExchangeId(1),
+        sequence: 4,
+        kind: ObserverEventKind::RequestHeadObserved {
+            boundary: ExchangeBoundary::ClientRequest,
+            head,
+        },
+    });
+    let snapshot = app.service.catalog().get(ExchangeId(1)).unwrap();
+    let prepared = input(
+        snapshot,
+        None,
+        request(&app, "1"),
+        Arc::new(AtomicBool::new(false)),
+    )
+    .await
+    .unwrap();
+    assert_eq!(prepared.headers.len(), 201);
+    let retained_bytes: usize = prepared
+        .headers
+        .iter()
+        .map(|field| field.name.len() + field.value.len())
+        .sum();
+    assert!(retained_bytes + prepared.target.as_ref().map_or(0, String::len) <= MAX_TOTAL);
+    assert!(prepared.headers.iter().any(|field| field.limited));
+    assert!(
+        prepared
+            .headers
+            .iter()
+            .filter(|field| field.limited)
+            .all(|field| field.name.is_empty() && field.value.is_empty())
+    );
+    assert_eq!(prepared.headers.last().unwrap().name, "MOCSI-AccessToken");
+}
+
+#[tokio::test]
 async fn removed_and_redacted_evidence_revokes_cached_values() {
     let app = application_fixture();
     let view = app.inspect_auth(request(&app, "1")).await.unwrap();

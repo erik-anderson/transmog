@@ -297,36 +297,31 @@ async fn input(
     let mut retained = vec![];
     for (ordinal, field) in headers.iter().enumerate().take(100_001) {
         // Preserve original ordinals even for unrelated headers; do not duplicate their large values.
-        let relevant = [
-            "authorization",
-            "proxy-authorization",
-            "www-authenticate",
-            "proxy-authenticate",
-            "authentication-info",
-            "proxy-authentication-info",
-            "location",
-        ]
-        .iter()
-        .any(|name| field.name_eq(name));
+        let oversized_name = field.name().len() > transmog_auth::MAX_CANDIDATE;
+        let relevant = !oversized_name
+            && std::str::from_utf8(field.name()).is_ok_and(transmog_auth::is_candidate_header);
+        let field_bytes = field.name().len().saturating_add(field.value().len());
         let limited = ordinal == 100_000
+            || oversized_name
             || relevant
                 && (field.value().len() > transmog_auth::MAX_CANDIDATE
-                    || field.value().len() > MAX_TOTAL.saturating_sub(used));
+                    || field_bytes > MAX_TOTAL.saturating_sub(used));
         let value = if relevant && !limited {
             field.value()
         } else {
             &[]
         };
-        used = used.saturating_add(value.len());
+        let name = if relevant && !limited {
+            String::from_utf8_lossy(field.name()).into_owned()
+        } else {
+            String::new()
+        };
+        used = used.saturating_add(name.len()).saturating_add(value.len());
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable());
         }
         retained.push(Header {
-            name: if relevant {
-                String::from_utf8_lossy(field.name()).into_owned()
-            } else {
-                String::new()
-            },
+            name,
             value: value.into(),
             redacted: field.is_redacted(),
             limited,
