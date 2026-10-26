@@ -1905,6 +1905,38 @@ impl Application {
         inspector::converter_header_from_snapshot(&snapshot, boundary, index)
     }
 
+    /// Read one original header occurrence with native authentication operation hints.
+    /// # Errors
+    /// Rejects unavailable, redacted, binary or oversized evidence.
+    pub fn converter_header_input(
+        &self,
+        id: &str,
+        boundary: &str,
+        index: usize,
+    ) -> Result<format_converter::ConverterText, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return inspector::converter_header_input_from_snapshot(
+                &response.snapshot,
+                boundary,
+                index,
+            );
+        }
+        let snapshot = self
+            .service
+            .catalog()
+            .get(transmog_core::intercept::ExchangeId(
+                inspector::parse_session_id(id)?,
+            ))
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Request is no longer retained",
+                    false,
+                )
+            })?;
+        inspector::converter_header_input_from_snapshot(&snapshot, boundary, index)
+    }
+
     /// Read a complete original header occurrence for explicit clipboard actions.
     /// # Errors
     /// Rejects unavailable stages, missing fields and excessive value sizes.

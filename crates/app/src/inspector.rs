@@ -195,6 +195,14 @@ pub(crate) fn converter_header_from_snapshot(
     stage: &str,
     index: usize,
 ) -> Result<String, AppError> {
+    converter_header_input_from_snapshot(snapshot, stage, index).map(|input| input.text)
+}
+
+pub(crate) fn converter_header_input_from_snapshot(
+    snapshot: &SessionSnapshot,
+    stage: &str,
+    index: usize,
+) -> Result<crate::format_converter::ConverterText, AppError> {
     let field = copy_header_from_snapshot(snapshot, stage, index)?;
     if field.binary {
         return Err(AppError::new(
@@ -203,12 +211,27 @@ pub(crate) fn converter_header_from_snapshot(
             false,
         ));
     }
-    field.value.ok_or_else(|| {
+    let text = field.value.ok_or_else(|| {
         AppError::new(
             ErrorCategory::Unavailable,
             "This header value was redacted.",
             false,
         )
+    })?;
+    let operation = if field.name.eq_ignore_ascii_case("authentication-info")
+        || field.name.eq_ignore_ascii_case("proxy-authentication-info")
+    {
+        Some("digest-parse")
+    } else if !field.name.eq_ignore_ascii_case("location")
+        && transmog_auth::is_candidate_header(&field.name)
+    {
+        Some("auth-decode")
+    } else {
+        None
+    };
+    Ok(crate::format_converter::ConverterText {
+        text,
+        operation: operation.map(str::to_owned),
     })
 }
 

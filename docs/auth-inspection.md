@@ -108,6 +108,13 @@ neither reveal state nor values become preferences or diagnostic history.
 Redacted values cannot be reconstructed.
 
 Right-click fields for name/value actions and finding headings for subtree actions.
+Supported artifact headings also offer **Open token in Format converter**;
+field menus offer **Open value in Format converter**. These explicitly copy the
+actual authorized retained material into temporary scratch input and preselect
+an operation when the parser knows its format. A collapsed envelope keeps the
+correct original token reference. Later evidence changes cannot alter copied
+scratch input; stale or unavailable evidence cannot start a new handoff. See
+[Format converter](format-converter.md).
 Copy subtree masks sensitive fields regardless of reveal state. Copy subtree
 including secrets explicitly includes available actual values. See
 [copying inspection values](copying-inspection-values.md).

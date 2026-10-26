@@ -182,6 +182,17 @@ try {
     .click({ button: "right" });
   await menu.getByRole("menuitem", { name: "Copy value", exact: true }).click();
   await page.waitForFunction(() => globalThis.__nativeCopied === "native-private-password");
+  const converter = page.locator("app-shell converter-host");
+  const converterInput = converter.getByRole("textbox", { name: "Converter input", exact: true });
+  await auth
+    .locator(".auth-field")
+    .filter({ has: page.locator("dt", { hasText: "Password" }) })
+    .click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Open value in Format converter", exact: true }).click();
+  assert.equal(await converterInput.inputValue(), "native-private-password");
+  assert.equal(await auth.getByText("native-private-password", { exact: true }).count(), 0);
+  await converterInput.fill("");
+  await page.keyboard.press("Escape");
   const handle = await auth.evaluate((element) => element.view.handle);
   const heading = auth.locator(".auth-finding > summary").first();
   await heading.click({ button: "right" });
@@ -204,6 +215,25 @@ try {
   await request.locator(".headers-table tbody tr").first().click({ button: "right" });
   await menu.getByRole("menuitem", { name: "Copy name and value", exact: true }).click();
   await page.waitForFunction(() => globalThis.__nativeCopied.startsWith("Authorization: Basic "));
+  await request.locator(".headers-table tbody tr").first().click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Open in Format converter", exact: true }).click();
+  await converter.getByRole("dialog", { name: "Format converter", exact: true }).waitFor();
+  assert.equal(
+    await converter.getByLabel("Conversion", { exact: true }).inputValue(),
+    "auth-decode",
+  );
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host").converterReady,
+  );
+  assert.equal(
+    JSON.parse(
+      await converter.getByRole("textbox", { name: "Converter output", exact: true }).inputValue(),
+    ).format,
+    "Basic",
+  );
+  await converterInput.fill("");
+  await page.keyboard.press("Escape");
   await request.locator(".message-tabs").getByRole("button", { name: /^Auth/ }).click();
   const denied = await page.evaluate(async (handle) => {
     try {
@@ -365,6 +395,48 @@ try {
       .isVisible(),
     true,
   );
+  await converter.getByRole("button", { name: "Format converter", exact: true }).click();
+  await converterInput.fill("4100");
+  await converter.getByLabel("Input representation", { exact: true }).selectOption("hex");
+  await converter.locator("details > summary").click();
+  await converter.getByLabel("Text encoding", { exact: true }).selectOption("utf16le");
+  await converter.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
+  await converter.locator("details > summary").click();
+  await page.keyboard.press("Escape");
+  await nested.locator(":scope > summary").click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Open token in Format converter", exact: true }).click();
+  await converter.getByRole("button", { name: "Cancel", exact: true }).click();
+  assert.equal(await converter.evaluate((element) => element.converterInput), "4100");
+  await nested.locator(":scope > summary").click({ button: "right" });
+  await menu.getByRole("menuitem", { name: "Open token in Format converter", exact: true }).click();
+  await converter.getByRole("button", { name: "Replace input", exact: true }).click();
+  assert.equal(await converterInput.inputValue(), jwt);
+  assert.equal(
+    await converter.getByLabel("Conversion", { exact: true }).inputValue(),
+    "jwt-decode",
+  );
+  await converterInput.press("Control+z");
+  assert.equal(await converterInput.inputValue(), "4100");
+  assert.equal(
+    await converter.getByLabel("Conversion", { exact: true }).inputValue(),
+    "base64-encode",
+  );
+  assert.equal(
+    await converter.getByLabel("Input representation", { exact: true }).inputValue(),
+    "hex",
+  );
+  assert.equal(
+    await converter.getByLabel("Text encoding", { exact: true }).inputValue(),
+    "utf16le",
+  );
+  await converterInput.press("Control+y");
+  assert.equal(await converterInput.inputValue(), jwt);
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host").converterReady,
+  );
+  await page.screenshot({ path: resolve(output, "auth-token-converter-native.png") });
+  await page.keyboard.press("Escape");
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 800,
     height: 600,

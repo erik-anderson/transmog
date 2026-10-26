@@ -30,6 +30,7 @@ export interface AuthFinding {
   fields: AuthField[];
   children: AuthFinding[];
   diagnostics: string[];
+  converterOperation?: string | null;
   readableFields?: AuthField[];
   technicalFields?: AuthField[];
 }

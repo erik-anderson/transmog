@@ -233,6 +233,7 @@ export async function checkAuth(page, root) {
     fields,
     children,
     diagnostics: [],
+    converterOperation: ["Bearer", "JWT / JWS"].includes(format) ? "jwt-decode" : null,
   });
   const inspection = {
     findings: [
@@ -480,6 +481,25 @@ export async function checkAuth(page, root) {
     });
   });
   const copyMenu = page.getByRole("menu", { name: "Copy inspection value", exact: true });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.authConverterInputs = {
+      f0: { text: "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.", operation: "jwt-decode" },
+    };
+  });
+  await bearer.locator(":scope > summary").click({ button: "right" });
+  await copyMenu
+    .getByRole("menuitem", { name: "Open token in Format converter", exact: true })
+    .click();
+  const converter = page.locator("app-shell converter-host");
+  assert.equal(
+    await converter.getByRole("textbox", { name: "Converter input", exact: true }).inputValue(),
+    "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.",
+  );
+  assert.equal(
+    await converter.getByLabel("Conversion", { exact: true }).inputValue(),
+    "jwt-decode",
+  );
+  await page.keyboard.press("Escape");
   await bearer.locator(":scope > summary").click({ button: "right" });
   await copyMenu.getByRole("menuitem", { name: "Copy name", exact: true }).click();
   assert.match(

@@ -15,6 +15,16 @@ pub const MAX_INPUT: usize = 8 * 1024 * 1024;
 /// Maximum produced bytes.
 pub const MAX_OUTPUT: usize = 32 * 1024 * 1024;
 
+/// Explicit temporary scratch handoff; never persist this credential-bearing text.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ConverterText {
+    /// Complete original text or a lossless explicit byte representation.
+    pub text: String,
+    /// Native catalog operation hint, when the evidence supplies one.
+    pub operation: Option<String>,
+}
+
 /// Representation of bytes in an editor.
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "kebab-case")]

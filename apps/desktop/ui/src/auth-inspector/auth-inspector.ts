@@ -1,4 +1,5 @@
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
+import type { ConverterText } from "../converter-selection.js";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -401,12 +402,24 @@ export class AuthInspector extends WebUIElement {
         : field.sensitive
           ? "Value actions copy the actual retained value, including sensitive material."
           : undefined,
-      actions: fieldCopyActions(
-        field.name,
-        field.available
-          ? () => invoke<string>("auth_value", { handle: view.handle, field: id })
-          : null,
-      ),
+      actions: [
+        ...fieldCopyActions(
+          field.name,
+          field.available
+            ? () => invoke<string>("auth_value", { handle: view.handle, field: id })
+            : null,
+        ),
+        ...(field.available
+          ? [
+              {
+                id: "converter",
+                label: "Open value in Format converter",
+                convert: true,
+                read: () => invoke<string>("auth_value", { handle: view.handle, field: id }),
+              },
+            ]
+          : []),
+      ],
     });
   }
   findingContext(id: string, event: MouseEvent | KeyboardEvent): void {
@@ -473,6 +486,20 @@ export class AuthInspector extends WebUIElement {
       current: () => this.current(revision) && this.active && this.view === view,
       actions: [
         nameCopyAction(artifact.format + " · " + artifact.context),
+        ...(finding.converterOperation
+          ? [
+              {
+                id: "converter-token",
+                label: "Open token in Format converter",
+                convert: true,
+                readConversion: () =>
+                  invoke<ConverterText>("auth_converter_input", {
+                    handle: view.handle,
+                    finding: id,
+                  }),
+              },
+            ]
+          : []),
         ...(finding.fields.length || finding.children.length
           ? [
               {

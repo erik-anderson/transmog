@@ -1548,6 +1548,24 @@ async fn inspect_headers(
 }
 
 #[tauri::command]
+async fn converter_header_input(
+    id: String,
+    boundary: String,
+    index: usize,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::format_converter::ConverterText, AppError> {
+    let application = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || application.converter_header_input(&id, &boundary, index))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Converter header input is unavailable".into(),
+            retryable: false,
+        })?
+}
+
+#[tauri::command]
 async fn converter_header_value(
     id: String,
     boundary: String,
@@ -2497,6 +2515,8 @@ pub fn run() {
                 inspect_certificates,
                 inspect_headers,
                 converter_header_value,
+                converter_header_input,
+                auth::auth_converter_input,
                 copy_header_field,
                 copy_message_headers,
                 copy_message_url,

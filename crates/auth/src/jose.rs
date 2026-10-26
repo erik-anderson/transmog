@@ -116,6 +116,15 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         true,
         "Raw token includes credentials and cryptographic material; explicit reveal required.",
     );
+    context.token(
+        &mut finding,
+        raw,
+        if parts.len() == 5 {
+            "jwe-inspect"
+        } else {
+            "jws-decode"
+        },
+    );
     context.field(
         &mut finding,
         "Decoded JOSE header",
@@ -295,6 +304,10 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         context.field(&mut finding, "Payload text", text, true, "JWS payload is not a supported JSON claims set; original bytes are available separately.");
     } else {
         finding.diagnostics.push("JWS payload is binary or not UTF-8; its lossless Base64 bytes are retained without guessing a character set.".into());
+    }
+    let operation = crate::conversion_for_format(&finding.format).unwrap_or("jws-decode");
+    if finding.converter_operation.is_some() {
+        finding.converter_operation = Some(operation);
     }
     Some(finding)
 }

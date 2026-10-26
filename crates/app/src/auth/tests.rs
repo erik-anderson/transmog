@@ -107,6 +107,42 @@ async fn subtree_values_are_bounded_authorized_and_atomic() {
             .is_err()
     );
 }
+
+#[tokio::test]
+async fn converter_handoff_reauthorizes_the_exact_private_token() {
+    let app = application_fixture();
+    let view = app.inspect_auth(request(&app, "1")).await.unwrap();
+    let input = app.auth_converter_input(&view.handle, "f0").unwrap();
+    assert_eq!(input.text, "dXNlcjpwYXNzOm1vcmU=");
+    assert_eq!(input.operation.as_deref(), Some("basic-decode"));
+    assert!(!serde_json::to_string(&view).unwrap().contains(&input.text));
+    let other = application_fixture();
+    assert!(other.auth_converter_input(&view.handle, "f0").is_err());
+    assert!(app.auth_converter_input(&view.handle, "f999").is_err());
+    app.set_visualizers_visible(false);
+    assert!(app.auth_converter_input(&view.handle, "f0").is_err());
+    app.set_visualizers_visible(true);
+    let view = app.inspect_auth(request(&app, "2")).await.unwrap();
+    app.reset_visualizer_document();
+    assert!(app.auth_converter_input(&view.handle, "f0").is_err());
+    let view = app.inspect_auth(request(&app, "1")).await.unwrap();
+    app.clear_traffic().await.unwrap();
+    assert!(app.auth_converter_input(&view.handle, "f0").is_err());
+    // Already copied scratch input has no live evidence dependency.
+    assert!(
+        crate::format_converter::convert(
+            &crate::format_converter::ConversionInput {
+                input: input.text,
+                representation: crate::format_converter::Representation::Text,
+                encoding: crate::format_converter::TextEncoding::Utf8,
+                operation: crate::format_converter::Operation::BasicDecode,
+                output_representation: crate::format_converter::Representation::Text,
+            },
+            &AtomicBool::new(false)
+        )
+        .is_ok()
+    );
+}
 #[tokio::test]
 async fn scoped_values_stages_source_and_retention() {
     let app = application_fixture();

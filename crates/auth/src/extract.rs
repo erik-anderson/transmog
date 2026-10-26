@@ -296,6 +296,9 @@ pub(crate) fn message(context: &mut Context, input: Input) {
         for item in envelopes {
             let mut finding = http::decode(context, item, source.clone(), role);
             if key.ends_with("authentication-info") {
+                if let Ok(original) = std::str::from_utf8(&header.value) {
+                    context.token(&mut finding, original, "digest-parse");
+                }
                 finding.source.offset = None;
                 finding.source.length = None;
                 finding.source.transforms.push(

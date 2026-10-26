@@ -5,6 +5,11 @@ export interface ConverterSelection {
   start?: number;
   end?: number;
   inputValue?: string;
+  operation?: string;
+}
+export interface ConverterText {
+  text: string;
+  operation?: string | null;
 }
 
 export function selectedConverterText(
@@ -90,12 +95,16 @@ export function focusConverterSource(source: HTMLElement | null): boolean {
   return (root instanceof ShadowRoot ? root.activeElement : document.activeElement) === target;
 }
 
-export function requestFormatConverter(source: HTMLElement, text: string): void {
+export function requestFormatConverter(
+  source: HTMLElement,
+  text: string,
+  operation?: string | null,
+): void {
   source.dispatchEvent(
     new CustomEvent("format-converter-request", {
       bubbles: true,
       composed: true,
-      detail: { text, source },
+      detail: { text, source, ...(operation ? { operation } : {}) },
     }),
   );
 }

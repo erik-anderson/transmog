@@ -862,6 +862,13 @@ await page.addInitScript(
             }
             return value;
           }
+          case "auth_converter_input":
+            return structuredClone(
+              state.authConverterInputs?.[args.finding] ?? {
+                text: "private-bearer-value",
+                operation: "auth-decode",
+              },
+            );
           case "auth_source":
             return structuredClone(
               state.authSource ?? {
@@ -1220,13 +1227,22 @@ await page.addInitScript(
               binary: false,
             };
           }
-          case "converter_header_value": {
+          case "converter_header_value":
+          case "converter_header_input": {
             const header = (state.fullHeaders ?? [
               { name: "Accept", value: "*/*" },
               { name: "Authorization", value: "[redacted]", sensitive: true },
             ])[args.index];
             if (header?.sensitive) throw new Error("This header value was redacted.");
-            return header?.value ?? "";
+            if (command === "converter_header_value") return header?.value ?? "";
+            return {
+              text: header?.value ?? "",
+              operation: /authentication-info/i.test(header?.name ?? "")
+                ? "digest-parse"
+                : /auth|access|token/i.test(header?.name ?? "")
+                  ? "auth-decode"
+                  : null,
+            };
           }
           case "open_product_website":
             return;

@@ -1,3 +1,4 @@
+import type { ConverterText } from "./converter-selection.js";
 /** Clipboard text is bounded independently of source bytes and display previews. */
 export const COPY_TEXT_BYTES = 16 * 1024 * 1024;
 /** Only app-authored static copy errors may be shown in the menu. */
@@ -6,8 +7,9 @@ export interface CopyAction {
   id: string;
   label: string;
   disabled?: boolean;
-  read: (current: () => boolean) => string | Promise<string>;
+  read?: (current: () => boolean) => string | Promise<string>;
   convert?: boolean;
+  readConversion?: (current: () => boolean) => ConverterText | Promise<ConverterText>;
 }
 export interface CopyRequest {
   source: HTMLElement;

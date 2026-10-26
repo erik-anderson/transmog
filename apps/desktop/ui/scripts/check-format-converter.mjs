@@ -207,7 +207,7 @@ export async function checkFormatConverter(page, root) {
   assert.equal(await input.inputValue(), "*/*");
   await page.keyboard.press("Escape");
   await page.evaluate(() => {
-    globalThis.__workspaceFixture.holdCommand = "converter_header_value";
+    globalThis.__workspaceFixture.holdCommand = "converter_header_input";
   });
   await row.click({ button: "right" });
   await copyMenu.getByRole("menuitem", { name: "Open in Format converter", exact: true }).click();
@@ -366,6 +366,48 @@ export async function checkFormatConverter(page, root) {
   await page.evaluate(() => {
     globalThis.__workspaceFixture.converterSaveError = false;
   });
+  await input.fill("4100");
+  await host.getByLabel("Input representation", { exact: true }).selectOption("hex");
+  await host.locator("details > summary").click();
+  await host.getByLabel("Text encoding", { exact: true }).selectOption("utf16le");
+  await host.getByLabel("Conversion", { exact: true }).selectOption("base64-encode");
+  const openToken = async () =>
+    page.evaluate((jwt) => {
+      const shell = document.querySelector("app-shell");
+      shell.dispatchEvent(
+        new CustomEvent("format-converter-request", {
+          bubbles: true,
+          composed: true,
+          detail: { text: jwt, operation: "jwt-decode", source: shell },
+        }),
+      );
+    }, jwt);
+  await openToken();
+  await host
+    .getByRole("dialog", { name: "Keep the current conversion?", exact: true })
+    .getByRole("button", { name: "Cancel", exact: true })
+    .click();
+  assert.equal(await host.evaluate((element) => element.converterInput), "4100");
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "base64-encode");
+  await openToken();
+  await host.getByRole("button", { name: "Replace input", exact: true }).click();
+  assert.equal(await input.inputValue(), jwt);
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "jwt-decode");
+  assert.equal(await host.getByLabel("Input representation", { exact: true }).inputValue(), "text");
+  assert.equal(await host.getByLabel("Text encoding", { exact: true }).inputValue(), "utf8");
+  await input.press("Control+z");
+  assert.equal(await input.inputValue(), "4100");
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "base64-encode");
+  assert.equal(await host.getByLabel("Input representation", { exact: true }).inputValue(), "hex");
+  assert.equal(await host.getByLabel("Text encoding", { exact: true }).inputValue(), "utf16le");
+  await input.press("Control+y");
+  assert.equal(await input.inputValue(), jwt);
+  assert.equal(await host.getByLabel("Conversion", { exact: true }).inputValue(), "jwt-decode");
+  await host.locator("details > summary").click();
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("converter-host").converterReady,
+  );
   for (const [width, height] of [
     [1440, 900],
     [960, 720],

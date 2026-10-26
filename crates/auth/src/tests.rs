@@ -252,6 +252,45 @@ fn shared_document_keeps_typed_jose_and_binary_payload_private_until_scratch_con
 }
 
 #[test]
+fn token_references_survive_wrappers_and_scheme_free_information() {
+    for malformed in ["Digest realm=x junk", "Digest realm=x, @@@"] {
+        let result = run(vec![header("WWW-Authenticate", malformed)], None);
+        assert_eq!(
+            result.converter_token("f0"),
+            Some((malformed, "digest-parse"))
+        );
+        assert!(
+            decode_authentication(
+                result.converter_token("f0").unwrap().0,
+                "digest-parse",
+                &AtomicBool::new(false)
+            )
+            .is_err()
+        );
+    }
+    let token = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJ1c2VyIn0.";
+    let result = run(
+        vec![
+            header("Authorization", &format!("Bearer {token}")),
+            header("Authentication-Info", "rspauth=\"exact\", qop=auth"),
+        ],
+        None,
+    );
+    assert_eq!(result.converter_token("f0"), Some((token, "jwt-decode")));
+    assert_eq!(result.converter_token("f0.0"), Some((token, "jwt-decode")));
+    assert_eq!(
+        result.converter_token("f1"),
+        Some(("rspauth=\"exact\", qop=auth", "digest-parse"))
+    );
+    assert!(!serde_json::to_string(&result).unwrap().contains(token));
+    let opaque = run(vec![header("Authorization", "Bearer opaque")], None);
+    assert_eq!(
+        opaque.converter_token("f0"),
+        Some(("Bearer opaque", "auth-decode"))
+    );
+}
+
+#[test]
 fn custom_jose_parser_and_artifact_limits_do_not_report_complete_header_coverage() {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     let oversized_header = format!(

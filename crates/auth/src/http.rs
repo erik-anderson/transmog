@@ -10,6 +10,7 @@ pub(crate) struct Envelope {
     pub limited: bool,
     pub start: usize,
     pub end: usize,
+    pub original: String,
 }
 fn token(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || b"!#$%&'*+-.^_`|~".contains(&byte)
@@ -51,6 +52,7 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
             limited: false,
             start,
             end: at,
+            original: String::new(),
         };
         if at < bytes.len() && bytes[at] != b',' {
             let mark = at;
@@ -139,13 +141,14 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
                 item.token = Some(raw.into());
             }
         }
-        item.end = at;
         if bytes.get(at).is_some_and(|b| *b != b',') {
             item.malformed = true;
             while at < bytes.len() && bytes[at] != b',' {
                 at += 1;
             }
         }
+        item.end = at;
+        item.original = value[start..at].into();
         result.push(item);
         if at == start {
             break;
@@ -159,6 +162,8 @@ pub(crate) fn parse(value: &str) -> Vec<Envelope> {
             } else {
                 last.malformed = true;
             }
+            last.end = bytes.len();
+            last.original = value[last.start..].into();
         }
     }
     result
@@ -271,6 +276,11 @@ pub(crate) fn decode(
             true,
             "Explicit copy/reveal includes credential material.",
         );
+        if let Some(operation) =
+            crate::conversion_for_format(name).filter(|operation| *operation != "auth-decode")
+        {
+            context.token(&mut finding, &raw, operation);
+        }
         if name == "Basic" {
             match STANDARD.decode(&raw) {
                 Ok(bytes) => {
@@ -344,8 +354,23 @@ pub(crate) fn decode(
             if name == "Bearer"
                 && let Some(inner) = crate::jose::decode(context, &raw, finding.source.clone())
             {
+                finding.converter_operation =
+                    inner.converter_operation.or(finding.converter_operation);
+                finding.token_value.clone_from(&inner.token_value);
                 finding.children.push(inner);
             }
+        }
+    }
+    if name == "Digest" {
+        context.token(&mut finding, &item.original, "digest-parse");
+    }
+    if name == "Bearer" || name == "Unknown HTTP auth scheme" {
+        // Auto needs the envelope to recognize an otherwise opaque credential.
+        if finding
+            .converter_operation
+            .is_none_or(|operation| operation == "auth-decode")
+        {
+            context.token(&mut finding, &item.original, "auth-decode");
         }
     }
     if name == "Unknown HTTP auth scheme" {

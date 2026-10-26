@@ -6,6 +6,22 @@ use transmog_app::{
     auth::{AuthHandle, AuthRequest, AuthSource, AuthView, RelatedAuth},
 };
 #[tauri::command]
+pub(super) async fn auth_converter_input(
+    handle: AuthHandle,
+    finding: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::format_converter::ConverterText, AppError> {
+    let app = state.window_application(&window)?;
+    tokio::task::spawn_blocking(move || app.auth_converter_input(&handle, &finding))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Auth converter input is unavailable".into(),
+            retryable: false,
+        })?
+}
+#[tauri::command]
 pub(super) async fn inspect_auth(
     request: AuthRequest,
     window: tauri::WebviewWindow,

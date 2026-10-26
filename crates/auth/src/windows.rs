@@ -890,5 +890,14 @@ pub(crate) fn decode(
         );
     }
     context.field(&mut finding, "Decoded mechanism bytes (hex prefix)", hex(&bytes[..bytes.len().min(4096)]), true, "At most the first 4 KiB of decoded mechanism bytes; full encoded material remains in the enclosing credential/source. Includes sensitive cryptographic data.");
+    context.token(
+        &mut finding,
+        &STANDARD.encode(bytes),
+        if explicit_ntlm {
+            "ntlm-decode"
+        } else {
+            "negotiate-decode"
+        },
+    );
     finding
 }

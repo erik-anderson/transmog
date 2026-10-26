@@ -548,6 +548,26 @@ impl Application {
         self.authorized_auth(handle)?;
         Ok(value)
     }
+    /// Copy an artifact's exact retained token into independent converter scratch input.
+    /// # Errors
+    /// Rejects stale generations, foreign documents, changed retention and unsupported artifacts.
+    pub fn auth_converter_input(
+        &self,
+        handle: &AuthHandle,
+        finding: &str,
+    ) -> Result<crate::format_converter::ConverterText, AppError> {
+        let active = self.authorized_auth(handle)?;
+        let (text, operation) = active
+            .inspection
+            .converter_token(finding)
+            .ok_or_else(unavailable)?;
+        let result = crate::format_converter::ConverterText {
+            text: text.into(),
+            operation: Some(operation.into()),
+        };
+        self.authorized_auth(handle)?;
+        Ok(result)
+    }
     /// Read an explicitly requested bounded group for an Auth subtree copy.
     /// # Errors
     /// Rejects stale evidence, unknown fields and aggregate output exhaustion.

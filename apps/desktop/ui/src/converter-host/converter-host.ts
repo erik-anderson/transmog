@@ -16,9 +16,9 @@ interface Edit {
   input: string;
   representation: Representation;
   encoding: Encoding;
+  operation: string;
 }
 interface Draft extends Edit {
-  operation: string;
   outputRepresentation: Representation;
   history: Edit[];
   future: Edit[];
@@ -140,8 +140,14 @@ export class ConverterHost extends WebUIElement {
     }
   };
   private readonly requestListener = (event: Event): void => {
-    const request = (event as CustomEvent<{ text: string; source: HTMLElement }>).detail;
-    this.selection = { text: request.text, source: request.source };
+    const request = (
+      event as CustomEvent<{ text: string; source: HTMLElement; operation?: string }>
+    ).detail;
+    this.selection = {
+      text: request.text,
+      source: request.source,
+      ...(request.operation ? { operation: request.operation } : {}),
+    };
     void this.acceptSelection();
   };
   private readonly headerListener = (event: Event): void => {
@@ -214,6 +220,7 @@ export class ConverterHost extends WebUIElement {
       input: this.converterInput,
       representation: this.converterRepresentation,
       encoding: this.converterEncoding,
+      operation: this.converterOperation,
     };
   }
   private remember(): void {
@@ -226,7 +233,7 @@ export class ConverterHost extends WebUIElement {
       this.history.shift();
     }
   }
-  private draft(text?: string): Draft {
+  private draft(text?: string, operation?: string): Draft {
     const root = this.getRootNode();
     const theme =
       root instanceof ShadowRoot
@@ -234,8 +241,14 @@ export class ConverterHost extends WebUIElement {
         : this.converterTheme;
     return {
       ...this.edit(),
-      ...(text !== undefined ? { input: text, representation: "text" as const } : {}),
-      operation: this.converterOperation,
+      ...(text !== undefined
+        ? {
+            input: text,
+            representation: "text" as const,
+            encoding: "utf8" as const,
+            operation: operation ?? this.converterOperation,
+          }
+        : {}),
       outputRepresentation: this.converterOutputMode,
       history: text === undefined ? this.history : [],
       future: text === undefined ? this.future : [],
@@ -317,6 +330,7 @@ export class ConverterHost extends WebUIElement {
     this.schedule();
   }
   changeOperation(event: Event): void {
+    this.remember();
     this.converterOperation = (event.currentTarget as HTMLSelectElement).value;
     this.updateAuthHint();
     this.schedule();
@@ -347,6 +361,9 @@ export class ConverterHost extends WebUIElement {
     this.inputEditor.value = next.input;
     this.converterRepresentation = next.representation;
     this.converterEncoding = next.encoding;
+    this.converterOperation = next.operation;
+    this.operationSelect.value = next.operation;
+    this.updateAuthHint();
     this.schedule();
   }
   private snapshot(): Record<string, unknown> {
@@ -577,6 +594,10 @@ export class ConverterHost extends WebUIElement {
     this.converterInput = this.selection.text;
     this.inputEditor.value = this.converterInput;
     this.converterRepresentation = "text";
+    this.converterEncoding = "utf8";
+    this.converterOperation = this.selection.operation ?? this.converterOperation;
+    this.operationSelect.value = this.converterOperation;
+    this.updateAuthHint();
     this.restoreFocus = this.selection.source;
     this.panel.showPopover();
     this.inputEditor.focus();
@@ -610,7 +631,9 @@ export class ConverterHost extends WebUIElement {
     const focus = this.active();
     this.converterHandoff = true;
     try {
-      await invoke("open_converter_window", { draft: this.draft(selection.text) });
+      await invoke("open_converter_window", {
+        draft: this.draft(selection.text, selection.operation),
+      });
     } catch (error: unknown) {
       this.converterError = describeError(error);
       if (

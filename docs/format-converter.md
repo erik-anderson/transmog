@@ -29,9 +29,20 @@ occurrence's complete original value. A selection at the clicked location takes
 precedence. Header order, duplicate fields, whitespace and empty values remain
 distinct; display truncation does not truncate the converter input. Unavailable,
 redacted and binary header values explain why they cannot be supplied as text.
+Known authentication headers preselect Auto or the appropriate parameter parser
+and decode immediately. Selecting text keeps ordinary text-selection behavior.
+
+In **Auth**, right-click a supported artifact heading and choose **Open token in
+Format converter**. This retrieves its exact native retained token, including
+collapsed Bearer/JOSE and Windows envelopes, and preselects the native operation.
+Field menus also offer **Open value in Format converter** for the complete actual
+value. Masked previews are never used as converter input. Native authorization
+rechecks the owning window, active evidence generation and retained source before
+the handoff. Once copied, scratch input has no live capture dependency.
 
 If the flyout already contains input, choose **Replace input**, **Open in new
-window**, or **Cancel**. Replacing input is undoable. Captured-page browser
+window**, or **Cancel**. Replacing input, operation, representation and encoding
+is one undoable edit; Cancel preserves the complete previous draft. Captured-page browser
 previews remain isolated from application context actions.
 
 ## Independent windows and temporary work

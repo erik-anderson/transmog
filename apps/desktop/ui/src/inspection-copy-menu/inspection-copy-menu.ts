@@ -145,20 +145,24 @@ export class InspectionCopyMenu extends WebUIElement {
       request.current() &&
       this.menu.matches(":popover-open");
     this.copyMenuBusy = true;
-    this.copyMenuStatus = "Preparing copy…";
+    this.copyMenuStatus = action.convert ? "Preparing converter input…" : "Preparing copy…";
     try {
       if (!current()) {
         this.close(false);
         return;
       }
-      const text = boundedCopy(await action.read(current));
+      const conversion = action.readConversion ? await action.readConversion(current) : null;
+      if (!conversion && !action.read) {
+        throw new CopyError("This action is unavailable. Open the menu again.");
+      }
+      const text = boundedCopy(conversion ? conversion.text : await action.read!(current));
       if (!current()) {
         this.close(false);
         return;
       }
       if (action.convert) {
         this.close();
-        requestFormatConverter(request.source, text);
+        requestFormatConverter(request.source, text, conversion?.operation);
         return;
       }
       await navigator.clipboard.writeText(text);
@@ -171,7 +175,9 @@ export class InspectionCopyMenu extends WebUIElement {
         this.copyMenuStatus =
           error instanceof CopyError
             ? error.message
-            : "Copy failed. The clipboard or retained value is unavailable.";
+            : action.convert
+              ? "Converter input is unavailable. Inspect the current evidence again."
+              : "Copy failed. The clipboard or retained value is unavailable.";
       }
     } finally {
       if (revision === this.revision) {

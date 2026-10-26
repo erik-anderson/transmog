@@ -1,4 +1,5 @@
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
+import type { ConverterText } from "../converter-selection.js";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import type {
   BodyInspection,
@@ -202,8 +203,12 @@ export class MessageInspector extends WebUIElement {
           label: "Open in Format converter",
           disabled: header.sensitive,
           convert: true,
-          read: () =>
-            invoke<string>("converter_header_value", { id, boundary, index: Number(header.id) }),
+          readConversion: () =>
+            invoke<ConverterText>("converter_header_input", {
+              id,
+              boundary,
+              index: Number(header.id),
+            }),
         },
       ],
     });

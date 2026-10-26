@@ -285,6 +285,8 @@ mod tests {
             "record_frontend_diagnostic",
             "open_trace_viewer",
             "change_response_transform",
+            "auth_converter_input",
+            "converter_header_input",
         ] {
             assert!(!command_allowed(command));
         }

@@ -94,12 +94,16 @@ pub struct Finding {
     pub children: Vec<Finding>,
     /// Finite parser observations that never contain raw input.
     pub diagnostics: Vec<String>,
+    /// Available scratch operation; raw input remains in the private value store.
+    pub converter_operation: Option<&'static str>,
     // Typed parser material is deliberately excluded from inspection serialization.
     // Only the explicit scratch adapter may expose this credential-bearing content.
     #[serde(skip)]
     pub(crate) content: Vec<(String, json::Node)>,
     #[serde(skip)]
     pub(crate) complete: bool,
+    #[serde(skip)]
+    token_value: Option<String>,
 }
 impl Finding {
     pub(crate) fn new(format: &str, role: &str, source: Source) -> Self {
@@ -116,6 +120,8 @@ impl Finding {
             diagnostics: vec![],
             content: vec![],
             complete: true,
+            converter_operation: None,
+            token_value: None,
         }
     }
     pub(crate) fn issue(&mut self, status: &str, note: &str) {
@@ -170,6 +176,24 @@ pub struct Inspection {
     values: Vec<String>,
 }
 impl Inspection {
+    /// Exact retained token representation for an explicit scratch handoff.
+    /// The application must authorize the active evidence before and after retrieving it.
+    pub fn converter_token(&self, finding: &str) -> Option<(&str, &'static str)> {
+        fn find<'a>(items: &'a [Finding], id: &str) -> Option<&'a Finding> {
+            items.iter().find_map(|item| {
+                if item.id == id {
+                    Some(item)
+                } else {
+                    find(&item.children, id)
+                }
+            })
+        }
+        let finding = find(&self.findings, finding)?;
+        Some((
+            self.value(finding.token_value.as_ref()?)?,
+            finding.converter_operation?,
+        ))
+    }
     /// Explicit selected-value access. The application must reauthorize retention and generation.
     pub fn value(&self, id: &str) -> Option<&str> {
         id.strip_prefix('v')?
@@ -251,6 +275,30 @@ impl<'a> Context<'a> {
                     .into(),
             );
         }
+    }
+    pub(crate) fn token(&mut self, finding: &mut Finding, raw: &str, operation: &'static str) {
+        if let Some(field) = finding
+            .fields
+            .iter()
+            .find(|field| self.result.value(&field.id) == Some(raw))
+        {
+            finding.token_value = Some(field.id.clone());
+            finding.converter_operation = Some(operation);
+            return;
+        }
+        if raw.len() > MAX_CANDIDATE
+            || self.result.values.len() >= MAX_FIELDS
+            || raw.len() > self.bytes_left
+        {
+            // Optional handoff retention must not change the structural outcome of captured evidence.
+            return;
+        }
+        if !self.charge(raw.len()) {
+            return;
+        }
+        finding.token_value = Some(format!("v{}", self.result.values.len()));
+        finding.converter_operation = Some(operation);
+        self.result.values.push(raw.into());
     }
     pub(crate) fn field(
         &mut self,
