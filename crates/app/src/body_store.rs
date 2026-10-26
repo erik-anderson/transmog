@@ -3013,6 +3013,107 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn xssi_json_inspection_preserves_compressed_source_edits_and_saved_files() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+
+        let directory = tempfile::tempdir().unwrap();
+        let store = BodyStore::new(config(directory.path().join("bodies"), 1024)).unwrap();
+        for (id, prefix) in [(1, ")]}'\n"), (2, ")]}',\n")] {
+            let original = format!("{prefix}{{\"ok\":true}}");
+            let encoded = crate::inspector::encode_content(
+                &["gzip".to_owned()],
+                original.as_bytes().to_vec(),
+            )
+            .await
+            .unwrap();
+            push(
+                &store,
+                [
+                    started(id),
+                    event(
+                        id,
+                        2,
+                        ObserverEventKind::ResponseHeadObserved {
+                            boundary: ExchangeBoundary::UpstreamResponse,
+                            head: ResponseHead {
+                                status: 200,
+                                source_version: HttpLegVersion::Http1,
+                                headers: HeaderBlock::from_fields(vec![
+                                    HeaderField::try_new(
+                                        "content-type",
+                                        "application/json; charset=utf-8",
+                                    )
+                                    .unwrap(),
+                                    HeaderField::try_new("content-encoding", "gzip").unwrap(),
+                                ]),
+                            },
+                        },
+                    ),
+                    boundary_chunk(id, 3, ExchangeBoundary::UpstreamResponse, &encoded),
+                    completed(id, 4),
+                ],
+            );
+            let mut request = crate::BodyInspectionRequest {
+                session_id: format!("{id:032x}"),
+                boundary: "upstream-response".into(),
+                representation: crate::BodyRepresentation::Auto,
+                decode_content: true,
+                offset: 0,
+                max_bytes: Some(1024),
+            };
+            let formatted = crate::inspector::inspect_body(Some(&store), request.clone())
+                .await
+                .unwrap();
+            assert_eq!(formatted.representation, "formatted-json");
+            assert_eq!(formatted.display, "{\n  \"ok\": true\n}");
+            assert!(formatted.warning.unwrap().contains("XSSI prefix omitted"));
+            assert!(formatted.decoded);
+            assert!(!formatted.truncated);
+            assert_eq!(formatted.display_bytes, original.len());
+
+            request.max_bytes = Some(original.len() - 1);
+            let limited = crate::inspector::inspect_body(Some(&store), request.clone())
+                .await
+                .unwrap();
+            assert_eq!(limited.representation, "original-text");
+            assert!(limited.display.starts_with(prefix));
+            assert!(limited.truncated);
+            assert_eq!(limited.warning, None);
+
+            request.max_bytes = Some(1024);
+            request.representation = crate::BodyRepresentation::Editable;
+            let editable = crate::inspector::inspect_body(Some(&store), request.clone())
+                .await
+                .unwrap();
+            assert_eq!(editable.display, original);
+            assert_eq!(editable.warning, None);
+            assert_eq!(
+                STANDARD.decode(editable.bytes_base64.unwrap()).unwrap(),
+                original.as_bytes()
+            );
+            request.representation = crate::BodyRepresentation::Bytes;
+            request.decode_content = false;
+            let raw = crate::inspector::inspect_body(Some(&store), request.clone())
+                .await
+                .unwrap();
+            assert_eq!(STANDARD.decode(raw.bytes_base64.unwrap()).unwrap(), encoded);
+
+            let saved = directory.path().join(format!("response-{id}.json"));
+            crate::response_file::prepare_with_path(
+                Some(&store),
+                &request.session_id,
+                &request.boundary,
+                "/result.json",
+            )
+            .unwrap()
+            .save_to(saved.clone())
+            .await
+            .unwrap();
+            assert_eq!(fs::read(saved).unwrap(), original.as_bytes());
+        }
+    }
+
+    #[tokio::test]
     async fn byte_preview_returns_exact_bounded_bytes_and_offsets() {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
 

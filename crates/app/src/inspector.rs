@@ -1323,7 +1323,7 @@ pub(crate) fn render_body(
             },
             |text| ("original-text", text, None, text_encoding),
         ),
-        BodyRepresentation::Formatted => format_json(text.as_deref()).map_or_else(
+        BodyRepresentation::Formatted => format_json(text.as_deref(), offset).map_or_else(
             || {
                 (
                     "unavailable",
@@ -1332,13 +1332,13 @@ pub(crate) fn render_body(
                     None,
                 )
             },
-            |formatted| ("formatted-json", formatted, None, text_encoding),
+            |(formatted, warning)| ("formatted-json", formatted, warning, text_encoding),
         ),
         BodyRepresentation::Auto => {
             if media_type.is_some_and(is_json_media_type)
-                && let Some(formatted) = format_json(text.as_deref())
+                && let Some((formatted, warning)) = format_json(text.as_deref(), offset)
             {
-                ("formatted-json", formatted, None, text_encoding)
+                ("formatted-json", formatted, warning, text_encoding)
             } else if let Some(text) = text.filter(|_| media_type.is_none_or(is_text_media_type)) {
                 ("original-text", text, None, text_encoding)
             } else {
@@ -1403,9 +1403,23 @@ pub(crate) fn is_text_media_type(media_type: &str) -> bool {
         )
 }
 
-fn format_json(text: Option<&str>) -> Option<String> {
-    let value: serde_json::Value = serde_json::from_str(text?).ok()?;
-    serde_json::to_string_pretty(&value).ok()
+fn format_json(text: Option<&str>, offset: u64) -> Option<(String, Option<String>)> {
+    let text = text?;
+    // LUCI pRPC and Angular use these exact anti-XSSI first lines. Only
+    // recognize them at the start of the body, never in a later byte range.
+    let json = if offset == 0 {
+        text.strip_prefix(")]}'\n")
+            .or_else(|| text.strip_prefix(")]}',\n"))
+            .unwrap_or(text)
+    } else {
+        text
+    };
+    let value: serde_json::Value = serde_json::from_str(json).ok()?;
+    let formatted = serde_json::to_string_pretty(&value).ok()?;
+    let warning = (json.len() != text.len()).then(|| {
+        "XSSI prefix omitted from this formatted view; the original body is unchanged.".to_owned()
+    });
+    Some((formatted, warning))
 }
 
 pub(crate) fn decode_unicode(bytes: &[u8], declared: Option<&str>) -> Option<String> {
@@ -1899,6 +1913,153 @@ mod tests {
                 expected
             );
         }
+    }
+
+    #[test]
+    fn xssi_json_formats_only_known_prefixes_and_preserves_original_views() {
+        for prefix in [")]}'\n", ")]}',\n"] {
+            let body = format!("{prefix}{{\"ok\":true}}");
+            for requested in [BodyRepresentation::Auto, BodyRepresentation::Formatted] {
+                let rendered = render_body(
+                    requested,
+                    body.as_bytes(),
+                    Some("utf-8"),
+                    Some("application/json"),
+                    0,
+                );
+                assert_eq!(rendered.0, "formatted-json");
+                assert_eq!(rendered.1, "{\n  \"ok\": true\n}");
+                assert!(
+                    rendered
+                        .2
+                        .as_deref()
+                        .unwrap()
+                        .contains("XSSI prefix omitted")
+                );
+                assert_eq!(rendered.3, Some("utf-8"));
+            }
+            for requested in [
+                BodyRepresentation::OriginalText,
+                BodyRepresentation::Editable,
+            ] {
+                let rendered = render_body(requested, body.as_bytes(), None, None, 0);
+                assert_eq!(rendered.0, "original-text");
+                assert_eq!(rendered.1, body);
+                assert_eq!(rendered.2, None);
+            }
+            let raw = render_body(BodyRepresentation::Bytes, body.as_bytes(), None, None, 0);
+            assert_eq!(raw.1, hex_dump(body.as_bytes(), 0));
+            assert_eq!(raw.2, None);
+            for (mime, expected) in [
+                (Some("application/problem+json"), "formatted-json"),
+                (Some("text/plain"), "original-text"),
+                (None, "original-text"),
+                (Some("application/octet-stream"), "bytes"),
+            ] {
+                assert_eq!(
+                    render_body(BodyRepresentation::Auto, body.as_bytes(), None, mime, 0).0,
+                    expected
+                );
+            }
+            assert_eq!(
+                render_body(
+                    BodyRepresentation::Formatted,
+                    body.as_bytes(),
+                    None,
+                    None,
+                    0
+                )
+                .0,
+                "formatted-json"
+            );
+            assert_eq!(
+                render_body(
+                    BodyRepresentation::Auto,
+                    body.as_bytes(),
+                    None,
+                    Some("application/json"),
+                    1,
+                )
+                .0,
+                "original-text"
+            );
+        }
+    }
+
+    #[test]
+    fn xssi_json_formats_after_unicode_decoding() {
+        let original = ")]}',\n[\"café\",true,null,42]";
+        let mut utf8 = vec![0xef, 0xbb, 0xbf];
+        utf8.extend_from_slice(original.as_bytes());
+        let mut utf16 = vec![0xff, 0xfe];
+        utf16.extend(original.encode_utf16().flat_map(u16::to_le_bytes));
+        for (bytes, encoding) in [(utf8, "utf-8-bom"), (utf16, "utf-16le-bom")] {
+            let rendered = render_body(
+                BodyRepresentation::Auto,
+                &bytes,
+                None,
+                Some("application/json"),
+                0,
+            );
+            assert_eq!(rendered.0, "formatted-json");
+            assert_eq!(
+                serde_json::from_str::<serde_json::Value>(&rendered.1).unwrap(),
+                serde_json::json!(["café", true, null, 42])
+            );
+            assert!(rendered.2.is_some());
+            assert_eq!(rendered.3, Some(encoding));
+        }
+    }
+
+    #[test]
+    fn xssi_json_rejects_near_matches_and_invalid_remainders() {
+        for body in [
+            ")]}'{}",
+            ")]}'\r\n{}",
+            ")]}',\r\n{}",
+            " )]}'\n{}",
+            "\n)]}'\n{}",
+            ")]}' \n{}",
+            "while(1);{}",
+            "for(;;);{}",
+            "callback({})",
+            ")]}'\n)]}'\n{}",
+            ")]}'\n",
+            ")]}',\ninvalid",
+            ")]}'\n{\"incomplete\":",
+            ")]}'\n{} trailing",
+            ")]}'\n{} {}",
+        ] {
+            let automatic = render_body(
+                BodyRepresentation::Auto,
+                body.as_bytes(),
+                None,
+                Some("application/json"),
+                0,
+            );
+            assert_eq!(automatic.0, "original-text", "{body:?}");
+            assert_eq!(automatic.1, body);
+            assert_eq!(automatic.2, None);
+            let explicit = render_body(
+                BodyRepresentation::Formatted,
+                body.as_bytes(),
+                None,
+                None,
+                0,
+            );
+            assert_eq!(explicit.0, "unavailable", "{body:?}");
+            assert_eq!(explicit.1, "");
+            assert!(!explicit.2.unwrap().contains("XSSI"));
+        }
+        let plain = render_body(
+            BodyRepresentation::Auto,
+            br#"{"prefix":")]}'"}"#,
+            None,
+            Some("application/json"),
+            0,
+        );
+        assert_eq!(plain.0, "formatted-json");
+        assert_eq!(plain.2, None);
     }
 
     #[tokio::test]

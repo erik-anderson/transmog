@@ -38,6 +38,13 @@ limit in one disclosure. **Copy body preview** copies only the displayed evidenc
 metadata** identifies the metadata view. **Save as…** saves the full retained
 response with content decoding, independently of the displayed preview limit.
 
+Auto formats JSON media types, including `+json`, when the preview contains a
+complete valid JSON value. Auto and **Formatted JSON** also recognize the exact
+anti-XSSI first lines `)]}'\n` and `)]}',\n` at the start of the decoded body
+(where `\n` denotes a newline). The formatted view omits that line and shows a
+notice. Other prefixes and invalid JSON keep Auto's normal fallback; **Text**,
+**Hex**, editing and **Save as…** preserve the prefix in the original body.
+
 Retained-body decoding accepts both zlib-wrapped and raw DEFLATE for
 `Content-Encoding: deflate`, including in protocol visualizers and saved response
 files. This handles senders such as OneCollector that omit the zlib wrapper.
