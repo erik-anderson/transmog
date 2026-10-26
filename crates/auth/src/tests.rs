@@ -231,10 +231,7 @@ fn shared_document_keeps_typed_jose_and_binary_payload_private_until_scratch_con
     assert!(converted.contains("1e+09"));
     let decoded: serde_json::Value = serde_json::from_str(&converted).unwrap();
     assert_eq!(decoded["status"], result.findings[0].children[0].status);
-    assert_eq!(
-        decoded["decoded"]["payload"]["sub"],
-        "private-shared-document"
-    );
+    assert_eq!(decoded["payload"]["sub"], "private-shared-document");
     let binary = format!(
         "{}.{}.c2ln",
         URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256"}"#),

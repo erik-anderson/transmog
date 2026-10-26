@@ -446,6 +446,12 @@ export async function checkFormatConverter(page, root) {
   ]) {
     await page.setViewportSize({ width, height });
     const bounds = await panel.boundingBox();
+    const inputBounds = await input.boundingBox(),
+      outputBounds = await output.boundingBox();
+    assert.ok(
+      outputBounds.height >= inputBounds.height,
+      "Structured output lost its reading space",
+    );
     assert.ok(
       bounds.x >= 0 &&
         bounds.y >= 0 &&

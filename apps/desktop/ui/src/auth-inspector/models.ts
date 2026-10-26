@@ -22,6 +22,7 @@ export interface AuthField {
 export interface AuthFinding {
   id: string;
   format: string;
+  envelope?: boolean;
   role: string;
   recognition: string;
   status: string;

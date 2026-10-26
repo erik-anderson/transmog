@@ -112,17 +112,27 @@ fn spnego_offered_selected_child_and_mic() {
             decode_authentication(&STANDARD.encode(&init), operation, &AtomicBool::new(false))
                 .unwrap();
         let decoded: serde_json::Value = serde_json::from_str(&decoded).unwrap();
-        let decoded = if decoded["format"] == "Negotiate" {
-            &decoded["children"][0]
-        } else {
-            &decoded
-        };
-        assert_eq!(decoded["format"], "SPNEGO");
-        assert_eq!(decoded["children"][0]["format"], "NTLM");
+        assert_eq!(decoded["format"], "NTLM");
+        assert_eq!(decoded["status"], "decoded");
+        assert_eq!(decoded["fields"]["Message type"], "1");
+        let layers = decoded["details"]["layers"].as_array().unwrap();
+        let spnego = layers
+            .iter()
+            .find(|layer| layer["format"] == "SPNEGO")
+            .unwrap();
         assert_eq!(
-            decoded["decoded"]["mechanismBytes"]["data"],
+            spnego["decoded"]["mechanismBytes"]["data"],
             STANDARD.encode(&init)
         );
+        assert_eq!(
+            spnego["values"]["Mechanism-list MIC"],
+            STANDARD.encode(b"private-mic")
+        );
+        assert!(spnego["source"]["transforms"].is_array());
+        if operation == "negotiate-decode" {
+            assert_eq!(layers[0]["format"], "Negotiate");
+            assert_eq!(layers[0]["status"], "opaque");
+        }
     }
     let finding = &result.findings[0].children[0];
     assert_eq!(finding.format, "SPNEGO");
@@ -157,6 +167,42 @@ fn spnego_offered_selected_child_and_mic() {
             .iter()
             .any(|f| f.name == "Selected mechanism")
     );
+}
+
+#[test]
+fn bare_and_prefixed_windows_conversions_promote_without_invented_source_ranges() {
+    for operation in ["ntlm-decode", "negotiate-decode"] {
+        for prefixed in [false, true] {
+            let bare = STANDARD.encode(ntlm(1));
+            let text = if prefixed {
+                format!(
+                    "{} {bare}",
+                    if operation == "ntlm-decode" {
+                        "NTLM"
+                    } else {
+                        "Negotiate"
+                    }
+                )
+            } else {
+                bare
+            };
+            let json = decode_authentication(&text, operation, &AtomicBool::new(false)).unwrap();
+            let json: serde_json::Value = serde_json::from_str(&json).unwrap();
+            assert_eq!(json["format"], "NTLM");
+            assert_eq!(json["status"], "decoded");
+            assert_eq!(json["fields"]["Message type"], "1");
+            if !prefixed {
+                for layer in json["details"]["layers"].as_array().unwrap() {
+                    assert!(layer["source"]["offset"].is_null());
+                    assert!(layer["source"]["length"].is_null());
+                    assert_eq!(
+                        layer["source"]["transforms"][0],
+                        "Explicit format interpretation of a bare token or parameter list"
+                    );
+                }
+            }
+        }
+    }
 }
 #[test]
 fn kerberos_exposed_ticket_and_encrypted_boundaries() {

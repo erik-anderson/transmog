@@ -91,7 +91,7 @@ fn flags(context: &mut Context, finding: &mut Finding, raw: u32) {
     for &(bit, name) in known {
         mask |= bit;
         if raw & bit != 0 {
-            context.field(finding, name, "Set", false, "Observed negotiation bit.");
+            context.technical_field(finding, name, "Set", false, "Observed negotiation bit.");
         }
     }
     if raw & !mask != 0 {
@@ -283,7 +283,7 @@ fn ntlm(context: &mut Context, bytes: &[u8], source: Source) -> Finding {
                 false,
                 "Captured response/key length; not a password and not validated.",
             );
-            context.field(
+            context.technical_field(
                 &mut finding,
                 name,
                 STANDARD.encode(value),
@@ -311,7 +311,7 @@ fn ntlm(context: &mut Context, bytes: &[u8], source: Source) -> Finding {
         }
     }
     if kind == 2 {
-        context.field(
+        context.technical_field(
             &mut finding,
             "Server challenge",
             STANDARD.encode(&bytes[24..32]),
@@ -340,7 +340,7 @@ fn ntlm(context: &mut Context, bytes: &[u8], source: Source) -> Finding {
         if first_payload.is_some_and(|end| end >= start + 16)
             && let Some(value) = bytes.get(start..start + 16)
         {
-            context.field(&mut finding,"Possible MIC / optional bytes",STANDARD.encode(value),true,"Bytes occupy the optional MIC region; presence and validity are not inferred from padding alone.");
+            context.technical_field(&mut finding,"Possible MIC / optional bytes",STANDARD.encode(value),true,"Bytes occupy the optional MIC region; presence and validity are not inferred from padding alone.");
         }
     }
     finding.diagnostics.push("Observed identities and cryptographic messages are unverified; a completed handshake or successful login is not inferred.".into());
@@ -857,7 +857,7 @@ fn negotiate(context: &mut Context, bytes: &[u8], mut source: Source, depth: usi
         .and_then(tlv)
         .filter(|v| v.tag == 4)
     {
-        context.field(
+        context.technical_field(
             &mut finding,
             "Mechanism-list MIC",
             STANDARD.encode(value.bytes),
@@ -889,7 +889,7 @@ pub(crate) fn decode(
             "Mechanism bytes exceeded the retained document budget.",
         );
     }
-    context.field(&mut finding, "Decoded mechanism bytes (hex prefix)", hex(&bytes[..bytes.len().min(4096)]), true, "At most the first 4 KiB of decoded mechanism bytes; full encoded material remains in the enclosing credential/source. Includes sensitive cryptographic data.");
+    context.technical_field(&mut finding, "Decoded mechanism bytes (hex prefix)", hex(&bytes[..bytes.len().min(4096)]), true, "At most the first 4 KiB of decoded mechanism bytes; full encoded material remains in the enclosing credential/source. Includes sensitive cryptographic data.");
     context.token(
         &mut finding,
         &STANDARD.encode(bytes),

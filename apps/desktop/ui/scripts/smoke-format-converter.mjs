@@ -49,12 +49,13 @@ try {
       const ntlm = ntlmBytes.toString("base64");
       for (const [operation, text, format] of [
         ["auth-decode", "Authorization: Basic dXNlcjpwYXNz", "Basic"],
+        ["auth-decode", `Bearer ${jwt}`, "JWT / JWS"],
         ["basic-decode", "dXNlcjpwYXNzOm1vcmU=", "Basic"],
         ["digest-parse", 'Authentication-Info: rspauth="secret", qop=auth', "Digest"],
         ["jws-decode", "eyJhbGciOiJub25lIn0._w.", "JWS"],
         ["jwe-inspect", "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4R0NNIn0..aXY.Y2lwaGVy.dGFn", "JWE"],
         ["ntlm-decode", ntlm, "NTLM"],
-        ["negotiate-decode", `Negotiate ${ntlm}`, "Negotiate"],
+        ["negotiate-decode", `Negotiate ${ntlm}`, "NTLM"],
       ]) {
         await page.getByLabel("Conversion", { exact: true }).selectOption(operation);
         await input.fill(text);
@@ -64,7 +65,16 @@ try {
         );
         assert.equal(result.format, format);
         if (operation === "jwe-inspect") assert.equal(result.status, "encrypted");
-        if (operation === "jws-decode") assert.equal(result.decoded.payloadBytesBase64, "/w==");
+        if (operation === "jws-decode") assert.equal(result.payloadBytesBase64, "/w==");
+        if (format === "JWT / JWS") {
+          assert.equal(result.payload.sub, "native-user");
+          assert.equal(result.status, "decoded");
+        }
+        if (operation === "negotiate-decode") {
+          assert.equal(result.status, "decoded");
+          assert.equal(result.details.layers[0].format, "Negotiate");
+          assert.equal(result.details.layers[0].status, "opaque");
+        }
       }
       await page.screenshot({
         path: resolve(argument("--output"), "converter-authentication-native.png"),

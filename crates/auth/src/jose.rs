@@ -109,7 +109,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             "The JOSE alg member is missing, duplicated or not a string.",
         );
     }
-    context.field(
+    context.technical_field(
         &mut finding,
         "Compact token",
         raw,
@@ -125,7 +125,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             "jws-decode"
         },
     );
-    context.field(
+    context.technical_field(
         &mut finding,
         "Decoded JOSE header",
         String::from_utf8_lossy(&header_bytes),
@@ -225,7 +225,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
                     "An unsecured JWT with alg none must have an empty signature.",
                 );
             }
-            context.field(
+            context.technical_field(
                 &mut finding,
                 "Signature length",
                 signature.len().to_string(),
@@ -235,7 +235,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
         }
         Err(_) => finding.issue("malformed", "Invalid JWS signature Base64url."),
     }
-    context.field(
+    context.technical_field(
         &mut finding,
         "Decoded payload bytes (Base64)",
         base64::engine::general_purpose::STANDARD.encode(&payload),
@@ -283,7 +283,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             if claims.duplicate() {
                 finding.ambiguity("Duplicate payload members are retained; claims are ambiguous.");
             }
-            context.field(
+            context.technical_field(
                 &mut finding,
                 "Decoded JSON payload",
                 String::from_utf8_lossy(&payload),
@@ -292,7 +292,7 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             );
             json::fields(context, &mut finding, &claims, "", false);
         } else {
-            context.field(
+            context.technical_field(
                 &mut finding,
                 "Payload text",
                 String::from_utf8_lossy(&payload),
@@ -301,7 +301,14 @@ fn decode_compact(context: &mut Context, raw: &str, mut source: Source) -> Optio
             );
         }
     } else if let Ok(text) = std::str::from_utf8(&payload) {
-        context.field(&mut finding, "Payload text", text, true, "JWS payload is not a supported JSON claims set; original bytes are available separately.");
+        if context.charge(text.len()) {
+            finding
+                .content
+                .push(("payloadText".into(), json::Node::Text(text.into())));
+        } else {
+            finding.issue("limited", "JWS text exceeded the retained document budget.");
+        }
+        context.technical_field(&mut finding, "Payload text", text, true, "JWS payload is not a supported JSON claims set; original bytes are available separately.");
     } else {
         finding.diagnostics.push("JWS payload is binary or not UTF-8; its lossless Base64 bytes are retained without guessing a character set.".into());
     }

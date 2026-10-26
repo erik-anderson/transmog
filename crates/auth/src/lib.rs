@@ -53,6 +53,17 @@ pub struct Source {
     /// Ordered transformation provenance.
     pub transforms: Vec<String>,
 }
+impl Source {
+    /// Decoder transformations may differ while referring to the same original occurrence/range.
+    pub(crate) fn same_range(&self, other: &Self) -> bool {
+        self.kind == other.kind
+            && self.label == other.label
+            && self.occurrence == other.occurrence
+            && self.header_index == other.header_index
+            && self.offset == other.offset
+            && self.length == other.length
+    }
+}
 /// One masked or readable field. Full values are held separately from serialization.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -69,6 +80,8 @@ pub struct Field {
     pub available: bool,
     /// Meaning or interpretation limits, without captured secrets.
     pub note: String,
+    #[serde(skip)]
+    pub(crate) technical: bool,
 }
 /// One observed format; nested wrappers retain independent statuses.
 #[derive(Clone, Debug, Serialize)]
@@ -78,6 +91,8 @@ pub struct Finding {
     pub id: String,
     /// Format name, without captured values.
     pub format: String,
+    /// This decoder layer can wrap one confirmed structure from the same retained range.
+    pub envelope: bool,
     /// Credential/challenge/protocol role.
     pub role: String,
     /// Recognized or candidate.
@@ -110,6 +125,16 @@ impl Finding {
         Self {
             id: String::new(),
             format: format.into(),
+            envelope: matches!(
+                format,
+                "Bearer"
+                    | "Negotiate"
+                    | "NTLM"
+                    | "GSS-API / SPNEGO"
+                    | "SPNEGO"
+                    | "SAML 2.0"
+                    | "Auth parameter"
+            ),
             role: role.into(),
             recognition: "recognized".into(),
             status: "decoded".into(),
@@ -332,7 +357,23 @@ impl<'a> Context<'a> {
             sensitive,
             available: true,
             note: note.into(),
+            technical: false,
         });
+    }
+    /// Preserve a raw representation or secondary protocol metadata after readable scratch data.
+    pub(crate) fn technical_field(
+        &mut self,
+        finding: &mut Finding,
+        name: &str,
+        value: impl Into<String>,
+        sensitive: bool,
+        note: &str,
+    ) {
+        let index = finding.fields.len();
+        self.field(finding, name, value, sensitive, note);
+        if let Some(field) = finding.fields.get_mut(index) {
+            field.technical = true;
+        }
     }
     pub(crate) fn push(&mut self, mut finding: Finding) {
         fn name_children(finding: &mut Finding) {

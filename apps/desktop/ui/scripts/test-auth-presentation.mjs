@@ -83,6 +83,15 @@ test("sibling challenges and different retained ranges remain separate", () => {
   }
   assert.equal(authArtifact(node("oauth", "OAuth / OpenID Connect", [jwt])).children.length, 1);
 });
+test("native envelope metadata overrides legacy format presentation", () => {
+  const child = node("child", "JWT / JWS");
+  const retained = authArtifact(node("root", "Bearer", [child], { envelope: false }));
+  assert.equal(retained.format, "Bearer");
+  assert.equal(retained.children.length, 1);
+  const promoted = authArtifact(node("root", "Native wrapper", [child], { envelope: true }));
+  assert.equal(promoted.format, "JWT / JWS");
+  assert.equal(promoted.layers.length, 2);
+});
 test("JWT claims precede JOSE metadata without changing captured field order", () => {
   const fields = [
     { ...field, id: "alg", name: "JOSE.alg" },

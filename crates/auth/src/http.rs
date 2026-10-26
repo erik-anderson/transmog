@@ -191,7 +191,7 @@ pub(crate) fn decode(
             "A credential-bearing header advertised a scheme without credentials.",
         );
     }
-    context.field(
+    context.technical_field(
         &mut finding,
         "Scheme",
         &item.scheme,
@@ -269,7 +269,7 @@ pub(crate) fn decode(
         );
     }
     if let Some(raw) = item.token {
-        context.field(
+        context.technical_field(
             &mut finding,
             "Original credential",
             &raw,
@@ -312,7 +312,7 @@ pub(crate) fn decode(
                             "passwordBytesBase64".into(),
                             crate::json::Node::Text(STANDARD.encode(&bytes[colon + 1..])),
                         ));
-                        context.field(
+                        context.technical_field(
                             &mut finding,
                             "Decoded bytes (Base64)",
                             STANDARD.encode(bytes),

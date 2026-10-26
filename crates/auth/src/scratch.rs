@@ -15,13 +15,18 @@ fn compact(raw: &str, flag: &AtomicBool) -> Result<DecodedDocument, &'static str
     if raw.len() > MAX_CANDIDATE {
         return Err("Authentication input exceeds the 1 MiB token limit.");
     }
-    let (value, _) = input_value(raw)?;
-    let (token, _) = crate::jose::candidate(value);
+    let (value, header) = input_value(raw)?;
+    let (token, token_offset) = crate::jose::candidate(value);
     let mut context = Context::new(flag);
     if !context.charge(token.len()) {
         return Err("Authentication decoding exceeded its finite budget.");
     }
-    let finding = crate::jose::decode(&mut context, token, Source::default())
+    let mut source = scratch_source(raw, value, header);
+    source.offset = source
+        .offset
+        .and_then(|offset| offset.checked_add(token_offset));
+    source.length = Some(token.len());
+    let finding = crate::jose::decode(&mut context, token, source)
         .ok_or("Expected a complete compact JWT or JOSE token with a JSON protected header.")?;
     context.push(finding);
     canceled(flag)?;
@@ -98,6 +103,17 @@ fn input_value(raw: &str) -> Result<(&str, Option<&str>), &'static str> {
     Ok((raw, None))
 }
 
+/// `value` is always a borrowed subslice from `input_value`; coordinates refer to the complete paste.
+fn scratch_source(raw: &str, value: &str, header: Option<&str>) -> Source {
+    Source {
+        kind: "scratch".into(),
+        label: header.unwrap_or("Pasted authentication input").into(),
+        offset: Some(value.as_ptr().addr() - raw.as_ptr().addr()),
+        length: Some(value.len()),
+        ..Source::default()
+    }
+}
+
 fn valid(document: &DecodedDocument) -> bool {
     document.complete
         && !["malformed", "limited"].contains(&document.status.as_str())
@@ -116,13 +132,7 @@ fn documents(
     if !context.charge(raw.len()) {
         return Err("Authentication decoding exceeded its finite budget.");
     }
-    let source = Source {
-        kind: "scratch".into(),
-        label: header.unwrap_or("Pasted authentication input").into(),
-        offset: Some(raw.len() - raw.trim_ascii_start().len()),
-        length: Some(value.len()),
-        ..Source::default()
-    };
+    let source = scratch_source(raw, value, header);
     let requested = match format {
         "basic-decode" => Some("Basic"),
         "digest-parse" => Some("Digest"),
@@ -188,16 +198,50 @@ fn documents(
             });
             let mut finding = crate::http::decode(&mut context, envelope, source.clone(), role);
             if prefixed.is_some() {
-                finding.source.offset = None;
-                finding.source.length = None;
-                finding.source.transforms.push(
+                fn normalize(finding: &mut crate::Finding, synthetic: &Source, transform: &str) {
+                    if !finding.source.same_range(synthetic) {
+                        return;
+                    }
+                    finding.source.offset = None;
+                    finding.source.length = None;
+                    finding.source.transforms.insert(0, transform.into());
+                    for child in &mut finding.children {
+                        normalize(child, synthetic, transform);
+                    }
+                }
+                let synthetic = finding.source.clone();
+                normalize(
+                    &mut finding,
+                    &synthetic,
                     if info {
                         "Authentication-Info parameters; original source has no scheme"
                     } else {
                         "Explicit format interpretation of a bare token or parameter list"
-                    }
-                    .into(),
+                    },
                 );
+            } else {
+                // HTTP parser ranges are relative to the stripped header value, not the paste.
+                fn remap(finding: &mut crate::Finding, base: usize, value_length: usize) {
+                    if let (Some(offset), Some(length)) =
+                        (finding.source.offset, finding.source.length)
+                    {
+                        if offset
+                            .checked_add(length)
+                            .is_some_and(|end| end <= value_length)
+                        {
+                            finding.source.offset = base.checked_add(offset);
+                        } else {
+                            finding.source.offset = None;
+                            finding.source.length = None;
+                        }
+                    }
+                    for child in &mut finding.children {
+                        remap(child, base, value_length);
+                    }
+                }
+                if let Some(base) = source.offset {
+                    remap(&mut finding, base, value.len());
+                }
             }
             context.push(finding);
         }
@@ -302,9 +346,12 @@ mod tests {
     fn paste_envelopes_parameters_unknown_roles_and_opaque_values() {
         let basic = run("Authorization: Basic dXNlcjpwYXNzOm1vcmU=", "auth-decode");
         assert_eq!(basic["format"], "Basic");
-        assert_eq!(basic["decoded"]["passwordBytesBase64"], "cGFzczptb3Jl");
         assert_eq!(
-            run("dXNlcjpwYXNzOm1vcmU=", "basic-decode")["role"],
+            basic["details"]["layers"][0]["decoded"]["passwordBytesBase64"],
+            "cGFzczptb3Jl"
+        );
+        assert_eq!(
+            run("dXNlcjpwYXNzOm1vcmU=", "basic-decode")["details"]["layers"][0]["role"],
             "unknown"
         );
         assert!(
@@ -314,18 +361,15 @@ mod tests {
             "WWW-Authenticate: Digest realm=\"a,b\", nonce=\"one\", nonce=\"two\", Basic realm=\"other\"",
             "auth-decode",
         );
-        assert_eq!(
-            digest["artifacts"][0]["decoded"]["parameters"][2]["value"],
-            "two"
-        );
+        assert_eq!(digest["artifacts"][0]["parameters"][2]["value"], "two");
         assert_eq!(digest["artifacts"][0]["status"], "incomplete");
         assert_eq!(digest["artifacts"][1]["format"], "Basic");
         let info = run(
             "Proxy-Authentication-Info: rspauth=\"secret\", qop=auth",
             "auth-decode",
         );
-        assert_eq!(info["decoded"]["parameters"][0]["name"], "rspauth");
-        assert_eq!(info["role"], "unknown");
+        assert_eq!(info["parameters"][0]["name"], "rspauth");
+        assert_eq!(info["details"]["layers"][0]["role"], "unknown");
         assert_eq!(
             run("Bearer opaque-token", "auth-decode")["status"],
             "opaque"
@@ -335,11 +379,14 @@ mod tests {
             "unsupported"
         );
         assert_eq!(
-            run("realm=\"standalone\", nonce=\"n\"", "digest-parse")["role"],
+            run("realm=\"standalone\", nonce=\"n\"", "digest-parse")["details"]["layers"][0]["role"],
             "unknown"
         );
         let non_utf8 = run(&STANDARD.encode([0xff, b':', 0x81]), "basic-decode");
-        assert_eq!(non_utf8["decoded"]["usernameBytesBase64"], "/w==");
+        assert_eq!(
+            non_utf8["details"]["layers"][0]["decoded"]["usernameBytesBase64"],
+            "/w=="
+        );
         assert!(!non_utf8.to_string().contains('\u{fffd}'));
     }
     #[test]
@@ -378,5 +425,105 @@ mod tests {
         assert!(
             decode_authentication("Bearer secret", "auth-decode", &AtomicBool::new(true)).is_err()
         );
+    }
+
+    #[test]
+    fn useful_payload_status_and_lossless_evidence_precede_technical_layers() {
+        use base64::engine::general_purpose::URL_SAFE_NO_PAD;
+        let token = format!(
+            "{}.{}.c2ln",
+            URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#),
+            URL_SAFE_NO_PAD
+                .encode(r#"{"sub":"first","n":9007199254740993.125,"sub":"second","n":1e+09}"#)
+        );
+        for input in [
+            token.clone(),
+            format!("Bearer {token}"),
+            format!("Authorization: Bearer {token}"),
+        ] {
+            let decoded =
+                decode_authentication(&input, "auth-decode", &AtomicBool::new(false)).unwrap();
+            let value: serde_json::Value = serde_json::from_str(&decoded).unwrap();
+            assert_eq!(value["format"], "JWT / JWS");
+            assert_eq!(value["status"], "incomplete");
+            assert!(
+                decoded
+                    .lines()
+                    .position(|line| line.contains("\"sub\": \"first\""))
+                    .unwrap()
+                    < 8
+            );
+            assert!(decoded.contains("9007199254740993.125"));
+            assert!(decoded.contains("1e+09"));
+            assert_eq!(decoded.matches("\"sub\":").count(), 2);
+            assert!(
+                value["diagnostics"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|notice| notice["format"] == "JWT / JWS")
+            );
+            assert!(
+                value["details"]["layers"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .any(|layer| layer["values"]["Compact token"] == token)
+            );
+        }
+        let text = format!(
+            "eyJhbGciOiJub25lIn0.{}.",
+            URL_SAFE_NO_PAD.encode("plain payload")
+        );
+        assert_eq!(run(&text, "jws-decode")["payloadText"], "plain payload");
+        let binary = "eyJhbGciOiJub25lIn0._wA.";
+        assert_eq!(run(binary, "jws-decode")["payloadBytesBase64"], "/wA=");
+    }
+
+    #[test]
+    fn scratch_ranges_point_into_the_complete_original_paste() {
+        let jwt = "eyJhbGciOiJub25lIn0.eyJzdWIiOiJyZWFkZXIifQ.";
+        let jwe = "eyJhbGciOiJkaXIiLCJlbmMiOiJBMTI4R0NNIn0..aXY.Y2lwaGVy.dGFn";
+        for (input, operation, expected) in [
+            (format!(" \t{jwt}\r\n"), "auth-decode", jwt.to_owned()),
+            (
+                format!("  MOCSI-AccessToken: \t{jwt} \r\n"),
+                "auth-decode",
+                jwt.to_owned(),
+            ),
+            (
+                format!(" \tAuthorization:  Bearer {jwt}\t\r\n"),
+                "auth-decode",
+                format!("Bearer {jwt}"),
+            ),
+            (
+                format!(" \tBearer {jwt} \r\n"),
+                "auth-decode",
+                format!("Bearer {jwt}"),
+            ),
+            (
+                format!("  X-Token: Bearer \t{jwt} \r\n"),
+                "jws-decode",
+                jwt.to_owned(),
+            ),
+            (format!(" \t{jwt}\r\n"), "jws-decode", jwt.to_owned()),
+            (
+                format!("  X-Token: {jwe} \r\n"),
+                "jwe-inspect",
+                jwe.to_owned(),
+            ),
+            (format!(" \t{jwe}\r\n"), "jwe-inspect", jwe.to_owned()),
+        ] {
+            let value = run(&input, operation);
+            for layer in value["details"]["layers"].as_array().unwrap() {
+                let offset = usize::try_from(layer["source"]["offset"].as_u64().unwrap()).unwrap();
+                let length = usize::try_from(layer["source"]["length"].as_u64().unwrap()).unwrap();
+                assert_eq!(
+                    &input[offset..offset + length],
+                    expected,
+                    "{operation}: {input}"
+                );
+            }
+        }
     }
 }

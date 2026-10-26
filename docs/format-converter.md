@@ -124,8 +124,19 @@ SPNEGO** when its format is known. Editing input keeps the chosen operation.
 Pasted input works independently of captured traffic and the Auth view.
 
 Output is readable JSON and explicitly includes temporary input credentials.
-General authentication output carries format, structural status, ordered values,
-decoded content, child structures, diagnostics and transformation provenance.
+General authentication output starts with the decoded format and structural
+status, followed by payload, ordered parameters or readable fields. A confirmed
+single child from the same original range leads the result, so a JWT in Bearer
+or NTLM in Negotiate reports that decoded structure's status. Different ranges
+and sibling artifacts stay separate. **details.layers** retains each decoder's
+own role, status, verification, original representations, field notes and full
+source provenance. Diagnostics name their owning layer. Technical values use
+compact ordered objects; duplicate names remain present.
+Scratch byte ranges use UTF-8 positions in the complete authentication input
+text, after applying the selected input representation and encoding. Offsets
+account for leading whitespace and a header name before the range. Explicitly
+introduced envelope prefixes have no original byte range and are reported as
+unknown.
 Duplicate Digest parameters and JSON members remain in their original order;
 exact JSON number spellings are preserved. Missing context leaves the role
 unknown. Opaque Bearer tokens and unsupported schemes are identified explicitly.

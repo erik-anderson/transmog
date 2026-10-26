@@ -34,7 +34,7 @@ export function authArtifact(root: AuthFinding): AuthArtifact {
   const layers = [root];
   let leaf = root;
   while (
-    envelopes.has(leaf.format) &&
+    (leaf.envelope ?? envelopes.has(leaf.format)) &&
     leaf.children.length === 1 &&
     sourceKey(leaf.source) === sourceKey(leaf.children[0]!.source)
   ) {

@@ -119,6 +119,10 @@ when changing the experience.
   their own drafts and do not depend on the originating workspace's lifetime.
   Clear obsolete derived output when its input changes. Chaining a structured
   decoding result should leave it ready for an explicitly chosen next operation.
+  Lead scratch decoding with readable content and its structural outcome. Keep
+  protocol wrappers and technical evidence afterward, preserving each layer's
+  interpretation and source rather than presenting an opaque wrapper as the
+  decoded content's outcome.
 
 - Protocol extensions offer visualizers through explicit selection or opt-in Auto
   parsing of the visible selected message, and declare
