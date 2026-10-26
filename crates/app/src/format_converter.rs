@@ -198,7 +198,7 @@ pub fn convert(
         Operation::HtmlDecode => unescape_html(&literal_text()?, cancelled)?.into_bytes(),
         Operation::JsonQuote => serde_json::to_string(&literal_text()?).map_err(|_| "JSON quoting failed.")?.into_bytes(),
         Operation::JsonUnquote => serde_json::from_str::<String>(&literal_text()?).map_err(|_| "Expected a complete JSON string with valid escapes and paired Unicode surrogates.")?.into_bytes(),
-        Operation::JwtDecode => transmog_auth::decode_jwt(&literal_text()?)?.into_bytes(),
+        Operation::JwtDecode => transmog_auth::decode_authentication(&literal_text()?, "jwt-decode", cancelled)?.into_bytes(),
         operation => {
             let digest = match operation {
                 Operation::Md5 => MessageDigest::md5(), Operation::Sha1 => MessageDigest::sha1(),

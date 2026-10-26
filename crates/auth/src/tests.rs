@@ -208,6 +208,50 @@ fn unsecured_jwt_must_have_an_empty_signature() {
 }
 
 #[test]
+fn shared_document_keeps_typed_jose_and_binary_payload_private_until_scratch_conversion() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    let token = format!(
+        "{}.{}.c2ln",
+        URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256","typ":"JWT"}"#),
+        URL_SAFE_NO_PAD
+            .encode(r#"{"sub":"private-shared-document","n":9007199254740993.125,"n":1e+09}"#)
+    );
+    let result = run(
+        vec![header("Authorization", &format!("Bearer {token}"))],
+        None,
+    );
+    // Typed documents are private even when a readable public claim happens to be present.
+    assert!(
+        !serde_json::to_string(&result)
+            .unwrap()
+            .contains("\"content\"")
+    );
+    let converted = decode_authentication(&token, "jws-decode", &AtomicBool::new(false)).unwrap();
+    assert!(converted.contains("9007199254740993.125"));
+    assert!(converted.contains("1e+09"));
+    let decoded: serde_json::Value = serde_json::from_str(&converted).unwrap();
+    assert_eq!(decoded["status"], result.findings[0].children[0].status);
+    assert_eq!(
+        decoded["decoded"]["payload"]["sub"],
+        "private-shared-document"
+    );
+    let binary = format!(
+        "{}.{}.c2ln",
+        URL_SAFE_NO_PAD.encode(r#"{"alg":"HS256"}"#),
+        URL_SAFE_NO_PAD.encode([0xff, 0, 0x81])
+    );
+    let converted = decode_authentication(&binary, "jws-decode", &AtomicBool::new(false)).unwrap();
+    assert!(converted.contains("/wCB"));
+    assert!(!converted.contains('\u{fffd}'));
+    assert!(decode_jwt(&binary).is_err());
+    assert!(
+        decode_authentication(&binary, "jws-decode", &AtomicBool::new(true))
+            .unwrap_err()
+            .contains("canceled")
+    );
+}
+
+#[test]
 fn custom_jose_parser_and_artifact_limits_do_not_report_complete_header_coverage() {
     use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
     let oversized_header = format!(

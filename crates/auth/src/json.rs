@@ -1,7 +1,7 @@
 //! Bounded JSON syntax with ordered duplicate members and exact number spellings.
 use crate::{Context, Finding, MAX_DEPTH, MAX_FIELDS};
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum Node {
     Object(Vec<(String, Node)>),
     Array(Vec<Node>),

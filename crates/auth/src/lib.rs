@@ -1,16 +1,19 @@
 //! Deterministic offline inspection. Decoding never establishes trust or sends traffic.
 #![allow(clippy::missing_errors_doc, clippy::too_many_lines)]
 mod body;
+mod document;
 mod extract;
 mod http;
 mod jose;
 mod json;
 mod oauth;
 mod saml;
+mod scratch;
 mod windows;
 
 pub use extract::is_candidate_header;
 pub use jose::decode_jwt;
+pub use scratch::decode_authentication;
 
 use serde::{Deserialize, Serialize};
 use std::sync::{
@@ -89,6 +92,10 @@ pub struct Finding {
     pub children: Vec<Finding>,
     /// Finite parser observations that never contain raw input.
     pub diagnostics: Vec<String>,
+    // Typed parser material is deliberately excluded from inspection serialization.
+    // Only the explicit scratch adapter may expose this credential-bearing content.
+    #[serde(skip)]
+    pub(crate) content: Vec<(String, json::Node)>,
 }
 impl Finding {
     pub(crate) fn new(format: &str, role: &str, source: Source) -> Self {
@@ -103,6 +110,7 @@ impl Finding {
             fields: vec![],
             children: vec![],
             diagnostics: vec![],
+            content: vec![],
         }
     }
     pub(crate) fn issue(&mut self, status: &str, note: &str) {
@@ -191,15 +199,15 @@ pub struct Input {
     /// Observed capture time, in Unix seconds, if available.
     pub captured_at: Option<i64>,
 }
-pub(crate) struct Context {
+pub(crate) struct Context<'a> {
     result: Inspection,
-    canceled: Arc<AtomicBool>,
+    canceled: &'a AtomicBool,
     bytes_left: usize,
     work_left: usize,
     captured_at: Option<i64>,
 }
-impl Context {
-    fn new(canceled: Arc<AtomicBool>) -> Self {
+impl<'a> Context<'a> {
+    fn new(canceled: &'a AtomicBool) -> Self {
         Self {
             result: Inspection::default(),
             canceled,
@@ -327,8 +335,10 @@ pub(crate) fn clip(value: &str, limit: usize) -> String {
     )
 }
 /// Inspect one message with cooperative cancellation and aggregate finite budgets.
+// Keep the owning public API for existing worker callers; the internal parser also supports a borrow.
+#[allow(clippy::needless_pass_by_value)]
 pub fn inspect(input: Input, canceled: Arc<AtomicBool>) -> Inspection {
-    let mut context = Context::new(canceled);
+    let mut context = Context::new(&canceled);
     context.captured_at = input.captured_at;
     extract::message(&mut context, input);
     context.result
@@ -340,7 +350,7 @@ pub fn inspect_as(mut input: Input, canceled: Arc<AtomicBool>, format: &str) -> 
     if format == "auto" {
         return inspect(input, canceled);
     }
-    let mut context = Context::new(canceled);
+    let mut context = Context::new(&canceled);
     context.captured_at = input.captured_at;
     let body = input.body.take();
     extract::message(&mut context, input);
