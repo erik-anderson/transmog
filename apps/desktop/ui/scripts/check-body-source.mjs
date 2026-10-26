@@ -1053,25 +1053,44 @@ export async function checkBodySourceBounds(page) {
   const coverage =
     "Only part of the body was retained because a capture limit was reached.\nXSSI prefix omitted from this formatted view; the original body is unchanged.\nPreview limited to the displayed portion.";
   await inspector.evaluate((i, coverage) => {
-    i.bodyNotice = coverage;
+    i.bodyNotice = Array(8).fill(coverage).join("\n");
   }, coverage);
   const notice = inspector.locator(".body-notice"),
     status = source.locator(".source-status");
-  for (const explanation of [notice, status]) {
-    await explanation.focus();
-    await explanation.press("End");
-    await page.waitForFunction(
-      (element) => element.scrollTop > 0,
-      await explanation.elementHandle(),
-    );
-    await explanation.press("Shift+F10");
-    await copyMenu.getByRole("menuitem", { name: "Copy explanation", exact: true }).click();
-    if (explanation === notice)
+  const originalStatus = await source.evaluate((view) => view.sourceStatus);
+  await source.evaluate((view, value) => {
+    view.sourceStatus = Array(8).fill(value).join("\n");
+  }, originalStatus);
+  // Earlier workspace layouts may leave enough height for short explanations to fit.
+  // Exercise actual overflow rather than requiring a fitted paragraph to scroll.
+  try {
+    for (const explanation of [notice, status]) {
       assert.equal(
-        (await page.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n"),
-        coverage,
+        await explanation.evaluate((element) => element.scrollHeight > element.clientHeight),
+        true,
       );
-    else assert.match(await page.evaluate(() => navigator.clipboard.readText()), /1 MiB/);
+      await explanation.focus();
+      await explanation.press("End");
+      await page.waitForFunction(
+        (element) => element.scrollTop > 0,
+        await explanation.elementHandle(),
+      );
+      await explanation.press("Shift+F10");
+      await copyMenu.getByRole("menuitem", { name: "Copy explanation", exact: true }).click();
+      if (explanation === notice)
+        assert.equal(
+          (await page.evaluate(() => navigator.clipboard.readText())).replaceAll("\r\n", "\n"),
+          Array(8).fill(coverage).join("\n"),
+        );
+      else assert.match(await page.evaluate(() => navigator.clipboard.readText()), /1 MiB/);
+    }
+  } finally {
+    await source.evaluate((view, value) => {
+      view.sourceStatus = value;
+    }, originalStatus);
+    await inspector.evaluate((view, value) => {
+      view.bodyNotice = value;
+    }, coverage);
   }
   await inspector.getByRole("button", { name: "Fields", exact: true }).click();
   const fields = source.locator("extension-visualizer");
