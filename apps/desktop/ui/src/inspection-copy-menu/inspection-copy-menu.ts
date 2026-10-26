@@ -50,7 +50,7 @@ export class InspectionCopyMenu extends WebUIElement {
     this.copyMenuNote = request.note ?? "";
     this.copyMenuStatus = "";
     this.$flushUpdates();
-    const anchor = menuAnchor(request.event, request.source);
+    const anchor = request.anchor ?? menuAnchor(request.event, request.source);
     this.menu.showPopover({ source: request.source });
     this.placement.open(anchor);
     this.buttons()[0]?.focus();
@@ -181,7 +181,8 @@ export class InspectionCopyMenu extends WebUIElement {
   }
   close(focus = true): void {
     this.placement.close();
-    const source = this.request?.source;
+    const source = this.request?.source,
+      restoreFocus = this.request?.restoreFocus;
     this.revision++;
     this.request = null;
     this.copyMenuBusy = false;
@@ -191,6 +192,10 @@ export class InspectionCopyMenu extends WebUIElement {
     this.copyActions = [];
     this.copyMenuNote = "";
     if (focus && source?.isConnected) {
+      if (restoreFocus) {
+        restoreFocus();
+        return;
+      }
       const target = source.closest<HTMLElement>("[tabindex],button,input,textarea") ?? source;
       target.focus({ preventScroll: true });
     }

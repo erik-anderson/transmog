@@ -17,6 +17,7 @@ test("clipboard scalar serialization preserves empty, Unicode, wide integers and
   assert.equal(copyScalar("hello 🌍"), "hello 🌍");
   assert.equal(copyScalar("a\n\t\\n\r\0"), "a\\n\\t\\\\n\\r\\u0000");
   assert.equal(copyScalar("9007199254740993"), "9007199254740993");
+  assert.equal(copyScalar("a\ud800b\udc00c😀"), "a\\ud800b\\udc00c😀");
 });
 test("subtrees keep duplicate names, order, empty values and two-space nesting", () => {
   assert.equal(

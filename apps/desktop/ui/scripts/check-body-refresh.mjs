@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { waitForBodySource, waitForBodyText, bodyText } from "./check-body-source.mjs";
 
 export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
   await page.goto("https://workspace.test/");
@@ -36,6 +37,14 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
       }
       if (probe.error) throw new Error("Fixture body read failed");
       const source = document.querySelector("app-shell").traffic.selectedDetail;
+      const previewText =
+        args.request.boundary === "client-request"
+          ? "Captured request body"
+          : args.request.boundary === "upstream-response"
+            ? "Original response body"
+            : args.request.sessionId === "first"
+              ? display
+              : "New selected response";
       return {
         ...result,
         metadata:
@@ -43,14 +52,8 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
             ? (source.storedBodies.find((body) => body.boundary === args.request.boundary) ??
               result.metadata)
             : result.metadata,
-        display:
-          args.request.boundary === "client-request"
-            ? "Captured request body"
-            : args.request.boundary === "upstream-response"
-              ? "Original response body"
-              : args.request.sessionId === "first"
-                ? display
-                : "New selected response",
+        display: previewText,
+        originalText: result.representation === "formatted-json" ? previewText : null,
         displayBytes: display.length,
       };
     };
@@ -58,32 +61,23 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
   });
   try {
     await page.locator('tr[data-session-id="first"]').click();
-    await inspector
-      .locator(".body-preview")
-      .filter({ hasText: "Captured navigation response" })
-      .waitFor();
+    await waitForBodySource(inspector);
     const before = await inspector.evaluate((element) => {
-      const text = element.querySelector(".body-preview"),
-        scroll =
-          text.scrollHeight > text.clientHeight ? text : element.querySelector(".body-scroll");
-      text.focus();
-      scroll.scrollTop = 360;
-      const range = document.createRange();
-      range.setStart(text.firstChild, 15);
-      range.setEnd(text.firstChild, 43);
-      const selection = text.getRootNode().getSelection?.() ?? document.getSelection();
-      selection.removeAllRanges();
-      selection.addRange(range);
+      const text = element.querySelector("body-source-viewer"),
+        scroll = text.editor;
+      scroll.focus();
+      scroll.setScrollTop(360);
+      scroll.setSelection({ startLineNumber: 15, startColumn: 2, endLineNumber: 16, endColumn: 5 });
       globalThis.__bodyReading = {
         text,
-        node: text.firstChild,
+        node: text.model,
         scroll,
-        scrollTop: scroll.scrollTop,
-        selection: selection.toString(),
+        scrollTop: scroll.getScrollTop(),
+        selection: text.model.getValueInRange(scroll.getSelection()),
       };
       return {
         calls: globalThis.__workspaceFixture.bodyRefresh.calls.length,
-        scrollTop: scroll.scrollTop,
+        scrollTop: scroll.getScrollTop(),
       };
     });
     assert.ok(before.scrollTop > 0, "Fixture body must scroll");
@@ -105,12 +99,12 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
     });
     const stable = await inspector.evaluate((element) => {
       const reading = globalThis.__bodyReading,
-        text = element.querySelector(".body-preview"),
-        selection = text?.getRootNode().getSelection?.() ?? document.getSelection();
+        text = element.querySelector("body-source-viewer"),
+        selection = text?.editor && text.model.getValueInRange(text.editor.getSelection());
       return {
-        sameNode: text === reading.text && text.firstChild === reading.node,
-        scrollTop: reading.scroll.scrollTop,
-        selection: selection.toString(),
+        sameNode: text === reading.text && text.model === reading.node,
+        scrollTop: reading.scroll.getScrollTop(),
+        selection,
         expectedSelection: reading.selection,
         loading: element.loading,
         calls: globalThis.__workspaceFixture.bodyRefresh.calls.length,
@@ -160,9 +154,9 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
       w.querySelector('message-inspector[side="request"]').showMode("body");
     });
     const request = page.locator('traffic-workspace message-inspector[side="request"]');
-    await request.getByText("Captured request body", { exact: true }).waitFor();
+    await waitForBodyText(request, "Captured request body");
     await inspector.getByLabel("Message stage", { exact: true }).selectOption("upstream-response");
-    await inspector.getByText("Original response body", { exact: true }).waitFor();
+    await waitForBodyText(inspector, "Original response body");
     const stageCalls = await page.evaluate(
       () => globalThis.__workspaceFixture.bodyRefresh.calls.length,
     );
@@ -176,10 +170,7 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
       "Identical stage/request evidence reloaded",
     );
     await inspector.getByLabel("Message stage", { exact: true }).selectOption("client-response");
-    await inspector
-      .locator(".body-preview")
-      .filter({ hasText: "Captured navigation response" })
-      .waitFor();
+    await waitForBodyText(inspector, "Captured navigation response");
     await request.getByRole("button", { name: "Headers", exact: true }).click();
     const evidenceCalls = await page.evaluate(
       () => globalThis.__workspaceFixture.bodyRefresh.calls.length,
@@ -197,7 +188,7 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
       ];
       await document.querySelector("app-shell").traffic.refreshInspection();
     });
-    await inspector.getByText("Updated retained response", { exact: true }).waitFor();
+    await waitForBodyText(inspector, "Updated retained response");
     assert.equal(
       await page.evaluate(() => globalThis.__workspaceFixture.bodyRefresh.calls.length),
       evidenceCalls + 1,
@@ -239,9 +230,7 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
         },
         { bytes, availability },
       );
-      await inspector
-        .getByText(new RegExp("Retained bytes " + bytes + " " + availability))
-        .waitFor();
+      await waitForBodyText(inspector, "Retained bytes " + bytes + " " + availability);
       assert.equal(
         await page.evaluate(() => globalThis.__workspaceFixture.bodyRefresh.calls.length),
         prior + 1,
@@ -339,10 +328,10 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
       "Identical updates duplicated an in-flight body read",
     );
     await page.locator('tr[data-session-id="second"]').click();
-    await inspector.getByText("New selected response", { exact: true }).waitFor();
+    await waitForBodyText(inspector, "New selected response");
     await page.evaluate(() => globalThis.__workspaceFixture.bodyRefresh.release());
     await page.waitForTimeout(30);
-    assert.equal(await inspector.locator(".body-preview").textContent(), "New selected response");
+    assert.equal(await bodyText(inspector), "New selected response");
 
     // A failed explicit refresh stays visible through identical detail updates and can be retried.
     await page.evaluate(async () => {
@@ -371,7 +360,7 @@ export async function checkBodyRefresh(page, root, { reproduce = false } = {}) {
     });
     await inspector.locator(".body-options > summary").click();
     await inspector.getByRole("button", { name: "Refresh preview", exact: true }).click();
-    await inspector.getByText("New selected response", { exact: true }).waitFor();
+    await waitForBodyText(inspector, "New selected response");
     assert.equal(
       await page.evaluate(() => globalThis.capturedScriptRan),
       undefined,

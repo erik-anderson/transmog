@@ -29,7 +29,8 @@ Message
 ```
 
 Text values remain readable. Scalar serialization escapes backslashes, embedded
-newlines, tabs and control characters. Wide protocol integers retain their exact
+newlines, tabs, control characters and unpaired UTF-16 surrogates. Valid Unicode
+characters remain readable. Wide protocol integers retain their exact
 decimal strings; enum and flag values retain their names and raw values. Byte
 arrays become uppercase hexadecimal pairs separated by spaces. Whole text/report
 actions preserve their text block's line breaks. Clipboard content is plain text.
@@ -83,14 +84,48 @@ selection behavior. Editors retain
 their ordinary editing shortcuts and menus; existing text-selection copying is
 preserved. Hex keeps its specialized byte-range/encoding and offset actions.
 
-Copy body preview copies the displayed preview, which can be shorter than the
-retained body. Warnings and missing-body prose offer **Copy explanation**, independently of the
+Copy body preview copies the entire loaded source representation, including
+folded and offscreen text, which can be shorter than the retained body. It uses
+the underlying text rather than syntax spans, line numbers or editor messages.
+Formatted JSON also offers **Copy original text preview** for that same decoded
+preview boundary before formatting. Right-clicking inside a source selection,
+or opening its keyboard menu with a selection, puts **Copy** first and offers
+**Open in Format converter** for that selection. Right-click preserves the text
+selection and inspected request. Shift+F10 or the Context Menu key opens at the
+caret; Escape returns focus to the source editor. Ctrl+C with an empty source
+selection leaves the clipboard unchanged. Find's input retains ordinary text
+copying. The editable response and script editors retain their own menus.
+Previews above the 1 MiB syntax limit use the same copy actions on a selectable
+plain-text surface. Pointer menus offer semantic field actions only when their
+source location can be mapped reliably; Fields retains those actions directly.
+
+Warnings and missing-body prose offer **Copy explanation**, independently of the
 body evidence. Metadata offers **Copy body metadata**. Selected text offers Copy
 first; read-only selections inside modal inspectors use the modal's copy menu.
 Retained stream-prefix coverage stays explicit. Use the existing
 body/message save actions when the complete retained binary representation is
 needed. Display masking and clipboard actions do not sanitize retained traffic
 or change capture/export redaction.
+
+## JSON body fields
+
+**Fields** and reliably mapped source tokens use the original decoded JSON
+preview. Duplicate keys keep their order and remain separate occurrences;
+numbers retain their captured spelling, including wide integers, exponents and
+negative zero. Copy name, Copy value and Copy name and value follow the scalar
+escaping rules above. Containers offer **Copy subtree** using the readable
+two-space indentation format, including collapsed descendants.
+Display labels identify empty or whitespace-only names and strings; copy actions
+still use their original names and values.
+
+**Copy as JSON** copies a valid JSON literal, object or array from its original
+source range, retaining token spelling and duplicates. It excludes an enclosing
+anti-XSSI prefix. **Copy JSON Pointer** escapes `/` and `~` in property names and
+uses array indices. The action is omitted for duplicate-key paths and their
+descendants, and for keys that cannot survive plain-text clipboard Unicode or
+line-ending handling without changing their identity. A pointer to the root is
+the empty string. These actions operate on the bounded preview; Save as remains
+the route to a complete retained response.
 
 ## Limits and changing evidence
 

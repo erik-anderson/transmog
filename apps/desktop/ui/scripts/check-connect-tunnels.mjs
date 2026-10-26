@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { waitForBodySource, waitForBodyText } from "./check-body-source.mjs";
 
 export async function checkConnectTunnels(page, root) {
   const original = await page.evaluate(() =>
@@ -54,8 +55,10 @@ export async function checkConnectTunnels(page, root) {
       },
       { original, method, transports },
     );
-  const body = () =>
-    inspector.getByText("body for " + original.id, { exact: true }).waitFor({ state: "visible" });
+  const body = async () => {
+    await waitForBodyText(inspector, "body for " + original.id);
+    await waitForBodySource(inspector);
+  };
   try {
     // Intercepted HTTPS retains the CONNECT authority on the client leg.
     await apply("GET", [client, upstream]);

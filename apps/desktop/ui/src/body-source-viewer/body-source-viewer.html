@@ -1,0 +1,12 @@
+<template>
+  <if condition="sourceEditorLoaded"><link w-ref="{sourceStyles}" rel="stylesheet" href="/monaco.css"></if>
+  <section class="body-source" aria-label="Body source preview">
+    <if condition="sourceStatus"><p class="source-status" role="status" tabindex="0" data-copy-surface data-copy-text data-copy-label="Explanation" ?hidden="{{sourceMode == 'fields' && sourceHasFields}}">{{sourceStatus}}</p></if>
+    <div class="source-content" ?hidden="{{sourceMode == 'fields' && sourceHasFields}}">
+      <pre w-ref="{fallback}" class="body-preview source-fallback" tabindex="0" aria-label="Body source preview" ?data-nowrap="{{!sourceWrap}}" ?hidden="{{sourceEditorReady}}" @contextmenu="{fallbackContext(e)}" @keydown="{fallbackKey(e)}" @copy="{fallbackCopy(e)}">{{bodySourceText}}</pre>
+      <div w-ref="{editorHost}" class="source-code-host" ?hidden="{{!sourceEditorReady}}"></div>
+    </div>
+    <if condition="sourceSnapshot"><extension-visualizer class="json-fields" slot="body-json-fields" ?active="{{active}}" :snapshot="{{sourceSnapshot}}"></extension-visualizer></if>
+    <div w-ref="{overflowHost}" class="source-overflow monaco-editor"></div>
+  </section>
+</template>

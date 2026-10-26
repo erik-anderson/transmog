@@ -21,6 +21,8 @@ import type { VisualizerChoice, VisualizerSelection } from "../extension-visuali
 import type { AuthSelection, AuthSourceNavigation } from "../auth-inspector/models.js";
 import { authBodyFormats } from "../auth-inspector/models.js";
 import type { AuthInspector } from "../auth-inspector/auth-inspector.js";
+import type { BodySourcePreview } from "../body-source-viewer/source.js";
+import type { BodySourceViewer } from "../body-source-viewer/body-source-viewer.js";
 
 const stages: Record<string, string> = {
   "client-request": "Original request",
@@ -265,6 +267,62 @@ export class MessageInspector extends WebUIElement {
   @observable sourceIp = "";
   @observable headSummary = "Select an exchange";
   @observable bodyText = "";
+  @observable bodySource: BodySourcePreview | null = null;
+  @observable bodySourceLanguage = "auto";
+  @observable bodySourceWrap = true;
+  @observable bodySourceReady = false;
+  @observable bodySourceLimited = false;
+  @observable bodySourceFields = false;
+  @observable bodySourceMode = "source";
+  bodySourceViewer!: BodySourceViewer;
+  bodySourceSourceTab!: HTMLButtonElement;
+  bodySourceFieldsTab!: HTMLButtonElement;
+  bodyOptions!: HTMLDetailsElement;
+  changeSourceLanguage(event: Event): void {
+    this.bodySourceLanguage = (event.currentTarget as HTMLSelectElement).value;
+  }
+  changeSourceWrap(event: Event): void {
+    this.bodySourceWrap = (event.currentTarget as HTMLInputElement).checked;
+  }
+  sourceReady(event: CustomEvent<boolean>): void {
+    event.stopPropagation();
+    this.bodySourceReady = event.detail;
+  }
+  sourceFields(event: CustomEvent<boolean>): void {
+    event.stopPropagation();
+    this.bodySourceFields = event.detail;
+  }
+  sourceLimited(event: CustomEvent<boolean>): void {
+    event.stopPropagation();
+    this.bodySourceLimited = event.detail;
+  }
+  changeSourceMode(mode: string, event?: Event): void {
+    if (this.bodySourceMode === mode) {
+      return;
+    }
+    const source = event?.currentTarget as HTMLElement | null,
+      root = this.getRootNode();
+    const restore =
+      !!source &&
+      (root instanceof ShadowRoot ? root.activeElement : document.activeElement) === source;
+    this.bodySourceMode = mode;
+    this.$flushUpdates();
+    if (restore) {
+      (mode === "source" ? this.bodySourceSourceTab : this.bodySourceFieldsTab)?.focus({
+        preventScroll: true,
+      });
+    }
+  }
+  sourceMode(event: CustomEvent<string>): void {
+    event.stopPropagation();
+    this.bodySourceMode = event.detail;
+  }
+  findSource(): void {
+    this.bodyOptions.open = false;
+    this.bodySourceMode = "source";
+    this.$flushUpdates();
+    this.bodySourceViewer?.find();
+  }
   @observable bodyNotice = "Select an exchange to preview its body.";
   @observable bodyCopyLabel = "Body preview";
   @observable bodyFacts = "";
@@ -572,6 +630,7 @@ export class MessageInspector extends WebUIElement {
       this.hexPreview = null;
       this.imageUrl = "";
       this.bodyText = "";
+      this.bodySource = null;
       this.bodyNotice = "Select an exchange to preview its body.";
       this.bodyFacts = "";
       this.bodySummary = "";
@@ -786,6 +845,7 @@ export class MessageInspector extends WebUIElement {
       this.hexPreview = null;
       this.imageUrl = "";
       this.bodyText = "";
+      this.bodySource = null;
       this.inspectedBodyKey = null;
       return;
     }
@@ -804,6 +864,7 @@ export class MessageInspector extends WebUIElement {
     this.imageUrl = "";
     this.loading = false;
     this.bodyText = "";
+    this.bodySource = null;
     this.bodyNotice = "";
     this.bodyCopyLabel = "Body preview";
     if (!this.detail) {
@@ -923,6 +984,18 @@ export class MessageInspector extends WebUIElement {
       } else {
         this.hexPreview = null;
         this.bodyText = inspection.display;
+        if (["original-text", "formatted-json"].includes(inspection.representation)) {
+          this.bodySource = {
+            key: inspectionKey,
+            text: inspection.display,
+            originalText:
+              inspection.originalText ??
+              (inspection.representation === "original-text" ? inspection.display : null),
+            mediaType: inspection.metadata.mediaType,
+            formatted: inspection.representation === "formatted-json",
+            truncated: inspection.truncated,
+          };
+        }
         if (!inspection.display && !this.bodyNotice && inspection.representation !== "image") {
           this.bodyNotice = "No body content.";
         }

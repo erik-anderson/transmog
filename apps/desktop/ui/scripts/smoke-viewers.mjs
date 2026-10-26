@@ -17,6 +17,7 @@ import { smokeCertificates } from "./smoke-certificates.mjs";
 import { hexReachability } from "./check-hex-viewer.mjs";
 import { smokeTraceSave } from "./smoke-trace-save.mjs";
 import { smokeConnectTunnels } from "./smoke-connect-tunnels.mjs";
+import { smokeBodySource } from "./smoke-body-source.mjs";
 
 import { nativeFixture } from "./native-fixture.mjs";
 import { smokeWindowShortcuts } from "./smoke-window-shortcuts.mjs";
@@ -33,6 +34,9 @@ const nativeSource = argument("--native-source");
 const trafficSource = argument("--traffic-source");
 const pageSource = argument("--page-source");
 const profileRoot = argument("--profile-root");
+const bodySourceOnly = process.argv.includes("--body-source-only");
+if (bodySourceOnly && process.argv.includes("--trace-save-only"))
+  throw new Error("Choose either body-source-only or trace-save-only verification.");
 const processId = argument("--process-id"),
   closeHelper = argument("--close-helper");
 async function closeNative(title) {
@@ -157,10 +161,24 @@ try {
     "Saved-file viewer did not finish automatic import",
   );
   process.stdout.write("Viewer file import verified.\n");
-  await smokeMarkerReview(viewer, traffic, screenshot);
-  const traceSave = await smokeTraceSave(viewer, screenshot);
-  if (process.argv.includes("--trace-save-only")) {
-    process.stdout.write(JSON.stringify({ nativeTraceSave: traceSave }) + "\n");
+  let bodySource;
+  if (bodySourceOnly) {
+    await viewer.evaluate(
+      `${traffic}.selectTraffic(${traffic}.sessions[0],new MouseEvent('click'))`,
+    );
+    await waitFor(
+      () => viewer.evaluate(`${traffic}.selectedDetail?.id===${traffic}.sessions[0]?.id`),
+      "Selected native fixture detail did not finish loading",
+    );
+    bodySource = await smokeBodySource(viewer, traffic, dirname(source), screenshot);
+  } else await smokeMarkerReview(viewer, traffic, screenshot);
+  const traceSave = bodySourceOnly ? null : await smokeTraceSave(viewer, screenshot);
+  if (bodySourceOnly || process.argv.includes("--trace-save-only")) {
+    process.stdout.write(
+      JSON.stringify(
+        bodySourceOnly ? { nativeBodySource: bodySource } : { nativeTraceSave: traceSave },
+      ) + "\n",
+    );
   } else {
     const result = await viewer.evaluate(`(async()=>{
     const shell=${root}, workspace=${traffic};
@@ -187,6 +205,7 @@ try {
       "Selected native fixture detail did not finish loading",
     );
     await smokeConnectTunnels(viewer);
+    bodySource = await smokeBodySource(viewer, traffic, dirname(source), screenshot);
     const search = await viewer.evaluate(
       `(async()=>{const workspace=${traffic};await workspace.changeTrafficSearchKind({currentTarget:{value:'contents'}});workspace.searchMetadata=false;workspace.searchRequestHeaders=false;workspace.searchResponseHeaders=false;workspace.searchBodies=true;workspace.selectSearchMatches=true;workspace.searchInput.value='viewer response';await workspace.runContentSearch();return {matches:workspace.contentMatchCount,selected:workspace.selectedTrafficCount,status:workspace.contentSearchStatus};})()`,
     );
@@ -1586,6 +1605,7 @@ try {
         traceMetadata: true,
         nativeCapture: !!nativeSource,
         traceSave,
+        bodySource,
       }) + "\n",
     );
   }

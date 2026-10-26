@@ -2185,6 +2185,7 @@ impl Application {
                 decoded,
                 text_encoding: None,
                 display: String::new(),
+                original_text: None,
                 bytes_base64: None,
                 byte_offset: 0,
                 display_bytes,

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { waitForBodySource } from "./check-body-source.mjs";
 
 export async function checkAppSelection(page, root) {
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -43,11 +44,10 @@ export async function checkAppSelection(page, root) {
     (await page.evaluate(() => getSelection().toString())).includes("Accept"),
     "Header evidence cannot be selected",
   );
-  const body = traffic.locator('message-inspector[side="response"] .body-preview');
-  await body.waitFor();
-  await body.dblclick({ position: { x: 20, y: 12 } });
+  const body = await waitForBodySource(traffic.locator('message-inspector[side="response"]'));
+  await body.locator(".view-lines .view-line").first().dblclick();
   assert.ok(
-    (await page.evaluate(() => getSelection().toString())).length,
+    (await body.evaluate((v) => v.model.getValueInRange(v.editor.getSelection()))).length,
     "Body evidence cannot be selected",
   );
   await traffic.locator(".selected-url").click();

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { deflateRawSync } from "node:zlib";
+import { waitForBodySource, bodyText } from "./check-body-source.mjs";
 
 export async function checkBodyDecoding(page) {
   await page.goto("https://workspace.test/");
@@ -108,6 +109,7 @@ export async function checkXssiJson(page, root) {
           ...result,
           representation: json ? "formatted-json" : "original-text",
           display: json ? formatted : original,
+          originalText: json ? original : null,
           displayBytes: bytes.length,
           warning: json ? warning : null,
         };
@@ -119,10 +121,11 @@ export async function checkXssiJson(page, root) {
     await page.locator('tr[data-session-id="first"]').click();
     const inspector = page.locator('traffic-workspace message-inspector[side="response"]');
     const viewer = inspector.getByLabel("Body viewer", { exact: true });
-    const preview = inspector.locator(".body-preview");
+    const preview = inspector.locator("body-source-viewer");
     const notice = inspector.locator(".body-notice");
     await notice.getByText(warning, { exact: true }).waitFor();
-    assert.equal(await preview.textContent(), formatted);
+    await waitForBodySource(inspector, formatted);
+    assert.equal(await bodyText(inspector), formatted);
     await mkdir(resolve(root, "../../../target/ui-check"), { recursive: true });
     for (const [width, height] of [
       [1440, 900],
@@ -136,19 +139,20 @@ export async function checkXssiJson(page, root) {
         path: resolve(root, `../../../target/ui-check/xssi-json-${width}.png`),
       });
     }
-    await preview.focus();
-    await preview.press("Shift+F10");
+    await preview.evaluate((v) => v.editor.focus());
+    await page.keyboard.press("Shift+F10");
     await page.getByRole("menuitem", { name: "Copy body preview", exact: true }).click();
     // Windows normalizes clipboard line endings to CRLF.
     const copied = await page.evaluate(() => navigator.clipboard.readText());
     assert.equal(copied.replaceAll("\r\n", "\n"), formatted);
     await viewer.selectOption("original-text");
-    await preview.getByText(original, { exact: true }).waitFor();
-    assert.equal(await preview.textContent(), original);
+    await waitForBodySource(inspector, original);
+    assert.equal(await bodyText(inspector), original);
     assert.equal(await notice.count(), 0);
     await viewer.selectOption("formatted");
     await notice.getByText(warning, { exact: true }).waitFor();
-    assert.equal(await preview.textContent(), formatted);
+    await waitForBodySource(inspector, formatted);
+    assert.equal(await bodyText(inspector), formatted);
     await viewer.focus();
     await viewer.press("Home");
     await viewer.press("Enter");

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { waitForBodySource, waitForBodyText } from "./check-body-source.mjs";
 
 async function checkTrafficMenuFocus(traffic) {
   const result = await traffic.evaluate(async (element) => {
@@ -572,8 +573,8 @@ async function checkTextMenus(page, root) {
   const menu = page.getByRole("menu", { name: "Copy inspection value", exact: true });
   await inspector.getByRole("button", { name: "Body", exact: true }).click();
   await inspector.getByLabel("Body viewer", { exact: true }).selectOption("original-text");
-  const preview = inspector.locator("pre.body-preview");
-  await preview.getByText("body for first", { exact: true }).waitFor();
+  const source = await waitForBodySource(inspector, "body for first");
+  const preview = source.locator(".source-code-host");
   for (const [width, height, zoom] of [
     [1440, 900, 1],
     [960, 720, 1],
@@ -620,7 +621,7 @@ async function checkTextMenus(page, root) {
       });
       await page.keyboard.press("Escape");
       assert.equal(
-        await preview.evaluate((element) => element === element.getRootNode().activeElement),
+        await source.evaluate((view) => view.editor.hasTextFocus()),
         true,
         "Body menu lost return focus",
       );
@@ -628,7 +629,7 @@ async function checkTextMenus(page, root) {
   }
   await page.evaluate(() => (document.documentElement.style.zoom = ""));
   await page.setViewportSize({ width: 1440, height: 900 });
-  await preview.focus();
+  await source.evaluate((view) => view.editor.focus());
   await page.keyboard.press("Shift+F10");
   await menu.getByRole("menuitem", { name: "Copy body preview", exact: true }).click();
   assert.equal(await page.evaluate(() => globalThis.__copied), "body for first");
@@ -652,6 +653,8 @@ async function checkTextMenus(page, root) {
     .locator(".body-notice")
     .getByText(/Encoding warning/)
     .waitFor();
+  await waitForBodyText(inspector, "retained text only");
+  await waitForBodySource(inspector);
   await preview.click({ button: "right" });
   await menu.getByRole("menuitem", { name: "Copy body preview", exact: true }).click();
   assert.equal(

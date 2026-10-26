@@ -619,6 +619,10 @@ pub struct BodyInspection {
     /// Safe text or byte-dump content. Presentation layers must assign this to
     /// `textContent`, never HTML.
     pub display: String,
+    /// The same bounded decoded text before formatting, independent of display
+    /// normalization and original retained bytes. Present only for formatted views;
+    /// original-text views already return this text in `display`.
+    pub original_text: Option<String>,
     /// Exact displayed bytes for byte-aware selection and lossless copying.
     /// Present for byte views and editable views, including editable text.
     pub bytes_base64: Option<String>,
@@ -914,6 +918,7 @@ pub(crate) async fn inspect_body(
             decoded: false,
             text_encoding: None,
             display: String::new(),
+            original_text: None,
             bytes_base64: None,
             byte_offset: request.offset,
             display_bytes: 0,
@@ -931,6 +936,7 @@ pub(crate) async fn inspect_body(
             decoded: false,
             text_encoding: None,
             display: String::new(),
+            original_text: None,
             bytes_base64: None,
             byte_offset: request.offset,
             display_bytes: 0,
@@ -952,6 +958,7 @@ pub(crate) async fn inspect_body(
             decoded: false,
             text_encoding: None,
             display: String::new(),
+            original_text: None,
             bytes_base64: None,
             byte_offset: request.offset,
             display_bytes: 0,
@@ -1028,6 +1035,9 @@ pub(crate) async fn inspect_body(
         request.offset,
     );
     let consumed = bytes.len();
+    let original_text = (representation == "formatted-json")
+        .then(|| decode_unicode(&bytes, metadata.charset.as_deref()))
+        .flatten();
     let next_offset = (!decoded
         && request.offset.saturating_add(consumed as u64) < metadata.retained_bytes)
         .then_some(request.offset.saturating_add(consumed as u64));
@@ -1037,6 +1047,7 @@ pub(crate) async fn inspect_body(
         decoded,
         text_encoding,
         display,
+        original_text,
         bytes_base64: (representation == "bytes"
             || request.representation == BodyRepresentation::Editable)
             .then(|| STANDARD.encode(&bytes)),

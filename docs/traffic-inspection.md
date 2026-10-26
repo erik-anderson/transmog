@@ -27,13 +27,35 @@ while compact windows retain the Request/Response switch.
 While Traffic is active, the shortcut works from list, inspector and app header
 controls, including focused buttons. Open menus and dialogs retain their keys,
 and text editors can handle the shortcut themselves.
-The search shortcuts **Ctrl+F** and **Ctrl+Shift+F** restore Traffic before
+Outside text editors, the search shortcuts **Ctrl+F** and **Ctrl+Shift+F** restore Traffic before
 focusing the filter or content search field.
 
 Body's status line identifies the representation, content decoding and displayed
 preview size. Significant preview limits, decoding warnings and unavailable-body
-reasons remain visible. **Body options** contains Decode and the preview byte
-limit in one disclosure. **Copy body preview** copies only the displayed evidence;
+reasons remain visible. **Body options** contains Decode, the preview byte
+limit, source language, wrapping and Find in one disclosure. Text previews up to
+1 MiB of UTF-8 use a
+read-only source editor with syntax highlighting, line numbers, folding and
+**Ctrl+F** to find text in the loaded preview. Language defaults to the message's
+MIME type; JSON, HTML, XML, CSS, JavaScript and Plain text can be chosen explicitly.
+Captured markup remains inert. Plain text stays usable while the editor loads;
+reading or selecting that fallback postpones the upgrade until focus and selection
+leave it. Choosing **Find** or **Show in source** proceeds despite an earlier
+fallback selection. Hidden editors release their models and restore reading
+position when shown again. These viewers are shared by Traffic and Composer responses.
+In compact panes, long explanation blocks have their own scroll area. Tab to
+them and use the arrow keys or End to read the rest; **Copy explanation** copies
+their complete wording.
+Larger loaded previews stay in a selectable, scrollable plain-text view with
+wrapping and source-copy actions. A visible notice explains the syntax limit;
+Find is disabled with an explanation in Body options. Lower Preview limit to
+use syntax highlighting, folding and Find. JSON Fields and Show in source remain
+available within their structured limits, with Show in source selecting text in
+the plain view when needed.
+
+The default preview reads at most 256 KiB; **Body options** can raise the limit
+to 16 MiB. **Copy body preview** copies the entire loaded representation, including
+folded and offscreen text;
 **Copy explanation** copies a warning or missing-body reason, and **Copy body
 metadata** identifies the metadata view. **Save as…** saves the full retained
 response with content decoding, independently of the displayed preview limit.
@@ -42,8 +64,23 @@ Auto formats JSON media types, including `+json`, when the preview contains a
 complete valid JSON value. Auto and **Formatted JSON** also recognize the exact
 anti-XSSI first lines `)]}'\n` and `)]}',\n` at the start of the decoded body
 (where `\n` denotes a newline). The formatted view omits that line and shows a
-notice. Other prefixes and invalid JSON keep Auto's normal fallback; **Text**,
+notice. Formatting preserves property order, duplicate keys and exact number and
+string tokens. **Copy original text preview** copies the same bounded decoded
+preview before formatting, including a recognized prefix. Other prefixes and
+invalid JSON keep Auto's normal fallback; **Text**,
 **Hex**, editing and **Save as…** preserve the prefix in the original body.
+
+Valid JSON offers **Source** and **Fields** beside the body viewer. Fields shows
+ordered properties, arrays, types and counts through the shared structured
+inspector. Selecting a field opens its details; **Show in source** selects its
+value in Source. Right-click a field or a reliably mapped source token for
+semantic copying, including **Copy as JSON** and unambiguous **Copy JSON Pointer**.
+See [copying inspection values](copying-inspection-values.md#json-body-fields).
+Choosing JSON language also enables Fields for valid JSON sent as another text
+MIME type. The structured preview has a 16 MiB UTF-8, 10,000-value and depth-32
+limit. A limit keeps the original text preview available. Malformed or incomplete
+previews keep source copying; a limited preview is identified as incomplete
+without claiming the complete retained body is invalid.
 
 Retained-body decoding accepts both zlib-wrapped and raw DEFLATE for
 `Content-Encoding: deflate`, including in protocol visualizers and saved response

@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 
 // A displayed byte must fit its viewport and every enclosing scroller.
 export function hexReachability(viewer, offset) {
-  const clipped = [];
+  // Client/offset dimensions are integral CSS pixels; rendered font metrics
+  // remain fractional. Permit their subpixel rounding without hiding a row.
+  const tolerance = 1,
+    clipped = [];
   const visible = (element) => {
     if (!element) return false;
     const rect = element.getBoundingClientRect();
@@ -31,10 +34,10 @@ export function hexReachability(viewer, offset) {
     const result =
       rect.width > 0 &&
       rect.height > 0 &&
-      rect.left >= left &&
-      rect.right <= right &&
-      rect.top >= top &&
-      rect.bottom <= bottom;
+      rect.left >= left - tolerance &&
+      rect.right <= right + tolerance &&
+      rect.top >= top - tolerance &&
+      rect.bottom <= bottom + tolerance;
     if (!result)
       clipped.push({
         element: element.className,
@@ -54,8 +57,8 @@ export function hexReachability(viewer, offset) {
     rows: viewer.hexRows.length,
     tailVisible:
       !!bounds &&
-      bounds.top >= viewport.top + rowHeight &&
-      bounds.bottom <= viewport.bottom &&
+      bounds.top >= viewport.top + rowHeight - tolerance &&
+      bounds.bottom <= viewport.bottom + tolerance &&
       visible(tail),
     viewport: viewport.toJSON(),
     tail: bounds?.toJSON(),

@@ -266,6 +266,7 @@ export interface BodyInspection {
   decoded: boolean;
   textEncoding: string | null;
   display: string;
+  originalText?: string | null;
   displayBytes: number;
   bytesBase64: string | null;
   byteOffset: number;

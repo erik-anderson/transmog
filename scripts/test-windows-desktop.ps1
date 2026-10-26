@@ -12,6 +12,7 @@ param(
     [switch]$WindowGeometryChecks,
     [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
+    [switch]$BodySourceChecks,
     [switch]$CapturedPageChecks,
     [switch]$TraceSaveChecks,
     [switch]$KeyRecoveryChecks,
@@ -35,6 +36,7 @@ if ($WindowGeometryChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCase
 if ($PortableCaseChecks -and ($StartupOnly -or $ViewerChecks -or $SoakMinutes)) { throw 'PortableCaseChecks is an isolated main-window flow.' }
 if ($PortableCaseChecks -and -not $ExecutablePath) { throw 'PortableCaseChecks requires an explicit desktop-test-fixtures build via ExecutablePath and SkipReleaseBuild.' }
 if ($ViewerChecks -and ($StartupOnly -or $SoakMinutes)) { throw 'ViewerChecks is a separate saved-file flow.' }
+if ($BodySourceChecks -and (-not $ViewerChecks -or $TraceSaveChecks -or $CapturedPageChecks -or $NativeTracePath)) { throw 'BodySourceChecks requires ViewerChecks and cannot be combined with other focused viewer flows.' }
 if ($CapturedPageChecks -and -not $ViewerChecks) { throw 'CapturedPageChecks requires ViewerChecks.' }
 if ($TraceSaveChecks -and (-not $ViewerChecks -or $NativeTracePath)) { throw 'TraceSaveChecks requires ViewerChecks and uses its isolated SAZ fixture.' }
 if ($KeyRecoveryChecks -and ($StartupOnly -or $ViewerChecks)) { throw 'KeyRecoveryChecks requires the main-window smoke checks.' }
@@ -370,6 +372,7 @@ try {
             if ($ScreenshotPath) { $viewerArguments += @('--screenshot', $ScreenshotPath) }
             if ($NativeTracePath) { $viewerArguments += @('--native-source', $NativeTracePath) }
             if ($TraceSaveChecks) { $viewerArguments += '--trace-save-only' }
+            if ($BodySourceChecks) { $viewerArguments += '--body-source-only' }
             & node @viewerArguments | ForEach-Object {
                 Write-Host $_
                 Save-DesktopMemorySample ([string]$_) | Out-Null
@@ -413,8 +416,9 @@ try {
         HighContrastVerified = -not $ViewerChecks
         HighDpiVerified = -not $ViewerChecks
         LocalizationLengthVerified = -not $ViewerChecks
-        ViewerFlowVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks)
-        TraceSaveProgressVerified = [bool]$ViewerChecks
+        ViewerFlowVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks -and -not $BodySourceChecks)
+        TraceSaveProgressVerified = [bool]($ViewerChecks -and -not $BodySourceChecks)
+        BodySourceVerified = [bool]($ViewerChecks -and -not $TraceSaveChecks)
         KeyRecoveryVerified = [bool]$KeyRecoveryChecks
         SoakMinutes = $SoakMinutes
         WorkingSetGrowthBytes = $endingWorkingSet - $startingWorkingSet

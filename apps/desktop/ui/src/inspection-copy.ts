@@ -15,6 +15,9 @@ export interface CopyRequest {
   actions: CopyAction[];
   current: () => boolean;
   note?: string | undefined;
+  /** Editor adapters provide a caret anchor and restore their own input focus. */
+  anchor?: { x: number; y: number };
+  restoreFocus?: () => void;
 }
 export function copyGesture(event: MouseEvent | KeyboardEvent): boolean {
   return (
@@ -43,7 +46,7 @@ export function requestCopy(
 /** Keep one property per line, retaining literal backslashes unambiguously. */
 export function copyScalar(value: string): string {
   // eslint-disable-next-line no-control-regex -- Escape captured control characters for single-line copying.
-  return value.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029]/g, (character) => {
+  return value.replace(/[\\\u0000-\u001f\u007f-\u009f\u2028\u2029\ud800-\udfff]/gu, (character) => {
     if (character === "\\") {
       return "\\\\";
     }

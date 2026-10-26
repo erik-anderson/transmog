@@ -3066,6 +3066,7 @@ mod tests {
                 .unwrap();
             assert_eq!(formatted.representation, "formatted-json");
             assert_eq!(formatted.display, "{\n  \"ok\": true\n}");
+            assert_eq!(formatted.original_text.as_deref(), Some(original.as_str()));
             assert!(formatted.warning.unwrap().contains("XSSI prefix omitted"));
             assert!(formatted.decoded);
             assert!(!formatted.truncated);
@@ -3078,6 +3079,7 @@ mod tests {
             assert_eq!(limited.representation, "original-text");
             assert!(limited.display.starts_with(prefix));
             assert!(limited.truncated);
+            assert_eq!(limited.original_text, None);
             assert_eq!(limited.warning, None);
 
             request.max_bytes = Some(1024);

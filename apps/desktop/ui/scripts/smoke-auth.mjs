@@ -213,8 +213,14 @@ try {
     .getByRole("button", { name: "Body", exact: true })
     .click();
   await response.getByLabel("Body viewer", { exact: true }).selectOption("original-text");
-  const body = response.locator("pre.body-preview");
-  await body.getByText(/access_token/).waitFor();
+  const body = response.locator("body-source-viewer"),
+    bodyHost = body.locator(".source-code-host");
+  await bodyHost.locator(":scope > .monaco-editor").waitFor();
+  assert.equal(
+    await body.evaluate((element) => element.model.getValue().includes("access_token")),
+    true,
+    "Native Auth source did not load the retained body into Monaco",
+  );
   for (const [width, height] of [
     [1440, 900],
     [960, 720],
@@ -229,14 +235,17 @@ try {
     const switcher = page.getByRole("button", { name: "Response", exact: true });
     if ((await switcher.count()) && (await switcher.first().isVisible()))
       await switcher.first().click();
-    const rect = await body.boundingBox(),
+    await bodyHost.locator(":scope > .monaco-editor").waitFor();
+    const rect = await bodyHost.boundingBox(),
       point = {
         x: Math.min(width - 12, rect.x + rect.width - 12),
         y: Math.min(height - 12, rect.y + rect.height - 12),
       };
     await page.mouse.click(point.x, point.y, { button: "right" });
     await menu.waitFor();
-    assert.deepEqual(await menu.getByRole("menuitem").allTextContents(), ["Copy body preview"]);
+    const bodyActions = await menu.getByRole("menuitem").allTextContents();
+    assert.ok(bodyActions.includes("Copy body preview"));
+    assert.equal(bodyActions.includes("Copy original text preview"), false);
     const box = await menu.boundingBox();
     assert.ok(
       box.x >= 0 && box.y >= 0 && box.x + box.width <= width && box.y + box.height <= height,
@@ -252,10 +261,7 @@ try {
     );
     await page.screenshot({ path: resolve(output, `copy-native-body-${width}.png`) });
     await page.keyboard.press("Escape");
-    assert.equal(
-      await body.evaluate((element) => element === element.getRootNode().activeElement),
-      true,
-    );
+    assert.equal(await body.evaluate((element) => element.editor.hasTextFocus()), true);
   }
   await cdp.send("Emulation.setDeviceMetricsOverride", {
     width: 1440,

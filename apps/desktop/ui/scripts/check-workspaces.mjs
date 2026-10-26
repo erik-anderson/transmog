@@ -23,6 +23,14 @@ import { checkResponseFiles } from "./check-response-files.mjs";
 import { checkResponseSetGuide } from "./check-response-set-guide.mjs";
 import { checkPreviewPrerequisites } from "./check-preview-prerequisites.mjs";
 import { checkBodyRefresh } from "./check-body-refresh.mjs";
+import {
+  checkBodySource,
+  checkJsonFields,
+  checkBodySourceBounds,
+  waitForBodySource,
+  waitForBodyText,
+  bodyText,
+} from "./check-body-source.mjs";
 import { checkBodyDecoding, checkXssiJson } from "./check-body-decoding.mjs";
 import { checkResponseSetPreview } from "./check-response-set-preview.mjs";
 import { checkTextEdits } from "./check-text-edits.mjs";
@@ -2906,7 +2914,9 @@ await page.addInitScript(
                     : metadata.mediaType === "application/octet-stream"
                       ? "bytes"
                       : "original-text"
-                : args.request.representation;
+                : args.request.representation === "formatted"
+                  ? "formatted-json"
+                  : args.request.representation;
             const bytes = composer
               ? state.composerBytes
               : (state.hexBytes ?? [0, 0x41, 0xff, 0x20]);
@@ -2919,6 +2929,7 @@ await page.addInitScript(
               representation,
               decoded: args.request.decodeContent && metadata.contentCodings.length > 0,
               textEncoding: "utf-8",
+              originalText: representation === "formatted-json" ? '{"fixture":true}' : null,
               display:
                 representation === "formatted-json"
                   ? '{\n  "fixture": true\n}'
@@ -4118,6 +4129,15 @@ const cancelRule = async () => {
   await discardIfAsked();
 };
 try {
+  if (process.argv.includes("--body-source-only")) {
+    await checkBodySource(page, root);
+    await checkJsonFields(page);
+    await checkBodySourceBounds(page);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("Body source navigation, copying, lifecycle and layouts verified.\n");
+    process.exit(0);
+  }
   if (process.argv.includes("--capture-tools-only")) {
     await page.goto("https://workspace.test/");
     await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
@@ -4566,6 +4586,7 @@ try {
     process.stdout.write("Network profile interactions and responsive layouts verified.\n");
     process.exit(0);
   }
+  const startupNavigationRequests = requests.length;
   await page.goto("https://workspace.test/");
   await page.waitForFunction(() =>
     document
@@ -4608,9 +4629,11 @@ try {
     )
     .map(([file]) => "/" + file.replace(/^dist\//, ""));
   assert.equal(
-    requests.some(
-      (path) => path === "/monaco.js" || path === "/monaco.css" || editorOutputs.includes(path),
-    ),
+    requests
+      .slice(startupNavigationRequests)
+      .some(
+        (path) => path === "/monaco.js" || path === "/monaco.css" || editorOutputs.includes(path),
+      ),
     false,
     "Monaco loaded at startup",
   );
@@ -4642,7 +4665,7 @@ try {
   await view("automation");
   await checkUserAgentOverrides(page, root);
   assert.equal(
-    requests.some((path) => path === "/monaco.js"),
+    requests.slice(startupRequests).some((path) => path === "/monaco.js"),
     false,
     "Response management eagerly loaded the script editor",
   );
@@ -5323,9 +5346,7 @@ try {
     .getByText("Auto · JSON", { exact: true })
     .waitFor({ state: "visible" });
   assert.match(
-    await page
-      .locator('traffic-workspace message-inspector[side="response"] .body-preview')
-      .textContent(),
+    await bodyText(page.locator('traffic-workspace message-inspector[side="response"]')),
     /"fixture": true/,
   );
   const requestHeaders = page.locator('traffic-workspace message-inspector[side="request"]');
@@ -5644,10 +5665,7 @@ try {
     "Late responses interrupted request editing",
   );
   const composerInspector = page.locator("composer-workspace message-inspector");
-  await composerInspector
-    .locator(".body-preview")
-    .getByText(/<script>/)
-    .waitFor({ state: "visible" });
+  await waitForBodyText(composerInspector, "<script>");
   assert.equal(
     await page.evaluate(() => globalThis.unsafeComposer),
     undefined,
@@ -6163,10 +6181,10 @@ try {
     Object.assign(state.sessions[0], { status: 200, terminal: "completed", responseBytes: 4 });
     state.channel.onmessage({ exchangeId: "first", sequence: 2, lagged: false });
   });
-  await page
-    .locator('traffic-workspace message-inspector[side="response"] .body-preview')
-    .getByText("body for first", { exact: true })
-    .waitFor({ state: "visible" });
+  await waitForBodyText(
+    page.locator('traffic-workspace message-inspector[side="response"]'),
+    "body for first",
+  );
   await checkTrafficFailures(page, resolve(root, "../../../target/ui-check"));
   await page.locator('tr[data-session-id="second"]').click();
   await page
@@ -7814,8 +7832,9 @@ try {
     .locator('traffic-workspace message-inspector[side="response"] .body-scroll')
     .boundingBox();
   assert.ok(smallPreview.height >= 48, "Small-window response preview has no usable space");
+  await waitForBodySource(page.locator('traffic-workspace message-inspector[side="response"]'));
   await page
-    .locator('traffic-workspace message-inspector[side="response"] .body-preview')
+    .locator('traffic-workspace message-inspector[side="response"] .source-code-host')
     .scrollIntoViewIfNeeded();
   assert.equal(
     await page.evaluate(
@@ -9819,6 +9838,9 @@ try {
   await checkBodyRefresh(page, root);
   await checkBodyDecoding(page);
   await checkXssiJson(page, root);
+  await checkBodySource(page, root);
+  await checkJsonFields(page);
+  await checkBodySourceBounds(page);
   await checkRequestOrder(page, root);
   await checkTrafficNavigation(page);
   await page.goto("https://workspace.test/");

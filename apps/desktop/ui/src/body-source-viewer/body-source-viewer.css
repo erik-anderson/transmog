@@ -1,0 +1,13 @@
+body-source-viewer { display:block; min-width:0; min-height:0; height:100%; }
+.body-source { display:flex; flex-direction:column; min-width:0; min-height:0; height:100%; overflow:hidden; background:var(--code); }
+.source-status { flex:none; max-height:35%; overflow:auto; margin:0; padding:.25rem .5rem; font-size:.73rem; color:var(--muted); overflow-wrap:anywhere; }
+.source-status:focus-visible { outline:2px solid var(--focus); outline-offset:-2px; }
+.source-content { position:relative; min-width:0; min-height:0; flex:1; overflow:hidden; }
+.source-code-host { position:absolute; inset:0; overflow:hidden; }
+.body-source .source-fallback { margin:0; padding:.65rem; height:100%; overflow:auto; white-space:pre-wrap; overflow-wrap:anywhere; font:.75rem/1.55 "Cascadia Mono",Consolas,monospace; user-select:text; }
+.body-source .source-fallback[data-nowrap] { white-space:pre; overflow-wrap:normal; }
+.source-overflow { position:relative; z-index:4; }
+.body-source > extension-visualizer { flex:1; min-height:0; }
+.body-source .json-fields .visualizer-tree { min-height:0; }
+/* The owning Body toolbar already identifies JSON/Fields and the read-only view. */
+.body-source .json-fields .visualizer-heading { display:none; }

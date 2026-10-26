@@ -1,4 +1,5 @@
 import type { ExtensionContribution } from "../extension-settings/models.js";
+import type { CopyAction } from "../inspection-copy.js";
 
 export type Presentation = "tree" | "table" | "text" | "hex";
 export interface VisualizerChoice {
@@ -33,12 +34,13 @@ export interface Format {
   units?: string | null;
 }
 export type Value =
-  | { kind: "string" | "integer" | "timestamp" | "guid"; value: string }
+  | { kind: "string" | "integer" | "number" | "timestamp" | "guid"; value: string }
   | { kind: "float"; value: number }
   | { kind: "boolean"; value: boolean }
   | { kind: "enum"; value: { name: string; raw: string } }
   | { kind: "flags"; value: { names: string[]; raw: string } }
-  | { kind: "bytes" | "object" | "array" };
+  | { kind: "object" | "array"; count?: number }
+  | { kind: "bytes" | "null" };
 export interface VisualizerNode {
   id: string;
   name: string;
@@ -85,7 +87,14 @@ export interface VisualizerDocument {
 export interface StructuredSnapshot {
   id: string;
   document: VisualizerDocument;
+  /** Host adapters apply producer semantics without granting an extension capability. */
+  copyActions?: (nodeId: string) => CopyAction[];
+  showSource?: (nodeId: string) => void;
+  /** Display-only text; node identity, values and copy semantics remain unchanged. */
+  nodePresentation?: NodePresentation;
+  about?: string;
 }
+export type NodePresentation = (nodeId: string) => { name?: string; value?: string } | undefined;
 export interface LiveStatus {
   available: boolean;
   enabled: boolean;
@@ -145,9 +154,11 @@ export function valueText(value: Value | null | undefined): string {
     case "bytes":
       return "Bytes";
     case "object":
-      return "Object";
+      return value.count === undefined ? "Object" : `Object · ${value.count} fields`;
     case "array":
-      return "Array";
+      return value.count === undefined ? "Array" : `Array · ${value.count} items`;
+    case "null":
+      return "null";
     case "enum":
       return `${value.value.name} (${value.value.raw})`;
     case "flags":
@@ -213,6 +224,7 @@ export function treeRows(
   expanded: Set<string>,
   selected: string,
   prefix: string,
+  presentation?: NodePresentation,
 ): TreeRow[] {
   const rows: TreeRow[] = [];
   const visit = (
@@ -223,7 +235,9 @@ export function treeRows(
     setSize: number,
   ): void => {
     const expandable = !!(node.children.length || node.childrenToken),
-      open = expanded.has(node.id);
+      open = expanded.has(node.id),
+      display = presentation?.(node.id),
+      name = display?.name ?? node.name;
     rows.push({
       id: node.id,
       domId: prefix + "-" + node.id,
@@ -233,14 +247,14 @@ export function treeRows(
       setSize,
       indent: (level - 1) * 16 + "px",
       top: rows.length * 26 + "px",
-      name: node.name,
-      value: valueText(node.value).slice(0, 512),
+      name,
+      value: (display?.value ?? valueText(node.value)).slice(0, 512),
       format: formatText(node.format),
       expandable,
       expanded: open,
       expandedState: expandable ? String(open) : null,
       selected: selected === node.id,
-      toggleLabel: (open ? "Collapse " : "Expand ") + node.name,
+      toggleLabel: (open ? "Collapse " : "Expand ") + name,
     });
     if (open) {
       node.children.forEach((child, i) =>
@@ -266,8 +280,9 @@ export interface TableRow {
 export function tablePage(
   node: VisualizerNode,
   page: number,
+  presentation?: NodePresentation,
 ): {
-  columns: Array<{ id: string; name: string }>;
+  columns: Array<{ id: string; name: string; rawName?: string }>;
   rows: TableRow[];
   text: string;
   previous: boolean;
@@ -275,7 +290,7 @@ export function tablePage(
   limited: boolean;
 } {
   const structured = node.children.some((child) => child.children.length);
-  const columns: Array<{ id: string; name: string }> = [];
+  const columns: Array<{ id: string; name: string; rawName?: string }> = [];
   if (
     !structured ||
     node.children.some((child) => child.value && !["object", "array"].includes(child.value.kind))
@@ -300,7 +315,11 @@ export function tablePage(
             continue;
           }
           keys.add(id);
-          columns.push({ id, name: field.name });
+          columns.push({
+            id,
+            name: presentation?.(field.id)?.name ?? field.name,
+            rawName: field.name,
+          });
         }
       }
     }
@@ -327,12 +346,19 @@ export function tablePage(
       const field = column.id === "value" ? row : values.get(column.id);
       return {
         nodeId: field?.id ?? "",
-        name: column.id === "value" ? row.name : column.name,
-        value: valueText(field?.value).slice(0, 512),
+        name: column.id === "value" ? row.name : (column.rawName ?? column.name),
+        value: (
+          (field ? presentation?.(field.id)?.value : undefined) ?? valueText(field?.value)
+        ).slice(0, 512),
         full: null,
       };
     });
-    return { id: row.id, name: row.name, cells: copyCells.map((cell) => cell.value), copyCells };
+    return {
+      id: row.id,
+      name: presentation?.(row.id)?.name ?? row.name,
+      cells: copyCells.map((cell) => cell.value),
+      copyCells,
+    };
   });
   return {
     columns,

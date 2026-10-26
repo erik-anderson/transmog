@@ -9,6 +9,7 @@ import "./trace-drop-target/trace-drop-target.js";
 import "./app-shell/app-shell.js";
 import "./traffic-workspace/traffic-workspace.js";
 import "./message-inspector/message-inspector.js";
+import "./body-source-viewer/body-source-viewer.js";
 import "./auth-inspector/auth-inspector.js";
 import "./extension-visualizer/extension-visualizer.js";
 import "./hex-viewer/hex-viewer.js";

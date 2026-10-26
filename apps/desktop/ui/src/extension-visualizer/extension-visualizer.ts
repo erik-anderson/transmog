@@ -776,13 +776,25 @@ export class ExtensionVisualizer extends WebUIElement {
   }
   private updateRows(revealSelection = false): void {
     this.allRows = this.root
-      ? treeRows(this.root, this.expanded, this.selected, this.rendererId)
+      ? treeRows(
+          this.root,
+          this.expanded,
+          this.selected,
+          this.rendererId,
+          this.snapshot?.nodePresentation,
+        )
       : [];
     if (revealSelection && this.root && !this.allRows.some((row) => row.selected)) {
       for (const ancestor of nodeAncestors(this.root, this.selected)) {
         this.expanded.add(ancestor);
       }
-      this.allRows = treeRows(this.root, this.expanded, this.selected, this.rendererId);
+      this.allRows = treeRows(
+        this.root,
+        this.expanded,
+        this.selected,
+        this.rendererId,
+        this.snapshot?.nodePresentation,
+      );
     }
     this.visualizerCanvasHeight = this.allRows.length * 26 + "px";
     this.windowRows();
@@ -873,8 +885,9 @@ export class ExtensionVisualizer extends WebUIElement {
     const sameSpans =
       JSON.stringify(node.spans) ===
       JSON.stringify(this.visualizerSpans.map(({ id: _id, label: _label, ...span }) => span));
-    this.visualizerSelectedName = node.name;
-    this.visualizerValue = valueText(node.value);
+    const display = this.snapshot?.nodePresentation?.(node.id);
+    this.visualizerSelectedName = display?.name ?? node.name;
+    this.visualizerValue = display?.value ?? valueText(node.value);
     this.visualizerFormat = formatText(node.format);
     if (!preserveMode) {
       this.visualizerMode =
@@ -888,7 +901,7 @@ export class ExtensionVisualizer extends WebUIElement {
       ...span,
       label: `${this.visualizerSources.find((source) => source.id === span.sourceId)?.name ?? span.sourceId} · offset ${span.offset} · ${span.length} bytes`,
     }));
-    this.visualizerTable = tablePage(node, this.tableOffset);
+    this.visualizerTable = tablePage(node, this.tableOffset, this.snapshot?.nodePresentation);
     if (retainHex && sameSpans && this.visualizerMode === "hex") {
       return;
     }
@@ -1040,6 +1053,9 @@ export class ExtensionVisualizer extends WebUIElement {
   copySelected(event: MouseEvent | KeyboardEvent): void {
     this.copyNode(this.selected, event);
   }
+  showNativeSource(): void {
+    this.snapshot?.showSource?.(this.selected);
+  }
   copyCell(
     cell: { nodeId: string; name: string; full: string | null },
     event: MouseEvent | KeyboardEvent,
@@ -1078,7 +1094,7 @@ export class ExtensionVisualizer extends WebUIElement {
       requestCopy(event, {
         source: event.currentTarget as HTMLElement,
         current,
-        actions: [
+        actions: snapshot.copyActions?.(id) ?? [
           ...(hasCopyValue(node)
             ? fieldCopyActions(node.name, () => valueText(node.value))
             : [nameCopyAction(node.name)]),
@@ -1143,7 +1159,7 @@ export class ExtensionVisualizer extends WebUIElement {
     const node = this.nodes.get(this.selected);
     if (node) {
       this.tableOffset = Math.max(0, this.tableOffset + delta);
-      this.visualizerTable = tablePage(node, this.tableOffset);
+      this.visualizerTable = tablePage(node, this.tableOffset, this.snapshot?.nodePresentation);
     }
   }
   showSpan(span: Span): void {
