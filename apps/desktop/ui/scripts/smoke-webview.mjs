@@ -572,6 +572,40 @@ try {
     shell.shadowRoot.querySelector('a[data-view="traffic"]').click();
     return {savedDefault:true,draftPreserved:true};
   })()`);
+  result.captureTools = await evaluate(`(async()=>{
+    const shell=document.querySelector('app-shell'),root=shell.shadowRoot;
+    root.querySelector('a[data-view="captures"]').click();
+    const captureDeadline=Date.now()+5000;
+    while(shell.activeView!=='captures'){
+      if(Date.now()>captureDeadline)throw new Error('Capture tools did not open');
+      await new Promise(resolve=>setTimeout(resolve,20));
+    }
+    const workspace=root.querySelector('capture-workspace');
+    const task=name=>Array.from(workspace.querySelectorAll('.capture-tabs button')).find(button=>button.textContent===name);
+    task('Convert').click();workspace.$flushUpdates();
+    const source=workspace.exportForm.elements.namedItem('source'),destination=workspace.exportForm.elements.namedItem('destination');
+    if(source.value||destination.value)throw new Error('Conversion starts with a fictional path');
+    workspace.exportForm.querySelector('button[type="submit"]').click();
+    if(!source.validity.valueMissing||root.activeElement!==source||workspace.captureBusy)throw new Error('Empty conversion was not blocked at the source: '+JSON.stringify({missing:source.validity.valueMissing,focused:root.activeElement===source,busy:workspace.captureBusy,visible:source.getClientRects().length>0}));
+    task('Export').click();workspace.$flushUpdates();
+    if(source.getClientRects().length)throw new Error('Export still displays file conversion');
+    const open=Array.from(workspace.querySelectorAll('button')).find(button=>button.textContent==='Open Traffic Files');
+    const previousError=workspace.captureError;
+    try {
+      workspace.captureError='Capture status unavailable: native focus probe';workspace.$flushUpdates();
+      workspace.querySelector('[aria-label="Dismiss capture error"]').click();
+      if(root.activeElement!==open)throw new Error('Dismissing an Export error left focus hidden');
+    } finally {workspace.captureError=previousError;workspace.$flushUpdates();}
+    open.click();
+    const deadline=Date.now()+5000;
+    while(shell.activeView!=='traffic'||!shell.traffic.filesMenu.matches(':popover-open')){
+      if(Date.now()>deadline)throw new Error('Export did not open Traffic Files');
+      await new Promise(resolve=>setTimeout(resolve,20));
+    }
+    if(root.activeElement!==shell.traffic.filesMenuButton)throw new Error('Export navigation left focus hidden');
+    shell.traffic.filesMenu.hidePopover();
+    return {emptySource:true,emptyDestination:true,validation:true,trafficFiles:true,visibleFocus:true,exportErrorFocus:true};
+  })()`);
   if (screenshotPath !== undefined) {
     const screenshot = await call("Page.captureScreenshot", {
       format: "png",

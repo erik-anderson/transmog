@@ -1,3 +1,4 @@
+import { checkCaptureTools } from "./check-capture-tools.mjs";
 import { checkResponseSetFollowups } from "./check-response-set-followups.mjs";
 import { checkFormatConverter } from "./check-format-converter.mjs";
 import { checkRequestControls } from "./check-request-controls.mjs";
@@ -3855,8 +3856,8 @@ await page.addInitScript(
               state.captureStatusPending = true;
               await new Promise((resolve) => (state.releaseCaptureStatus = resolve));
               delete state.deferCaptureStatus;
-              if (state.captureStatusError) throw new Error("Fixture stale capture status failed");
             }
+            if (state.captureStatusError) throw new Error("Fixture capture status failed");
             return status;
           }
           case "start_capture":
@@ -3900,6 +3901,7 @@ await page.addInitScript(
               notes: ["Interrupted tail; valid prefix recovered"],
             };
           case "export_capture":
+            if (state.captureExportError) throw new Error("Fixture source file could not be read");
             state.lastCaptureExport = structuredClone(args.request);
             return {
               destination: args.request.destination,
@@ -4116,6 +4118,32 @@ const cancelRule = async () => {
   await discardIfAsked();
 };
 try {
+  if (process.argv.includes("--capture-tools-only")) {
+    await page.goto("https://workspace.test/");
+    await page.waitForFunction(() => document.querySelector("app-shell").traffic.queryLoaded);
+    await page
+      .locator("#traffic")
+      .getByLabel("Filter or search traffic", { exact: true })
+      .fill("example.test");
+    await page.waitForFunction(() => {
+      const traffic = document.querySelector("app-shell").traffic;
+      return (
+        traffic.liveFilter === "example.test" &&
+        !traffic.queryPending &&
+        traffic.sessions.length >= 2
+      );
+    });
+    const rows = page.locator("#traffic tr[data-session-id]");
+    await rows.nth(0).click();
+    await rows.nth(1).click({ modifiers: ["Control"] });
+    await page.waitForFunction(
+      () => document.querySelector("app-shell").traffic.selectedTrafficCount === 2,
+    );
+    await checkCaptureTools(page, root, view);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.exit(0);
+  }
   if (process.argv.includes("--traffic-perf-only")) {
     const index = process.argv.indexOf("--perf-output");
     await checkTrafficPerformance(page, index >= 0 ? process.argv[index + 1] : undefined);
@@ -7488,6 +7516,7 @@ try {
   });
   await view("captures");
   const captures = page.locator("capture-workspace");
+  await checkCaptureTools(page, root, view);
   const focusBounds = await captures
     .getByLabel("Traffic to record", { exact: true })
     .evaluate((input) => ({
@@ -7663,6 +7692,7 @@ try {
     .locator(".capture-tabs")
     .getByRole("button", { name: "Inspect / recover", exact: true })
     .click();
+  await captures.getByLabel("Trace file", { exact: true }).fill("session.tmcap");
   await captures.getByRole("button", { name: "Inspect trace metadata", exact: true }).click();
   await captureIdle();
   const inspectedSource = await captures.getByLabel("Trace file", { exact: true }).inputValue();
@@ -7687,25 +7717,23 @@ try {
     /Interrupted tail; valid prefix recovered/,
   );
   await captures.getByLabel("Trace file", { exact: true }).fill("uninspected.tmcap");
-  await captures
-    .getByRole("button", { name: "Convert/export inspected trace…", exact: true })
-    .click();
+  await captures.getByRole("button", { name: "Convert inspected trace…", exact: true }).click();
   assert.equal(
-    await captures.getByLabel("Source capture", { exact: true }).inputValue(),
+    await captures.getByLabel("Source file (.tmcap)", { exact: true }).inputValue(),
     "C:/captures/" + inspectedSource,
     "Recovery used an edited filename instead of the inspected capture",
   );
   assert.equal(
-    await captures.getByLabel("New export file", { exact: true }).inputValue(),
-    "C:/captures/session.exported.tmcap",
+    await captures.getByLabel("Destination file", { exact: true }).inputValue(),
+    "C:/captures/session.converted.tmcap",
   );
   await captures.getByLabel("Format", { exact: true }).selectOption("json-lines");
   assert.equal(
-    await captures.getByLabel("New export file", { exact: true }).inputValue(),
-    "C:/captures/session.exported.jsonl",
+    await captures.getByLabel("Destination file", { exact: true }).inputValue(),
+    "C:/captures/session.converted.jsonl",
   );
   await captures.getByLabel("Redact sensitive header values in this copy", { exact: true }).check();
-  await captures.getByRole("button", { name: "Export file", exact: true }).click();
+  await captures.getByRole("button", { name: "Convert file", exact: true }).click();
   await captureIdle();
   assert.equal(
     await page.evaluate(

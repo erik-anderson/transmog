@@ -26,6 +26,7 @@ export class CaptureWorkspace extends WorkspaceElement {
   @attr view = "traffic";
   @attr lifecycle = "stopped";
   @observable captureTask = "record";
+  @observable captureTaskPressed: Record<string, string> = initialState.captureTaskPressed;
   @observable recordingContent = "headers";
   @observable captureWaiting = false;
   private recordingCanceled = false;
@@ -79,6 +80,8 @@ export class CaptureWorkspace extends WorkspaceElement {
   captureForm!: HTMLFormElement;
   inspectionForm!: HTMLFormElement;
   exportForm!: HTMLFormElement;
+  recordTaskButton!: HTMLButtonElement;
+  trafficFilesButton!: HTMLButtonElement;
   private bodyChoiceTouched = false;
   private defaultRevision = 0;
   recordBodiesChanged(event: Event): void {
@@ -136,7 +139,13 @@ export class CaptureWorkspace extends WorkspaceElement {
   }
   showCaptureTask(task: string): void {
     this.captureTask = task;
+    this.captureTaskPressed = Object.fromEntries(
+      Object.keys(initialState.captureTaskPressed).map((name) => [name, String(name === task)]),
+    );
     this.captureError = "";
+  }
+  openTrafficFiles(): void {
+    this.$emit("traffic-files-request", undefined);
   }
   private renderCapture(status: CaptureReadModel): void {
     this.captureActive = status.state === "active";
@@ -191,7 +200,7 @@ export class CaptureWorkspace extends WorkspaceElement {
     });
   }
   async chooseExportSource(): Promise<void> {
-    await this.runCapture("Could not open export source", async () => {
+    await this.runCapture("Could not choose source file", async () => {
       const path = await invoke<string | null>("pick_capture_path", {
         kind: "source",
         format: null,
@@ -359,25 +368,30 @@ export class CaptureWorkspace extends WorkspaceElement {
     const source = this.inspectedPath;
     (this.exportForm.elements.namedItem("source") as HTMLInputElement).value = source;
     (this.exportForm.elements.namedItem("destination") as HTMLInputElement).value =
-      source.replace(/\.tmcap$/i, "") + ".exported.tmcap";
+      source.replace(/\.tmcap$/i, "") + ".converted.tmcap";
     (this.exportForm.elements.namedItem("format") as HTMLSelectElement).value = "native";
     this.exportExtension = "tmcap";
     this.exportCanEncrypt = true;
-    this.captureTask = "export";
+    this.showCaptureTask("convert");
+    this.$flushUpdates();
+    (this.exportForm.elements.namedItem("source") as HTMLInputElement).focus();
   }
   async exportCapture(event: Event): Promise<void> {
     event.preventDefault();
-    await this.runCapture("Capture export failed", async () => {
+    if (!this.exportForm.reportValidity()) {
+      return;
+    }
+    await this.runCapture("File conversion failed", async () => {
       const data = new FormData(this.exportForm);
       const password =
         data.get("encrypt") === "on"
-          ? await this.promptTracePassword("Encrypt export", true)
+          ? await this.promptTracePassword("Encrypt converted file", true)
           : null;
       if (data.get("encrypt") === "on" && password === null) {
-        this.captureText = "Export canceled.";
+        this.captureText = "Conversion canceled.";
         return;
       }
-      const report = await this.withTracePassword("Open source capture", (sourcePassword) =>
+      const report = await this.withTracePassword("Open source file", (sourcePassword) =>
         invoke<CaptureExportResult>("export_capture", {
           request: {
             password,
@@ -390,7 +404,7 @@ export class CaptureWorkspace extends WorkspaceElement {
         }),
       );
       if (report === null) {
-        this.captureText = "Export canceled.";
+        this.captureText = "Conversion canceled.";
         return;
       }
       this.captureFacts = [
@@ -408,18 +422,19 @@ export class CaptureWorkspace extends WorkspaceElement {
         },
       ];
       this.captureDetails = JSON.stringify(report, null, 2);
-      this.captureText = "Export saved to a new file.";
+      this.captureText = "Converted copy saved to a new file.";
     });
   }
   dismissCaptureError(): void {
     this.captureError = "";
-    const form =
-      this.captureTask === "record"
-        ? this.captureForm
-        : this.captureTask === "inspect"
-          ? this.inspectionForm
-          : this.exportForm;
-    (form.elements.namedItem("source") as HTMLInputElement | null)?.focus();
+    if (this.captureTask === "record") {
+      this.recordTaskButton.focus();
+    } else if (this.captureTask === "export") {
+      this.trafficFilesButton.focus();
+    } else {
+      const form = this.captureTask === "inspect" ? this.inspectionForm : this.exportForm;
+      (form.elements.namedItem("source") as HTMLInputElement).focus();
+    }
   }
   disconnectedCallback(): void {
     this.recordingCanceled = true;

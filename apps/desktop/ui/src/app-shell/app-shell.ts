@@ -677,6 +677,12 @@ export class AppShell extends WebUIElement {
       void this.activateView(event.detail);
     }
   }
+  async openTrafficFiles(): Promise<void> {
+    if (await this.activateView("traffic")) {
+      this.traffic.filesMenuButton.focus();
+      this.traffic.filesMenuButton.click();
+    }
+  }
   async onTraceImport(event: CustomEvent<{ paths: string[] }>): Promise<void> {
     event.stopPropagation();
     if (await this.activateView("traffic")) {

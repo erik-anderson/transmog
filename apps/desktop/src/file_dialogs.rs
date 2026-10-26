@@ -37,9 +37,9 @@ pub(crate) async fn pick_capture_path(
                 ExportFormat::SazStrict | ExportFormat::SazExtended => ("SAZ archive", "saz"),
             };
             dialog
-                .set_title("Choose a new export file")
+                .set_title("Choose a destination for the converted file")
                 .add_filter(label, &[extension])
-                .set_file_name(format!("session.exported.{extension}"))
+                .set_file_name(format!("session.converted.{extension}"))
                 .save_file()
                 .await
         }

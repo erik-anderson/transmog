@@ -110,8 +110,17 @@ observations; SAZ conversion reports its compatibility limitations.
 **Capture tools → Inspect / recover** offers a trace drop target and picker that import
 into Traffic, plus a separate **Import trace** button for a typed source path.
 **Inspect trace metadata** reads the file's original context and shows its full
-path without adding Traffic entries. **Capture tools → Convert / export** converts native
-files to TMCap, JSONL or SAZ and suggests filenames containing `exported`.
+path without adding Traffic entries. Source paths start empty; browse for an existing
+trace or enter its path before inspecting or converting.
+
+**Capture tools → Convert** creates a new file from a saved TMCap file in TMCap,
+JSON lines or SAZ format. Choose a source file and an unused destination;
+**Convert inspected trace…** carries over the inspected path and suggests a
+filename containing `converted`. Conversion leaves the source unchanged.
+
+**Capture tools → Export** explains how to save captured or imported Traffic
+through **Traffic → Files → Save copy…**. **Open Traffic Files** goes to Traffic
+and opens that menu, preserving the current selection and filters.
 
 Imports bound the index for each source and the combined index and metadata
 across merged files. Publication is atomic: rejected files add neither partial

@@ -1416,6 +1416,12 @@
   "composerSourceAvailable": false,
   "bodyHexMode": false,
   "captureTask": "record",
+  "captureTaskPressed": {
+    "record": "true",
+    "inspect": "false",
+    "convert": "false",
+    "export": "false"
+  },
   "traceDragActive": false,
   "pickingTrace": false,
   "captureError": "",

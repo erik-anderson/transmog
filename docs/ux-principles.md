@@ -63,6 +63,8 @@ when changing the experience.
 - Show recovery and risk acknowledgements when relevant. Name counts for what
   they count, with human-readable units and outcomes. Keep opaque identifiers
   available as technical detail.
+- Distinguish exporting current Traffic from converting a saved file. Source
+  inputs start empty; examples and hints must never act as selected file paths.
 - Explain copy and export consequences beside the action. A clear action label
   and concise disclosure are sufficient for routine saves; avoid redundant
   acknowledgement checkboxes. Describe capture limitations without implying

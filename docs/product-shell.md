@@ -172,10 +172,10 @@ or SAZ, or HAR output for HTTP archive interchange. SAZ offers compatibility and
 extended-fidelity choices. File-only recording and conversion are in Capture tools.
 Inspect / recover offers a drop/picker target and Import trace action that bring
 TMCap, SAZ or HAR files into Traffic. Inspect trace metadata reads the original
-context and displays the full path without importing entries. Convert / export
-converts native recordings, using `exported` in suggested filenames. Record to file
-chooses a
-destination before starting its proxy and writes requests directly to that file
+context and displays the full path without importing entries. Convert takes a saved
+TMCap file and creates a converted copy; file paths start empty. Export explains
+**Traffic → Files → Save copy…** and offers a shortcut to that menu. Record to file
+chooses a destination before starting its proxy and writes requests directly to that file
 without retaining them in Traffic. Switching from live capture waits for active
 requests to finish and offers cancellation while waiting. Choose Headers only
 or Headers and bodies. Stop recording seals the file and restores
