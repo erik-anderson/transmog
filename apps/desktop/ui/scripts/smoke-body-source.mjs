@@ -194,6 +194,18 @@ export async function smokeBodySource(viewer, traffic, directory, screenshotPath
     assert.equal(initial.language, "json");
     assert.equal(initial.readonly, true);
     assert.equal(initial.fallbackHidden, true);
+    await wait(`${source}.editorHost.querySelector('.codicon-folding-expanded')`, "folding arrows");
+    const iconFont = await evaluate(`(async()=>{
+        const icon=${source}.editorHost.querySelector('.codicon');
+        const style=getComputedStyle(icon,'::before');
+        const faces=await document.fonts.load('16px codicon',style.content);
+        return {family:style.fontFamily,content:style.content,faces:faces.map(face=>({family:face.family,status:face.status}))};
+      })()`);
+    assert.match(iconFont.family, /codicon/);
+    assert.ok(
+      iconFont.faces.some((face) => face.family === "codicon" && face.status === "loaded"),
+      "Native Monaco icon font is unavailable: " + JSON.stringify(iconFont),
+    );
     assert.equal(initial.decoded, true);
     assert.equal(
       initial.display.match(/"duplicate"/g)?.length,

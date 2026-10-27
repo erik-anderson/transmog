@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 
 export async function checkResponseBodyEditor(page, root) {
   const form = page.locator(".auto-response-editor"),
@@ -171,6 +172,7 @@ export async function checkResponseBodyEditor(page, root) {
       text,
       `${language} formatting did not change unformatted content`,
     );
+    if (language === "json") await checkMonacoIcons(dialog.locator(".body-code-host"));
     await focus();
     await page.keyboard.press("Control+z");
     await page.waitForFunction(

@@ -40,6 +40,7 @@ import { checkResponseBodyEditor } from "./check-response-body-editor.mjs";
 import { checkBinaryResponse } from "./check-binary-response.mjs";
 import { checkMatchingTests, checkMatchingSelectionRace } from "./check-matching-tests.mjs";
 import { checkScripts } from "./check-scripts.mjs";
+import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 import { checkAutoResponseDragging } from "./check-autoresponse-dragging.mjs";
 import { checkTrafficFilters } from "./check-traffic-filters.mjs";
 import { checkTrafficAdvanced } from "./check-traffic-advanced.mjs";
@@ -139,7 +140,7 @@ const resources = new Map(
   ),
 );
 resources.set("/document.css", {
-  file: resolve(root, "src/document.css"),
+  body: await readFile(resolve(root, "dist/document.css")),
   contentType: "text/css",
 });
 resources.set("/transmog-icon.svg", {
@@ -7501,6 +7502,7 @@ try {
     () =>
       document.querySelector("app-shell").shadowRoot.querySelector("paused-exchange")?.editorReady,
   );
+  await checkMonacoIcons(page.locator("paused-exchange .monaco-editor-host"));
   await page.setViewportSize({ width: 760, height: 520 });
   await page.locator('tr[data-decision-id="1"]').click();
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/breakpoints-small.png") });

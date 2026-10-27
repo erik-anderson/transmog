@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 
 export async function checkScripts(page, root) {
   const scripts = page.locator("script-editor");
@@ -18,6 +19,7 @@ export async function checkScripts(page, root) {
   const fixture = async (values) =>
     page.evaluate((values) => Object.assign(globalThis.__workspaceFixture, values), values);
   await waitIdle();
+  await checkMonacoIcons(scripts.locator(".monaco-editor-host").first());
   assert.deepEqual(
     await scripts.evaluate(async (editor) => {
       const { getTypeScriptWorker } = await import("/monaco.js");
@@ -264,6 +266,7 @@ export async function checkScripts(page, root) {
   await scripts.getByRole("button", { name: "More", exact: true }).click();
   await scripts.getByRole("button", { name: "Compare with active", exact: true }).click();
   await waitIdle();
+  await checkMonacoIcons(scripts.locator(".diff-editor"));
   assert.match(await scripts.locator(".script-settings-diff").textContent(), /writeHeaders/);
   await append("\n// comparison is now old");
   assert.equal(await scripts.evaluate((editor) => editor.diffStale), true);

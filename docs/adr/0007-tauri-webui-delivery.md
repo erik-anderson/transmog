@@ -47,8 +47,10 @@ Use Tauri with WebView2 on Windows and Microsoft WebUI behind a local adapter.
   internal policy requests, permits HTML only for the pinned local editor
   renderer, and restricts worker script URLs to app-owned same-origin
   `/monaco-*` assets. Monaco's runtime-generated CSS and bundled data-font are
-  the only reasons `style-src 'unsafe-inline'` and `font-src data:` are present;
-  inline scripts and evaluation remain forbidden. Serve no remote
+  the only reasons `style-src 'unsafe-inline'` and `font-src data:` are present.
+  The font face is declared in bundled document CSS so Chromium can use it inside
+  editor shadow roots, while editor styles and scripts remain lazy.
+  Inline scripts and evaluation remain forbidden. Serve no remote
   subresources, allow navigation only to the custom application origin that
   Tauri exposes on the current platform, and deny WebView-initiated popups.
   App commands own separate capture viewers and isolated preview windows.

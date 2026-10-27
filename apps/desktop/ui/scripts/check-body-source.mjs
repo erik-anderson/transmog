@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
+import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 
 export async function waitForBodySource(inspector, expected) {
   const source = inspector.locator("body-source-viewer");
@@ -117,6 +118,7 @@ export async function checkBodySource(page, root) {
     );
     await inspector.getByLabel("Body viewer", { exact: true }).focus();
     const source = await waitForBodySource(inspector, formatted);
+    await checkMonacoIcons(source.locator(".source-code-host"));
     await page.unroute("**/monaco.css");
     await source.evaluate((v) => v.editor.setScrollTop(0));
     assert.equal(await source.evaluate((v) => v.model.getLanguageId()), "json");
@@ -251,6 +253,33 @@ export async function checkBodySource(page, root) {
       before,
     );
     assert.equal(await page.evaluate(() => globalThis.sourceExecuted), undefined);
+    await source.evaluate(async (v) => {
+      v.editor.setPosition({ lineNumber: 1, column: 1 });
+      v.editor.setScrollTop(0);
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+    });
+    const expanded = source.locator(".margin-view-overlays .codicon-folding-expanded").first();
+    await expanded.hover();
+    await page.waitForFunction(
+      (icon) => getComputedStyle(icon).opacity === "1",
+      await expanded.elementHandle(),
+    );
+    const downArrow = await expanded.evaluate((icon) => getComputedStyle(icon, "::before").content);
+    await page.screenshot({ path: resolve(root, "../../../target/ui-check/monaco-icons.png") });
+    await expanded.click();
+    const collapsed = source.locator(".margin-view-overlays .codicon-folding-collapsed").first();
+    await collapsed.waitFor();
+    assert.notEqual(
+      await collapsed.evaluate((icon) => getComputedStyle(icon, "::before").content),
+      downArrow,
+      "Collapsing a range did not change its arrow",
+    );
+    await page.screenshot({
+      path: resolve(root, "../../../target/ui-check/monaco-icons-collapsed.png"),
+    });
+    await collapsed.click();
+    await collapsed.waitFor({ state: "detached" });
+    await expanded.waitFor();
     await mkdir(resolve(root, "../../../target/body-source"), { recursive: true });
     for (const [width, height] of [
       [1440, 900],
@@ -288,7 +317,25 @@ export async function checkBodySource(page, root) {
         path: resolve(root, `../../../target/body-source/browser-${width}.png`),
       });
     }
+    for (const [theme, media, className] of [
+      ["dark", { colorScheme: "dark" }, "vs-dark"],
+      ["forced-colors", { forcedColors: "active" }, "hc-black"],
+    ]) {
+      await page.emulateMedia(media);
+      await source.locator(`.monaco-editor.${className}`).waitFor();
+      await checkMonacoIcons(source.locator(".source-code-host"));
+      const arrow = source.locator(".margin-view-overlays .codicon-folding-expanded").first();
+      await arrow.hover();
+      await page.waitForFunction(
+        (icon) => getComputedStyle(icon).opacity === "1",
+        await arrow.elementHandle(),
+      );
+      await page.screenshot({
+        path: resolve(root, `../../../target/body-source/browser-icons-${theme}.png`),
+      });
+    }
   } finally {
+    await page.emulateMedia({ colorScheme: "light", forcedColors: "none" });
     await page.setViewportSize(viewport);
     await page.goto("https://workspace.test/");
   }

@@ -141,7 +141,16 @@ await writeFile(
     2,
   ) + "\n",
 );
-await copyFile(join(workingDirectory, "src/document.css"), join(outputDirectory, "document.css"));
+// Font faces must be document-scoped to reach editors inside shadow roots.
+// Inline the installed Monaco font under the existing font-src data: policy.
+await esbuild.build({
+  absWorkingDir: workingDirectory,
+  entryPoints: ["src/document.css"],
+  outfile: join(outputDirectory, "document.css"),
+  bundle: true,
+  minify: true,
+  loader: { ".ttf": "dataurl" },
+});
 
 await copyFile(
   join(workingDirectory, "../icons/icon.svg"),
