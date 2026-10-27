@@ -16,10 +16,10 @@ traffic data, persistence, and operations. Editors and secondary workspaces load
 on demand. The interface is served from an embedded origin without a local web
 server or filesystem fallback.
 
-- `src/windows.rs`: Windows and Tauri integration.
-- `ui/src`: WebUI components, templates, and styles.
-- `crates/app`: application services shared with headless clients.
-- `crates/app-webui`: embedded UI rendering and assets.
+- [src/windows.rs](src/windows.rs): Windows and Tauri integration.
+- [ui/src](ui/src): WebUI components, templates, and styles.
+- [crates/app](../../crates/app): application services shared with headless clients.
+- [crates/app-webui](../../crates/app-webui): embedded UI rendering and assets.
 
 See [the delivery architecture decision](../../docs/adr/0007-tauri-webui-delivery.md)
 for the framework and security choices.

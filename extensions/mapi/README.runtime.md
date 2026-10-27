@@ -22,12 +22,12 @@ Open ⓘ for parser budget summaries and Copy diagnostics when investigating a
 limit. Work is bounded separately for the selected message, paired request and
 earlier context, so replaying context cannot consume the selected message's work.
 
-Synthetic qualification uses the pinned Microsoft Office Inspectors for Fiddler
-implementation and protocol specifications as references. Intentional differences
+The visualizer has been manually verified to work. Automated qualification uses
+the pinned Microsoft Office Inspectors for Fiddler implementation and protocol
+specifications as references. Intentional differences
 include correct decoded-source ranges, exact UTC FILETIME values, whole
 FastTransfer values reassembled across retained chunks, and explicit handling of
-reference-parser defects. Real Office capture validation is deferred; no such
-end-to-end validation is claimed.
+reference-parser defects.
 
 Only the two runtime scripts, this README, and the Microsoft MIT notice are
 listed for packaging. Authoring sources, tests and tools are not distributed.

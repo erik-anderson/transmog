@@ -9,3 +9,6 @@ Run `node scripts/collect-license-fallbacks.mjs` to refresh snapshots. Normal
 builds use these files offline. Settings → About → Credits displays these notices,
 license files from published packages, npm production dependencies and notices
 inside vendored native source trees.
+
+After a dependency update, remove snapshots whose package/version is absent
+from every checked-in Cargo lockfile. Git history retains notices for old versions.

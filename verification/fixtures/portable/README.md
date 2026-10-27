@@ -1,17 +1,17 @@
-# Portable investigation design corpus
+# Portable investigation test corpus
 
-K0 design fixtures for [revision 0](../../../docs/portable-investigations.md).
+Synthetic fixtures for [revision 0](../../../docs/portable-investigations.md).
 All content, identifiers, notes, tokens, paths and passwords are synthetic and
 public test data. No customer capture, private key or real credential is included.
 Git attributes preserve every corpus file byte-for-byte across platforms; JSON
 and text-body hashes must not change through Windows newline conversion.
 
-`catalog.json` inventories actual file hashes/lengths and scenarios with expected
-**future** parser/import outcomes. The generator and Python tests establish
-fixture consistency; they are not a production package validator, import path,
-encryption implementation or proof that the application supports these formats.
+`catalog.json` inventories file hashes, lengths and expected parser/import
+outcomes. Python checks fixture consistency; the Rust reader and application
+tests below exercise production behavior. Authored CLI examples remain separate
+from shipped command support.
 
-- `manifests/` contains concrete candidate case/rule manifests. Their objects live
+- `manifests/` contains case/rule manifests. Their objects live
   in the shared `objects/sha256/` fixture store; this corpus root is not itself a
   standalone case working directory. A consumer must stage only one manifest's
   declared closure when testing an actual case.
@@ -34,7 +34,7 @@ encryption implementation or proof that the application supports these formats.
   It collects no real machine configuration and does not rewrite source captures.
 
 An encrypted TMCap source object alone does not demonstrate whole-case encryption.
-K3's artifact/package tests separately qualify the typed outer wrapper, unchanged
+Artifact/package tests separately qualify the typed outer wrapper, unchanged
 inner ZIP, authenticated seek, independent ZIP reading, hostile archives and
 transactional publication. Current native seeds require the mandatory document
 kind discriminator and are regenerated with their hashes/manifest references.
@@ -68,8 +68,8 @@ seed hashes, explicitly review and remove obsolete generated objects before
 `--write`; the generator never deletes files. Refresh these seeds when the
 experimental native format changes; do not add migration readers for this corpus.
 
-K1 now runs `rules-only.json` through the production `transmog-portable` parser
-and Application review/import/export APIs. Tests also project the coded-header
+Rule interchange tests run `rules-only.json` through the production
+`transmog-portable` parser and Application review/import/export APIs. Tests also project the coded-header
 asset fixture into a rules-only collection and verify exact encoded bytes, raw
 duplicate fields and native matcher/action behavior. Run these with:
 
@@ -78,7 +78,7 @@ python scripts/dev-env.py --run cargo test --locked -p transmog-portable
 python scripts/dev-env.py --run cargo test --locked -p transmog-app --lib rule_interchange
 ```
 
-K2's `working_cases` integration tests run the case manifests through production
+The `working_cases` integration tests run the case manifests through production
 schema/semantic validation and verified object snapshots, including missing assets,
 encrypted sources, optional future experiments, context and historical body objects.
 Application `investigation_tests` open native evidence, re-export selected streams
@@ -86,8 +86,8 @@ and loss, preserve original source context, and verify stable source/entry links
 They do not run tools or activate rules/scripts. Directory tests qualify history,
 interruption, stale writers, bounded streaming and Windows blocked replacement.
 
-K3's production `packages` tests exercise internal streamed ZIP64 and hostile
+Production `packages` tests exercise internal streamed ZIP64 and hostile
 archives inside native containers, plus bare-archive rejection, native encryption,
-forwarding, exact object/ZIP bytes, independent
-readers and failure cleanup. Native desktop checks use a fresh profile. CLI
-scenarios still need their K4 consumers; these tests do not qualify future commands.
+forwarding, exact object/ZIP bytes, independent readers and failure cleanup.
+Native desktop checks use a fresh profile. These
+tests do not qualify the deferred case/rule CLI commands.

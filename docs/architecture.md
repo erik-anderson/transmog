@@ -81,101 +81,55 @@ runtime or protocol APIs.
 
 ## Interception lifecycle
 
-`transmog-core` exposes transport-neutral, typed lifecycle callbacks. An
-`InterceptorFactory` creates one `ExchangeInterceptor` per exchange. Request
-callbacks run in registration order and response and terminal callbacks unwind
-in reverse order. A short-circuit at interceptor B never enters C; a local
-response from B still passes through the response hooks for B and A. Completion
-or failure is delivered once to every entered interceptor.
+`transmog-core` exposes transport-neutral lifecycle callbacks. Factories create
+one interceptor per exchange; request hooks run in registration order, while
+response and terminal hooks unwind through entered interceptors in reverse.
+Body plans select bounded pass-through, transform, buffer, replace or discard
+behavior before pumping. See [interception lifecycle](interception-lifecycle.md)
+for short circuits, exactly-once cleanup, observation and cancellation.
 
-Body behavior is selected before a pump starts. `PassThrough`, `Transform`,
-`Buffer`, `Replace`, and `Discard` all use canonical frames and explicit bounds.
-Hyper, quiche, Tokio channels, and TLS connection objects do not appear in hook
-signatures. Pass-through streams before producer completion; complete-body
-editing is available only through an explicit nonzero limit.
+`transmog-content` composes gzip/Brotli/deflate/zstd processing around canonical
+body frames. It owns representation negotiation, header repair, decompression
+budgets and cooperative work limits; transports do not reinterpret codec errors.
+[Embedding](embedding.md) explains the opt-in content policies and limits.
 
-`transmog-content` is the next layer above canonical body framing. It owns
-content-coding plans, representation header repair, decompression budgets, and
-bounded streaming gzip/Brotli/deflate/zstd codec engines. Its content-aware
-pipeline composes those engines around the interception body pipeline without
-moving compression policy into Hyper, quiche, or core lifecycle types.
-Interceptors declare neutral, raw, required-decoded, or optional-decoded
-representation requirements; raw/decoded conflicts fail before body processing
-begins.
-Codec operations use content-layer byte quanta, cooperative executor yields,
-per-call deadlines, and cumulative active-work deadlines. Timeout is a typed
-terminal content failure; transports neither schedule nor reinterpret it.
-
-The immutable `OriginalTarget` records client intent. Head edits are logical
-message edits and cannot silently redirect a socket. A `Reroute` action is fed
-to a `RouteSelector`, which applies a `DestinationAuthorizer` and returns an
-auditable `UpstreamPlan`. Pool keys include destination, HTTP policy, trust
-generation, TLS policy, and connector policy.
+Client intent stays in immutable `OriginalTarget`. Editing a message head cannot
+silently redirect a socket: rerouting goes through `RouteSelector` and
+`DestinationAuthorizer` to an auditable `UpstreamPlan`. Pool identities include
+destination, HTTP policy, trust generation, TLS and connector policy.
 
 ## Embedding boundaries
 
-`ProxyComponents` freezes the application-owned pieces before bind:
+`ProxyComponents` fixes the interceptor chain, content policy, observers and
+providers before bind. Hosts may supply route selection, a canonical streaming
+`UpstreamService`, WebSocket hooks, certificate/client-identity resolvers, clocks
+and IDs. Hyper, quiche and TLS connection objects stay outside hook signatures.
+See [embedding](embedding.md) for construction and provider obligations.
 
-- an immutable interceptor chain;
-- an immutable, finite content-processing policy (disabled by default);
-- a bounded `ObserverHub`;
-- an optional custom `RouteSelector`;
-- an optional canonical streaming `UpstreamService`;
-- an optional protocol-neutral `WebSocketHookFactory` (empty by default);
-- a downstream `DownstreamCertificateResolver`;
-- a bounded, best-effort downstream `ClientIdentityResolver`;
-- clock and ID providers for deterministic tests or host integration.
+Built-in network adapters validate authorized destinations before I/O. The
+runtime owns replay/fallback policy and [connection racing](networking.md).
+Trust reload builds replacement clients; in-flight exchanges retain their old
+generation. [Caller attribution](client-process-attribution.md) is a bounded,
+best-effort metadata snapshot and never authorizes traffic.
 
-The convenience `ProxyServer::bind` adapts a `ProxyCa` through the bounded MITM
-certificate resolver. `ProxyServer::bind_with_components` has no CA parameter,
-so a future reverse listener can use supplied certificate material without
-weakening CONNECT/SNI identity validation. The default network upstream keeps
-trust snapshots generation-scoped. Reload builds complete replacement Hyper and
-quiche clients; in-flight exchanges retain their previous generation.
-`HyperUpstreamService` and `H3UpstreamService` also expose those pooled network
-clients through the same canonical boundary used by application services. They
-validate the authorized destination against the complete normalized request
-target before any network I/O; fallback policy stays above the individual
-adapter. Both transports use the runtime's shared, bounded Happy Eyeballs
-policy: Hyper races TCP address families and the quiche adapter races complete,
-verified QUIC handshakes. See [origin connection racing](networking.md).
-
-The default client-identity resolver snapshots the process associated with a
-new loopback TCP connection on Windows and Linux. Non-loopback peers are marked
-remote, lookup failures do not fail traffic, and embedders can replace the
-resolver. The snapshot is part of immutable exchange metadata and is therefore
-available to hooks, observers, the application session catalog, and native
-capture. See [client process attribution](client-process-attribution.md) for
-platform behavior and security constraints.
-
-The core, runtime and protocol adapters own protocol correctness state: exchange
-IDs, framing and flow control, route attempts, retry eligibility, connection pools, deadlines,
-cancellation, body bounds, pause permits, trust generation, certificate and
-Alt-Svc caches, and exactly-once terminal state. Capture databases, saved rules,
-UI state, IPC schemas, projects, replay collections, and scripting runtimes
-belong above the core.
-
-The headless application/session service owns only live application lifecycle:
-searchable snapshots with bounded per-entry detail and queries, lossy delta hints,
-capture start/seal state, same-build controller attachment and proxy run status. Durable databases,
-saved projects, command-line policy, and UI selection/editor state remain above
-that service. See [the service guide](application-session-service.md). The
-desktop-specific facade, sandbox helpers, and presentation layer sit above that
-service; see [the product shell](product-shell.md).
+Core/runtime/protocol layers own framing, flow control, retries, pools, deadlines,
+body bounds, pause permits, trust generation and terminal state. The
+[session service](application-session-service.md) adds the live catalog, capture,
+controller and host-integration lifecycle. Durable workspaces, UI selection,
+IPC schemas and scripting belong above those layers in the application and
+[desktop shell](product-shell.md).
 
 ## Resource and failure model
 
-`RuntimeLimits`, `HookLimits`, `ContentLimits`, and `H3TransportLimits` make
-transport queues, connection counts, body-processing and paused-callback bounds
-explicit. Product retention policies are separate; stream history can grow with
-the retained session. A slow observer uses one declared delivery policy: wait for
-capacity, backpressure with
-a deadline, drop-newest with a visible counter, or disconnect. Desktop retention
-and CLI recordings wait for capacity throughout their bounded storage pipeline,
-slowing requests rather than losing evidence under pressure. Body bytes and
-credential fields are excluded or redacted by default for library observers.
-The desktop and guided CLI explicitly retain bodies and sensitive headers under
-product privacy preferences; diagnostics and support bundles remain redacted.
+`RuntimeLimits`, `HookLimits`, `ContentLimits` and `H3TransportLimits` bound
+transport queues, connections, processing and paused callbacks. Product
+[retention and privacy](product-state-and-support.md#retention-and-privacy) are
+separate policies, not a total process-memory limit.
+
+Observers choose finite delivery policies. Desktop retention and CLI recording
+wait for storage capacity, slowing traffic rather than dropping evidence under
+pressure. Library observers omit bodies and redact sensitive headers by default;
+products explicitly choose their capture privacy settings.
 
 Hook, route-selector, upstream-service, body-filter, and observer callbacks run
 behind panic, timeout, cancellation, and drop containment. Application-owned

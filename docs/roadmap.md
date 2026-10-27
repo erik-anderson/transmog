@@ -11,35 +11,24 @@ are checked in.
 
 - Add a searchable capture library and project-level organization across saved
   captures, persisted automation, scripts, response assets and preferences.
-- Add desktop file actions for the implemented bounded rule/asset interchange,
-  conflict review and disabled-import APIs in [portable investigations](portable-investigations.md).
+- Extend standalone rule-collection file workflows beyond the implemented case
+  open/save and reviewed disabled import in [portable investigations](portable-investigations.md).
 - Add request-body auto-response conditions only with explicit retention,
   privacy, resource, and replay semantics.
 - Extend headless tooling for persisted automation and script-workspace
   management. Guided support recording, circular capture, native streaming
   output and password-protected export already exist in the CLI.
 
-## Visualizer qualification
-
-The extension host, packages, development workflow and bundled MAPI/HTTP
-visualizer are implemented. Their durable contracts live in
-[Extensions](extensions.md) and the [MAPI implementation guide](../extensions/mapi/README.md).
-
-- Validate the bundled MAPI visualizer against sanitized real Office traffic
-  when captures are available. Current qualification uses broad synthetic
-  reference comparisons, boundary tests and native desktop/sandbox checks;
-  production-capture compatibility is not yet established.
-- Extract shared authoring primitives only when another extension demonstrates
-  a concrete need. The MAPI byte reader and field model remain local for now.
-
 ## Capture and inspection fidelity
 
-- Broader case/rule CLI validation, matching and extraction remain deferred under
-  the revision-0 [portable investigation contract](portable-investigations.md), along with
-  offline script execution, persisted browser runs and CLI comparison (K5).
-  Desktop case previews and saved recorded-request/capture comparisons are implemented.
-  Broader project organization and any future format stability decision remain
-  separate from the experimental live control protocol.
+- Add case inspection/validation/unpacking, rule validation and recorded-evidence
+  matching to the standalone CLI. Define structured results, exit codes and
+  separate package/source password roles before exposing these commands; do not
+  treat proposed grammar as an existing interface. CLI case packing is out of scope.
+- Qualify offline script tooling, persisted browser-run evidence and CLI
+  comparison separately. Desktop case previews and saved request/capture
+  comparisons already exist under the experimental revision-0
+  [portable investigation contract](portable-investigations.md).
 - Expand safe previews or semantic viewers only after a format-specific parser,
   sandbox, CSP, resource-limit, and hostile-corpus review.
 
@@ -52,8 +41,8 @@ visualizer are implemented. Their durable contracts live in
 - Add macOS caller-process attribution only if it can use a supported and
   testable operating-system contract; the available `libproc` socket APIs are
   currently private and subject to change.
-- Review activation of the deferred hosted platform, browser, fuzz, and
-  performance workflows in the [CI guide](../ci/README.md).
+- Review additional hosted platform, browser, fuzz and performance coverage
+  against the current local gates and [CI policy](../ci/README.md#additional-hosted-coverage).
 
 ## Protocol expansion
 
@@ -123,7 +112,7 @@ the roadmap.
   Chromium's PKI requirements develop. Define trust installation, protected key
   storage, migration and rollback before changing the interception root.
   Current hybrid exchange and ML-DSA handshake support are documented in the
-  [certificate model](chromium-negotiation.md#algorithms-and-clienthello).
+  [negotiation policy](chromium-negotiation.md#algorithms-and-clienthello).
 
 ## Control protocol stabilization
 

@@ -13,9 +13,10 @@ connects visible-message activation to retained headers and body ranges. Desktop
 settings provides installation and declaration management. The desktop inspector
 offers explicit selection, scoped retained context, opt-in live controls and host-owned structured rendering.
 The [bundled MAPI/HTTP extension](../extensions/mapi/README.md) uses the same
-package and sandbox contracts, with an independent TypeScript parser qualified
-against synthetic Microsoft-reference cases. Its header viewer has no body-parser
-dependency. Real Office end-to-end validation remains deferred.
+package and sandbox contracts. Its independent TypeScript parser is covered by
+Microsoft-reference regression cases, and the visualizer has been manually
+verified to work. Its header viewer has no body-parser dependency. See the
+[MAPI qualification notes](../extensions/mapi/README.md#qualification) for details.
 
 The bundled **Binary formats** extension adds Protobuf, Bond Compact Binary,
 MessagePack, CBOR and BSON request/response body viewers. It uses the same package, sandbox,
@@ -587,9 +588,8 @@ The isolated native desktop fixture exercises the same renderer through actual
 AppContainer initialization, retained byte continuations, expansion, denied source
 reads and unloading. The bundled MAPI acceptance additionally checks synthetic
 binary messages, exact values, scoped retained context, transformed sources and
-concurrent contributions. The [MAPI guide](../extensions/mapi/README.md) records
-independent protocol comparisons separately from host acceptance. Validation
-against real Office captures is deferred.
+concurrent contributions. The [MAPI guide](../extensions/mapi/README.md#qualification)
+records protocol comparisons, host acceptance and manual verification.
 The native live fixture also sends controlled HTTP exchanges through the proxy
 to the production sandbox, checking response-body continuation, origin and
 content-type filtering, explicit opt-in, stopping and inactive unloading.

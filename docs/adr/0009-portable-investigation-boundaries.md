@@ -1,6 +1,7 @@
 # ADR 0009: Portable investigation boundaries
 
-Status: accepted architecture; format revision 0 is an implementation design.
+Status: accepted; format revision 0 remains experimental. Current implementation
+and limits are in [portable investigations](../portable-investigations.md).
 
 ## Context
 
@@ -40,10 +41,10 @@ the same capture is imported twice or different captures reuse exchange IDs.
    seekable artifact payload; do not disguise an archive as HTTP traffic or encode
    it into JSON.
    A mandatory document-kind discriminator distinguishes captures from portable
-   archives. K3 must implement and qualify this extension, authenticated
-   completion, bounded random access, failure cleanup and clean-machine
-   distribution before shipping encryption. No new encryption protocol or
-   compatibility reader is introduced. SAZ member encryption stays separate.
+   archives. Implementations must qualify authenticated completion, bounded
+   random access, failure cleanup and clean-machine distribution before shipping
+   encryption. No new encryption protocol or compatibility reader is introduced.
+   SAZ member encryption stays separate.
 7. Keep CLI result schemas separate from desktop command DTOs. New read-only
    commands use the same semantic validators and matchers, with explicit unknown
    states and no network, routing, trust-store or activation side effects.
@@ -54,8 +55,9 @@ the same capture is imported twice or different captures reuse exchange IDs.
    readers and recovery together without legacy readers or dual writes. Opening
    a case never runs the recorded tools. Review context privacy with traffic.
 
-The [portable investigation design](../portable-investigations.md) owns the
-revision-0 fields, limits, CLI grammar and staged implementation boundaries.
+The [portable investigation guide](../portable-investigations.md) owns the
+revision-0 fields, limits and implemented APIs. Deferred CLI work belongs in
+the [roadmap](../roadmap.md#capture-and-inspection-fidelity).
 
 ## Consequences
 
@@ -67,10 +69,9 @@ own input-password requirement. Working directories and explicit unpacked copies
 are plaintext; package encryption is not an erasure promise for working state.
 
 The wrapper adds a second index and framing overhead, but leaves the inner ZIP
-unchanged and avoids a second encryption dependency. The existing implementation
-does not yet support this generic payload. K0 contains design fixtures, not a
-production case reader or an encryption claim. This records the maintainer's
-choice of ZIP64 inside TMCap over a separate outer encryption format.
+unchanged and avoids a second encryption dependency. Design fixtures alone do
+not qualify a reader; the implemented package path has separate integrity,
+encryption and random-access checks.
 
 ## Alternatives
 

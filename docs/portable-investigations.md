@@ -1,12 +1,13 @@
 # Portable investigations: revision 0
 
-Status: K1/K2 implement rule/asset and working-case APIs. K3 adds bounded Stored
-ZIP64 transfer, the typed TMCap wrapper with optional whole-package encryption,
-and desktop review/open/save/disabled-import actions. K4 is limited to native
-capture context listing/extraction through the [CLI](cli.md#read-recorded-context).
-Desktop cases also support frozen response previews and saved recorded-request /
-capture-scope comparisons. Broader case/rule CLI tooling, offline script execution
-and persisted browser-run evidence remain future work. Revision 0 stays experimental.
+Desktop cases share reviewed evidence, rules, assets, notes and context with
+optional package encryption. They support disabled rule import, frozen response
+previews and saved request/capture comparisons. Library APIs also provide
+rule interchange and plaintext working cases with revision history.
+
+The CLI currently supports [native capture context extraction](cli.md#read-recorded-context).
+Case/rule commands, offline script execution and persisted browser-run evidence
+remain planned. Revision 0 stays experimental.
 [ADR 0009](adr/0009-portable-investigation-boundaries.md) records the architecture;
 [the roadmap](roadmap.md) tracks remaining implementation.
 
@@ -17,28 +18,22 @@ only the current documented revision-0 layout and declared capabilities; it
 rejects other schema versions rather than guessing a downgrade. Refresh design
 fixtures when the contract changes. No TMCap migration or earlier-layout adapter
 is part of this work. A supported public v1 and its support window require a
-separate recorded decision before release; neither this design nor additional
-consumers establishes such a promise. CLI result revision 0 follows the same
-experimental policy. Private persistence, script API and live control retain
+separate recorded decision before release; additional consumers do not establish
+such a promise. Private persistence, script API and live control retain
 their own policies; control revision 0 remains outside this decision.
 
-## Current foundation
+## Implementation boundaries
 
-The audited source is the response-editing closeout on `0df7fcf` (0.1.4).
-Revalidate these boundaries when implementing a consumer:
+Portable manifests are separate from private application persistence. The
+[portable crate](../crates/portable/src/lib.rs) owns their validation and object
+storage; [application APIs](../crates/app/src/investigations.rs) adapt retained
+traffic and saved automation. Matching and actions use the
+[native automation compiler](../crates/proxy-automation/src/lib.rs).
 
-| Area | Reuse and portability boundary |
-| --- | --- |
-| Automation | [Private workspace](../crates/app/src/automation.rs) schema 2, 4 MiB, validated generations and atomic activation; [response sets](../crates/app/src/response_sets.rs) keep current collections, explicit named versions and independent applied snapshots. Export intent and exact selected current/named content, not generations, Undo state or active hook registrations. |
-| Response assets | [Asset storage](../crates/app/src/response_assets.rs) schema 1; explicit copy/link up to 1 GiB. Stored hashes identify encoded entities; linked configuration does not identify historical bytes. Omit absolute paths and copied-from paths. |
-| Match and action semantics | [Native compiler](../crates/proxy-automation/src/lib.rs), [URL matcher](../crates/proxy-automation/src/matching.rs) and [literal operation](../crates/proxy-automation/src/text_transform.rs) remain authoritative. Translate explicit portable fields; do not deserialize private rule enums as the interchange contract. |
-| Capture provenance | [Save trace](../crates/app/src/trace_save.rs) carries original source/entry associations, body boundaries, availability, actual hook outcomes and streams. [TMCap](tmcap-format.md) remains an independently versioned, experimental evidence format. No migration code is added. |
-| Comparison | [Runtime subjects](../crates/app/src/comparison.rs) contain session, draft, asset and preview handles. Export stable evidence references and options, not handles. Preserve unavailable/incomplete/not-compared states. |
-| Scripts | [API revision 1](../crates/proxy-script/src/lib.rs) is unstable. Save draft, activation and optional sandbox tests are distinct. Export source, declared handlers/capabilities/limits and asset references, never tokens, compiled state or cached validation authority. |
-| Privacy | [Export projection](../crates/app/src/export_privacy.rs) handles selected header/trailer redaction and raw-head omission. It does not sanitize arbitrary URLs, bodies, scripts or notes. |
-| Configuration/context | [Network collector](../crates/network/src/context.rs) captures bounded, opt-in tool output with collection time, purpose, platform and notes. [Trace save](../crates/app/src/trace_save.rs) currently distinguishes original source context from the saving machine's new context in `trace-metadata` / `trace-source`. Preserve that provenance in the shared context object model, without requiring this existing record layout. |
-| Distribution | [Release packaging](../scripts/package-signed-windows-release.ps1) publishes a separate signed CLI; the desktop installer includes script/preview helpers. It does not bundle the CLI. Script declarations and a standalone CLI script-host distribution are not currently shipped contracts. |
-| CLI | [Dispatcher](../crates/proxy-cli/src/main.rs) has profile/record/serve/roots/CA/capture commands. Existing inspect output is KEY=VALUE and errors exit 2. New JSON/results must be explicit additions. [Password input](../crates/proxy-cli/src/passwords.rs) is masked or a protected UTF-8 file, never command-line password text. |
+Export exact saved definitions and bytes, with source identity and availability.
+Local generations, activation handles, Undo history, credentials and filesystem
+paths are not portable authority. [Export redaction](../crates/app/src/export_privacy.rs)
+removes selected headers/trailers; it does not sanitize URLs, bodies, scripts or notes.
 
 ## Package and working-copy decisions
 
@@ -76,88 +71,41 @@ archives renamed with a native extension. The internal ZIP profile remains part
 of native package validation. SAZ traffic import/export is a separate format and
 retains its own ZIP compression and encryption support.
 
-When encryption is enabled, reuse
-[TMCap's encryption](tmcap-format.md#encryption-and-integrity): AES-256-GCM,
-Argon2id with 64 MiB, three iterations and one lane, domain-separated block keys,
-fresh salt/nonces, authenticated indexes and sealing. Reject unsupported KDF
-settings before password work; serialize password derivations. The public header
-retains its 4 KiB bound. Exposed information includes the TMCap file/document
-type, encryption parameters, salt/nonces, ciphertext size, external filename and
-filesystem metadata. The case manifest, member names and artifact descriptor
-are encrypted. No plaintext title, source list or notes are copied outside.
+The `portable-archive` document kind separates packages from capture records.
+Its descriptor carries the case/rules media type, exact ZIP length and SHA-256,
+plus a bounded chunk index. The wrapper provides streaming writes and seekable,
+integrity-checked reads without a persisted decrypted archive. A valid transfer
+requires both a sealed wrapper and a complete, validated inner ZIP; capture
+checkpoint recovery cannot reconstruct a missing ZIP directory. See the
+[wire specification](tmcap-format.md#portable-archive-payload).
 
-This requires a **new generic artifact path**, not an existing capture feature:
-
-- Share the file/block/encryption layer below capture-record semantics. Define
-  a mandatory public document-kind discriminator for captures versus
-  `portable-archive`, authenticated with the rest of the header. Unsupported
-  document kinds fail before a capture importer can treat a case as empty
-  traffic. The [wire specification](tmcap-format.md#portable-archive-payload) defines the extension; current consumers and
-  fixtures use it together, without migration readers or earlier-layout adapters.
-- Store one typed logical ZIP payload with media type (case/rules),
-  checked unsigned-64-bit length, SHA-256 and a bounded chunk index. Reuse chunks
-  of at most 128 KiB and existing integrity checks; encrypt the descriptor with
-  the payload when encryption is selected. Do not invent HTTP exchanges,
-  embed Base64 archives in metadata, or allocate the entire ZIP as one blob.
-- Provide streaming writing and a logical `Read + Seek` view of the exact ZIP
-  bytes. ZIP creation must stream directly into the wrapper; inspection must
-  verify requested chunks (including authentication when encrypted) before
-  exposing them, without a persisted decrypted temporary archive. Bound the ZIP
-  directory before library indexing.
-- Emit Stored ZIP members; let the outer layer's existing adaptive compression
-  handle compressible chunks and bypass ineffective work. Do not decompress and
-  rebuild an existing ZIP to wrap it. The [composition benchmark](performance.md#portable-archive-composition) measures nested framing/index overhead
-  and read amplification on large archives and already compressed evidence.
-- Require a sealed outer artifact and complete inner ZIP for a valid transfer.
-  TMCap checkpoint recovery does not reconstruct a missing ZIP central directory.
-  Publish only after completion/integrity checks, authentication when encrypted,
-  exact length/hash verification and package validation. Re-encrypting creates
-  different outer bytes; inner object hashes and portable source identities do
-  not change when their bytes do not.
-
-The implementation reuses the existing encryption dependency and validates the
-composition separately: independent ZIP readability, corruption/truncation,
-password handling, bounded random access and transactional publication. The
-test-only native flow uses a fresh desktop profile. This does not establish a
-stable public v1 or qualify the future CLI commands.
+Optional [TMCap encryption](tmcap-format.md#encryption-and-integrity) protects the
+manifest, member names, descriptor and objects. File/document type, encryption
+parameters, ciphertext size, filename and filesystem metadata remain visible.
+Unencrypted checksums provide corruption detection, not confidentiality or
+publisher identity. Re-encryption changes the outer bytes but preserves inner
+object hashes when their bytes are unchanged.
 
 ### Compression and performance qualification
 
-Keep compression at the TMCap layer for native packages, with independent
-level-1 zstd chunks and existing raw bypass. Stored ZIP members allow direct
-seeking into an embedded native capture through the logical ZIP view; the
-installed ZIP reader's seek API rejects compressed members. Deflating a whole
-capture member would require a separate decompression/spooling strategy before
-its internal indexes could serve bounded random reads. Double compression also
-spends work on captures and encoded response bodies that already compress
-internally. Do not apply HTTP paired-boundary deduplication to an archive.
+Stored ZIP members allow direct seeks into embedded captures. TMCap supplies
+independent zstd chunks and adaptive raw bypass, resetting compression sampling
+at member boundaries so incompressible evidence cannot suppress compression of
+later text. HTTP paired-boundary deduplication does not apply to archives.
 
-The generic writer must reset/re-evaluate compression at member boundaries, or
-use equivalent bounded sampling that prevents an incompressible capture from
-suppressing compression of subsequent text/configuration members. Boundary hints
-must preserve the exact ZIP bytes and must not force padded physical blocks for
-every small member. The developer benchmark measures both policies.
-
-Before shipping, compare Stored ZIP + TMCap against ZIP Deflate with outer
-compression disabled on the same synthetic and representative workloads: large
-native/encrypted captures, encoded assets, large plain text, small config/notes,
-and mixed member order. Record package size, pack/validate/open times, random
-entry/body latency, CPU and peak memory; report password derivation separately.
-Current capture benchmarks qualify the existing codec, not this future wrapper.
-Measured scope, results and the small-package framing floor are recorded in
-[performance](performance.md#portable-archive-composition); they are not a general
-package throughput promise.
-
-Unencrypted TMCap uses its existing corruption checks, not authenticated
-encryption; it provides no confidentiality or publisher identity.
+The [composition benchmark](performance.md#portable-archive-composition)
+compares this policy with whole-stream sampling and ZIP Deflate. It measures
+size, pack/open/validation time, random-read amplification, CPU and memory,
+separating password derivation. Its synthetic codec results do not establish
+desktop end-to-end performance or a cross-machine throughput guarantee.
 
 ### Opening and working copies
 
 Read-only opening pins the source and uses integrity-checked bounded reads,
 authenticated when encrypted; it must not silently persist a decrypted working
 copy. Validate authenticated completion when encrypted, and all object hashes
-before publishing an imported case. Explicit **Save working copy** / `case unpack`
-creates a plaintext directory after disclosure. Source
+before publishing an imported case. **Save unencrypted folder…** creates a
+plaintext working directory after disclosure. CLI unpacking remains planned. Source
 movement/deletion either leaves pinned reads valid or produces an explicit
 unavailable source; it never resolves a new file by its old name.
 
@@ -175,7 +123,7 @@ are excluded.
 
 UTF-8 JSON, no BOM, duplicate keys, non-finite numbers or unknown top-level fields.
 Required fields and a concrete example live in the [fixture corpus](../verification/fixtures/portable/README.md).
-This is a typed design, not the private persistence DTO or a stable public v1.
+This contract is separate from private persistence and is not a stable public v1.
 Known nested types also reject unknown semantic fields; bounded namespaced
 `extensions` are the explicit preservation mechanism. An optional unsupported
 response set can be retained opaquely within the manifest bound, but its unknown
@@ -501,9 +449,10 @@ they never infer a past run's bytes from today's linked file. Existing per-run
 snapshot evidence stays in selected native captures, and the working model can
 retain explicitly supplied historical body objects independently of current assets.
 
-No desktop case dialog, new command, browser launcher or case archive is added
-by K2. Hosts use their existing read-only viewer role and permission checks when
-opening the evidence API; this does not grant a viewer global automation rights.
+Desktop transfer uses the K3 package APIs below; these working-directory APIs
+do not launch browsers or add CLI commands. Hosts use their existing read-only
+viewer role and permission checks when opening evidence; this does not grant a
+viewer global automation rights.
 Synchronous prepare/save APIs should run on a worker in a GUI host. Case evidence
 opening is asynchronous and cancels pending publication if its future is dropped.
 
@@ -808,89 +757,20 @@ Package encryption does not erase plaintext working copies, previews or dumps.
 
 ## Intended CLI interface
 
-The maintainer narrowed K4 to `context --input FILE [--list | --id ID]`: a
-read-only native-capture context reader. It supports a supplied `--password`, a
-masked prompt when needed, and `--no-prompt` for automation. See the
-[implemented CLI contract](cli.md#read-recorded-context). It does not add portable
-package authoring, case unpacking, rule matching, or a new query language.
+The implemented [`context` command](cli.md#read-recorded-context) lists or extracts
+saved native-capture context. It does not author packages, unpack cases or test
+rules. See the [roadmap](roadmap.md#capture-and-inspection-fidelity) for deferred
+case/rule/script CLI work; proposed command names and result schemas are not
+shipped interfaces.
 
-The following commands remain unimplemented design ideas, with no scheduled
-increment. CLI case packing has been removed from the proposed scope.
+## Verification
 
-| Command | Intended behavior |
-| --- | --- |
-| `case inspect --input FILE --json` | Bounded inventory, source/dependency states and capabilities; no execution or import. |
-| `case validate --input FILE --json` | Verify structure, object hashes and references; separately report evidence completeness and runnable capabilities. |
-| `case unpack --input FILE --output DIR` | Explicit plaintext working copy, create-new directory and safe transactional extraction. |
-| `rules validate --input FILE --json` | Portable schema plus authoritative rule/action validation; no activation. |
-| `rules test --input FILE --capture FILE --json` | Original-request or available recorded-boundary matching, actual match/no-match/unknown, order and intent; no response/script execution or network. |
-| `capture inspect --input FILE --json` | Explicit structured addition; existing KEY=VALUE default remains. |
-| `capture compare --left FILE --right FILE --output FILE --json` | Existing comparison semantics with stable portable references; differences succeed unless `--fail-if-different`. |
-| `script types`, `script validate`, `script test` | Shipped declarations, side-effect-free validation, then explicitly invoked bounded sandbox tests. |
+Use the [portable investigation checks](testing.md#portable-investigations) for
+fixture consistency, native rule and case readers, hostile archives, encrypted
+transfer, transactional publication and desktop flows. Every shipped reader must
+exercise its production path; design fixtures alone do not qualify a consumer.
 
-Use existing support-profile JSON and validation; do not add a second capture
-profile language. All groups support `--help` before setup. Reject duplicate or
-unknown options before file mutation. Paths with spaces/Unicode remain ordinary
-quoted paths. No network service, source checkout, Cargo or Node requirement for
-binary-only workflows. K0 does not add a case management SDK or browser launcher.
-
-Password roles: `--input-password-file FILE` for the package, repeated
-`--source-password-file SOURCE_ID FILE` for separately encrypted captures, and
-`--password-file FILE` for encrypted output only. Use masked prompts when
-interactive; noninteractive missing passwords fail explicitly. Preserve the
-current 4096-byte UTF-8 file bound and newline trimming. These deferred commands
-have no implemented password interface. The delivered context reader explicitly
-accepts a password argument as well as a masked prompt and password file.
-Diagnostics/progress/prompts go to stderr for new structured
-commands; stdout contains one UTF-8 JSON result and newline. Existing default
-output and existing command exit behavior remain unchanged.
-
-Results use `resultVersion:0`, `command`, `status` (`ok`/`error`), `diagnostics`
-(category, field path, human message) and command-specific `data`. Machine
-categories/counts are explicit; messages may evolve. Source references and large
-lengths use the manifest's exact string representations. Validation validity,
-evidence completeness and response set runnability are separate fields. A valid
-inspection-only case succeeds with unavailable response sets. Define a separate
-streaming result mode before exposing enormous per-exchange JSON inventories.
-
-| Exit | New structured-command meaning |
-| --- | --- |
-| 0 | Successful operation, including ordinary comparison differences or known evidence gaps. |
-| 1 | Comparison differences with explicit `--fail-if-different`. |
-| 2 | Usage, invalid structure/integrity, authentication failure or missing password. Authentication errors do not identify a tampered ciphertext as a known wrong password. |
-| 3 | Unsupported format, required feature, encryption profile or unavailable execution capability. |
-| 4 | I/O, destination collision, disk-space or permission failure. |
-| 5 | Explicit sandbox/execution failure. |
-| 130 | Cancellation; no published partial output. |
-
-## Implementation and acceptance handoff
-
-K0's checked-in fixtures establish bytes, identities and expected future outcomes;
-they do not demonstrate an implemented package parser. The ordinary Python gate
-checks fixture consistency, digests, compression and scenario coverage. Current
-native readers verify real encrypted/stream/incomplete capture seeds separately.
-
-K1's production parser and application tests cover selected rule/asset export
-and reviewed disabled import, native exact/pattern/regex/query matching, header
-and literal output, encoded/duplicate-header fixtures, changed/large linked
-files, conflict remapping, cancellation, failed persistence, restart recovery,
-workspace ownership and generation-bound asset visibility. Passing rule tests
-alone does not qualify archive readers or future CLI commands.
-
-K2's working-case APIs implement evidence/notes/context/run inventory and
-transactional directory persistence, including historical manifest inspection.
-K3 implements and separately checks safe archive readers/writers, the typed TMCap
-wrapper, hostile corpus, transactional export and clean-profile desktop transfer.
-K4 qualifies only context listing/extraction using the standalone CLI in an empty
-directory, including password and no-prompt behavior. Case/rule CLI work is
-deferred. Future script/preview/comparison work must qualify its own distribution
-and execution dependencies without implying arbitrary browser launching.
-
-Every reader must exercise the corpus through its production path once shipped:
-colliding sources and IDs; duplicate/binary headers and compression; missing and
-changed linked bytes; sensitive notes; encrypted sources; streams/loss/prefixes;
-unknown versions/features; invalid paths, duplicate members and corrupt digests.
-Retain cancellation/full-disk/password retry and large streaming coverage as
-additional consumers are introduced.
-Record actual compatibility, completeness and runnable state instead of a single
-"portable" success flag. Keep per-run results under ignored `artifacts`.
+Keep source identity, evidence completeness, dependency availability and runnable
+state distinct in results. Cancellation, full-disk, password retry and large
+streaming cases belong in affected gates. Per-run reports stay under ignored
+`artifacts/`; future CLI/script consumers need their own distribution checks.

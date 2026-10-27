@@ -1,8 +1,9 @@
 # Verification artifacts
 
-[Portable design fixtures](fixtures/portable/README.md) are checked-in synthetic
-test inputs for the case-format design. Their public dummy notes/passwords and
-body bytes are deliberately separate from generated live verification reports.
+[Portable fixtures](fixtures/portable/README.md) are checked-in synthetic
+inputs used by current capture, package and application tests. Their dummy
+notes/passwords and body bytes are deliberately separate from generated live
+verification reports.
 
 The network-enabled Playwright gate writes ignored `live-report.json` and
 `live-report.md` files here. They are per-run evidence, not maintained project

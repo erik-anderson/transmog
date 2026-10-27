@@ -1,77 +1,52 @@
 # Saving and inspecting traces
 
-Request order (**#**) is local to the workspace; see
-[Request order](traffic-inspection.md#request-order) for numbering and import
-fallbacks. Saving a subset preserves source associations and explicit source
-numbers, while reopening assigns fresh workspace numbers. Native saves carry
-versioned request-order ordinals so a saved investigation retains deterministic
-relative order even with equal or backward timestamps. Extended SAZ carries the
-same ordering and original numeric provenance in its Transmog evidence. These
-ordering fields are optional within the current formats; earlier experimental
-TMCap container layouts have no compatibility adapter.
-HAR and conventional third-party SAZ consumers may discard these extensions;
-workspace numbers alone are never portable source references.
-
-For evidence, frozen rules/assets, notes and source-associated context in one
-transfer, use **Files → Save case…**. [Portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3)
-use Stored ZIP64 inside TMCap with optional whole-package encryption. They open
-through **Open case…**, where inspection, exact-package forwarding,
-plaintext working copies and reviewed disabled rule import are separate actions.
-Normal file import and drag/drop recognize case files and open the case overview.
-Case inspection and forwarding remain secondary actions in the Files menu.
-
-Use **Traffic → Files → Save copy…** in the main window or a Capture viewer. Review all retained entries, selected requests, the current filters/incident window,
-or an original source; removed entries are excluded.
-Undo a removal before saving if those entries should be included. The file dialog
-confirms overwriting other exports; imported originals require a new filename. An existing destination is replaced only after a complete
-successful write. Failed reads or writes leave that destination intact. A progress
+Use **Traffic → Files → Save copy…** in the main window or a Capture viewer.
+Review all retained entries, selected requests, the current filters/incident
+window, or an original source. Removed entries are excluded; undo their removal
+to include them. Imported originals require a new filename. The file dialog
+confirms replacing other exports, which happens only after a complete successful
+write. Failed reads or writes leave the destination intact. A progress
 bar reports writing and SAZ conversion by entry, with indeterminate progress while
 preparing or finalizing. Close the dialog to keep working; Traffic continues to
 show save progress, and **Save progress…** reopens the dialog.
-
-Select a request and choose **Details → Certificates** to inspect its original TLS
-connections, server and client authentication chains, public PEM/DER and recorded
-verification failures. TMCap shares certificate definitions across requests.
-Extended SAZ stores them under `transmog/certificates/`; HAR uses a
-`_transmogCertificates` dictionary with per-entry `_transmogPerformance`
-references. Ordinary readers can ignore these extensions. Imported Chromium
-NetLog PEM paths use the same viewer, while SAZ HTTPS flags and HAR security
-summaries remain available even when their files omitted certificate bytes.
 
 The Save copy dialog shows concise help for the selected format; detailed
 limitations are under **Format details and capture limits**, and the full
 inventory/refresh action is under **Included evidence inventory**. Password,
 context and header-removal choices stay visible.
 
-The Save copy dialog offers TMCap, HAR, SAZ compatibility and SAZ extended
-fidelity. Select **SAZ · compatibility** for ordinary SAZ readers, or **SAZ ·
-extended fidelity** to preserve original source associations and additional
-evidence. SAZ supports optional encryption and network context; ZIP member names
-remain visible. Both SAZ profiles include retained WebSocket messages for Fiddler,
-with reconstructed frames and normalized HTTP/2 handshakes. TMCap preserves full
-stream lifecycle and parsed SSE events; HAR omits stream activity.
-SAZ includes each selected exchange. Missing request or response heads
-use clearly labeled compatibility placeholders: Fiddler can show the explanation
-in session comments and message headers; an uncaptured response uses a labeled 599
-status, or 502 for a recorded DNS, TCP or TLS setup failure, and, when
-there are no retained response bytes, explanatory text. These are export
-placeholders, not captured server responses. The save report counts affected
-entries and additional generated TLS connection summaries. Captured opaque CONNECT
-tunnels include their recorded destination, peer and byte totals without invented
-TLS details. TMCap preserves the original missing-head state without placeholders.
-HAR 1.2 preserves HTTP exchanges, original headers, decoded response bodies and
-available timings. HAR has no password encryption or computer network-context
-option. Missing bodies are
-disclosed; binary request bodies use a Transmog extension. See
-[JSON archive import](json-archives.md).
+## Choose a format
 
-Save native traces as `.tmcap`. Each chunk is compressed independently, so the
-desktop can read body payloads on demand. Bodies stream from retained storage;
-large captures are not collected into one in-memory buffer. Active, missing or
-incomplete bodies remain explicit and are counted in the save report. Review
-private headers and bodies before sharing. Saved traces have no fixed file-size
-or record-count ceiling; metadata indexing and body-processing budgets remain
-separate.
+| Format | Use and limits |
+| --- | --- |
+| [TMCap](native-capture-format.md) | Native evidence, source associations, stream lifecycle and parsed SSE events. Compressed chunks support on-demand body reads and optional encryption. |
+| [SAZ · compatibility](saz-compatibility.md) | Conventional SAZ readers, including retained WebSocket messages reconstructed for Fiddler. Missing heads use labeled placeholders; these are not captured server responses. |
+| [SAZ · extended fidelity](saz-compatibility.md) | Conventional SAZ plus Transmog source associations and additional evidence. Both SAZ modes offer encryption and network context; ZIP member names remain visible. |
+| [HAR](json-archives.md) | HTTP archive interchange with headers, decoded response bodies and available timings. No stream activity, password encryption or computer network-context option. |
+
+The save report discloses missing or incomplete bodies and format-specific
+omissions. TMCap bodies stream from retained storage without collecting the
+whole capture in memory. Saved traces have no fixed file-size or record-count
+ceiling; metadata indexing and body-processing budgets still apply. Review
+private headers, URLs, bodies and notes before sharing; header redaction alone
+does not anonymize a trace.
+
+For evidence, frozen rules/assets, notes and context in one transfer, use
+**Files → Save case…**. [Portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3)
+open through **Open case…**, normal file import or drag/drop. Inspection,
+forwarding, plaintext working copies and reviewed disabled rule import are
+separate actions.
+
+## Evidence and source context
+
+Workspace request numbers are local. TMCap and extended SAZ preserve relative
+request order and explicit original numbers, but reopening assigns new workspace
+numbers. See [request order](traffic-inspection.md#request-order) for fallbacks
+and provenance; a workspace number is never a portable source reference.
+
+**Details → Certificates** shows recorded TLS chains and verification failures.
+See [certificate evidence](certificate-model.md#recorded-connection-evidence)
+for retained fields and format support.
 
 For linked auto-responses, TMCap records the selected encoded entity's length,
 SHA-256 and compression stack with the historical rule/asset decision. It saves
@@ -145,27 +120,20 @@ distinct loaded instances. Filenames, paths, URLs and workspace request numbers
 are descriptive and do not become cross-capture identities. Removed evidence is
 reported unavailable; a former path does not authorize loading a replacement file.
 
-Comparison bodies, pairing decisions and exclusions are bounded transient window
-state. Saving a trace does not currently persist them or duplicate payloads in a
-comparison-result JSON file. Portable cases and public CLI comparison belong to
-their separate API/artifact work. See [Traffic comparison](traffic-inspection.md#comparing-captured-evidence).
+Saving a trace does not persist comparison state. Use **Save comparison in case…**
+to retain supported recorded-request or capture-scope comparisons, including
+their evidence references and settings. Temporary draft, asset and preview
+comparisons remain window state. See [case comparisons](portable-investigations.md#desktop-previews-and-saved-comparisons)
+and [Traffic comparison](traffic-inspection.md#comparing-captured-evidence).
 
 ## Incident intake and reviewed evidence export
 
-Native sources retain support profiles, original clocks and independent markers.
-The **Markers** panel and Timeline flags provide direct review and navigation.
-Requests can be flagged from their context menu or **Actions**, with an optional
-note and a persistent request/response link. Marker text can be edited or cleared,
-and markers can be deleted, with session Undo. See [marker review and export](support-capture-profiles.md#developer-intake-and-export-review).
-
-**Save copy…** inventories selected, filtered or source membership before saving,
-including offscreen entries. **Include markers and notes** preserves the current
-marker set independently of **Include capture details**. TMCap and extended SAZ
-preserve markers and message links; HAR and compatibility SAZ disclose omissions.
-Changed notes require a refreshed inventory, and only successfully preserved
-source revisions become saved. Copies contain current note text and reviewer
-provenance, without replaced text or Undo history. Imported originals stay intact.
-
+**Include markers and notes** controls the current marker set independently of
+**Include capture details**. TMCap and extended SAZ preserve markers and message
+links; HAR and compatibility SAZ disclose their omission. Copies contain current
+notes and reviewer provenance, without replaced text or Undo history. Changed
+notes require a refreshed inventory. See [marker review and export](support-capture-profiles.md#developer-intake-and-export-review)
+for membership, revision checks and unsaved-work handling.
 
 ## Literal response edit evidence
 
@@ -188,20 +156,10 @@ evidence. A hash or saved configuration alone cannot recover an expired body.
 An imported trace shows historical attribution without enabling local automation
 or authorizing access to an author's filesystem paths.
 
-Save trace does not export the automation workspace, named variant definitions,
-script sources, external file dependencies or temporary captured-page preview
-scenes/reports. The [working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
-can now combine reviewed retained evidence, source context, notes and selected
-saved response sets in an explicit plaintext directory. Desktop case file actions,
-archive transfer and binary-only rule management remain future work.
-See [response sets](automation.md#response-sets)
-for current authoring and activation behavior.
-
-The [portable investigation guide](portable-investigations.md) specifies a
-separate case manifest, exact evidence references and whole-package encryption
-qualification. K2 adds no TMCap wire change, compatibility reader or case command.
-Its [context model](portable-investigations.md#configuration-and-diagnostic-context)
-uses package objects for capture-time and separately collected diagnostics,
-retaining original source associations and distinguishing the saving machine's
-snapshot. Keeping today's native context-record layout or reading historical
-layouts is not required by the new format.
+Save copy does not export the automation workspace, named variant definitions,
+script sources, external file dependencies or temporary preview scenes/reports.
+Use [Save case](portable-investigations.md#desktop-transfer-and-package-apis-k3)
+to combine reviewed evidence, source context, notes and selected saved response
+sets in a package with optional encryption. Importing its automation requires a
+separate review and leaves imported rules disabled. Case/rule CLI commands remain
+planned. See [response sets](automation.md#response-sets) for authoring and activation.

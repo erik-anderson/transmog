@@ -428,7 +428,10 @@ and [workflow-token event behavior](https://docs.github.com/en/actions/how-tos/w
 
 ## Release prerequisites
 
-In addition to [building.md](building.md), the release workstation needs:
+Hosted releases use the protected Azure signing environment described in
+[CI](../ci/README.md#signed-draft-releases); local qualification does not require
+a signing certificate. For the alternative local-certificate packaging path,
+install [build prerequisites](building.md) and provide:
 
 - a code-signing certificate available to the current user and usable by the
   Windows SDK `signtool.exe`;
@@ -532,15 +535,13 @@ prevents creation of a publishable draft.
 
 ## Owned data
 
-The installer owns its executable, shortcuts, and uninstall registration.
-Runtime product state under `%LOCALAPPDATA%\Transmog` owns these names:
-
-- `proxy-recovery-v1.json`;
-- `certificate-ownership-v1.json`;
-- `interception-ca.pem` and `interception-ca.key`, the default app-managed CA;
-- `preferences.<generation>.json` and quarantined variants;
-- `.transmog-state-*.tmp`; and
-- `diagnostics.jsonl` plus its single rotation.
+The installer owns its executable, shortcuts and uninstall registration.
+Uninstall also removes recognized app data under `%LOCALAPPDATA%\Transmog`:
+proxy/certificate recovery records, the default app-managed CA, preference and
+update-preference generations, automation/script state, diagnostics, owned
+temporary files, and the body-cache/response-asset directories. Exact filename
+recognition belongs to [desktop cleanup](../apps/desktop/src/windows.rs) and
+[update-policy cleanup](../apps/desktop/src/update_policy.rs).
 
 Uninstall removes the default app-managed CA files before discarding its ownership
 record. Unknown files and directories are left in place. User-selected CAs,
@@ -573,8 +574,8 @@ clients and Nginx, Apache and Caddy with certificate validation enabled.
 
 ## Clean-machine release checklist
 
-Hosted Windows Server installer and WebView checks do not establish clean
-Windows 11 qualification. Run this checklist for a release candidate and record
+Hosted installer and WebView checks do not replace fresh Windows 11 qualification.
+Run this checklist for a release candidate and record
 its outcome, including any explicit maintainer deferral, with the release evidence.
 
 Use a disposable, fully updated Windows 11 VM with no Transmog state:

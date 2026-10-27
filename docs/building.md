@@ -140,13 +140,12 @@ output root to protect every run. Cleanup never deletes a whole run directory.
 The supported profile is named **Windows LLVM/Ninja**. It uses LLVM for all
 native compilation and Rust's official Windows ABI target:
 
-- Rust 1.99.1, target `x86_64-pc-windows-msvc` on x64 or
+- The Rust toolchain pinned in [rust-toolchain.toml](../rust-toolchain.toml),
+  target `x86_64-pc-windows-msvc` on x64 or
   `aarch64-pc-windows-msvc` on ARM64;
-- LLVM/Clang 22.1.4 or newer (`clang-cl` and `llvm-lib`; `lld-link` is retained
+- LLVM/Clang (`clang-cl` and `llvm-lib`; `lld-link` is retained
   for diagnostics but is not Cargo's final PE linker);
-- Ninja 1.13.2 or newer;
-- CMake 4.4.4 or newer;
-- NASM 3.02 or newer;
+- Ninja, CMake and NASM;
 - Visual Studio 2022 or newer Build Tools/Community with:
   - **MSVC x64/x86 build tools** (`Microsoft.VisualStudio.Component.VC.Tools.x86.x64`);
     ARM64 hosts use **MSVC ARM64 build tools** (`Microsoft.VisualStudio.Component.VC.Tools.ARM64`);
@@ -168,10 +167,9 @@ From Visual Studio Installer, choose **Modify**, then either import the checked-
 administrator elevation and may require a restart. The library does not install
 or modify build tools at runtime.
 
-The repository-local tool setup pins official portable
-distributions under ignored `.tools`. Those binaries are intentionally not
-committed. A system installation of equivalent or newer compatible versions is
-also supported.
+[setup-windows-ci.ps1](../scripts/setup-windows-ci.ps1) pins native tool versions,
+official downloads and hashes under ignored `.tools`; those binaries are not
+committed. Equivalent or newer compatible system installations are also supported.
 
 On ARM64, `setup-windows-ci.ps1` installs pinned native ARM64 LLVM and CMake.
 LLVM lets Rust build scripts load its libclang DLL; native CMake lets BoringSSL
@@ -288,8 +286,11 @@ separate sandboxed worker process through its extension mode.
 Production activation requires the host's Windows AppContainer plus Job Object;
 there is no production fallback to an unsandboxed process.
 
-Install build-time packages and generate the ESM bundle and WebUI
-projection manifest:
+### UI assets
+
+Workspace builds on every platform require generated UI assets. Install Node.js
+24+ and generate them before invoking Cargo directly; CLI-only builds do not need
+this step. From the repository root:
 
 ```powershell
 python scripts/dev-env.py --run cargo fetch --locked
@@ -313,6 +314,8 @@ python ./scripts/build-desktop.py --configuration Debug --locked-dependencies
 
 For build-and-launch commands, use the [entry point above](#build-and-launch-the-windows-desktop).
 Choose validation from [desktop and capture tests](testing.md#desktop-and-capture-workflows).
+
+### Package the Windows desktop
 
 The desktop locates `transmog-script-host.exe` beside its own executable. The
 repository build script builds the desktop and both helpers into the same
@@ -378,8 +381,9 @@ application deliberately refuses an unprotected-key fallback.
 
 ## Linux
 
-Install Rust 1.99.1+, Clang/LLVM, LLD, CMake, Ninja, NASM, a C/C++ standard
-library development package, and normal libc development headers. Then run:
+Install the [pinned Rust toolchain](../rust-toolchain.toml), Clang/LLVM, LLD,
+CMake, Ninja, NASM, C/C++ standard-library development packages and libc headers.
+Prepare [UI assets](#ui-assets) for a workspace build, then run:
 
 ```sh
 python3 scripts/dev-env.py --check
@@ -410,8 +414,9 @@ Content fuzzing is optional and has its own nightly Rust and `cargo-fuzz`
 
 ## macOS
 
-Install Rust 1.99.1+, Xcode Command Line Tools, CMake, Ninja, and NASM. Apple
-Clang is supported; upstream LLVM may be selected explicitly when matching CI.
+Install the [pinned Rust toolchain](../rust-toolchain.toml), Xcode Command Line
+Tools, CMake, Ninja and NASM. Apple Clang is supported; upstream LLVM may be
+selected explicitly. Prepare [UI assets](#ui-assets) before a workspace build:
 
 ```sh
 python3 scripts/dev-env.py --check

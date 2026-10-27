@@ -53,9 +53,8 @@ configuration. Override output, interval, or ceiling through script parameters
 rather than changing production limits.
 
 The Rust harness and Python runner support Windows, Linux and macOS memory
-sampling through their host APIs. A hosted performance workflow is parked
-under `ci/github-actions/` and remains inactive until hosted automation is
-explicitly enabled.
+sampling through their host APIs. Hosted performance coverage remains planned;
+see [CI policy](../ci/README.md#additional-hosted-coverage).
 
 ## Post-quantum TLS handshakes
 
@@ -182,32 +181,13 @@ including an encrypted capture; other inputs are an encoded asset, 16 MiB text,
 small configuration output, and both mixed member orders. No real traffic or
 machine configuration is collected.
 
-The initial Windows warm-cache qualification observed:
-
-| Workload | Stored + member-boundary TMCap | Deflate 6 + raw TMCap |
-| --- | --- | --- |
-| Native capture | 32.157 MiB; mid-entry probe 0.35 ms | 32.141 MiB; probe 10.85 ms |
-| Mixed, captures first | 72.290 MiB; largest probe 0.14 ms | 72.336 MiB; largest probe 13.59 ms |
-| Plain response text | 0.047 MiB | 0.094 MiB |
-| Small context | 0.047 MiB | 0.047 MiB |
-
-Whole-stream sampling produced 80.141 MiB for the captures-first mix; resetting
-at member boundaries recovered text compression and produced 72.290 MiB in both
-orders. This supports the boundary reset policy. It does not imply a size advantage
-for incompressible evidence. Three fixed blocks create a roughly 48 KiB floor for
-small native transfers. Mid-entry native-capture reads used about 128 KiB of
-physical reads versus about 16 MiB for the Deflate prefix; raw data records each
-probe rather than treating a cached archive tail as a random read.
-
-The codec process used roughly 6–7 MiB peak working set on these inputs, or about
-70 MiB for the encrypted mix including the existing 64 MiB KDF. ZIP creation is
-measured separately as another process. A reproducible roughly 40-second stored
-text ZIP creation wall-time stall had only about 0.08 CPU seconds, so combined
-wall-time throughput is not inferred from this sample. These are synthetic codec
-composition results with warm OS caches, not desktop end-to-end pack performance,
-cold-storage latency, maximum-index memory, or a cross-machine throughput promise.
-Application preparation/semantic validation and signed distribution need their
-own qualification.
+Stored members preserve random access; resetting compression at member boundaries
+prevents incompressible captures from suppressing compression of later text.
+See [package compression policy](portable-investigations.md#compression-and-performance-qualification).
+Compare both member orders and account for fixed framing overhead on small files.
+Measure ZIP creation separately from codec work. These synthetic codec results
+do not establish desktop end-to-end performance, cold-storage latency or
+cross-machine throughput. Keep measured sizes, timings and memory in run reports.
 
 ## Remaining coverage
 

@@ -166,33 +166,24 @@ the current mode. **Ctrl+Shift+F** selects Search contents and focuses that fiel
 Dialogs and editor-specific shortcuts retain priority. Unassigned modifier combinations and
 held-key repeats do not start additional window or file operations.
 
-**Files → Save copy…** saves retained traffic across the entire list and searches, with optional
-password encryption, export-only header redaction and network context for TMCap
-or SAZ, or HAR output for HTTP archive interchange. SAZ offers compatibility and
-extended-fidelity choices. File-only recording and conversion are in Capture tools.
-Inspect / recover offers a drop/picker target and Import trace action that bring
-TMCap, SAZ or HAR files into Traffic. Inspect trace metadata reads the original
-context and displays the full path without importing entries. Convert takes a saved
-TMCap file and creates a converted copy; file paths start empty. Export explains
-**Traffic → Files → Save copy…** and offers a shortcut to that menu. Record to file
-chooses a destination before starting its proxy and writes requests directly to that file
-without retaining them in Traffic. Switching from live capture waits for active
-requests to finish and offers cancellation while waiting. Choose Headers only
-or Headers and bodies. Stop recording seals the file and restores
-Windows proxy settings. See
-[trace saving](trace-saving.md), [native capture encoding](native-capture-format.md)
-and [SAZ compatibility](saz-compatibility.md) for file behavior. The separate
-[CLI support recorder](cli-support-capture.md) is published outside the installer.
+**Files → Save copy…** exports retained traffic with format-specific encryption,
+redaction and context choices. [Trace saving](trace-saving.md) covers formats,
+source metadata, import/recovery and conversion. **Save case…** shares selected
+rules and evidence through [portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3).
+
+**Capture tools → Record to file** chooses a destination before starting its proxy
+and writes directly to that file without retaining entries in Traffic. Switching
+from live capture waits for active requests and offers cancellation while waiting.
+Choose **Headers only** or **Headers and bodies**. Stopping seals the file and
+restores Windows proxy settings. The separate [CLI recorder](cli-support-capture.md)
+is distributed outside the installer.
 
 ## Editing and replay
 
-**Edit and replay** opens Composer from live or imported traffic. Edited drafts
-survive navigation; replacing a draft asks for a decision. Sending requires
-acknowledgement for non-idempotent methods and credential-bearing fields. Replay
-uses the canonical verifying HTTP adapters even when the proxy is stopped.
-Large captured or replacement-file bodies stream outside the WebView editor.
-Response previews disclose display truncation; replay history keeps the source
-association. See [traffic inspection](traffic-inspection.md#edit-and-replay).
+**Edit and replay** opens Composer from live or imported traffic. Replay uses the
+verifying HTTP adapters even when the proxy is stopped. See
+[editing and replay](traffic-inspection.md#edit-and-replay) for draft preservation,
+acknowledgements, body streaming and history.
 
 Breakpoints presents one selected editor beside the waiting-request queue.
 Remaining decision time stays visible, replacement drafts survive selection
@@ -225,11 +216,9 @@ Current support boundaries are in [limitations](limitations.md), future work in
 
 ## Related captured-page previews
 
-Baseline and modified [page previews](captured-page-preview.md) identify response
-mode and script choice in their titles and trusted opening-window reports. The
-main window alone can select workspace auto-responses. Capture viewers keep
-baseline preview and the established main-window import route for using rules.
-Reports and retained scene handles are checked against their opening window;
-closing that window cancels preparation, closes its previews and releases retained
-reports. Up to three recent runs retain bytes for baseline/updated iteration,
-while older reports remain readable within the eight-report bound.
+[Page previews](captured-page-preview.md) belong to their opening window, which
+owns preparation, reports and retained scenes. Closing it cancels preparation
+and closes its previews. The main window can use workspace auto-responses;
+capture viewers use baseline previews or explicitly selected case content. See
+[case previews](portable-investigations.md#desktop-previews-and-saved-comparisons)
+for frozen package response choices.

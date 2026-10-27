@@ -216,8 +216,10 @@ preferences or certificate recovery metadata.
 
 For unattended captures, add `--encrypt --password-file <protected-file>`. The
 UTF-8 file is read into memory (up to 4096 bytes; a final newline is ignored).
-Protect that file yourself; Transmog does not delete or remember it. Actual
-password strings are never accepted as command-line options.
+Protect that file yourself; Transmog does not delete or remember it. `record`
+and `capture` commands do not accept password strings as command-line options;
+the read-only [`context` command](cli.md#read-recorded-context) also accepts
+`--password TEXT`.
 
 `capture inspect` and `capture validate` ask for a password when needed, or
 accept `--password-file` in an unattended run. `capture seal` preserves the

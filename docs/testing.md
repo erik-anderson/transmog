@@ -9,25 +9,29 @@ owns the mandatory candidate qualification sequence.
 
 ## TypeScript lint and source formatting
 
-From the repository root, run `npm run check` to check every maintained TypeScript
-file, including desktop UI, Playwright tests, MAPI sources, and SDK declarations.
-ESLint uses the recommended JavaScript and TypeScript rules, type-only imports,
-mandatory braces, and at most one statement per line. Prettier owns formatting:
-two spaces, double quotes, semicolons, trailing commas, and a 100-column target.
-Prettier also formats maintained `.mjs` files, including build scripts, test
-runners, browser fixtures, and native test helpers, with the same settings.
-Vendored sources and generated build output are excluded from both tools.
+Install and run the root tooling from the repository root:
 
-Run `npm run lint:fix` to apply safe ESLint fixes and format the sources. Use
-`npm run format` for formatting alone, or `npm run lint` for lint alone. Both
-checks run in the portable repository gate and the signed release UI gate.
-The root tooling pins a TypeScript version supported by typescript-eslint;
-application type checking continues to use the desktop package's compiler.
+```powershell
+npm ci --ignore-scripts
+npm run check
+```
+
+This checks ESLint across maintained TypeScript and Prettier formatting across
+TypeScript and `.mjs` files, excluding vendored/generated output. Rules live in
+[eslint.config.mjs](../eslint.config.mjs) and [.prettierrc.json](../.prettierrc.json).
+Use `npm run lint:fix` for fixes and formatting, `npm run format` for formatting
+alone, or `npm run lint` for lint alone.
+
+The root check and desktop UI check are different: the latter type-checks and
+builds the application using its own compiler. Both run in release qualification.
 
 ## Repository gate
 
-Python 3.11 or newer is mandatory. The runner configures native tools for its
-child processes; on Windows this is the LLVM/Ninja environment. Run:
+Python 3.11 or newer is mandatory. On a fresh checkout, prepare
+[UI assets](building.md#ui-assets) first; workspace Rust builds embed them.
+Rebuild them after UI changes. The runner configures native tools for its child
+processes, but does not install UI dependencies or run desktop UI/browser checks.
+From the repository root:
 
 ```powershell
 python ./scripts/dev-env.py --check
@@ -50,71 +54,6 @@ The Chromium HAR/NetLog import regression uses sanitized, checked-in archives
 and runs in the ordinary Rust suite without a browser or network connection.
 See [browser fixtures](../crates/app/tests/fixtures/browser/README.md) for regeneration.
 
-The [portable investigation corpus](../verification/fixtures/portable/README.md)
-is checked by the ordinary Python gate and current native capture-reader tests.
-Use `python scripts/portable_fixtures.py --check` for a mutation-free corpus check.
-`cargo test -p transmog-portable` exercises the K1 production rule reader,
-native matching/actions and verified object staging. `cargo test -p transmog-app
---lib rule_interchange` covers disabled import/export, conflict remaps, failure
-atomicity, workspace/generation binding, linked snapshots and restart recovery.
-K2's `cargo test -p transmog-portable --test working_cases` covers the case corpus,
-directory history/recovery, stale writers, bounded large objects and failed
-publication. `cargo test -p transmog-app --lib investigation_tests` covers inert
-native evidence opening, source/occurrence identity, original context, streams,
-capture-wide loss, encrypted inputs and changed originals. Unix no-follow/locking
-checks run in the Linux container; Windows tests cover blocked replacement.
-These K1/K2 checks alone do not qualify archive readers, package encryption or CLI support.
-K3's `cargo test -p transmog-portable --test packages` qualifies production ZIP64
-preflight and hostile payloads inside native packages, bare-archive rejection,
-encryption, exact-ZIP forwarding, independent readers,
-working copies and publication failures. Capture artifact tests cover authenticated
-random reads, incomplete/tampered completion and failed-output poisoning. A sparse
-ZIP64 metadata test exceeds four GiB without reading/allocating its declared body.
-The current-format fuzz builder includes the mandatory document kind so its seeds
-continue reaching the documented parser stages.
-
-The complete `npm run test:workspaces` gate includes portable-case authoring,
-password retry, inert context, note navigation, disabled import, cancellation,
-retained progress and responsive/forced-color layouts. To isolate that flow after
-`npm run check`, use `node scripts/check-workspaces.mjs --portable-cases-only`.
-
-For the real WebView2 transfer flow, build a test-only desktop binary:
-
-```powershell
-python scripts/dev-env.py --run cargo build --locked -p transmog-desktop --features desktop-test-fixtures
-./scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath ./target/debug/transmog.exe -PortableCaseChecks
-```
-
-This creates a fresh profile and exercises production IPC, encrypted save/open,
-same-filename replacement with pinned readers, wrong-password retry, explicit
-plaintext working copy, inert notes, layout and
-Escape focus. The feature-only file-picker adapter selects owned destinations inside
-that test instance's export root; product builds have no such adapter. It does not
-qualify a signed installer or the visual native file chooser. Source/evidence
-streaming and actual disabled imports also have application integration coverage.
-
-Use [the composition benchmark](performance.md#portable-archive-composition) for
-compression policy measurements. The narrowed K4 checks only native context
-listing/extraction, password modes and standalone binary operation; broader
-case/rule CLI work is deferred.
-
-For context CLI changes, run strict Clippy and all targets for `-p transmog`.
-The executable tests exercise extraction, metadata-only reads, encrypted input,
-no-prompt behavior and password spaces/quotes/backslashes/Unicode. A separate
-opt-in standalone shell check copies the selected binary to an owned temporary
-directory, restricts the product's PATH, and executes a quoted-password script:
-
-```powershell
-$env:TRANSMOG_CONTEXT_TEST_BINARY = (Resolve-Path ./target/release/transmog-cli.exe).Path
-$env:TRANSMOG_CONTEXT_TEST_SHELL = (Get-Command pwsh).Source
-python scripts/dev-env.py --run cargo test --locked -p transmog --test context standalone_binary_and_shell_quoted_passwords -- --ignored --nocapture
-```
-
-Use an absolute POSIX shell path such as `/bin/sh` for the shell variable on Linux.
-Interactive masked entry also needs a real-terminal check; piped stdin deliberately
-fails when an encrypted input has no supplied password. No desktop/browser checks
-are implied by this CLI-only qualification.
-
 For a narrower Rust change, select the affected Cargo packages. To qualify the
 portable Rust workspace and headless binaries as Linux processes:
 
@@ -123,9 +62,9 @@ python ./scripts/test-linux-docker.py
 ```
 
 That runner uses a digest-pinned image, mounts the checkout read-only and keeps
-Cargo/target data in named volumes. It does not qualify a native Linux desktop.
-Hosted release gates and deliberately inactive broader workflows are described
-in [CI](../ci/README.md).
+Cargo/target data in named volumes. Generate [UI assets](building.md#ui-assets)
+on the host before running it. It does not qualify a native Linux desktop.
+See [CI](../ci/README.md) for active workflows and planned additional coverage.
 
 The opt-in native SDK has its own Linux gate, including C++, C, and .NET
 consumers in Debug and Release:
@@ -239,6 +178,70 @@ The script reloads the real WebView, activates the TypeScript island, and fails
 on WebUI hydration, the typed status command, missing module/CSS assets, a CSP
 violation, or a browser error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
 test-only and must not be set for production launches.
+
+## Portable investigations
+
+The [fixture corpus](../verification/fixtures/portable/README.md) is checked by
+the ordinary Python gate. Run `python scripts/portable_fixtures.py --check` for
+fixture consistency alone. For production readers and application integration,
+use these focused Cargo tests through `python scripts/dev-env.py --run cargo …`:
+
+| Cargo arguments | Coverage |
+| --- | --- |
+| `test --locked -p transmog-portable` | Rule validation, case history/recovery, ZIP64 packages, hostile inputs, encryption, forwarding and publication failures. |
+| `test --locked -p transmog-app --lib rule_interchange` | Disabled imports, conflict remapping, linked snapshots, generation binding and failure atomicity. |
+| `test --locked -p transmog-app --lib investigation_tests` | Evidence identity, context, streams, encrypted sources and changed originals. |
+
+Unix no-follow/locking tests run in the Linux container; Windows covers blocked
+replacement. Capture artifact tests cover authenticated random reads and
+incomplete/tampered completion. A sparse ZIP64 test covers offsets beyond 4 GiB.
+
+After the UI build, run the full browser gate or isolate portable cases:
+
+```powershell
+npm --prefix apps/desktop/ui run test:workspaces
+node apps/desktop/ui/scripts/check-workspaces.mjs --portable-cases-only
+```
+
+These exercise case authoring, password retry, inert context, disabled import,
+cancellation, retained progress and responsive/forced-color layouts.
+
+For the real WebView2 transfer flow, build a test-only desktop binary:
+
+```powershell
+python scripts/dev-env.py --run cargo build --locked -p transmog-desktop --features desktop-test-fixtures
+./scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath ./target/debug/transmog.exe -PortableCaseChecks
+```
+
+This creates a fresh profile and exercises production IPC, encrypted save/open,
+same-filename replacement with pinned readers, wrong-password retry, explicit
+plaintext working copy, inert notes, layout and
+Escape focus. The feature-only file-picker adapter selects owned destinations inside
+that test instance's export root; product builds have no such adapter. It does not
+qualify a signed installer or the visual native file chooser. Source/evidence
+streaming and actual disabled imports also have application integration coverage.
+
+Use [the composition benchmark](performance.md#portable-archive-composition) for
+compression policy measurements. Case/rule CLI commands remain deferred.
+
+### Context CLI
+
+For context CLI changes, run strict Clippy and all targets for `-p transmog`.
+The executable tests exercise extraction, metadata-only reads, encrypted input,
+no-prompt behavior and password spaces/quotes/backslashes/Unicode. A separate
+opt-in standalone shell check copies the selected binary to an owned temporary
+directory, restricts the product's PATH, and executes a quoted-password script:
+
+```powershell
+$env:TRANSMOG_CONTEXT_TEST_BINARY = (Resolve-Path ./target/release/transmog-cli.exe).Path
+$env:TRANSMOG_CONTEXT_TEST_SHELL = (Get-Command pwsh).Source
+python scripts/dev-env.py --run cargo test --locked -p transmog --test context standalone_binary_and_shell_quoted_passwords -- --ignored --nocapture
+```
+
+Use an absolute POSIX shell path such as `/bin/sh` for the shell variable on Linux.
+Interactive masked entry also needs a real-terminal check; piped stdin deliberately
+fails when an encrypted input has no supplied password. No desktop/browser checks
+are implied by this CLI-only qualification.
 
 ## Protocol and product interoperability
 

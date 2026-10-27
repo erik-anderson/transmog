@@ -75,13 +75,9 @@ starting a proxy:
 
 Rust crates expose the proxy runtime, streaming content processing, interception,
 automation, capture and application/session services independently of the desktop.
-Start with [embedding](docs/embedding.md), [architecture](docs/architecture.md),
-and the [dependency map](docs/dependencies.md). The
-[.NET example](examples/dotnet-embedding/README.md) demonstrates a narrow native ABI.
-
-Transmog uses Hyper for H1/H2, quiche for H3, Tokio for asynchronous I/O, and one
-BoringSSL family for TLS and cryptography. The desktop uses Tauri/Wry, Microsoft
-WebUI, Monaco, and an isolated V8 process for scripts.
+Start with [embedding](docs/embedding.md) and [architecture](docs/architecture.md).
+The experimental [native SDK](sdk/README.md) exposes the shared application facade
+to C++, C and .NET; the [dependency map](docs/dependencies.md) explains the stack.
 
 ## Development
 

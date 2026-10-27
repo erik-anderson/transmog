@@ -29,27 +29,16 @@ set removes its saved demos. A remembered captured-page association alone keeps
 only identity and URL, without retaining capture bytes. See [response
 sets](automation.md#response-sets) and [captured previews](captured-page-preview.md).
 
-Saving a trace preserves retained network evidence; it does not package these
-response set definitions, script sources, linked files, saved demos or temporary preview scenes.
-Copying the application state directory is not a portable investigation format.
-For sharing boundaries and unavailable bytes, see [trace saving](trace-saving.md#response-set-sharing).
-The [portable investigation APIs](portable-investigations.md#implemented-rule-interchange-apis-k1)
-provide selected rule/asset interchange for library callers. Imported source
-definitions, identity mappings and asset metadata share one automation commit;
-their immutable body blobs use the existing asset store. Imported named
-response sets start paused with no applied snapshot, and ordinary rules start
-disabled. A saved state directory is still not a portable case.
-[Working-case APIs](portable-investigations.md#implemented-working-case-apis-k2)
-now keep selected evidence, source-associated notes/context, frozen response sets
-and up to 32 manifest revisions in an explicit plaintext directory. Current
-publication is transactional; interrupted staging remains separate recovery data.
-Desktop Files actions now open/save reviewed ZIP64/TMCap transfers, with optional
-whole-package encryption. Opening keeps a pinned read-only source and creates no
-decrypted archive. Evidence uses the existing inert trace inspector; its lazy
-readers retain source/key handles after package review closes. Plaintext working
-copies and disabled automation import are separate explicit actions. Preparing a
-new derived case from Traffic uses disclosed owned plaintext snapshots; forwarding
-an opened package streams its exact ZIP without that intermediate copy.
+Saving a trace preserves network evidence, not the automation workspace. Use
+[portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3)
+for reviewed sharing, optional package encryption and explicit plaintext working
+copies. Copying the application-state directory is not a supported transfer format.
+
+Imported rule definitions, identity mappings and asset metadata share one atomic
+automation commit. Imported response sets start paused without an applied
+snapshot; ordinary rules start disabled. Existing activation and drafts remain
+independent. Working cases store their own manifest history and immutable objects,
+outside application preferences.
 
 Response assets persist the chosen copy/link behavior. Linked assets retain an
 absolute path even when the file is unavailable; they do not silently become
@@ -67,6 +56,11 @@ alone does not retain a complete body. Explicit TMCap recording/saving preserves
 the metadata and available body bytes; see [trace saving](trace-saving.md).
 Temporary serving files, like decoded preview files, may survive an abrupt exit;
 InPrivate is not a crash-erasure mechanism for those files.
+
+[Literal response edits](automation.md#literal-edits-to-fresh-responses) persist
+with automation generations. Disabled drafts remain inactive; operation outcomes,
+counts and hashes follow capture retention rather than creating a permanent
+body store.
 
 Settings provides Save, Revert and Ctrl+S. Narrow layout saves merge with other
 settings so a stale workspace snapshot cannot overwrite newer preferences.
@@ -141,14 +135,9 @@ record-count ceiling, while metadata indexing and processing stay bounded.
 Oversized or unknown-length requests in Auto routing stream over HTTP/1 or HTTP/2
 rather than requiring a buffered HTTP/3 retry.
 
-Starting the proxy does not create an automatic trace journal. **Save copy…** and
-explicit recording write files. See [trace saving](trace-saving.md) and the
-[CLI support guide](cli-support-capture.md); the CLI has separate preferences
-and root ownership under `%LOCALAPPDATA%\Transmog-cli`. Its read-only
-[`context` command](cli.md#read-recorded-context) lists or extracts original
-configuration/support context from native captures. It supports a password
-argument, masked prompt, password file and a no-prompt automation mode. It does
-not collect current configuration or export traffic bodies.
+Starting the proxy does not create a trace journal. [Save copy and explicit
+recording](trace-saving.md) write files. The [CLI recorder](cli-support-capture.md)
+has separate preferences and root ownership under `%LOCALAPPDATA%\Transmog-cli`.
 
 Desktop automatic-check preferences and update reminders use a separate bounded `update-preferences.<generation>.json`
 store under the same product-state root. Independent Settings saves cannot
@@ -207,10 +196,3 @@ export reviews are run/window state, not global preferences containing captured
 notes. Incident marks belong to explicit recorded artifacts; normal proxy startup
 does not create a journal. Review original context and HTTP/stream content before
 sharing; header redaction alone does not anonymize them.
-
-
-Literal response edit definitions persist with native automation generations.
-Saving a disabled draft does not activate it. Operation outcomes, counts and
-hashes follow the exchange's existing capture metadata lifecycle; they do not
-create a permanent body store. Historical bodies remain subject to retention.
-See [literal response edits](automation.md#literal-edits-to-fresh-responses).

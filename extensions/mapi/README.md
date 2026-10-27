@@ -96,6 +96,9 @@ offer Live updates, regardless of the parse result.
 
 ## Qualification
 
+The MAPI/HTTP visualizer has been manually verified to work. Automated
+qualification covers reference parity, malformed inputs and native integration.
+
 The unchanged [Microsoft reference](../../third_party/mapi-inspector/README.md)
 is pinned at `7a76470574377d14cae612c507f45b34d70e05a0`. Its 651 source-file
 hashes and native Marshal reader provide independent reference evidence. The
@@ -121,7 +124,7 @@ only after the comparison succeeds. Machine-local timestamps and exception
 stacks are excluded from the normalized reference data.
 
 The 721 synthetic probes comprise 707 wire-fact comparisons, 12 continuation
-evidence checks and two archived invalid OptionsData response probes. These
+evidence checks and two invalid OptionsData regression probes. These
 are deliberately separate counts. Coverage includes every request/response
 HTTP dispatch path for all 23 operations, 128 request ROP shapes, response
 variants, populated NSPI data, meaningful mailbox/table responses, scalar and
@@ -158,7 +161,3 @@ Intentional corrections to reference behavior have explicit evidence:
   status read made two old padded shape probes invalid; separate valid success
   and failure cases verify the protocol layout.
 - The Unicode subject fixture uses the protocol's correct discriminator, 4.
-
-No sanitized Office captures are available. Real Office end-to-end validation
-is deferred by agreement; synthetic qualification does not establish complete
-production-capture compatibility or support for every possible protocol value.

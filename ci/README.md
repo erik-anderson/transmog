@@ -1,100 +1,68 @@
-# Hosted Windows packaging and releases
+# Hosted workflows
+
+Active definitions live in [`.github/workflows`](../.github/workflows/):
+
+| Workflow | Trigger and purpose |
+| --- | --- |
+| [Windows signed release](../.github/workflows/windows-release.yml) | Manual dispatch on `main` (Canary) or `release/<major>.<minor>` (Beta/Stable); qualifies x64 and ARM64 and creates a signed draft. |
+| [Windows unsigned installer](../.github/workflows/windows-installer.yml) | Manual development packaging on x64; no release publication or signing access. |
+| [Windows hosted WebView startup probe](../.github/workflows/windows-desktop-probe.yml) | Manual runner diagnostics using a verified unsigned baseline. |
+| [Maintain release and Canary versions](../.github/workflows/advance-release-version.yml) | Branch creation and release events; maintains version tracks and update feeds. |
+| [Native SDK](../.github/workflows/sdk.yml) | Relevant pull requests or manual dispatch; Windows/Ubuntu C++, C and .NET checks. |
+
+Broader platform, browser, fuzz and performance coverage remains
+[planned](#additional-hosted-coverage). The workflow files own exact triggers, runner
+versions, action pins, timeouts and permissions.
 
 ## Signed draft releases
 
-Dispatch **Windows signed release** (`.github/workflows/windows-release.yml`)
-on `main` for Canaries, or a major/minor release branch such as `release/0.1`
-for Beta/Stable. It uses standard
-`windows-2025` runners and skips private repositories
-and other branches. It has no automatic push, tag, schedule, or pull-request
-trigger. Runs are serialized, time-limited, and retain intermediate artifacts
-for seven days; compiled targets and signing tools are never restored from caches.
+Complete [local release qualification](../docs/windows-release.md#local-release-qualification-before-dispatch)
+on the clean candidate commit before dispatch. The [manual release process](../docs/windows-release.md#manual-github-release-process)
+owns version selection, branch policy, dispatch, signing approval and publication.
+Publishing a reviewed draft does not rebuild its assets.
 
-The Python tooling requires Python 3.11 or newer and uses only the standard
-library. The hosted Windows image supplies Python; the packaging, release, and
-version-maintenance workflows set `PYTHONUTF8=1` so Python child output matches
-the tooling's UTF-8 subprocess decoder.
-
-Before dispatch, complete the mandatory
-[local release qualification](../docs/windows-release.md#local-release-qualification-before-dispatch)
-on the clean candidate commit. Record the tested commit, resolve failures and
-verify that the pushed source matches it. The [manual release process](../docs/windows-release.md#manual-github-release-process)
-owns version selection, dispatch, signing approval, draft review and publication,
-including the GitHub CLI/REST fallback. Building and publication remain separate
-decisions; publishing the reviewed draft does not rebuild its assets.
-
-The canonical semantic version, source channel, and release track live in `release-version.json`;
-Cargo/npm/Tauri, release tags, installer names, and product diagnostics use that same semantic version.
-Published versions, wrong branch lines/tracks, and reserved Canary lines fail
-before build setup. **Maintain release and Canary versions** initializes new
-release branches to Beta and reserves their line at branch creation by advancing
-main to the next minor Canary version. Existing later lines are preserved, and
-major increments require human action. Publication advances only the publishing
-branch's patch version; Beta promotion persists Stable without another increment.
-Release-branch publication leaves main unchanged. The job has only `contents: write`, with no
-Azure identity or signing access. Release branches use neutral Release product
-branding, so reviewed Beta assets can become Stable without another build/signing.
+The workflow runs only in public repositories on approved branches. It qualifies
+x64 on `windows-2025` and ARM64 on `windows-11-arm`, then bundles both on the
+protected x64 signer. Each architecture must pass the repository, browser,
+certificate, archive, optimized CLI and three-minute WebView soak gates before
+signing. Policy checks share an immutable advisory snapshot during builds and
+refresh advisories before signing. Python requires 3.11+; `PYTHONUTF8=1` keeps
+subprocess output consistent with the tooling's UTF-8 decoder.
 
 | Job | GitHub permissions | Azure access |
 | --- | --- | --- |
-| Build and tests | `contents: read` | None |
+| Policy, build and tests | `contents: read` | None |
 | Protected signing | `contents: read`, `id-token: write` | Sign only the selected production profile |
 | Installer smoke test | `contents: read` | None |
 | Negative identity test | `contents: read`, `id-token: write` | Authentication must be rejected |
 | Provenance attestation | `contents: read`, `id-token: write`, `attestations: write` | None |
 | Draft publication | `contents: write` | None |
 
-The build runs the full locked repository gate, browser workspace
-tests, and 3-minute WebView soak before credentials exist. Soak progress logs
-include UTC timestamps and elapsed/remaining time once per
-minute, with a completion timestamp. Same-run immutable
-artifacts carry hashes, commit, run ID, version, and target architecture. The
-build also validates matching full PDBs for all four released executables and
-retains them in a versioned public symbols ZIP. The archive includes the source
-commit and debug identifiers and receives release checksums and provenance.
-The signing job checks that catalog before restoring the app, two bundled helpers,
-standalone CLI and UI assets;
-it bundles those outputs without recompiling the application or running npm
-installation scripts with Azure credentials.
+Only dependency downloads are cached, keyed by architecture and tool versions.
+Native/V8 archives are hash-verified after restoration. Compiled targets, unsigned
+payloads and signed outputs are never restored from caches. Same-run immutable
+artifact IDs carry hashes, commit, run ID, version and architecture between jobs.
+The signer verifies these before bundling; it neither recompiles the application
+nor runs npm installation scripts with Azure credentials. See
+[release symbols](../docs/windows-release.md#crash-investigation-symbols) for PDB
+validation and the public symbols archives.
 
-Producer jobs pass immutable artifact IDs to downstream jobs, so retrying a
-failed job can retain the successful build and soak from an earlier attempt.
-Signing retries timestamp-service failures up to three times with short delays;
-permission errors and other failures stop immediately. Every attempt starts
-from the original input bytes and still requires valid signatures and timestamps.
+Retrying failed jobs can reuse successful upstream artifacts. Timestamp-service
+failures retry up to three times from the original input bytes; permission and
+other signing failures stop immediately. Every attempt still requires valid
+signatures and timestamps. The CLI is signed separately and excluded from the
+desktop installer; lifecycle checks run before signing and against the final CLI.
 
-Browser workspace checks run first so UI failures do not wait for Rust compilation.
-The release builder first fetches the locked Cargo dependencies, so offline UI
-Credits generation can read their metadata and license files on a fresh runner.
-The repository-wide Clippy/tests then run before optimized compilation. That full gate
-replaces the packaging wrapper's narrower test pass. Tauri forwards all four
-package selections to one Cargo release build, and sidecars are staged
-later during bundling. Clippy/development and release artifacts remain separate;
-this avoids redundant test/package passes without removing the quality checks.
-The CLI is signed and published separately, with version, checksum, signature
-and provenance checks. The installer qualification gate confirms it is excluded
-from the app install directory.
-Its lifecycle smoke test also runs on the optimized CLI before signing, and
-the resulting report travels with the build payload. This catches fixture and
-command regressions before signing approval; installer qualification repeats
-the same checks against the final signed CLI. Synthetic export fixtures must
-pass native capture validation before checking SAZ placeholders and rejection
-of unsafe HTTP fields.
+Hosted WebView and client-certificate checks isolate product data and temporarily
+set loopback DevTools arguments through machine policy for elevated runners.
+Wrappers restore prior per-app policy and refuse this mode outside disposable
+GitHub-hosted runners. Setup verifies Evergreen WebView2 and installs Microsoft's
+signed bootstrapper there only when needed. The product installer contains no
+runtime payload. Failure artifacts exclude isolated profiles and product data.
 
-The hosted WebView and client-certificate desktop checks isolate product data
-and temporarily set loopback DevTools arguments through machine policy. WebView2
-150+ ignores environment overrides in elevated hosts; standard hosted Windows
-jobs run elevated. The wrappers restore the prior per-app policy afterward and
-refuse that mode outside disposable GitHub-hosted runners. The prerequisite
-setup verifies an Evergreen runtime is present, installing Microsoft's signed
-bootstrapper only on those runners when required. Runtime payloads remain absent
-from the Transmog installer. Failure artifacts contain startup logs/reports only,
-never the isolated profile or its product data.
-
-For runner diagnostics, **Windows hosted WebView startup probe** reuses the
-hash-verified unsigned baseline solely as a test application. Its optional fast
-smoke mode avoids recompiling Rust. This baseline is never used for a signed
-release; release artifacts still require same-run source/hash validation.
+The separate startup probe uses a hash-verified unsigned baseline for diagnostics,
+including optional smoke checks without recompilation. That baseline is never a
+signed release input.
 
 Configure the `release-signing` environment to allow `main` and `release/*`,
 require `erik-anderson` approval, allow self-review for this solo repository, and
@@ -142,10 +110,11 @@ publisher, and timestamp. An Azure-free job then verifies installed executables
 and the uninstaller, exercises maintenance/removal, and checks that the smoke test
 has not changed the user proxy or root certificates.
 
-`actions/attest` generates provenance for the **final signed installer**, release
-manifest, and dependency SBOM file. Its SHA is pinned, and the attestation job
-verifies the Sigstore bundle against this repository, workflow, the selected branch, and the
-source commit. This is a provenance attestation, not an assertion that the SBOM
+`actions/attest` generates provenance for final installers, standalone CLIs,
+symbols, release/update manifests, updater signatures and SBOMs. Its SHA is
+pinned, and the job verifies the Sigstore bundle against this repository,
+workflow, selected branch and source commit. This is a provenance attestation,
+not an assertion that the SBOM
 includes every OS/NSIS component. The bundle is included in the draft release.
 Consumers can verify the downloaded installer with a recent GitHub CLI:
 
@@ -163,9 +132,10 @@ For a hotfix, replace `refs/heads/main` with its source branch.
 Publication creates or updates only a draft for the configured product
 version. It refuses to overwrite a published release. The draft contains the
 installer, SHA-256 catalog, signing and permission reports, desktop/installer test
-evidence, third-party notices, SBOM, source manifest, and attestation bundle. The
-clean Windows 11 checklist is deferred by the maintainer; public publication
-remains a separate decision. See [`docs/windows-release.md`](../docs/windows-release.md).
+evidence, third-party notices, SBOM, source manifest, and attestation bundle.
+Record clean-machine qualification or an explicit candidate-specific maintainer
+deferral with the release evidence; public publication remains a separate
+decision. See [the checklist](../docs/windows-release.md#clean-machine-release-checklist).
 
 ## Unsigned development installers
 
@@ -211,26 +181,14 @@ V8 archive. They do not contain compiled Cargo targets. Every native/V8 archive
 is hash-checked after restoration. Keep GitHub's cache limit at its included
 allowance; increasing it is not required for this workflow.
 
-The optional caches are for this unsigned workflow. The signed release workflow
-uses fresh tools and downloads instead.
+The signed workflow has its own architecture-specific dependency-download caches
+and independently verifies restored native/V8 archives; neither workflow reuses
+compiled targets for releases.
 
-## Deferred workflows
+## Additional hosted coverage
 
-The broader definitions remain under `ci/github-actions/` rather than
-`.github/workflows/`. Pushing the repository does not trigger their proposed
-push, pull-request, schedule, or dispatch events.
-
-Local validation remains authoritative while hosted automation is deferred.
-Use the commands documented in `docs/testing.md`, including the read-only Linux
-Docker/WSL2 matrix, before publishing changes.
-
-Enabling those broader workflows remains an explicit repository decision:
-
-1. Review action versions, permissions, runner images, secrets, retention, and
-   cost controls against the repository's current policy.
-2. Move the selected definitions into `.github/workflows/`.
-3. Revisit their event triggers before pushing the enabling commit; the parked
-   files preserve the originally proposed triggers as design material, not as
-   approved automation policy.
-4. Observe the first Windows, Linux, macOS, fuzz, browser, and performance runs
-   and record still-open platform work in `docs/roadmap.md`.
+Use [the local test gates](../docs/testing.md) for coverage beyond the active
+workflows above. Adding hosted platform, browser, fuzz or performance jobs
+requires an explicit repository decision and review of triggers, permissions,
+runner images, secrets, retention and costs. Base new jobs on the current
+runners and local commands, then qualify their first hosted runs.

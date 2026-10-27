@@ -1,24 +1,17 @@
 # Native capture encoding
 
-For byte layouts, cryptographic derivation, record and index schemas, and reader
-invariants, see the [TMCap format specification](tmcap-format.md).
+TMCap is Transmog's indexed, compressed native format. The desktop loads metadata
+without decompressing bodies and reads payloads on demand. This guide explains
+storage, scheduling and recovery; the [wire specification](tmcap-format.md) owns
+byte layouts, encryption derivation, record schemas and reader invariants.
 
-Current headers require a document kind: `capture` for this append/checkpoint
-format, or `portable-archive` for a sealed, seekable ZIP payload. The latter reuses
-the existing encryption/block/compression layer without inventing HTTP records;
-see [portable investigations](portable-investigations.md). Capture prefix recovery
-does not recover an incomplete ZIP. This experimental layout has no earlier-header
-adapter; current consumers and fixtures move together.
+The mandatory document kind is `capture` for append/checkpoint recording or
+`portable-archive` for a sealed, seekable ZIP payload. Capture recovery does not
+repair an incomplete ZIP. The format is experimental, with no reader for earlier
+container layouts; current consumers and fixtures move together.
 
-Application saves may include an exchange-scoped `request-order` extension with
-`{"version":1,"ordinal":"42"}`. The positive decimal `u64` ordinal describes
-relative workspace admission order at save time, independently of observer-event
-sequence and exchange identity. Import uses a complete, unique set of ordinals;
-otherwise it labels its first-surviving-appearance fallback. It always assigns
-fresh workspace numbers. Entry provenance may separately retain an
-`originalNumber` object (`version`, exact decimal `value`, and `provenance`) for
-an explicit source request number, such as a SAZ session number. These optional
-extensions do not change the container schema or interpret opaque IDs as numbers.
+Application saves preserve [request ordering and source numbers](tmcap-format.md#application-stream-records)
+independently of exchange identity. Reopening assigns fresh workspace numbers.
 
 Hook-effect records carry the captured `chain_position` and an optional
 `response_snapshot` for frozen local response selections. Its camel-case fields
@@ -28,16 +21,13 @@ handling. The hook ID retains the rule/asset revisions. Body records remain
 independent evidence of the client-response output and its retention state.
 Snapshot metadata never grants filesystem access and contains no external path.
 
-TMCap is an indexed, block-based capture container. `TMCAP001\0`, header version
-`1`, and record schema revision `1` identify the current format. Stream lifecycle
-and WebSocket/SSE content are independently indexed. Optional stream-summary
-metadata retains explicit establishment, terminal observation, observation cutoff
+Stream lifecycle and WebSocket/SSE content are independently indexed. Optional
+stream-summary metadata retains establishment, terminal observation, observation cutoff
 and elapsed lifetime. Its legacy `openedAt` remains first observation and is not
 reinterpreted as establishment. Older summaries without explicit timing evidence
 remain readable without inventing missing timestamps. Persistent SSE IDs are
 stored once and referenced by later messages, avoiding repeated large fields
-on disk and in reopened histories. There is no
-compatibility reader for earlier experimental layouts.
+on disk and in reopened histories.
 
 Circular recording also keeps stream payloads outside JSON metadata, including
 in its private memory or disk scratch storage. Export preserves the compressed
@@ -47,80 +37,37 @@ WebSockets whose handshake has completed but whose stream is still open.
 
 ## Privacy and physical layout
 
-```
+```text
 public bootstrap | protected geometry | locator A | locator B | fixed-size blocks
                                                       packed objects / footer
 ```
 
-The public bootstrap contains the nine-byte magic, a little-endian u32 JSON
-header length, and at most 4096 bytes of JSON. The header names `indexed-blocks`,
-zstd, the cipher, KDF, salt, nonce prefix and supported KDF parameters. For
-encrypted files, the public `block_size` is zero; the actual size is a u32 inside
-the authenticated bootstrap proof (20 bytes including its GCM tag). Plain files
-have a four-byte geometry word matching the header. Supported plaintext block
-sizes are 16384 and 1024 bytes, each followed by a 16-byte authentication tag or
-checksum. Two fixed 256-byte checkpoint locator slots follow the bootstrap.
+With encryption enabled, traffic metadata, payloads, indexes and checkpoint
+references are encrypted. File type, encryption parameters, filename, filesystem
+metadata and total size remain visible; there is no traffic-volume padding.
+Saved-file encryption does not hide runtime memory, live filesystem activity or
+private circular-cache allocation patterns.
 
-Each block's **encrypted** plaintext starts with a one-byte kind and a
-little-endian u32 used length, followed by payload and padding. Physical kinds are packed data (0) and footer (3).
-Packed data contains body (0), metadata leaf (1) and branch (2) objects. All blocks in a file have
-the same physical size. Records can share blocks or cross block boundaries;
-blocks do not identify individual requests or responses.
-
-With encryption enabled, URLs, methods, headers, timestamps, certificates,
-exchange and record IDs, counts, body lengths, compression flags, index entries,
-block kinds and checkpoint references are encrypted. The file type, encryption
-parameters, filename, filesystem metadata and total file size remain observable.
-There is no traffic-volume padding. This protects a saved file; it does not hide
-live filesystem activity, runtime memory, or the allocation pattern of private
-circular-storage temporary files from an observer of the running machine.
-
-Passwords derive a 256-bit master key through Argon2id (64 MiB, three iterations,
-one lane, fresh 16-byte salt). AES-256-GCM encrypts the bootstrap geometry using
-master-key counter zero. HKDF-SHA256 derives domain-separated block keys using
-the hash of the public header as salt and the block epoch as context. Each epoch
-contains at most 65536 blocks (at most 1 GiB of plaintext). A block nonce combines
-the file's four-byte prefix and its big-endian counter within the epoch. AAD binds
-the exact public header, global block ordinal and block domain. Moving a block,
-changing its bytes, or copying it from another file fails authentication.
-
-Locator updates derive independent keys from fresh random 16-byte salts. Each
-slot has 224 encrypted plaintext bytes plus a 16-byte tag; it commits a generation
-and footer block ordinal, bound to the slot and file. Updating a slot never
-reuses a block or locator encryption nonce/key pair. Unencrypted blocks and
-locators have truncated SHA-256 checksums; these detect corruption, not malicious
-changes by someone able to rewrite the file. Failed writer operations poison the
-writer. Passwords and derived key buffers are redacted and zeroized on final drop.
+Passwords derive keys through Argon2id; AES-256-GCM authenticates encrypted
+blocks and locators. Plain files use checksums that detect corruption, not
+malicious rewriting. Failed writes poison the writer, and password/key buffers
+are redacted and zeroized on final drop. Exact parameters and nonce/key rules
+belong to [encryption and integrity](tmcap-format.md#encryption-and-integrity).
 
 ## Metadata index and lazy bodies
 
-The persisted index stores full record metadata, including ordered request and
-response headers, separately from body data. Leaves target 128 KiB of expanded
-metadata; branches combine 32 children. The footer contains a bounded root
-frontier, record count, its own ordinal and a sealed flag. Only the current leaf
-and a logarithmic branch frontier need to remain in writer memory.
+The index stores ordered request/response metadata separately from body blobs.
+Opening reads the bootstrap and footer; populating Traffic walks compressed index
+pages in file order without inflating bodies. Application memory still scales
+with the metadata it displays. Writers retain only the current leaf and a
+logarithmic branch frontier.
 
-Opening reads the bootstrap and final footer. It does not scan data blocks or
-inflate body chunks. Populating the traffic list walks compressed index pages
-in file order, so it can load request/response metadata in batches. It does not
-seek to each body's data location. Memory used by the application's traffic
-list still scales with the metadata it chooses to display.
-
-An index entry contains the record ordinal, its canonical metadata and an
-optional body reference. Metadata is stored only in compressed pages. Bodies
-are at most 128 KiB per chunk; identical opposite-boundary chunks can reference
-one blob. Nearly identical chunks can use an earlier independent chunk as a
-zstd dictionary, with at most one additional 128 KiB read. No dependency chains
-or whole-file decompression are needed.
-
-Packed objects have kind, codec, expanded length and encoded length in a ten-byte
-header. Bodies and index pages share physical blocks; only checkpoints pad a
-partial block. Metadata-only loading may fetch neighboring body ciphertext in
-the page's boundary blocks, but never decompresses body blobs. A random read
-authenticates its metadata page and selected body blocks, verifies lengths and
-digests, and uses the indexed frame's pinned codec. Full validation reads every
-referenced body. All allocations, tree ranges, dictionaries and decompression
-are bounded; defaults do not cap total file size or record count.
+HTTP bodies use chunks of at most 128 KiB. Equal opposite-boundary chunks may
+share a blob; near matches may use an earlier independent chunk as a zstd
+dictionary, with at most one extra chunk read and no dependency chain. Random
+reads verify the selected metadata and body blocks. Full validation checks every
+referenced body. Index ranges, allocations and decompression are bounded without
+a fixed total file-size or record-count limit. See the [index specification](tmcap-format.md#index-objects-and-footer).
 
 WebSocket/SSE message metadata follows the same index. Message payloads and SSE
 field text occupy independent authenticated blobs, fetched only when inspected.
@@ -210,21 +157,16 @@ Small compaction preserves metadata-only opening and lazy body reads.
 
 ## Retained evidence
 
-Public X.509 certificates use global `public-certificate` definitions keyed by
-SHA-256; TLS evidence refers to them instead of repeating DER per exchange.
-Definitions precede references, are validated and shared by readers, and remain
-until their last circular-retention reference is evicted. No private key or TLS
-session secret belongs to the record schema.
+Public X.509 certificates and immutable transport/TLS facts use shared,
+SHA-256-addressed definitions. Records refer to those definitions instead of
+repeating DER or connection metadata per exchange. Changing facts create a new
+connection-context definition; circular finalization emits only definitions
+needed by retained exchanges. Metadata-only opening resolves them without body
+decompression. The Rust API expands references into its performance model.
+See [certificate records](tmcap-format.md#application-stream-records) and
+[shared connection context](tmcap-format.md#shared-connection-context).
 
-Stable transport and TLS facts use immutable `connection-context` definitions
-addressed by SHA-256 of normalized context JSON. Performance snapshots carry a
-context reference plus changing counters, measurements and request-relative
-timings. Changed facts create a new definition even when the physical connection
-ID stays the same. Both definitions and references are encrypted and indexed;
-metadata-only opening resolves them without decompressing bodies. Each definition
-has one canonical copy in the metadata index. Circular finalization emits only the
-contexts needed by retained exchanges. The Rust API expands references back into
-the existing performance model. See the [wire schema](tmcap-format.md#shared-connection-context).
+No private key or TLS session secret belongs in the capture schema.
 
 Performance records preserve measured timing, transport evidence and actual HTTP
 versions at all four request/response boundaries, including HTTP/1 minor versions.
