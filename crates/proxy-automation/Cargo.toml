@@ -14,7 +14,7 @@ regex.workspace = true
 serde.workspace = true
 hex.workspace = true
 sha2.workspace = true
-transmog-core = { version = "=0.1.13", path = "../proxy-core" }
+transmog-core = { version = "=0.1.14", path = "../proxy-core" }
 thiserror.workspace = true
 tokio.workspace = true
 
