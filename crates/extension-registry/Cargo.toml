@@ -13,14 +13,14 @@ serde.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
-transmog-extensions = { version = "=0.1.14", path = "../extensions" }
-transmog-extension-supervisor = { version = "=0.1.14", path = "../extension-supervisor" }
+transmog-extensions = { version = "=0.1.15", path = "../extensions" }
+transmog-extension-supervisor = { version = "=0.1.15", path = "../extension-supervisor" }
 
 [target.'cfg(unix)'.dependencies]
 rustix = { version = "=1.1.5", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
-transmog-directory-watch = { version = "=0.1.14", path = "../directory-watch" }
+transmog-directory-watch = { version = "=0.1.15", path = "../directory-watch" }
 
 [lints]
 workspace = true
