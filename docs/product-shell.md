@@ -195,6 +195,13 @@ responses are the primary path to reusable auto-responses. Property edits remain
 drafts until saved; active rule/script revisions and pause state are distinct.
 See [automation](automation.md) for matching, ordering and sandbox behavior.
 
+## MCP agents
+
+Enable agent access and create scoped keys in **Settings → Integrations**.
+The top MCP indicator shows connection activity; an **Unredacted** countdown
+badge opens temporary-access revocation. Humans review agent rules in
+**Automation → Rules**. See [MCP setup and permissions](mcp.md).
+
 ## Data and presentation boundaries
 
 The shell uses a fixed viewport with scrolling inside each workspace. The system

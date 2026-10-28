@@ -78,6 +78,30 @@ separate from Windows outputs. Logs, source/toolchain provenance, and staged SDK
 archives go to `.local/sdk-linux-qualification/`. See
 [the SDK guide](../sdk/README.md#verification) for scope and prerequisites.
 
+## Local MCP access
+
+The MCP crate covers authentication, scope, revocation, disclosure consent,
+shared-rule conflicts, temporary control, connection activity and loopback traffic.
+Run from the repository root after preparing UI assets:
+
+```powershell
+python scripts/dev-env.py --run cargo test --locked -p transmog-mcp --all-features
+node apps/desktop/ui/scripts/check-workspaces.mjs --mcp-only
+```
+
+The complete browser gate includes the same UI flow. The ordinary Windows
+desktop harness also tests the real CLI, key isolation, unredacted approvals,
+early revocation and connection indicators. Build the desktop and CLI together
+before native checks. To verify offline discovery, opt-in startup and reuse after
+restart with a disposable profile:
+
+```powershell
+python scripts/test-mcp-startup.py --executable target/debug/transmog-cli.exe --artifacts artifacts/mcp-startup
+```
+
+This startup check requires no existing desktop process and closes only its own
+windows. See [MCP setup](mcp.md) and [connector contracts](mcp-reference.md).
+
 ## Desktop and capture workflows
 
 Auth fixtures run with `cargo test -p transmog-auth` and the application auth

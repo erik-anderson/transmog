@@ -1,165 +1,92 @@
 # Local MCP agent access
 
-Transmog's CLI exposes a stdio MCP server for Codex, Copilot CLI and similar
-agents. The desktop owns traffic, permissions and rule state. Each CLI invocation
-supplies its own `TRANSMOG_ACCESS_KEY`; there is no shared signed-in connection
-or credential cache.
+Connect Codex, Copilot CLI or another MCP client to inspect request/response
+context, control collection, send requests and collaborate on traffic rules.
+Access is off by default and listens only on this computer's loopback interface.
 
-## Authorize an agent
+## Connect an agent
 
-Open **Settings → Integrations**, enable **Allow MCP connections**, then choose
-**Create access key…**. Name the agent, choose exact hosts, frozen selected requests
-or all traffic, an expiry and the required permissions. Saving this dialog is the
-explicit approval. Transmog shows the random key once, with configuration examples
-for Codex and Copilot CLI. Store the key in that agent's private configuration.
-Create a different key for each agent or investigation.
+1. In the main desktop window, open **Settings → Integrations** and enable
+   **Allow MCP connections**.
+2. Choose **Create access key…**. Name it, select exact hosts, selected requests
+   or all traffic, and choose permissions and expiry. Create a separate key for
+   each agent.
+3. Copy the generated Codex or Copilot configuration into that agent's settings.
+   Keep the key private: Transmog shows it only once. Preserve the generated CLI
+   path and environment entries, including `LOCALAPPDATA` on Windows.
 
-The key identifies a grant. A friendly name does not authenticate an executable;
-any process that obtains the same secret can use that grant. This design separates
-agents that keep their own keys private. It does not isolate mutually untrusted
-processes running as the same operating-system user or protect a compromised user
-profile. The desktop stores a SHA-256 verifier, never the plaintext key.
+The agent runs `transmog-cli mcp serve` and calls `transmog_connect` to connect.
+Creating the key is the in-app approval; a name alone never authorizes a caller.
+Anyone who obtains the same key can use its permissions.
 
-Run `transmog-cli mcp serve` with the key in the process environment. MCP discovery
-and initialization work with the desktop offline. The agent calls
-`transmog_connect` to obtain the current workspace instance, scope and permissions.
-`transmog-cli mcp status` and `transmog-cli mcp call TOOL_NAME` (JSON on stdin) use
-the same per-invocation authentication. Keys are never command-line arguments.
-Use the generated configuration's `LOCALAPPDATA` entry as well: clients may
-sanitize the CLI's environment, and this keeps discovery and optional desktop
-launch attached to the same Windows user profile.
+The desktop must be running for traffic operations. Add `--start-app` to the
+connector arguments to let an explicit connection launch it; the CLI must be
+beside the desktop executable. This never enables MCP or starts collection.
+MCP initialization and tool discovery still work while the desktop is closed.
 
-Configuration formats follow the official
-[Codex MCP guide](https://developers.openai.com/codex/mcp) and
-[Copilot CLI MCP guide](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-mcp-servers).
+## Review connections and unredacted access
 
-## Permissions and rule collaboration
+The top **MCP** indicator shows connected access keys. It keeps recent calls
+visible for three seconds to prevent flicker; an idle stdio connector alone does
+not count as a desktop connection. Open it to see the key names and access controls.
 
-**Omit authentication headers and bodies** is on by default for every key,
-including keys saved before this option was introduced. It suppresses known
-authentication-header values and all message bodies even when their read
-permissions were selected. It does not change the human's retained traffic.
+**Omit authentication headers and bodies** is enabled for every key by default.
+Known authentication-header values and all message bodies stay omitted even when
+their read permissions are selected. This does not change the traffic retained
+for human inspection.
 
-An agent calls `transmog_sensitive_access_request` with a reason and asks the
-user to respond near the top of Transmog. The access indicator shows a pending
-request without opening a popup or moving focus. Open it to review the agent,
-reason and existing traffic scope, then choose:
+An agent can request unredacted values with a reason. Open the request badge on
+the MCP indicator, review the agent and scope, then choose:
 
-- **For next 1 minute**: allow unredacted header/body values for that key for
-  60 seconds. The top indicator shows the remaining time and opens a
-  **Revoke access now** control. The saved omission setting is unchanged.
-- **Always**: turn off that key's saved omission setting and grant the two read
-  permissions. This survives restart until changed or the key expires/is revoked.
-- **Deny**: leave unredacted values protected. Status polling does not prompt again.
+- **For next 1 minute**: allow unredacted values for 60 seconds without changing
+  the saved setting. An **Unredacted · 0:59** badge shows the countdown; open it
+  and choose **Revoke access now** to end access sooner.
+- **Always**: turn off that key's omission setting and grant body and credential
+  reads. This change survives restart.
+- **Deny**: keep values protected.
 
-The agent checks `transmog_sensitive_access_status` before retrying a protected
-read. Neither choice broadens traffic scope or grants send/edit/collection
-permissions. Temporary consent ends on expiry, revocation, key changes, master-off
-or main-workspace shutdown. Recording and breakpoint control that require these
-values end when that access ends; in-flight results are checked before disclosure.
-An operating-system clock change cannot extend a temporary approval.
+These choices do not expand traffic scope or grant editing, collection or sending.
+Disclosed data may be sent to the agent's provider. Temporary approval also ends
+when the key changes, expires or is revoked, MCP is disabled, or the main window
+closes. The badge updates independently of the connection indicator's grace period.
 
-Every valid key can list relevant saved rules and read their definitions. There is
-no separate rule-read permission. Rules containing authored body content or known
-credential-header values require the corresponding disclosure permission for their
-full definition; the summary still describes their effects.
+## Permissions and shared rules
 
-| Permission | Access |
+Every valid key can read relevant saved rules and their effects without a separate
+rule-read permission. Body content and known credential values in rule definitions
+remain subject to the read permissions and omission setting.
+
+| Permission | Allows |
 | --- | --- |
-| View request details | Search scoped traffic and inspect masked heads, timings, failures and effects |
-| Read message bodies | Explicit bounded reads of retained body bytes and authored rule body content |
-| Control collection | Start/stop the shared proxy and agent-owned recordings |
-| Prepare changes | Create, edit and test the key's disabled header/text rule drafts |
-| Edit shared rules | Edit existing saved header/text rules with revision checks |
-| Change live traffic | Activate temporary rules or targeted breakpoints; combined with Edit shared rules, update or disable enabled saved rules |
-| Send requests | Send authored or replayed requests within approved hosts |
-| Read unmasked credential headers | Reveal known credential headers and credential-bearing rule configuration |
+| View request details | Inspect scoped traffic, masked headers, timings and changes |
+| Read message bodies | Read retained bodies and authored rule body content |
+| Control collection | Start/stop the shared proxy and the agent's recordings |
+| Prepare changes | Create, edit and test the key's own disabled header/text rule drafts |
+| Edit shared rules | Edit existing saved header/text rules |
+| Change live traffic | Activate temporary rules or targeted breakpoints; with Edit shared rules, change or disable enabled saved rules |
+| Send requests | Send authored or replayed requests within scope |
+| Read unmasked credential headers | Read known credential headers and credential-bearing rule configuration |
 
-Humans review agent drafts in **Automation → Rules**, using their normal editors.
-Agent names appear on temporary rules. Newer saved human revisions cause a conflict
-instead of being overwritten. Desktop refresh hints preserve unsaved editor drafts;
-reopen the latest saved version and reconcile before saving again.
+Review agent drafts in **Automation → Rules** using the normal editors. Newer
+saved human edits cause a conflict instead of being overwritten, and agent
+refreshes preserve unsaved human drafts.
 
-Shared rule edits are durable. Revoking a key ends its temporary effects but does
-not roll back shared configuration or a human's work. Temporary agent rules require
-an owned control lease of 30–600 seconds. Expiry, revocation, permission changes or
-master-off disable those temporary rules and detach their breakpoint controller.
-Only the owning key can edit a temporary rule. A human can choose **Keep changes…**
-to convert a reviewed temporary rule into ordinary saved configuration.
+Temporary rules show the agent's name and stop when their control session ends.
+Choose **Keep changes…** to retain reviewed changes as ordinary saved rules.
+Shared saved edits remain after a key is revoked.
 
-Whole-workspace native recording requires all-traffic scope, collection, body and
-credential access. Editable breakpoint envelopes also require body and credential
-access and are restricted to one approved exact host. Ending a controller aborts
-its unresolved pauses. Agents cannot take over a human's existing controller.
+## Keys and restarts
 
-## Restarts and connection lifecycle
+Manage keys in **Settings → Integrations**. **Replace key…** invalidates the old
+secret and shows a new one once; **Revoke…** permanently disables it. Turning off
+**Allow MCP connections** suspends all keys and ends temporary access and effects.
+Turning it back on permits still-valid keys to reconnect.
 
-Named grants, expiry, revocation and master enablement survive app restarts.
-**Replace key…** invalidates the previous secret immediately and shows its
-replacement once. **Revoke…** permanently invalidates it. Master-off suspends keys;
-turning MCP back on allows still-valid keys to reconnect.
-The desktop header distinguishes MCP enablement from authenticated agent
-connections. Its connection count groups calls by access key and stays visible
-until three seconds after the last call finishes, so rapid short calls do not
-flicker. An idle stdio connector alone does not count as a desktop connection.
-Open the indicator to see the user-assigned key names, live control sessions and
-access controls. Connection status grants no authority; every call still
-authenticates its own key. A badge above the connection label shows pending access
-requests or the countdown for temporary unredacted access. The badge updates
-immediately on approval, expiry or revocation, independently of connection
-smoothing; select it to reach **Revoke access now**.
-Agent-owned recordings are sealed when
-their grant ends or MCP is disabled. The shared proxy remains under normal
-desktop collection controls.
+Saved keys, permissions, omission settings and expiry survive app restarts.
+Temporary approvals and control sessions do not. After restarting, agents must
+reconnect and rediscover traffic references; selected-request scopes must be
+refreshed in the app. Persistent host scopes continue using the same key.
 
-Configure `--start-app` explicitly if `transmog_connect` should launch the sibling
-desktop executable when it is absent. This never enables MCP, starts the proxy or
-starts recording. Setup and certificate decisions remain in the desktop. Status
-and ordinary tool calls do not launch the app.
-
-Every desktop run has a fresh instance identifier. Selected-request grants from
-earlier runs cannot silently expand or attach to reused IDs. Reconnect and edit
-their selection in the desktop. Traffic/body references and temporary control
-handles must be rediscovered after restarting; ordinary persistent host grants
-continue working with their existing key.
-
-## Evidence and transport boundaries
-
-Agents inspect the same retained original/effective request and response
-boundaries as a human. Body content is fetched explicitly, in bounded ranges with
-retention/truncation metadata. Header comparisons report visible differences;
-bounded equal-looking previews do not establish byte equality. Captured content
-is untrusted evidence, including instructions embedded by a server.
-
-The internal desktop endpoint binds only `127.0.0.1` on an ephemeral port. It has
-no LAN/wildcard bind option. The CLI validates bounded local discovery and pins
-the run's ephemeral TLS certificate before sending the key. It bypasses ambient
-proxies, follows no redirects and rejects non-loopback endpoints. The server
-checks Host, rejects browser Origin headers and authenticates every operation;
-revocation is rechecked during work and before returning data. Discovery contains
-no secret or TLS private key. It is protected by the user's local profile boundary.
-
-Send operations require a caller-supplied operation ID. Reusing it with the same
-request returns the stored outcome or reports uncertainty without resending.
-Reusing it for different content fails. The CLI never retries mutations. After a
-timeout or app restart, inspect the result before deciding to send a new request;
-the in-memory send ledger is scoped to one desktop run.
-
-Traffic, credentials, private keys and agent keys are not part of MCP activity
-logs. Data explicitly disclosed to an agent may be sent to that agent's provider.
-Host private keys, TLS session secrets, arbitrary local file reads and script
-source/execution are not exposed by these tools.
-
-## Development verification
-
-The MCP crate tests authentication, revocation, scoping, shared edits, leases,
-SDK discovery, and a real loopback proxy exchange. Workspace browser checks cover
-the permission dialogs, key lifecycle and preservation of unsaved human drafts.
-The normal Windows desktop harness also exercises the native permission dialog
-and separate CLI invocations.
-
-After building the desktop and CLI together, qualify offline discovery and opt-in
-launch with `python scripts/test-mcp-startup.py --executable
-target/debug/transmog-cli.exe --artifacts artifacts/mcp-startup`. This Windows
-check requires no existing desktop process, uses a disposable profile and test
-grant, closes only its own windows, and verifies reuse across two desktop runs.
+See [CLI commands](cli.md#mcp-agent-connections) for direct calls,
+[the developer reference](mcp-reference.md) for authentication and tool contracts,
+and [MCP verification](testing.md#local-mcp-access) for test commands.

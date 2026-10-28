@@ -70,6 +70,8 @@ one repository:
 - `transmog-session`: UI-independent live application lifecycle;
 - `transmog-app` and `transmog-app-webui`: persisted product workspaces, safe
   presentation models, and Rust-rendered UI;
+- `transmog-mcp`: scoped agent grants, the CLI's stdio MCP connector and a
+  loopback-only desktop adapter above the application services;
 - `transmog-host-windows`, `transmog-process-sandbox`, and
   `transmog-preview-worker`: explicit OS integration and isolated helpers; and
 - `transmog`, `transmog-desktop`: headless command-line and Windows desktop
@@ -78,6 +80,11 @@ one repository:
 Dependencies point toward lower layers. Transport objects do not appear in core
 interception contracts, and product persistence or UI types do not appear in
 runtime or protocol APIs.
+
+MCP calls enter through the CLI and authenticate against desktop-owned grants
+before reaching application operations. This endpoint is separate from captured
+proxy traffic and the internal control transport. See the
+[MCP connector reference](mcp-reference.md) for disclosure and lifecycle boundaries.
 
 ## Interception lifecycle
 

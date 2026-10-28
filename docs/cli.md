@@ -1,12 +1,8 @@
 # CLI guide
 
-The desktop also bundles the CLI for [local MCP agent access](mcp.md).
-`transmog-cli mcp serve` exposes the stdio connector; `mcp status` and `mcp call`
-require the same caller-held key through `TRANSMOG_ACCESS_KEY` on every invocation.
-
 Use the standalone CLI to record a support trace, run a manually configured
-proxy, or inspect and convert native captures. Download the signed Windows
-`transmog-cli.exe` from the project's
+proxy, inspect and convert native captures, or connect an MCP agent to the desktop.
+Download the signed Windows `transmog-cli.exe` from the project's
 [release assets](https://github.com/erik-anderson/transmog/releases). It is
 also included in the desktop installer and requires no Rust or
 Cargo installation. See the [support capture guide](cli-support-capture.md) for
@@ -40,6 +36,8 @@ are deferred; existing command output and exit behavior remain unchanged.
 | Command | Task |
 | --- | --- |
 | `record` | Guided recording to a new `.tmcap` file; Ctrl+C stops and saves it. |
+| `mcp serve` | Run the stdio MCP connector for an agent. |
+| `mcp status` / `mcp call` | Check desktop status or call an MCP tool with JSON arguments. |
 | `context` | List or extract original recorded configuration, support metadata, incidents and source notes. |
 | `roots cleanup` | Restore interrupted Windows proxy settings and remove CLI-owned roots. |
 | `serve` | Run a proxy with an existing CA and manually configured clients. |
@@ -50,6 +48,24 @@ are deferred; existing command output and exit behavior remain unchanged.
 | `capture validate` | Check native integrity and require a complete final seal. |
 | `capture seal` | Write an interrupted native capture's complete records to a new sealed file. |
 | `capture export` | Convert native records to JSONL, SAZ, or extended SAZ. |
+
+## MCP agent connections
+
+Create a key in **Settings → Integrations** and use the generated agent
+configuration; see [MCP setup](mcp.md). Every invocation requires its own
+`TRANSMOG_ACCESS_KEY` environment value. Keys are never command-line arguments.
+On Windows, preserve the generated `LOCALAPPDATA` environment entry too.
+Agents normally launch `mcp serve`; for direct status or tool calls:
+
+```powershell
+.\transmog-cli.exe mcp status
+'{}' | .\transmog-cli.exe mcp call transmog_status
+```
+
+These examples assume the key is already configured in the process environment.
+`mcp call` reads a JSON object from stdin. `mcp serve --start-app` lets the agent's
+explicit `transmog_connect` call launch the sibling desktop executable; it never
+enables MCP or starts collection. Status and direct calls require a running desktop.
 
 ## Record a support trace
 

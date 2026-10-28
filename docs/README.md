@@ -21,7 +21,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 - [Request timings](request-timings.md): waterfalls and shared transport evidence.
 - [Streams](stream-inspection.md): WebSocket/SSE inspection and retained messages.
 - [Automation](automation.md): auto-responses, header overrides and scripts.
-- [Local MCP agents](mcp.md): scoped access keys, traffic inspection and shared rule collaboration.
+- [Local MCP agents](mcp.md): setup, scoped permissions, unredacted access and shared rules.
 - [Safe previews](safe-previews.md) and [captured-page preview](captured-page-preview.md).
 - [Product state and support](product-state-and-support.md): settings, retention, privacy and diagnostics.
 - [Client process attribution](client-process-attribution.md).
@@ -51,6 +51,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 
 - [Interception lifecycle](interception-lifecycle.md): ordering, short circuits and failures.
 - [Application/session service](application-session-service.md): catalog, capture, replay and host integration.
+- [MCP connector](mcp-reference.md): authentication, local transport, disclosure and tool contracts.
 - [Architecture decisions](adr/README.md): accepted constraints and rationale.
 - [Native SDK](../sdk/README.md), [C++ example](../examples/cpp-embedding/README.md) and [.NET example](../examples/dotnet-embedding/README.md).
 - [Branding and identifiers](branding.md).

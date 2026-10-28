@@ -31,7 +31,8 @@ The proxy binds to loopback by default. The desktop guides HTTPS trust setup and
 restores the previous per-user Windows proxy settings when stopped. Traffic is
 transient unless saved or recorded. Sensitive-header redaction is off by default
 in the desktop; Privacy controls newly captured headers, and Save trace can
-redact the exported copy. See [current limitations](docs/limitations.md).
+redact the exported copy. MCP access separately omits known authentication header
+values and all message bodies by default. See [current limitations](docs/limitations.md).
 
 ## Run the Windows desktop
 
@@ -48,6 +49,11 @@ for the Windows toolchain, locked dependencies and desktop helpers. After launch
 See [building](docs/building.md#windows-desktop-shell) for an unsigned development
 installer and [Windows releases](docs/windows-release.md) for signed packaging
 and qualification.
+
+To connect Codex, Copilot CLI or another MCP client, open **Settings → Integrations**,
+enable **Allow MCP connections**, and create a scoped access key. Copy the generated
+configuration into that agent's settings. See [MCP setup and permissions](docs/mcp.md)
+for unredacted access, shared rule editing and revocation.
 
 ## Record from the command line
 
