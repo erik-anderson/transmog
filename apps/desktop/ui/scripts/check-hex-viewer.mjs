@@ -68,6 +68,94 @@ export function hexReachability(viewer, offset) {
   };
 }
 
+async function checkDragScrolling(page, viewer, screenshotPath) {
+  const grid = viewer.getByRole("grid");
+  const waitForScroll = (position, direction) =>
+    page.waitForFunction(
+      ({ position, direction }) => {
+        const viewer = document.querySelector("app-shell").shadowRoot.querySelector("hex-viewer");
+        return direction * (viewer.viewport.scrollTop - position) > 250;
+      },
+      { position, direction },
+      { timeout: 5000 },
+    );
+  for (const column of ["hex", "text"]) {
+    await grid.press("Control+Home");
+    const firstCell = viewer.locator(`[data-byte="0"][data-column="${column}"]`);
+    await firstCell.scrollIntoViewIfNeeded();
+    const first = await firstCell.boundingBox();
+    const bounds = await grid.boundingBox();
+    const x = first.x + first.width / 2;
+    await page.mouse.move(x, first.y + first.height / 2);
+    await page.mouse.down();
+    try {
+      // Stay inside the viewport with pointer capture intact, then hold still.
+      await page.mouse.move(x, bounds.y + bounds.height - 8);
+      await waitForScroll(0, 1);
+      const middle = await grid.evaluate((element) => element.scrollTop);
+      const selectedBefore = await viewer.evaluate((element) => Number(element.rangeEnd));
+      await waitForScroll(middle, 1);
+      assert.ok(
+        (await viewer.evaluate((element) => Number(element.rangeEnd))) > selectedBefore + 128,
+        "Holding at the lower edge stopped extending the byte selection",
+      );
+      assert.equal(await viewer.evaluate((element) => element.rangeStart), "0");
+      assert.equal(await viewer.evaluate((element) => element.activeColumn), column);
+      await page.screenshot({ path: screenshotPath.replace(".png", `-drag-${column}.png`) });
+
+      // Reverse without releasing, including movement outside the viewport.
+      const bottom = await grid.evaluate((element) => element.scrollTop);
+      await page.mouse.move(x, bounds.y - 10);
+      await waitForScroll(bottom, -1);
+      const reversed = await grid.evaluate((element) => element.scrollTop);
+      await waitForScroll(reversed, -1);
+      assert.ok(
+        (await viewer.evaluate((element) => Number(element.rangeEnd))) < selectedBefore,
+        "Dragging above the viewport did not shrink the anchored range",
+      );
+      await page.mouse.move(x, bounds.y + bounds.height / 2);
+      // Wheel/scrollbar offsets need not align to whole rows.
+      await viewer.evaluate((element) => {
+        element.viewport.scrollTop = element.columnHeader.getBoundingClientRect().height * 10.75;
+        element.renderRows();
+      });
+      const point = await viewer.evaluate(
+        (element, { x, y }) => {
+          const target = element
+            .getRootNode()
+            .elementFromPoint(x, y)
+            .closest("[data-byte]")
+            .getBoundingClientRect();
+          return { x: target.x + target.width / 2, y: target.y + target.height / 2 };
+        },
+        { x, y: bounds.y + bounds.height / 2 },
+      );
+      await page.mouse.move(point.x, point.y);
+      const hovered = await viewer.evaluate(
+        (element, { x, y }) =>
+          element.getRootNode().elementFromPoint(x, y)?.closest("[data-byte]")?.dataset.byte,
+        point,
+      );
+      assert.equal(
+        await viewer.evaluate((element) => element.caret),
+        hovered,
+        "After scrolling, the selected byte did not match the byte under the pointer",
+      );
+    } finally {
+      await page.mouse.up();
+    }
+    const stopped = await grid.evaluate((element) => element.scrollTop);
+    const range = await viewer.evaluate((element) => [element.rangeStart, element.rangeEnd]);
+    await page.waitForTimeout(120);
+    assert.equal(await grid.evaluate((element) => element.scrollTop), stopped);
+    assert.deepEqual(
+      await viewer.evaluate((element) => [element.rangeStart, element.rangeEnd]),
+      range,
+      "Releasing the pointer continued changing the byte selection",
+    );
+  }
+}
+
 export async function checkHexViewer(page, inspector, screenshotPath) {
   const originalDetail = await inspector.evaluate((element) => structuredClone(element.detail));
   const viewer = inspector.locator("hex-viewer");
@@ -322,6 +410,35 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
     assert.deepEqual((await state()).slice(0, 3), [16, 0, 16]);
     await grid.press("PageDown");
     assert.ok((await state())[0] > 16);
+    const dragViewport = page.viewportSize();
+    const dragLayout = await page.evaluate(() => {
+      const traffic = document.querySelector("app-shell").traffic;
+      const layout = { side: traffic.inspectorSide, preferences: traffic.preferences };
+      traffic.inspectorSide = "response";
+      traffic.preferences = { ...traffic.preferences, layout: "stacked", listSplit: 30 };
+      return layout;
+    });
+    try {
+      for (const size of [
+        { width: 1440, height: 900 },
+        { width: 960, height: 720 },
+        { width: 800, height: 600 },
+      ]) {
+        await page.setViewportSize(size);
+        await checkDragScrolling(
+          page,
+          viewer,
+          screenshotPath.replace(".png", `-${size.width}.png`),
+        );
+      }
+    } finally {
+      await page.setViewportSize(dragViewport);
+      await page.evaluate(({ side, preferences }) => {
+        const traffic = document.querySelector("app-shell").traffic;
+        traffic.inspectorSide = side;
+        traffic.preferences = preferences;
+      }, dragLayout);
+    }
     await grid.press("Control+Home");
     const first = await cell(0).boundingBox();
     const bounds = await grid.boundingBox();
@@ -332,7 +449,9 @@ export async function checkHexViewer(page, inspector, screenshotPath) {
     await page.waitForFunction(
       () =>
         document.querySelector("app-shell").shadowRoot.querySelector("hex-viewer").viewport
-          .scrollTop > 0,
+          .scrollTop > 250,
+      undefined,
+      { timeout: 5000 },
     );
     await page.mouse.up();
     assert.ok((await state())[2] > 16, "Dragging beyond the viewport did not extend the range");

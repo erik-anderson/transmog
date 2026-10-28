@@ -115,10 +115,60 @@ export async function smokeHexViewer(evaluate, call) {
     })()`),
       true,
     );
+    const dragPoints = await evaluate(`(async () => {
+      const viewer=globalThis.__hexSmoke.viewer;
+      viewer.preview={key:'webview-hex-drag',bytes:Uint8Array.from({length:262144},(_,i)=>i%256),offset:0,truncated:false};
+      viewer.$flushUpdates();
+      await new Promise(resolve=>requestAnimationFrame(()=>requestAnimationFrame(resolve)));
+      const first=viewer.querySelector('[data-byte="0"][data-column="hex"]').getBoundingClientRect(),bounds=viewer.viewport.getBoundingClientRect();
+      return {start:{x:first.left+first.width/2,y:first.top+first.height/2},bottom:{x:first.left+first.width/2,y:bounds.bottom-8}};
+    })()`);
+    await call("Input.dispatchMouseEvent", { type: "mouseMoved", ...dragPoints.start });
+    await call("Input.dispatchMouseEvent", {
+      type: "mousePressed",
+      button: "left",
+      clickCount: 1,
+      ...dragPoints.start,
+    });
+    try {
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseMoved",
+        buttons: 1,
+        ...dragPoints.bottom,
+      });
+      for (let step = 0; step < 2; step++) {
+        assert.equal(
+          await evaluate(`(async () => {
+            const viewer=globalThis.__hexSmoke.viewer,start=viewer.viewport.scrollTop,end=BigInt(viewer.rangeEnd),deadline=performance.now()+5000;
+            while(viewer.viewport.scrollTop-start<250&&performance.now()<deadline)await new Promise(resolve=>setTimeout(resolve,30));
+            return viewer.viewport.scrollTop-start>=250&&BigInt(viewer.rangeEnd)>end+128n&&viewer.rangeStart==='0';
+          })()`),
+          true,
+          "Holding a drag at the bottom stalled native scrolling or selection",
+        );
+      }
+    } finally {
+      await call("Input.dispatchMouseEvent", {
+        type: "mouseReleased",
+        button: "left",
+        clickCount: 1,
+        ...dragPoints.bottom,
+      });
+    }
+    assert.equal(
+      await evaluate(`(async () => {
+        const viewer=globalThis.__hexSmoke.viewer,top=viewer.viewport.scrollTop,end=viewer.rangeEnd;
+        await new Promise(resolve=>setTimeout(resolve,120));
+        return viewer.viewport.scrollTop===top&&viewer.rangeEnd===end;
+      })()`),
+      true,
+      "Native byte selection kept scrolling after pointer release",
+    );
     return {
       mouseSelection: true,
       mirroredHighlight: true,
       keyboardSelection: true,
+      dragScrolling: true,
       copy: true,
       submenu: true,
     };
@@ -126,6 +176,7 @@ export async function smokeHexViewer(evaluate, call) {
     await evaluate(`(() => {
       const saved=globalThis.__hexSmoke;
       if(!saved)return;
+      saved.viewer?.cancelSelection();
       if(saved.viewer&&saved.listener)for(const type of ['pointerdown','pointermove','pointerup','lostpointercapture'])saved.viewer.viewport.removeEventListener(type,saved.listener);
       saved.viewer?.contextMenu.hidePopover();
       saved.inspector.hexPreview=saved.preview;saved.inspector.bodyText=saved.text;saved.inspector.bodyNotice=saved.notice;saved.inspector.mode=saved.mode;

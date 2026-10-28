@@ -415,9 +415,12 @@ export class HexViewer extends WebUIElement {
       Math.min(15, Math.floor((this.pointerX - header.left) / (header.width / 16))),
     );
     const y = Math.max(bounds.top + this.rowHeight, Math.min(bounds.bottom - 1, this.pointerY));
+    const remainder = this.scaled ? 0 : this.viewport.scrollTop % this.rowHeight;
     const row =
       this.currentTop() +
-      BigInt(Math.max(0, Math.floor((y - bounds.top - this.rowHeight) / this.rowHeight)));
+      BigInt(
+        Math.max(0, Math.floor((y - bounds.top - this.rowHeight + remainder) / this.rowHeight)),
+      );
     this.selectTo(row * 16n + BigInt(column), true);
   }
   private dragScroll(): void {
@@ -434,7 +437,14 @@ export class HexViewer extends WebUIElement {
     if (!direction) {
       return;
     }
-    this.scrollToRow(this.currentTop() + BigInt(direction));
+    if (this.scaled) {
+      this.scrollToRow(this.currentTop() + BigInt(direction));
+    } else {
+      // Native scroll offsets round fractional row heights. Accumulate pixels so
+      // rounding cannot keep a row-based step stuck at the same scroll position.
+      this.viewport.scrollTop += direction * this.rowHeight;
+      this.renderRows();
+    }
     this.selectPointerByte();
   }
 
