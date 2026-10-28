@@ -29,6 +29,8 @@ pub enum Permission {
     Collect,
     /// Prepare and test disabled modifications.
     PrepareChanges,
+    /// Edit shared saved rules, preserving newer human revisions. Reading requires no separate permission.
+    EditSharedRules,
     /// Apply temporary changes to matching live traffic.
     Modify,
     /// Send explicitly authored or replayed requests.
@@ -381,6 +383,25 @@ impl AccessManager {
             Ok(())
         })?;
         Ok(self.status())
+    }
+
+    /// Replaces exactly one reviewed key while retaining its label and permissions.
+    /// # Errors
+    /// Rejects stale/revoked records and entropy or persistence failures atomically.
+    pub fn replace(&self, id: &str, revision: u64) -> Result<AccessKey, Error> {
+        let key = AccessKey(Zeroizing::new(format!("tmk_{id}_{}", random(32)?)));
+        self.mutate(|state| {
+            let record = find_record(state, id, revision)?;
+            if record.grant.revoked {
+                return Err(invalid(
+                    "Create a new key instead of replacing a revoked key.",
+                ));
+            }
+            record.verifier = Sha256::digest(key.expose().as_bytes()).into();
+            record.grant.revision = record.grant.revision.checked_add(1).ok_or_else(storage)?;
+            Ok(())
+        })?;
+        Ok(key)
     }
 
     /// Permanently revokes one key, or all keys when no ID is supplied.

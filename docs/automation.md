@@ -19,6 +19,11 @@ snapshot with which it started.
 
 ## Rules workspace
 
+Agents can collaborate on the same saved header and response-text rules through
+[local MCP access](mcp.md). Reading relevant rules is available to every valid
+key; editing shared rules is an explicit permission and preserves human revisions.
+Humans review agent drafts in this workspace before keeping or enabling them.
+
 **Automation** has three tools: **Rules**, **Response sets**, and **Scripts**.
 Rules brings saved responses, header changes, browser-header presets and response
 text replacements into one searchable list and properties pane. Filter by Requests

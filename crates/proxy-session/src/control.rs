@@ -50,6 +50,8 @@ pub enum ControlPhase {
 /// Breakpoint phases installed for one attached controller.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ControlPolicy {
+    /// Exact original-target hosts. Empty retains the caller's explicit unrestricted policy.
+    pub hosts: BTreeSet<String>,
     /// Exact phase set in which the controller may affect traffic.
     pub phases: BTreeSet<ControlPhase>,
     /// Complete-body buffer and edit bound for either direction.
@@ -59,6 +61,7 @@ pub struct ControlPolicy {
 impl Default for ControlPolicy {
     fn default() -> Self {
         Self {
+            hosts: BTreeSet::new(),
             phases: BTreeSet::from([ControlPhase::RequestHead, ControlPhase::ResponseHead]),
             body_limit: NonZeroUsize::new(4 * 1024 * 1024).expect("constant is nonzero"),
         }
@@ -314,10 +317,15 @@ struct ControlInterceptorFactory {
 impl InterceptorFactory for ControlInterceptorFactory {
     fn create(
         &self,
-        _metadata: &ExchangeMetadata,
+        metadata: &ExchangeMetadata,
     ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
         Ok(Arc::new(ControlInterceptor {
-            attachment: self.connector.current(),
+            attachment: self.connector.current().filter(|(_, policy)| {
+                policy.hosts.is_empty()
+                    || policy.hosts.iter().any(|host| {
+                        host.eq_ignore_ascii_case(&metadata.original_target.as_target().host)
+                    })
+            }),
         }))
     }
 }
@@ -815,6 +823,7 @@ mod tests {
         let policy = ControlPolicy {
             phases: BTreeSet::from([ControlPhase::RequestBody]),
             body_limit: NonZeroUsize::new(16).unwrap(),
+            hosts: BTreeSet::new(),
         };
         let mut controller = connector
             .connect(&handshake(&policy), config(), policy)
@@ -892,5 +901,35 @@ mod tests {
             connector.connect(&peer, config(), policy),
             Err(ControlConnectionError::MissingCapability(_))
         ));
+    }
+
+    #[tokio::test]
+    async fn host_scoped_control_never_enqueues_unrelated_request_heads() {
+        let connector = ControlConnector::new("build").unwrap();
+        let policy = ControlPolicy {
+            hosts: BTreeSet::from(["unrelated.test".into()]),
+            ..ControlPolicy::default()
+        };
+        let mut controller = connector
+            .connect(&handshake(&policy), config(), policy)
+            .unwrap();
+        let interceptor = connector
+            .interceptor_factory()
+            .create(context().metadata())
+            .unwrap();
+        assert!(matches!(
+            interceptor
+                .on_request_head(RequestHeadEvent {
+                    context: context(),
+                    head: head()
+                })
+                .await,
+            RequestHeadAction::Continue
+        ));
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), controller.recv_decision())
+                .await
+                .is_err()
+        );
     }
 }

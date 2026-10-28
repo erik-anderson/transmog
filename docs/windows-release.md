@@ -9,7 +9,8 @@ Each release also builds, signs, timestamps and publishes `transmog-cli.exe` as
 a separate x64 asset and `transmog-cli-arm64.exe` for Windows ARM64. Both have
 the same semantic version and are covered by
 release checksums, signature evidence and provenance. Qualification verifies its
-version command and confirms that the app installer contains no CLI executable.
+version command and confirms that the app installer includes the signed CLI
+beside the desktop for local MCP connections.
 Local packaging returns both the installer and the standalone CLI paths.
 
 The signed workflow builds and qualifies x64 on `windows-2025` and ARM64 on

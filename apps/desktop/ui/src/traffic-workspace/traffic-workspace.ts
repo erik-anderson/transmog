@@ -1736,6 +1736,9 @@ export class TrafficWorkspace extends WorkspaceElement {
   trafficUndoButton!: HTMLButtonElement;
   trafficRedoButton!: HTMLButtonElement;
   private trafficSelection = new ListSelection();
+  selectedTrafficIds(): string[] {
+    return [...this.trafficSelection.ids];
+  }
   private trafficSelectionRevision = 0;
   private trafficUndoTimer: number | undefined;
   @observable private trafficUndo: Array<{ ids: string[]; expiresAt?: number | undefined }> = [];

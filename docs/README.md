@@ -21,6 +21,7 @@ contains remaining work; Git history holds completed plans and migration notes.
 - [Request timings](request-timings.md): waterfalls and shared transport evidence.
 - [Streams](stream-inspection.md): WebSocket/SSE inspection and retained messages.
 - [Automation](automation.md): auto-responses, header overrides and scripts.
+- [Local MCP agents](mcp.md): scoped access keys, traffic inspection and shared rule collaboration.
 - [Safe previews](safe-previews.md) and [captured-page preview](captured-page-preview.md).
 - [Product state and support](product-state-and-support.md): settings, retention, privacy and diagnostics.
 - [Client process attribution](client-process-attribution.md).

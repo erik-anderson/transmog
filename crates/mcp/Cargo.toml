@@ -7,9 +7,18 @@ rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
 
+[features]
+connector = ["dep:rmcp"]
+desktop = ["dep:transmog-app", "dep:transmog-automation", "dep:transmog-core"]
+
 [dependencies]
+rmcp = { version = "=3.6.0", default-features = false, features = ["server", "transport-io"], optional = true }
 base64.workspace = true
 boring.workspace = true
+bytes.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
 getrandom.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -17,8 +26,17 @@ sha2.workspace = true
 tempfile.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-boring.workspace = true
+transmog-tls = { version = "=0.1.15", path = "../proxy-tls" }
+transmog-app = { version = "=0.1.15", path = "../app", optional = true }
+transmog-automation = { version = "=0.1.15", path = "../proxy-automation", optional = true }
+transmog-core = { version = "=0.1.15", path = "../proxy-core", optional = true }
 url.workspace = true
 zeroize.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+transmog-session = { version = "=0.1.15", path = "../proxy-session" }
+rmcp = { version = "=3.6.0", default-features = false, features = ["client", "server", "transport-io"] }

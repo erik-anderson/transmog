@@ -22,6 +22,7 @@ name = "transmog"
 path = "src/main.rs"
 
 [dependencies]
+transmog-mcp = { version = "=0.1.15", path = "../../crates/mcp", features = ["desktop"] }
 transmog-app = { version = "=0.1.15", path = "../../crates/app" }
 transmog-portable = { version = "=0.1.15", path = "../../crates/portable" }
 transmog-capture = { version = "=0.1.15", path = "../../crates/proxy-capture" }

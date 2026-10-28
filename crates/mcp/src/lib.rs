@@ -3,6 +3,20 @@
 
 mod access;
 pub use access::{AccessKey, AccessManager, AccessStatus, Grant, GrantInput, Permission, Scope};
+mod transport;
+pub use transport::{CallFuture, Endpoint, Handler, LocalClient, LocalServer};
+mod catalog;
+pub use catalog::{ToolSpec, tool_catalog};
+#[cfg(feature = "desktop")]
+mod application;
+#[cfg(feature = "desktop")]
+pub use application::{AgentApplication, ProxyHost};
+#[cfg(feature = "connector")]
+mod connector;
+#[cfg(feature = "connector")]
+pub use connector::Connector;
+#[cfg(all(test, feature = "connector"))]
+mod connector_tests;
 
 use serde::Serialize;
 

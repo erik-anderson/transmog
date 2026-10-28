@@ -38,6 +38,9 @@ pub enum BreakpointPhaseInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BreakpointSettings {
+    /// Exact original-target hosts; empty preserves the desktop's unrestricted breakpoint choice.
+    #[serde(default)]
+    pub hosts: BTreeSet<String>,
     /// Explicitly enabled phases.
     pub phases: BTreeSet<BreakpointPhaseInput>,
     /// Maximum complete body edit size.
@@ -51,6 +54,7 @@ pub struct BreakpointSettings {
 impl Default for BreakpointSettings {
     fn default() -> Self {
         Self {
+            hosts: BTreeSet::new(),
             phases: BTreeSet::from([
                 BreakpointPhaseInput::RequestHead,
                 BreakpointPhaseInput::ResponseHead,
@@ -88,6 +92,8 @@ pub struct PausedExchange {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct BreakpointStatus {
+    /// Opaque ownership generation; changes with every new controller attachment.
+    pub controller_id: Option<String>,
     /// Whether the exclusive controller worker is attached.
     pub enabled: bool,
     /// Bounded decisions awaiting replies.
@@ -107,6 +113,7 @@ pub struct BreakpointDecision {
 }
 
 struct State {
+    controller_id: Option<String>,
     enabled: bool,
     pending: BTreeMap<u64, PendingDecision>,
     worker: Option<JoinHandle<()>>,
@@ -125,6 +132,7 @@ impl BreakpointManager {
             service,
             build_id,
             state: Arc::new(Mutex::new(State {
+                controller_id: None,
                 enabled: false,
                 pending: BTreeMap::new(),
                 worker: None,
@@ -137,20 +145,31 @@ impl BreakpointManager {
         settings: &BreakpointSettings,
     ) -> Result<BreakpointStatus, AppError> {
         validate_settings(settings)?;
+        let mut nonce = [0_u8; 16];
+        getrandom::fill(&mut nonce).map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "A breakpoint controller identity could not be created",
+                true,
+            )
+        })?;
+        let controller_id = format!("{:032x}", u128::from_le_bytes(nonce));
+        let mut admission = self.lock();
+        if admission
+            .worker
+            .as_ref()
+            .is_some_and(JoinHandle::is_finished)
         {
-            let mut state = self.lock();
-            if state.worker.as_ref().is_some_and(JoinHandle::is_finished) {
-                state.worker.take();
-                state.enabled = false;
-                state.pending.clear();
-            }
-            if state.enabled {
-                return Err(AppError::new(
-                    ErrorCategory::Conflict,
-                    "interactive breakpoint controller is already enabled",
-                    false,
-                ));
-            }
+            admission.worker.take();
+            admission.enabled = false;
+            admission.pending.clear();
+        }
+        if admission.enabled {
+            return Err(AppError::new(
+                ErrorCategory::Conflict,
+                "interactive breakpoint controller is already enabled",
+                false,
+            ));
         }
         let runtime = tokio::runtime::Handle::try_current().map_err(|_| {
             AppError::new(
@@ -184,6 +203,7 @@ impl BreakpointManager {
                     decision_timeout: Duration::from_millis(settings.timeout_ms),
                 },
                 ControlPolicy {
+                    hosts: settings.hosts.clone(),
                     phases: control_phases,
                     body_limit: NonZeroUsize::new(settings.body_limit)
                         .expect("validated as nonzero"),
@@ -191,6 +211,8 @@ impl BreakpointManager {
             )
             .map_err(|error| AppError::new(ErrorCategory::Conflict, error.to_string(), false))?;
         let state = Arc::clone(&self.state);
+        admission.enabled = true;
+        admission.controller_id = Some(controller_id.clone());
         let worker = runtime.spawn(async move {
             let mut controller = controller;
             while let Some(message) = controller.recv().await {
@@ -209,25 +231,35 @@ impl BreakpointManager {
             let mut state = state
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            state.pending.clear();
-            state.enabled = false;
+            if state.controller_id.as_deref() == Some(&controller_id) {
+                state.pending.clear();
+                state.enabled = false;
+            }
         });
-        let mut state = self.lock();
-        state.enabled = true;
-        state.worker = Some(worker);
-        Ok(status(&state))
+        admission.worker = Some(worker);
+        Ok(status(&admission))
     }
 
     pub(crate) async fn disable(&self) -> BreakpointStatus {
-        let worker = self.lock().worker.take();
+        self.disable_owned(None).await
+    }
+
+    pub(crate) async fn disable_owned(&self, owner: Option<&str>) -> BreakpointStatus {
+        let worker = {
+            let mut state = self.lock();
+            if owner.is_some_and(|owner| state.controller_id.as_deref() != Some(owner)) {
+                return status(&state);
+            }
+            state.pending.clear();
+            state.enabled = false;
+            state.controller_id = None;
+            state.worker.take()
+        };
         if let Some(worker) = worker {
             worker.abort();
             let _ = worker.await;
         }
-        let mut state = self.lock();
-        state.pending.clear();
-        state.enabled = false;
-        status(&state)
+        self.status()
     }
 
     pub(crate) fn status(&self) -> BreakpointStatus {
@@ -240,9 +272,29 @@ impl BreakpointManager {
         &self,
         decision: BreakpointDecision,
     ) -> Result<BreakpointStatus, AppError> {
+        self.decide_owned(None, decision)
+    }
+
+    pub(crate) fn status_owned(&self, owner: &str) -> Result<BreakpointStatus, AppError> {
+        let mut state = self.lock();
+        if !state.enabled || state.controller_id.as_deref() != Some(owner) {
+            return Err(owner_conflict());
+        }
+        state.pending.retain(|_, decision| decision.is_pending());
+        Ok(status(&state))
+    }
+
+    pub(crate) fn decide_owned(
+        &self,
+        owner: Option<&str>,
+        decision: BreakpointDecision,
+    ) -> Result<BreakpointStatus, AppError> {
         let exchange = parse_exchange_id(&decision.exchange_id)?;
         let pending = {
             let mut state = self.lock();
+            if owner.is_some_and(|owner| state.controller_id.as_deref() != Some(owner)) {
+                return Err(owner_conflict());
+            }
             let pending = state.pending.get(&decision.decision_id).ok_or_else(|| {
                 AppError::new(
                     ErrorCategory::Conflict,
@@ -270,7 +322,7 @@ impl BreakpointManager {
                 action: decision.action,
             })
             .map_err(|error| AppError::new(ErrorCategory::Conflict, error.to_string(), false))?;
-        Ok(self.status())
+        owner.map_or_else(|| Ok(self.status()), |owner| self.status_owned(owner))
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
@@ -297,9 +349,18 @@ impl Drop for BreakpointManager {
 
 fn status(state: &State) -> BreakpointStatus {
     BreakpointStatus {
+        controller_id: state.enabled.then(|| state.controller_id.clone()).flatten(),
         enabled: state.enabled,
         paused: state.pending.values().map(paused).collect(),
     }
+}
+
+fn owner_conflict() -> AppError {
+    AppError::new(
+        ErrorCategory::Conflict,
+        "This breakpoint controller was replaced or detached",
+        false,
+    )
 }
 
 fn paused(pending: &PendingDecision) -> PausedExchange {
@@ -331,6 +392,10 @@ fn paused(pending: &PendingDecision) -> PausedExchange {
 
 fn validate_settings(settings: &BreakpointSettings) -> Result<(), AppError> {
     if settings.phases.is_empty()
+        || settings.hosts.len() > 64
+        || settings.hosts.iter().any(|host| {
+            host.is_empty() || host.len() > 253 || host.chars().any(char::is_whitespace)
+        })
         || settings.body_limit == 0
         || settings.body_limit > MAX_BODY_EDIT_BYTES
         || settings.max_pending == 0
@@ -562,6 +627,46 @@ mod tests {
                 .enable_breakpoints(&BreakpointSettings::default())
                 .unwrap()
                 .enabled
+        );
+        application.shutdown().await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replacing_controller_invalidates_former_agents_read_decide_and_cleanup() {
+        let application = crate::Application::new(crate::AppConfig::default()).unwrap();
+        let first = application
+            .enable_breakpoints(&BreakpointSettings::default())
+            .unwrap()
+            .controller_id
+            .unwrap();
+        application.disable_breakpoints().await;
+        let second = application
+            .enable_breakpoints(&BreakpointSettings::default())
+            .unwrap()
+            .controller_id
+            .unwrap();
+        assert_ne!(first, second);
+        assert!(application.paused_exchanges_for(&first).is_err());
+        assert!(
+            application
+                .decide_breakpoint_for(
+                    &first,
+                    BreakpointDecision {
+                        decision_id: 1,
+                        exchange_id: format!("{:032x}", 1),
+                        action: DecisionAction::Continue
+                    }
+                )
+                .is_err()
+        );
+        application.disable_breakpoints_for(&first).await;
+        assert_eq!(
+            application
+                .paused_exchanges_for(&second)
+                .unwrap()
+                .controller_id
+                .as_deref(),
+            Some(second.as_str())
         );
         application.shutdown().await.unwrap();
     }

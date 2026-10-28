@@ -5,6 +5,12 @@ layers. Desktop and headless callers share those failure and privacy semantics.
 
 ## Persisted state
 
+[MCP access grants](mcp.md) use a separate authoritative store for key verifiers,
+permissions, scope, expiry and revocation. Plaintext keys are shown once and never
+stored with settings. Connection discovery contains only a loopback endpoint and
+the current run's certificate pin; control handles and send retry records expire
+with that run.
+
 Preferences contain theme, table/pane layout, window geometry, connection
 configuration, live-entry/body-retention policy and explicit recent-path choices.
 See [network profiles and connection settings](network-profiles.md) for choices,

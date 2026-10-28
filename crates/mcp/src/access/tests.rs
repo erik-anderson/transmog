@@ -1,5 +1,19 @@
 use super::*;
 
+#[test]
+fn replacement_invalidates_old_secret_and_preserves_named_grant() {
+    let manager = AccessManager::open(None).unwrap();
+    manager.set_enabled(true).unwrap();
+    let (grant, old_key) = manager.create(input("Codex")).unwrap();
+    let new_key = manager.replace(&grant.id, grant.revision).unwrap();
+    assert!(manager.authenticate(old_key.expose()).is_err());
+    let replaced = manager.authenticate(new_key.expose()).unwrap();
+    assert_eq!(replaced.id, grant.id);
+    assert_eq!(replaced.name, grant.name);
+    assert!(replaced.revision > grant.revision);
+    assert!(manager.replace(&grant.id, grant.revision).is_err());
+}
+
 fn input(name: &str) -> GrantInput {
     GrantInput {
         name: name.into(),

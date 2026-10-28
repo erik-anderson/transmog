@@ -217,6 +217,11 @@ when changing the experience.
 
 ## Keep product contracts in their topic guides
 
+Human and agent rule editing uses the same saved rules and revision conflicts.
+Every authorized agent may read relevant rule effects; shared edits require an
+explicit permission. Preserve unsaved human drafts during agent refreshes and
+keep active agent access visible with a direct route to its controls.
+
 Update the owning guide when a deliberate product decision changes a convention.
 Keep exact labels, defaults, limits and activation rules there, with links from
 other guides rather than repeated inventories.
@@ -235,6 +240,7 @@ other guides rather than repeated inventories.
 | Scratch conversions and converter-window lifetime | [Format converter](format-converter.md) |
 | Persistence, retention defaults and privacy | [Product state](product-state-and-support.md) |
 | Rule editing and activation | [Automation](automation.md) |
+| Agent permissions, key lifecycle and shared rule collaboration | [Local MCP access](mcp.md) |
 | Preview isolation | [Safe previews](safe-previews.md) and [page preview](captured-page-preview.md) |
 | Save/import behavior and fidelity | [Trace saving](trace-saving.md) |
 | Portable case sharing, encryption and working copies | [Portable investigations](portable-investigations.md#desktop-transfer-and-package-apis-k3) |

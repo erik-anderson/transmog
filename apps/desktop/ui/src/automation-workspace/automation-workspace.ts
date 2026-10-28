@@ -35,6 +35,7 @@ import type { UserAgentOverrides } from "../user-agent-overrides/user-agent-over
 import type { MatchDraft, MatchEditor } from "../match-editor/match-editor.js";
 import type { ScriptEditor } from "../script-editor/script-editor.js";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WorkspaceElement } from "../workspace-element.js";
 import type {
   ResponseBodyFileInfo,
@@ -1761,9 +1762,30 @@ export class AutomationWorkspace extends WorkspaceElement {
 
   protected hydratedCallback(): void {
     window.addEventListener("blur", this.cancelRuleDrag);
+    const generation = ++this.mcpEventGeneration;
+    void listen("mcp-automation-changed", () => {
+      this.refreshUsageSoon();
+      if (this.view === "automation") {
+        this.automationText =
+          "An agent changed saved rules. Your editor drafts are preserved; review the current rule revision before saving.";
+      }
+    })
+      .then((unlisten) => {
+        if (this.isConnected && generation === this.mcpEventGeneration) {
+          this.mcpUnlisten = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch(() => undefined);
     void this.refreshAutomation();
   }
+  private mcpUnlisten: UnlistenFn | undefined;
+  private mcpEventGeneration = 0;
   disconnectedCallback(): void {
+    this.mcpEventGeneration++;
+    this.mcpUnlisten?.();
+    this.mcpUnlisten = undefined;
     this.collectionAddEpoch++;
     this.finishRuleDrag();
     window.removeEventListener("blur", this.cancelRuleDrag);

@@ -69,6 +69,7 @@ import { checkPagePreviewRules } from "./check-page-preview-rules.mjs";
 import { checkTrafficFailures } from "./check-traffic-failures.mjs";
 import { checkNetworkProfiles } from "./check-network-profiles.mjs";
 import { checkClientCertificates } from "./check-client-certificates.mjs";
+import { checkMcp } from "./check-mcp.mjs";
 import { checkExtensions } from "./check-extensions.mjs";
 import { checkVisualizers } from "./check-visualizers.mjs";
 import { checkCopy } from "./check-copy.mjs";
@@ -769,6 +770,65 @@ await page.addInitScript(
         }
         state.calls[command] = (state.calls[command] ?? 0) + 1;
         switch (command) {
+          case "mcp_summary":
+            return {
+              enabled: state.mcp?.enabled ?? false,
+              controls: state.mcp?.controls.length ?? 0,
+            };
+          case "mcp_status":
+          case "mcp_set_enabled":
+          case "mcp_create_key":
+          case "mcp_update_key":
+          case "mcp_replace_key":
+          case "mcp_revoke_key":
+          case "mcp_remove_key": {
+            state.mcp ??= {
+              enabled: false,
+              grants: [],
+              instanceId: "a".repeat(32),
+              endpoint: null,
+              cliCommand: "C:\\Transmog\\transmog-cli.exe",
+              cliEnvironment: { LOCALAPPDATA: "C:\\Users\\Fixture\\AppData\\Local" },
+              controls: [],
+              temporaryRules: [],
+              activity: [],
+              error: null,
+            };
+            const current = state.mcp;
+            if (state.mcpFailure && command !== "mcp_status") throw new Error(state.mcpFailure);
+            if (command === "mcp_set_enabled") {
+              current.enabled = args.enabled;
+              current.endpoint = args.enabled ? "https://127.0.0.1:45678" : null;
+            }
+            if (command === "mcp_create_key") {
+              current.grants.push({
+                ...args.input,
+                id: `key-${current.grants.length + 1}`,
+                revision: 1,
+                createdAt: 1700000000,
+                lastUsedAt: null,
+                revoked: false,
+              });
+              return { key: "tmk_fixture_secret_shown_once", status: structuredClone(current) };
+            }
+            if (command === "mcp_update_key") {
+              const grant = current.grants.find((grant) => grant.id === args.id);
+              Object.assign(grant, args.input, { revision: grant.revision + 1 });
+            }
+            if (command === "mcp_replace_key") {
+              current.grants.find((grant) => grant.id === args.id).revision++;
+              return { key: "tmk_fixture_replacement", status: structuredClone(current) };
+            }
+            if (command === "mcp_revoke_key")
+              for (const grant of current.grants)
+                if (!args.id || grant.id === args.id) {
+                  grant.revoked = true;
+                  grant.revision++;
+                }
+            if (command === "mcp_remove_key")
+              current.grants = current.grants.filter((grant) => grant.id !== args.id);
+            return structuredClone(current);
+          }
           case "plugin:event|listen": {
             const id = ++nativeEventId;
             nativeEvents.set(id, { event: args.event, handler: args.handler });
@@ -4173,6 +4233,13 @@ const cancelRule = async () => {
   await discardIfAsked();
 };
 try {
+  if (process.argv.includes("--mcp-only")) {
+    await checkMcp(page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write("MCP permission, key lifecycle, failure and layout checks passed.\n");
+    process.exit(0);
+  }
   if (process.argv.includes("--body-source-only")) {
     await checkBodySource(page, root);
     await checkJsonFields(page);
@@ -9922,6 +9989,7 @@ try {
     path: resolve(root, "../../../target/ui-check/traffic-cleared-empty.png"),
   });
   await checkComparison(page, root);
+  await checkMcp(page, root);
   await checkFormatConverter(page, root);
   await checkPortableCases(page, root);
   await checkIncidents(page, root);

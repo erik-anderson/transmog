@@ -332,6 +332,13 @@ impl AutomationRegistry {
             .and_then(|path| load_latest(path, &assets))
             .unwrap_or_default();
         migrate_user_agent_override(&mut document);
+        // Temporary agent rules never become live merely because persisted
+        // configuration is reopened, even if recovery cannot write a new file.
+        for rule in &mut document.rules {
+            if rule.id.starts_with("mcp-") {
+                rule.enabled = false;
+            }
+        }
         validate_document(&document)?;
         let imported = crate::rule_interchange::imported_assets(&document);
         if !assets.import_catalog_valid(&imported) {

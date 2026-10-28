@@ -1,6 +1,7 @@
 import initialState from "../initial-state.json";
 import "../network-profile-settings/network-profile-settings.js";
 import "../extension-settings/extension-settings.js";
+import "../mcp-settings/mcp-settings.js";
 import type { ExtensionSettings } from "../extension-settings/extension-settings.js";
 import "../client-certificate-settings/client-certificate-settings.js";
 import "../loopback-exemptions/loopback-exemptions.js";

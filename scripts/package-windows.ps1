@@ -77,6 +77,7 @@ $standaloneCli = Join-Path $buildDirectory 'transmog-cli.exe'
 if (-not $BuildOnly -and -not (Test-Path -LiteralPath $standaloneCli -PathType Leaf)) { throw 'The standalone CLI release executable is missing.' }
 $bundledHost = Join-Path $binaryDirectory "transmog-script-host-$Target.exe"
 $bundledPreview = Join-Path $binaryDirectory "transmog-preview-worker-$Target.exe"
+$bundledCli = Join-Path $binaryDirectory "transmog-cli-$Target.exe"
 if (-not $BuildOnly) { New-Item -ItemType Directory -Force -Path $binaryDirectory | Out-Null }
 if ($SigningMetadataPath) {
     $SigningMetadataPath = (Resolve-Path -LiteralPath $SigningMetadataPath).Path
@@ -95,6 +96,7 @@ if (-not $BuildOnly) {
     }
     Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-script-host.exe') -Destination $bundledHost -Force
     Copy-Item -LiteralPath (Join-Path $buildDirectory 'transmog-preview-worker.exe') -Destination $bundledPreview -Force
+    Copy-Item -LiteralPath $standaloneCli -Destination $bundledCli -Force
 }
 
 $tauriArguments = if ($BuildOnly) { @('build', '--no-bundle', '--no-sign', '--ci') }
@@ -108,7 +110,7 @@ $override = @{
         externalBin = @()
     }
 }
-if (-not $BuildOnly) { $override.bundle.externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker') }
+if (-not $BuildOnly) { $override.bundle.externalBin = @('binaries/transmog-script-host', 'binaries/transmog-preview-worker', 'binaries/transmog-cli') }
 if ($SigningMetadataPath) {
     $override.bundle.windows = @{
         digestAlgorithm = 'sha256'
@@ -167,6 +169,7 @@ try {
     if (-not $BuildOnly) {
         Remove-Item -LiteralPath $bundledHost -Force -ErrorAction SilentlyContinue
         Remove-Item -LiteralPath $bundledPreview -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $bundledCli -Force -ErrorAction SilentlyContinue
     }
 }
 

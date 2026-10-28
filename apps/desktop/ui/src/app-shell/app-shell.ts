@@ -6,6 +6,7 @@ import type { ComparisonOpen, CaptureOpen } from "../comparison-models.js";
 import "../autoresponse-switch/autoresponse-switch.js";
 import "../app-updates/app-updates.js";
 import "../client-certificate-requests/client-certificate-requests.js";
+import "../mcp-indicator/mcp-indicator.js";
 import "../captured-preview/captured-preview.js";
 import type { CapturedPreview } from "../captured-preview/captured-preview.js";
 import "../response-set-page-picker/response-set-page-picker.js";
@@ -669,6 +670,13 @@ export class AppShell extends WebUIElement {
   }
   onSelection(event: CustomEvent<SelectedResponse | null>): void {
     this.selection = event.detail;
+  }
+  onMcpSelection(event: CustomEvent<{ provide(ids: string[]): void }>): void {
+    event.detail.provide(this.traffic.selectedTrafficIds());
+  }
+  async openMcpSettings(): Promise<void> {
+    await this.activateView("settings");
+    this.settings.showSettingsSection("integrations");
   }
   onNavigate(event: CustomEvent<ViewName>): void {
     if (event.detail === "settings") {

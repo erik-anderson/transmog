@@ -38,7 +38,7 @@ Invoke-MaintenanceProcess -FilePath $cli -Arguments @('--version')
 & python (Join-Path $PSScriptRoot 'test-cli-support.py') --executable $cli --artifacts (Join-Path $env:RUNNER_TEMP "transmog-cli-smoke-$env:GITHUB_RUN_ID")
 if ($LASTEXITCODE -ne 0) { throw 'Signed CLI capture/lifecycle qualification failed.' }
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', '/TMCAP=1', '/SAZ=1', '/HAR=1', "/D=$installDirectory")
-if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe')) { throw 'The standalone CLI must not be bundled in the app installer.' }
+if (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe') -PathType Leaf)) { throw 'The MCP connector CLI must be installed beside the desktop.' }
 if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-extension-host.exe')) { throw 'Extensions must use the shared script host instead of a duplicate installed runtime.' }
 foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     $openCommand = (Get-Item -LiteralPath "HKCU:\Software\Classes\Transmog.$kind\shell\open\command").GetValue('')
@@ -50,7 +50,7 @@ foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     if ((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Erik Anderson\Transmog' -Name ($kind + 'Registration')) -ne 1) { throw "$kind choice was not preserved during an in-place install." }
 }
 Invoke-MaintenanceProcess -FilePath (Join-Path $installDirectory 'transmog.exe') -Arguments @('--verify-update-artifact', ('"' + (Resolve-Path -LiteralPath $installer).Path + '"'), ('"' + (Resolve-Path -LiteralPath "$installer.sig").Path + '"'), (ConvertTo-ReleaseSemVer $manifest.Version))
-foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'uninstall.exe')) {
+foreach ($name in @('transmog.exe', 'transmog-script-host.exe', 'transmog-preview-worker.exe', 'transmog-cli.exe', 'uninstall.exe')) {
     if ($name -cne 'uninstall.exe') { Assert-WindowsBinaryTarget -Path (Join-Path $installDirectory $name) -Target $Target }
     $signatures.Add((Get-WindowsSignatureEvidence -FilePath (Join-Path $installDirectory $name) -ExpectedPublisher $manifest.Publisher))
 }

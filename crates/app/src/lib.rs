@@ -2268,6 +2268,29 @@ impl Application {
         self.breakpoints.status()
     }
 
+    /// Reads only the exact controller owned by a scoped caller.
+    /// # Errors
+    /// Rejects a replaced or detached controller without exposing another caller's envelopes.
+    pub fn paused_exchanges_for(&self, controller_id: &str) -> Result<BreakpointStatus, AppError> {
+        self.breakpoints.status_owned(controller_id)
+    }
+
+    /// Detaches only the caller's exact controller; a replacement stays active.
+    pub async fn disable_breakpoints_for(&self, controller_id: &str) {
+        self.breakpoints.disable_owned(Some(controller_id)).await;
+    }
+
+    /// Answers one decision only within the exact controller owned by the caller.
+    /// # Errors
+    /// Rejects replaced controllers and invalid, consumed or expired decisions.
+    pub fn decide_breakpoint_for(
+        &self,
+        controller_id: &str,
+        decision: BreakpointDecision,
+    ) -> Result<BreakpointStatus, AppError> {
+        self.breakpoints.decide_owned(Some(controller_id), decision)
+    }
+
     /// Submits one correlated, phase-valid breakpoint action.
     ///
     /// # Errors

@@ -1693,12 +1693,28 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e6d5a32815ae3f33302d95fdcb2ce17862f8c65363dcfd29360480ba1001fc9c"
 
 [[package]]
+name = "futures"
+version = "0.3.34"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9a31d2a3fbaaeb2af2368bbdd904aa8e812d3c04a1ee10d3171f52d556e5d0a3"
+dependencies = [
+ "futures-channel",
+ "futures-core",
+ "futures-executor",
+ "futures-io",
+ "futures-sink",
+ "futures-task",
+ "futures-util",
+]
+
+[[package]]
 name = "futures-channel"
 version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b1f9e3d69d39e4862ffed03ed071a76f9a13ba1d9109d355b0f0aa6b15e393c4"
 dependencies = [
  "futures-core",
+ "futures-sink",
 ]
 
 [[package]]
@@ -1766,6 +1782,7 @@ version = "0.3.34"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0d50a92467f8ba5dd6e3ee5d4bd04d73ab2e4e1c44474a0674821dfce14b79bc"
 dependencies = [
+ "futures-channel",
  "futures-core",
  "futures-io",
  "futures-macro",
@@ -3877,6 +3894,12 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "57c0d7b74b563b49d38dae00a0c37d4d6de9b432382b2892f0574ddcae73fd0a"
 
 [[package]]
+name = "pastey"
+version = "0.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2ee67f1008b1ba2321834326597b8e186293b049a023cdef258527550b9935b4"
+
+[[package]]
 name = "pbkdf2"
 version = "0.13.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4537,6 +4560,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmcp"
+version = "3.6.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ceb42e9e47443cd83a834dea57b5816d35481417bae72ade5dc5615c59122e26"
+dependencies = [
+ "chrono",
+ "futures",
+ "indexmap 2.14.2",
+ "libc",
+ "pastey",
+ "pin-project-lite",
+ "schemars 1.2.2",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+ "tokio-stream",
+ "tokio-util",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "rpassword"
 version = "7.5.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4709,7 +4755,7 @@ checksum = "3fbf2ae1b8bc8e02df939598064d22402220cd5bbcca1c76f7d6a310974d5615"
 dependencies = [
  "dyn-clone",
  "indexmap 1.9.3",
- "schemars_derive",
+ "schemars_derive 0.8.22",
  "serde",
  "serde_json",
  "url",
@@ -4734,8 +4780,10 @@ version = "1.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "687274d293b6cdc6e73e0fee520bf2049650090d7164f87672d212a3c530cf4a"
 dependencies = [
+ "chrono",
  "dyn-clone",
  "ref-cast",
+ "schemars_derive 1.2.2",
  "serde",
  "serde_json",
 ]
@@ -4748,8 +4796,20 @@ checksum = "32e265784ad618884abaea0600a9adf15393368d840e0222d101a072f3f7534d"
 dependencies = [
  "proc-macro2",
  "quote",
- "serde_derive_internals",
+ "serde_derive_internals 0.29.1",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "schemars_derive"
+version = "1.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d98c67716b46af2f0b8cf752abc930f6f9aecfbf671ecfb531db8a31dbe4e2ba"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "serde_derive_internals 0.30.0",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -4905,6 +4965,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "serde_derive_internals"
+version = "0.30.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f852137cce035d6a4df67ccce505ff6b3e9fd3a10e3e52b24dc71e650bb1a9bd"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 3.0.6",
 ]
 
 [[package]]
@@ -6282,6 +6353,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
+ "tokio",
+]
+
+[[package]]
 name = "tokio-util"
 version = "0.7.19"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6531,6 +6613,7 @@ dependencies = [
  "transmog-core",
  "transmog-host-windows",
  "transmog-key-protection",
+ "transmog-mcp",
  "transmog-network",
  "transmog-runtime",
  "transmog-saz",
@@ -6755,6 +6838,7 @@ dependencies = [
  "transmog-extensions",
  "transmog-host-windows",
  "transmog-http",
+ "transmog-mcp",
  "transmog-portable",
  "transmog-session",
  "transmog-tls",
@@ -6913,13 +6997,24 @@ version = "0.1.15"
 dependencies = [
  "base64 0.22.1",
  "boring",
+ "bytes",
  "getrandom 0.4.3",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rmcp",
  "serde",
  "serde_json",
  "sha2 0.11.1",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-boring",
+ "transmog-app",
+ "transmog-automation",
+ "transmog-core",
+ "transmog-session",
+ "transmog-tls",
  "url",
  "zeroize",
 ]

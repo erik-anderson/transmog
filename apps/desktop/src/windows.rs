@@ -12,6 +12,8 @@ mod extension_management;
 mod format_converter;
 #[path = "incidents.rs"]
 mod incidents;
+#[path = "mcp.rs"]
+mod mcp;
 #[path = "portable_cases.rs"]
 mod portable_cases;
 #[path = "saved_demos.rs"]
@@ -980,7 +982,11 @@ async fn create_support_bundle(
 }
 
 #[tauri::command]
-async fn prepare_update_handoff(state: State<'_, DesktopState>) -> Result<AppStatus, String> {
+async fn prepare_update_handoff(
+    state: State<'_, DesktopState>,
+    agents: State<'_, mcp::AgentState>,
+) -> Result<AppStatus, String> {
+    agents.shutdown().await.map_err(|error| error.to_string())?;
     state
         .application
         .shutdown()
@@ -2286,8 +2292,35 @@ pub fn run() {
     let initial_files =
         workspaces::opened_files(&arguments, &std::env::current_dir().unwrap_or_default());
     let setup_profile = webview_data_path.clone();
+    let desktop_state = DesktopState {
+        #[cfg(feature = "desktop-test-fixtures")]
+        certificate_test_fixture,
+        _client_certificate_controller: certificate_controller,
+        workspaces: Arc::new(workspaces::WindowWorkspaces::default()),
+        webview_data_path,
+        application: application.clone(),
+        host: Arc::clone(&host),
+        owned_certificate,
+        certificate_operation: Arc::new(tokio::sync::Mutex::new(())),
+        loopback_operation: Arc::new(tokio::sync::Mutex::new(())),
+        ca_certificate_path,
+        ca_private_key_path,
+        diagnostics_path,
+        export_root: state_root.join("exports"),
+        closing: close_started,
+    };
+    let agent_state = mcp::AgentState::new(desktop_state.clone(), state_root.clone());
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, arguments, cwd| {
+            if arguments.iter().any(|argument| argument == "--mcp-start") {
+                let app = app.clone();
+                tauri::async_runtime::spawn(async move {
+                    if app.get_webview_window("main").is_none()
+                        && workspaces::open_main_window(app.clone()).await.is_err() { return; }
+                    mcp::AgentState::start(&app);
+                });
+                return;
+            }
             workspaces::activate_files(
                 app,
                 workspaces::opened_files(&arguments, std::path::Path::new(&cwd)),
@@ -2296,23 +2329,8 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates)
         .manage(format_converter::ConverterWindows::new())
-        .manage(DesktopState {
-            #[cfg(feature = "desktop-test-fixtures")]
-            certificate_test_fixture,
-            _client_certificate_controller: certificate_controller,
-            workspaces: Arc::new(workspaces::WindowWorkspaces::default()),
-            webview_data_path,
-            application: application.clone(),
-            host: Arc::clone(&host),
-            owned_certificate,
-            certificate_operation: Arc::new(tokio::sync::Mutex::new(())),
-            loopback_operation: Arc::new(tokio::sync::Mutex::new(())),
-            ca_certificate_path,
-            ca_private_key_path,
-            diagnostics_path,
-            export_root: state_root.join("exports"),
-            closing: close_started,
-        })
+        .manage(desktop_state)
+        .manage(agent_state)
         .register_uri_scheme_protocol("transmog-ui", move |context, request: Request<Vec<u8>>| {
             let state = context.app_handle().state::<DesktopState>();
             let converter_mode = context.app_handle().state::<format_converter::ConverterWindows>().contains(context.webview_label());
@@ -2354,6 +2372,16 @@ pub fn run() {
         )
         .invoke_handler({
             let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+                mcp::mcp_status,
+                mcp::mcp_summary,
+                mcp::mcp_set_enabled,
+                mcp::mcp_create_key,
+                mcp::mcp_update_key,
+                mcp::mcp_replace_key,
+                mcp::mcp_revoke_key,
+                mcp::mcp_remove_key,
+                mcp::mcp_end_control,
+                mcp::mcp_keep_rule,
                 format_converter::convert_format,
                 format_converter::auth_conversion_catalog,
                 format_converter::cancel_format_conversion,
@@ -2599,6 +2627,7 @@ pub fn run() {
         .setup(move |app| {
             if initial_files.is_empty() {
                 create_main_window(app.handle(), initial_window, setup_profile)?;
+                mcp::AgentState::start(app.handle());
             } else {
                 workspaces::create_viewer(app.handle(), initial_files)
                     .map_err(|error| std::io::Error::other(error.message))?;
@@ -2666,7 +2695,8 @@ pub fn run() {
                 let close_guard = Arc::clone(&close_guard);
                 tauri::async_runtime::spawn(async move {
                     persist_window_state(&application, &window);
-                    if application.shutdown().await.is_ok()
+                    let agents_closed = window.state::<mcp::AgentState>().shutdown().await.is_ok();
+                    if agents_closed && application.shutdown().await.is_ok()
                         && host.recover_pending().is_ok()
                         && !host.recovery_pending()
                     {
@@ -2844,6 +2874,8 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
                 | "diagnostics.jsonl.1"
                 | "certificate-ownership-v1.json"
                 | "proxy-recovery-v1.json"
+                | "mcp-access.json"
+                | "mcp-endpoint.json"
         ) || is_owned_preference_generation(&name)
             || crate::update_policy::is_owned_update_file(&name)
             || matches!(

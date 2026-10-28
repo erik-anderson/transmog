@@ -338,6 +338,7 @@ fn focus(window: &WebviewWindow) {
 }
 #[tauri::command]
 pub(super) async fn open_main_window(app: tauri::AppHandle) -> Result<(), String> {
+    let agent_app = app.clone();
     let operation = app.state::<DesktopState>().workspaces.main_open.clone();
     let _operation = operation.lock().await;
     // WebView2 window creation must not run in a synchronous IPC callback.
@@ -355,7 +356,9 @@ pub(super) async fn open_main_window(app: tauri::AppHandle) -> Result<(), String
         .map_err(|error| error.to_string())
     })
     .await
-    .map_err(|_| "Main window worker failed".to_owned())?
+    .map_err(|_| "Main window worker failed".to_owned())??;
+    super::mcp::AgentState::start(&agent_app);
+    Ok(())
 }
 #[tauri::command]
 pub(super) async fn open_trace_viewer(

@@ -1,10 +1,14 @@
 # CLI guide
 
+The desktop also bundles the CLI for [local MCP agent access](mcp.md).
+`transmog-cli mcp serve` exposes the stdio connector; `mcp status` and `mcp call`
+require the same caller-held key through `TRANSMOG_ACCESS_KEY` on every invocation.
+
 Use the standalone CLI to record a support trace, run a manually configured
 proxy, or inspect and convert native captures. Download the signed Windows
 `transmog-cli.exe` from the project's
 [release assets](https://github.com/erik-anderson/transmog/releases). It is
-distributed separately from the desktop installer and requires no Rust or
+also included in the desktop installer and requires no Rust or
 Cargo installation. See the [support capture guide](cli-support-capture.md) for
 signature verification and the guided recording flow.
 

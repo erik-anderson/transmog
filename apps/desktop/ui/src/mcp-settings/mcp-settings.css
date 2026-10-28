@@ -1,0 +1,20 @@
+mcp-settings { display:contents; }
+.mcp-panel { max-width:60rem; font-size:.875rem; }
+.mcp-panel h2,.mcp-panel h3,.mcp-panel h4 { margin:.25rem 0; }
+.mcp-panel h3 { font-size:.95rem; }.mcp-panel h4 { font-size:.875rem; }
+.mcp-panel p { line-height:1.45; overflow-wrap:anywhere; }
+.mcp-switch { display:flex; align-items:center; gap:.4rem; font-weight:650; margin:.75rem 0 .4rem; }
+.mcp-actions { display:flex; align-items:baseline; flex-wrap:wrap; gap:.4rem .65rem; }
+.mcp-key-heading { margin-top:1rem; }.mcp-key-heading h3 { margin-right:auto; }
+.mcp-status { margin:.5rem 0; }.mcp-error { color:var(--danger); white-space:pre-wrap; overflow-wrap:anywhere; }
+.mcp-key { padding:.65rem 0; border-bottom:1px solid var(--line); }.mcp-key h4 { margin-right:auto; }.mcp-key p { margin:.35rem 0; }
+.mcp-control { display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; flex-wrap:wrap; padding:.5rem 0; border-bottom:1px solid var(--line); }
+.mcp-help { margin-top:1rem; }.mcp-panel details { margin:.75rem 0; }.mcp-panel summary { cursor:pointer; }
+.mcp-dialog { margin:auto; padding:1rem; width:min(43rem,calc(100vw - 2rem)); max-height:calc(100dvh - 2rem); overflow:auto; border:1px solid var(--line); border-radius:.5rem; color:var(--text); background:var(--panel); font-size:.875rem; }
+.mcp-dialog::backdrop { background:rgb(0 0 0 / .3); }.mcp-dialog h2 { font-size:1.05rem; margin:0 0 .75rem; }
+.mcp-dialog fieldset { display:grid; gap:.65rem; border:0; margin:0; padding:0; min-width:0; }
+.mcp-dialog label { display:grid; gap:.3rem; margin:.5rem 0; }.mcp-dialog label:has(input[type=checkbox]) { display:flex; align-items:baseline; gap:.4rem; }
+.mcp-dialog input:not([type=checkbox]),.mcp-dialog textarea,.mcp-dialog select { width:100%; min-width:0; box-sizing:border-box; }
+.mcp-dialog textarea { resize:vertical; }.mcp-dialog .field-help { margin:.15rem 0; color:var(--muted); font-size:.75rem; line-height:1.45; }
+.mcp-dialog .mcp-actions { margin-top:.65rem; }.mcp-permissions { border-top:1px solid var(--line); padding-top:.3rem; }.mcp-config { font-family:var(--font-mono,monospace); white-space:pre; }
+.mcp-confirm { max-width:30rem; }

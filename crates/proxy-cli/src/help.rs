@@ -11,7 +11,7 @@ pub(crate) fn requested(arguments: &[String]) -> io::Result<Option<&'static str>
     }
     let depth = if matches!(
         arguments[0].as_str(),
-        "ca" | "capture" | "roots" | "profile"
+        "ca" | "capture" | "roots" | "profile" | "mcp"
     ) && arguments.get(1).is_some_and(|arg| !arg.starts_with('-'))
     {
         2
@@ -63,6 +63,7 @@ fn takes_value(argument: &str) -> bool {
 fn topic(path: &[String]) -> io::Result<&'static str> {
     let path = path.iter().map(String::as_str).collect::<Vec<_>>();
     match path.as_slice() {
+        ["mcp"] | ["mcp", "serve" | "status" | "call"] => Ok(MCP),
         [] => Ok(ROOT),
         ["record"] => Ok(RECORD),
         ["context"] => Ok(CONTEXT),
@@ -86,11 +87,14 @@ fn topic(path: &[String]) -> io::Result<&'static str> {
     }
 }
 
+const MCP: &str = "Authenticated local agent access:\n  transmog-cli mcp serve [--start-app]\n  transmog-cli mcp status\n  transmog-cli mcp call TOOL_NAME < arguments.json\n\nCreate a named access key in Transmog Settings → Integrations → MCP and supply it through TRANSMOG_ACCESS_KEY for every invocation. The key is never read from a shared cache. Configure the environment explicitly for your MCP server.\n\nserve speaks MCP over stdio and initializes while the desktop is offline. Call transmog_connect first. --start-app allows that explicit connection request to launch the sibling desktop executable; it never enables MCP. All network access uses the pinned local loopback endpoint.\n\ncall reads a bounded JSON object from stdin (or uses {} at an interactive terminal), prints the result, and never retries changes automatically.\n";
+
 const ROOT: &str = "transmog-cli — traffic capture and explicit proxy tools
 
 Usage: transmog-cli COMMAND [OPTIONS]
 
 Commands:
+  mcp               Authenticated local agent access and stdio MCP connector
   profile validate  Validate an inert support capture profile (no setup or recording)
   record            Guided support recording; Ctrl+C stops and saves a TMCap trace
   context           List or extract recorded configuration and support context

@@ -15,6 +15,8 @@ also run in the Linux test gate; Linux and macOS desktop products are not qualif
   attribution, timing waterfalls, and shared connection evidence.
 - Breakpoints, header rules, ordered auto-responses, and sandboxed scripts with
   audit records of traffic changes.
+- [Local MCP agent access](docs/mcp.md) with separate scoped keys, request/response
+  context, temporary traffic changes and human/agent rule collaboration.
 - HTTP/1.1 and HTTP/2 interception, WebSockets over H1/H2, server-sent events,
   and HTTP/3 origin connections.
 - Chromium network profiles with configurable TLS, protocol, and trust settings.

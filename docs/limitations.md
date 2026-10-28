@@ -70,8 +70,9 @@ extensions belong in the [roadmap](roadmap.md).
   expressions, with request-header criteria for every method. Request-body
   matching is not yet available in the auto-response editor.
 - Experimental control revision 0 is a same-build, in-process contract. There
-  is no stable external control protocol, and stabilization is deferred until a
-  human explicitly requests it.
+  is no public raw decision transport. [Local MCP access](mcp.md) exposes scoped
+  product operations above that internal contract; it does not expose script
+  execution, arbitrary files or an unauthenticated remote listener.
 - `transmog-session` exposes host integration as an injected transaction seam.
   It does not mutate platform state itself. The Windows desktop supplies the
   concrete current-user proxy and certificate-store integration. Normal callers

@@ -4,6 +4,7 @@ mod arguments;
 mod circular;
 mod context;
 mod help;
+mod mcp;
 mod output;
 mod passwords;
 mod root_lifecycle;
@@ -61,6 +62,7 @@ use transmog_tls::{
 #[tokio::main]
 async fn main() {
     tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "transmog=info".into()),
@@ -81,6 +83,7 @@ async fn run() -> Result<(), Box<dyn Error>> {
         return Ok(());
     }
     match arguments.first().map(String::as_str) {
+        Some("mcp") => mcp::command(&arguments[1..]).await,
         Some("profile") => support_profile::command(&arguments[1..]),
         Some("context") => context::command(&arguments[1..]),
         Some("record") => support::record(&arguments[1..]).await,
