@@ -306,10 +306,10 @@ async fn serve(
     };
     // Recheck after body admission and monitor changes while an asynchronous operation runs.
     let mut changed = access.subscribe();
-    let revision = grant.revision;
+    let authority = grant.clone();
     let authorized = access
         .authenticate(&key)
-        .is_ok_and(|current| current.id == grant.id && current.revision == revision);
+        .is_ok_and(|current| current.same_authority(&authority));
     if !authorized {
         return Ok(response(
             StatusCode::UNAUTHORIZED,
@@ -322,19 +322,19 @@ async fn serve(
         tokio::select! {
             result = &mut operation => break result,
             _ = changed.changed() => {
-                if !access.authenticate(&key).is_ok_and(|current| current.revision == revision) {
+                if !access.authenticate(&key).is_ok_and(|current| current.same_authority(&authority)) {
                     break Err(Error::new("authorization_changed", "Access was revoked, disabled or changed while this operation was running."));
                 }
             },
             () = tokio::time::sleep(Duration::from_secs(1)) => {
-                if access.authenticate(&key).is_err() { break Err(Error::new("unauthorized", "This access key is no longer valid.")); }
+                if !access.authenticate(&key).is_ok_and(|current| current.same_authority(&authority)) { break Err(Error::new("unauthorized", "This access key is no longer valid.")); }
             },
         }
     };
     // A completed read must not publish data after its grant was revoked.
     if !access
         .authenticate(&key)
-        .is_ok_and(|current| current.revision == revision)
+        .is_ok_and(|current| current.same_authority(&authority))
     {
         return Ok(response(
             StatusCode::UNAUTHORIZED,
@@ -467,6 +467,8 @@ impl LocalClient {
                 "mcp_disabled" => "mcp_disabled",
                 "unauthorized" => "unauthorized",
                 "permission_denied" => "permission_denied",
+                "sensitive_access_required" => "sensitive_access_required",
+                "request_denied" => "request_denied",
                 "authorization_changed" => "authorization_changed",
                 "limit" => "limit",
                 "conflict" => "conflict",

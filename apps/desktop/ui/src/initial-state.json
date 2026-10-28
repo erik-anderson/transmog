@@ -2097,5 +2097,9 @@
   "copyMenuStatus": "",
   "copyMenuBusy": false,
   "copyFeedback": "",
-  "copyColorScheme": "light dark"
+  "copyColorScheme": "light dark",
+  "mcpSensitiveRequests": [],
+  "mcpSensitiveTemporary": [],
+  "mcpSensitiveError": "",
+  "mcpSensitiveBusy": false
 }

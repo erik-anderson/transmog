@@ -16,6 +16,7 @@ fn replacement_invalidates_old_secret_and_preserves_named_grant() {
 
 fn input(name: &str) -> GrantInput {
     GrantInput {
+        omit_sensitive_values: false,
         name: name.into(),
         permissions: BTreeSet::from([Permission::Inspect]),
         scope: Scope::All,

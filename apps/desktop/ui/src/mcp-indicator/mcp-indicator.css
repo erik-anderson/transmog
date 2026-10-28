@@ -1,1 +1,5 @@
 mcp-indicator { display:contents; }
+.mcp-access-panel { position:fixed; inset:3.5rem .75rem auto auto; margin:0; width:min(31rem,calc(100vw - 1.5rem)); max-height:calc(100dvh - 4.25rem); box-sizing:border-box; overflow:auto; padding:1rem; border:1px solid var(--line); border-radius:.5rem; background:var(--panel); color:var(--text); box-shadow:0 .3rem 1.2rem rgb(0 0 0 / .15); font-size:.875rem; }
+.mcp-access-panel header,.mcp-access-actions { display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; flex-wrap:wrap; }
+.mcp-access-panel h2 { margin:0; font-size:1rem; }.mcp-access-panel h3 { margin:.9rem 0 .4rem; font-size:.9rem; }.mcp-access-panel h4 { margin:.3rem 0; font-size:.875rem; overflow-wrap:anywhere; }
+.mcp-access-panel p { line-height:1.4; margin:.4rem 0; overflow-wrap:anywhere; }.mcp-access-panel article { border-block:1px solid var(--line); padding:.65rem 0; margin:.5rem 0; }.mcp-access-scope,.mcp-access-panel .field-help { color:var(--muted);font-size:.75rem; }.mcp-access-actions { margin:.5rem 0; }.mcp-access-error {color:var(--danger);}

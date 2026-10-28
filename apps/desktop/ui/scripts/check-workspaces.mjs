@@ -770,11 +770,58 @@ await page.addInitScript(
         }
         state.calls[command] = (state.calls[command] ?? 0) + 1;
         switch (command) {
-          case "mcp_summary":
-            return {
+          case "mcp_summary": {
+            const summary = {
               enabled: state.mcp?.enabled ?? false,
               controls: state.mcp?.controls.length ?? 0,
+              sensitiveRequests: structuredClone(state.mcpSensitive ?? []),
             };
+            if (state.deferMcpSummary) {
+              state.deferMcpSummary = false;
+              await new Promise((resolve) => {
+                state.finishMcpSummary = () => {
+                  state.finishMcpSummary = null;
+                  resolve();
+                };
+              });
+            }
+            return summary;
+          }
+          case "mcp_sensitive_decide": {
+            if (state.mcpSensitiveFailure) throw new Error(state.mcpSensitiveFailure);
+            const approval = state.mcpSensitive.find((entry) => entry.id === args.id);
+            if (!approval || approval.state !== "pending")
+              throw new Error("This access request expired or changed.");
+            if (args.choice === "minute") {
+              approval.state = "temporary";
+              approval.remainingSeconds = 60;
+            } else {
+              if (args.choice === "always") {
+                const grant = state.mcp.grants.find((grant) => grant.id === approval.grantId);
+                grant.omitSensitiveValues = false;
+                grant.permissions = [
+                  ...new Set([...grant.permissions, "read-bodies", "read-credentials"]),
+                ];
+                grant.revision++;
+              }
+              state.mcpSensitive = state.mcpSensitive.filter((entry) => entry.id !== args.id);
+            }
+            state.emitNative("mcp-access-changed");
+            return {
+              enabled: state.mcp.enabled,
+              controls: 0,
+              sensitiveRequests: structuredClone(state.mcpSensitive),
+            };
+          }
+          case "mcp_sensitive_revoke": {
+            state.mcpSensitive = state.mcpSensitive.filter((entry) => entry.id !== args.id);
+            state.emitNative("mcp-access-changed");
+            return {
+              enabled: state.mcp.enabled,
+              controls: 0,
+              sensitiveRequests: structuredClone(state.mcpSensitive),
+            };
+          }
           case "mcp_status":
           case "mcp_set_enabled":
           case "mcp_create_key":

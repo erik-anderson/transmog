@@ -21,6 +21,7 @@ impl Handler for Echo {
 
 fn input(name: &str) -> GrantInput {
     GrantInput {
+        omit_sensitive_values: false,
         name: name.into(),
         permissions: BTreeSet::from([Permission::Inspect]),
         scope: Scope::All,
@@ -150,6 +151,47 @@ async fn revoke_during_a_read_cancels_it_without_publishing_its_result() {
         .unwrap()
         .unwrap();
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn revoking_disclosure_cancels_an_inflight_read_even_without_a_key_revision_change() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = AccessManager::open(None).unwrap();
+    manager.set_enabled(true).unwrap();
+    let mut protected = input("Codex");
+    protected.omit_sensitive_values = true;
+    let (grant, key) = manager.create(protected).unwrap();
+    let pending = manager
+        .request_sensitive_access(&grant, "Inspect authentication values.")
+        .unwrap();
+    let id = pending["request"]["id"].as_str().unwrap();
+    manager.decide_sensitive_access(id, "minute").unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let _server = LocalServer::start(
+        root.path().into(),
+        manager.clone(),
+        Arc::new(Echo(calls.clone())),
+    )
+    .await
+    .unwrap();
+    let client = LocalClient::new(root.path().into());
+    let work = tokio::spawn(async move { client.call(key.expose(), "slow", Value::Null).await });
+    timeout(Duration::from_secs(3), async {
+        while calls.load(Ordering::SeqCst) == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .unwrap();
+    manager.revoke_sensitive_access(id).unwrap();
+    assert_eq!(manager.status().grants[0].revision, grant.revision);
+    assert!(
+        timeout(Duration::from_secs(2), work)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
 }
 
 #[tokio::test]

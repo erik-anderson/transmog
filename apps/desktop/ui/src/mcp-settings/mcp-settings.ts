@@ -1,5 +1,6 @@
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { WorkspaceElement } from "../workspace-element.js";
 import { describeError } from "../utilities.js";
 import initial from "../initial-state.json";
@@ -18,6 +19,7 @@ type Scope =
   | { kind: "hosts"; hosts: string[] }
   | { kind: "requests"; instanceId: string; ids: string[] };
 interface Grant {
+  omitSensitiveValues?: boolean;
   id: string;
   revision: number;
   name: string;
@@ -29,6 +31,7 @@ interface Grant {
   revoked: boolean;
 }
 interface GrantInput {
+  omitSensitiveValues: boolean;
   name: string;
   permissions: Permission[];
   scope: Scope;
@@ -128,6 +131,9 @@ export class McpSettings extends WorkspaceElement {
   private sequence = 0;
   private confirmAction: (() => Promise<void>) | undefined;
   private returnFocus: HTMLElement | undefined;
+  private accessUnlisten: UnlistenFn | undefined;
+  private accessGeneration = 0;
+  private accessRefreshPending = false;
 
   activeChanged(): void {
     if (this.active && this.isConnected) {
@@ -135,14 +141,44 @@ export class McpSettings extends WorkspaceElement {
     }
   }
   protected hydratedCallback(): void {
+    const generation = ++this.accessGeneration;
+    void listen("mcp-access-changed", () => {
+      if (!this.active) {
+        return;
+      }
+      if (this.mcpBusy) {
+        this.accessRefreshPending = true;
+      } else {
+        void this.refresh();
+      }
+    })
+      .then((unlisten) => {
+        if (this.isConnected && generation === this.accessGeneration) {
+          this.accessUnlisten = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch(() => undefined);
     if (this.active) {
       void this.refresh();
     }
   }
   disconnectedCallback(): void {
+    this.accessGeneration++;
+    this.accessUnlisten?.();
+    this.accessUnlisten = undefined;
     this.sequence++;
     this.clearKey();
     super.disconnectedCallback();
+  }
+  private refreshAccessChange(): void {
+    if (this.accessRefreshPending) {
+      this.accessRefreshPending = false;
+      if (this.active && this.isConnected) {
+        void this.refresh();
+      }
+    }
   }
 
   async refresh(): Promise<void> {
@@ -216,6 +252,7 @@ export class McpSettings extends WorkspaceElement {
       this.mcpError = message;
     } finally {
       this.mcpBusy = false;
+      this.refreshAccessChange();
     }
   }
   async toggle(event: Event): Promise<void> {
@@ -270,6 +307,7 @@ export class McpSettings extends WorkspaceElement {
     this.editingRevision = grant.revision;
     this.mcpDialogError = "";
     this.field("name").value = grant.name;
+    this.field("omit-sensitive-values").checked = grant.omitSensitiveValues ?? true;
     for (const permission of Object.keys(labels) as Permission[]) {
       this.field(permission).checked = grant.permissions.includes(permission);
     }
@@ -313,6 +351,7 @@ export class McpSettings extends WorkspaceElement {
             };
     const expiry = String(data.get("expiry") ?? "");
     return {
+      omitSensitiveValues: data.has("omit-sensitive-values"),
       name: String(data.get("name") ?? ""),
       permissions: (Object.keys(labels) as Permission[]).filter((permission) =>
         data.has(permission),
@@ -361,6 +400,7 @@ export class McpSettings extends WorkspaceElement {
       this.mcpDialogError = describeError(error);
     } finally {
       this.mcpBusy = false;
+      this.refreshAccessChange();
     }
   }
   closeEditor(): void {

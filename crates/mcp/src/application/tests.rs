@@ -43,6 +43,7 @@ impl Harness {
     fn grant(&self, permissions: &[Permission]) -> Grant {
         self.access
             .create(GrantInput {
+                omit_sensitive_values: false,
                 name: "Test agent".into(),
                 permissions: permissions.iter().copied().collect(),
                 scope: Scope::Hosts {
@@ -432,6 +433,7 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
     let (grant, key) = h
         .access
         .create(GrantInput {
+            omit_sensitive_values: false,
             name: "Loopback test".into(),
             permissions: [
                 Permission::Inspect,
@@ -514,6 +516,7 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
     let (_, outsider) = h
         .access
         .create(GrantInput {
+            omit_sensitive_values: false,
             name: "Other host".into(),
             permissions: [Permission::Inspect].into_iter().collect(),
             scope: Scope::Hosts {
@@ -535,6 +538,116 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
 }
 
 struct ResponseFixture(std::sync::atomic::AtomicUsize);
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Keep one original-value consent and evidence lifecycle together."
+)]
+async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_revocation() {
+    let root = tempfile::tempdir().unwrap();
+    let access = AccessManager::open(None).unwrap();
+    access.set_enabled(true).unwrap();
+    let application = Application::new(AppConfig {
+        replay_executor: Some(Arc::new(ResponseFixture(
+            std::sync::atomic::AtomicUsize::new(0),
+        ))),
+        ..AppConfig::default()
+    })
+    .unwrap();
+    let adapter = AgentApplication::new(
+        application,
+        access.clone(),
+        root.path().into(),
+        Arc::new(NoProxy),
+    )
+    .unwrap();
+    let h = Harness {
+        _root: root,
+        adapter,
+        access,
+    };
+    let mut config:GrantInput=serde_json::from_value(json!({"name":"Protected agent","permissions":["inspect","send","read-bodies","read-credentials"],"scope":{"kind":"hosts","hosts":["example.test"]},"expiresAt":null})).unwrap();
+    assert!(config.omit_sensitive_values);
+    config.name = "Protected agent".into();
+    let (_, key) = h.access.create(config).unwrap();
+    let _server = crate::LocalServer::start_for_instance(
+        h.adapter.root.clone(),
+        h.adapter.instance_id.clone(),
+        h.access.clone(),
+        h.adapter.clone(),
+    )
+    .await
+    .unwrap();
+    let client = crate::LocalClient::new(h.adapter.root.clone());
+    let sent=client.call(key.expose(),"transmog_request_send",json!({"instanceId":h.adapter.instance_id,"operationId":"protected-send","request":{"method":"GET","url":"http://example.test/path","headers":[],"body":"","acknowledgeNonIdempotent":false,"acknowledgeCredentials":false}})).await.unwrap();
+    let input =
+        json!({"instanceId":h.adapter.instance_id,"id":sent["id"],"boundary":"client-response"});
+    assert_eq!(
+        client
+            .call(key.expose(), "transmog_body_read", input.clone())
+            .await
+            .unwrap_err()
+            .code,
+        "sensitive_access_required"
+    );
+    let detail = client
+        .call(
+            key.expose(),
+            "transmog_exchange_get",
+            json!({"instanceId":h.adapter.instance_id,"id":sent["id"]}),
+        )
+        .await
+        .unwrap();
+    assert!(!detail.to_string().contains("retained-cookie-secret"));
+    let pending = client
+        .call(
+            key.expose(),
+            "transmog_sensitive_access_request",
+            json!({"reason":"Read the original failure response."}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(pending["headersAllowed"], false);
+    let id = pending["request"]["id"].as_str().unwrap();
+    h.access.decide_sensitive_access(id, "minute").unwrap();
+    let body = client
+        .call(key.expose(), "transmog_body_read", input.clone())
+        .await
+        .unwrap();
+    assert_eq!(
+        STANDARD.decode(body["data"].as_str().unwrap()).unwrap(),
+        b"retained-body-secret"
+    );
+    let detail = client
+        .call(
+            key.expose(),
+            "transmog_exchange_get",
+            json!({"instanceId":h.adapter.instance_id,"id":sent["id"]}),
+        )
+        .await
+        .unwrap();
+    assert!(detail.to_string().contains("retained-cookie-secret"));
+    h.access.revoke_sensitive_access(id).unwrap();
+    assert_eq!(
+        client
+            .call(key.expose(), "transmog_body_read", input)
+            .await
+            .unwrap_err()
+            .code,
+        "sensitive_access_required"
+    );
+    assert!(
+        client
+            .call(
+                key.expose(),
+                "transmog_sensitive_access_request",
+                json!({"reason":"Bypass", "choice":"always"})
+            )
+            .await
+            .is_err()
+    );
+}
 impl transmog_session::ReplayExecutor for ResponseFixture {
     fn execute(
         &self,
@@ -662,7 +775,7 @@ async fn send_retry_is_deduplicated_and_evidence_reads_check_body_and_scope() {
         .await
         .unwrap_err()
         .code,
-        "permission_denied"
+        "sensitive_access_required"
     );
     let mut outsider = reader.clone();
     outsider.scope = Scope::Hosts {

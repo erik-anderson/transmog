@@ -24,6 +24,10 @@ export async function checkMcp(page, root) {
   await editor.getByLabel("Exact hosts", { exact: true }).fill("api.example.test\nlocalhost");
   await editor.getByLabel("Edit shared rules", { exact: true }).check();
   assert.equal(
+    await editor.getByLabel("Omit authentication headers and bodies", { exact: true }).isChecked(),
+    true,
+  );
+  assert.equal(
     await editor.getByLabel(/Read rules/).count(),
     0,
     "Rule reads must not need a permission checkbox",
@@ -66,6 +70,7 @@ export async function checkMcp(page, root) {
     true,
   );
   const row = panel.locator("article").filter({ hasText: "Codex · shared rule collaboration" });
+  await checkSensitiveApprovals(page, root, panel);
   await row.getByRole("button", { name: "Edit permissions…", exact: true }).click();
   const edit = panel.getByRole("dialog", { name: "Edit agent permissions", exact: true });
   assert.equal(await edit.getByLabel("Edit shared rules", { exact: true }).isChecked(), true);
@@ -150,4 +155,129 @@ export async function checkMcp(page, root) {
   );
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/mcp-collaboration.png") });
   await page.goto("https://workspace.test/");
+}
+
+async function checkSensitiveApprovals(page, root, panel) {
+  const indicator = page.locator("mcp-indicator");
+  const request = async (id) =>
+    page.evaluate((id) => {
+      const state = globalThis.__workspaceFixture;
+      const grant = state.mcp.grants[0];
+      state.mcpSensitive = [
+        {
+          id,
+          grantId: grant.id,
+          revision: grant.revision,
+          name: grant.name,
+          scope: grant.scope,
+          reason: "Inspect an expired token response without losing the current human draft.",
+          state: "pending",
+          remainingSeconds: 300,
+        },
+      ];
+      state.emitNative("mcp-access-changed");
+    }, id);
+  await request("first");
+  const button = indicator.getByRole("button", { name: /MCP · 1 access request/ });
+  await button.waitFor();
+  assert.equal(
+    await indicator.getByRole("dialog").isVisible(),
+    false,
+    "An agent request stole focus with an automatic popup",
+  );
+  await button.focus();
+  await page.keyboard.press("Enter");
+  const access = indicator.getByRole("dialog", { name: "Agent access", exact: true });
+  for (const width of [1440, 960, 800]) {
+    await page.setViewportSize({ width, height: width === 800 ? 600 : 900 });
+    assert.equal(
+      await access.evaluate((panel) => panel.scrollWidth <= panel.clientWidth + 1),
+      true,
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/mcp-sensitive-request-${width}.png`),
+    });
+  }
+  await access.getByRole("button", { name: "For next 1 minute", exact: true }).click();
+  await indicator.getByRole("button", { name: /MCP · original values 1:00/ }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.mcp.grants[0].omitSensitiveValues),
+    true,
+  );
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/mcp-sensitive-minute.png"),
+  });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferMcpSummary = true;
+    void document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishMcpSummary);
+  await access.getByRole("button", { name: "Revoke access now", exact: true }).click();
+  await access
+    .getByText("No original-value requests or temporary approvals.", { exact: false })
+    .waitFor();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishMcpSummary());
+  assert.equal(
+    await indicator.evaluate((component) => component.mcpSensitiveTemporary.length),
+    0,
+    "A late status response restored revoked access in the UI",
+  );
+  await page.keyboard.press("Escape");
+  await access.waitFor({ state: "hidden" });
+  await page.waitForFunction(
+    () =>
+      document
+        .querySelector("app-shell")
+        .shadowRoot.querySelector("mcp-indicator")
+        .querySelector("button[popovertarget]")
+        .matches(":focus"),
+    {},
+    { timeout: 3000 },
+  );
+  assert.equal(
+    await indicator
+      .getByRole("button", { name: "MCP enabled", exact: true })
+      .evaluate((button) => button.matches(":focus")),
+    true,
+  );
+  await request("permanent");
+  await button.click();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcpSensitiveFailure =
+      "Could not save approval. Retry after checking Transmog.";
+  });
+  await access.getByRole("button", { name: "Always", exact: true }).click();
+  await access.getByRole("alert").filter({ hasText: "Could not save approval" }).waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.mcp.grants[0].omitSensitiveValues),
+    true,
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcpSensitiveFailure = null;
+  });
+  await access.getByRole("button", { name: "Always", exact: true }).click();
+  await access
+    .getByText("No original-value requests or temporary approvals.", { exact: false })
+    .waitFor();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.mcp.grants[0].omitSensitiveValues),
+    false,
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").settings.querySelector("mcp-settings").mcpRows[0]
+        ?.omitSensitiveValues === false,
+  );
+  await panel.getByRole("button", { name: "Edit permissions…", exact: true }).click();
+  const editor = panel.getByRole("dialog", { name: "Edit agent permissions", exact: true });
+  assert.equal(
+    await editor.getByLabel("Omit authentication headers and bodies", { exact: true }).isChecked(),
+    false,
+  );
+  // Restore protection through the saved setting before leaving this flow.
+  await editor.getByLabel("Omit authentication headers and bodies", { exact: true }).check();
+  await editor.getByRole("button", { name: "Save permissions", exact: true }).click();
+  await editor.waitFor({ state: "hidden" });
+  await page.setViewportSize({ width: 1440, height: 900 });
 }

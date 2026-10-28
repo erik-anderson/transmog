@@ -63,6 +63,60 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
     );
     const rules = await cli(created.key, "transmog_rules_list", { instanceId: status.instanceId });
     assert(Array.isArray(rules.rules), "An authenticated key could not read rules");
+    assert.equal(status.sensitiveAccess.headersAllowed, false);
+    assert.equal(status.sensitiveAccess.bodiesAllowed, false);
+    const requested = await cli(created.key, "transmog_sensitive_access_request", {
+      reason: "Inspect the original authentication values for the native qualification.",
+    });
+    assert.equal(requested.request.state, "pending");
+    assert.equal(requested.headersAllowed, false);
+    const respond = async (choice) =>
+      evaluate(`(async()=>{
+      const indicator=document.querySelector('app-shell').shadowRoot.querySelector('mcp-indicator');
+      await indicator.refresh();
+      if(!indicator.mcpAccessPanel.matches(':popover-open'))indicator.querySelector('button[popovertarget]').click();
+      const approval=indicator.mcpSensitiveRequests[0];
+      if(!approval)throw new Error('The native access request is missing');
+      const label=${JSON.stringify(choice)}==='minute'?'For next 1 minute':'Always';
+      const button=[...indicator.mcpAccessPanel.querySelectorAll('button')].find(button=>button.textContent===label);
+      if(!button)throw new Error('The requested native consent action is missing');
+      button.click();
+      const deadline=Date.now()+10000;
+      while(indicator.mcpSensitiveBusy){if(Date.now()>deadline)throw new Error('Native consent timed out');await new Promise(resolve=>setTimeout(resolve,20));}
+      if(indicator.mcpSensitiveError)throw new Error(indicator.mcpSensitiveError);
+      return true;
+    })()`);
+    await respond("minute");
+    const temporary = await cli(created.key, "transmog_sensitive_access_status", {});
+    assert.equal(temporary.headersAllowed, true);
+    assert.equal(temporary.bodiesAllowed, true);
+    assert.equal(temporary.omitSensitiveValues, true);
+    if (screenshotPath) {
+      const image = await call("Page.captureScreenshot", { format: "png" });
+      await writeFile(
+        screenshotPath.replace(/\.png$/i, "-mcp-sensitive-minute.png"),
+        Buffer.from(image.data, "base64"),
+      );
+    }
+    await evaluate(`(async()=>{
+      const indicator=document.querySelector('app-shell').shadowRoot.querySelector('mcp-indicator');
+      await indicator.revoke(indicator.mcpSensitiveTemporary[0].id);
+      if(indicator.mcpSensitiveError)throw new Error(indicator.mcpSensitiveError);
+    })()`);
+    assert.equal(
+      (await cli(created.key, "transmog_sensitive_access_status", {})).headersAllowed,
+      false,
+    );
+    await cli(created.key, "transmog_sensitive_access_request", {
+      reason: "Test the explicit persistent original-value decision.",
+    });
+    await respond("always");
+    const permanent = await cli(created.key, "transmog_sensitive_access_status", {});
+    assert.equal(permanent.omitSensitiveValues, false);
+    assert.equal(permanent.bodiesAllowed, true);
+    await evaluate(
+      `document.querySelector('app-shell').shadowRoot.querySelector('mcp-indicator').mcpAccessPanel.hidePopover()`,
+    );
     assert.equal(
       (await cli("invalid-caller-secret", "transmog_status", {})).failed,
       true,
@@ -101,6 +155,10 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       loopbackOnly: true,
       ruleReadsWithoutPermission: true,
       keyReplacementAndRevocation: true,
+      defaultOmission: true,
+      temporarySensitiveAccess: true,
+      earlySensitiveRevocation: true,
+      persistentSensitiveSetting: true,
     };
   } finally {
     if (grantId) {

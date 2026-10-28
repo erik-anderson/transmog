@@ -35,6 +35,30 @@ Configuration formats follow the official
 
 ## Permissions and rule collaboration
 
+**Omit authentication headers and bodies** is on by default for every key,
+including keys saved before this option was introduced. It suppresses known
+authentication-header values and all message bodies even when their read
+permissions were selected. It does not change the human's retained traffic.
+
+An agent calls `transmog_sensitive_access_request` with a reason and asks the
+user to respond near the top of Transmog. The access indicator shows a pending
+request without opening a popup or moving focus. Open it to review the agent,
+reason and existing traffic scope, then choose:
+
+- **For next 1 minute**: allow original header/body values for that key for
+  60 seconds. The top indicator shows the remaining time and opens a
+  **Revoke access now** control. The saved omission setting is unchanged.
+- **Always**: turn off that key's saved omission setting and grant the two read
+  permissions. This survives restart until changed or the key expires/is revoked.
+- **Deny**: leave original values protected. Status polling does not prompt again.
+
+The agent checks `transmog_sensitive_access_status` before retrying a protected
+read. Neither choice broadens traffic scope or grants send/edit/collection
+permissions. Temporary consent ends on expiry, revocation, key changes, master-off
+or main-workspace shutdown. Recording and breakpoint control that require these
+values end when that access ends; in-flight results are checked before disclosure.
+An operating-system clock change cannot extend a temporary approval.
+
 Every valid key can list relevant saved rules and read their definitions. There is
 no separate rule-read permission. Rules containing authored body content or known
 credential-header values require the corresponding disclosure permission for their

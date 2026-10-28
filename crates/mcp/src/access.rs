@@ -16,6 +16,11 @@ use crate::Error;
 
 const MAX_GRANTS: usize = 64;
 const MAX_STORE_BYTES: u64 = 1024 * 1024;
+mod disclosure;
+
+const fn default_omit_sensitive_values() -> bool {
+    true
+}
 
 /// Explicit capability granted in the desktop's Create access key dialog.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
@@ -144,6 +149,9 @@ fn canonical_host(host: &str) -> Result<String, Error> {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct GrantInput {
+    /// Omit known authentication headers and message bodies until an in-app approval.
+    #[serde(default = "default_omit_sensitive_values")]
+    pub omit_sensitive_values: bool,
     /// User-assigned label; never an authentication identifier.
     pub name: String,
     /// Nonempty explicit capabilities.
@@ -177,6 +185,13 @@ impl GrantInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Grant {
+    /// Default-on protection for original authentication headers and message bodies.
+    #[serde(default = "default_omit_sensitive_values")]
+    pub omit_sensitive_values: bool,
+    #[serde(skip)]
+    disclosure_id: Option<String>,
+    #[serde(skip)]
+    sensitive_deadline: Option<std::time::Instant>,
     /// Stable identifier for trusted desktop management commands.
     pub id: String,
     /// Monotonic revision used to reject stale desktop edits.
@@ -198,12 +213,42 @@ pub struct Grant {
 }
 
 impl Grant {
+    /// Checks a capability against the current disclosure deadline as well as permissions.
+    pub fn allows(&self, permission: Permission) -> bool {
+        let sensitive = matches!(
+            permission,
+            Permission::ReadBodies | Permission::ReadCredentials
+        );
+        self.permissions.contains(&permission)
+            && (!sensitive
+                || self
+                    .sensitive_deadline
+                    .map_or(!self.omit_sensitive_values, |deadline| {
+                        deadline > std::time::Instant::now()
+                    }))
+    }
+
+    pub(crate) fn same_authority(&self, other: &Self) -> bool {
+        self.id == other.id
+            && self.revision == other.revision
+            && self.permissions == other.permissions
+            && self.disclosure_id == other.disclosure_id
+            && self.sensitive_deadline == other.sensitive_deadline
+    }
     /// Rejects operations absent from this explicitly authored grant.
     /// # Errors
     /// Returns `permission_denied` when this capability has not been granted.
     pub fn require(&self, permission: Permission) -> Result<(), Error> {
-        if self.permissions.contains(&permission) {
+        if self.allows(permission) {
             Ok(())
+        } else if matches!(
+            permission,
+            Permission::ReadBodies | Permission::ReadCredentials
+        ) {
+            Err(Error::new(
+                "sensitive_access_required",
+                "Original values are omitted or not allowed. Call transmog_sensitive_access_request and ask the user to respond in Transmog; then check transmog_sensitive_access_status.",
+            ))
         } else {
             Err(Error::new(
                 "permission_denied",
@@ -239,6 +284,8 @@ struct Record {
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Store {
+    #[serde(skip)]
+    disclosures: std::collections::HashMap<String, disclosure::Disclosure>,
     version: u32,
     enabled: bool,
     records: Vec<Record>,
@@ -336,6 +383,9 @@ impl AccessManager {
         let id = random(12)?;
         let key = AccessKey(Zeroizing::new(format!("tmk_{id}_{}", random(32)?)));
         let grant = Grant {
+            omit_sensitive_values: input.omit_sensitive_values,
+            disclosure_id: None,
+            sensitive_deadline: None,
             id,
             revision: 1,
             name: input.name,
@@ -377,6 +427,7 @@ impl AccessManager {
             }
             record.grant.revision = record.grant.revision.checked_add(1).ok_or_else(storage)?;
             record.grant.name = input.name;
+            record.grant.omit_sensitive_values = input.omit_sensitive_values;
             record.grant.permissions = input.permissions;
             record.grant.scope = input.scope;
             record.grant.expires_at = input.expires_at;
@@ -444,6 +495,7 @@ impl AccessManager {
     /// Returns disabled or unauthorized without revealing whether an individual key ID exists.
     pub fn authenticate(&self, key: &str) -> Result<Grant, Error> {
         let mut state = self.lock();
+        disclosure::prune(&mut state);
         if !state.enabled {
             return Err(Error::new(
                 "mcp_disabled",
@@ -468,7 +520,8 @@ impl AccessManager {
             return Err(unauthorized());
         }
         record.grant.last_used_at = Some(now());
-        Ok(record.grant.clone())
+        let grant = record.grant.clone();
+        Ok(disclosure::effective(&state, &grant))
     }
 
     /// Flushes last-use metadata without changing permission generations.
@@ -488,6 +541,7 @@ impl AccessManager {
         let mut state = self.lock();
         let mut next = state.clone();
         let result = change(&mut next)?;
+        disclosure::prune(&mut next);
         self.persist(&next)?;
         *state = next;
         self.changed
@@ -525,6 +579,7 @@ fn validate_store(state: &Store) -> Result<(), Error> {
     for record in &state.records {
         let grant = &record.grant;
         let mut input = GrantInput {
+            omit_sensitive_values: grant.omit_sensitive_values,
             name: grant.name.clone(),
             permissions: grant.permissions.clone(),
             scope: grant.scope.clone(),

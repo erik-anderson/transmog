@@ -28,6 +28,20 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
     let boundary = || json!({"type":"string","enum":["client-request","upstream-request","upstream-response","client-response"]});
     vec![
         spec(
+            "transmog_sensitive_access_request",
+            "Ask the user in Transmog for original authentication headers and message bodies within this key's existing traffic scope. Requires an explicit reason. Creates one pending request; it grants nothing until the user chooses For next 1 minute or Always in the app. Ask the user to respond near the top of Transmog, then poll transmog_sensitive_access_status. Never assume approval or work around a denial.",
+            false,
+            json!({"reason":{"type":"string","minLength":1,"maxLength":800}}),
+            &["reason"],
+        ),
+        spec(
+            "transmog_sensitive_access_status",
+            "Read this key's original-value approval and expiry without prompting again. Pending, denied and expired requests do not authorize disclosure. Always decisions change the saved omission setting; temporary approval ends after 60 seconds or earlier revocation.",
+            true,
+            json!({}),
+            &[],
+        ),
+        spec(
             "transmog_connect",
             "Connect to Transmog using the configured access key. May start the desktop only when --start-app is configured. Returns approved permissions, scope and instanceId; it never enables MCP or creates a grant.",
             false,

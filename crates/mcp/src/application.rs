@@ -210,6 +210,14 @@ impl AgentApplication {
     )]
     async fn handle(&self, grant: Grant, operation: &str, input: Value) -> Result<Value, Error> {
         validate_arguments(operation, &input)?;
+        if operation == "transmog_sensitive_access_request" {
+            return self
+                .access
+                .request_sensitive_access(&grant, string(&input, "reason")?);
+        }
+        if operation == "transmog_sensitive_access_status" {
+            return self.access.sensitive_access_status(&grant);
+        }
         if operation == "transmog_request_send" {
             return self.send(&grant, &input).await;
         }
@@ -217,7 +225,7 @@ impl AgentApplication {
         self.cleanup().await?;
         let result = match operation {
             "transmog_connect" | "transmog_status" => Ok(
-                json!({"connected":true,"instanceId":self.instance_id,"grant":{"id":grant.id,"name":grant.name,"permissions":grant.permissions,"scope":grant.scope,"expiresAt":grant.expires_at},"proxy":self.application.status(),"recordingActive":matches!(self.application.capture_status(), transmog_app::CaptureReadModel::Active{..}),"limits":{"pageSize":200,"bodyReadBytes":65536,"controlLeaseSeconds":600}}),
+                json!({"connected":true,"instanceId":self.instance_id,"grant":{"id":grant.id,"name":grant.name,"permissions":grant.permissions,"scope":grant.scope,"expiresAt":grant.expires_at,"omitSensitiveValues":grant.omit_sensitive_values},"sensitiveAccess":self.access.sensitive_access_status(&grant)?,"proxy":self.application.status(),"recordingActive":matches!(self.application.capture_status(), transmog_app::CaptureReadModel::Active{..}),"limits":{"pageSize":200,"bodyReadBytes":65536,"controlLeaseSeconds":600}}),
             ),
             "transmog_traffic_list" => self.list(&grant, &input),
             "transmog_exchange_get" => {
@@ -234,9 +242,7 @@ impl AgentApplication {
                     .inspect_headers(id, boundary, index(&input, "offset", 0, 100_000)?, false)
                     .map_err(app_error)?;
                 for header in &mut page.headers {
-                    if sensitive(&header.name)
-                        && !grant.permissions.contains(&Permission::ReadCredentials)
-                    {
+                    if sensitive(&header.name) && !grant.allows(Permission::ReadCredentials) {
                         header.value = "[redacted]".into();
                         header.sensitive = true;
                     }
@@ -423,10 +429,7 @@ impl AgentApplication {
         if let Some(fields) = detail.as_object_mut() {
             fields.remove("authRevisions");
         }
-        mask_headers(
-            &mut detail,
-            grant.permissions.contains(&Permission::ReadCredentials),
-        );
+        mask_headers(&mut detail, grant.allows(Permission::ReadCredentials));
         Ok(detail)
     }
 
@@ -486,10 +489,7 @@ impl AgentApplication {
         let next = (offset + page.sessions.len() < page.total_matched)
             .then_some(offset + page.sessions.len());
         let mut rows = value(page.sessions)?;
-        mask_headers(
-            &mut rows,
-            grant.permissions.contains(&Permission::ReadCredentials),
-        );
+        mask_headers(&mut rows, grant.allows(Permission::ReadCredentials));
         Ok(
             json!({"instanceId":self.instance_id,"sessions":rows,"totalMatched":page.total_matched,"nextOffset":next}),
         )
@@ -585,7 +585,7 @@ impl AgentApplication {
             "different"
         };
         let mut result = json!({"headers":{"state":state,"left":left_head,"right":right_head},"body":{"state":"not-compared","reason":"Read message bodies permission is required."},"coverage":"Bounded retained header views; full byte evidence remains available through explicit body reads."});
-        if grant.permissions.contains(&Permission::ReadBodies) {
+        if grant.allows(Permission::ReadBodies) {
             let left_body = self.body(grant, input, "leftId").await;
             let right_body = self.body(grant, input, "rightId").await;
             if let (Ok(left), Ok(right)) = (left_body, right_body) {
@@ -727,19 +727,18 @@ impl AgentApplication {
             return Err(denied("The rule is outside this key's traffic scope."));
         }
         let mut omitted = Vec::new();
-        if rule_has_credentials(&rule) && !grant.permissions.contains(&Permission::ReadCredentials)
-        {
+        if rule_has_credentials(&rule) && !grant.allows(Permission::ReadCredentials) {
             omitted.push("Credential-bearing header values require sensitive-header access.");
         }
         if (rule.request.replace_body.is_some()
             || rule.response.replace_body.is_some()
             || rule.response.text_transform.is_some())
-            && !grant.permissions.contains(&Permission::ReadBodies)
+            && !grant.allows(Permission::ReadBodies)
         {
             omitted.push("Authored body content requires Read message bodies permission.");
         }
         Ok(
-            json!({"summary":rule_summary(&rule),"rule":if omitted.is_empty(){Some(&rule)}else{None},"editable":omitted.is_empty() && self.editable_rule(grant,id).is_ok() && (!rule.enabled || grant.permissions.contains(&Permission::Modify)),"omitted":omitted}),
+            json!({"summary":rule_summary(&rule),"rule":if omitted.is_empty(){Some(&rule)}else{None},"editable":omitted.is_empty() && self.editable_rule(grant,id).is_ok() && (!rule.enabled || grant.allows(Permission::Modify)),"omitted":omitted}),
         )
     }
 
@@ -762,8 +761,7 @@ impl AgentApplication {
                 .ok_or_else(|| Error::new("not_found", "The shared rule is no longer available."))?
         };
         Self::check_rule_scope(grant, &rule)?;
-        if rule_has_credentials(&rule) && !grant.permissions.contains(&Permission::ReadCredentials)
-        {
+        if rule_has_credentials(&rule) && !grant.allows(Permission::ReadCredentials) {
             return Err(denied(
                 "This rule contains credential-bearing header configuration. Sensitive header access is required to read or edit it.",
             ));
@@ -791,14 +789,13 @@ impl AgentApplication {
         if previous.enabled || rule.enabled {
             grant.require(Permission::Modify)?;
         }
-        if rule_has_credentials(&rule) && !grant.permissions.contains(&Permission::ReadCredentials)
-        {
+        if rule_has_credentials(&rule) && !grant.allows(Permission::ReadCredentials) {
             return Err(denied(
                 "Sensitive header access is required to edit credential-bearing rules.",
             ));
         }
         if (previous.response.text_transform.is_some() || rule.response.text_transform.is_some())
-            && !grant.permissions.contains(&Permission::ReadBodies)
+            && !grant.allows(Permission::ReadBodies)
         {
             return Err(denied(
                 "Read message bodies permission is required to edit authored body content.",
@@ -1025,6 +1022,10 @@ impl AgentApplication {
             .values()
             .filter(|control| {
                 !access.enabled
+                    || (control.breakpoints
+                        && !self
+                            .access
+                            .has_sensitive_access(&control.grant_id, control.grant_revision))
                     || control.expires_at <= now()
                     || !access.grants.iter().any(|grant| {
                         grant.id == control.grant_id
@@ -1044,6 +1045,7 @@ impl AgentApplication {
                 .as_ref()
                 .is_some_and(|(owner, revision, _)| {
                     !access.enabled
+                        || !self.access.has_sensitive_access(owner, *revision)
                         || !access.grants.iter().any(|grant| {
                             grant.id == *owner
                                 && grant.revision == *revision
@@ -1236,6 +1238,15 @@ fn sensitive(name: &str) -> bool {
             | "set-cookie"
             | "authentication-info"
             | "proxy-authentication-info"
+            | "www-authenticate"
+            | "proxy-authenticate"
+            | "x-api-key"
+            | "api-key"
+            | "x-auth-token"
+            | "x-access-token"
+            | "x-amz-security-token"
+            | "x-csrf-token"
+            | "x-xsrf-token"
     )
 }
 

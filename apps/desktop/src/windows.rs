@@ -2374,6 +2374,8 @@ pub fn run() {
             let dispatch: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
                 mcp::mcp_status,
                 mcp::mcp_summary,
+                mcp::mcp_sensitive_decide,
+                mcp::mcp_sensitive_revoke,
                 mcp::mcp_set_enabled,
                 mcp::mcp_create_key,
                 mcp::mcp_update_key,

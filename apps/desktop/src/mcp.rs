@@ -87,11 +87,21 @@ impl AgentState {
                     .lock()
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 if notifications.is_none() {
-                    let mut changes = adapter.subscribe_changes();
+                    let mut rules_rx = adapter.subscribe_changes();
+                    let mut access_rx = state.access().expect("adapter has access").subscribe();
                     let app = handle.clone();
                     *notifications = Some(tokio::spawn(async move {
-                        while changes.changed().await.is_ok() {
-                            let _ = app.emit_to("main", "mcp-automation-changed", ());
+                        loop {
+                            tokio::select! {
+                                outcome=rules_rx.changed()=> {
+                                    if outcome.is_err(){break;}
+                                    let _ = app.emit_to("main", "mcp-automation-changed", ());
+                                },
+                                outcome=access_rx.changed()=>{
+                                    if outcome.is_err(){break;}
+                                    let _ = app.emit_to("main", "mcp-access-changed", ());
+                                },
+                            }
                         }
                     }));
                 }
@@ -174,6 +184,9 @@ impl AgentState {
     }
     pub async fn shutdown(&self) -> Result<(), Error> {
         self.listener.lock().await.take();
+        if let Ok(access) = self.access() {
+            access.clear_sensitive_access();
+        }
         if let Some(notifications) = self
             .notifications
             .lock()
@@ -206,7 +219,28 @@ fn adapter_rules(adapter: &AgentApplication) -> Value {
 
 #[tauri::command]
 pub(super) fn mcp_summary(state: State<'_, AgentState>) -> Value {
-    json!({"enabled":state.access().is_ok_and(|access|access.status().enabled),"controls":state.adapter().map_or(0,|adapter|adapter.active_control_count())})
+    json!({"enabled":state.access().is_ok_and(|access|access.status().enabled),"controls":state.adapter().map_or(0,|adapter|adapter.active_control_count()),"sensitiveRequests":state.access().map_or_else(|_|Vec::new(),AccessManager::sensitive_access_requests)})
+}
+
+#[tauri::command]
+pub(super) async fn mcp_sensitive_decide(
+    id: String,
+    choice: String,
+    state: State<'_, AgentState>,
+) -> Result<Value, Error> {
+    state.access()?.decide_sensitive_access(&id, &choice)?;
+    state.adapter()?.reconcile().await?;
+    Ok(mcp_summary(state))
+}
+
+#[tauri::command]
+pub(super) async fn mcp_sensitive_revoke(
+    id: String,
+    state: State<'_, AgentState>,
+) -> Result<Value, Error> {
+    state.access()?.revoke_sensitive_access(&id)?;
+    state.adapter()?.reconcile().await?;
+    Ok(mcp_summary(state))
 }
 
 #[tauri::command]
