@@ -3,6 +3,43 @@ import { mkdir } from "node:fs/promises";
 import { resolve } from "node:path";
 import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 
+function foldingIconPointerTarget({ view, sticky = false }) {
+  const icons = view.querySelectorAll(".margin-view-overlays .codicon-folding-expanded"),
+    viewport = view.editorHost.getBoundingClientRect();
+  for (let index = 0; index < icons.length; index++) {
+    const icon = icons[index],
+      bounds = icon.getBoundingClientRect();
+    if (!bounds.width || bounds.top < viewport.top || bounds.bottom > viewport.bottom) continue;
+    const hit = icon
+      .getRootNode()
+      .elementFromPoint(bounds.x + bounds.width / 2, bounds.y + bounds.height / 2);
+    if (sticky ? hit?.hasAttribute("data-sticky-is-folding-icon") : hit === icon) return index + 1;
+  }
+  return 0;
+}
+
+async function hoverSourceFoldingIcon(page, source) {
+  // Virtual gutter DOM order is not visual order. After scrolling, its first icon
+  // can be clipped or covered by the sticky header. Reset the view and hit-test.
+  await source.evaluate((view) => {
+    view.editor.setPosition({ lineNumber: 1, column: 1 });
+    view.editor.setScrollPosition({ scrollTop: 0, scrollLeft: 0 });
+  });
+  const target = await page.waitForFunction(foldingIconPointerTarget, {
+    view: await source.elementHandle(),
+  });
+  const icon = source
+    .locator(".margin-view-overlays .codicon-folding-expanded")
+    .nth((await target.jsonValue()) - 1);
+  await target.dispose();
+  await icon.hover();
+  await page.waitForFunction(
+    (icon) => getComputedStyle(icon).opacity === "1",
+    await icon.elementHandle(),
+  );
+  return icon;
+}
+
 export async function waitForBodySource(inspector, expected) {
   const source = inspector.locator("body-source-viewer");
   await source.locator(".source-code-host > .monaco-editor").waitFor();
@@ -253,17 +290,7 @@ export async function checkBodySource(page, root) {
       before,
     );
     assert.equal(await page.evaluate(() => globalThis.sourceExecuted), undefined);
-    await source.evaluate(async (v) => {
-      v.editor.setPosition({ lineNumber: 1, column: 1 });
-      v.editor.setScrollTop(0);
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-    });
-    const expanded = source.locator(".margin-view-overlays .codicon-folding-expanded").first();
-    await expanded.hover();
-    await page.waitForFunction(
-      (icon) => getComputedStyle(icon).opacity === "1",
-      await expanded.elementHandle(),
-    );
+    const expanded = await hoverSourceFoldingIcon(page, source);
     const downArrow = await expanded.evaluate((icon) => getComputedStyle(icon, "::before").content);
     await page.screenshot({ path: resolve(root, "../../../target/ui-check/monaco-icons.png") });
     await expanded.click();
@@ -324,12 +351,21 @@ export async function checkBodySource(page, root) {
       await page.emulateMedia(media);
       await source.locator(`.monaco-editor.${className}`).waitFor();
       await checkMonacoIcons(source.locator(".source-code-host"));
-      const arrow = source.locator(".margin-view-overlays .codicon-folding-expanded").first();
-      await arrow.hover();
-      await page.waitForFunction(
-        (icon) => getComputedStyle(icon).opacity === "1",
-        await arrow.elementHandle(),
-      );
+      // Recreate the overlap left by scrolling a short pane. It must be resolved
+      // by positioning the editor, even when the sticky header is fully ready.
+      await source.evaluate((view) => {
+        view.editor.setPosition({ lineNumber: 6, column: 1 });
+        view.editor.setScrollTop(view.editor.getTopForLineNumber(5));
+      });
+      const covered = await page.waitForFunction(foldingIconPointerTarget, {
+        view: await source.elementHandle(),
+        sticky: true,
+      });
+      await covered.dispose();
+      await page.screenshot({
+        path: resolve(root, `../../../target/body-source/browser-icons-${theme}-scrolled.png`),
+      });
+      await hoverSourceFoldingIcon(page, source);
       await page.screenshot({
         path: resolve(root, `../../../target/body-source/browser-icons-${theme}.png`),
       });
