@@ -6908,6 +6908,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "transmog-mcp"
+version = "0.1.15"
+dependencies = [
+ "base64 0.22.1",
+ "boring",
+ "getrandom 0.4.3",
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "url",
+ "zeroize",
+]
+
+[[package]]
 name = "transmog-network"
 version = "0.1.15"
 dependencies = [

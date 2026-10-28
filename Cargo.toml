@@ -2,6 +2,7 @@
 exclude = ["sdk", "third_party/rust-transport/vendor/h2", "third_party/rust-transport/vendor/hyper", "third_party/rust-transport/vendor/quiche", "third_party/swc-ecma-parser"]
 resolver = "2"
 members = [
+    "crates/mcp",
     "crates/auth",
     "apps/desktop",
     "crates/app",
