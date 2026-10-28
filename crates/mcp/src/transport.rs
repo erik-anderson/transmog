@@ -93,6 +93,7 @@ pub struct LocalServer {
     endpoint: Endpoint,
     root: PathBuf,
     task: JoinHandle<()>,
+    access: AccessManager,
 }
 
 impl LocalServer {
@@ -160,6 +161,7 @@ impl LocalServer {
         endpoint.validate()?;
         publish(&root, &endpoint)?;
         let mut authority = access.subscribe();
+        let server_access = access.clone();
         let address = endpoint.address;
         let task = tokio::spawn(async move {
             let slots = Arc::new(Semaphore::new(16));
@@ -200,6 +202,7 @@ impl LocalServer {
             endpoint,
             root,
             task,
+            access: server_access,
         })
     }
 
@@ -212,6 +215,7 @@ impl LocalServer {
 impl Drop for LocalServer {
     fn drop(&mut self) {
         self.task.abort();
+        self.access.clear_activity();
         if read_endpoint(&self.root)
             .is_ok_and(|endpoint| endpoint.instance_id == self.endpoint.instance_id)
         {
@@ -316,6 +320,7 @@ async fn serve(
             &serde_json::json!({"error":{"code":"authorization_changed","message":"Access changed. Reconnect before continuing."}}),
         ));
     }
+    let _activity = access.begin_call(&grant);
     let operation = handler.call(grant, call.operation, call.input);
     tokio::pin!(operation);
     let result = loop {

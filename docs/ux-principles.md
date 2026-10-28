@@ -221,9 +221,12 @@ Human and agent rule editing uses the same saved rules and revision conflicts.
 Every authorized agent may read relevant rule effects; shared edits require an
 explicit permission. Preserve unsaved human drafts during agent refreshes and
 keep active agent access visible with a direct route to its controls.
-Agent requests for original sensitive values appear without stealing focus.
+Agent requests for unredacted values appear without stealing focus.
 Default to omission, make temporary consent visibly time-bound with an immediate
 revoke action, and distinguish it from a durable change to the saved setting.
+Keep connection activity stable across brief calls. Show temporary sensitive-value
+access as a badge on the connection indicator; authorization and revocation
+feedback must stay immediate even when connection status is smoothed.
 
 Update the owning guide when a deliberate product decision changes a convention.
 Keep exact labels, defaults, limits and activation rules there, with links from

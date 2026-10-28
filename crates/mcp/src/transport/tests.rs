@@ -62,6 +62,8 @@ async fn loopback_calls_require_each_callers_key_and_recheck_revocation() {
         std::net::Ipv4Addr::LOCALHOST
     );
     let client = LocalClient::new(root.path().into());
+    assert!(client.call("", "echo", Value::Null).await.is_err());
+    assert_eq!(manager.active_agents().len(), 0);
     assert_eq!(
         client
             .call(key_a.expose(), "echo", Value::Null)
@@ -79,7 +81,12 @@ async fn loopback_calls_require_each_callers_key_and_recheck_revocation() {
     assert!(client.call("", "echo", Value::Null).await.is_err());
     assert!(client.call(&a.id, "echo", Value::Null).await.is_err());
     assert_eq!(calls.load(Ordering::SeqCst), 2);
+    let agents = manager.active_agents();
+    assert_eq!(agents.len(), 2);
+    assert_eq!(agents[0]["name"], "Codex");
+    assert_eq!(agents[1]["name"], "Copilot");
     manager.revoke(Some((&a.id, a.revision))).unwrap();
+    assert_eq!(manager.active_agents().len(), 1);
     assert!(
         client
             .call(key_a.expose(), "echo", Value::Null)
@@ -93,6 +100,7 @@ async fn loopback_calls_require_each_callers_key_and_recheck_revocation() {
             .is_ok()
     );
     drop(server);
+    assert_eq!(manager.active_agents().len(), 0);
     assert!(!root.path().join(DISCOVERY_FILE).exists());
 }
 

@@ -542,7 +542,7 @@ struct ResponseFixture(std::sync::atomic::AtomicUsize);
 #[tokio::test]
 #[allow(
     clippy::too_many_lines,
-    reason = "Keep one original-value consent and evidence lifecycle together."
+    reason = "Keep one unredacted consent and evidence lifecycle together."
 )]
 async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_revocation() {
     let root = tempfile::tempdir().unwrap();

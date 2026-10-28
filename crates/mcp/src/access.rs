@@ -16,6 +16,7 @@ use crate::Error;
 
 const MAX_GRANTS: usize = 64;
 const MAX_STORE_BYTES: u64 = 1024 * 1024;
+mod activity;
 mod disclosure;
 
 const fn default_omit_sensitive_values() -> bool {
@@ -40,7 +41,7 @@ pub enum Permission {
     Modify,
     /// Send explicitly authored or replayed requests.
     Send,
-    /// Read original credential-bearing headers instead of masking them.
+    /// Read unredacted credential-bearing headers instead of masking them.
     ReadCredentials,
 }
 
@@ -185,7 +186,7 @@ impl GrantInput {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Grant {
-    /// Default-on protection for original authentication headers and message bodies.
+    /// Default-on protection for unredacted authentication headers and message bodies.
     #[serde(default = "default_omit_sensitive_values")]
     pub omit_sensitive_values: bool,
     #[serde(skip)]
@@ -247,7 +248,7 @@ impl Grant {
         ) {
             Err(Error::new(
                 "sensitive_access_required",
-                "Original values are omitted or not allowed. Call transmog_sensitive_access_request and ask the user to respond in Transmog; then check transmog_sensitive_access_status.",
+                "Unredacted values are omitted or not allowed. Call transmog_sensitive_access_request and ask the user to respond in Transmog; then check transmog_sensitive_access_status.",
             ))
         } else {
             Err(Error::new(
@@ -285,6 +286,8 @@ struct Record {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct Store {
     #[serde(skip)]
+    activity: std::collections::HashMap<String, activity::Activity>,
+    #[serde(skip)]
     disclosures: std::collections::HashMap<String, disclosure::Disclosure>,
     version: u32,
     enabled: bool,
@@ -307,6 +310,7 @@ pub struct AccessManager {
     state: Arc<Mutex<Store>>,
     path: Option<PathBuf>,
     changed: watch::Sender<u64>,
+    activity_changed: watch::Sender<u64>,
 }
 
 impl AccessManager {
@@ -339,10 +343,12 @@ impl AccessManager {
             Err(_) => return Err(storage()),
         };
         let (changed, _) = watch::channel(0);
+        let (activity_changed, _) = watch::channel(0);
         Ok(Self {
             state: Arc::new(Mutex::new(state)),
             path,
             changed,
+            activity_changed,
         })
     }
 
@@ -542,6 +548,7 @@ impl AccessManager {
         let mut next = state.clone();
         let result = change(&mut next)?;
         disclosure::prune(&mut next);
+        activity::prune(&mut next);
         self.persist(&next)?;
         *state = next;
         self.changed

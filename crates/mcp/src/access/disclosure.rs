@@ -77,7 +77,7 @@ fn status(state: &Store, grant: &Grant) -> Value {
 }
 
 impl AccessManager {
-    /// Requests human approval for original headers/bodies for this key's existing scope.
+    /// Requests human approval for unredacted headers/bodies for this key's existing scope.
     /// # Errors
     /// Rejects stale, inactive or oversized requests and briefly rate-limits denied requests.
     pub fn request_sensitive_access(&self, grant: &Grant, reason: &str) -> Result<Value, Error> {
@@ -85,7 +85,7 @@ impl AccessManager {
         if reason.is_empty() || reason.chars().count() > 800 || reason.chars().any(char::is_control)
         {
             return Err(invalid(
-                "Explain why original authentication headers and bodies are needed in 1–800 characters.",
+                "Explain why unredacted authentication headers and bodies are needed in 1–800 characters.",
             ));
         }
         let mut state = self.lock();
@@ -110,7 +110,7 @@ impl AccessManager {
             if entry.phase == "denied" && entry.deadline > Instant::now() {
                 return Err(Error::new(
                     "request_denied",
-                    "The user denied original-value access. Wait before making another explicit request.",
+                    "The user denied unredacted access. Wait before making another explicit request.",
                 ));
             }
         }

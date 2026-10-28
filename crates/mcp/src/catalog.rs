@@ -29,14 +29,14 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
     vec![
         spec(
             "transmog_sensitive_access_request",
-            "Ask the user in Transmog for original authentication headers and message bodies within this key's existing traffic scope. Requires an explicit reason. Creates one pending request; it grants nothing until the user chooses For next 1 minute or Always in the app. Ask the user to respond near the top of Transmog, then poll transmog_sensitive_access_status. Never assume approval or work around a denial.",
+            "Ask the user in Transmog for unredacted authentication headers and message bodies within this key's existing traffic scope. Requires an explicit reason. Creates one pending request; it grants nothing until the user chooses For next 1 minute or Always in the app. Ask the user to respond near the top of Transmog, then poll transmog_sensitive_access_status. Never assume approval or work around a denial.",
             false,
             json!({"reason":{"type":"string","minLength":1,"maxLength":800}}),
             &["reason"],
         ),
         spec(
             "transmog_sensitive_access_status",
-            "Read this key's original-value approval and expiry without prompting again. Pending, denied and expired requests do not authorize disclosure. Always decisions change the saved omission setting; temporary approval ends after 60 seconds or earlier revocation.",
+            "Read this key's approval for unredacted values and its expiry without prompting again. Pending, denied and expired requests do not authorize disclosure. Always decisions change the saved omission setting; temporary approval ends after 60 seconds or earlier revocation.",
             true,
             json!({}),
             &[],

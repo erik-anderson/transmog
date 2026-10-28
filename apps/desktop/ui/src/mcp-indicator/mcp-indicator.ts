@@ -19,6 +19,7 @@ interface Summary {
   enabled: boolean;
   controls: number;
   sensitiveRequests?: Approval[];
+  activeAgents?: { id: string; name: string }[];
 }
 interface ApprovalRow extends Approval {
   scopeText: string;
@@ -31,6 +32,9 @@ export class McpIndicator extends WorkspaceElement {
   @attr({ mode: "boolean" }) viewerMode = false;
   @observable mcpIndicatorVisible = initial.mcpIndicatorVisible;
   @observable mcpIndicatorText = initial.mcpIndicatorText;
+  @observable mcpBadgeText = initial.mcpBadgeText;
+  @observable mcpControlText = initial.mcpControlText;
+  @observable mcpActiveAgents: { id: string; name: string }[] = [];
   @observable mcpSensitiveRequests: ApprovalRow[] = [];
   @observable mcpSensitiveTemporary: ApprovalRow[] = [];
   @observable mcpSensitiveError = initial.mcpSensitiveError;
@@ -46,22 +50,24 @@ export class McpIndicator extends WorkspaceElement {
   private generation = 0;
   private sequence = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
-  private unlisten: UnlistenFn | undefined;
+  private unlisteners: UnlistenFn[] = [];
 
   protected hydratedCallback(): void {
     window.addEventListener("keydown", this.markEscape, true);
     const generation = ++this.generation;
     void this.poll(generation);
     if (!this.viewerMode) {
-      void listen("mcp-access-changed", () => void this.refresh())
-        .then((unlisten) => {
-          if (this.isConnected && generation === this.generation) {
-            this.unlisten = unlisten;
-          } else {
-            unlisten();
-          }
-        })
-        .catch(() => undefined);
+      for (const event of ["mcp-access-changed", "mcp-activity-changed"]) {
+        void listen(event, () => void this.refresh())
+          .then((unlisten) => {
+            if (this.isConnected && generation === this.generation) {
+              this.unlisteners.push(unlisten);
+            } else {
+              unlisten();
+            }
+          })
+          .catch(() => undefined);
+      }
     }
   }
   private accept(summary: Summary): void {
@@ -77,14 +83,21 @@ export class McpIndicator extends WorkspaceElement {
     }));
     this.mcpSensitiveRequests = rows.filter((entry) => entry.state === "pending");
     this.mcpSensitiveTemporary = rows.filter((entry) => entry.state === "temporary");
+    this.mcpActiveAgents = summary.activeAgents ?? [];
     this.mcpIndicatorVisible = summary.enabled || rows.length > 0;
-    this.mcpIndicatorText = this.mcpSensitiveTemporary.length
-      ? `MCP · original values ${countdown(Math.min(...this.mcpSensitiveTemporary.map((entry) => entry.remainingSeconds)))}`
+    this.mcpIndicatorText = this.mcpActiveAgents.length
+      ? `MCP · ${this.mcpActiveAgents.length} connected`
+      : summary.controls
+        ? `MCP · ${summary.controls} control session${summary.controls === 1 ? "" : "s"}`
+        : "MCP enabled";
+    this.mcpControlText = summary.controls
+      ? `${summary.controls} live control session${summary.controls === 1 ? "" : "s"}`
+      : "";
+    this.mcpBadgeText = this.mcpSensitiveTemporary.length
+      ? `Unredacted · ${countdown(Math.min(...this.mcpSensitiveTemporary.map((entry) => entry.remainingSeconds)))}`
       : this.mcpSensitiveRequests.length
-        ? `MCP · ${this.mcpSensitiveRequests.length} access request${this.mcpSensitiveRequests.length === 1 ? "" : "s"}`
-        : summary.controls
-          ? `MCP · ${summary.controls} control session${summary.controls === 1 ? "" : "s"}`
-          : "MCP enabled";
+        ? `${this.mcpSensitiveRequests.length} access request${this.mcpSensitiveRequests.length === 1 ? "" : "s"}`
+        : "";
   }
   async refresh(): Promise<void> {
     if (this.viewerMode || !this.isConnected) {
@@ -159,8 +172,10 @@ export class McpIndicator extends WorkspaceElement {
     this.generation++;
     this.sequence++;
     clearTimeout(this.timer);
-    this.unlisten?.();
-    this.unlisten = undefined;
+    for (const unlisten of this.unlisteners) {
+      unlisten();
+    }
+    this.unlisteners = [];
     super.disconnectedCallback();
   }
 }

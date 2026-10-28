@@ -63,10 +63,19 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
     );
     const rules = await cli(created.key, "transmog_rules_list", { instanceId: status.instanceId });
     assert(Array.isArray(rules.rules), "An authenticated key could not read rules");
+    assert.equal(
+      await evaluate(`(async()=>{
+      const indicator=document.querySelector('app-shell').shadowRoot.querySelector('mcp-indicator');
+      await indicator.refresh();
+      return indicator.mcpIndicatorText==='MCP · 1 connected' && indicator.mcpActiveAgents[0]?.name==='Native MCP collaboration';
+    })()`),
+      true,
+      "Native connection indicator did not identify the authenticated key",
+    );
     assert.equal(status.sensitiveAccess.headersAllowed, false);
     assert.equal(status.sensitiveAccess.bodiesAllowed, false);
     const requested = await cli(created.key, "transmog_sensitive_access_request", {
-      reason: "Inspect the original authentication values for the native qualification.",
+      reason: "Inspect the unredacted authentication values for the native qualification.",
     });
     assert.equal(requested.request.state, "pending");
     assert.equal(requested.headersAllowed, false);
@@ -91,6 +100,17 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
     assert.equal(temporary.headersAllowed, true);
     assert.equal(temporary.bodiesAllowed, true);
     assert.equal(temporary.omitSensitiveValues, true);
+    assert.equal(
+      await evaluate(`(async()=>{
+      const indicator=document.querySelector('app-shell').shadowRoot.querySelector('mcp-indicator');
+      await indicator.refresh();
+      const badge=indicator.querySelector('.mcp-access-badge');
+      const label=indicator.querySelector('.mcp-indicator-label');
+      return badge.textContent.startsWith('Unredacted · ') && label.textContent.includes('connected') && badge.getBoundingClientRect().top < label.getBoundingClientRect().top;
+    })()`),
+      true,
+      "Native unredacted badge did not stay above connection status",
+    );
     if (screenshotPath) {
       const image = await call("Page.captureScreenshot", { format: "png" });
       await writeFile(
@@ -108,7 +128,7 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       false,
     );
     await cli(created.key, "transmog_sensitive_access_request", {
-      reason: "Test the explicit persistent original-value decision.",
+      reason: "Test the explicit persistent unredacted decision.",
     });
     await respond("always");
     const permanent = await cli(created.key, "transmog_sensitive_access_status", {});
@@ -159,6 +179,8 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       temporarySensitiveAccess: true,
       earlySensitiveRevocation: true,
       persistentSensitiveSetting: true,
+      connectionIndicator: true,
+      unredactedValuesBadge: true,
     };
   } finally {
     if (grantId) {

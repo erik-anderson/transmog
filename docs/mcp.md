@@ -45,12 +45,12 @@ user to respond near the top of Transmog. The access indicator shows a pending
 request without opening a popup or moving focus. Open it to review the agent,
 reason and existing traffic scope, then choose:
 
-- **For next 1 minute**: allow original header/body values for that key for
+- **For next 1 minute**: allow unredacted header/body values for that key for
   60 seconds. The top indicator shows the remaining time and opens a
   **Revoke access now** control. The saved omission setting is unchanged.
 - **Always**: turn off that key's saved omission setting and grant the two read
   permissions. This survives restart until changed or the key expires/is revoked.
-- **Deny**: leave original values protected. Status polling does not prompt again.
+- **Deny**: leave unredacted values protected. Status polling does not prompt again.
 
 The agent checks `transmog_sensitive_access_status` before retrying a protected
 read. Neither choice broadens traffic scope or grants send/edit/collection
@@ -98,8 +98,17 @@ Named grants, expiry, revocation and master enablement survive app restarts.
 **Replace key…** invalidates the previous secret immediately and shows its
 replacement once. **Revoke…** permanently invalidates it. Master-off suspends keys;
 turning MCP back on allows still-valid keys to reconnect.
-The desktop header shows enabled agent access and a count of temporary control
-sessions; select it to open Integrations. Agent-owned recordings are sealed when
+The desktop header distinguishes MCP enablement from authenticated agent
+connections. Its connection count groups calls by access key and stays visible
+until three seconds after the last call finishes, so rapid short calls do not
+flicker. An idle stdio connector alone does not count as a desktop connection.
+Open the indicator to see the user-assigned key names, live control sessions and
+access controls. Connection status grants no authority; every call still
+authenticates its own key. A badge above the connection label shows pending access
+requests or the countdown for temporary unredacted access. The badge updates
+immediately on approval, expiry or revocation, independently of connection
+smoothing; select it to reach **Revoke access now**.
+Agent-owned recordings are sealed when
 their grant ends or MCP is disabled. The shared proxy remains under normal
 desktop collection controls.
 

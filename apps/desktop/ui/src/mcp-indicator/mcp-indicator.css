@@ -1,4 +1,11 @@
 mcp-indicator { display:contents; }
+.mcp-indicator-button { position:relative; display:grid; justify-items:center; gap:0; min-width:9rem; overflow:visible; }
+.mcp-indicator-label { display:flex; align-items:center; gap:.4rem; grid-row:2; white-space:nowrap; }
+.mcp-indicator-button[data-connected] .status-dot { background:var(--accent-strong); }
+.mcp-access-badge { grid-row:1; position:relative; margin-top:-.7rem; margin-bottom:.1rem; padding:.05rem .35rem; border:1px solid var(--line-strong); border-radius:.6rem; background:var(--panel-raised); color:var(--text); font-size:.65rem; line-height:1.3; font-weight:650; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.mcp-access-badge[data-sensitive] { border-color:var(--warning); color:var(--warning); background:var(--warning-soft); }
+.mcp-connected-agents { margin:.4rem 0; padding-inline-start:1.2rem; max-height:8rem; overflow:auto; overflow-wrap:anywhere; }
+@media (forced-colors:active) { .mcp-access-badge,.mcp-access-badge[data-sensitive] { border-color:CanvasText; color:CanvasText; background:Canvas; } .mcp-indicator-button[data-connected] .status-dot { background:CanvasText; } }
 .mcp-access-panel { position:fixed; inset:3.5rem .75rem auto auto; margin:0; width:min(31rem,calc(100vw - 1.5rem)); max-height:calc(100dvh - 4.25rem); box-sizing:border-box; overflow:auto; padding:1rem; border:1px solid var(--line); border-radius:.5rem; background:var(--panel); color:var(--text); box-shadow:0 .3rem 1.2rem rgb(0 0 0 / .15); font-size:.875rem; }
 .mcp-access-panel header,.mcp-access-actions { display:flex; align-items:baseline; justify-content:space-between; gap:.5rem; flex-wrap:wrap; }
 .mcp-access-panel h2 { margin:0; font-size:1rem; }.mcp-access-panel h3 { margin:.9rem 0 .4rem; font-size:.9rem; }.mcp-access-panel h4 { margin:.3rem 0; font-size:.875rem; overflow-wrap:anywhere; }

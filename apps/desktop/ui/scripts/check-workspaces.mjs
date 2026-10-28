@@ -775,6 +775,7 @@ await page.addInitScript(
               enabled: state.mcp?.enabled ?? false,
               controls: state.mcp?.controls.length ?? 0,
               sensitiveRequests: structuredClone(state.mcpSensitive ?? []),
+              activeAgents: structuredClone(state.mcpActiveAgents ?? []),
             };
             if (state.deferMcpSummary) {
               state.deferMcpSummary = false;
@@ -811,6 +812,7 @@ await page.addInitScript(
               enabled: state.mcp.enabled,
               controls: 0,
               sensitiveRequests: structuredClone(state.mcpSensitive),
+              activeAgents: structuredClone(state.mcpActiveAgents ?? []),
             };
           }
           case "mcp_sensitive_revoke": {
@@ -820,6 +822,7 @@ await page.addInitScript(
               enabled: state.mcp.enabled,
               controls: 0,
               sensitiveRequests: structuredClone(state.mcpSensitive),
+              activeAgents: structuredClone(state.mcpActiveAgents ?? []),
             };
           }
           case "mcp_status":

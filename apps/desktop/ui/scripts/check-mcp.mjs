@@ -70,6 +70,7 @@ export async function checkMcp(page, root) {
     true,
   );
   const row = panel.locator("article").filter({ hasText: "Codex · shared rule collaboration" });
+  await checkConnectionIndicator(page, root);
   await checkSensitiveApprovals(page, root, panel);
   await row.getByRole("button", { name: "Edit permissions…", exact: true }).click();
   const edit = panel.getByRole("dialog", { name: "Edit agent permissions", exact: true });
@@ -157,6 +158,55 @@ export async function checkMcp(page, root) {
   await page.goto("https://workspace.test/");
 }
 
+async function checkConnectionIndicator(page, root) {
+  const indicator = page.locator("mcp-indicator");
+  const label = indicator.locator(".mcp-indicator-label");
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.mcpActiveAgents = [
+      { id: "codex", name: "Codex · shared rule collaboration" },
+      { id: "copilot", name: "Copilot · investigating a long request and response context" },
+    ];
+    state.emitNative("mcp-activity-changed");
+  });
+  await label.getByText("MCP · 2 connected", { exact: true }).waitFor();
+  await indicator.getByRole("button", { name: "MCP · 2 connected", exact: true }).click();
+  const access = indicator.getByRole("dialog", { name: "Agent access", exact: true });
+  await access
+    .getByRole("listitem")
+    .filter({ hasText: "Codex · shared rule collaboration" })
+    .waitFor();
+  await access.getByRole("listitem").filter({ hasText: "Copilot · investigating" }).waitFor();
+  for (const width of [1440, 960, 800]) {
+    await page.setViewportSize({ width, height: width === 800 ? 600 : 900 });
+    assert.equal(
+      await access.evaluate((panel) => panel.scrollWidth <= panel.clientWidth + 1),
+      true,
+      "Connected agent names overflow horizontally",
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/mcp-connected-${width}.png`),
+    });
+  }
+  // A late snapshot must not resurrect a disconnected agent.
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.deferMcpSummary = true;
+    void document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
+  });
+  await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishMcpSummary);
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.mcpActiveAgents = [];
+    state.emitNative("mcp-activity-changed");
+  });
+  await label.getByText("MCP enabled", { exact: true }).waitFor();
+  await page.evaluate(() => globalThis.__workspaceFixture.finishMcpSummary());
+  assert.equal(await indicator.evaluate((component) => component.mcpActiveAgents.length), 0);
+  await page.keyboard.press("Escape");
+  await access.waitFor({ state: "hidden" });
+}
+
 async function checkSensitiveApprovals(page, root, panel) {
   const indicator = page.locator("mcp-indicator");
   const request = async (id) =>
@@ -178,7 +228,7 @@ async function checkSensitiveApprovals(page, root, panel) {
       state.emitNative("mcp-access-changed");
     }, id);
   await request("first");
-  const button = indicator.getByRole("button", { name: /MCP · 1 access request/ });
+  const button = indicator.getByRole("button", { name: /1 access request/ });
   await button.waitFor();
   assert.equal(
     await indicator.getByRole("dialog").isVisible(),
@@ -199,7 +249,25 @@ async function checkSensitiveApprovals(page, root, panel) {
     });
   }
   await access.getByRole("button", { name: "For next 1 minute", exact: true }).click();
-  await indicator.getByRole("button", { name: /MCP · original values 1:00/ }).waitFor();
+  await indicator
+    .locator(".mcp-access-badge")
+    .getByText("Unredacted · 1:00", { exact: true })
+    .waitFor();
+  assert.equal(await indicator.locator(".mcp-indicator-label").innerText(), "MCP enabled");
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.mcpActiveAgents = [{ id: "codex", name: state.mcp.grants[0].name }];
+    state.emitNative("mcp-activity-changed");
+  });
+  await indicator
+    .locator(".mcp-indicator-label")
+    .getByText("MCP · 1 connected", { exact: true })
+    .waitFor();
+  assert.equal(await indicator.locator(".mcp-access-badge").innerText(), "Unredacted · 1:00");
+  const badgeBounds = await indicator.locator(".mcp-access-badge").boundingBox();
+  const labelBounds = await indicator.locator(".mcp-indicator-label").boundingBox();
+  assert(badgeBounds.y < labelBounds.y, "Unredacted access must appear above the connection label");
+  assert(badgeBounds.y >= 0, "Unredacted badge is clipped above the window");
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.mcp.grants[0].omitSensitiveValues),
     true,
@@ -207,6 +275,15 @@ async function checkSensitiveApprovals(page, root, panel) {
   await page.screenshot({
     path: resolve(root, "../../../target/ui-check/mcp-sensitive-minute.png"),
   });
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/mcp-badge-forced-colors.png"),
+  });
+  await page.emulateMedia({ forcedColors: "none" });
+  // Clicking the badge opens the same immediate revocation controls.
+  await page.keyboard.press("Escape");
+  await indicator.locator(".mcp-access-badge").click();
+  await access.waitFor();
   await page.evaluate(() => {
     globalThis.__workspaceFixture.deferMcpSummary = true;
     void document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
@@ -214,7 +291,7 @@ async function checkSensitiveApprovals(page, root, panel) {
   await page.waitForFunction(() => !!globalThis.__workspaceFixture.finishMcpSummary);
   await access.getByRole("button", { name: "Revoke access now", exact: true }).click();
   await access
-    .getByText("No original-value requests or temporary approvals.", { exact: false })
+    .getByText("No requests for unredacted values or temporary approvals.", { exact: false })
     .waitFor();
   await page.evaluate(() => globalThis.__workspaceFixture.finishMcpSummary());
   assert.equal(
@@ -222,6 +299,12 @@ async function checkSensitiveApprovals(page, root, panel) {
     0,
     "A late status response restored revoked access in the UI",
   );
+  assert.equal(await indicator.locator(".mcp-access-badge").isVisible(), false);
+  assert.equal(await indicator.locator(".mcp-indicator-label").innerText(), "MCP · 1 connected");
+  await page.evaluate(async () => {
+    globalThis.__workspaceFixture.mcpActiveAgents = [];
+    await document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
+  });
   await page.keyboard.press("Escape");
   await access.waitFor({ state: "hidden" });
   await page.waitForFunction(
@@ -257,7 +340,7 @@ async function checkSensitiveApprovals(page, root, panel) {
   });
   await access.getByRole("button", { name: "Always", exact: true }).click();
   await access
-    .getByText("No original-value requests or temporary approvals.", { exact: false })
+    .getByText("No requests for unredacted values or temporary approvals.", { exact: false })
     .waitFor();
   assert.equal(
     await page.evaluate(() => globalThis.__workspaceFixture.mcp.grants[0].omitSensitiveValues),

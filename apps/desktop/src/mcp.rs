@@ -89,6 +89,10 @@ impl AgentState {
                 if notifications.is_none() {
                     let mut rules_rx = adapter.subscribe_changes();
                     let mut access_rx = state.access().expect("adapter has access").subscribe();
+                    let mut activity_rx = state
+                        .access()
+                        .expect("adapter has access")
+                        .subscribe_activity();
                     let app = handle.clone();
                     *notifications = Some(tokio::spawn(async move {
                         loop {
@@ -100,6 +104,10 @@ impl AgentState {
                                 outcome=access_rx.changed()=>{
                                     if outcome.is_err(){break;}
                                     let _ = app.emit_to("main", "mcp-access-changed", ());
+                                },
+                                outcome=activity_rx.changed()=>{
+                                    if outcome.is_err(){break;}
+                                    let _ = app.emit_to("main", "mcp-activity-changed", ());
                                 },
                             }
                         }
@@ -219,7 +227,12 @@ fn adapter_rules(adapter: &AgentApplication) -> Value {
 
 #[tauri::command]
 pub(super) fn mcp_summary(state: State<'_, AgentState>) -> Value {
-    json!({"enabled":state.access().is_ok_and(|access|access.status().enabled),"controls":state.adapter().map_or(0,|adapter|adapter.active_control_count()),"sensitiveRequests":state.access().map_or_else(|_|Vec::new(),AccessManager::sensitive_access_requests)})
+    json!({
+        "enabled":state.access().is_ok_and(|access|access.status().enabled),
+        "controls":state.adapter().map_or(0,|adapter|adapter.active_control_count()),
+        "sensitiveRequests":state.access().map_or_else(|_|Vec::new(),AccessManager::sensitive_access_requests),
+        "activeAgents":state.access().map_or_else(|_|Vec::new(),AccessManager::active_agents),
+    })
 }
 
 #[tauri::command]
