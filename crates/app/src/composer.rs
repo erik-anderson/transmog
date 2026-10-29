@@ -153,9 +153,21 @@ pub(crate) struct ComposerManager {
     executor: Option<Arc<dyn ReplayExecutor>>,
     history: Arc<Mutex<History>>,
     response: Arc<Mutex<VecDeque<Arc<crate::composer_response::ComposerResponse>>>>,
+    response_pool: Arc<Mutex<VecDeque<RetainedResponse>>>,
+}
+
+struct RetainedResponse {
+    owner: std::sync::Weak<Mutex<VecDeque<Arc<crate::composer_response::ComposerResponse>>>>,
+    id: transmog_core::intercept::ExchangeId,
+    bytes: u64,
 }
 
 impl ComposerManager {
+    pub(crate) fn fork(&self) -> Self {
+        let mut fork = Self::new(self.executor.clone());
+        fork.response_pool = self.response_pool.clone();
+        fork
+    }
     pub(crate) fn has_executor(&self) -> bool {
         self.executor.is_some()
     }
@@ -200,6 +212,7 @@ impl ComposerManager {
             active: Arc::new(Mutex::new(HashMap::new())),
             executor,
             response: Arc::new(Mutex::new(VecDeque::new())),
+            response_pool: Arc::default(),
             history: Arc::new(Mutex::new(History {
                 next_id: 0,
                 items: VecDeque::new(),
@@ -413,20 +426,34 @@ impl ComposerManager {
         &self,
         response: Arc<crate::composer_response::ComposerResponse>,
     ) {
+        let mut pool = self
+            .response_pool
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        pool.retain(|entry| entry.owner.strong_count() > 0);
+        pool.push_front(RetainedResponse {
+            owner: Arc::downgrade(&self.response),
+            id: response.snapshot.exchange_id,
+            bytes: response.retained_bytes(),
+        });
         let mut retained = self
             .response
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         retained.push_front(response);
-        while retained.len() > MAX_HISTORY
-            || retained
-                .iter()
-                .map(|response| response.retained_bytes())
-                .sum::<u64>()
-                > 256 * 1024 * 1024
-                && retained.len() > 1
+        drop(retained);
+        while pool.len() > MAX_HISTORY
+            || pool.iter().map(|entry| entry.bytes).sum::<u64>() > 256 * 1024 * 1024
+                && pool.len() > 1
         {
-            retained.pop_back();
+            if let Some(entry) = pool.pop_back()
+                && let Some(owner) = entry.owner.upgrade()
+            {
+                owner
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .retain(|response| response.snapshot.exchange_id != entry.id);
+            }
         }
     }
 

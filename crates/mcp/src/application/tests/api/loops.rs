@@ -399,7 +399,7 @@ async fn interrupted_admission_becomes_unknown_without_resending() {
     let executor = Arc::new(PendingReplay(tokio::sync::Notify::new()));
     let h = replay_harness(executor.clone());
     let owner = h.grant(&[Permission::Send]);
-    let input = json!({"instanceId":h.adapter.instance_id,"operationId":"one","request":{"method":"GET","url":"http://example.test/"}});
+    let input = json!({"sessionId":"main","instanceId":h.adapter.instance_id,"operationId":"one","request":{"method":"GET","url":"http://example.test/"}});
     let adapter = h.adapter.clone();
     let grant = owner.clone();
     let arguments = input.clone();

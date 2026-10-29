@@ -183,6 +183,7 @@ impl TraceRegistry {
         revision: u64,
         change: MarkerChange,
     ) -> Result<MarkerReview, AppError> {
+        let _publication = self.lock_publication();
         Self::change_marker_locked(&mut self.lock(), id, revision, change)
     }
     fn change_marker_locked(
@@ -325,6 +326,7 @@ impl TraceRegistry {
         Ok(())
     }
     pub(crate) fn set_marker_draft_dirty(&self, dirty: bool) {
+        let _publication = self.lock_publication();
         self.lock().marker_draft_dirty = dirty;
     }
     pub(crate) fn has_marker_changes(&self) -> bool {

@@ -2107,5 +2107,14 @@
   "mcpSensitiveRequests": [],
   "mcpSensitiveTemporary": [],
   "mcpSensitiveError": "",
-  "mcpSensitiveBusy": false
+  "mcpSensitiveBusy": false,
+  "sessionReviewAvailable": false,
+  "sessionReviewName": "",
+  "sessionReviewEnded": false,
+  "sessionReviewKind": "headers",
+  "sessionReviewError": "",
+  "sessionReviewMessage": "",
+  "sessionReviewBusy": false,
+  "mcpInspectionSessions": [],
+  "mcpCapturePasswords": []
 }

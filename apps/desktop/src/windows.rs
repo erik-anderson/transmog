@@ -585,43 +585,75 @@ fn record_frontend_diagnostic(code: String, message: String, state: State<'_, De
 }
 
 #[tauri::command]
-fn automation_status(state: State<'_, DesktopState>) -> AutomationStatus {
-    state.application.automation_status()
+fn automation_status(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<AutomationStatus, AppError> {
+    Ok(state.window_application(&window)?.automation_status())
 }
 
 #[tauri::command]
 fn change_response_transform(
     generation: u64,
     change: transmog_app::HeaderRuleChange,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<AutomationStatus, AppError> {
+    validate_review_change(&window, &state, &change)?;
     state
-        .application
+        .window_application(&window)?
         .change_response_transform(generation, change)
 }
 #[tauri::command]
 fn test_response_transform(
     input: transmog_app::TextTransformTestInput,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<transmog_app::TextTransformTest, AppError> {
-    state.application.test_response_transform(&input)
+    state
+        .window_application(&window)?
+        .test_response_transform(&input)
 }
 
 #[tauri::command]
 fn change_header_rule(
     generation: u64,
     change: transmog_app::HeaderRuleChange,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<AutomationStatus, AppError> {
-    state.application.change_header_rule(generation, change)
+    validate_review_change(&window, &state, &change)?;
+    state
+        .window_application(&window)?
+        .change_header_rule(generation, change)
 }
 
 #[tauri::command]
 fn test_header_rule(
     input: transmog_app::HeaderRuleTestInput,
+    window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<transmog_app::HeaderRuleTest, AppError> {
-    state.application.test_header_rule(&input)
+    state.window_application(&window)?.test_header_rule(&input)
+}
+
+fn validate_review_change(
+    window: &tauri::WebviewWindow,
+    state: &DesktopState,
+    change: &transmog_app::HeaderRuleChange,
+) -> Result<(), AppError> {
+    if state.workspaces.review(window.label()).is_some()
+        && matches!(change,transmog_app::HeaderRuleChange::Save{rule,..}|transmog_app::HeaderRuleChange::Restore{rule} if rule.enabled)
+    {
+        return Err(AppError {
+            category: transmog_app::ErrorCategory::InvalidInput,
+            message:
+                "Private drafts stay disabled. Publish the saved rule to use it in live traffic."
+                    .into(),
+            retryable: false,
+        });
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -2385,6 +2417,12 @@ pub fn run() {
                 mcp::mcp_remove_key,
                 mcp::mcp_end_control,
                 mcp::mcp_keep_rule,
+                mcp::mcp_review_session,
+                mcp::mcp_end_session,
+                mcp::mcp_capture_password,
+                mcp::mcp_review_state,
+                mcp::mcp_review_dirty,
+                mcp::mcp_review_publish,
                 format_converter::convert_format,
                 format_converter::auth_conversion_catalog,
                 format_converter::cancel_format_conversion,
@@ -2611,6 +2649,7 @@ pub fn run() {
                     .is_ok()
                     && (label == "main"
                         || workspaces::viewer_command_allowed(invoke.message.command())
+                        || (state.workspaces.review(label).is_some() && workspaces::agent_review_command_allowed(invoke.message.command()))
                         || format_converter::command_allowed(invoke.message.command())) };
                 if allowed {
                     #[cfg(feature = "desktop-test-fixtures")]
@@ -2658,6 +2697,9 @@ pub fn run() {
             }
             if let tauri::WindowEvent::CloseRequested { api, .. } = event {
                 let state=window.state::<DesktopState>();
+                if state.workspaces.review(window.label()).is_some_and(|review|review.has_rule_draft()) {
+                    api.prevent_close();let _=tauri::Emitter::emit_to(window,window.label(),"session-rule-close-requested",());return;
+                }
                 if window.get_webview_window(window.label()).and_then(|webview| state.window_application(&webview).ok()).is_some_and(|application| application.has_marker_changes()) {
                     api.prevent_close();let _=tauri::Emitter::emit_to(window, window.label(), "trace-close-requested", ());return;
                 }
@@ -2678,7 +2720,7 @@ pub fn run() {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .remove(window.label());
-                    if let Some(viewer) = removed { viewer.application.deactivate_visualizers(); viewer.application.cancel_composer_requests(); }
+                    if let Some(viewer) = removed { viewer.application.deactivate_visualizers(); if viewer.review.is_none(){viewer.application.cancel_composer_requests();} }
                 }
             }
             if window.label() == "main"

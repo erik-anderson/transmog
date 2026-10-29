@@ -776,6 +776,8 @@ await page.addInitScript(
               controls: state.mcp?.controls.length ?? 0,
               sensitiveRequests: structuredClone(state.mcpSensitive ?? []),
               activeAgents: structuredClone(state.mcpActiveAgents ?? []),
+              sessions: structuredClone(state.mcpInspectionSessions ?? []),
+              capturePasswords: structuredClone(state.mcpCapturePasswords ?? []),
             };
             if (state.deferMcpSummary) {
               state.deferMcpSummary = false;
@@ -825,6 +827,39 @@ await page.addInitScript(
               activeAgents: structuredClone(state.mcpActiveAgents ?? []),
             };
           }
+          case "mcp_review_state":
+            return {
+              available: location.search.includes("viewer"),
+              name: "Agent investigation",
+              accessEnded: state.reviewAccessEnded ?? false,
+            };
+          case "mcp_review_dirty":
+            state.reviewDirty = args.dirty;
+            return;
+          case "mcp_review_publish":
+            state.publishedPrivateRule = structuredClone(args);
+            return { id: "published", enabled: false, revision: 1 };
+          case "mcp_review_session":
+            state.reviewedSession = args.sessionId;
+            return "viewer-agent";
+          case "mcp_end_session":
+            state.mcpInspectionSessions = state.mcpInspectionSessions.filter(
+              (session) => session.sessionId !== args.sessionId,
+            );
+            return {
+              enabled: true,
+              controls: 0,
+              sessions: structuredClone(state.mcpInspectionSessions),
+            };
+          case "mcp_capture_password":
+            state.capturePasswordSubmitted = args.password.length > 0;
+            state.mcpCapturePasswords = [];
+            return {
+              enabled: true,
+              controls: 0,
+              sessions: structuredClone(state.mcpInspectionSessions),
+              capturePasswords: [],
+            };
           case "mcp_configuration_key": {
             const grant = state.mcp.grants.find(
               (item) => item.id === args.id && item.revision === args.revision && !item.revoked,

@@ -109,7 +109,7 @@ fn scope() -> Value {
 }
 fn grant() -> Value {
     object(
-        json!({"id":id(),"name":text(160),"permissions":array(choice(&["inspect","read-bodies","read-credentials","collect","prepare-changes","edit-shared-rules","modify","send"]),8),"scope":scope(),"expiresAt":nullable(count()),"omitSensitiveValues":flag()}),
+        json!({"id":id(),"name":text(160),"permissions":array(choice(&["inspect","load-captures","read-bodies","read-credentials","collect","prepare-changes","edit-shared-rules","modify","send"]),9),"scope":scope(),"expiresAt":nullable(count()),"omitSensitiveValues":flag()}),
         &[
             "id",
             "name",
@@ -146,7 +146,7 @@ fn native_rule() -> Value {
 }
 fn rule_summary() -> Value {
     object(
-        json!({"id":id(),"revision":count(),"name":maybe_text(),"enabled":flag(),"host":maybe_text(),"method":maybe_text(),"pathPrefix":maybe_text(),"priority":{"type":"integer"},"effects":open(json!({"requestHeaders":count(),"responseHeaders":count(),"requestBodyReplacement":flag(),"responseBodyReplacement":flag(),"responseTextReplacement":flag(),"savedResponse":flag(),"userAgentOverride":flag(),"requestAbort":flag(),"responseAbort":flag(),"discardRequestBody":flag(),"discardResponseBody":flag()}),"Content-free native rule side effects."),"temporaryAgentRule":flag()}),
+        json!({"sessionId":id(),"id":id(),"revision":count(),"name":maybe_text(),"enabled":flag(),"host":maybe_text(),"method":maybe_text(),"pathPrefix":maybe_text(),"priority":{"type":"integer"},"effects":open(json!({"requestHeaders":count(),"responseHeaders":count(),"requestBodyReplacement":flag(),"responseBodyReplacement":flag(),"responseTextReplacement":flag(),"savedResponse":flag(),"userAgentOverride":flag(),"requestAbort":flag(),"responseAbort":flag(),"discardRequestBody":flag(),"discardResponseBody":flag()}),"Content-free native rule side effects."),"temporaryAgentRule":flag()}),
         &[
             "id",
             "revision",

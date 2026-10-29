@@ -99,11 +99,11 @@ impl AgentState {
                             tokio::select! {
                                 outcome=rules_rx.changed()=> {
                                     if outcome.is_err(){break;}
-                                    let _ = app.emit_to("main", "mcp-automation-changed", ());
+                                    let _ = app.emit("mcp-automation-changed", ());
                                 },
                                 outcome=access_rx.changed()=>{
                                     if outcome.is_err(){break;}
-                                    let _ = app.emit_to("main", "mcp-access-changed", ());
+                                    let _ = app.emit("mcp-access-changed", ());
                                 },
                                 outcome=activity_rx.changed()=>{
                                     if outcome.is_err(){break;}
@@ -232,7 +232,93 @@ pub(super) fn mcp_summary(state: State<'_, AgentState>) -> Value {
         "controls":state.adapter().map_or(0,|adapter|adapter.active_control_count()),
         "sensitiveRequests":state.access().map_or_else(|_|Vec::new(),AccessManager::sensitive_access_requests),
         "activeAgents":state.access().map_or_else(|_|Vec::new(),AccessManager::active_agents),
+        "sessions":state.adapter().map_or_else(|_|json!([]),|adapter|adapter.management_status()["sessions"].clone()),
+        "capturePasswords":state.adapter().map_or_else(|_|Vec::new(),|adapter|adapter.pending_capture_passwords()),
     })
+}
+
+#[tauri::command]
+pub(super) async fn mcp_review_session(
+    session_id: String,
+    app: tauri::AppHandle,
+) -> Result<String, Error> {
+    let review = app
+        .state::<AgentState>()
+        .adapter()?
+        .review_session(&session_id)?;
+    tauri::async_runtime::spawn_blocking(move || {
+        super::workspaces::review_agent_session(&app, review)
+    })
+    .await
+    .map_err(|_| Error {
+        code: "unavailable",
+        message: "The review window could not be opened.".into(),
+    })?
+    .map_err(|error| Error {
+        code: "unavailable",
+        message: error.message,
+    })
+}
+#[tauri::command]
+pub(super) fn mcp_end_session(
+    session_id: String,
+    state: State<'_, AgentState>,
+) -> Result<Value, Error> {
+    state.adapter()?.end_inspection_session(&session_id)?;
+    Ok(mcp_summary(state))
+}
+#[tauri::command]
+pub(super) fn mcp_capture_password(
+    session_id: String,
+    operation_id: String,
+    password: String,
+    state: State<'_, AgentState>,
+) -> Result<Value, Error> {
+    state
+        .adapter()?
+        .supply_capture_password(&session_id, &operation_id, password)?;
+    Ok(mcp_summary(state))
+}
+
+fn review(
+    window: &tauri::WebviewWindow,
+    state: &DesktopState,
+) -> Result<Arc<transmog_mcp::SessionReview>, Error> {
+    state
+        .workspaces
+        .review(window.label())
+        .ok_or_else(|| Error {
+            code: "unavailable",
+            message: "This window is not an agent session review.".into(),
+        })
+}
+#[tauri::command]
+pub(super) fn mcp_review_state(
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Value {
+    state.workspaces.review(window.label()).map_or_else(
+        || json!({"available":false}),
+        |review| json!({"available":true,"name":review.name(),"accessEnded":review.access_ended()}),
+    )
+}
+#[tauri::command]
+pub(super) fn mcp_review_dirty(
+    dirty: bool,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), Error> {
+    review(&window, &state)?.set_dirty(dirty);
+    Ok(())
+}
+#[tauri::command]
+pub(super) async fn mcp_review_publish(
+    id: String,
+    revision: u64,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<Value, Error> {
+    review(&window, &state)?.publish(&id, revision).await
 }
 
 #[tauri::command]

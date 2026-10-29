@@ -86,6 +86,13 @@ before reaching application operations. This endpoint is separate from captured
 proxy traffic and the internal control transport. See the
 [MCP connector reference](mcp-reference.md) for disclosure and lifecycle boundaries.
 
+Private MCP inspection sessions own imported sources, evidence memberships and
+disabled rule drafts. Live memberships refer to the main engine's canonical
+exchanges and body sources; subscribers never duplicate network execution or
+hooks. Capture viewers attach to these existing backends with independent window
+state. Key ownership, expiry and shared resource budgets remain in `transmog-mcp`;
+live rules, scripts, breakpoints and collection controls stay global.
+
 ## Interception lifecycle
 
 `transmog-core` exposes transport-neutral lifecycle callbacks. Factories create

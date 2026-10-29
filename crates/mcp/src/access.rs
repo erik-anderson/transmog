@@ -29,6 +29,8 @@ const fn default_omit_sensitive_values() -> bool {
 pub enum Permission {
     /// Search metadata and inspect masked request/response evidence.
     Inspect,
+    /// Load supported local traffic files into private inspection sessions.
+    LoadCaptures,
     /// Read retained message bodies, which can contain sensitive information.
     ReadBodies,
     /// Start and stop the shared proxy and recording.
@@ -54,7 +56,7 @@ pub enum Permission {
     deny_unknown_fields
 )]
 pub enum Scope {
-    /// All retained and future traffic in the main workspace.
+    /// All retained and future traffic, including permitted private capture imports.
     All,
     /// Existing and future traffic for these exact hosts, on any port.
     Hosts {

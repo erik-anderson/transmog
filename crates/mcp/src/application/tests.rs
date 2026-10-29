@@ -1,5 +1,6 @@
 use super::*;
 mod api;
+mod sessions;
 
 #[test]
 fn header_redaction_matches_credential_terms_across_case_and_separators() {
@@ -103,6 +104,9 @@ impl Harness {
     }
     async fn call(&self, grant: &Grant, operation: &str, mut input: Value) -> Result<Value, Error> {
         input["instanceId"] = json!(self.adapter.instance_id);
+        if super::sessions::inspection_tool(operation) && input.get("sessionId").is_none() {
+            input["sessionId"] = json!("main");
+        }
         if input["rule"].get("matcher").is_some() {
             let native: Rule = serde_json::from_value(input["rule"].clone()).unwrap();
             if operation == "transmog_rule_prepare" && input.get("expectedRevision").is_some() {
@@ -372,7 +376,7 @@ fn schema_validation_rejects_unknown_fields_wrong_types_and_unbounded_pages() {
     assert!(
         validate_arguments(
             "transmog_body_read",
-            &json!({"instanceId":"0".repeat(32),"id":"1","boundary":"unknown"})
+            &json!({"sessionId":"main","instanceId":"0".repeat(32),"id":"1","boundary":"unknown"})
         )
         .is_err()
     );
@@ -476,12 +480,16 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
         .unwrap();
     let origin = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let destination = origin.local_addr().unwrap();
+    let (request_seen, seen) = tokio::sync::oneshot::channel();
+    let (respond, response_allowed) = tokio::sync::oneshot::channel();
     let producer = tokio::spawn(async move {
         let (mut socket, _) = origin.accept().await.unwrap();
         let mut header = Vec::new();
         while !header.ends_with(b"\r\n\r\n") {
             header.push(socket.read_u8().await.unwrap());
         }
+        request_seen.send(()).unwrap();
+        response_allowed.await.unwrap();
         socket.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\nSet-Cookie: original-secret\r\nConnection: close\r\n\r\nbody-test").await.unwrap();
     });
     let (grant, key) = h
@@ -512,9 +520,28 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
     .await
     .unwrap();
     let client = crate::LocalClient::new(h.adapter.root.clone());
+    let mut private_sessions = Vec::new();
+    for _ in 0..2 {
+        let created = h
+            .call(&grant, "transmog_session_create", json!({}))
+            .await
+            .unwrap();
+        let id = created["sessionId"].clone();
+        h.call(
+            &grant,
+            "transmog_session_live_subscribe",
+            json!({"sessionId":id}),
+        )
+        .await
+        .unwrap();
+        private_sessions.push(id);
+    }
     let mut rule = rule("draft", false);
     rule.matcher.host = Some("127.0.0.1".into());
-    rule.response.headers = std::mem::take(&mut rule.request.headers);
+    rule.request.headers.clear();
+    rule.response.headers = vec![transmog_automation::HeaderOperation::Append(
+        transmog_core::HeaderField::try_new("X-Collaboration", "first").unwrap(),
+    )];
     let prepared = h
         .call(
             &grant,
@@ -528,19 +555,67 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
         .await
         .unwrap();
     h.call(&grant,"transmog_rule_activate",json!({"id":prepared["id"],"expectedRevision":prepared["revision"],"controlId":control["id"]})).await.unwrap();
+    let maintenance = h.adapter.start_maintenance();
     let mut socket =
         tokio::net::TcpStream::connect(h.adapter.application.status().listener.unwrap())
             .await
             .unwrap();
     socket.write_all(format!("GET http://{destination}/evidence HTTP/1.1\r\nHost: {destination}\r\nConnection: close\r\n\r\n").as_bytes()).await.unwrap();
+    seen.await.unwrap();
+    tokio::time::timeout(Duration::from_secs(5), async {
+        for id in &private_sessions {
+            loop {
+                if h.call(&grant, "transmog_traffic_list", json!({"sessionId":id}))
+                    .await
+                    .unwrap()["totalMatched"]
+                    == 1
+                {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        }
+    })
+    .await
+    .unwrap();
+    h.call(
+        &grant,
+        "transmog_session_live_unsubscribe",
+        json!({"sessionId":private_sessions[0]}),
+    )
+    .await
+    .unwrap();
+    respond.send(()).unwrap();
     let mut response = Vec::new();
     tokio::time::timeout(Duration::from_secs(10), socket.read_to_end(&mut response))
         .await
         .unwrap()
         .unwrap();
     producer.await.unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&response)
+            .to_ascii_lowercase()
+            .matches("x-collaboration:")
+            .count(),
+        1
+    );
+    for session_id in &private_sessions {
+        let page = h
+            .call(
+                &grant,
+                "transmog_traffic_list",
+                json!({"sessionId":session_id}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(page["totalMatched"], 1);
+    }
     let page = client
-        .call(key.expose(), "transmog_traffic_list", json!({}))
+        .call(
+            key.expose(),
+            "transmog_traffic_list",
+            json!({"sessionId":"main"}),
+        )
         .await
         .unwrap();
     assert_eq!(page["sessions"].as_array().unwrap().len(), 1);
@@ -549,7 +624,7 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
         .call(
             key.expose(),
             "transmog_exchange_get",
-            json!({"instanceId":h.adapter.instance_id,"id":id}),
+            json!({"sessionId":"main","instanceId":h.adapter.instance_id,"id":id}),
         )
         .await
         .unwrap();
@@ -585,12 +660,40 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
         .unwrap();
     assert_eq!(
         client
-            .call(outsider.expose(), "transmog_traffic_list", json!({}))
+            .call(
+                outsider.expose(),
+                "transmog_traffic_list",
+                json!({"sessionId":"main"})
+            )
             .await
             .unwrap()["totalMatched"],
         0
     );
     drop(server);
+    h.adapter.application.discard_traffic().unwrap();
+    for session_id in &private_sessions {
+        let body = h
+            .call(
+                &grant,
+                "transmog_body_read",
+                json!({"sessionId":session_id,"id":id,"boundary":"client-response"}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            STANDARD.decode(body["data"].as_str().unwrap()).unwrap(),
+            b"body-test"
+        );
+    }
+    h.call(
+        &grant,
+        "transmog_session_close",
+        json!({"sessionId":private_sessions[0]}),
+    )
+    .await
+    .unwrap();
+    assert!(h.adapter.application.automation_status().rules[0].enabled);
+    maintenance.abort();
     h.adapter.end_all().await.unwrap();
     h.adapter.application.shutdown().await.unwrap();
 }
@@ -638,9 +741,8 @@ async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_
     .await
     .unwrap();
     let client = crate::LocalClient::new(h.adapter.root.clone());
-    let sent=client.call(key.expose(),"transmog_request_send",json!({"instanceId":h.adapter.instance_id,"operationId":"protected-send","request":{"method":"GET","url":"http://example.test/path","headers":[],"body":"","acknowledgeNonIdempotent":false,"acknowledgeCredentials":false}})).await.unwrap();
-    let input =
-        json!({"instanceId":h.adapter.instance_id,"id":sent["id"],"boundary":"client-response"});
+    let sent=client.call(key.expose(),"transmog_request_send",json!({"sessionId":"main","instanceId":h.adapter.instance_id,"operationId":"protected-send","request":{"method":"GET","url":"http://example.test/path","headers":[],"body":"","acknowledgeNonIdempotent":false,"acknowledgeCredentials":false}})).await.unwrap();
+    let input = json!({"sessionId":"main","instanceId":h.adapter.instance_id,"id":sent["id"],"boundary":"client-response"});
     assert_eq!(
         client
             .call(key.expose(), "transmog_body_read", input.clone())
@@ -653,7 +755,7 @@ async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_
         .call(
             key.expose(),
             "transmog_exchange_get",
-            json!({"instanceId":h.adapter.instance_id,"id":sent["id"]}),
+            json!({"sessionId":"main","instanceId":h.adapter.instance_id,"id":sent["id"]}),
         )
         .await
         .unwrap();
@@ -683,7 +785,7 @@ async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_
         .call(
             key.expose(),
             "transmog_exchange_get",
-            json!({"instanceId":h.adapter.instance_id,"id":sent["id"]}),
+            json!({"sessionId":"main","instanceId":h.adapter.instance_id,"id":sent["id"]}),
         )
         .await
         .unwrap();
@@ -861,7 +963,7 @@ async fn send_retry_is_deduplicated_and_evidence_reads_check_body_and_scope() {
             .handle(
                 reader,
                 "transmog_exchange_get",
-                json!({"instanceId":"0".repeat(32),"id":sent["id"]})
+                json!({"sessionId":"main","instanceId":"0".repeat(32),"id":sent["id"]})
             )
             .await
             .unwrap_err()

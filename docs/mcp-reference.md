@@ -19,6 +19,7 @@ never authenticate a later operation. There is no shared credential cache or
 OAuth sign-in. The desktop authenticates against a SHA-256 verifier. On Windows,
 keys have a user-bound encrypted copy so the trusted settings UI can reopen
 configuration. Plaintext keys never enter the persisted store.
+
 Keys identify grants, not verified executables. Processes that can read the same
 user's private configuration are not isolated from each other.
 
@@ -38,6 +39,60 @@ fresh instance ID; retained references and control handles must be rediscovered.
 Activity indicators group authenticated calls by key. Their three-second quiet
 period is presentation state, excluded from persistence and authorization.
 
+## Inspection sessions and capture operations
+
+Inspection, search, comparison, context, replay and rule-draft tools require
+`sessionId`. Use `main` for the main workspace, or create a private offline
+session with `transmog_session_create`. List, renew and close it through
+`transmog_session_list`, `transmog_session_renew` and `transmog_session_close`.
+Private IDs, cursors, context references and operation IDs are owned by the key;
+knowing another key's IDs grants no access. Instance identity, current scope and
+disclosure are checked independently. Valid session activity renews a 30-minute
+idle lifetime; incoming traffic does not. Human review keeps a session alive.
+
+`transmog_capture_load` requires **Load capture files**, a private session,
+`path` and `operationId`. Selected-request scopes cannot authorize new imports.
+Supported sources are native TMCap (including recoverable and encrypted captures),
+standard/extended/encrypted SAZ, HAR, and Chromium NetLog JSON/typed JSONL.
+`transmog_capture_list` groups each imported file under one `captureId`, including
+empty files and merged source captures. `includeContext` provides complete paged
+source metadata with all-traffic scope and unredacted header/body access.
+
+Load and unload return tracked operations. Poll `transmog_operation_status`;
+`transmog_operation_cancel` requests cancellation; `cancelRequested` distinguishes
+that request from completed cleanup. Identical operation-ID retries
+return the recorded operation; different input conflicts. Publication is atomic.
+`waiting-password` requires the user to enter the password in the desktop MCP
+panel. No MCP tool accepts a password. A retry uses the same pinned source handle.
+Password entry does not approve unredacted reads.
+
+`transmog_capture_unload` removes the entire file group, its source indexes,
+markers and readers, and invalidates dependent evidence references. It preserves
+source files, separately saved copies and retained replay results. Unsaved human
+edits return `needs_human_action`. Closing a review window preserves the session;
+closing a session ends agent access and releases its evidence. Revocation and MCP
+shutdown preserve dirty human review work while ending agent access.
+
+`transmog_session_live_subscribe` admits references to the single live engine,
+with optional request-side exact host/method filters and `includeExisting`.
+Unsubscribe stops new memberships; admitted requests continue receiving updates.
+No subscription starts another proxy, runs another hook pipeline or sends a
+duplicate request. Direct sends retain evidence in their originating session;
+`live-rules` sends traverse the shared proxy once and reach matching subscribers.
+Shared controls and their leases are independent of inspection-session lifetime.
+
+Private rules stay disabled. Prepare/test them in their session and publish an
+exact revision through `transmog_rule_publish` with **Edit shared rules**. Publishing
+creates a disabled shared saved rule. Shared updates and activation require the
+existing shared-rule/live-traffic permissions. Rule lists include shared side
+effects, and saved edits reject stale revisions without replacing human drafts.
+
+Budgets are shared across sessions: eight sessions total/four per key, four pending
+capture operations, 256 MiB of imported indexes, 200,000 live memberships, and
+the existing context/snapshot and replay-retention budgets. A bounded main retention policy also reserves space for newer live traffic.
+Files are bounded to
+1 GiB; each session holds at most 16 captures (64 total). The operation ledger is
+bounded for the app run and never evicts IDs in a way that permits duplicate work.
 ## Evidence and disclosure
 
 Host scopes match exact hosts on any port and apply before paging. Selected-request

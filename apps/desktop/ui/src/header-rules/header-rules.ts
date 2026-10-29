@@ -109,6 +109,7 @@ function display(value: number[]): { encoding: ValueEncoding; value: string } {
 const id = () => crypto.randomUUID();
 
 export class HeaderRules extends WorkspaceElement {
+  @attr({ mode: "boolean" }) privateDrafts = false;
   @attr({ mode: "boolean" }) embedded = false;
   @attr({ attribute: "editor-kind" }) editorKind = "headers";
   @observable hrText = false;
@@ -564,6 +565,11 @@ export class HeaderRules extends WorkspaceElement {
     this.hrDirty = this.baseline.differs(this.draftValues());
     this.hrCanSave = !this.hrId || this.hrDirty;
   }
+  hrDirtyChanged(): void {
+    if (this.privateDrafts) {
+      this.$emit("private-rule-dirty", this.hrDirty);
+    }
+  }
   private dirty(): void {
     this.updateDirty();
     this.hrError = "";
@@ -753,7 +759,7 @@ export class HeaderRules extends WorkspaceElement {
     return {
       id: this.hrId || (this.hrText ? "text-" : "header-") + id(),
       displayName: this.hrName.trim(),
-      enabled: this.hrEnabled,
+      enabled: this.privateDrafts ? false : this.hrEnabled,
       revision: this.loaded?.revision ?? 1,
       priority: this.loaded?.priority ?? 0,
       matcher,

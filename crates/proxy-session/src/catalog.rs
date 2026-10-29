@@ -20,6 +20,8 @@ use transmog_core::{
     },
 };
 use transmog_runtime::WebSocketSessionEvidence;
+#[path = "catalog_views.rs"]
+mod views;
 
 /// Finite memory and fan-out policy for one live catalog.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -468,6 +470,8 @@ impl MutableSession {
 
 #[derive(Debug, Default)]
 struct CatalogState {
+    borrowed: HashMap<ExchangeId, views::Reference>,
+    pins: HashMap<ExchangeId, usize>,
     retain_stream_content: [bool; 2],
     max_live_entries: Option<NonZeroUsize>,
     imported_count: usize,
@@ -706,6 +710,9 @@ impl SessionCatalog {
         if state.dismissed.contains(&exchange_id) {
             return None;
         }
+        if let Some(reference) = state.borrowed.get(&exchange_id) {
+            return reference.snapshot(true);
+        }
         state.by_id.get(&exchange_id).map(MutableSession::snapshot)
     }
 
@@ -719,6 +726,10 @@ impl SessionCatalog {
         let state = self.lock_state();
         if state.dismissed.contains(&exchange_id) {
             return None;
+        }
+        if let Some(reference) = state.borrowed.get(&exchange_id) {
+            let snapshot = reference.snapshot(false)?;
+            return Some(project(SessionHeads::from(&snapshot)));
         }
         state.by_id.get(&exchange_id).map(|entry| {
             project(SessionHeads {
@@ -741,6 +752,21 @@ impl SessionCatalog {
         limit: usize,
     ) -> Vec<(u64, ExchangeId)> {
         use std::ops::Bound::{Excluded, Unbounded};
+        if self.has_references() {
+            let mut rows = self
+                .view_metadata()
+                .into_iter()
+                .filter(|snapshot| {
+                    after.is_none_or(|number| snapshot.request_number > number)
+                        && before.is_none_or(|number| snapshot.request_number < number)
+                })
+                .map(|snapshot| (snapshot.request_number, snapshot.exchange_id))
+                .collect::<Vec<_>>();
+            if reverse {
+                rows.reverse();
+            }
+            return rows.into_iter().take(limit.min(4096)).collect();
+        }
         if after
             .zip(before)
             .is_some_and(|(after, before)| after >= before)
@@ -782,6 +808,11 @@ impl SessionCatalog {
         let state = self.lock_state();
         if state.dismissed.contains(&exchange_id) {
             return None;
+        }
+        if let Some(reference) = state.borrowed.get(&exchange_id) {
+            return reference
+                .snapshot(false)
+                .map(|snapshot| snapshot.last_sequence);
         }
         state
             .by_id
@@ -832,7 +863,9 @@ impl SessionCatalog {
         let mut ids = HashSet::new();
         if state.imported_count.saturating_add(sessions.len()) > 100_000
             || sessions.iter().any(|session| {
-                state.by_id.contains_key(&session.exchange_id) || !ids.insert(session.exchange_id)
+                state.by_id.contains_key(&session.exchange_id)
+                    || state.borrowed.contains_key(&session.exchange_id)
+                    || !ids.insert(session.exchange_id)
             })
         {
             return Err(CatalogError::ImportLimit);
@@ -894,7 +927,15 @@ impl SessionCatalog {
 
     /// Retained identities, including dismissed evidence available for Undo.
     pub fn retained_ids(&self) -> Vec<ExchangeId> {
-        self.lock_state().by_id.keys().copied().collect()
+        {
+            let state = self.lock_state();
+            state
+                .by_id
+                .keys()
+                .chain(state.borrowed.keys())
+                .copied()
+                .collect()
+        }
     }
 
     /// Open or connecting live `WebSockets` that remain visible in Traffic.
@@ -927,6 +968,7 @@ impl SessionCatalog {
                     .by_id
                     .get(id)
                     .is_some_and(|session| !session.live_websocket() || terminated.contains(id))
+                    || state.borrowed.contains_key(id)
             })
             .collect::<Vec<_>>();
         let changed = changed
@@ -947,6 +989,14 @@ impl SessionCatalog {
         selected: &HashSet<ExchangeId>,
         terminated_websockets: &[ExchangeId],
     ) -> Vec<ExchangeId> {
+        if self.has_references() {
+            let ids = self
+                .retained_ids()
+                .into_iter()
+                .filter(|id| !selected.contains(id))
+                .collect::<Vec<_>>();
+            return self.dismiss(&ids, terminated_websockets);
+        }
         let mut state = self.lock_state();
         let terminated = terminated_websockets
             .iter()
@@ -969,6 +1019,10 @@ impl SessionCatalog {
     /// Clears every retained entry, including evidence from earlier removals.
     /// Renew dismissal identities so earlier expiry tasks cannot delete this Undo.
     pub fn dismiss_all(&self, terminated_websockets: &[ExchangeId]) -> Vec<ExchangeId> {
+        if self.has_references() {
+            let ids = self.retained_ids();
+            return self.dismiss(&ids, terminated_websockets);
+        }
         let mut state = self.lock_state();
         let terminated = terminated_websockets
             .iter()
@@ -1038,11 +1092,22 @@ impl SessionCatalog {
 
     /// Releases all in-memory evidence when the owning desktop session closes.
     pub fn discard_all(&self) -> Vec<ExchangeId> {
+        let references = std::mem::take(&mut self.lock_state().borrowed);
+        let borrowed_ids = references.keys().copied().collect::<Vec<_>>();
+        drop(references);
         let mut state = self.lock_state();
-        let ids = state.by_id.keys().copied().collect();
-        state.by_id.clear();
-        state.order.clear();
-        state.dismissed.clear();
+        let ids = state
+            .by_id
+            .keys()
+            .filter(|id| !state.pins.contains_key(id))
+            .copied()
+            .chain(borrowed_ids)
+            .collect::<Vec<_>>();
+        let pinned = state.pins.keys().copied().collect::<HashSet<_>>();
+        state.by_id.retain(|id, _| pinned.contains(id));
+        state.dismissed.extend(pinned.iter().copied());
+        state.order.retain(|_, id| pinned.contains(id));
+        state.dismissed.retain(|id| !ids.contains(id));
         state.dismissal_versions.clear();
         state.imported_count = 0;
         ids
@@ -1077,6 +1142,9 @@ impl SessionCatalog {
 
     /// Pages authoritative state in stable admission order.
     pub fn query(&self, query: &CatalogQuery) -> CatalogPage {
+        if self.has_references() {
+            return self.query_view(query, false);
+        }
         let state = self.lock_state();
         let start = query.after.map_or(0, |cursor| cursor.admission);
         let limit = query
@@ -1115,6 +1183,9 @@ impl SessionCatalog {
     /// This is intended for live traffic surfaces that follow the tail rather
     /// than expose cursor-based historical pagination.
     pub fn query_latest(&self, query: &CatalogQuery) -> CatalogPage {
+        if self.has_references() {
+            return self.query_view(query, true);
+        }
         let state = self.lock_state();
         let limit = query
             .limit
@@ -1153,6 +1224,14 @@ impl SessionCatalog {
     /// list cannot stall observer ingestion. Only one temporary snapshot is
     /// alive at a time, and the callback may query this catalog.
     pub fn project_retained<T>(&self, mut project: impl FnMut(&SessionSnapshot) -> T) -> Vec<T> {
+        if self.has_references() {
+            return self
+                .view_metadata()
+                .into_iter()
+                .filter_map(|snapshot| self.get(snapshot.exchange_id))
+                .map(|snapshot| project(&snapshot))
+                .collect();
+        }
         let ids = {
             let state = self.lock_state();
             state
@@ -1171,6 +1250,9 @@ impl SessionCatalog {
     /// Atomically copies retained metadata at one lifecycle/time boundary.
     /// Body prefixes and message collections are omitted; formatting happens after unlocking.
     pub fn retained_metadata(&self) -> Vec<SessionSnapshot> {
+        if self.has_references() {
+            return self.view_metadata();
+        }
         let state = self.lock_state();
         let now = std::time::Instant::now();
         let cutoff_millis = transmog_core::stream::observed_millis();
@@ -1305,6 +1387,7 @@ fn evict_oldest_terminal(state: &mut CatalogState) -> bool {
             .by_id
             .get(exchange_id)
             .filter(|session| !session.imported)
+            .filter(|_| !state.pins.contains_key(exchange_id))
             .filter(|session| !session.is_active())
             .map(|_| (*admission, *exchange_id))
     });
@@ -1582,8 +1665,14 @@ fn forget_dismissed(state: &mut CatalogState, ids: &[ExchangeId]) -> Vec<Exchang
     let removed = ids
         .iter()
         .copied()
-        .filter(|id| state.dismissed.contains(id))
+        .filter(|id| state.dismissed.contains(id) && !state.pins.contains_key(id))
         .collect::<HashSet<_>>();
+    let references = removed
+        .iter()
+        .filter_map(|id| state.borrowed.remove(id))
+        .collect::<Vec<_>>();
+    // Reference drops can release a parent catalog; no parent ever calls its child.
+    drop(references);
     for id in &removed {
         if let Some(session) = state.by_id.remove(id) {
             state.imported_count = state
@@ -1599,6 +1688,58 @@ fn forget_dismissed(state: &mut CatalogState, ids: &[ExchangeId]) -> Vec<Exchang
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn private_pins_leave_room_for_the_main_catalog_to_rotate() {
+        let root = SessionCatalog::new(limits(2));
+        start(&root, 1, "example.test");
+        start(&root, 2, "example.test");
+        let view = SessionCatalog::new(limits(2));
+        view.reference_exchanges(&root, &[ExchangeId(1)], Arc::new(|_| {}))
+            .unwrap();
+        assert!(
+            view.reference_exchanges(&root, &[ExchangeId(2)], Arc::new(|_| {}))
+                .is_err()
+        );
+        assert_eq!(root.lock_state().pins.len(), 1);
+    }
+    #[test]
+    fn private_views_share_one_exchange_and_survive_main_clear_until_last_release() {
+        let root = SessionCatalog::new(limits(8));
+        start(&root, 1, "example.test");
+        let a = SessionCatalog::new(limits(8));
+        let b = SessionCatalog::new(limits(8));
+        let released = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = released.clone();
+        let release = std::sync::Arc::new(move |ids: Vec<ExchangeId>| {
+            counter.fetch_add(ids.len(), std::sync::atomic::Ordering::SeqCst);
+        });
+        a.reference_exchanges(&root, &[ExchangeId(1)], release.clone())
+            .unwrap();
+        b.reference_exchanges(&root, &[ExchangeId(1)], release)
+            .unwrap();
+        assert_eq!(root.retained_ids().len(), 1);
+        assert_eq!(
+            a.get(ExchangeId(1)).unwrap().exchange_id,
+            b.get(ExchangeId(1)).unwrap().exchange_id
+        );
+        root.dismiss_all(&[ExchangeId(1)]);
+        assert_eq!(
+            root.forget_dismissed(&[ExchangeId(1)]),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
+        assert!(root.get(ExchangeId(1)).is_none());
+        assert!(a.get(ExchangeId(1)).is_some());
+        a.discard_all();
+        assert!(b.get(ExchangeId(1)).is_some());
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 0);
+        b.discard_all();
+        assert_eq!(released.load(std::sync::atomic::Ordering::SeqCst), 1);
+        assert_eq!(
+            root.retained_ids(),
+            [] as [transmog_core::intercept::ExchangeId; 0]
+        );
+    }
+
     #[tokio::test]
     async fn catalog_deltas_classify_message_interests_without_carrying_values() {
         let catalog = SessionCatalog::new(limits(3));

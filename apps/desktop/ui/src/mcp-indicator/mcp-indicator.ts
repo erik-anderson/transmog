@@ -20,6 +20,27 @@ interface Summary {
   controls: number;
   sensitiveRequests?: Approval[];
   activeAgents?: { id: string; name: string }[];
+  sessions?: InspectionSession[];
+  capturePasswords?: CapturePasswordRequest[];
+}
+interface InspectionSession {
+  sessionId: string;
+  name: string;
+  ownerName: string;
+  captureCount: number;
+  liveSubscribed: boolean;
+  agentAccessEnded: boolean;
+  needsHumanAction: boolean;
+}
+interface CapturePasswordRequest {
+  name: string;
+  sessionId: string;
+  operationId: string;
+  error?: { code: string };
+}
+interface CapturePasswordRow extends CapturePasswordRequest {
+  key: string;
+  errorText: string;
 }
 interface ApprovalRow extends Approval {
   scopeText: string;
@@ -39,6 +60,8 @@ export class McpIndicator extends WorkspaceElement {
   @observable mcpSensitiveTemporary: ApprovalRow[] = [];
   @observable mcpSensitiveError = initial.mcpSensitiveError;
   @observable mcpSensitiveBusy = initial.mcpSensitiveBusy;
+  @observable mcpInspectionSessions: InspectionSession[] = initial.mcpInspectionSessions;
+  @observable mcpCapturePasswords: CapturePasswordRow[] = initial.mcpCapturePasswords;
   mcpAccessPanel!: HTMLElement;
   mcpIndicatorButton!: HTMLButtonElement;
   private restoreOnClose = false;
@@ -84,12 +107,27 @@ export class McpIndicator extends WorkspaceElement {
     this.mcpSensitiveRequests = rows.filter((entry) => entry.state === "pending");
     this.mcpSensitiveTemporary = rows.filter((entry) => entry.state === "temporary");
     this.mcpActiveAgents = summary.activeAgents ?? [];
-    this.mcpIndicatorVisible = summary.enabled || rows.length > 0;
+    this.mcpInspectionSessions = summary.sessions ?? [];
+    this.mcpCapturePasswords = (summary.capturePasswords ?? []).map((job) => ({
+      ...job,
+      key: `${job.sessionId}:${job.operationId}`,
+      errorText:
+        job.error?.code === "invalid_password"
+          ? "That password did not unlock the capture. Try again."
+          : "",
+    }));
+    this.mcpIndicatorVisible =
+      summary.enabled ||
+      rows.length > 0 ||
+      this.mcpInspectionSessions.length > 0 ||
+      this.mcpCapturePasswords.length > 0;
     this.mcpIndicatorText = this.mcpActiveAgents.length
       ? `MCP · ${this.mcpActiveAgents.length} connected`
       : summary.controls
         ? `MCP · ${summary.controls} control session${summary.controls === 1 ? "" : "s"}`
-        : "MCP enabled";
+        : summary.enabled
+          ? "MCP enabled"
+          : "MCP disabled";
     this.mcpControlText = summary.controls
       ? `${summary.controls} live control session${summary.controls === 1 ? "" : "s"}`
       : "";
@@ -97,7 +135,11 @@ export class McpIndicator extends WorkspaceElement {
       ? `Unredacted · ${countdown(Math.min(...this.mcpSensitiveTemporary.map((entry) => entry.remainingSeconds)))}`
       : this.mcpSensitiveRequests.length
         ? `${this.mcpSensitiveRequests.length} access request${this.mcpSensitiveRequests.length === 1 ? "" : "s"}`
-        : "";
+        : this.mcpCapturePasswords.length
+          ? this.mcpCapturePasswords.length === 1
+            ? "Password needed"
+            : `${this.mcpCapturePasswords.length} passwords needed`
+          : "";
   }
   async refresh(): Promise<void> {
     if (this.viewerMode || !this.isConnected) {
@@ -147,6 +189,24 @@ export class McpIndicator extends WorkspaceElement {
   }
   async revoke(id: string): Promise<void> {
     await this.change("mcp_sensitive_revoke", { id });
+  }
+  async reviewSession(sessionId: string): Promise<void> {
+    try {
+      await invoke("mcp_review_session", { sessionId });
+      this.mcpAccessPanel.hidePopover();
+    } catch (error) {
+      this.mcpSensitiveError = describeError(error);
+    }
+  }
+  async endSession(sessionId: string): Promise<void> {
+    await this.change("mcp_end_session", { sessionId });
+  }
+  async capturePassword(event: Event, sessionId: string, operationId: string): Promise<void> {
+    event.preventDefault();
+    const form = event.currentTarget as HTMLFormElement;
+    const password = String(new FormData(form).get("password") ?? "");
+    form.reset();
+    await this.change("mcp_capture_password", { sessionId, operationId, password });
   }
   open(): void {
     this.mcpAccessPanel.hidePopover();

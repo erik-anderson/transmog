@@ -439,8 +439,7 @@ async fn replay_preparation_is_read_only_and_drops_credentials_and_connection_he
 async fn waiting_does_not_block_other_tools_and_timeout_is_an_empty_success() {
     let h = fixture();
     let owner = full(&h);
-    let input =
-        json!({"instanceId":h.adapter.instance_id,"afterRequestNumber":"0","timeoutMs":1000});
+    let input = json!({"sessionId":"main","instanceId":h.adapter.instance_id,"afterRequestNumber":"0","timeoutMs":1000});
     let wait = h
         .adapter
         .handle(owner.clone(), "transmog_traffic_wait", input);
@@ -537,7 +536,7 @@ async fn stream_metadata_never_includes_payload_and_reads_are_bounded_and_protec
 
 #[test]
 fn nested_validation_names_the_invalid_field_without_echoing_its_value() {
-    let error=validate_arguments("transmog_request_send",&json!({"instanceId":"0".repeat(32),"operationId":"one","request":{"method":"GET","url":"http://example.test","headers":[{"name":"X-Test","value":123}]}})).unwrap_err();
+    let error=validate_arguments("transmog_request_send",&json!({"sessionId":"main","instanceId":"0".repeat(32),"operationId":"one","request":{"method":"GET","url":"http://example.test","headers":[{"name":"X-Test","value":123}]}})).unwrap_err();
     assert!(error.message.contains("arguments.request.headers[0].value"));
     assert!(!error.message.contains("123"));
     assert!(validate_arguments("transmog_request_send",&json!({"instanceId":"wrong","operationId":"one","request":{"method":"GET","url":"http://example.test"}})).is_err());

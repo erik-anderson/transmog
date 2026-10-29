@@ -77,6 +77,16 @@ fn status(state: &Store, grant: &Grant) -> Value {
 }
 
 impl AccessManager {
+    pub(crate) fn session_authority(&self, id: &str) -> Option<Grant> {
+        let mut state = self.lock();
+        prune(&mut state);
+        state
+            .records
+            .iter()
+            .find(|record| record.grant.id == id && valid(&state, &record.grant))
+            .map(|record| effective(&state, &record.grant))
+    }
+
     /// Requests human approval for unredacted headers/bodies for this key's existing scope.
     /// # Errors
     /// Rejects stale, inactive or oversized requests and briefly rate-limits denied requests.

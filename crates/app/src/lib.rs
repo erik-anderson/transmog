@@ -30,6 +30,7 @@ pub mod comparison;
 mod composer;
 mod composer_response;
 mod context;
+mod inspection_sessions;
 mod replay_context;
 pub use context::{CompleteBodyContext, MAX_CONTEXT_DECODE_BYTES};
 mod diagnostics;
@@ -178,7 +179,8 @@ pub use sessions::{
 use thiserror::Error;
 pub use trace_save::{TraceSaveFormat, TraceSaveOptions, TraceSaveProgress, TraceSaveResult};
 pub use traces::{
-    TraceImportProgress, TraceImportRequest, TraceImportResult, TraceInspection, TraceMetadataView,
+    PreparedTraceImport, TraceImportProgress, TraceImportRequest, TraceImportResult,
+    TraceInspection, TraceMetadataView,
 };
 pub use transmog_core::client_authentication::ClientCertificatePolicy;
 pub use transmog_core::connection_policy::AllowedHttpProtocols;
@@ -380,6 +382,7 @@ impl std::fmt::Debug for AppConfig {
 /// Cloneable owner of authoritative application state.
 #[derive(Clone)]
 pub struct Application {
+    live_parent: Option<Arc<Application>>,
     preview_capture: String,
     upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
     proxy_certificate: Arc<std::sync::Mutex<Option<boring::x509::X509>>>,
@@ -564,6 +567,7 @@ impl Application {
             preview_capture.clone(),
         ));
         Ok(Self {
+            live_parent: None,
             preview_capture,
             upstream_trust: config.upstream_trust,
             proxy_certificate: Arc::new(std::sync::Mutex::new(None)),
@@ -2172,6 +2176,37 @@ impl Application {
     /// Cancels an in-progress saved-file import before catalog publication.
     pub fn cancel_trace_import(&self, operation_id: &str) {
         self.traces.cancel(operation_id);
+    }
+
+    /// Pins a regular capture source for a later import or password retry.
+    /// # Errors
+    /// Rejects unreadable, unsupported or oversized files.
+    pub fn prepare_trace_import(
+        &self,
+        request: TraceImportRequest,
+    ) -> Result<PreparedTraceImport, AppError> {
+        PreparedTraceImport::open(request)
+    }
+
+    /// Imports an already pinned source. The password is transient and never persisted.
+    /// # Errors
+    /// Returns password, format, cancellation or bounded import errors.
+    pub async fn import_prepared_trace(
+        &self,
+        source: PreparedTraceImport,
+        password: Option<transmog_capture::CapturePassword>,
+        progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
+    ) -> Result<TraceImportResult, AppError> {
+        let store = self.body_store.clone().ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "Saved trace body storage is not configured",
+                false,
+            )
+        })?;
+        self.traces
+            .import_prepared(source, password, self.service.clone(), store, progress)
+            .await
     }
 
     /// Freezes retained responses for an isolated captured HTML preview.

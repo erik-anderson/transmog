@@ -25,6 +25,8 @@ mod context;
 mod inspection;
 mod rule_tests;
 mod sends;
+mod sessions;
+pub use sessions::SessionReview;
 
 /// Existing desktop proxy-start validation and host setup, injected without UI dependencies.
 pub trait ProxyHost: Send + Sync + 'static {
@@ -47,15 +49,19 @@ struct Control {
 #[derive(Default)]
 struct Runtime {
     controls: HashMap<String, Control>,
-    sends: HashMap<(String, String), sends::SendRecord>,
     recording: Option<(String, u64, PathBuf)>,
     activity: Vec<Value>,
-    snapshots: std::collections::VecDeque<inspection::Snapshot>,
-    contexts: std::collections::VecDeque<context::Context>,
 }
 
 /// Shared operations for one main workspace. Runtime control handles never outlive this instance.
 pub struct AgentApplication {
+    session_id: String,
+    parent: Option<std::sync::Weak<AgentApplication>>,
+    own: std::sync::OnceLock<std::sync::Weak<AgentApplication>>,
+    sessions: sessions::Registry,
+    context_cache: Arc<Mutex<std::collections::VecDeque<context::Context>>>,
+    snapshot_cache: Arc<Mutex<std::collections::VecDeque<inspection::Snapshot>>>,
+    send_ledger: Arc<Mutex<HashMap<(String, String), sends::SendRecord>>>,
     application: Application,
     access: AccessManager,
     root: PathBuf,
@@ -64,6 +70,8 @@ pub struct AgentApplication {
     operations: tokio::sync::Mutex<()>,
     runtime: Mutex<Runtime>,
     changes: tokio::sync::watch::Sender<u64>,
+    // Drop storage after the backend has closed its body workers and source readers.
+    _session_directory: Option<Arc<tempfile::TempDir>>,
 }
 
 impl AgentApplication {
@@ -81,6 +89,14 @@ impl AgentApplication {
             .map_err(|_| invalid("A workspace generation could not be generated."))?;
         let (changes, _) = tokio::sync::watch::channel(0);
         let result = Arc::new(Self {
+            _session_directory: None,
+            session_id: "main".into(),
+            parent: None,
+            own: std::sync::OnceLock::new(),
+            sessions: sessions::Registry::default(),
+            context_cache: Arc::default(),
+            snapshot_cache: Arc::default(),
+            send_ledger: Arc::default(),
             application,
             access,
             root,
@@ -90,6 +106,7 @@ impl AgentApplication {
             runtime: Mutex::new(Runtime::default()),
             changes,
         });
+        let _ = result.own.set(Arc::downgrade(&result));
         for rule in result.application.automation_status().rules {
             if rule.enabled && rule.id.starts_with("mcp-") {
                 result.set_rule_enabled(&rule.id, rule.revision, false)?;
@@ -111,12 +128,25 @@ impl AgentApplication {
     /// Checks control leases periodically, including expiry and permission changes.
     pub fn start_maintenance(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
         let weak = Arc::downgrade(self);
+        let mut updates = self.application.subscribe_session_updates().ok();
         tokio::spawn(async move {
+            let mut maintenance = tokio::time::interval(Duration::from_millis(500));
             loop {
-                tokio::time::sleep(Duration::from_millis(500)).await;
+                let hint = tokio::select! {
+                    _=maintenance.tick()=>None,
+                    result=async{match &mut updates {Some(updates)=>updates.recv().await,None=>std::future::pending().await}}=>Some(result),
+                };
                 let Some(service) = weak.upgrade() else {
                     return;
                 };
+                if let Some(hint) = hint {
+                    match hint {
+                        Ok(hint) => service.fanout_live(hint.exchange_id.as_deref()),
+                        Err(_) => updates = None,
+                    }
+                    continue;
+                }
+                service.maintain_sessions();
                 let _operation = service.operations.lock().await;
                 if let Err(error) = service.cleanup().await {
                     service.application.record_diagnostic(
@@ -140,14 +170,22 @@ impl AgentApplication {
             self.end_control(&id).await?;
         }
         self.end_recording().await?;
-        self.lock().snapshots.clear();
+        self.snapshot_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.context_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        self.close_all_sessions();
         Ok(())
     }
 
     /// Safe current control/activity metadata for the trusted desktop management view.
     pub fn management_status(&self) -> Value {
         let runtime = self.lock();
-        json!({"instanceId":self.instance_id,"controls":runtime.controls.values().collect::<Vec<_>>(),"activity":runtime.activity})
+        json!({"instanceId":self.instance_id,"controls":runtime.controls.values().collect::<Vec<_>>(),"activity":runtime.activity,"sessions":self.session_summaries(None)})
     }
 
     /// Number of temporary leases for the trusted desktop's compact status indicator.
@@ -164,6 +202,7 @@ impl AgentApplication {
     /// # Errors
     /// Returns a cleanup failure without hiding remaining temporary effects.
     pub async fn reconcile(&self) -> Result<(), Error> {
+        self.maintain_sessions();
         let _operation = self.operations.lock().await;
         self.cleanup().await
     }
@@ -212,11 +251,54 @@ impl AgentApplication {
         Ok(())
     }
 
+    async fn handle(&self, grant: Grant, operation: &str, input: Value) -> Result<Value, Error> {
+        let root = self
+            .own
+            .get()
+            .and_then(std::sync::Weak::upgrade)
+            .ok_or_else(|| invalid("This MCP instance ended."))?;
+        validate_arguments(operation, &input)?;
+        if sessions::management_tool(operation) {
+            return root.session_operation(&grant, operation, &input).await;
+        }
+        let target = if sessions::inspection_tool(operation) {
+            root.session_target(&grant, string(&input, "sessionId")?)?
+        } else {
+            root.clone()
+        };
+        if target.session_id != "main" && input["enabled"] == true {
+            return Err(invalid(
+                "Private drafts are tested locally. Publish a draft before applying it to live traffic.",
+            ));
+        }
+        let mut result = target.handle_local(grant.clone(), operation, input).await?;
+        if target.session_id != "main" {
+            root.session_record_current(&grant, &target.session_id)?;
+        }
+        if root
+            .access
+            .session_authority(&grant.id)
+            .is_none_or(|current| current.revision != grant.revision)
+        {
+            return Err(denied(
+                "Access changed while this operation was running. Reconnect.",
+            ));
+        }
+        if sessions::inspection_tool(operation) {
+            result["sessionId"] = json!(target.session_id);
+        }
+        Ok(result)
+    }
     #[allow(
         clippy::too_many_lines,
         reason = "One authorization dispatch makes each tool's effects auditable together."
     )]
-    async fn handle(&self, grant: Grant, operation: &str, input: Value) -> Result<Value, Error> {
+    async fn handle_local(
+        &self,
+        grant: Grant,
+        operation: &str,
+        input: Value,
+    ) -> Result<Value, Error> {
         validate_arguments(operation, &input)?;
         if operation == "transmog_sensitive_access_request" {
             return self
@@ -634,13 +716,31 @@ impl AgentApplication {
         self.check_instance(input)?;
         let offset = index(input, "offset", 0, 1024)?;
         let limit = index(input, "limit", 100, 100)?.max(1);
-        let rows: Vec<_> = self
+        let mut rules = self
             .application
             .automation_status()
             .rules
             .into_iter()
-            .filter(|rule| self.rule_relevant(grant, rule))
-            .map(|rule| rule_summary(&rule))
+            .map(|rule| (self.session_id.clone(), rule))
+            .collect::<Vec<_>>();
+        if let Some(parent) = self.parent.as_ref().and_then(std::sync::Weak::upgrade) {
+            rules.extend(
+                parent
+                    .application
+                    .automation_status()
+                    .rules
+                    .into_iter()
+                    .map(|rule| ("main".to_owned(), rule)),
+            );
+        }
+        let rows: Vec<_> = rules
+            .into_iter()
+            .filter(|(_, rule)| self.rule_relevant(grant, rule))
+            .map(|(session, rule)| {
+                let mut summary = rule_summary(&rule);
+                summary["sessionId"] = json!(session);
+                summary
+            })
             .collect();
         Ok(
             json!({"instanceId":self.instance_id,"total":rows.len(),"rules":rows.iter().skip(offset).take(limit).collect::<Vec<_>>(),"nextOffset":(offset+limit<rows.len()).then_some(offset+limit),"coverage":"Saved native rules, including disabled and temporary rules. Scripts and external interceptors can also affect traffic; their source is not exposed by this permission."}),
@@ -675,6 +775,16 @@ impl AgentApplication {
     }
 
     fn read_rule(&self, grant: &Grant, id: &str) -> Result<Value, Error> {
+        if !self
+            .application
+            .automation_status()
+            .rules
+            .iter()
+            .any(|rule| rule.id == id)
+            && let Some(parent) = self.parent.as_ref().and_then(std::sync::Weak::upgrade)
+        {
+            return parent.read_rule(grant, id);
+        }
         let rule = self
             .application
             .automation_status()
@@ -696,13 +806,15 @@ impl AgentApplication {
         {
             omitted.push("Authored body content requires Read message bodies permission.");
         }
+        let mut summary = rule_summary(&rule);
+        summary["sessionId"] = json!(self.session_id);
         Ok(
-            json!({"summary":rule_summary(&rule),"rule":if omitted.is_empty(){Some(&rule)}else{None},"definition":if omitted.is_empty(){authoring::definition(&rule)}else{None},"editable":omitted.is_empty() && self.editable_rule(grant,id).is_ok() && (!rule.enabled || grant.allows(Permission::Modify)),"omitted":omitted}),
+            json!({"summary":summary,"rule":if omitted.is_empty(){Some(&rule)}else{None},"definition":if omitted.is_empty(){authoring::definition(&rule)}else{None},"editable":omitted.is_empty() && self.editable_rule(grant,id).is_ok() && (!rule.enabled || grant.allows(Permission::Modify)),"omitted":omitted}),
         )
     }
 
     fn editable_rule(&self, grant: &Grant, id: &str) -> Result<Rule, Error> {
-        let rule = if id.starts_with(&format!("mcp-{}-", grant.id)) {
+        let rule = if self.session_id != "main" || id.starts_with(&format!("mcp-{}-", grant.id)) {
             grant.require(Permission::PrepareChanges)?;
             self.owned_rule(grant, id)?
         } else {
@@ -730,6 +842,9 @@ impl AgentApplication {
 
     fn update_shared_rule(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
         self.check_instance(input)?;
+        if self.session_id != "main" {
+            return self.prepare_rule(grant, input);
+        }
         grant.require(Permission::EditSharedRules)?;
         let id = string(input, "id")?;
         if id.starts_with("mcp-") {
@@ -770,7 +885,7 @@ impl AgentApplication {
     }
 
     fn owned_rule(&self, grant: &Grant, id: &str) -> Result<Rule, Error> {
-        if !id.starts_with(&format!("mcp-{}-", grant.id)) {
+        if self.session_id == "main" && !id.starts_with(&format!("mcp-{}-", grant.id)) {
             return Err(denied("This key may change only its own agent rules."));
         }
         self.application
@@ -840,7 +955,7 @@ impl AgentApplication {
             })
             .transpose()?;
         let previous = if expected.is_some() {
-            let previous = self.owned_rule(grant, string(input, "id")?)?;
+            let previous = self.editable_rule(grant, string(input, "id")?)?;
             if previous.enabled {
                 grant.require(Permission::Modify)?;
             }
@@ -1087,6 +1202,8 @@ fn denied(message: &str) -> Error {
 fn app_error(error: transmog_app::AppError) -> Error {
     Error::new(
         match error.category {
+            transmog_app::ErrorCategory::PasswordRequired => "password_required",
+            transmog_app::ErrorCategory::InvalidPassword => "invalid_password",
             transmog_app::ErrorCategory::Conflict => "conflict",
             transmog_app::ErrorCategory::InvalidInput => "invalid_input",
             transmog_app::ErrorCategory::Limit => "limit",

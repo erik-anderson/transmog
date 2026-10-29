@@ -1,0 +1,9 @@
+session-review { display:contents; }
+.session-review-dialog { width:min(76rem,calc(100vw - 2rem)); height:calc(100dvh - 3rem); max-width:none; max-height:none; padding:1rem; border:1px solid var(--line); border-radius:.5rem; background:var(--panel); color:var(--text); }
+.session-review-dialog[open] { display:flex; flex-direction:column; gap:.5rem; }
+.session-review-dialog::backdrop { background:rgb(0 0 0 / .4); }
+.session-review-dialog > header { display:flex; align-items:start; justify-content:space-between; gap:1rem; }
+.session-review-dialog h2 { margin:0; font-size:1rem; overflow-wrap:anywhere; }
+.session-review-dialog p { margin:.3rem 0; font-size:.8125rem; }
+.session-rule-editors { flex:1; min-height:0; }
+header-rules[private-drafts] rule-activation { display:none; }

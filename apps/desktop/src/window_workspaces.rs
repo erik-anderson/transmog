@@ -15,7 +15,8 @@ use transmog_app::{
 
 pub(super) struct Viewer {
     pub application: Application,
-    _root: tempfile::TempDir,
+    _root: Option<tempfile::TempDir>,
+    pub review: Option<Arc<transmog_mcp::SessionReview>>,
 }
 #[derive(Default)]
 pub(super) struct WindowWorkspaces {
@@ -24,6 +25,13 @@ pub(super) struct WindowWorkspaces {
     pending: Mutex<HashMap<String, Vec<PathBuf>>>,
 }
 impl WindowWorkspaces {
+    pub fn review(&self, label: &str) -> Option<Arc<transmog_mcp::SessionReview>> {
+        self.viewers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get(label)
+            .and_then(|viewer| viewer.review.clone())
+    }
     pub fn prepare_network_profile(
         &self,
         profile: transmog_app::NetworkProfileSnapshot,
@@ -178,6 +186,7 @@ pub(super) fn viewer_command_allowed(command: &str) -> bool {
             | "open_trace_viewer"
             | "open_main_window"
             | "take_opened_traces"
+            | "mcp_review_state"
     )
 }
 pub(super) fn opened_files(arguments: &[String], cwd: &Path) -> Vec<PathBuf> {
@@ -274,7 +283,8 @@ pub(super) fn create_viewer(
         label.clone(),
         Viewer {
             application,
-            _root: root,
+            _root: Some(root),
+            review: None,
         },
     );
     drop(viewers);
@@ -304,6 +314,86 @@ pub(super) fn create_viewer(
         return Err(error("Capture viewer could not be opened"));
     }
     Ok(label)
+}
+
+pub(super) fn review_agent_session(
+    app: &tauri::AppHandle,
+    review: transmog_mcp::SessionReview,
+) -> Result<String, AppError> {
+    let state = app.state::<DesktopState>();
+    let mut viewers = state
+        .workspaces
+        .viewers
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some((label, _)) = viewers.iter().find(|(_, viewer)| {
+        viewer
+            .review
+            .as_ref()
+            .is_some_and(|existing| existing.id() == review.id())
+    }) {
+        let label = label.clone();
+        drop(viewers);
+        if let Some(window) = app.get_webview_window(&label) {
+            focus(&window);
+        }
+        return Ok(label);
+    }
+    if viewers.len() >= 8 || state.closing.load(Ordering::Acquire) {
+        return Err(error("Close a capture viewer before opening this review"));
+    }
+    let label = format!(
+        "viewer-{}",
+        ARTIFACT_SEQUENCE.fetch_add(1, Ordering::Relaxed)
+    );
+    let title = format!("Transmog — {}", review.name());
+    viewers.insert(
+        label.clone(),
+        Viewer {
+            application: review.application(),
+            _root: None,
+            review: Some(Arc::new(review)),
+        },
+    );
+    drop(viewers);
+    let result = WebviewWindowBuilder::new(
+        app,
+        &label,
+        WebviewUrl::CustomProtocol(
+            tauri::Url::parse("transmog-ui://localhost/").expect("fixed URL"),
+        ),
+    )
+    .title(title)
+    .inner_size(1200.0, 820.0)
+    .min_inner_size(760.0, 520.0)
+    .data_directory(state.webview_data_path.clone())
+    .on_navigation(is_allowed_navigation)
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .build();
+    if result.is_err() {
+        state
+            .workspaces
+            .viewers
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&label);
+        return Err(error("The session review window could not be opened"));
+    }
+    Ok(label)
+}
+
+pub(super) fn agent_review_command_allowed(command: &str) -> bool {
+    matches!(
+        command,
+        "mcp_review_state"
+            | "mcp_review_dirty"
+            | "mcp_review_publish"
+            | "automation_status"
+            | "change_header_rule"
+            | "test_header_rule"
+            | "change_response_transform"
+            | "test_response_transform"
+    )
 }
 
 pub(super) fn activate_files(app: &tauri::AppHandle, paths: Vec<PathBuf>) {
@@ -456,7 +546,8 @@ mod tests {
                 format!("viewer-{index}"),
                 Viewer {
                     application: application.clone(),
-                    _root: tempfile::tempdir().unwrap(),
+                    _root: Some(tempfile::tempdir().unwrap()),
+                    review: None,
                 },
             );
             applications.push((application.clone(), application.product_state()));

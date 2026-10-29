@@ -7,6 +7,7 @@ import "../autoresponse-switch/autoresponse-switch.js";
 import "../app-updates/app-updates.js";
 import "../client-certificate-requests/client-certificate-requests.js";
 import "../mcp-indicator/mcp-indicator.js";
+import "../session-review/session-review.js";
 import "../captured-preview/captured-preview.js";
 import type { CapturedPreview } from "../captured-preview/captured-preview.js";
 import "../response-set-page-picker/response-set-page-picker.js";

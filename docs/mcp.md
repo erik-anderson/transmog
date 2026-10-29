@@ -56,6 +56,7 @@ See [matching details](mcp-reference.md#evidence-and-disclosure).
 | Permission | Allows |
 | --- | --- |
 | View request details | Search scoped traffic and inspect headers, timings, changes and stream metadata |
+| Load capture files | Load and unload local captures in private inspection sessions |
 | Control collection | Start/stop the shared proxy and the agent's recordings |
 | Prepare changes | Create, edit and test the agent's disabled header/text rule drafts |
 | Edit shared rules | Edit existing saved header/text rules |
@@ -73,6 +74,28 @@ Agent refreshes preserve human drafts, and conflicting saved edits are rejected.
 Temporary rules show the agent's name and stop when its control session ends.
 Choose **Keep changes…** to retain reviewed rules. Shared saved edits remain after
 revoking a key.
+
+## Private inspection sessions
+
+Agents can load TMCap, SAZ, HAR and Chromium NetLog files into private sessions
+without changing your workspace. Enable **Load capture files** for that key.
+Encrypted captures wait for a password in the top **MCP** panel; the agent never
+receives the password, and redaction stays unchanged.
+
+Open **MCP → Inspection sessions → Review** to inspect the same evidence in a
+separate capture window. Files opened there join the same session.
+**Review private rules** uses the normal header and text
+editors. Agent updates preserve your drafts; **Publish selected rule** creates a
+disabled shared rule for review in the main window.
+
+Closing the review window keeps the session. **End session** releases its files
+and evidence without deleting source files or stopping live capture. Resolve
+unsaved edits before ending it. Idle sessions expire after 30 minutes; an open
+review window keeps them available. Sessions end on app restart or revoked access.
+
+Sessions may also subscribe to live traffic. Subscribers share each real exchange
+and its updates; requests and live rules run once. Live rules and collection
+controls affect the shared proxy, regardless of which session reviews the traffic.
 
 ## Configuration, keys and restarts
 

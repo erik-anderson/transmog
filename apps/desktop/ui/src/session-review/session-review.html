@@ -1,0 +1,10 @@
+<template>
+<button type="button" class="secondary" w-ref="{reviewButton}" ?hidden="{{!sessionReviewAvailable}}" @click="{open()}">Review private rules</button>
+<dialog aria-labelledby="session-review-heading" class="session-review-dialog" w-ref="{reviewDialog}" @private-rule-dirty="{dirty()}">
+ <header><div><h2 id="session-review-heading">Private rules · {{sessionReviewName}}</h2><p>These drafts affect this inspection session. Publishing creates a disabled shared rule.</p></div><button type="button" class="secondary" @click="{close()}">Close</button></header>
+ <p role="status" ?hidden="{{!sessionReviewEnded}}">Agent access has ended. Your review and edits are preserved.</p>
+ <div class="actions" role="group" aria-label="Private rule type"><button type="button" class="secondary" aria-pressed="{{sessionReviewKind == 'headers'}}" @click="{kind('headers')}">Headers</button><button type="button" class="secondary" aria-pressed="{{sessionReviewKind == 'response-text'}}" @click="{kind('response-text')}">Response text</button><button type="button" @click="{publish()}" ?disabled="{{sessionReviewBusy}}">Publish selected rule</button></div>
+ <p class="field-error" role="alert" ?hidden="{{!sessionReviewError}}">{{sessionReviewError}}</p><p role="status" ?hidden="{{!sessionReviewMessage}}">{{sessionReviewMessage}}</p>
+ <div class="session-rule-editors"><header-rules private-drafts w-ref="{headersEditor}" ?hidden="{{sessionReviewKind != 'headers'}}"></header-rules><header-rules private-drafts editor-kind="response-text" w-ref="{textEditor}" ?hidden="{{sessionReviewKind != 'response-text'}}"></header-rules></div>
+</dialog>
+</template>

@@ -10,7 +10,7 @@ pub use catalog::{ToolSpec, tool_catalog};
 #[cfg(feature = "desktop")]
 mod application;
 #[cfg(feature = "desktop")]
-pub use application::{AgentApplication, ProxyHost};
+pub use application::{AgentApplication, ProxyHost, SessionReview};
 #[cfg(feature = "connector")]
 mod connector;
 #[cfg(feature = "connector")]

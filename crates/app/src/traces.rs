@@ -64,6 +64,46 @@ pub struct TraceImportRequest {
     pub max_file_bytes: u64,
 }
 
+/// An opened source retained across password retries. No filename is reopened.
+#[derive(Clone, Debug)]
+pub struct PreparedTraceImport {
+    request: TraceImportRequest,
+    reader: SourceReader,
+    index_limit: Option<u64>,
+}
+impl PreparedTraceImport {
+    /// Bounds this import's combined source metadata and evidence index before publication.
+    #[must_use]
+    pub fn with_index_limit(mut self, bytes: u64) -> Self {
+        self.index_limit = Some(bytes);
+        self
+    }
+    pub(crate) fn open(mut request: TraceImportRequest) -> Result<Self, AppError> {
+        request.path = std::path::absolute(&request.path)
+            .map_err(|_| invalid("Trace path could not be resolved"))?;
+        let file = File::open(&request.path)
+            .map_err(|_| invalid("The selected trace file is unreadable"))?;
+        let metadata = file
+            .metadata()
+            .map_err(|_| invalid("The selected trace file is unreadable"))?;
+        if !metadata.is_file() || metadata.len() > request.max_file_bytes {
+            return Err(invalid(
+                "Choose a supported capture file within the import size limit",
+            ));
+        }
+        let reader =
+            SourceReader::new(file).map_err(|_| unavailable("Trace source could not be opened"))?;
+        if crate::trace_format::detect_trace_format_from(&request.path, reader.clone()).is_none() {
+            return Err(invalid("Choose a supported capture file"));
+        }
+        Ok(Self {
+            request,
+            reader,
+            index_limit: None,
+        })
+    }
+}
+
 /// Import progress for one explicitly named operation.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -178,6 +218,8 @@ pub(crate) struct SourceRequestNumber {
 
 #[derive(Default)]
 struct State {
+    keep_group_sources: bool,
+    groups: HashMap<String, (Vec<ExchangeId>, Vec<String>)>,
     marker_reviews: BTreeMap<String, crate::incidents::MarkerReviewState>,
     marker_draft_dirty: bool,
     marker_undo: std::collections::VecDeque<(String, crate::incidents::MarkerSnapshot)>,
@@ -236,6 +278,68 @@ pub(crate) struct TraceRegistry {
     state: Arc<Mutex<State>>,
 }
 impl TraceRegistry {
+    pub(crate) fn group_ids(&self) -> Vec<String> {
+        self.lock().groups.keys().cloned().collect()
+    }
+    pub(crate) fn retain_group_sources(&self) {
+        self.lock().keep_group_sources = true;
+    }
+    pub(crate) fn lock_publication(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.publication
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+    pub(crate) fn group_entries(&self, id: &str) -> Result<Vec<ExchangeId>, AppError> {
+        self.lock()
+            .groups
+            .get(id)
+            .map(|group| group.0.clone())
+            .ok_or_else(|| invalid("This capture is no longer loaded"))
+    }
+    pub(crate) fn forget_group(&self, id: &str, removed: &[ExchangeId]) {
+        // Empty and capture-only sources in other file groups have no row to keep
+        // them alive through ordinary row dismissal cleanup.
+        let (metadata, artifacts) = {
+            let state = self.lock();
+            let retained = state
+                .groups
+                .iter()
+                .filter(|(key, _)| key.as_str() != id)
+                .flat_map(|(_, group)| group.1.iter())
+                .collect::<HashSet<_>>();
+            (
+                state
+                    .metadata
+                    .iter()
+                    .filter(|(id, _)| retained.contains(id))
+                    .map(|(id, value)| (id.clone(), value.clone()))
+                    .collect::<Vec<_>>(),
+                state
+                    .artifacts
+                    .iter()
+                    .filter(|(id, _)| retained.contains(id))
+                    .map(|(id, value)| (id.clone(), value.clone()))
+                    .collect::<Vec<_>>(),
+            )
+        };
+        self.forget_entries(removed);
+        let mut state = self.lock();
+        state.metadata.extend(metadata);
+        state.artifacts.extend(artifacts);
+        if let Some((_, sources)) = state.groups.remove(id) {
+            for source in sources {
+                state.metadata.remove(&source);
+                state.artifacts.remove(&source);
+                state.marker_reviews.remove(&source);
+                state.marker_undo.retain(|(id, _)| id != &source);
+            }
+        }
+        state.metadata_bytes = state
+            .metadata
+            .values()
+            .map(|meta| trace_metadata_bytes(meta).unwrap_or(MAX_HEAD_BYTES))
+            .sum();
+    }
     pub(crate) fn retained_index_bytes(&self) -> u64 {
         let state = self.lock();
         u64::try_from(state.index_bytes.saturating_add(state.metadata_bytes)).unwrap_or(u64::MAX)
@@ -250,11 +354,19 @@ impl TraceRegistry {
             state.entries.remove(&format!("{:032x}", id.0));
             state.occurrences.remove(&format!("{:032x}", id.0));
         }
-        let sources = state
+        let mut sources = state
             .entries
             .values()
             .map(|entry| entry.trace_id.clone())
             .collect::<std::collections::HashSet<_>>();
+        if state.keep_group_sources {
+            sources.extend(
+                state
+                    .groups
+                    .values()
+                    .flat_map(|group| group.1.iter().cloned()),
+            );
+        }
         // Capture-level annotations remain reviewable without surviving requests.
         let annotated = state
             .metadata
@@ -341,6 +453,37 @@ impl TraceRegistry {
         store: BodyStore,
         progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
     ) -> Result<TraceImportResult, AppError> {
+        self.import_opened(request, None, service, store, progress)
+            .await
+    }
+
+    pub(crate) async fn import_prepared(
+        &self,
+        mut source: PreparedTraceImport,
+        password: Option<transmog_capture::CapturePassword>,
+        service: ApplicationSessionService,
+        store: BodyStore,
+        progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
+    ) -> Result<TraceImportResult, AppError> {
+        source.request.password = password;
+        self.import_opened(
+            source.request,
+            Some((source.reader, source.index_limit)),
+            service,
+            store,
+            progress,
+        )
+        .await
+    }
+
+    async fn import_opened(
+        &self,
+        request: TraceImportRequest,
+        reader: Option<(SourceReader, Option<u64>)>,
+        service: ApplicationSessionService,
+        store: BodyStore,
+        progress: Arc<dyn Fn(TraceImportProgress) + Send + Sync>,
+    ) -> Result<TraceImportResult, AppError> {
         if request.operation_id.is_empty()
             || request.operation_id.len() > 128
             || request.max_file_bytes == 0
@@ -363,13 +506,44 @@ impl TraceRegistry {
             id: request.operation_id.clone(),
         };
         let result = tokio::task::spawn_blocking(move || {
-            operation.registry.import_blocking(
-                &request,
-                &service,
-                &store,
-                &canceled,
-                progress.as_ref(),
-            )
+            if let Some((reader, limit)) = reader {
+                let (imported, trace, _) = Self::read_source(
+                    &request,
+                    reader,
+                    request.path.clone(),
+                    &canceled,
+                    progress.as_ref(),
+                )?;
+                if let Some(limit) = limit {
+                    let metadata = std::iter::once(&trace)
+                        .chain(imported.sources.values())
+                        .try_fold(0usize, |sum, source| {
+                            trace_metadata_bytes(source).map(|bytes| sum.saturating_add(bytes))
+                        })
+                        .map_err(|_| invalid("Invalid trace source metadata"))?;
+                    if u64::try_from(imported.index_bytes.saturating_add(metadata))
+                        .unwrap_or(u64::MAX)
+                        > limit
+                    {
+                        return Err(AppError::new(
+                            ErrorCategory::Limit,
+                            "The shared capture index budget is full. Unload a capture and retry.",
+                            false,
+                        ));
+                    }
+                }
+                operation
+                    .registry
+                    .publish_import(imported, &service, &store, trace, &canceled)
+            } else {
+                operation.registry.import_blocking(
+                    &request,
+                    &service,
+                    &store,
+                    &canceled,
+                    progress.as_ref(),
+                )
+            }
         })
         .await;
         result.map_err(|_| unavailable("Trace import worker failed"))?
@@ -550,6 +724,10 @@ impl TraceRegistry {
         result
     }
 
+    #[allow(
+        clippy::too_many_lines,
+        reason = "Keep the atomic catalog, index and source publication together."
+    )]
     fn publish_import(
         &self,
         imported: ImportData,
@@ -565,6 +743,14 @@ impl TraceRegistry {
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         if canceled.load(Ordering::Acquire) {
             return Err(unavailable("Trace import canceled"));
+        }
+        {
+            let state = self.lock();
+            if state.keep_group_sources && state.groups.len() >= 16 {
+                return Err(invalid(
+                    "Unload a capture before loading another (maximum 16 per inspection session)",
+                ));
+            }
         }
         let extra_metadata = std::iter::once(&trace)
             .chain(imported.sources.values())
@@ -606,6 +792,14 @@ impl TraceRegistry {
                 ));
             }
         }
+        let group_ids = imported
+            .entries
+            .keys()
+            .filter_map(|id| u128::from_str_radix(id, 16).ok().map(ExchangeId))
+            .collect::<Vec<_>>();
+        let group_sources = std::iter::once(trace_id.clone())
+            .chain(imported.sources.keys().cloned())
+            .collect::<Vec<_>>();
         // Catalog publication is atomic. All fallible source/index work precedes
         // it, so canceling or a bad file never leaves half an import in Traffic.
         service
@@ -638,6 +832,7 @@ impl TraceRegistry {
                     imported.stream_index_bytes,
                 ));
                 state.metadata_bytes = state.metadata_bytes.saturating_add(extra_metadata);
+                state.groups.insert(trace_id.clone(),(group_ids,group_sources));
                 state.metadata.extend(imported.sources);
                 state.metadata.insert(trace_id.clone(), trace.clone());
                 install_origins(&mut state, &trace_id, imported.artifact.as_ref(), &imported.source_keys, &imported.entries, &imported.native_loss);
@@ -3087,6 +3282,151 @@ mod tests {
     use crate::{AppConfig, Application, BodyStoreConfig, RequestCommandFormat, SessionQueryInput};
     use std::io::{Cursor, Write};
     use transmog_capture::{CaptureRecord, CaptureWriter};
+
+    #[tokio::test]
+    async fn prepared_index_budget_rejects_before_publishing_any_capture_context() {
+        let root = tempfile::tempdir().unwrap();
+        let session = app(root.path());
+        let path = root.path().join("empty.har");
+        std::fs::write(
+            &path,
+            br#"{"log":{"version":"1.2","creator":{"name":"Fixture","version":"1"},"entries":[]}}"#,
+        )
+        .unwrap();
+        let source = session
+            .prepare_trace_import(request(path, "bounded"))
+            .unwrap();
+        let error = session
+            .import_prepared_trace(source.clone().with_index_limit(0), None, Arc::new(|_| {}))
+            .await
+            .unwrap_err();
+        assert_eq!(error.category, ErrorCategory::Limit);
+        assert_eq!(session.loaded_capture_ids(), [] as [String; 0]);
+        assert_eq!(session.imported_index_bytes(), 0);
+        session
+            .import_prepared_trace(source, None, Arc::new(|_| {}))
+            .await
+            .unwrap();
+        assert_eq!(session.loaded_capture_ids().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn capture_groups_unload_all_supported_sources_and_release_readers() {
+        let root = tempfile::tempdir().unwrap();
+        let parent = app(root.path());
+        let native_path = root.path().join("source.tmcap");
+        native(&native_path, Some(b"body".to_vec()), 4);
+        let saved = app(&root.path().join("saved"));
+        saved
+            .import_trace(request(native_path.clone(), "seed"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let mut paths = vec![(native_path, None)];
+        for (name, format, encrypted) in [
+            ("strict.saz", crate::TraceSaveFormat::SazStrict, false),
+            ("extended.saz", crate::TraceSaveFormat::SazExtended, false),
+            ("encrypted.saz", crate::TraceSaveFormat::SazExtended, true),
+            ("encrypted.tmcap", crate::TraceSaveFormat::Native, true),
+            ("source.har", crate::TraceSaveFormat::Har, false),
+        ] {
+            let password = encrypted
+                .then(|| transmog_capture::CapturePassword::new("capture password".into()));
+            let path = root.path().join(name);
+            saved
+                .save_traffic_trace(
+                    path.clone(),
+                    crate::TraceSaveOptions {
+                        format,
+                        password: password.clone(),
+                        ..Default::default()
+                    },
+                )
+                .await
+                .unwrap();
+            paths.push((path, password));
+        }
+        saved.discard_traffic().unwrap();
+        drop(saved);
+        let fixtures =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/browser");
+        paths.extend(
+            ["placeholder.netlog", "placeholder.jsonl"].map(|name| (fixtures.join(name), None)),
+        );
+        for (index, (path, password)) in paths.into_iter().enumerate() {
+            let session = parent
+                .create_inspection_session(root.path().join(format!("session-{index}")))
+                .unwrap();
+            let pinned = session
+                .prepare_trace_import(request(path.clone(), "load"))
+                .unwrap();
+            if password.is_some() {
+                assert_eq!(
+                    session
+                        .import_prepared_trace(pinned.clone(), None, Arc::new(|_| {}))
+                        .await
+                        .unwrap_err()
+                        .category,
+                    ErrorCategory::PasswordRequired
+                );
+            }
+            let result = session
+                .import_prepared_trace(pinned.clone(), password, Arc::new(|_| {}))
+                .await
+                .unwrap();
+            drop(pinned);
+            assert_eq!(
+                parent
+                    .query_sessions(SessionQueryInput::default())
+                    .unwrap()
+                    .sessions,
+                [] as [crate::SessionSummary; 0]
+            );
+            session.unload_capture(&result.trace.id).unwrap();
+            assert!(session.trace_metadata_list().is_empty());
+            assert_eq!(session.imported_index_bytes(), 0);
+            assert_eq!(
+                session
+                    .query_sessions(SessionQueryInput::default())
+                    .unwrap()
+                    .sessions,
+                [] as [crate::SessionSummary; 0]
+            );
+            assert!(path.exists());
+            #[cfg(windows)]
+            {
+                use std::os::windows::fs::OpenOptionsExt as _;
+                let _exclusive = std::fs::OpenOptions::new()
+                    .read(true)
+                    .share_mode(0)
+                    .open(&path)
+                    .expect("unload releases the source reader");
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn unloading_one_empty_file_preserves_other_empty_capture_context() {
+        let root = tempfile::tempdir().unwrap();
+        let session = app(root.path());
+        let a = root.path().join("a.har");
+        let b = root.path().join("b.har");
+        for path in [&a, &b] {
+            std::fs::write(path,br#"{"log":{"version":"1.2","creator":{"name":"Fixture","version":"1"},"entries":[]}}"#).unwrap();
+        }
+        let a = session
+            .import_trace(request(a, "a"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let b = session
+            .import_trace(request(b, "b"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        session.unload_capture(&a.trace.id).unwrap();
+        assert_eq!(session.trace_metadata_list().len(), 1);
+        assert!(session.trace_metadata(&b.trace.id).is_ok());
+        session.unload_capture(&b.trace.id).unwrap();
+        assert!(session.trace_metadata_list().is_empty());
+    }
 
     #[test]
     fn related_context_requires_known_original_target_provenance() {

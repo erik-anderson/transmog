@@ -7,6 +7,7 @@ import initial from "../initial-state.json";
 
 type Permission =
   | "inspect"
+  | "load-captures"
   | "read-bodies"
   | "collect"
   | "prepare-changes"
@@ -79,6 +80,7 @@ interface Status {
 type Operation = Exclude<Permission, "read-bodies" | "read-credentials">;
 const labels: Record<Operation, string> = {
   inspect: "View request details",
+  "load-captures": "Load capture files",
   collect: "Control collection",
   "prepare-changes": "Prepare changes",
   "edit-shared-rules": "Edit shared rules",

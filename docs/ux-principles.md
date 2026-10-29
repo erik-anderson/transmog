@@ -225,6 +225,13 @@ Human and agent rule editing uses the same saved rules and revision conflicts.
 Every authorized agent may read relevant rule effects; shared edits require an
 explicit permission. Preserve unsaved human drafts during agent refreshes and
 keep active agent access visible with a direct route to its controls.
+
+Agent inspection sessions open quietly and remain independent of the user's
+workspace. Review attaches the existing capture viewer to the same evidence;
+closing the window keeps the session. Keep ending a session explicit, preserve
+unsaved human work when access ends, and distinguish private drafts from shared
+live rules. Passwords for agent-requested capture loads are entered only in the
+app and never imply approval to disclose unredacted values.
 Agent requests for unredacted values appear without stealing focus.
 Default to omission, make temporary consent visibly time-bound with an immediate
 revoke action, and distinguish it from a durable change to the saved setting.

@@ -5,6 +5,7 @@ use std::time::Instant;
 pub(super) struct Context {
     id: String,
     owner: String,
+    pub(super) realm: String,
     revision: u64,
     expires: Instant,
     expires_at: u64,
@@ -32,16 +33,19 @@ pub(super) struct ContextInput {
 impl AgentApplication {
     pub(super) fn sweep_contexts(&self) {
         let access = self.access.status();
-        self.lock().contexts.retain(|context| {
-            context.expires > Instant::now()
-                && access.enabled
-                && access.grants.iter().any(|grant| {
-                    grant.id == context.owner
-                        && grant.revision == context.revision
-                        && !grant.revoked
-                        && grant.expires_at.is_none_or(|expiry| expiry > now())
-                })
-        });
+        self.context_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|context| {
+                context.expires > Instant::now()
+                    && access.enabled
+                    && access.grants.iter().any(|grant| {
+                        grant.id == context.owner
+                            && grant.revision == context.revision
+                            && !grant.revoked
+                            && grant.expires_at.is_none_or(|expiry| expiry > now())
+                    })
+            });
     }
     pub(super) fn retain_context(
         &self,
@@ -66,27 +70,25 @@ impl AgentApplication {
         }
         let id = random(18)?;
         let expires_at = now() + 300;
-        let mut runtime = self.lock();
-        runtime
-            .contexts
-            .retain(|context| context.expires > Instant::now());
-        while runtime
-            .contexts
+        let mut contexts = self
+            .context_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        contexts.retain(|context| context.expires > Instant::now());
+        while contexts
             .iter()
             .filter(|context| context.owner == grant.id)
             .count()
             >= 64
-            || runtime.contexts.len() >= 256
-            || runtime
-                .contexts
+            || contexts.len() >= 256
+            || contexts
                 .iter()
                 .map(|context| context.bytes.len())
                 .sum::<usize>()
                 .saturating_add(bytes.len())
                 > 512 * 1024 * 1024
         {
-            let Some(index) = runtime
-                .contexts
+            let Some(index) = contexts
                 .iter()
                 .position(|context| context.owner == grant.id)
             else {
@@ -95,12 +97,13 @@ impl AgentApplication {
                     "The retained context budget is full. Retry after contexts expire.",
                 ));
             };
-            runtime.contexts.remove(index);
+            contexts.remove(index);
         }
         let length = bytes.len();
-        runtime.contexts.push_back(Context {
+        contexts.push_back(Context {
             id: id.clone(),
             owner: grant.id.clone(),
+            realm: self.session_id.clone(),
             revision: grant.revision,
             expires: Instant::now() + Duration::from_secs(300),
             expires_at,
@@ -120,12 +123,15 @@ impl AgentApplication {
 
     pub(super) fn read_context(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
         self.check_instance(input)?;
-        let runtime = self.lock();
-        let context = runtime
-            .contexts
+        let contexts = self
+            .context_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let context = contexts
             .iter()
             .find(|context| {
-                context.id == input["contextId"]
+                context.realm == self.session_id
+                    && context.id == input["contextId"]
                     && context.owner == grant.id
                     && context.revision == grant.revision
                     && context.expires > Instant::now()
@@ -149,6 +155,20 @@ impl AgentApplication {
         );
         if !allowed {
             return Err(denied("The context is outside this key's current scope."));
+        }
+        if context.entry_id.as_ref().is_some_and(|id| {
+            self.application
+                .copy_message_url(id, "client-request")
+                .is_err()
+        }) || context.source["kind"] == "capture"
+            && context.source["captureId"]
+                .as_str()
+                .is_none_or(|id| self.application.trace_metadata(id).is_err())
+        {
+            return Err(Error::new(
+                "source_unloaded",
+                "This context source is no longer loaded.",
+            ));
         }
         let offset = input["offset"]
             .as_str()

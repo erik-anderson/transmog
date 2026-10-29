@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { writeFile } from "node:fs/promises";
+import { smokeMcpSessions } from "./smoke-mcp-sessions.mjs";
 
 // The owning PowerShell harness supplies an isolated user profile. Keys created
 // here are disposable test credentials; never print their values in evidence.
@@ -72,7 +73,10 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       true,
       "Native CLI could not authenticate to the loopback endpoint",
     );
-    const rules = await cli(created.key, "transmog_rules_list", { instanceId: status.instanceId });
+    const rules = await cli(created.key, "transmog_rules_list", {
+      instanceId: status.instanceId,
+      sessionId: "main",
+    });
     assert(Array.isArray(rules.rules), "An authenticated key could not read rules");
     assert.equal(
       await evaluate(`(async()=>{
@@ -153,6 +157,14 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       true,
       "Another caller reused an existing connection",
     );
+    const sessionChecks = await smokeMcpSessions(
+      cli,
+      invoke,
+      created.key,
+      grantId,
+      status.instanceId,
+      screenshotPath,
+    );
     const current = await invoke("mcp_status");
     assert.match(current.endpoint, /^https:\/\/127\.0\.0\.1:\d+$/);
     assert.equal(
@@ -181,6 +193,7 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
     await invoke("mcp_revoke_key", { id: grantId, revision: latest.revision });
     assert.equal((await cli(replacement.key, "transmog_status", {})).failed, true);
     return {
+      ...sessionChecks,
       nativePermissionDialog: true,
       callerIsolation: true,
       loopbackOnly: true,

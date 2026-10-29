@@ -1,6 +1,7 @@
 //! Send admission and durable outcomes within one app run.
 use super::*;
 pub(super) struct SendRecord {
+    realm: String,
     fingerprint: Vec<u8>,
     url: String,
     outcome: Option<Result<Value, Error>>,
@@ -11,7 +12,12 @@ struct Admission<'a> {
 }
 impl Drop for Admission<'_> {
     fn drop(&mut self) {
-        if let Some(record) = self.app.lock().sends.get_mut(&self.identity)
+        if let Some(record) = self
+            .app
+            .send_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .get_mut(&self.identity)
             && record.outcome.is_none()
         {
             record.outcome = Some(Err(Error::new(
@@ -22,14 +28,19 @@ impl Drop for Admission<'_> {
     }
 }
 impl AgentApplication {
+    fn ledger(&self) -> std::sync::MutexGuard<'_, HashMap<(String, String), SendRecord>> {
+        self.send_ledger
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
     pub(super) fn send_status(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
         self.check_instance(input)?;
         grant.require(Permission::Send)?;
         let operation = string(input, "operationId")?;
-        let runtime = self.lock();
-        let record = runtime
-            .sends
+        let ledger = self.ledger();
+        let record = ledger
             .get(&(grant.id.clone(), operation.into()))
+            .filter(|record| record.realm == self.session_id)
             .ok_or_else(|| {
                 Error::new(
                     "not_found",
@@ -81,13 +92,13 @@ impl AgentApplication {
         let identity = (grant.id.clone(), operation.clone());
         let live = input["mode"] == "live-rules";
         let fingerprint = Sha256::digest(
-            serde_json::to_vec(&(live, &request))
+            serde_json::to_vec(&(&self.session_id, live, &request))
                 .map_err(|_| invalid("The request could not be encoded."))?,
         )
         .to_vec();
         {
-            let runtime = self.lock();
-            if let Some(record) = runtime.sends.get(&identity) {
+            let ledger = self.ledger();
+            if let Some(record) = ledger.get(&identity) {
                 if record.fingerprint != fingerprint {
                     return Err(Error::new(
                         "conflict",
@@ -106,9 +117,9 @@ impl AgentApplication {
             .validate_agent_request(&request, live)
             .map_err(app_error)?;
         {
-            let mut runtime = self.lock();
+            let mut ledger = self.ledger();
             // Admission is atomic even when two callers pass preflight concurrently.
-            if let Some(record) = runtime.sends.get(&identity) {
+            if let Some(record) = ledger.get(&identity) {
                 if record.fingerprint != fingerprint {
                     return Err(Error::new(
                         "conflict",
@@ -122,15 +133,16 @@ impl AgentApplication {
                     ))
                 });
             }
-            if runtime.sends.len() >= 1024 {
+            if ledger.len() >= 1024 {
                 return Err(Error::new(
                     "limit",
                     "The send ledger is full for this app run; existing operation IDs remain protected.",
                 ));
             }
-            runtime.sends.insert(
+            ledger.insert(
                 identity.clone(),
                 SendRecord {
+                    realm: self.session_id.clone(),
                     fingerprint,
                     url: request.url.clone(),
                     outcome: None,
@@ -141,9 +153,8 @@ impl AgentApplication {
             app: self,
             identity: identity.clone(),
         };
-        let outcome=self.application.execute_agent_request(request,live).await.map(|result|json!({"operationId":operation,"instanceId":self.instance_id,"id":result.detail.id,"status":result.status,"mode":if live{"live-rules"}else{"direct"},"attribution":result.attribution,"inspectWith":"transmog_exchange_get"})).map_err(|error|Error::new("outcome_unknown",format!("The send was admitted; it will not be resent. {}",app_error(error).message)));
-        self.lock()
-            .sends
+        let outcome=self.application.execute_agent_request(request,live).await.map(|result|json!({"sessionId":self.session_id,"operationId":operation,"instanceId":self.instance_id,"id":result.detail.id,"status":result.status,"mode":if live{"live-rules"}else{"direct"},"attribution":result.attribution,"inspectWith":"transmog_exchange_get"})).map_err(|error|Error::new("outcome_unknown",format!("The send was admitted; it will not be resent. {}",app_error(error).message)));
+        self.ledger()
             .get_mut(&identity)
             .expect("admitted record")
             .outcome = Some(outcome.clone());

@@ -9,8 +9,8 @@ responses, pause and edit exchanges, replay requests, and save traces for later.
 The Windows desktop uses Evergreen WebView2. The Rust engine and headless tools
 also run in the Linux test gate; Linux and macOS desktop products are not qualified.
 
-> **MCP support:** Let agents inspect traffic and collaborate on rules through
-> local, scoped access keys. [Set up an agent](docs/mcp.md).
+> **MCP support:** Let agents inspect live traffic or private capture files and
+> collaborate on rules through local, scoped access keys. [Set up an agent](docs/mcp.md).
 
 ## Features
 

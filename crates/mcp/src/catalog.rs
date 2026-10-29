@@ -1,6 +1,7 @@
 //! Stable tool schemas; initialization never requires a running desktop or a credential.
 use serde_json::{Value, json};
 mod models;
+pub(crate) mod sessions;
 #[cfg(any(feature = "desktop", feature = "connector", test))]
 pub(crate) mod validation;
 
@@ -58,7 +59,7 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
         spec(
             "transmog_connect",
-            "Connect to Transmog using the configured access key. May start the desktop only when --start-app is configured. Returns approved permissions, scope and instanceId; it never enables MCP or creates a grant.",
+            "Connect to Transmog using the configured access key. May start the desktop only when --start-app is configured. Returns approved permissions, scope and instanceId. Use sessionId main for shared traffic, or create a private session for capture files. It never enables MCP or creates a grant.",
             false,
             json!({}),
             &[],
@@ -233,6 +234,7 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
     ];
     models::complete(&mut tools);
+    sessions::complete(&mut tools);
     tools
 }
 

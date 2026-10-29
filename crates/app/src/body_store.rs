@@ -672,9 +672,14 @@ impl Drop for BodyStoreInner {
 /// Cloneable product-layer response-body cache and runtime observer.
 #[derive(Clone)]
 pub struct BodyStore {
+    fallback: Option<Arc<BodyFallback>>,
     inner: Arc<BodyStoreInner>,
 }
 
+struct BodyFallback {
+    source: BodyStore,
+    catalog: transmog_session::SessionCatalog,
+}
 impl std::fmt::Debug for BodyStore {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
@@ -687,6 +692,21 @@ impl std::fmt::Debug for BodyStore {
 }
 
 impl BodyStore {
+    pub(crate) fn with_live_source(
+        mut self,
+        source: BodyStore,
+        catalog: transmog_session::SessionCatalog,
+    ) -> Self {
+        self.fallback = Some(Arc::new(BodyFallback { source, catalog }));
+        self
+    }
+    fn live_source(&self, id: ExchangeId) -> Option<&Self> {
+        self.fallback
+            .as_ref()
+            .filter(|fallback| fallback.catalog.references(id))
+            .map(|fallback| &fallback.source)
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn register_saved(
         &self,
@@ -772,7 +792,10 @@ impl BodyStore {
             .name("transmog-body-store".to_owned())
             .spawn(move || worker_loop(&worker, &receiver))
             .map_err(|_| BodyStoreError::WorkerUnavailable)?;
-        Ok(Self { inner })
+        Ok(Self {
+            inner,
+            fallback: None,
+        })
     }
 
     /// Runtime observer settings for exact response bytes and optional request
@@ -875,6 +898,9 @@ impl BodyStore {
 
     /// Lists known boundaries for one exchange in stable boundary order.
     pub fn metadata(&self, exchange_id: ExchangeId) -> Vec<StoredBodyMetadata> {
+        if let Some(source) = self.live_source(exchange_id) {
+            return source.metadata(exchange_id);
+        }
         let state = self.lock_state();
         [
             BoundaryKey::ClientRequest,
@@ -902,6 +928,9 @@ impl BodyStore {
         exchange_id: ExchangeId,
         boundary: ExchangeBoundary,
     ) -> Option<ResponseHead> {
+        if let Some(source) = self.live_source(exchange_id) {
+            return source.response_head(exchange_id, boundary);
+        }
         self.lock_state()
             .records
             .get(&BodyKey {
@@ -954,6 +983,9 @@ impl BodyStore {
         length: usize,
         prepare: bool,
     ) -> Result<BodyRange, BodyStoreError> {
+        if let Some(source) = self.live_source(exchange_id) {
+            return source.read_range_inner(exchange_id, boundary, offset, length, prepare);
+        }
         if length == 0 || length > self.inner.config.max_read_bytes {
             return Err(BodyStoreError::ReadLimitExceeded);
         }
@@ -1049,6 +1081,9 @@ impl BodyStore {
         boundary: ExchangeBoundary,
         complete: bool,
     ) -> Result<BodyReadLease, BodyStoreError> {
+        if let Some(source) = self.live_source(exchange_id) {
+            return source.open_context(exchange_id, boundary, complete);
+        }
         let key = BodyKey {
             exchange_id,
             boundary: BoundaryKey::from_boundary(boundary),
@@ -1132,6 +1167,9 @@ impl BodyStore {
     ///
     /// Returns [`BodyStoreError::WorkerUnavailable`] if the worker exited.
     pub fn flush(&self) -> Result<(), BodyStoreError> {
+        if let Some(fallback) = &self.fallback {
+            fallback.source.flush()?;
+        }
         let (sender, receiver) = mpsc::channel();
         self.inner
             .sender

@@ -52,7 +52,8 @@ impl Application {
             return Err(failed("The request sender is unavailable."));
         }
         if live_rules {
-            self.agent_proxy_address()?;
+            let engine = self.live_parent.as_deref().unwrap_or(self);
+            engine.agent_proxy_address()?;
             if matches!(
                 request.body_source,
                 Some(crate::ComposerBodySource::File { .. })
@@ -62,8 +63,8 @@ impl Application {
                 ));
             }
             if built.target().scheme == "https"
-                && (!self.product_state().preferences.decrypt_https
-                    || self
+                && (!engine.product_state().preferences.decrypt_https
+                    || engine
                         .proxy_certificate
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -73,7 +74,7 @@ impl Application {
                     "HTTPS live-rules replay requires HTTPS decryption and the running proxy's interception certificate. Configure it in the app, then start collection.",
                 ));
             }
-            if self.body_store.is_none() {
+            if engine.body_store.is_none() {
                 return Err(invalid(
                     "Body retention is required for live-rules replay context",
                 ));
@@ -166,19 +167,20 @@ impl Application {
             return self.execute_composer(request).await;
         }
         self.validate_agent_request(&request, true)?;
-        let address = self.agent_proxy_address()?;
+        let engine = self.live_parent.as_deref().unwrap_or(self);
+        let address = engine.agent_proxy_address()?;
         let (validated, _) = composer::build_request(&request)?;
         let body = self
             .agent_request_body(&request, validated.body.clone())
             .await?;
-        let watermark = self
+        let watermark = engine
             .service
             .catalog()
             .project_retained(|snapshot| snapshot.request_number)
             .into_iter()
             .max()
             .unwrap_or(0);
-        let certificate = self
+        let certificate = engine
             .proxy_certificate
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -187,10 +189,10 @@ impl Application {
         let expected_method = request.method.clone();
         let (status, local) =
             send_through_proxy(address, &request, validated, body, certificate).await?;
-        let mut updates = self.subscribe_session_updates()?;
+        let mut updates = engine.subscribe_session_updates()?;
         let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
         let snapshot = loop {
-            if let Some(snapshot) = self
+            if let Some(snapshot) = engine
                 .service
                 .catalog()
                 .project_retained(|snapshot| {
@@ -222,7 +224,7 @@ impl Application {
             .as_ref()
             .map(|id| self.replay_origin(id));
         let retained_source = source.clone();
-        let store = self
+        let store = engine
             .body_store
             .clone()
             .ok_or_else(|| failed("Body retention is required for live-rules replay context"))?;

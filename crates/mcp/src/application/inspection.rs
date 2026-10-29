@@ -8,6 +8,7 @@ use transmog_app::{
 
 pub(super) struct Snapshot {
     token: String,
+    pub(super) realm: String,
     grant_id: String,
     revision: u64,
     expires_at: u64,
@@ -122,27 +123,25 @@ impl AgentApplication {
         coverage: Option<Value>,
     ) -> Result<String, Error> {
         let token = random(18)?;
-        let mut runtime = self.lock();
-        runtime
-            .snapshots
-            .retain(|snapshot| snapshot.deadline > std::time::Instant::now());
+        let mut snapshots = self
+            .snapshot_cache
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        snapshots.retain(|snapshot| snapshot.deadline > std::time::Instant::now());
         // A busy key cannot displace another key's active snapshots.
-        if runtime
-            .snapshots
+        if snapshots
             .iter()
             .filter(|snapshot| snapshot.grant_id == grant.id)
             .count()
             >= 8
-            && let Some(index) = runtime
-                .snapshots
+            && let Some(index) = snapshots
                 .iter()
                 .position(|snapshot| snapshot.grant_id == grant.id)
         {
-            runtime.snapshots.remove(index);
+            snapshots.remove(index);
         }
-        if runtime.snapshots.len() >= 128
-            || runtime
-                .snapshots
+        if snapshots.len() >= 128
+            || snapshots
                 .iter()
                 .map(|snapshot| snapshot.ids.len())
                 .sum::<usize>()
@@ -154,8 +153,9 @@ impl AgentApplication {
                 "Too many active traffic snapshots. Retry after a snapshot expires.",
             ));
         }
-        runtime.snapshots.push_back(Snapshot {
+        snapshots.push_back(Snapshot {
             token: token.clone(),
+            realm: self.session_id.clone(),
             grant_id: grant.id.clone(),
             revision: grant.revision,
             expires_at: now() + 300,
@@ -176,12 +176,15 @@ impl AgentApplication {
             .parse()
             .map_err(|_| invalid("cursor has an invalid position."))?;
         let (ids, total, expires, coverage, next) = {
-            let runtime = self.lock();
-            let snapshot = runtime
-                .snapshots
+            let snapshots = self
+                .snapshot_cache
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            let snapshot = snapshots
                 .iter()
                 .find(|snapshot| {
-                    snapshot.token == token
+                    snapshot.realm == self.session_id
+                        && snapshot.token == token
                         && snapshot.grant_id == grant.id
                         && snapshot.revision == grant.revision
                         && snapshot.deadline > std::time::Instant::now()

@@ -34,6 +34,7 @@ export async function checkMcp(page, root) {
   await editor.getByLabel("Allow all", { exact: true }).check();
   for (const label of [
     "View request details",
+    "Load capture files",
     "Control collection",
     "Prepare changes",
     "Edit shared rules",
@@ -217,6 +218,128 @@ export async function checkMcp(page, root) {
     true,
   );
   await page.screenshot({ path: resolve(root, "../../../target/ui-check/mcp-collaboration.png") });
+  await page.goto("https://workspace.test/");
+  await checkInspectionSessions(page, root);
+}
+
+async function checkInspectionSessions(page, root) {
+  await page.evaluate(() => {
+    const state = globalThis.__workspaceFixture;
+    state.mcp = { enabled: true, grants: [], controls: [] };
+    state.mcpInspectionSessions = [
+      {
+        sessionId: "private-1",
+        name: "Investigating authentication retries and response transformations",
+        ownerName: "Investigation agent",
+        captureCount: 2,
+        liveSubscribed: true,
+        agentAccessEnded: false,
+        needsHumanAction: false,
+      },
+    ];
+    state.mcpCapturePasswords = [
+      {
+        sessionId: "private-1",
+        operationId: "encrypted-load",
+        name: "Investigation agent · encrypted.tmcap",
+      },
+    ];
+  });
+  const indicator = page.locator("mcp-indicator");
+  await indicator.waitFor({ state: "attached" });
+  await page.evaluate(() =>
+    document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh(),
+  );
+  await indicator.locator(".mcp-indicator-button").click();
+  const panel = indicator.locator(".mcp-access-panel");
+  await panel.getByRole("heading", { name: "Inspection sessions", exact: true }).waitFor();
+  assert.equal(await indicator.locator(".mcp-access-badge").innerText(), "Password needed");
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: width === 800 ? 600 : 900 });
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/mcp-sessions-${width}.png`),
+    });
+  }
+  await panel
+    .getByLabel("Capture password", { exact: true })
+    .fill("password for the cancelled job");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcpCapturePasswords = [
+      {
+        sessionId: "private-1",
+        operationId: "different-encrypted-load",
+        name: "Another encrypted capture",
+      },
+    ];
+    return document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
+  });
+  assert.equal(
+    await panel.getByLabel("Capture password", { exact: true }).inputValue(),
+    "",
+    "A changed password job must not inherit another job's entered secret",
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcpCapturePasswords[0].error = { code: "invalid_password" };
+    return document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
+  });
+  await panel
+    .getByRole("alert")
+    .filter({ hasText: "That password did not unlock the capture" })
+    .waitFor();
+  await panel.getByLabel("Capture password", { exact: true }).fill("fixture password");
+  await panel.getByRole("button", { name: "Continue loading", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.capturePasswordSubmitted);
+  assert.equal(await panel.locator('input[type="password"]').count(), 0);
+  await panel.getByRole("button", { name: "Review", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.reviewedSession),
+    "private-1",
+  );
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcp.enabled = false;
+    globalThis.__workspaceFixture.mcpInspectionSessions[0].agentAccessEnded = true;
+    return document.querySelector("app-shell").shadowRoot.querySelector("mcp-indicator").refresh();
+  });
+  assert.equal(await indicator.locator(".mcp-indicator-label").innerText(), "MCP disabled");
+  await page.goto("https://workspace.test/?viewer");
+  const review = page.locator("session-review");
+  await review.getByRole("button", { name: "Review private rules", exact: true }).click();
+  const dialog = review.locator(".session-review-dialog");
+  await dialog.waitFor();
+  await page.evaluate(() => {
+    const editor = document
+      .querySelector("app-shell")
+      .shadowRoot.querySelector("session-review").headersEditor;
+    editor.newRule();
+  });
+  const editor = dialog.locator("header-rules").first();
+  await editor
+    .getByLabel("Rule name", { exact: true })
+    .fill("Human draft must survive agent updates");
+  await page.waitForFunction(() => globalThis.__workspaceFixture.reviewDirty === true);
+  await page.evaluate(() => globalThis.__workspaceFixture.emitNative("mcp-automation-changed"));
+  assert.equal(
+    await editor.getByLabel("Rule name", { exact: true }).inputValue(),
+    "Human draft must survive agent updates",
+  );
+  assert.equal(
+    await editor.getByRole("button", { name: "Save and enable", exact: true }).isVisible(),
+    false,
+  );
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/mcp-session-rules-800.png"),
+  });
+  await page.keyboard.press("Escape");
+  await dialog.waitFor({ state: "hidden" });
+  await review.getByRole("button", { name: "Review private rules", exact: true }).click();
+  assert.equal(
+    await editor.getByLabel("Rule name", { exact: true }).inputValue(),
+    "Human draft must survive agent updates",
+  );
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/mcp-session-rules-1440.png"),
+  });
   await page.goto("https://workspace.test/");
 }
 
