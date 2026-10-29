@@ -6594,7 +6594,7 @@ dependencies = [
 
 [[package]]
 name = "transmog"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "bytes",
@@ -6624,7 +6624,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-app"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "boring",
@@ -6678,7 +6678,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-app-webui"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "brotli",
@@ -6693,7 +6693,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-auth"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "flate2",
@@ -6706,7 +6706,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-automation"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "bytes",
  "hex",
@@ -6721,7 +6721,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-capture"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -6743,7 +6743,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-client-certificates"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "sha2 0.11.1",
  "windows-sys 0.61.2",
@@ -6751,7 +6751,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-client-identity"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "transmog-core",
  "windows-sys 0.61.2",
@@ -6759,7 +6759,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-content"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "async-compression",
  "bytes",
@@ -6772,7 +6772,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-control-model"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -6781,7 +6781,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-control-transport"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "thiserror 2.0.21",
  "tokio",
@@ -6790,7 +6790,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-core"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "bytes",
  "http",
@@ -6802,7 +6802,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-desktop"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "boring",
@@ -6848,7 +6848,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-directory-watch"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "tempfile",
  "windows-sys 0.61.2",
@@ -6856,7 +6856,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extension-host"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "serde_json",
@@ -6873,7 +6873,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extension-registry"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "getrandom 0.4.3",
  "rustix 1.1.5",
@@ -6888,7 +6888,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extension-supervisor"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "getrandom 0.4.3",
@@ -6899,7 +6899,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-extensions"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
@@ -6914,7 +6914,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-h3"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "bytes",
@@ -6936,7 +6936,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-host-windows"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "serde",
  "serde_json",
@@ -6946,7 +6946,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-http"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "bytes",
@@ -6971,7 +6971,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-js-runtime"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "percent-encoding",
  "url",
@@ -6980,7 +6980,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-key-protection"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "aes-gcm",
  "dbus",
@@ -6993,7 +6993,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-mcp"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "boring",
@@ -7022,7 +7022,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-network"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "futures-util",
  "serde",
@@ -7034,7 +7034,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-package-zip"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "crc32fast",
  "thiserror 2.0.21",
@@ -7044,7 +7044,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-portable"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "crc32fast",
@@ -7066,7 +7066,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-preview-worker"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "image",
  "transmog-process-sandbox",
@@ -7074,14 +7074,14 @@ dependencies = [
 
 [[package]]
 name = "transmog-process-sandbox"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "windows-sys 0.61.2",
 ]
 
 [[package]]
 name = "transmog-runtime"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "bytes",
@@ -7108,7 +7108,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-saz"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "flate2",
@@ -7127,7 +7127,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "bytes",
  "serde",
@@ -7143,7 +7143,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script-compiler"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "sourcemap",
  "stacker",
@@ -7159,7 +7159,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script-host"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "serde",
@@ -7179,7 +7179,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-script-supervisor"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "getrandom 0.4.3",
  "serde_json",
@@ -7190,7 +7190,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-session"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "bytes",
  "http",
@@ -7208,7 +7208,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-socket-info"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "libc",
  "transmog-core",
@@ -7217,7 +7217,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-tls"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "async-compression",
  "boring",
@@ -7249,7 +7249,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-tls-native"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "boring-sys",
@@ -7263,7 +7263,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-websocket"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "base64 0.22.1",
  "bytes",
@@ -7277,7 +7277,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-webview-preview-windows"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "hex",
  "sha2 0.11.1",
@@ -7287,7 +7287,7 @@ dependencies = [
 
 [[package]]
 name = "transmog-windows-trust"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "boring",
  "hex",
