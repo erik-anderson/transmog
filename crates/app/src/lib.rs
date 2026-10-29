@@ -25,9 +25,13 @@ mod client_certificates;
 pub use classifications::{
     ClassificationFacetInput, ClassificationFacetPage, ClassificationFilter, TrafficClassification,
 };
+mod agent_replay;
 pub mod comparison;
 mod composer;
 mod composer_response;
+mod context;
+mod replay_context;
+pub use context::{CompleteBodyContext, MAX_CONTEXT_DECODE_BYTES};
 mod diagnostics;
 mod experiment_pages;
 mod export_privacy;
@@ -378,6 +382,7 @@ impl std::fmt::Debug for AppConfig {
 pub struct Application {
     preview_capture: String,
     upstream_trust: Option<Arc<transmog_tls::TrustSnapshot>>,
+    proxy_certificate: Arc<std::sync::Mutex<Option<boring::x509::X509>>>,
     client_certificates: Option<ClientCertificateManager>,
     certificate_policy_operation: Arc<std::sync::Mutex<()>>,
     network_profile_operation: Arc<tokio::sync::Mutex<()>>,
@@ -561,6 +566,7 @@ impl Application {
         Ok(Self {
             preview_capture,
             upstream_trust: config.upstream_trust,
+            proxy_certificate: Arc::new(std::sync::Mutex::new(None)),
             client_certificates: config.client_certificates,
             certificate_policy_operation: Arc::new(std::sync::Mutex::new(())),
             network_profile_operation: Arc::new(tokio::sync::Mutex::new(())),
@@ -1447,7 +1453,10 @@ impl Application {
                 .err()
                 .map_or("proxy listener started", |error| error.message.as_str()),
         );
-        result?;
+        *self
+            .proxy_certificate
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = result?;
         Ok(self.status())
     }
 
@@ -2240,6 +2249,12 @@ impl Application {
     /// # Errors
     /// Returns invalid selection or missing/incomplete body errors.
     pub fn prepare_request_file(&self, id: &str) -> Result<RequestFile, AppError> {
+        if let Some(response) = self.composer.response(id) {
+            return request_actions::prepare_snapshot_file(
+                &response.snapshot,
+                Some(&response.store),
+            );
+        }
         request_actions::prepare_file(&self.service, self.body_store.as_ref(), id)
     }
 
@@ -2448,18 +2463,10 @@ impl Application {
         if let Some(id) = &request.source_entry_id {
             inspector::parse_session_id(id)?;
         }
-        let source = request.source_entry_id.as_ref().map(|id| {
-            let trace = self.traces.entry(id);
-            ComposerOrigin {
-                trace_name: trace
-                    .as_ref()
-                    .and_then(|entry| self.traces.metadata(&entry.trace_id))
-                    .map(|metadata| metadata.name),
-                entry_id: id.clone(),
-                trace_id: trace.as_ref().map(|entry| entry.trace_id.clone()),
-                original_id: trace.map(|entry| entry.original_id),
-            }
-        });
+        let source = request
+            .source_entry_id
+            .as_ref()
+            .map(|id| self.replay_origin(id));
         let file = match &request.body_source {
             Some(ComposerBodySource::Captured { entry_id }) => Some(
                 self.prepare_request_file(entry_id)?

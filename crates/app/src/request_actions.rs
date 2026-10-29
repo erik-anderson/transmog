@@ -79,6 +79,9 @@ pub struct RequestFile {
 }
 
 impl RequestFile {
+    pub(crate) fn byte_length(&self) -> Option<u64> {
+        self.length_known.then_some(self.bytes)
+    }
     /// Generates text referencing the selected path before consuming the lease.
     ///
     /// # Errors
@@ -200,10 +203,17 @@ pub(crate) fn prepare_file(
     id: &str,
 ) -> Result<RequestFile, AppError> {
     let snapshot = snapshot(service, id)?;
-    let head = request_head(&snapshot)?.clone();
-    let body = original_body(&snapshot, store)?;
+    prepare_snapshot_file(&snapshot, store)
+}
+
+pub(crate) fn prepare_snapshot_file(
+    snapshot: &SessionSnapshot,
+    store: Option<&BodyStore>,
+) -> Result<RequestFile, AppError> {
+    let head = request_head(snapshot)?.clone();
+    let body = original_body(snapshot, store)?;
     Ok(RequestFile {
-        version: request_protocol(&snapshot).into(),
+        version: request_protocol(snapshot).into(),
         head,
         reader: body.reader,
         bytes: body.bytes,

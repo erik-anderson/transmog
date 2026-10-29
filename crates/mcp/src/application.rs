@@ -14,14 +14,17 @@ use std::{
     time::Duration,
 };
 use transmog_app::{
-    Application, BodyInspectionRequest, BodyRangeRequest, BodyRepresentation, CaptureStartRequest,
-    ComposerBodySource, ComposerRequest, HeaderRuleChange, HeaderRulePlacement,
-    HeaderRuleTestInput, SessionQueryInput, TextTransformTestInput, TrafficColumn,
-    TrafficDimension, TrafficFilterGroup, TrafficFilterValue,
+    Application, BodyRangeRequest, CaptureStartRequest, ComposerBodySource, ComposerRequest,
+    HeaderRuleChange, HeaderRulePlacement, HeaderRuleTestInput, SessionQueryInput,
+    TextTransformTestInput, TrafficColumn, TrafficDimension, TrafficFilterGroup,
+    TrafficFilterValue,
 };
 use transmog_automation::Rule;
 mod authoring;
+mod context;
 mod inspection;
+mod rule_tests;
+mod sends;
 
 /// Existing desktop proxy-start validation and host setup, injected without UI dependencies.
 pub trait ProxyHost: Send + Sync + 'static {
@@ -44,10 +47,11 @@ struct Control {
 #[derive(Default)]
 struct Runtime {
     controls: HashMap<String, Control>,
-    sends: HashMap<(String, String), (Vec<u8>, Option<Value>)>,
+    sends: HashMap<(String, String), sends::SendRecord>,
     recording: Option<(String, u64, PathBuf)>,
     activity: Vec<Value>,
     snapshots: std::collections::VecDeque<inspection::Snapshot>,
+    contexts: std::collections::VecDeque<context::Context>,
 }
 
 /// Shared operations for one main workspace. Runtime control handles never outlive this instance.
@@ -248,22 +252,9 @@ impl AgentApplication {
             "transmog_request_prepare" => self.prepare_request(&grant, &input),
             "transmog_stream_list" => self.stream_list(&grant, &input),
             "transmog_stream_read" => self.stream_read(&grant, &input),
-            "transmog_headers_read" => {
-                self.entry(&grant, &input, "id")?;
-                let id = string(&input, "id")?;
-                let boundary = string(&input, "boundary")?;
-                let mut page = self
-                    .application
-                    .inspect_headers(id, boundary, index(&input, "offset", 0, 100_000)?, false)
-                    .map_err(app_error)?;
-                for header in &mut page.headers {
-                    if sensitive(&header.name) && !grant.allows(Permission::ReadCredentials) {
-                        header.value = "[redacted]".into();
-                        header.sensitive = true;
-                    }
-                }
-                value(page)
-            }
+            "transmog_headers_read" => self.headers_page(&grant, &input),
+            "transmog_context_read" => self.read_context(&grant, &input),
+            "transmog_request_status" => self.send_status(&grant, &input),
             "transmog_body_read" => self.body(&grant, &input, "id").await,
             "transmog_exchange_compare" => self.compare(&grant, &input).await,
             "transmog_proxy_start" => {
@@ -283,7 +274,7 @@ impl AgentApplication {
                 self.read_rule(&grant, string(&input, "id")?)
             }
             "transmog_rule_update" => self.update_shared_rule(&grant, &input),
-            "transmog_rule_test" => self.test_rule(&grant, &input),
+            "transmog_rule_test" => self.test_rule(&grant, &input).await,
             "transmog_control_begin" => {
                 self.check_instance(&input)?;
                 grant.require(Permission::Modify)?;
@@ -463,19 +454,34 @@ impl AgentApplication {
             .and_then(Value::as_bool)
             .unwrap_or(false)
         {
-            let inspected = self
+            let body = self
                 .application
-                .inspect_body(BodyInspectionRequest {
-                    session_id: id.into(),
-                    boundary: boundary.into(),
-                    representation: BodyRepresentation::OriginalText,
-                    decode_content: true,
-                    offset: offset_number,
-                    max_bytes: Some(max),
-                })
+                .complete_body_context(id, boundary)
                 .await
                 .map_err(app_error)?;
-            return value(inspected);
+            let url = self
+                .application
+                .copy_message_url(id, "client-request")
+                .map_err(app_error)?;
+            let text = body.text_encoding.is_some();
+            let reference = self.retain_context(
+                grant,
+                context::ContextInput {
+                    bytes: body.bytes,
+                    required: vec![Permission::Inspect, Permission::ReadBodies],
+                    source: json!({"kind":"body","id":id,"boundary":boundary}),
+                    metadata: value(body.metadata)?,
+                    url,
+                    entry_id: Some(id.into()),
+                    representation: if text {
+                        "decoded-text"
+                    } else {
+                        "decoded-bytes"
+                    },
+                    text,
+                },
+            )?;
+            return self.read_context(grant,&json!({"instanceId":self.instance_id,"contextId":reference["contextId"],"offset":offset_number.to_string(),"maxBytes":max}));
         }
         let page = self
             .application
@@ -880,50 +886,6 @@ impl AgentApplication {
         self.save_rule(rule, Some(revision))
     }
 
-    fn test_rule(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
-        self.check_instance(input)?;
-        let readable = self.read_rule(grant, string(input, "id")?)?;
-        if readable["rule"].is_null() {
-            return Err(denied(
-                "The full definition is unavailable under this key's disclosure permissions.",
-            ));
-        }
-        let rule: Rule = parse(readable["rule"].clone())?;
-        let mut sample = input["sample"].clone();
-        if !sample.is_object() {
-            return Err(invalid("The test sample must be an object."));
-        }
-        sample["rule"] = value(rule.clone())?;
-        authoring::sample_headers(&mut sample)?;
-        if sample.get("responseStatus").is_none() {
-            sample["responseStatus"] = json!(200);
-        }
-        let sample: HeaderRuleTestInput = parse(sample)?;
-        if !grant.scope.allows_url(&sample.url) {
-            return Err(denied("The sample URL is outside this key's scope."));
-        }
-        if transmog_automation::is_text_transform_rule(&rule) {
-            let mut result = value(
-                self.application
-                    .test_response_transform(&TextTransformTestInput {
-                        sample,
-                        body: optional_string(input, "body")?.unwrap_or_default(),
-                    })
-                    .map_err(app_error)?,
-            )?;
-            result["kind"] = json!("response-text");
-            Ok(result)
-        } else {
-            let result = self
-                .application
-                .test_header_rule(&sample)
-                .map_err(app_error)?;
-            Ok(
-                json!({"kind":"headers","test":result.test,"before":authoring::test_headers(&result.before,grant),"after":authoring::test_headers(&result.after,grant),"operations":result.operations}),
-            )
-        }
-    }
-
     fn control(&self, grant: &Grant, input: &Value) -> Result<Control, Error> {
         self.check_instance(input)?;
         grant.require(Permission::Modify)?;
@@ -983,6 +945,7 @@ impl AgentApplication {
     }
 
     async fn cleanup(&self) -> Result<(), Error> {
+        self.sweep_contexts();
         let access = self.access.status();
         let expired: Vec<_> = self
             .lock()
@@ -1055,71 +1018,6 @@ impl AgentApplication {
         current.breakpoints = true;
         current.controller_id.clone_from(&controller_id);
         Ok(json!({"enabled":status.enabled,"controllerId":controller_id}))
-    }
-
-    async fn send(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
-        self.check_instance(input)?;
-        grant.require(Permission::Send)?;
-        let request: ComposerRequest = parse(input["request"].clone())?;
-        if !grant.scope.allows_url(&request.url) {
-            return Err(denied(
-                "The request destination is outside this key's scope.",
-            ));
-        }
-        if matches!(request.body_source, Some(ComposerBodySource::File { .. })) {
-            return Err(denied(
-                "Agent sends cannot read local files. Supply an inline body or authorized captured body.",
-            ));
-        }
-        if let Some(ComposerBodySource::Captured { entry_id }) = &request.body_source {
-            grant.require(Permission::ReadBodies)?;
-            self.entry(
-                grant,
-                &json!({"instanceId":self.instance_id,"id":entry_id}),
-                "id",
-            )?;
-        }
-        if let Some(id) = &request.source_entry_id {
-            self.entry(grant, &json!({"instanceId":self.instance_id,"id":id}), "id")?;
-        }
-        let operation = string(input, "operationId")?.to_owned();
-        let identity = (grant.id.clone(), operation.clone());
-        let fingerprint = Sha256::digest(
-            serde_json::to_vec(&request)
-                .map_err(|_| invalid("The request could not be encoded."))?,
-        )
-        .to_vec();
-        {
-            let mut runtime = self.lock();
-            if let Some((previous, result)) = runtime.sends.get(&identity) {
-                if previous != &fingerprint {
-                    return Err(Error::new(
-                        "conflict",
-                        "That operationId was already used for a different request.",
-                    ));
-                }
-                return result.clone().ok_or_else(||Error::new("outcome_unknown","This send was already admitted. Inspect Traffic; it will not be sent again."));
-            }
-            if runtime.sends.len() >= 1024 {
-                return Err(Error::new(
-                    "limit",
-                    "The send operation ledger is full for this app run. Existing operation IDs remain protected from duplicate sends.",
-                ));
-            }
-            runtime.sends.insert(identity.clone(), (fingerprint, None));
-        }
-        let result = self
-            .application
-            .execute_composer(request)
-            .await
-            .map_err(app_error)?;
-        // Store a bounded result reference, so retry protection does not retain response bodies.
-        let result = json!({"operationId":operation,"instanceId":self.instance_id,"id":result.detail.id,"status":result.status,"attribution":result.attribution,"inspectWith":"transmog_exchange_get"});
-        if let Some((_, stored)) = self.lock().sends.get_mut(&identity) {
-            *stored = Some(result.clone());
-        }
-        self.activity(grant, "transmog_request_send", true);
-        Ok(result)
     }
 
     fn activity(&self, grant: &Grant, operation: &str, success: bool) {

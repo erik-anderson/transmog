@@ -16,7 +16,7 @@ async fn stdio_discovery_initializes_without_desktop_or_key_and_calls_explain_se
     });
     let client = ().serve(client_io).await.unwrap();
     let tools = client.list_tools(None).await.unwrap();
-    assert_eq!(tools.tools.len(), 34);
+    assert_eq!(tools.tools.len(), 36);
     for tool in &tools.tools {
         let output = tool
             .output_schema

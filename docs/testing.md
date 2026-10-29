@@ -82,6 +82,8 @@ archives go to `.local/sdk-linux-qualification/`. See
 
 The MCP crate covers authentication, scope, revocation, disclosure consent,
 shared-rule conflicts, temporary control, connection activity and loopback traffic.
+It also verifies complete-context paging, HTTP/HTTPS rule-aware replay, captured
+rule tests, retained replay evidence and send-outcome recovery.
 Run from the repository root after preparing UI assets:
 
 ```powershell

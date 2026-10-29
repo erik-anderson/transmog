@@ -1040,6 +1040,15 @@ impl BodyStore {
         exchange_id: ExchangeId,
         boundary: ExchangeBoundary,
     ) -> Result<BodyReadLease, BodyStoreError> {
+        self.open_context(exchange_id, boundary, true)
+    }
+
+    pub(crate) fn open_context(
+        &self,
+        exchange_id: ExchangeId,
+        boundary: ExchangeBoundary,
+        complete: bool,
+    ) -> Result<BodyReadLease, BodyStoreError> {
         let key = BodyKey {
             exchange_id,
             boundary: BoundaryKey::from_boundary(boundary),
@@ -1050,7 +1059,7 @@ impl BodyStore {
                 .records
                 .get_mut(&key)
                 .ok_or(BodyStoreError::UnknownBody)?;
-            if record.availability != BodyAvailability::Complete || !record.terminal {
+            if complete && (record.availability != BodyAvailability::Complete || !record.terminal) {
                 return Err(BodyStoreError::ReadUnavailable);
             }
             let path = record.path.clone();
@@ -1082,6 +1091,37 @@ impl BodyStore {
                 record.leases = record.leases.saturating_sub(1);
             }
             Err(BodyStoreError::ReadUnavailable)
+        }
+    }
+
+    pub(crate) fn register_frozen(
+        &self,
+        metadata: &StoredBodyMetadata,
+        headers: &HeaderBlock,
+        response: Option<ResponseHead>,
+        source: Arc<dyn SavedBodySource>,
+    ) {
+        let id = ExchangeId(
+            u128::from_str_radix(&metadata.exchange_id, 16).expect("internal exchange identity"),
+        );
+        let boundary =
+            crate::inspector::parse_boundary(metadata.boundary).expect("internal boundary");
+        self.register_saved(
+            id,
+            boundary,
+            headers,
+            response,
+            source,
+            metadata.observed_bytes,
+            metadata.availability == BodyAvailability::Complete,
+        );
+        if let Some(record) = self.lock_state().records.get_mut(&BodyKey {
+            exchange_id: id,
+            boundary: BoundaryKey::from_boundary(boundary),
+        }) {
+            record.availability = metadata.availability;
+            record.reason.clone_from(&metadata.reason);
+            record.sha256.clone_from(&metadata.sha256);
         }
     }
 

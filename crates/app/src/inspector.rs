@@ -541,7 +541,7 @@ pub struct BodyEditView {
     /// Actual operation result on decoded bytes.
     pub report: transmog_core::intercept::BodyEditReport,
 }
-fn body_edits(snapshot: &SessionSnapshot) -> Vec<BodyEditView> {
+pub(crate) fn body_edits(snapshot: &SessionSnapshot, limit: usize) -> Vec<BodyEditView> {
     snapshot
         .hook_effects
         .iter()
@@ -557,11 +557,11 @@ fn body_edits(snapshot: &SessionSnapshot) -> Vec<BodyEditView> {
                 None
             }
         })
-        .take(MAX_DIAGNOSTICS)
+        .take(limit)
         .collect()
 }
 
-fn header_effects(snapshot: &SessionSnapshot) -> Vec<HeaderEffectView> {
+pub(crate) fn header_effects(snapshot: &SessionSnapshot, limit: usize) -> Vec<HeaderEffectView> {
     snapshot
         .hook_effects
         .iter()
@@ -580,7 +580,7 @@ fn header_effects(snapshot: &SessionSnapshot) -> Vec<HeaderEffectView> {
                 headers: headers.clone(),
             })
         })
-        .take(MAX_DIAGNOSTICS)
+        .take(limit)
         .collect()
 }
 
@@ -868,8 +868,8 @@ pub(crate) fn detail_from_snapshot(
         stored_bodies,
         diagnostics,
         hook_effects,
-        header_effects: header_effects(snapshot),
-        body_edits: body_edits(snapshot),
+        header_effects: header_effects(snapshot, MAX_DIAGNOSTICS),
+        body_edits: body_edits(snapshot, MAX_DIAGNOSTICS),
         auto_response: auto_response_match(snapshot),
         route_selection,
         route_attempts,
@@ -1215,6 +1215,14 @@ pub(crate) async fn decode_content(
     codings: &[String],
     encoded: Vec<u8>,
 ) -> Result<Vec<u8>, AppError> {
+    decode_content_with_limit(codings, encoded, MAX_BODY_READ_BYTES).await
+}
+
+pub(crate) async fn decode_content_with_limit(
+    codings: &[String],
+    encoded: Vec<u8>,
+    max_bytes: usize,
+) -> Result<Vec<u8>, AppError> {
     if codings.is_empty() {
         return Ok(encoded);
     }
@@ -1227,8 +1235,7 @@ pub(crate) async fn decode_content(
     })?;
     let headers = HeaderBlock::from_fields(vec![field]);
     let default_limits = ContentLimits::default();
-    let preview_limit =
-        NonZeroUsize::new(MAX_BODY_READ_BYTES).expect("the inspector hard limit is nonzero");
+    let preview_limit = NonZeroUsize::new(max_bytes).expect("the decoder hard limit is nonzero");
     let limits = ContentLimits::new(
         preview_limit,
         preview_limit,

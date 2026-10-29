@@ -1,4 +1,4 @@
-//! The latest Composer response owns its bytes independently of Traffic retention.
+//! Replay evidence owns its bytes independently of Traffic retention and later sends.
 use crate::{
     AppError, BodyStore, BodyStoreConfig, ErrorCategory, SessionDetail,
     body_store::SavedBodySource, inspector,
@@ -30,7 +30,7 @@ pub(crate) struct PreparedComposerResponse {
 }
 
 #[derive(Debug)]
-struct ResponseBytes(Bytes);
+pub(crate) struct ResponseBytes(pub(crate) Bytes);
 impl SavedBodySource for ResponseBytes {
     fn open(&self) -> io::Result<Box<dyn Read + Send>> {
         self.open_at(0)
@@ -74,6 +74,10 @@ impl ComposerResponse {
         Ok(PreparedComposerResponse { exchange_id, store })
     }
 
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "One immutable replay envelope combines request, response and attribution."
+    )]
     pub(crate) fn retain(
         prepared: PreparedComposerResponse,
         mut request: RequestHead,
@@ -82,6 +86,7 @@ impl ComposerResponse {
         redact: bool,
         origin: Option<crate::ComposerOrigin>,
         mut performance: transmog_core::performance::PerformanceEvidence,
+        request_body: Arc<dyn SavedBodySource>,
     ) -> Result<(Arc<Self>, SessionDetail), AppError> {
         let PreparedComposerResponse { exchange_id, store } = prepared;
         let mut head = ResponseHead {
@@ -96,6 +101,16 @@ impl ComposerResponse {
             Some(head.clone()),
             Arc::new(ResponseBytes(response.body.clone())),
             response.body.len() as u64,
+            true,
+        );
+        let request_bytes = request_body.length().unwrap_or(0);
+        store.register_saved(
+            exchange_id,
+            ExchangeBoundary::ClientRequest,
+            &request.headers,
+            None,
+            request_body,
+            request_bytes,
             true,
         );
         if redact {
@@ -177,10 +192,30 @@ impl ComposerResponse {
         let mut detail = inspector::detail_from_snapshot(&self.snapshot, None)?;
         detail.stored_bodies = self.store.metadata(self.snapshot.exchange_id);
         detail.composer_origin.clone_from(&self.origin);
-        detail
-            .diagnostics
-            .push("Response received from a live server by Composer.".into());
+        if self.snapshot.request_number == 0 {
+            detail
+                .diagnostics
+                .push("Response received from a live server by Composer.".into());
+        }
         Ok(detail)
+    }
+    pub(crate) fn retained_bytes(&self) -> u64 {
+        self.store
+            .metadata(self.snapshot.exchange_id)
+            .iter()
+            .map(|body| body.retained_bytes)
+            .sum()
+    }
+    pub(crate) fn from_snapshot(
+        snapshot: SessionSnapshot,
+        store: BodyStore,
+        origin: Option<crate::ComposerOrigin>,
+    ) -> Arc<Self> {
+        Arc::new(Self {
+            snapshot,
+            store,
+            origin,
+        })
     }
 }
 
@@ -291,7 +326,13 @@ mod tests {
         let id = &result.detail.id;
         assert_eq!(result.detail.responses[0].protocol, "HTTP/2");
         assert_eq!(
-            result.detail.stored_bodies[0].retained_bytes,
+            result
+                .detail
+                .stored_bodies
+                .iter()
+                .find(|body| body.boundary == "client-response")
+                .unwrap()
+                .retained_bytes,
             bytes.len() as u64
         );
         assert_eq!(
@@ -316,8 +357,11 @@ mod tests {
         executor.0.lock().unwrap().body = Bytes::from_static(b"replacement");
         let replacement = app.execute_composer(input()).await.unwrap();
         assert_ne!(id, &replacement.detail.id);
-        assert!(app.session_detail(id).is_err());
-        assert!(app.read_body_range(request(id, 0, 1)).await.is_err());
+        assert!(app.session_detail(id).is_ok());
+        assert_eq!(
+            app.read_body_range(request(id, 0, 1)).await.unwrap().bytes,
+            bytes[..1]
+        );
         drop(app);
         let root = tempfile::tempdir().unwrap();
         let saved = leased.save_to(root.path().join("saved.bin")).await.unwrap();
@@ -328,7 +372,7 @@ mod tests {
     #[tokio::test]
     async fn encoded_composer_response_uses_shared_decoding_and_saves_original_decoded_content() {
         use crate::{BodyInspectionRequest, BodyRepresentation};
-        let original = br#"{"received":"complete response","notMarkup":true}"#.to_vec();
+        let original=serde_json::to_vec(&serde_json::json!({"received":"complete response","data":(0_u64..10000).map(|index|format!("{:016x}",index.wrapping_mul(0x9e37_79b9_7f4a_7c15))).collect::<Vec<_>>()})).unwrap();
         let encoded = inspector::encode_content(&["gzip".into()], original.clone())
             .await
             .unwrap();
@@ -347,6 +391,12 @@ mod tests {
         .unwrap();
         let result = app.execute_composer(input()).await.unwrap();
         let id = result.detail.id;
+        let complete = app
+            .complete_body_context(&id, "client-response")
+            .await
+            .unwrap();
+        assert_eq!(complete.bytes, original);
+        assert_eq!(complete.text_encoding.as_deref(), Some("utf-8"));
         let view = app
             .inspect_body(BodyInspectionRequest {
                 session_id: id.clone(),

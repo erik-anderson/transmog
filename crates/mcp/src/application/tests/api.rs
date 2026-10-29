@@ -1,6 +1,8 @@
 use super::*;
 use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
 use transmog_core::observe::{ObserverEvent, ObserverEventKind};
+mod https;
+mod loops;
 
 struct TrafficHarness {
     harness: Harness,
@@ -328,7 +330,7 @@ async fn compact_batch_and_json_extraction_preserve_coverage_and_json_null() {
         .await
         .unwrap();
     assert_eq!(probe["metadata"]["availability"], "complete", "{probe}");
-    assert_eq!(probe["representation"], "original-text", "{probe}");
+    assert_eq!(probe["representation"], "decoded-text", "{probe}");
     let result=h.call(&owner,"transmog_body_extract",json!({"id":sent["id"],"boundary":"client-response","pointers":["/items/0/id","/nullValue","/missing","/a~1b/~0key"]})).await.unwrap();
     contract("transmog_body_extract", &result);
     assert_eq!(result["values"][0]["value"], "body-needle");
@@ -341,20 +343,37 @@ async fn compact_batch_and_json_extraction_preserve_coverage_and_json_null() {
 }
 
 #[tokio::test]
-async fn extraction_rejects_oversized_json_instead_of_parsing_a_prefix() {
-    let h = traffic(serde_json::to_vec(&json!({"data":"x".repeat(70000)})).unwrap());
+async fn extraction_reads_complete_json_beyond_display_limits() {
+    let h = traffic(serde_json::to_vec(&json!({"data":"x".repeat(300_000),"tail":7})).unwrap());
     let owner = full(&h);
     let sent = send(&h, &owner, "one").await;
-    assert_eq!(
-        h.call(
+    let result = h
+        .call(
             &owner,
             "transmog_body_extract",
-            json!({"id":sent["id"],"boundary":"client-response","pointers":["/data"]})
+            json!({"id":sent["id"],"boundary":"client-response","pointers":["/tail"]}),
         )
         .await
-        .unwrap_err()
-        .code,
-        "incomplete_body"
+        .unwrap();
+    assert_eq!(result["values"][0]["value"], 7);
+    contract("transmog_body_extract", &result);
+    let large = h
+        .call(
+            &owner,
+            "transmog_body_extract",
+            json!({"id":sent["id"],"boundary":"client-response","pointers":["/data"]}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(large["inlineComplete"], false);
+    assert_eq!(large["values"], json!([]));
+    assert!(
+        large["context"]["totalBytes"]
+            .as_str()
+            .unwrap()
+            .parse::<usize>()
+            .unwrap()
+            > 300_000
     );
     h.adapter.application.shutdown().await.unwrap();
 }

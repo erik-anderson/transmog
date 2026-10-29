@@ -200,17 +200,26 @@ pub(super) fn complete(tool: &mut ToolSpec) {
         }
         "transmog_headers_read" => {
             tool.output_schema = object(
-                json!({"summary":header_summary(),"headers":array(header_view(),512),"offset":count(),"nextOffset":nullable(count())}),
-                &["summary", "headers", "offset", "nextOffset"],
+                json!({"headers":array(open(json!({"name":text(524_288),"value":text(524_288),"encoding":text(64),"sensitive":flag()}),"Complete ordered field value."),200),"totalHeaders":count(),"offset":count(),"nextOffset":nullable(count()),"context":super::context_ref(),"coverage":text(256)}),
+                &[
+                    "headers",
+                    "totalHeaders",
+                    "offset",
+                    "nextOffset",
+                    "context",
+                    "coverage",
+                ],
             );
         }
         "transmog_body_read" => {
             tool.output_schema = json!({"type":"object","anyOf":[
-                object(json!({"metadata":body_metadata(),"offset":text(20),"totalBytes":text(20),"encoding":{"const":"base64"},"data":text(90_000),"nextOffset":nullable(text(20))}), &["metadata","offset","totalBytes","encoding","data","nextOffset"]),
-                object(json!({"metadata":body_metadata(),"representation":text(64),"decoded":flag(),"textEncoding":maybe_text(),"display":text(262_144),"originalText":maybe_text(),"bytesBase64":nullable(text(90_000)),"byteOffset":count(),"displayBytes":count(),"truncated":flag(),"nextOffset":nullable(count()),"warning":maybe_text(),"previewHandle":maybe_text(),"previewMimeType":maybe_text()}), &["metadata","representation","decoded","textEncoding","display","originalText","bytesBase64","byteOffset","displayBytes","truncated","nextOffset","warning","previewHandle","previewMimeType"])
+                object(json!({"metadata":body_metadata(),"offset":text(20),"totalBytes":text(20),"encoding":choice(&["base64"]),"data":text(90_000),"nextOffset":nullable(text(20))}), &["metadata","offset","totalBytes","encoding","data","nextOffset"]),
+                super::context_page()
             ]});
         }
         "transmog_exchange_get" => {
+            tool.output_schema["properties"]["context"] = super::context_ref();
+            tool.output_schema["properties"]["inlineComplete"] = flag();
             tool.output_schema["properties"]["requests"] = array(head(), 4);
             tool.output_schema["properties"]["responses"] = array(head(), 4);
             tool.output_schema["properties"]["bodies"] = array(body_metadata(), 4);
@@ -244,7 +253,35 @@ pub(super) fn complete(tool: &mut ToolSpec) {
             );
         }
         "transmog_rule_test" => {
-            tool.output_schema = rule_test();
+            let variants = rule_test();
+            let mut fields = serde_json::Map::new();
+            for variant in variants["anyOf"].as_array().expect("rule shapes") {
+                fields.extend(
+                    variant["properties"]
+                        .as_object()
+                        .expect("rule fields")
+                        .clone(),
+                );
+            }
+            fields.insert("kind".into(), choice(&["headers", "response-text"]));
+            fields.insert("context".into(), super::context_ref());
+            fields.insert("inlineComplete".into(), flag());
+            fields.insert("source".into(), json!({"type":"object"}));
+            fields.insert("ruleId".into(), id());
+            fields.insert("revision".into(), count());
+            fields.insert("beforeText".into(), text(262_144));
+            fields.insert("afterText".into(), text(262_144));
+            tool.output_schema = object(
+                Value::Object(fields),
+                &[
+                    "kind",
+                    "context",
+                    "inlineComplete",
+                    "source",
+                    "ruleId",
+                    "revision",
+                ],
+            );
         }
         "transmog_control_begin" | "transmog_control_renew" => {
             tool.output_schema = object(
@@ -263,7 +300,7 @@ pub(super) fn complete(tool: &mut ToolSpec) {
         "transmog_control_end" => tool.output_schema = object(json!({"ended":flag()}), &["ended"]),
         "transmog_request_send" => {
             tool.output_schema = object(
-                json!({"operationId":id(),"instanceId":instance(),"id":id(),"status":uint(599),"attribution":text(128),"inspectWith":{"const":"transmog_exchange_get"}}),
+                json!({"operationId":id(),"instanceId":instance(),"id":id(),"status":uint(599),"mode":choice(&["direct","live-rules"]),"attribution":text(128),"inspectWith":{"const":"transmog_exchange_get"}}),
                 &[
                     "operationId",
                     "instanceId",
@@ -306,7 +343,7 @@ pub(super) fn complete(tool: &mut ToolSpec) {
         }
         "transmog_stream_read" => {
             tool.output_schema = object(
-                json!({"instanceId":instance(),"id":id(),"sequence":count(),"encoding":{"const":"base64"},"data":text(90_000),"offset":count(),"retainedBytes":count(),"observedBytes":count(),"truncated":flag(),"availability":choice(&["complete","truncated","unavailable"]),"nextOffset":nullable(count())}),
+                json!({"instanceId":instance(),"id":id(),"sequence":count(),"encoding":choice(&["base64"]),"data":text(90_000),"offset":count(),"retainedBytes":count(),"observedBytes":count(),"truncated":flag(),"availability":choice(&["complete","truncated","unavailable"]),"nextOffset":nullable(count())}),
                 &[
                     "instanceId",
                     "id",
@@ -349,18 +386,18 @@ fn tool_head(response: bool) -> Value {
 
 fn rule_test() -> Value {
     let test = object(
-        json!({"matched":flag(),"normalizedUrl":text(16_384),"checks":array(object(json!({"label":text(1024),"matched":flag(),"detail":text(16_384)}), &["label","matched","detail"]),256),"captures":array(object(json!({"label":text(1024),"value":text(16_384)}), &["label","value"]),256)}),
+        json!({"matched":flag(),"normalizedUrl":text(131_072),"checks":array(object(json!({"label":text(131_072),"matched":flag(),"detail":text(131_072)}), &["label","matched","detail"]),131_072),"captures":array(object(json!({"label":text(131_072),"value":text(131_072)}), &["label","value"]),131_072)}),
         &["matched", "normalizedUrl", "checks", "captures"],
     );
     let headers = array(
         object(
-            json!({"name":text(256),"value":text(90_000),"encoding":choice(&["utf-8","base64"]),"sensitive":flag()}),
+            json!({"name":text(131_072),"value":text(131_072),"encoding":choice(&["utf-8","base64"]),"sensitive":flag()}),
             &["name", "value", "encoding", "sensitive"],
         ),
-        512,
+        131_072,
     );
     json!({"type":"object","anyOf":[
-        object(json!({"kind":{"const":"headers"},"test":test,"before":headers,"after":headers,"operations":array(object(json!({"index":count(),"operation":text(64),"name":text(256),"changed":flag()}), &["index","operation","name","changed"]),64)}), &["kind","test","before","after","operations"]),
+        object(json!({"kind":{"const":"headers"},"test":test,"before":headers,"after":headers,"operations":array(object(json!({"index":count(),"operation":text(64),"name":text(131_072),"changed":flag()}), &["index","operation","name","changed"]),64)}), &["kind","test","before","after","operations"]),
         object(json!({"kind":{"const":"response-text"},"test":test,"report":nullable(open(json!({"outcome":text(64),"matches":nullable(count()),"replacements":count(),"beforeBytes":nullable(count()),"afterBytes":nullable(count()),"beforeSha256":maybe_text(),"afterSha256":maybe_text()}),"Network-free literal replacement outcome.")),"beforeText":text(65_536),"afterText":text(1_048_576)}), &["kind","test","report","beforeText","afterText"])
     ]})
 }

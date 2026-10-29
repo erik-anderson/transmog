@@ -152,10 +152,13 @@ pub(crate) struct ComposerManager {
     active: Arc<Mutex<HashMap<u64, ExchangeCancellation>>>,
     executor: Option<Arc<dyn ReplayExecutor>>,
     history: Arc<Mutex<History>>,
-    response: Arc<Mutex<Option<Arc<crate::composer_response::ComposerResponse>>>>,
+    response: Arc<Mutex<VecDeque<Arc<crate::composer_response::ComposerResponse>>>>,
 }
 
 impl ComposerManager {
+    pub(crate) fn has_executor(&self) -> bool {
+        self.executor.is_some()
+    }
     pub(crate) fn prepare_network_profile(
         &self,
         profile: crate::NetworkProfileSnapshot,
@@ -196,7 +199,7 @@ impl ComposerManager {
         Self {
             active: Arc::new(Mutex::new(HashMap::new())),
             executor,
-            response: Arc::new(Mutex::new(None)),
+            response: Arc::new(Mutex::new(VecDeque::new())),
             history: Arc::new(Mutex::new(History {
                 next_id: 0,
                 items: VecDeque::new(),
@@ -282,7 +285,20 @@ impl ComposerManager {
             .with_performance(performance.clone())
             .unwrap_or(executor);
         let (mut request, target) = build_request(&input)?;
+        let mut request_source: Arc<dyn crate::body_store::SavedBodySource> = Arc::new(
+            crate::composer_response::ResponseBytes(request.body.clone()),
+        );
         let executor: Arc<dyn ReplayExecutor> = if let Some((file, length)) = file {
+            let snapshot =
+                crate::replay_context::snapshot_file(file, length, cancellation.clone()).await?;
+            let file = snapshot.reopen().map_err(|_| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "The request snapshot could not be opened",
+                    false,
+                )
+            })?;
+            request_source = Arc::new(snapshot);
             request.headers.remove_all("content-length");
             request.headers.push(
                 HeaderField::try_new("Content-Length", length.to_string()).expect("decimal length"),
@@ -334,11 +350,9 @@ impl ComposerManager {
             redact,
             source.clone(),
             performance.snapshot(),
+            request_source,
         )?;
-        *self
-            .response
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Some(retained.clone());
+        self.retain_response(retained.clone());
         let headers = retained.snapshot.response_heads[0]
             .head
             .headers
@@ -388,14 +402,35 @@ impl ComposerManager {
         self.response
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .as_ref()
-            .filter(|response| {
+            .iter()
+            .find(|response| {
                 id.eq_ignore_ascii_case(&format!("{:032x}", response.snapshot.exchange_id.0))
             })
             .cloned()
     }
 
-    fn record(
+    pub(crate) fn retain_response(
+        &self,
+        response: Arc<crate::composer_response::ComposerResponse>,
+    ) {
+        let mut retained = self
+            .response
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        retained.push_front(response);
+        while retained.len() > MAX_HISTORY
+            || retained
+                .iter()
+                .map(|response| response.retained_bytes())
+                .sum::<u64>()
+                > 256 * 1024 * 1024
+                && retained.len() > 1
+        {
+            retained.pop_back();
+        }
+    }
+
+    pub(crate) fn record(
         &self,
         method: String,
         target: String,
@@ -924,7 +959,7 @@ pub(crate) fn validate_stream_input(input: &ComposerRequest) -> Result<(), AppEr
         .map_err(|error| AppError::new(ErrorCategory::InvalidInput, error.to_string(), false))
 }
 
-fn build_request(input: &ComposerRequest) -> Result<(ReplayRequest, String), AppError> {
+pub(crate) fn build_request(input: &ComposerRequest) -> Result<(ReplayRequest, String), AppError> {
     if input.body_source.is_some() && !input.body.is_empty() {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,

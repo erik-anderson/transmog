@@ -170,7 +170,7 @@ pub(crate) async fn start_proxy(
     resources: ProxyStartResources<'_>,
     request: ProxyStartRequest,
     host: Option<Arc<dyn HostIntegration>>,
-) -> Result<(), AppError> {
+) -> Result<Option<boring::x509::X509>, AppError> {
     let ProxyStartResources {
         upstream_trust,
         client_certificate_resolver,
@@ -232,6 +232,7 @@ pub(crate) async fn start_proxy(
             Arc::new(scripts),
             NonZeroUsize::new(64).expect("script provider limit is nonzero"),
         );
+    let public_certificate = ca.as_ref().map(|ca| ca.certificate().to_owned());
     let certificates = interception_certificates(ca, &config.limits)?;
     // IDs must outlive a proxy run because retained exchanges and body-cache
     // files remain addressable after stop/start.
@@ -269,7 +270,7 @@ pub(crate) async fn start_proxy(
         }
         None => service.start(server).await,
     }
-    .map(|_| ())
+    .map(|_| public_certificate)
     .map_err(AppError::from)
 }
 

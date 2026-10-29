@@ -245,14 +245,22 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
     tools.push(search);
     let mut extract = spec(
         "transmog_body_extract",
-        "Extract JSON values by RFC 6901 JSON Pointer from a complete decoded body of at most 64 KiB. Requires unredacted access. Reports missing pointers separately and never parses an incomplete prefix as a full document.",
+        "Extract JSON values by RFC 6901 JSON Pointer from a complete decoded body within the 256 MiB whole-document budget. Requires unredacted access. Reports missing pointers separately and never parses an incomplete prefix as a full document.",
         true,
         json!({"instanceId":instance(),"id":id(),"boundary":boundary(),"pointers":array(text(4096),32)}),
         &["instanceId", "id", "boundary", "pointers"],
     );
     extract.output_schema = object(
-        json!({"instanceId":instance(),"id":id(),"boundary":boundary(),"values":array(object(json!({"pointer":text(4096),"found":flag(),"value":{"description":"Selected JSON value; present only when found is true."}}), &["pointer","found"]),32),"coverage":text(256)}),
-        &["instanceId", "id", "boundary", "values", "coverage"],
+        json!({"instanceId":instance(),"id":id(),"boundary":boundary(),"values":array(object(json!({"pointer":text(4096),"found":flag(),"value":{"description":"Selected JSON value; present only when found is true."}}), &["pointer","found"]),32),"coverage":text(256),"context":context_ref(),"inlineComplete":flag()}),
+        &[
+            "instanceId",
+            "id",
+            "boundary",
+            "values",
+            "coverage",
+            "context",
+            "inlineComplete",
+        ],
     );
     extract.schema["properties"]["pointers"]["minItems"] = json!(1);
     tools.push(extract);
@@ -271,6 +279,27 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
     tools.push(spec("transmog_stream_list","List bounded WebSocket/SSE message metadata for an authorized exchange. Payloads and raw event bytes are read separately; metadata listing works while redaction is enabled.",true,json!({"instanceId":instance(),"id":id(),"offset":uint(u64::MAX),"limit":json!({"type":"integer","minimum":1,"maximum":200}),"sender":choice(&["client","server"]),"controls":flag()}),&["instanceId","id"]));
     tools.push(spec("transmog_stream_read","Read at most 64 KiB of one retained WebSocket/SSE payload as base64. Requires unredacted access. Retention loss and truncation remain explicit; offsets refer to retained decoded bytes.",true,json!({"instanceId":instance(),"id":id(),"sequence":uint(u64::MAX),"offset":uint(u64::MAX),"maxBytes":json!({"type":"integer","minimum":1,"maximum":65_536})}),&["instanceId","id","sequence"]));
     tools.push(spec("transmog_traffic_wait","Wait up to 30 seconds for authorized matching traffic admitted after afterRequestNumber. Checks existing matches before waiting, returns one bounded snapshot page, and does not block other tools or human controls. timeout is a successful empty outcome.",true,json!({"instanceId":instance(),"query":query(),"afterRequestNumber":json!({"type":"string","pattern":"^[0-9]{1,20}$"}),"timeoutMs":json!({"type":"integer","minimum":0,"maximum":30_000}),"limit":json!({"type":"integer","minimum":1,"maximum":200})}),&["instanceId","afterRequestNumber"]));
+    let mut context = spec(
+        "transmog_context_read",
+        "Read the next bounded byte page of complete retained context using contextId and nextOffset. Contexts are owned by this key and grant revision, expire after five minutes, and recheck scope and unredacted access on every page. UTF-8 data uses decoded UTF-8 byte offsets; binary data is base64.",
+        true,
+        json!({"instanceId":instance(),"contextId":id(),"offset":{"type":"string","pattern":"^[0-9]{1,20}$"},"maxBytes":{"type":"integer","minimum":1,"maximum":65536}}),
+        &["instanceId", "contextId"],
+    );
+    context.output_schema = context_page();
+    tools.push(context);
+    let mut status = spec(
+        "transmog_request_status",
+        "Look up this key's send operation without resending. Returns pending, completed, or outcome-unknown. IDs and outcomes last for this app run; unknown operations return not_found.",
+        true,
+        json!({"instanceId":instance(),"operationId":id()}),
+        &["instanceId", "operationId"],
+    );
+    status.output_schema = object(
+        json!({"operationId":id(),"state":choice(&["pending","completed","outcome-unknown"]),"result":nullable(json!({"type":"object"})),"error":nullable(error_schema())}),
+        &["operationId", "state", "result", "error"],
+    );
+    tools.push(status);
     for tool in tools.iter_mut() {
         results::complete(tool);
         if tool.name == "transmog_traffic_wait" {
@@ -286,6 +315,17 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
             }
         }
     }
+    let send_schema = tools
+        .iter()
+        .find(|tool| tool.name == "transmog_request_send")
+        .expect("send tool")
+        .output_schema
+        .clone();
+    tools
+        .iter_mut()
+        .find(|tool| tool.name == "transmog_request_status")
+        .expect("status tool")
+        .output_schema["properties"]["result"] = nullable(send_schema);
     let evidence = tools
         .iter()
         .find(|tool| tool.name == "transmog_exchange_get")
@@ -302,11 +342,19 @@ pub(super) fn complete(tools: &mut Vec<ToolSpec>) {
 pub(super) fn sections() -> Value {
     defaulted(
         array(
-            choice(&["headers", "bodies", "timing", "changes", "transport"]),
-            5,
+            choice(&[
+                "headers",
+                "bodies",
+                "timing",
+                "changes",
+                "transport",
+                "context",
+                "all",
+            ]),
+            7,
         ),
         json!(["headers", "bodies"]),
-        "Allowlisted evidence sections. Bodies contain metadata only.",
+        "Bodies contain metadata only. context provides complete retained metadata and header values via transmog_context_read; all includes every section.",
     )
 }
 fn error_schema() -> Value {
@@ -385,5 +433,30 @@ pub(super) fn breakpoint_settings() -> Value {
     object(
         json!({"phases":array(choice(&["request-head","request-body","response-head","response-body"]),4),"bodyLimit":json!({"type":"integer","minimum":1,"maximum":131_072}),"maxPending":json!({"type":"integer","minimum":1,"maximum":8}),"timeoutMs":json!({"type":"integer","minimum":1,"maximum":30_000})}),
         &["phases", "bodyLimit", "maxPending", "timeoutMs"],
+    )
+}
+
+pub(super) fn context_ref() -> Value {
+    object(
+        json!({"contextId":id(),"totalBytes":text(20),"expiresAt":uint(u64::MAX),"readWith":{"const":"transmog_context_read"}}),
+        &["contextId", "totalBytes", "expiresAt", "readWith"],
+    )
+}
+pub(super) fn context_page() -> Value {
+    object(
+        json!({"instanceId":instance(),"contextId":id(),"source":{"type":"object"},"metadata":nullable(json!({"type":"object"})),"representation":text(64),"encoding":choice(&["utf-8","base64"]),"data":text(90000),"offset":text(20),"totalBytes":text(20),"nextOffset":nullable(text(20)),"expiresAt":uint(u64::MAX)}),
+        &[
+            "instanceId",
+            "contextId",
+            "source",
+            "metadata",
+            "representation",
+            "encoding",
+            "data",
+            "offset",
+            "totalBytes",
+            "nextOffset",
+            "expiresAt",
+        ],
     )
 }

@@ -62,6 +62,10 @@ See [matching details](mcp-reference.md#evidence-and-disclosure).
 | Change live traffic | Activate temporary rules or targeted breakpoints; with Edit shared rules, change or disable enabled saved rules |
 | Send requests | Send authored or replayed requests within scope |
 
+Agents can read complete retained context in pages, test a rule against captured
+traffic, and replay through live rules to verify its effect. Body and credential
+reads follow the redaction choice.
+
 Every valid key can read relevant rule effects without a separate permission;
 values follow the redaction setting. Review agent drafts in **Automation → Rules**.
 Agent refreshes preserve human drafts, and conflicting saved edits are rejected.

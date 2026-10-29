@@ -247,22 +247,78 @@ impl AgentApplication {
             || vec!["headers", "bodies"],
             |items| items.iter().filter_map(Value::as_str).collect(),
         );
+        let context = if sections.contains(&"context") || sections.contains(&"all") {
+            let mut complete = self
+                .application
+                .retained_exchange_context(string(input, "id")?)
+                .map_err(app_error)?;
+            complete
+                .as_object_mut()
+                .expect("exchange context")
+                .remove("authRevisions");
+            mask_headers(&mut complete, grant.allows(Permission::ReadCredentials));
+            hide_bodies(&mut complete);
+            for side in ["requests", "responses"] {
+                if let Some(heads) = complete[side].as_array_mut() {
+                    for head in heads {
+                        let boundary = head["boundary"].as_str().unwrap_or_default().to_owned();
+                        if side == "requests" {
+                            let (method, url) = self
+                                .application
+                                .message_request(string(input, "id")?, &boundary)
+                                .map_err(app_error)?;
+                            head["target"] = json!(url);
+                            head["method"] = json!(method);
+                        }
+                        head["headers"] =
+                            self.complete_headers(grant, string(input, "id")?, &boundary)?;
+                    }
+                }
+            }
+            let url = self
+                .application
+                .copy_message_url(string(input, "id")?, "client-request")
+                .map_err(app_error)?;
+            let required = if grant.allows(Permission::ReadCredentials) {
+                vec![Permission::Inspect, Permission::ReadCredentials]
+            } else {
+                vec![Permission::Inspect]
+            };
+            Some(self.context_json(
+                grant,
+                &complete,
+                required,
+                json!({"kind":"exchange","id":input["id"]}),
+                url,
+                Some(string(input, "id")?.into()),
+            )?)
+        } else {
+            None
+        };
         let mut result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"]});
-        if sections.contains(&"headers") {
+        if sections.contains(&"headers") || sections.contains(&"all") {
             result["requests"] = detail["requests"].take();
             result["responses"] = detail["responses"].take();
         }
-        if sections.contains(&"bodies") {
+        if sections.contains(&"bodies") || sections.contains(&"all") {
             result["bodies"] = detail["storedBodies"].take();
         }
-        if sections.contains(&"timing") {
+        if sections.contains(&"timing") || sections.contains(&"all") {
             result["timing"] = json!({"points":detail["performance"]["points"],"work":detail["performance"]["work"],"protocols":detail["performance"]["protocols"]});
         }
-        if sections.contains(&"changes") {
+        if sections.contains(&"changes") || sections.contains(&"all") {
             result["changes"] = json!({"hooks":detail["hookEffects"],"headers":detail["headerEffects"],"bodies":detail["bodyEdits"],"autoResponse":detail["autoResponse"]});
         }
-        if sections.contains(&"transport") {
+        if sections.contains(&"transport") || sections.contains(&"all") {
             result["transport"] = json!({"connections":detail["performance"]["transports"],"routeSelection":detail["routeSelection"],"routeAttempts":detail["routeAttempts"],"diagnostics":detail["diagnostics"],"stream":detail["stream"],"sequenceLoss":detail["sequenceLoss"]});
+        }
+        if let Some(context) = context {
+            result["context"] = context;
+        }
+        if result.get("context").is_some()
+            && serde_json::to_vec(&result).is_ok_and(|bytes| bytes.len() > 512 * 1024)
+        {
+            result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"],"context":result["context"],"inlineComplete":false});
         }
         bounded(result, 512 * 1024)
     }
@@ -412,26 +468,10 @@ impl AgentApplication {
         let boundary = string(input, "boundary")?;
         let body = self
             .application
-            .inspect_body(BodyInspectionRequest {
-                session_id: id.into(),
-                boundary: boundary.into(),
-                representation: BodyRepresentation::OriginalText,
-                decode_content: true,
-                offset: 0,
-                max_bytes: Some(65536),
-            })
+            .complete_body_context(id, boundary)
             .await
             .map_err(app_error)?;
-        if body.truncated
-            || value(&body.metadata)?["availability"] != "complete"
-            || body.representation != "original-text"
-        {
-            return Err(Error::new(
-                "incomplete_body",
-                "JSON extraction requires a complete decoded text body of at most 65536 bytes.",
-            ));
-        }
-        let document: Value = serde_json::from_str(&body.display)
+        let document: Value = serde_json::from_slice(&body.bytes)
             .map_err(|_| invalid("The complete decoded body is not valid JSON."))?;
         let mut values = Vec::new();
         let invalid_escape = regex::Regex::new("~([^01]|$)").expect("constant regex");
@@ -452,9 +492,21 @@ impl AgentApplication {
                 |value| json!({"pointer":pointer,"found":true,"value":value}),
             ));
         }
-        bounded(
-            json!({"instanceId":self.instance_id,"id":id,"boundary":boundary,"values":values,"coverage":"Complete decoded retained JSON document."}),
-            256 * 1024,
+        let url = self
+            .application
+            .copy_message_url(id, "client-request")
+            .map_err(app_error)?;
+        let reference = self.context_json(
+            grant,
+            &json!(values),
+            vec![Permission::Inspect, Permission::ReadBodies],
+            json!({"kind":"json-extraction","id":id,"boundary":boundary}),
+            url,
+            Some(id.into()),
+        )?;
+        let complete = serde_json::to_vec(&values).is_ok_and(|bytes| bytes.len() <= 128 * 1024);
+        Ok(
+            json!({"instanceId":self.instance_id,"id":id,"boundary":boundary,"values":if complete{values}else{Vec::new()},"context":reference,"inlineComplete":complete,"coverage":"Complete decoded retained JSON document."}),
         )
     }
 

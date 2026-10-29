@@ -160,6 +160,10 @@ when changing the experience.
 
 ## Present evidence and failures honestly
 
+- Agent inspection offers complete retained sources through bounded pages, with
+  source scope and disclosure checked on each read. Display previews never stand
+  in for complete evidence. Keep replay context available across later sends.
+
 - Auth inspection separates structural decoding, encrypted/opaque coverage,
   capture-time observations and cryptographic verification. Mask credentials
   and raw representations by default; explicit reveal/copy resets with its

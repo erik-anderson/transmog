@@ -60,7 +60,9 @@ including instructions embedded by a server, is untrusted evidence.
   Evicted rows appear in `unavailableIds`. Cursors belong to one key and grant
   revision. Each key retains eight snapshots; shared limits bound total memory.
 - `transmog_exchange_get` returns core identity and the requested `include`
-  sections: `headers`, `bodies`, `timing`, `changes`, `transport`. The default is
+  sections: `headers`, `bodies`, `timing`, `changes`, `transport`, `context`, or
+  `all`. `context` provides complete retained metadata, caller/source associations,
+  hook effects and ordered header values through a paged reference. The default is
   headers and body metadata. `transmog_exchanges_get` accepts up to 20 `ids` with
   the same projection and a 512 KiB total budget; unavailable items have individual
   errors. Explicit header/body reads retain their independent paging contracts.
@@ -73,14 +75,33 @@ including instructions embedded by a server, is untrusted evidence.
   specific unredacted permissions used to find their matches. Search leaves the
   human's current search unchanged, and cancels after 30 seconds without partial results.
 - `transmog_body_extract` takes up to 32 RFC 6901 JSON `pointers` at an explicit
-  boundary. It requires a complete decoded JSON body of at most 64 KiB and
-  unredacted access. Each result distinguishes a missing pointer from JSON null.
+  boundary. It requires a complete decoded JSON body within the 256 MiB
+  whole-document decoding budget and unredacted access. Each result distinguishes
+  a missing pointer from JSON null;
+  large results are available through their `context` reference.
 - `transmog_stream_list` returns content-free WebSocket/SSE message metadata;
   `transmog_stream_read` reads one payload by `sequence` with bounded base64 byte
   ranges, retention state and `nextOffset`. Payload reads require unredacted access.
 - `transmog_traffic_wait` waits up to 30 seconds for scoped matching traffic after
   `afterRequestNumber`. It checks existing matches before waiting, leaves other
   calls available and returns `timedOut: true` for an empty timeout.
+
+`transmog_headers_read` pages complete ordered field values, preserving duplicates
+and binary values with explicit UTF-8/base64 encoding. Its `context` reference
+contains the entire sanitized block. `transmog_body_read` pages retained encoded
+bytes as base64; `decodeContent: true` returns a decoded context page. Continue
+with `transmog_context_read`, its `contextId`, and `nextOffset`. Offsets and
+`totalBytes` are decimal byte-position strings; text offsets refer to UTF-8 bytes.
+A tiny page that splits a character uses base64 to preserve its exact bytes.
+
+Context references expire after five minutes and belong to one key, grant revision
+and source scope. Each page rechecks its original disclosure requirements.
+Up to 64 contexts per key and 256 globally share a 512 MiB memory budget;
+older contexts for the same key can be replaced. Whole-document decoding is
+bounded to 256 MiB and retains the native codec safeguards. Raw retained byte
+ranges have no whole-document ceiling. Missing or incomplete sources produce
+explicit errors rather than a purported complete document. Inline test/extraction
+results set `inlineComplete: false` when the full result needs its context reader.
 
 The default redaction policy suppresses known authentication-header values and all
 message bodies, including sensitive authored rule content. It does not sanitize
@@ -115,8 +136,14 @@ Shared edits preserve other existing native match conditions. `transmog_rule_get
 returns the native definition for review plus the authoring `definition` when
 disclosure allows it. Use its revision for updates. Revising a temporary draft
 requires both `id` and `expectedRevision`.
-Network-free rule tests return readable ordered headers with explicit UTF-8 or
-base64 encoding, or the literal text operation's before/after sample and outcome.
+`transmog_rule_test` accepts exactly one of `sample` or `sampleExchangeId`.
+Captured samples use complete retained headers and, for text rules, decoded body
+content. Choose `requestBoundary` (default `client-request`) and
+`responseBoundary` (default `client-response`) to test before or after live edits.
+Tests return ordered headers or before/after text with the native outcome and a
+complete result context; they do not send traffic or activate rules. Source scope
+and unredacted access still apply. Native text transforms retain their 1 MiB
+input/output limit.
 
 Shared header/text edits use saved-rule revisions; stale writes conflict rather
 than overwrite newer human work. Rule reads need no separate capability, while
@@ -137,8 +164,25 @@ pauses; agents cannot take over a human's existing controller.
 
 Send calls require an operation ID. Reusing it with identical input returns the
 recorded outcome or uncertainty without resending; different input conflicts.
-The CLI never retries mutations. After timeout, inspect the outcome before
-sending again. The send ledger lasts only for the current desktop run.
+Validation runs before admission, so rejected arguments do not consume an ID.
+`transmog_request_status` reads this key's `pending`, `completed` or
+`outcome-unknown` state without sending. Cancellation after admission records
+uncertainty and never retries automatically. The CLI never retries mutations;
+inspect traffic before choosing a new operation after uncertainty. The ledger
+lasts only for the current desktop run.
+
+`transmog_request_send` defaults to `mode: "direct"`, which sends to the origin
+without applying live rules. Use `mode: "live-rules"` to verify changes through
+the running loopback proxy, including its current rules, hooks and observers.
+HTTPS uses CONNECT with certificate verification against the running proxy's
+public interception CA and requires HTTPS decryption to be enabled. It requires
+collection to be running and body retention configured; it never starts collection
+automatically. Live-rules sends allow up to 4 MiB of request
+body and consume up to 16 MiB of response body. Results identify the mode and an
+exchange ID for inspecting observed boundaries and rule attribution.
+Replay evidence remains available across later sends, within a history of
+100 exchanges and a 256 MiB aggregate body budget (the latest exchange is kept).
+Retention/source omissions remain explicit; replay history ends with the app run.
 
 `transmog_request_prepare` creates an editable draft from an authorized request
 boundary without sending. It preserves duplicate headers, explains dropped
