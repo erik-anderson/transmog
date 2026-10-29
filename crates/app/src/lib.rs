@@ -1571,6 +1571,134 @@ impl Application {
             .release(view_id);
     }
 
+    /// Reads at most 200 explicit retained metadata rows, preserving supplied order.
+    /// # Errors
+    /// Returns invalid identities or a bounded-input failure. Evicted rows are omitted.
+    pub fn session_summaries(&self, ids: &[String]) -> Result<Vec<SessionSummary>, AppError> {
+        if ids.len() > 200 {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "Read at most 200 metadata rows",
+                false,
+            ));
+        }
+        let capturing = matches!(self.capture_status(), CaptureReadModel::Active { .. });
+        let now = std::time::SystemTime::now();
+        let mut rows = Vec::new();
+        for id in ids {
+            let exchange = transmog_core::intercept::ExchangeId(inspector::parse_session_id(id)?);
+            if let Some(snapshot) = self.service.catalog().get(exchange) {
+                rows.push(sessions::summarize_with_trace(
+                    &snapshot,
+                    now,
+                    capturing,
+                    &self.traces,
+                ));
+            }
+        }
+        Ok(rows)
+    }
+
+    /// Searches an explicit snapshot without changing the human's search or selections.
+    /// Header values excluded by the predicate never participate in matching.
+    /// # Errors
+    /// Returns invalid search inputs, cancellation or bounded decoding failures.
+    pub async fn search_traffic_scoped(
+        &self,
+        request: TrafficSearchRequest,
+        ids: Vec<String>,
+        omit_header: fn(&str) -> bool,
+    ) -> Result<TrafficSearchResult, AppError> {
+        search::search_scoped(
+            request,
+            ids,
+            self.service.clone(),
+            self.body_store.clone(),
+            omit_header,
+        )
+        .await
+    }
+
+    /// Reads complete text request-head fields without reading body content.
+    /// # Errors
+    /// Returns an unavailable boundary, an evicted entry, or non-text header bytes.
+    pub fn captured_request_head(
+        &self,
+        id: &str,
+        boundary: &str,
+    ) -> Result<(ComposerRequest, Vec<String>), AppError> {
+        let snapshot = if let Some(response) = self.composer.response(id) {
+            response.snapshot.clone()
+        } else {
+            self.service
+                .catalog()
+                .get(transmog_core::intercept::ExchangeId(
+                    inspector::parse_session_id(id)?,
+                ))
+                .ok_or_else(|| {
+                    AppError::new(
+                        ErrorCategory::Unavailable,
+                        "Request is no longer retained",
+                        false,
+                    )
+                })?
+        };
+        let head = snapshot
+            .request_heads
+            .iter()
+            .find(|head| inspector::boundary(head.boundary) == boundary)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Request boundary is unavailable",
+                    false,
+                )
+            })?;
+        let mut omitted_headers = Vec::new();
+        let headers = head
+            .head
+            .headers
+            .iter()
+            .filter(|field| {
+                if field.is_redacted() {
+                    omitted_headers.push(String::from_utf8_lossy(field.name()).into_owned());
+                    false
+                } else {
+                    true
+                }
+            })
+            .map(|field| {
+                let text = |bytes: &[u8]| {
+                    std::str::from_utf8(bytes).map(str::to_owned).map_err(|_| {
+                        AppError::new(
+                            ErrorCategory::InvalidInput,
+                            "A captured header cannot be represented as text",
+                            false,
+                        )
+                    })
+                };
+                Ok(ComposerHeader {
+                    name: text(field.name())?,
+                    value: text(field.value())?,
+                })
+            })
+            .collect::<Result<Vec<_>, AppError>>()?;
+        Ok((
+            ComposerRequest {
+                method: head.head.method.clone(),
+                url: self.copy_message_url(id, boundary)?,
+                headers,
+                body: String::new(),
+                body_source: None,
+                source_entry_id: Some(id.into()),
+                body_is_hex: false,
+                acknowledge_non_idempotent: false,
+                acknowledge_credentials: false,
+            },
+            omitted_headers,
+        ))
+    }
+
     /// Reads compact timing metadata for a bounded window of a filtered traffic view.
     ///
     /// # Errors

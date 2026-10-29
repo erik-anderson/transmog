@@ -20,6 +20,8 @@ use transmog_app::{
     TrafficDimension, TrafficFilterGroup, TrafficFilterValue,
 };
 use transmog_automation::Rule;
+mod authoring;
+mod inspection;
 
 /// Existing desktop proxy-start validation and host setup, injected without UI dependencies.
 pub trait ProxyHost: Send + Sync + 'static {
@@ -45,6 +47,7 @@ struct Runtime {
     sends: HashMap<(String, String), (Vec<u8>, Option<Value>)>,
     recording: Option<(String, u64, PathBuf)>,
     activity: Vec<Value>,
+    snapshots: std::collections::VecDeque<inspection::Snapshot>,
 }
 
 /// Shared operations for one main workspace. Runtime control handles never outlive this instance.
@@ -133,6 +136,7 @@ impl AgentApplication {
             self.end_control(&id).await?;
         }
         self.end_recording().await?;
+        self.lock().snapshots.clear();
         Ok(())
     }
 
@@ -221,18 +225,29 @@ impl AgentApplication {
         if operation == "transmog_request_send" {
             return self.send(&grant, &input).await;
         }
+        if operation == "transmog_traffic_wait" {
+            let result = self.wait_traffic(&grant, &input).await;
+            self.activity(&grant, operation, result.is_ok());
+            return result;
+        }
+        if operation == "transmog_traffic_search" {
+            let result = self.search_traffic(&grant, &input).await;
+            self.activity(&grant, operation, result.is_ok());
+            return result;
+        }
         let _operation = self.operations.lock().await;
         self.cleanup().await?;
         let result = match operation {
             "transmog_connect" | "transmog_status" => Ok(
                 json!({"connected":true,"instanceId":self.instance_id,"grant":{"id":grant.id,"name":grant.name,"permissions":grant.permissions,"scope":grant.scope,"expiresAt":grant.expires_at,"omitSensitiveValues":grant.omit_sensitive_values},"sensitiveAccess":self.access.sensitive_access_status(&grant)?,"proxy":self.application.status(),"recordingActive":matches!(self.application.capture_status(), transmog_app::CaptureReadModel::Active{..}),"limits":{"pageSize":200,"bodyReadBytes":65536,"controlLeaseSeconds":600}}),
             ),
-            "transmog_traffic_list" => self.list(&grant, &input),
-            "transmog_exchange_get" => {
-                let mut detail = self.detail(&grant, &input, "id")?;
-                hide_bodies(&mut detail);
-                Ok(detail)
-            }
+            "transmog_traffic_list" => self.traffic_page(&grant, &input),
+            "transmog_exchange_get" => self.exchange(&grant, &input),
+            "transmog_exchanges_get" => self.exchanges(&grant, &input),
+            "transmog_body_extract" => self.extract_body(&grant, &input).await,
+            "transmog_request_prepare" => self.prepare_request(&grant, &input),
+            "transmog_stream_list" => self.stream_list(&grant, &input),
+            "transmog_stream_read" => self.stream_read(&grant, &input),
             "transmog_headers_read" => {
                 self.entry(&grant, &input, "id")?;
                 let id = string(&input, "id")?;
@@ -431,68 +446,6 @@ impl AgentApplication {
         }
         mask_headers(&mut detail, grant.allows(Permission::ReadCredentials));
         Ok(detail)
-    }
-
-    fn list(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
-        grant.require(Permission::Inspect)?;
-        let offset = index(input, "offset", 0, 1_000_000)?;
-        let limit = index(input, "limit", 100, 200)?.max(1);
-        let mut query = SessionQueryInput {
-            search: optional_string(input, "search")?,
-            method: optional_string(input, "method")?,
-            host: optional_string(input, "host")?,
-            offset: Some(offset),
-            limit: Some(limit),
-            ..SessionQueryInput::default()
-        };
-        if let Scope::Hosts { hosts } = &grant.scope {
-            query.filter_groups.push(TrafficFilterGroup {
-                dimension: TrafficDimension::Column(TrafficColumn::Host),
-                values: hosts
-                    .iter()
-                    .cloned()
-                    .map(TrafficFilterValue::Text)
-                    .collect(),
-            });
-        }
-        if let Scope::Requests { instance_id, ids } = &grant.scope {
-            if instance_id != &self.instance_id {
-                return Err(Error::new(
-                    "stale_instance",
-                    "The selected-request grant belongs to a previous run. Edit its scope in Transmog.",
-                ));
-            }
-            // Selection scopes are bounded to 4096 IDs; unrelated catalog entries never enter the result.
-            let selected: std::collections::HashSet<_> = ids.iter().collect();
-            let matching = self
-                .application
-                .matching_traffic_ids(&query)
-                .map_err(app_error)?;
-            let matching: Vec<_> = matching
-                .into_iter()
-                .filter(|id| selected.contains(id))
-                .collect();
-            let mut rows = Vec::new();
-            for id in matching.iter().skip(offset).take(limit) {
-                if let Ok(mut detail) =
-                    self.detail(grant, &json!({"instanceId":self.instance_id,"id":id}), "id")
-                {
-                    hide_bodies(&mut detail);
-                    rows.push(detail);
-                }
-            }
-            return Ok(
-                json!({"instanceId":self.instance_id,"sessions":rows,"totalMatched":matching.len(),"nextOffset":(offset+rows.len()<matching.len()).then_some(offset+rows.len())}),
-            );
-        }
-        let page = self.application.query_sessions(query).map_err(app_error)?;
-        let next = (offset + page.sessions.len() < page.total_matched)
-            .then_some(offset + page.sessions.len());
-        let mut rows = value(page.sessions)?;
-        mask_headers(&mut rows, grant.allows(Permission::ReadCredentials));
-        Ok(
-            json!({"instanceId":self.instance_id,"sessions":rows,"totalMatched":page.total_matched,"nextOffset":next}),
-        )
     }
 
     async fn body(&self, grant: &Grant, input: &Value, id_field: &str) -> Result<Value, Error> {
@@ -738,7 +691,7 @@ impl AgentApplication {
             omitted.push("Authored body content requires Read message bodies permission.");
         }
         Ok(
-            json!({"summary":rule_summary(&rule),"rule":if omitted.is_empty(){Some(&rule)}else{None},"editable":omitted.is_empty() && self.editable_rule(grant,id).is_ok() && (!rule.enabled || grant.allows(Permission::Modify)),"omitted":omitted}),
+            json!({"summary":rule_summary(&rule),"rule":if omitted.is_empty(){Some(&rule)}else{None},"definition":if omitted.is_empty(){authoring::definition(&rule)}else{None},"editable":omitted.is_empty() && self.editable_rule(grant,id).is_ok() && (!rule.enabled || grant.allows(Permission::Modify)),"omitted":omitted}),
         )
     }
 
@@ -779,11 +732,9 @@ impl AgentApplication {
             ));
         }
         let previous = self.editable_rule(grant, id)?;
-        let mut rule: Rule = parse(input["rule"].clone())?;
-        if rule.id != id {
-            return Err(invalid(
-                "The replacement must retain the existing shared rule ID.",
-            ));
+        let mut rule = Self::author_rule(&input["rule"], Some(&previous))?;
+        if let Some(enabled) = input["enabled"].as_bool() {
+            rule.enabled = enabled;
         }
         Self::check_rule_scope(grant, &rule)?;
         if previous.enabled || rule.enabled {
@@ -874,7 +825,6 @@ impl AgentApplication {
     fn prepare_rule(&self, grant: &Grant, input: &Value) -> Result<Value, Error> {
         self.check_instance(input)?;
         grant.require(Permission::PrepareChanges)?;
-        let mut rule: Rule = parse(input["rule"].clone())?;
         let expected = input
             .get("expectedRevision")
             .map(|value| {
@@ -883,12 +833,22 @@ impl AgentApplication {
                     .ok_or_else(|| invalid("expectedRevision must be a nonnegative integer."))
             })
             .transpose()?;
-        if expected.is_some() {
-            let previous = self.owned_rule(grant, &rule.id)?;
+        let previous = if expected.is_some() {
+            let previous = self.owned_rule(grant, string(input, "id")?)?;
             if previous.enabled {
                 grant.require(Permission::Modify)?;
             }
+            Some(previous)
         } else {
+            None
+        };
+        if input.get("id").is_some() && expected.is_none() {
+            return Err(invalid(
+                "id requires expectedRevision when revising a temporary rule.",
+            ));
+        }
+        let mut rule = Self::author_rule(&input["rule"], previous.as_ref())?;
+        if previous.is_none() {
             rule.id = format!("mcp-{}-{}", grant.id, random(9)?);
             rule.revision = 1;
         }
@@ -934,24 +894,32 @@ impl AgentApplication {
             return Err(invalid("The test sample must be an object."));
         }
         sample["rule"] = value(rule.clone())?;
+        authoring::sample_headers(&mut sample)?;
+        if sample.get("responseStatus").is_none() {
+            sample["responseStatus"] = json!(200);
+        }
         let sample: HeaderRuleTestInput = parse(sample)?;
         if !grant.scope.allows_url(&sample.url) {
             return Err(denied("The sample URL is outside this key's scope."));
         }
         if transmog_automation::is_text_transform_rule(&rule) {
-            value(
+            let mut result = value(
                 self.application
                     .test_response_transform(&TextTransformTestInput {
                         sample,
                         body: optional_string(input, "body")?.unwrap_or_default(),
                     })
                     .map_err(app_error)?,
-            )
+            )?;
+            result["kind"] = json!("response-text");
+            Ok(result)
         } else {
-            value(
-                self.application
-                    .test_header_rule(&sample)
-                    .map_err(app_error)?,
+            let result = self
+                .application
+                .test_header_rule(&sample)
+                .map_err(app_error)?;
+            Ok(
+                json!({"kind":"headers","test":result.test,"before":authoring::test_headers(&result.before,grant),"after":authoring::test_headers(&result.after,grant),"operations":result.operations}),
             )
         }
     }
@@ -1331,62 +1299,7 @@ fn validate_arguments(operation: &str, input: &Value) -> Result<(), Error> {
         .into_iter()
         .find(|tool| tool.name == operation)
         .ok_or_else(|| invalid("Unknown Transmog tool."))?;
-    let fields = input
-        .as_object()
-        .ok_or_else(|| invalid("Operation arguments must be an object."))?;
-    let properties = spec.schema["properties"]
-        .as_object()
-        .expect("object schema");
-    if fields.keys().any(|key| !properties.contains_key(key))
-        || spec.schema["required"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .any(|required| !fields.contains_key(required.as_str().unwrap_or_default()))
-    {
-        return Err(invalid(
-            "The operation has missing or unsupported arguments.",
-        ));
-    }
-    for (name, field) in fields {
-        let schema = &properties[name];
-        let valid = match schema["type"].as_str() {
-            Some("string") => field.as_str().is_some_and(|text| {
-                schema
-                    .get("maxLength")
-                    .and_then(Value::as_u64)
-                    .is_none_or(|max| text.chars().count() as u64 <= max)
-                    && schema
-                        .get("minLength")
-                        .and_then(Value::as_u64)
-                        .is_none_or(|min| text.chars().count() as u64 >= min)
-            }),
-            Some("integer") => field.as_u64().is_some_and(|number| {
-                schema
-                    .get("maximum")
-                    .and_then(Value::as_u64)
-                    .is_none_or(|max| number <= max)
-                    && schema
-                        .get("minimum")
-                        .and_then(Value::as_u64)
-                        .is_none_or(|min| number >= min)
-            }),
-            Some("boolean") => field.is_boolean(),
-            Some("object") => field.is_object(),
-            _ => true,
-        };
-        if !valid
-            || schema
-                .get("enum")
-                .and_then(Value::as_array)
-                .is_some_and(|choices| !choices.contains(field))
-        {
-            return Err(invalid(
-                "An operation argument has an invalid type, value or size.",
-            ));
-        }
-    }
-    Ok(())
+    crate::catalog::validation::validate(&spec.schema, input)
 }
 
 #[cfg(test)]

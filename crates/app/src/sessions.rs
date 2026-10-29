@@ -772,7 +772,7 @@ fn text_value(row: &SessionSummary, column: TrafficColumn) -> String {
     }
 }
 
-fn summarize_with_trace(
+pub(crate) fn summarize_with_trace(
     snapshot: &SessionSnapshot,
     now: SystemTime,
     capturing: bool,

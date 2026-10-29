@@ -364,6 +364,7 @@ impl SearchRegistry {
                 store.as_ref(),
                 &canceled,
                 progress.as_ref(),
+                None,
             ))
         })
         .await;
@@ -465,15 +466,19 @@ async fn scan(
     store: Option<&BodyStore>,
     canceled: &AtomicBool,
     progress: &(dyn Fn(TrafficSearchProgress) + Send + Sync),
+    scope: Option<&ScanScope>,
 ) -> Result<TrafficSearchResult, AppError> {
     if let Some(store) = store {
         store
             .flush()
             .map_err(|_| unavailable("Recent body data could not be synchronized"))?;
     }
-    let entries = service
+    let entries: Vec<_> = service
         .catalog()
-        .project_retained(|snapshot| snapshot.exchange_id);
+        .project_retained(|snapshot| snapshot.exchange_id)
+        .into_iter()
+        .filter(|id| scope.is_none_or(|scope| scope.ids.contains(id)))
+        .collect();
     if entries.len() > MAX_RESULTS {
         return Err(invalid("The search snapshot exceeds the entry limit"));
     }
@@ -497,9 +502,16 @@ async fn scan(
             found = scoped_headers(&snapshot, request)
                 .iter()
                 .any(|(_, headers)| {
-                    headers
-                        .iter()
-                        .any(|field| matcher.matches(&header_text(field)))
+                    headers.iter().any(|field| {
+                        let omitted = scope.is_some_and(|scope| {
+                            (scope.omit_header)(&String::from_utf8_lossy(field.name()))
+                        });
+                        if omitted {
+                            matcher.matches(&String::from_utf8_lossy(field.name()))
+                        } else {
+                            matcher.matches(&header_text(field))
+                        }
+                    })
                 });
         }
         for (enabled, direction) in [
@@ -548,6 +560,53 @@ async fn scan(
         return Err(unavailable("Traffic search canceled"));
     }
     Ok(result)
+}
+
+struct ScanScope {
+    ids: HashSet<ExchangeId>,
+    omit_header: fn(&str) -> bool,
+}
+
+/// Cancellation of the awaiting API also stops its independent search worker.
+struct ScopedCancellation(Arc<AtomicBool>);
+impl Drop for ScopedCancellation {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Release);
+    }
+}
+
+pub(crate) async fn search_scoped(
+    request: TrafficSearchRequest,
+    ids: Vec<String>,
+    service: ApplicationSessionService,
+    store: Option<BodyStore>,
+    omit_header: fn(&str) -> bool,
+) -> Result<TrafficSearchResult, AppError> {
+    let matcher = Matcher::new(&request)?;
+    if ids.len() > MAX_RESULTS {
+        return Err(invalid("The search snapshot exceeds the entry limit"));
+    }
+    let ids = ids
+        .iter()
+        .map(|id| inspector::parse_session_id(id).map(ExchangeId))
+        .collect::<Result<HashSet<_>, _>>()?;
+    let scope = ScanScope { ids, omit_header };
+    let cancel = ScopedCancellation(Arc::new(AtomicBool::new(false)));
+    let canceled = cancel.0.clone();
+    let runtime = tokio::runtime::Handle::current();
+    tokio::task::spawn_blocking(move || {
+        runtime.block_on(scan(
+            &request,
+            &matcher,
+            &service,
+            store.as_ref(),
+            &canceled,
+            &|_| {},
+            Some(&scope),
+        ))
+    })
+    .await
+    .map_err(|_| unavailable("Traffic search worker failed"))?
 }
 enum BodyText {
     Text(String, String),

@@ -4,6 +4,10 @@ Let agents inspect request/response context, control capture, send requests and
 collaborate on traffic rules. MCP is off by default and accepts only local
 loopback connections.
 
+Agents can filter and search traffic, inspect WebSocket/SSE messages, extract JSON
+fields and prepare replay drafts without sending them. Body search, extraction
+and stream payload reads follow the same unredacted-access setting as body reads.
+
 ## Connect an agent
 
 1. Open **Settings → Integrations** in the main desktop window and enable
@@ -51,7 +55,7 @@ See [matching details](mcp-reference.md#evidence-and-disclosure).
 
 | Permission | Allows |
 | --- | --- |
-| View request details | Inspect scoped traffic, headers, timings and changes |
+| View request details | Search scoped traffic and inspect headers, timings, changes and stream metadata |
 | Control collection | Start/stop the shared proxy and the agent's recordings |
 | Prepare changes | Create, edit and test the agent's disabled header/text rule drafts |
 | Edit shared rules | Edit existing saved header/text rules |
@@ -68,10 +72,9 @@ revoking a key.
 
 ## Configuration, keys and restarts
 
-Open **Configuration…** on an agent entry to copy its setup again. Older entries
-without a recoverable key need **Replace key…** once. Replacement invalidates the
-old key; update the agent with the new configuration. **Revoke…** permanently
-invalidates a key.
+Open **Configuration…** on an agent entry to copy its setup again. **Replace key…**
+invalidates its current key; update the agent with the new configuration.
+**Revoke…** permanently invalidates a key.
 
 **Copy URL** and **Copy port** share the current private endpoint, which changes on
 restart. Agents connect through the generated stdio configuration.

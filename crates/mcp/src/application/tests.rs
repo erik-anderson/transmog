@@ -1,4 +1,5 @@
 use super::*;
+mod api;
 
 #[test]
 fn header_redaction_matches_credential_terms_across_case_and_separators() {
@@ -102,6 +103,13 @@ impl Harness {
     }
     async fn call(&self, grant: &Grant, operation: &str, mut input: Value) -> Result<Value, Error> {
         input["instanceId"] = json!(self.adapter.instance_id);
+        if input["rule"].get("matcher").is_some() {
+            let native: Rule = serde_json::from_value(input["rule"].clone()).unwrap();
+            if operation == "transmog_rule_prepare" && input.get("expectedRevision").is_some() {
+                input["id"] = json!(native.id);
+            }
+            input["rule"] = authoring::definition(&native).unwrap();
+        }
         self.adapter.handle(grant.clone(), operation, input).await
     }
     fn human_rule(&self, enabled: bool) -> Rule {
@@ -508,7 +516,11 @@ async fn real_loopback_proxy_exposes_scoped_original_and_effective_evidence_thro
     rule.matcher.host = Some("127.0.0.1".into());
     rule.response.headers = std::mem::take(&mut rule.request.headers);
     let prepared = h
-        .call(&grant, "transmog_rule_prepare", json!({"rule":rule}))
+        .call(
+            &grant,
+            "transmog_rule_prepare",
+            json!({"rule":authoring::definition(&rule).unwrap()}),
+        )
         .await
         .unwrap();
     let control = h

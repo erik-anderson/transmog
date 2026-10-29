@@ -16,6 +16,42 @@ async fn stdio_discovery_initializes_without_desktop_or_key_and_calls_explain_se
     });
     let client = ().serve(client_io).await.unwrap();
     let tools = client.list_tools(None).await.unwrap();
+    assert_eq!(tools.tools.len(), 34);
+    for tool in &tools.tools {
+        let output = tool
+            .output_schema
+            .as_ref()
+            .expect("Every tool advertises its result contract");
+        assert!(
+            output.contains_key("properties") || output.contains_key("anyOf"),
+            "{} has no result fields",
+            tool.name
+        );
+        if let Some(examples) = tool
+            .input_schema
+            .get("examples")
+            .and_then(serde_json::Value::as_array)
+        {
+            for example in examples {
+                crate::catalog::validation::validate(
+                    &serde_json::Value::Object((*tool.input_schema).clone()),
+                    example,
+                )
+                .unwrap();
+            }
+        }
+    }
+    let annotations = tools
+        .tools
+        .iter()
+        .find(|tool| tool.name == "transmog_connect")
+        .unwrap()
+        .annotations
+        .as_ref()
+        .unwrap();
+    assert_eq!(annotations.destructive_hint, Some(false));
+    assert_eq!(annotations.open_world_hint, Some(false));
+    assert_eq!(annotations.idempotent_hint, Some(true));
     assert!(
         tools
             .tools
@@ -30,6 +66,15 @@ async fn stdio_discovery_initializes_without_desktop_or_key_and_calls_explain_se
     assert_eq!(
         response.structured_content.unwrap()["error"]["code"],
         "unauthorized"
+    );
+    let unknown = client
+        .call_tool(CallToolRequestParams::new("transmog_missing"))
+        .await
+        .unwrap();
+    assert_eq!(unknown.is_error, Some(true));
+    assert_eq!(
+        unknown.structured_content.unwrap()["error"]["code"],
+        "unknown_tool"
     );
     client.cancel().await.unwrap();
     server.await.unwrap();

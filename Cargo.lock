@@ -7002,6 +7002,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "regex",
  "rmcp",
  "serde",
  "serde_json",

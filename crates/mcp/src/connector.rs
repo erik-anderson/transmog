@@ -59,6 +59,11 @@ impl Connector {
                 "Configure TRANSMOG_ACCESS_KEY for this MCP server. Create a key in Transmog Settings → Integrations → MCP.",
             ));
         }
+        let spec = tool_catalog()
+            .into_iter()
+            .find(|tool| tool.name == name)
+            .ok_or_else(|| Error::new("unknown_tool", "Unknown Transmog operation."))?;
+        crate::catalog::validation::validate(&spec.schema, &input)?;
         if name == "transmog_connect" && self.start_app {
             match self
                 .client
@@ -138,7 +143,7 @@ impl ServerHandler for Connector {
         let tools = tool_catalog()
             .into_iter()
             .map(|spec| {
-                Tool::new(
+                let mut tool = Tool::new(
                     spec.name,
                     spec.description,
                     spec.schema.as_object().expect("object tool schema").clone(),
@@ -146,9 +151,17 @@ impl ServerHandler for Connector {
                 .with_annotations(
                     ToolAnnotations::new()
                         .read_only(spec.read_only)
-                        .destructive(!spec.read_only)
-                        .open_world(!spec.read_only),
-                )
+                        .destructive(spec.destructive)
+                        .open_world(spec.open_world)
+                        .idempotent(spec.idempotent),
+                );
+                tool.output_schema = Some(Arc::new(
+                    spec.output_schema
+                        .as_object()
+                        .expect("object result schema")
+                        .clone(),
+                ));
+                tool
             })
             .collect();
         std::future::ready(Ok(ListToolsResult {
@@ -164,7 +177,7 @@ impl ServerHandler for Connector {
     ) -> Result<CallToolResponse, ErrorData> {
         if !tool_catalog().iter().any(|tool| tool.name == request.name) {
             return Ok(CallToolResult::structured_error(
-                serde_json::json!({"code":"unknown_tool","message":"Unknown Transmog operation."}),
+                serde_json::json!({"error":{"code":"unknown_tool","message":"Unknown Transmog operation."}}),
             )
             .into());
         }
