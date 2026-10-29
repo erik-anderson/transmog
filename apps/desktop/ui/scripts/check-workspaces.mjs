@@ -825,6 +825,16 @@ await page.addInitScript(
               activeAgents: structuredClone(state.mcpActiveAgents ?? []),
             };
           }
+          case "mcp_configuration_key": {
+            const grant = state.mcp.grants.find(
+              (item) => item.id === args.id && item.revision === args.revision && !item.revoked,
+            );
+            if (!grant || state.mcpConfigurationUnavailable)
+              throw new Error(
+                "This entry has no recoverable configuration. Replace its key, then copy the new configuration to the agent.",
+              );
+            return { key: state.mcpSavedKey ?? "tmk_fixture_secret_shown_once" };
+          }
           case "mcp_status":
           case "mcp_set_enabled":
           case "mcp_create_key":
@@ -867,6 +877,7 @@ await page.addInitScript(
             }
             if (command === "mcp_replace_key") {
               current.grants.find((grant) => grant.id === args.id).revision++;
+              state.mcpSavedKey = "tmk_fixture_replacement";
               return { key: "tmk_fixture_replacement", status: structuredClone(current) };
             }
             if (command === "mcp_revoke_key")

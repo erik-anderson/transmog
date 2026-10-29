@@ -13,18 +13,54 @@ export async function checkMcp(page, root) {
   await panel.getByText("MCP is off.", { exact: false }).waitFor();
   await panel.getByLabel("Allow MCP connections", { exact: true }).check();
   await panel.getByText("MCP is available on this computer.", { exact: true }).waitFor();
+  await panel.getByText("Next: allow an agent", { exact: true }).waitFor();
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/mcp-next-agent.png") });
+  await page.context().grantPermissions(["clipboard-read", "clipboard-write"]);
+  await panel.getByRole("button", { name: "Copy URL", exact: true }).click();
+  assert.equal(
+    await page.evaluate(() => navigator.clipboard.readText()),
+    "https://127.0.0.1:45678",
+  );
+  await panel.getByRole("button", { name: "Copy port", exact: true }).click();
+  assert.equal(await page.evaluate(() => navigator.clipboard.readText()), "45678");
   await page
     .locator("mcp-indicator")
     .getByRole("button", { name: "MCP enabled", exact: true })
     .waitFor();
   await panel.getByRole("button", { name: "Create access key…", exact: true }).click();
   const editor = panel.getByRole("dialog", { name: "Create access key", exact: true });
-  await editor.getByLabel("Name", { exact: true }).fill("Codex · shared rule collaboration");
+  await editor.getByLabel("Name", { exact: true }).fill("Work agent · shared rule collaboration");
+  assert.equal(await editor.getByLabel("Traffic scope", { exact: true }).inputValue(), "all");
+  await editor.getByLabel("Allow all", { exact: true }).check();
+  for (const label of [
+    "View request details",
+    "Control collection",
+    "Prepare changes",
+    "Edit shared rules",
+    "Change live traffic",
+    "Send requests",
+  ]) {
+    assert.equal(await editor.getByLabel(label, { exact: true }).isChecked(), true);
+  }
+  assert.equal(
+    await editor
+      .getByLabel("Redact authentication headers and bodies", { exact: true })
+      .isChecked(),
+    true,
+  );
+  await editor.getByLabel("Control collection", { exact: true }).uncheck();
+  assert.equal(await editor.getByLabel("Allow all", { exact: true }).isChecked(), false);
+  assert.equal(
+    await editor.locator('input[name="read-bodies"], input[name="read-credentials"]').count(),
+    0,
+  );
   await editor.getByLabel("Traffic scope", { exact: true }).selectOption("hosts");
   await editor.getByLabel("Exact hosts", { exact: true }).fill("api.example.test\nlocalhost");
   await editor.getByLabel("Edit shared rules", { exact: true }).check();
   assert.equal(
-    await editor.getByLabel("Omit authentication headers and bodies", { exact: true }).isChecked(),
+    await editor
+      .getByLabel("Redact authentication headers and bodies", { exact: true })
+      .isChecked(),
     true,
   );
   assert.equal(
@@ -44,13 +80,21 @@ export async function checkMcp(page, root) {
     });
   }
   await editor.getByRole("button", { name: "Create key", exact: true }).click();
-  const key = panel.getByRole("dialog", { name: "Save your access key", exact: true });
+  const key = panel.getByRole("dialog", { name: "Agent configuration", exact: true });
   await key.waitFor();
+  await key.getByRole("button", { name: "Copy configuration", exact: true }).click();
+  assert.match(
+    await page.evaluate(() => navigator.clipboard.readText()),
+    /TRANSMOG_ACCESS_KEY = "tmk_fixture_secret_shown_once"/,
+  );
+  assert.equal(await key.getByRole("button", { name: "Copy key", exact: true }).count(), 0);
+  assert.equal(await key.locator('input[type="password"]').count(), 0);
   assert.match(
     await key.getByLabel("Agent configuration containing access key", { exact: true }).inputValue(),
     /TRANSMOG_ACCESS_KEY = "tmk_fixture_secret_shown_once"/,
   );
-  await key.getByLabel("Agent configuration", { exact: true }).selectOption("copilot");
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/mcp-configuration.png") });
+  await key.getByLabel("Configuration format", { exact: true }).selectOption("json");
   const config = JSON.parse(
     await key.getByLabel("Agent configuration containing access key", { exact: true }).inputValue(),
   );
@@ -69,7 +113,25 @@ export async function checkMcp(page, root) {
       .evaluate((button) => button.matches(":focus")),
     true,
   );
-  const row = panel.locator("article").filter({ hasText: "Codex · shared rule collaboration" });
+  const row = panel
+    .locator("article")
+    .filter({ hasText: "Work agent · shared rule collaboration" });
+  await row.getByRole("button", { name: "Configuration…", exact: true }).click();
+  await key.waitFor();
+  assert.match(
+    await key.getByLabel("Agent configuration containing access key", { exact: true }).inputValue(),
+    /tmk_fixture_secret_shown_once/,
+  );
+  await page.keyboard.press("Escape");
+  await key.waitFor({ state: "hidden" });
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcpConfigurationUnavailable = true;
+  });
+  await row.getByRole("button", { name: "Configuration…", exact: true }).click();
+  await panel.getByRole("alert").filter({ hasText: "Replace its key" }).waitFor();
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.mcpConfigurationUnavailable = false;
+  });
   await checkConnectionIndicator(page, root);
   await checkSensitiveApprovals(page, root, panel);
   await row.getByRole("button", { name: "Edit permissions…", exact: true }).click();
@@ -164,8 +226,8 @@ async function checkConnectionIndicator(page, root) {
   await page.evaluate(() => {
     const state = globalThis.__workspaceFixture;
     state.mcpActiveAgents = [
-      { id: "codex", name: "Codex · shared rule collaboration" },
-      { id: "copilot", name: "Copilot · investigating a long request and response context" },
+      { id: "codex", name: "Work agent · shared rule collaboration" },
+      { id: "copilot", name: "Review agent · investigating a long request and response context" },
     ];
     state.emitNative("mcp-activity-changed");
   });
@@ -174,9 +236,9 @@ async function checkConnectionIndicator(page, root) {
   const access = indicator.getByRole("dialog", { name: "Agent access", exact: true });
   await access
     .getByRole("listitem")
-    .filter({ hasText: "Codex · shared rule collaboration" })
+    .filter({ hasText: "Work agent · shared rule collaboration" })
     .waitFor();
-  await access.getByRole("listitem").filter({ hasText: "Copilot · investigating" }).waitFor();
+  await access.getByRole("listitem").filter({ hasText: "Review agent · investigating" }).waitFor();
   for (const width of [1440, 960, 800]) {
     await page.setViewportSize({ width, height: width === 800 ? 600 : 900 });
     assert.equal(
@@ -355,11 +417,13 @@ async function checkSensitiveApprovals(page, root, panel) {
   await panel.getByRole("button", { name: "Edit permissions…", exact: true }).click();
   const editor = panel.getByRole("dialog", { name: "Edit agent permissions", exact: true });
   assert.equal(
-    await editor.getByLabel("Omit authentication headers and bodies", { exact: true }).isChecked(),
+    await editor
+      .getByLabel("Redact authentication headers and bodies", { exact: true })
+      .isChecked(),
     false,
   );
   // Restore protection through the saved setting before leaving this flow.
-  await editor.getByLabel("Omit authentication headers and bodies", { exact: true }).check();
+  await editor.getByLabel("Redact authentication headers and bodies", { exact: true }).check();
   await editor.getByRole("button", { name: "Save permissions", exact: true }).click();
   await editor.waitFor({ state: "hidden" });
   await page.setViewportSize({ width: 1440, height: 900 });

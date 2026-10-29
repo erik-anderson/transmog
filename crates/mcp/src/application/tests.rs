@@ -1,4 +1,50 @@
 use super::*;
+
+#[test]
+fn header_redaction_matches_credential_terms_across_case_and_separators() {
+    for name in [
+        "X-Client-Assertion",
+        "X-Passphrase",
+        "DPoP",
+        "X-JWT",
+        "X-Bearer",
+        "X-SAML",
+    ] {
+        assert!(sensitive(name), "{name} must be redacted");
+    }
+    for name in [
+        "AuthMsaDeviceTicket",
+        "APIKey",
+        "api-key",
+        "api_key",
+        "X_AcCeSs_ToKeN",
+        "Cookie",
+        "Proxy-Authorization",
+        "X-Session-ID",
+        "X-Password",
+        "X-Client-Secret",
+        "X-Credential",
+        "X-CSRF",
+        "X-XSRF",
+        "X-Signature",
+        "Ocp-Apim-Subscription-Key",
+        "X-Private-Key",
+        "X-Access-Key",
+    ] {
+        assert!(sensitive(name), "{name} must be redacted");
+    }
+    for name in [
+        "Content-Type",
+        "User-Agent",
+        "X-Request-ID",
+        "Accept",
+        "Cache-Control",
+        "Public-Key-Pins",
+        "X-Monkey",
+    ] {
+        assert!(!sensitive(name), "{name} is unrelated to credentials");
+    }
+}
 use crate::GrantInput;
 use transmog_app::AppConfig;
 
@@ -600,6 +646,8 @@ async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_
         .await
         .unwrap();
     assert!(!detail.to_string().contains("retained-cookie-secret"));
+    assert!(!detail.to_string().contains("retained-ticket-secret"));
+    assert!(!detail.to_string().contains("retained-api-secret"));
     let pending = client
         .call(
             key.expose(),
@@ -628,6 +676,8 @@ async fn protected_evidence_requires_a_human_decision_and_is_hidden_again_after_
         .await
         .unwrap();
     assert!(detail.to_string().contains("retained-cookie-secret"));
+    assert!(detail.to_string().contains("retained-ticket-secret"));
+    assert!(detail.to_string().contains("retained-api-secret"));
     h.access.revoke_sensitive_access(id).unwrap();
     assert_eq!(
         client
@@ -663,6 +713,12 @@ impl transmog_session::ReplayExecutor for ResponseFixture {
                 headers: transmog_core::HeaderBlock::from_fields(vec![
                     transmog_core::HeaderField::try_new("Set-Cookie", "retained-cookie-secret")
                         .unwrap(),
+                    transmog_core::HeaderField::try_new(
+                        "AuthMsaDeviceTicket",
+                        "retained-ticket-secret",
+                    )
+                    .unwrap(),
+                    transmog_core::HeaderField::try_new("APIKey", "retained-api-secret").unwrap(),
                 ]),
             })
         })

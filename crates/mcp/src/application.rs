@@ -1230,24 +1230,39 @@ fn app_error(error: transmog_app::AppError) -> Error {
     )
 }
 fn sensitive(name: &str) -> bool {
-    matches!(
-        name.to_ascii_lowercase().as_str(),
-        "authorization"
-            | "proxy-authorization"
-            | "cookie"
-            | "set-cookie"
-            | "authentication-info"
-            | "proxy-authentication-info"
-            | "www-authenticate"
-            | "proxy-authenticate"
-            | "x-api-key"
-            | "api-key"
-            | "x-auth-token"
-            | "x-access-token"
-            | "x-amz-security-token"
-            | "x-csrf-token"
-            | "x-xsrf-token"
-    )
+    // Normalize separators so APIKey, Api-Key and api_key share the same policy.
+    // Conservative false positives are preferable to disclosing credential values.
+    let normalized: String = name
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|value| value.to_ascii_lowercase())
+        .collect();
+    [
+        "auth",
+        "ticket",
+        "token",
+        "secret",
+        "credential",
+        "cookie",
+        "apikey",
+        "password",
+        "passwd",
+        "session",
+        "csrf",
+        "xsrf",
+        "signature",
+        "subscriptionkey",
+        "privatekey",
+        "accesskey",
+        "bearer",
+        "jwt",
+        "saml",
+        "dpop",
+        "assertion",
+        "passphrase",
+    ]
+    .iter()
+    .any(|term| normalized.contains(term))
 }
 
 fn rule_has_credentials(rule: &Rule) -> bool {

@@ -6,8 +6,9 @@ layers. Desktop and headless callers share those failure and privacy semantics.
 ## Persisted state
 
 [MCP access grants](mcp.md) use a separate authoritative store for key verifiers,
-permissions, scope, expiry and revocation. Plaintext keys are shown once and never
-stored with settings. Connection discovery contains only a loopback endpoint and
+permissions, scope, expiry and revocation. New and replaced keys have a Windows
+user-bound encrypted copy for reopening agent configuration. Plaintext keys never
+enter the settings store. Connection discovery contains only a loopback endpoint and
 the current run's certificate pin; control handles and send retry records expire
 with that run.
 

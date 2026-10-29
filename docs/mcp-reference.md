@@ -11,8 +11,10 @@ arguments and discovery descriptions.
 The agent-facing MCP transport is stdio. Each CLI invocation presents its own
 `TRANSMOG_ACCESS_KEY` to the desktop; connection state, names and previous calls
 never authenticate a later operation. There is no shared credential cache or
-OAuth sign-in. The desktop stores a SHA-256 verifier of each random key, not the
-plaintext secret. Keys identify grants, not verified executables. Processes that
+OAuth sign-in. The desktop authenticates against a SHA-256 verifier. On Windows,
+new and replaced keys also have a user-bound encrypted copy so the trusted settings
+UI can reopen configuration. Plaintext keys never enter the persisted store. Legacy
+entries without an encrypted copy require explicit key replacement for recovery. Keys identify grants, not verified executables. Processes that
 can read the same user's private configuration are not isolated from each other.
 
 The private desktop endpoint binds only `127.0.0.1` on an ephemeral port, with no
@@ -31,6 +33,11 @@ fresh instance ID; retained references and control handles must be rediscovered.
 Activity indicators group authenticated calls by key. Their three-second quiet
 period is presentation state, excluded from persistence and authorization.
 
+Older stored grants with partial sensitive-read permissions migrate to redaction-on,
+without expanding their scope or operations. The UI controls both sensitive-read
+capabilities through one redaction setting; their wire identifiers remain for
+compatibility.
+
 ## Evidence and disclosure
 
 Host scopes match exact hosts on any port and apply before paging. Selected-request
@@ -41,7 +48,7 @@ explicit bounded body reads, retention, truncation and representation metadata.
 Equal bounded previews do not establish complete byte equality. Captured content,
 including instructions embedded by a server, is untrusted evidence.
 
-The default omission policy suppresses known authentication-header values and all
+The default redaction policy suppresses known authentication-header values and all
 message bodies, including sensitive authored rule content. It does not sanitize
 arbitrary URLs or identify every possible custom secret. The
 [application adapter](../crates/mcp/src/application.rs) defines header masking.
@@ -51,8 +58,7 @@ it cannot approve itself. The agent asks the human to respond in Transmog, then
 polls `transmog_sensitive_access_status` before retrying a protected read. Polling
 does not create prompts. Only trusted desktop commands decide or revoke consent.
 
-One-minute consent uses a monotonic deadline and remains in memory. Always
-atomically saves omission-off plus body and credential read permissions. Neither
+One-minute consent uses a monotonic deadline and remains in memory. Always atomically turns off the saved redaction setting. Neither
 choice expands scope or other capabilities. Revocation or expiry cancels access
 and prevents in-flight results from disclosing values. Recording and breakpoint
 work that requires those values ends too. See
@@ -63,7 +69,7 @@ work that requires those values ends too. See
 
 Shared header/text edits use saved-rule revisions; stale writes conflict rather
 than overwrite newer human work. Rule reads need no separate capability, while
-their body and credential content follows disclosure policy. Temporary rules are
+their body and credential content follows the redaction setting. Temporary rules are
 owned by one key and require a control lease of 30–600 seconds. Other keys can
 read their effects but cannot edit them. Lease expiry, revocation, permission
 changes or master-off disable temporary effects and detach their controller.

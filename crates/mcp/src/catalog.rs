@@ -36,7 +36,7 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
         spec(
             "transmog_sensitive_access_status",
-            "Read this key's approval for unredacted values and its expiry without prompting again. Pending, denied and expired requests do not authorize disclosure. Always decisions change the saved omission setting; temporary approval ends after 60 seconds or earlier revocation.",
+            "Read this key's approval for unredacted values and its expiry without prompting again. Pending, denied and expired requests do not authorize disclosure. Always decisions change the saved redaction setting; temporary approval ends after 60 seconds or earlier revocation.",
             true,
             json!({}),
             &[],
@@ -71,14 +71,14 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
         spec(
             "transmog_headers_read",
-            "Read ordered duplicate-preserving headers at an explicit observation boundary. Credential headers are masked unless this key explicitly permits them.",
+            "Read ordered duplicate-preserving headers at an explicit observation boundary. Authentication headers are redacted unless this key has unredacted access.",
             true,
             json!({"instanceId":instance(),"id":id(),"boundary":boundary(),"offset":number()}),
             &["instanceId", "id", "boundary"],
         ),
         spec(
             "transmog_body_read",
-            "Read a bounded retained body range. Requires Read message bodies; content may contain secrets. Reports retention, truncation and representation explicitly.",
+            "Read a bounded retained body range. Requires redaction to be off or temporary unredacted approval; content may contain secrets. Reports retention, truncation and representation explicitly.",
             true,
             json!({"instanceId":instance(),"id":id(),"boundary":boundary(),"offset":text(),"maxBytes":{"type":"integer","minimum":1,"maximum":65536},"decodeContent":boolean()}),
             &["instanceId", "id", "boundary"],
@@ -106,7 +106,7 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
         spec(
             "transmog_recording_start",
-            "Start a new native recording in Transmog's agent-export directory. Requires all-traffic scope, collection, body and credential permissions because the recording preserves full evidence. Never overwrites a file.",
+            "Start a new native recording in Transmog's agent-export directory. Requires all-traffic scope, collection and unredacted access because the recording preserves full evidence. Never overwrites a file.",
             false,
             json!({"name":{"type":"string","maxLength":80}}),
             &[],
@@ -197,7 +197,7 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
         ),
         spec(
             "transmog_breakpoints_set",
-            "Attach targeted request/response breakpoints under this key's control lease. Requires body and credential access to inspect editable envelopes. Conflicts with an already attached desktop controller.",
+            "Attach targeted request/response breakpoints under this key's control lease. Requires unredacted access to inspect editable envelopes. Conflicts with an already attached desktop controller.",
             false,
             json!({"instanceId":instance(),"controlId":id(),"host":text(),"settings":{"type":"object"}}),
             &["instanceId", "controlId", "host", "settings"],

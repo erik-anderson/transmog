@@ -2378,6 +2378,7 @@ pub fn run() {
                 mcp::mcp_sensitive_revoke,
                 mcp::mcp_set_enabled,
                 mcp::mcp_create_key,
+                mcp::mcp_configuration_key,
                 mcp::mcp_update_key,
                 mcp::mcp_replace_key,
                 mcp::mcp_revoke_key,

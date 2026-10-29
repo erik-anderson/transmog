@@ -50,7 +50,7 @@ See [building](docs/building.md#windows-desktop-shell) for an unsigned developme
 installer and [Windows releases](docs/windows-release.md) for signed packaging
 and qualification.
 
-To connect Codex, Copilot CLI or another MCP client, open **Settings → Integrations**,
+To connect an MCP agent, open **Settings → Integrations**,
 enable **Allow MCP connections**, and create a scoped access key. Copy the generated
 configuration into that agent's settings. See [MCP setup and permissions](docs/mcp.md)
 for unredacted access, shared rule editing and revocation.

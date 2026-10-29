@@ -224,6 +224,9 @@ keep active agent access visible with a direct route to its controls.
 Agent requests for unredacted values appear without stealing focus.
 Default to omission, make temporary consent visibly time-bound with an immediate
 revoke action, and distinguish it from a durable change to the saved setting.
+Agent setup defaults to all main-workspace traffic, with explicit operations and
+one redaction choice. Allow all selects operations without disabling redaction.
+Keep configuration reusable through trusted settings with OS-protected key storage.
 Keep connection activity stable across brief calls. Show temporary sensitive-value
 access as a badge on the connection indicator; authorization and revocation
 feedback must stay immediate even when connection status is smoothed.

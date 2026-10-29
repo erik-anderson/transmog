@@ -287,6 +287,16 @@ pub(super) async fn mcp_create_key(
 }
 
 #[tauri::command]
+pub(super) fn mcp_configuration_key(
+    id: String,
+    revision: u64,
+    state: State<'_, AgentState>,
+) -> Result<Value, Error> {
+    let key = state.access()?.configuration_key(&id, revision)?;
+    Ok(json!({"key":key.expose()}))
+}
+
+#[tauri::command]
 pub(super) async fn mcp_update_key(
     id: String,
     revision: u64,
@@ -306,7 +316,7 @@ pub(super) async fn mcp_replace_key(
     state: State<'_, AgentState>,
 ) -> Result<Value, Error> {
     let key = state.access()?.replace(&id, revision)?;
-    // The replacement is already durable. Always deliver its one-time secret, even
+    // The replacement is already durable. Always deliver its configuration key, even
     // when temporary-effect cleanup fails; maintenance will retry that cleanup.
     if let Err(error) = state.adapter()?.reconcile().await {
         *state

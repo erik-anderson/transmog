@@ -248,7 +248,7 @@ impl Grant {
         ) {
             Err(Error::new(
                 "sensitive_access_required",
-                "Unredacted values are omitted or not allowed. Call transmog_sensitive_access_request and ask the user to respond in Transmog; then check transmog_sensitive_access_status.",
+                "Unredacted access is not allowed. Call transmog_sensitive_access_request and ask the user to respond in Transmog; then check transmog_sensitive_access_status.",
             ))
         } else {
             Err(Error::new(
@@ -259,11 +259,11 @@ impl Grant {
     }
 }
 
-/// One newly generated secret, returned only to the trusted creation dialog.
+/// Secret material available only to trusted desktop configuration commands.
 pub struct AccessKey(Zeroizing<String>);
 
 impl AccessKey {
-    /// Explicit access for the one-time key display. Never log or include it in agent results.
+    /// Explicit access for configuration generation. Never log or include it in agent results.
     pub fn expose(&self) -> &str {
         &self.0
     }
@@ -280,6 +280,8 @@ impl std::fmt::Debug for AccessKey {
 struct Record {
     grant: Grant,
     verifier: [u8; 32],
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    protected_key: Option<Vec<u8>>,
 }
 
 #[derive(Clone, Default, Deserialize, Serialize)]
@@ -319,7 +321,7 @@ impl AccessManager {
     /// Returns a safe persistence error for unreadable, oversized or corrupt existing state.
     pub fn open(path: Option<PathBuf>) -> Result<Self, Error> {
         let file = path.as_ref().map(std::fs::File::open).transpose();
-        let state = match file {
+        let mut state = match file {
             Ok(Some(file)) => {
                 let mut bytes = Vec::new();
                 file.take(MAX_STORE_BYTES + 1)
@@ -342,14 +344,34 @@ impl AccessManager {
             },
             Err(_) => return Err(storage()),
         };
+        // Collapse legacy partial disclosure into the conservative side of the
+        // single redaction choice. Never silently grant the missing capability.
+        let mut tightened = false;
+        for record in &mut state.records {
+            if !record.grant.omit_sensitive_values
+                && (!record.grant.permissions.contains(&Permission::ReadBodies)
+                    || !record
+                        .grant
+                        .permissions
+                        .contains(&Permission::ReadCredentials))
+            {
+                record.grant.omit_sensitive_values = true;
+                record.grant.revision = record.grant.revision.checked_add(1).ok_or_else(storage)?;
+                tightened = true;
+            }
+        }
         let (changed, _) = watch::channel(0);
         let (activity_changed, _) = watch::channel(0);
-        Ok(Self {
+        let manager = Self {
             state: Arc::new(Mutex::new(state)),
             path,
             changed,
             activity_changed,
-        })
+        };
+        if tightened {
+            manager.flush()?;
+        }
+        Ok(manager)
     }
 
     /// Current safe metadata for the trusted settings view.
@@ -405,6 +427,7 @@ impl AccessManager {
         let record = Record {
             grant: grant.clone(),
             verifier: Sha256::digest(key.expose().as_bytes()).into(),
+            protected_key: protect_key(&key)?,
         };
         self.mutate(|state| {
             if state.records.len() >= MAX_GRANTS { return Err(invalid("Remove an unused key before creating another. At most 64 keys can be retained.")); }
@@ -447,6 +470,7 @@ impl AccessManager {
     /// Rejects stale/revoked records and entropy or persistence failures atomically.
     pub fn replace(&self, id: &str, revision: u64) -> Result<AccessKey, Error> {
         let key = AccessKey(Zeroizing::new(format!("tmk_{id}_{}", random(32)?)));
+        let protected_key = protect_key(&key)?;
         self.mutate(|state| {
             let record = find_record(state, id, revision)?;
             if record.grant.revoked {
@@ -455,6 +479,7 @@ impl AccessManager {
                 ));
             }
             record.verifier = Sha256::digest(key.expose().as_bytes()).into();
+            record.protected_key = protected_key;
             record.grant.revision = record.grant.revision.checked_add(1).ok_or_else(storage)?;
             Ok(())
         })?;
@@ -469,10 +494,12 @@ impl AccessManager {
             if let Some((id, revision)) = target {
                 let record = find_record(state, id, revision)?;
                 record.grant.revoked = true;
+                record.protected_key = None;
                 record.grant.revision = record.grant.revision.checked_add(1).ok_or_else(storage)?;
             } else {
                 for record in &mut state.records {
                     record.grant.revoked = true;
+                    record.protected_key = None;
                     record.grant.revision =
                         record.grant.revision.checked_add(1).ok_or_else(storage)?;
                 }
@@ -537,6 +564,34 @@ impl AccessManager {
         self.persist(&self.lock())
     }
 
+    /// Recovers configuration material only for the trusted desktop management UI.
+    /// # Errors
+    /// Rejects stale, revoked, expired, legacy or inaccessible protected keys.
+    pub fn configuration_key(&self, id: &str, revision: u64) -> Result<AccessKey, Error> {
+        let mut state = self.lock();
+        let record = find_record(&mut state, id, revision)?;
+        if record.grant.revoked
+            || record
+                .grant
+                .expires_at
+                .is_some_and(|expiry| expiry <= now())
+        {
+            return Err(invalid(
+                "This agent is revoked or expired. Create or update its entry first.",
+            ));
+        }
+        let protected = record
+            .protected_key
+            .as_deref()
+            .ok_or_else(config_unavailable)?;
+        let key = unprotect_key(protected)?;
+        let verifier: [u8; 32] = Sha256::digest(key.expose().as_bytes()).into();
+        if !boring::memcmp::eq(&verifier, &record.verifier) {
+            return Err(config_unavailable());
+        }
+        Ok(key)
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Store> {
         self.state
             .lock()
@@ -576,6 +631,52 @@ impl AccessManager {
         file.persist(path).map_err(|_| storage())?;
         Ok(())
     }
+}
+
+fn config_unavailable() -> Error {
+    Error::new(
+        "configuration_unavailable",
+        "This entry has no recoverable configuration. Replace its key, then copy the new configuration to the agent.",
+    )
+}
+
+#[cfg(windows)]
+fn protect_key(key: &AccessKey) -> Result<Option<Vec<u8>>, Error> {
+    use transmog_key_protection::{KeyProtection as _, SystemKeyProtection};
+    SystemKeyProtection
+        .protect(key.expose().as_bytes())
+        .map(Some)
+        .map_err(|_| {
+            Error::new(
+                "storage",
+                "Windows could not protect the agent configuration. No key was saved.",
+            )
+        })
+}
+#[cfg(not(windows))]
+#[allow(
+    clippy::unnecessary_wraps,
+    reason = "Keep the same fallible interface as Windows key protection."
+)]
+fn protect_key(_: &AccessKey) -> Result<Option<Vec<u8>>, Error> {
+    Ok(None)
+}
+
+#[cfg(windows)]
+fn unprotect_key(bytes: &[u8]) -> Result<AccessKey, Error> {
+    use transmog_key_protection::{KeyProtection as _, SystemKeyProtection};
+    let bytes = SystemKeyProtection
+        .unprotect(bytes)
+        .map_err(|_| config_unavailable())?;
+    let key = std::str::from_utf8(&bytes).map_err(|_| config_unavailable())?;
+    if key.len() > 128 || !key.starts_with("tmk_") {
+        return Err(config_unavailable());
+    }
+    Ok(AccessKey(Zeroizing::new(key.to_owned())))
+}
+#[cfg(not(windows))]
+fn unprotect_key(_: &[u8]) -> Result<AccessKey, Error> {
+    Err(config_unavailable())
 }
 
 fn validate_store(state: &Store) -> Result<(), Error> {

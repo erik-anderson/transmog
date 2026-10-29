@@ -7,7 +7,7 @@ import { writeFile } from "node:fs/promises";
 export async function smokeMcp(call, evaluate, screenshotPath) {
   const invoke = (command, args = {}) =>
     evaluate(
-      `window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)})`,
+      `(async()=>{try{return await window.__TAURI_INTERNALS__.invoke(${JSON.stringify(command)},${JSON.stringify(args)});}catch(error){throw new Error('Native '+${JSON.stringify(command)}+': '+(error?.message??String(error)));}})()`,
     );
   const initial = await invoke("mcp_status");
   let grantId;
@@ -47,7 +47,7 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       form.elements.namedItem('scope').value='hosts';form.elements.namedItem('hosts').value='example.test';
       form.elements.namedItem('edit-shared-rules').checked=true;panel.changed();
       await panel.save(new Event('submit',{cancelable:true}));
-      if(!panel.mcpKeyDialog.open||!panel.mcpSecret)throw new Error('Native key creation did not show its one-time secret');
+      if(!panel.mcpKeyDialog.open||!panel.mcpSecret)throw new Error('Native key creation did not show its configuration');
       if(form.elements.namedItem('read-rules'))throw new Error('Rule reads require an unintended permission');
       const result={key:panel.mcpSecret,id:panel.mcpRows.at(-1).id};panel.closeKey();
       await new Promise(resolve=>setTimeout(resolve,25));
@@ -55,6 +55,17 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       return result;
     })()`);
     grantId = created.id;
+    const recovered = await invoke("mcp_configuration_key", { id: created.id, revision: 1 });
+    assert.equal(recovered.key === created.key, true, "Saved native configuration changed the key");
+    await evaluate(`(async()=>{
+      const panel=document.querySelector('app-shell').settings.querySelector('mcp-settings');
+      const button=[...panel.querySelectorAll('article button')].find(button=>button.textContent==='Configuration…');
+      button.click();
+      const deadline=Date.now()+10000;
+      while(!panel.mcpKeyDialog.open){if(Date.now()>deadline)throw new Error('Saved configuration did not reopen');await new Promise(resolve=>setTimeout(resolve,20));}
+      if(!panel.mcpConfig.includes('TRANSMOG_ACCESS_KEY'))throw new Error('Saved configuration is missing authentication');
+      panel.closeKey();
+    })()`);
     const status = await cli(created.key, "transmog_connect", {});
     assert.equal(
       status.connected,
@@ -181,6 +192,7 @@ export async function smokeMcp(call, evaluate, screenshotPath) {
       persistentSensitiveSetting: true,
       connectionIndicator: true,
       unredactedValuesBadge: true,
+      savedConfiguration: true,
     };
   } finally {
     if (grantId) {

@@ -76,15 +76,14 @@ interface Status {
   activity: Activity[];
   error: string | null;
 }
-const labels: Record<Permission, string> = {
+type Operation = Exclude<Permission, "read-bodies" | "read-credentials">;
+const labels: Record<Operation, string> = {
   inspect: "View request details",
-  "read-bodies": "Read message bodies",
   collect: "Control collection",
   "prepare-changes": "Prepare changes",
   "edit-shared-rules": "Edit shared rules",
   modify: "Change live traffic",
   send: "Send requests",
-  "read-credentials": "Read unmasked credential headers",
 };
 const date = (seconds: number | null): string =>
   seconds === null ? "Never" : new Date(seconds * 1000).toLocaleString();
@@ -107,13 +106,16 @@ export class McpSettings extends WorkspaceElement {
   @observable mcpActivity: Array<Activity & { timeText: string; outcome: string }> = [];
   @observable mcpRules: TemporaryRule[] = [];
   @observable mcpEditingId = "";
-  @observable mcpScopeKind = "hosts";
+  @observable mcpScopeKind = "all";
+  @observable mcpAllowAll = false;
+  @observable mcpNeedsAgent = false;
+  @observable mcpEndpointAvailable = false;
   @observable mcpSelectedCount = 0;
   @observable mcpDirty = false;
   @observable mcpDialogError = "";
   @observable mcpSecret = "";
   @observable mcpConfig = "";
-  @observable mcpClient = "codex";
+  @observable mcpClient = "toml";
   @observable mcpAutoStart = false;
   @observable mcpConfirmText = "";
   @observable mcpConfirmLabel = "";
@@ -199,10 +201,21 @@ export class McpSettings extends WorkspaceElement {
     this.mcpEnabled = status.enabled;
     this.mcpLoaded = true;
     this.mcpEndpoint = status.endpoint ?? "Not listening";
+    this.mcpEndpointAvailable = !!status.endpoint;
+    this.mcpNeedsAgent =
+      status.enabled &&
+      !status.grants.some(
+        (grant) =>
+          !grant.revoked && (grant.expiresAt === null || grant.expiresAt * 1000 > Date.now()),
+      );
     this.mcpError = status.error ?? "";
     this.mcpRows = status.grants.map((grant) => ({
       ...grant,
-      permissionText: grant.permissions.map((permission) => labels[permission]).join(" · "),
+      omitSensitiveValues: this.redacted(grant),
+      permissionText: grant.permissions
+        .filter((permission): permission is Operation => permission in labels)
+        .map((permission) => labels[permission])
+        .join(" · "),
       scopeText:
         grant.scope.kind === "all"
           ? "All traffic in the main workspace"
@@ -289,7 +302,8 @@ export class McpSettings extends WorkspaceElement {
     this.editingRevision = 0;
     this.mcpDialogError = "";
     this.captureSelection();
-    this.mcpScopeKind = this.selectionIds.length ? "requests" : "hosts";
+    this.mcpScopeKind = "all";
+    this.mcpAllowAll = false;
     this.field("scope").value = this.mcpScopeKind;
     this.field("expiry").value = localDate(Math.floor(Date.now() / 1000) + 30 * 86400);
     this.mcpDirty = true;
@@ -307,8 +321,8 @@ export class McpSettings extends WorkspaceElement {
     this.editingRevision = grant.revision;
     this.mcpDialogError = "";
     this.field("name").value = grant.name;
-    this.field("omit-sensitive-values").checked = grant.omitSensitiveValues ?? true;
-    for (const permission of Object.keys(labels) as Permission[]) {
+    this.field("omit-sensitive-values").checked = this.redacted(grant);
+    for (const permission of Object.keys(labels) as Operation[]) {
       this.field(permission).checked = grant.permissions.includes(permission);
     }
     this.mcpScopeKind = grant.scope.kind;
@@ -321,6 +335,7 @@ export class McpSettings extends WorkspaceElement {
     this.field("expiry").value = grant.expiresAt === null ? "" : localDate(grant.expiresAt);
     this.original = JSON.stringify(this.input());
     this.mcpDirty = false;
+    this.updateAllowAll();
     this.mcpDialog.showModal();
   }
   useSelection(): void {
@@ -328,6 +343,7 @@ export class McpSettings extends WorkspaceElement {
     this.changed();
   }
   changed(): void {
+    this.updateAllowAll();
     this.mcpScopeKind = this.field("scope").value;
     try {
       this.mcpDirty = !this.mcpEditingId || JSON.stringify(this.input()) !== this.original;
@@ -353,9 +369,12 @@ export class McpSettings extends WorkspaceElement {
     return {
       omitSensitiveValues: data.has("omit-sensitive-values"),
       name: String(data.get("name") ?? ""),
-      permissions: (Object.keys(labels) as Permission[]).filter((permission) =>
-        data.has(permission),
-      ),
+      // Sensitive capabilities are internal; the redaction switch controls their use.
+      permissions: [
+        ...(Object.keys(labels) as Operation[]).filter((permission) => data.has(permission)),
+        "read-bodies",
+        "read-credentials",
+      ],
       scope,
       expiresAt: expiry ? Math.floor(new Date(expiry).getTime() / 1000) : null,
     };
@@ -370,7 +389,7 @@ export class McpSettings extends WorkspaceElement {
     this.mcpDialogError = "";
     try {
       const input = this.input();
-      if (!input.permissions.length) {
+      if (!input.permissions.some((permission) => permission in labels)) {
         throw new Error("Choose at least one permission.");
       }
       if (input.scope.kind === "requests" && !input.scope.ids.length) {
@@ -430,7 +449,7 @@ export class McpSettings extends WorkspaceElement {
     this.mcpSecret = key;
     this.mcpDialogError = "";
     this.mcpCopyText = "";
-    this.mcpClient = "codex";
+    this.mcpClient = "toml";
     this.mcpAutoStart = false;
     this.configChanged();
     this.mcpKeyDialog.showModal();
@@ -446,7 +465,7 @@ export class McpSettings extends WorkspaceElement {
     const args = ["mcp", "serve", ...(this.mcpAutoStart ? ["--start-app"] : [])];
     const environment = { ...this.snapshot?.cliEnvironment, TRANSMOG_ACCESS_KEY: this.mcpSecret };
     this.mcpConfig =
-      this.mcpClient === "codex"
+      this.mcpClient === "toml"
         ? `[mcp_servers.transmog]\ncommand = ${JSON.stringify(command)}\nargs = ${JSON.stringify(args)}\n\n[mcp_servers.transmog.env]\n${Object.entries(
             environment,
           )
@@ -468,13 +487,51 @@ export class McpSettings extends WorkspaceElement {
             2,
           );
   }
-  async copyKey(): Promise<void> {
-    try {
-      await navigator.clipboard.writeText(this.mcpSecret);
-      this.mcpCopyText = "Access key copied.";
-    } catch (error) {
-      this.mcpDialogError = describeError(error);
+  private redacted(grant: Grant): boolean {
+    return (
+      (grant.omitSensitiveValues ?? true) ||
+      !grant.permissions.includes("read-bodies") ||
+      !grant.permissions.includes("read-credentials")
+    );
+  }
+  private updateAllowAll(): void {
+    this.mcpAllowAll = (Object.keys(labels) as Operation[]).every(
+      (permission) => this.field(permission).checked,
+    );
+  }
+  allowAll(event: Event): void {
+    const checked = (event.target as HTMLInputElement).checked;
+    for (const permission of Object.keys(labels) as Operation[]) {
+      this.field(permission).checked = checked;
     }
+    this.changed();
+  }
+  async copyEndpoint(portOnly: boolean): Promise<void> {
+    if (!this.snapshot?.endpoint) {
+      return;
+    }
+    try {
+      await navigator.clipboard.writeText(
+        portOnly ? new URL(this.snapshot.endpoint).port : this.snapshot.endpoint,
+      );
+      this.mcpText = portOnly ? "Local port copied." : "Local URL copied.";
+    } catch (error) {
+      this.mcpError = describeError(error);
+    }
+  }
+  async configuration(id: string, event: Event): Promise<void> {
+    const grant = this.snapshot?.grants.find((item) => item.id === id);
+    if (!grant) {
+      return;
+    }
+    this.returnFocus = event.currentTarget as HTMLElement;
+    await this.run(async () => {
+      const result = await invoke<{ key: string }>("mcp_configuration_key", {
+        id,
+        revision: grant.revision,
+      });
+      this.showKey(result.key);
+    });
   }
   async copyConfig(): Promise<void> {
     try {

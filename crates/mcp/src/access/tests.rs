@@ -1,5 +1,128 @@
 use super::*;
 
+#[cfg(windows)]
+#[test]
+fn protected_configuration_reopens_after_restart_and_never_leaks_through_status() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("access.json");
+    let manager = AccessManager::open(Some(path.clone())).unwrap();
+    let mut config = input("Agent");
+    config
+        .permissions
+        .extend([Permission::ReadBodies, Permission::ReadCredentials]);
+    let (grant, key) = manager.create(config).unwrap();
+    assert!(boring::memcmp::eq(
+        manager
+            .configuration_key(&grant.id, grant.revision)
+            .unwrap()
+            .expose()
+            .as_bytes(),
+        key.expose().as_bytes()
+    ));
+    let bytes = std::fs::read_to_string(&path).unwrap();
+    assert!(!bytes.contains(key.expose()));
+    assert!(
+        !serde_json::to_string(&manager.status())
+            .unwrap()
+            .contains("protectedKey")
+    );
+    let reloaded = AccessManager::open(Some(path)).unwrap();
+    assert!(boring::memcmp::eq(
+        reloaded
+            .configuration_key(&grant.id, grant.revision)
+            .unwrap()
+            .expose()
+            .as_bytes(),
+        key.expose().as_bytes()
+    ));
+    let new_key = reloaded.replace(&grant.id, grant.revision).unwrap();
+    assert!(
+        reloaded
+            .configuration_key(&grant.id, grant.revision)
+            .is_err()
+    );
+    assert!(boring::memcmp::eq(
+        reloaded
+            .configuration_key(&grant.id, grant.revision + 1)
+            .unwrap()
+            .expose()
+            .as_bytes(),
+        new_key.expose().as_bytes()
+    ));
+    reloaded
+        .revoke(Some((&grant.id, grant.revision + 1)))
+        .unwrap();
+    assert!(
+        reloaded
+            .configuration_key(&grant.id, grant.revision + 2)
+            .is_err()
+    );
+    assert!(reloaded.lock().records[0].protected_key.is_none());
+}
+
+#[test]
+fn legacy_configuration_requires_explicit_replacement_without_changing_authority() {
+    let manager = AccessManager::open(None).unwrap();
+    let (grant, _) = manager.create(input("Legacy agent")).unwrap();
+    manager.lock().records[0].protected_key = None;
+    assert_eq!(
+        manager
+            .configuration_key(&grant.id, grant.revision)
+            .unwrap_err()
+            .code,
+        "configuration_unavailable"
+    );
+    assert_eq!(manager.status().grants[0].revision, grant.revision);
+}
+
+#[test]
+fn restart_migrates_partial_sensitive_grants_to_redaction_without_expanding_scope() {
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("legacy.json");
+    let manager = AccessManager::open(Some(path.clone())).unwrap();
+    let mut config = input("Partial legacy access");
+    config.permissions.insert(Permission::ReadBodies);
+    config.scope = Scope::Hosts {
+        hosts: vec!["example.test".into()],
+    };
+    let (grant, key) = manager.create(config).unwrap();
+    manager.set_enabled(true).unwrap();
+    let loaded = AccessManager::open(Some(path.clone())).unwrap();
+    let current = loaded.authenticate(key.expose()).unwrap();
+    assert!(current.omit_sensitive_values);
+    assert!(!current.allows(Permission::ReadBodies));
+    assert!(!current.allows(Permission::ReadCredentials));
+    assert_eq!(current.scope, grant.scope);
+    assert_eq!(current.revision, grant.revision + 1);
+    assert_eq!(
+        AccessManager::open(Some(path)).unwrap().status().grants[0].revision,
+        current.revision
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn configuration_rejects_another_keys_protected_blob_or_expired_grant() {
+    let manager = AccessManager::open(None).unwrap();
+    let (grant, _) = manager.create(input("First")).unwrap();
+    manager.create(input("Second")).unwrap();
+    {
+        let mut store = manager.lock();
+        store.records[0].protected_key = store.records[1].protected_key.clone();
+    }
+    assert!(
+        manager
+            .configuration_key(&grant.id, grant.revision)
+            .is_err()
+    );
+    manager.lock().records[0].grant.expires_at = Some(now());
+    assert!(
+        manager
+            .configuration_key(&grant.id, grant.revision)
+            .is_err()
+    );
+}
+
 #[test]
 fn replacement_invalidates_old_secret_and_preserves_named_grant() {
     let manager = AccessManager::open(None).unwrap();

@@ -34,6 +34,9 @@ transmog-core = { version = "=0.1.15", path = "../proxy-core", optional = true }
 url.workspace = true
 zeroize.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+transmog-key-protection = { version = "=0.1.15", path = "../key-protection" }
+
 [lints]
 workspace = true
 

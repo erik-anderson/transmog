@@ -7013,6 +7013,7 @@ dependencies = [
  "transmog-app",
  "transmog-automation",
  "transmog-core",
+ "transmog-key-protection",
  "transmog-session",
  "transmog-tls",
  "url",
