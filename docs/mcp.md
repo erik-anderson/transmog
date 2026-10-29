@@ -1,101 +1,86 @@
 # Local MCP agent access
 
-Let agents inspect request/response context, control collection, send requests
-and collaborate on traffic rules.
-Access is off by default and listens only on this computer's loopback interface.
+Let agents inspect request/response context, control capture, send requests and
+collaborate on traffic rules. MCP is off by default and accepts only local
+loopback connections.
 
 ## Connect an agent
 
-1. In the main desktop window, open **Settings → Integrations** and enable
+1. Open **Settings → Integrations** in the main desktop window and enable
    **Allow MCP connections**.
-2. Choose **Create access key…**. Name it, select exact hosts, selected requests
-   or all traffic, and choose permissions and expiry. Create a separate key for
-   each agent. The default scope is **All traffic in the main workspace**.
-   **Allow all** selects every operation without turning redaction off.
-3. Copy the generated TOML or JSON configuration into that agent's settings.
-   Keep the configuration private. Reopen it with **Configuration…** on the agent entry.
-   Preserve the generated CLI path and environment entries, including `LOCALAPPDATA` on Windows.
+2. Choose **Create access key…**. Name the agent and choose its permissions,
+   scope and expiry. Scope defaults to **All traffic in the main workspace**;
+   exact hosts and selected requests are also available. Choose **Control
+   collection** to let the agent start capture, or **Allow all** to select every
+   operation without changing redaction.
+3. Copy the generated TOML or JSON configuration into the agent's MCP settings,
+   then reload its MCP connections. Preserve the CLI path and environment entries,
+   including `LOCALAPPDATA` on Windows. Keep this configuration private.
 
-The agent runs `transmog-cli mcp serve` and calls `transmog_connect` to connect.
-Creating the key is the in-app approval; a name alone never authorizes a caller.
-Anyone who obtains the same key can use its permissions.
+Use a separate key for each agent. Anyone with a key can use its permissions;
+agent names alone do not authorize connections. Enabling MCP does not start capture.
 
-The desktop must be running for traffic operations. Add `--start-app` to the
-connector arguments to let an explicit connection launch it; the CLI must be
-beside the desktop executable. This never enables MCP or starts collection.
-MCP initialization and tool discovery still work while the desktop is closed.
+The desktop must be running for traffic operations. Select **Start Transmog when
+needed** in the configuration dialog to let an explicit agent connection launch it.
+The CLI must be beside the desktop executable. This never enables MCP or starts capture.
 
-## Review connections and unredacted access
+## Redaction and unredacted access
 
-The top **MCP** indicator shows connected access keys. It keeps recent calls
-visible for three seconds to prevent flicker; an idle stdio connector alone does
-not count as a desktop connection. Open it to see the key names and access controls.
+**Redact authentication headers and bodies** is on by default. It hides
+credential-like header values and all message bodies from agents, including
+sensitive rule content. Human inspection is unchanged. Turning it off allows
+unredacted reads within the existing scope.
 
-**Redact authentication headers and bodies** is enabled for every key by default.
-Header names matching authentication terms and all message bodies are hidden.
-Turning redaction off allows both; there are no separate sensitive-read checkboxes. This does not change traffic retained for human inspection.
+An agent can request unredacted values with a reason. Open its request badge on
+the top **MCP** indicator, review the agent and scope, then choose:
 
-An agent can request unredacted values with a reason. Open the request badge on
-the MCP indicator, review the agent and scope, then choose:
-
-- **For next 1 minute**: allow unredacted values for 60 seconds without changing
-  the saved setting. An **Unredacted · 0:59** badge shows the countdown; open it
-  and choose **Revoke access now** to end access sooner.
-- **Always**: turn off that key's redaction setting. This change survives restart.
+- **For next 1 minute**: allow access for 60 seconds. The **Unredacted · 0:59** badge
+  shows the countdown; open it and choose **Revoke access now** to end access sooner.
+- **Always**: turn off that key's saved redaction setting.
 - **Deny**: keep values protected.
 
-Header names are matched without regard to case or separators: `auth`, `ticket`,
-`token`, `secret`, `credential`, `cookie`, `session`, `password`/`passwd`/`passphrase`, `csrf`/`xsrf`,
-`signature`, API/access/private/subscription keys, `bearer`, `jwt`, `saml`, `dpop` and `assertion`.
-For example, both `APIKey` and `AuthMsaDeviceTicket` are redacted. This conservative
-matching can hide benign headers; it does not sanitize arbitrary URLs.
+These choices grant no additional operations or traffic scope. Disclosed data may
+be sent to the agent's provider. Temporary approval ends on expiry, key changes,
+revocation, MCP disablement or main-window closure.
 
-These choices do not expand traffic scope or grant editing, collection or sending.
-Disclosed data may be sent to the agent's provider. Temporary approval also ends
-when the key changes, expires or is revoked, MCP is disabled, or the main window
-closes. The badge updates independently of the connection indicator's grace period.
+Header matching ignores case and separators, covering names such as `APIKey` and
+`AuthMsaDeviceTicket`. It can hide benign headers and does not sanitize URLs.
+See [matching details](mcp-reference.md#evidence-and-disclosure).
 
 ## Permissions and shared rules
 
-Every valid key can read relevant saved rules and their effects without a separate
-rule-read permission. Body content and known credential values in rule definitions
-follow the redaction setting.
-
 | Permission | Allows |
 | --- | --- |
-| View request details | Inspect scoped traffic, masked headers, timings and changes |
+| View request details | Inspect scoped traffic, headers, timings and changes |
 | Control collection | Start/stop the shared proxy and the agent's recordings |
-| Prepare changes | Create, edit and test the key's own disabled header/text rule drafts |
+| Prepare changes | Create, edit and test the agent's disabled header/text rule drafts |
 | Edit shared rules | Edit existing saved header/text rules |
 | Change live traffic | Activate temporary rules or targeted breakpoints; with Edit shared rules, change or disable enabled saved rules |
 | Send requests | Send authored or replayed requests within scope |
 
-Review agent drafts in **Automation → Rules** using the normal editors. Newer
-saved human edits cause a conflict instead of being overwritten, and agent
-refreshes preserve unsaved human drafts.
+Every valid key can read relevant rule effects without a separate permission;
+values follow the redaction setting. Review agent drafts in **Automation → Rules**.
+Agent refreshes preserve human drafts, and conflicting saved edits are rejected.
 
-Temporary rules show the agent's name and stop when their control session ends.
-Choose **Keep changes…** to retain reviewed changes as ordinary saved rules.
-Shared saved edits remain after a key is revoked.
+Temporary rules show the agent's name and stop when its control session ends.
+Choose **Keep changes…** to retain reviewed rules. Shared saved edits remain after
+revoking a key.
 
 ## Configuration, keys and restarts
 
-Use **Configuration…** on an agent entry to copy its TOML or JSON setup again.
-Older entries without a recoverable key must use **Replace key…** once; update
-the agent with the new configuration. The local **Copy URL** and **Copy port**
-actions copy the current private endpoint, which changes on restart. They do not
-replace the agent-facing stdio configuration.
+Open **Configuration…** on an agent entry to copy its setup again. Older entries
+without a recoverable key need **Replace key…** once. Replacement invalidates the
+old key; update the agent with the new configuration. **Revoke…** permanently
+invalidates a key.
 
-Manage keys in **Settings → Integrations**. **Replace key…** invalidates the old
-secret and shows a new one once; **Revoke…** permanently disables it. Turning off
-**Allow MCP connections** suspends all keys and ends temporary access and effects.
-Turning it back on permits still-valid keys to reconnect.
+**Copy URL** and **Copy port** share the current private endpoint, which changes on
+restart. Agents connect through the generated stdio configuration.
 
-Saved keys, permissions, redaction settings and expiry survive app restarts.
-Temporary approvals and control sessions do not. After restarting, agents must
-reconnect and rediscover traffic references; selected-request scopes must be
-refreshed in the app. Persistent host scopes continue using the same key.
+Keys, permissions, redaction settings and expiry survive restarts. Temporary
+approvals and control sessions do not. Reconnect after restarting and refresh
+selected-request scopes in the app. Turning **Allow MCP connections** off suspends
+all keys and ends temporary access and effects; still-valid keys work again when
+you re-enable it.
 
-See [CLI commands](cli.md#mcp-agent-connections) for direct calls,
-[the developer reference](mcp-reference.md) for authentication and tool contracts,
-and [MCP verification](testing.md#local-mcp-access) for test commands.
+See [CLI commands](cli.md#mcp-agent-connections), the
+[developer reference](mcp-reference.md) and [MCP verification](testing.md#local-mcp-access).

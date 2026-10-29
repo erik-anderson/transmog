@@ -9,14 +9,15 @@ responses, pause and edit exchanges, replay requests, and save traces for later.
 The Windows desktop uses Evergreen WebView2. The Rust engine and headless tools
 also run in the Linux test gate; Linux and macOS desktop products are not qualified.
 
+> **MCP support:** Let agents inspect traffic and collaborate on rules through
+> local, scoped access keys. [Set up an agent](docs/mcp.md).
+
 ## Features
 
 - Live traffic with request/response inspectors, content search, caller-process
   attribution, timing waterfalls, and shared connection evidence.
 - Breakpoints, header rules, ordered auto-responses, and sandboxed scripts with
   audit records of traffic changes.
-- [Local MCP agent access](docs/mcp.md) with separate scoped keys, request/response
-  context, temporary traffic changes and human/agent rule collaboration.
 - HTTP/1.1 and HTTP/2 interception, WebSockets over H1/H2, server-sent events,
   and HTTP/3 origin connections.
 - Chromium network profiles with configurable TLS, protocol, and trust settings.
@@ -49,11 +50,6 @@ for the Windows toolchain, locked dependencies and desktop helpers. After launch
 See [building](docs/building.md#windows-desktop-shell) for an unsigned development
 installer and [Windows releases](docs/windows-release.md) for signed packaging
 and qualification.
-
-To connect an MCP agent, open **Settings → Integrations**,
-enable **Allow MCP connections**, and create a scoped access key. Copy the generated
-configuration into that agent's settings. See [MCP setup and permissions](docs/mcp.md)
-for unredacted access, shared rule editing and revocation.
 
 ## Record from the command line
 

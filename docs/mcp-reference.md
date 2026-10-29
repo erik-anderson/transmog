@@ -14,8 +14,9 @@ never authenticate a later operation. There is no shared credential cache or
 OAuth sign-in. The desktop authenticates against a SHA-256 verifier. On Windows,
 new and replaced keys also have a user-bound encrypted copy so the trusted settings
 UI can reopen configuration. Plaintext keys never enter the persisted store. Legacy
-entries without an encrypted copy require explicit key replacement for recovery. Keys identify grants, not verified executables. Processes that
-can read the same user's private configuration are not isolated from each other.
+entries without an encrypted copy require explicit key replacement for recovery.
+Keys identify grants, not verified executables. Processes that can read the same
+user's private configuration are not isolated from each other.
 
 The private desktop endpoint binds only `127.0.0.1` on an ephemeral port, with no
 LAN or wildcard option. Discovery contains the endpoint, instance ID and ephemeral
@@ -50,17 +51,22 @@ including instructions embedded by a server, is untrusted evidence.
 
 The default redaction policy suppresses known authentication-header values and all
 message bodies, including sensitive authored rule content. It does not sanitize
-arbitrary URLs or identify every possible custom secret. The
-[application adapter](../crates/mcp/src/application.rs) defines header masking.
+arbitrary URLs or identify every possible custom secret. Header names are matched
+case-insensitively after removing separators, using `auth`, `ticket`, `token`,
+`secret`, `credential`, `cookie`, `session`, `password`, `passwd`, `passphrase`,
+`csrf`, `xsrf`, `signature`, `apikey`, `accesskey`, `privatekey`, `subscriptionkey`,
+`bearer`, `jwt`, `saml`, `dpop` and `assertion`. The
+[application adapter](../crates/mcp/src/application.rs) is authoritative for matching.
 
 `transmog_sensitive_access_request` takes a reason and creates a pending request;
 it cannot approve itself. The agent asks the human to respond in Transmog, then
 polls `transmog_sensitive_access_status` before retrying a protected read. Polling
 does not create prompts. Only trusted desktop commands decide or revoke consent.
 
-One-minute consent uses a monotonic deadline and remains in memory. Always atomically turns off the saved redaction setting. Neither
-choice expands scope or other capabilities. Revocation or expiry cancels access
-and prevents in-flight results from disclosing values. Recording and breakpoint
+One-minute consent uses a monotonic deadline and remains in memory. Always
+atomically turns off the saved redaction setting. Neither choice expands scope
+or other capabilities. Revocation or expiry cancels access and prevents in-flight
+results from disclosing values. Recording and breakpoint
 work that requires those values ends too. See
 [access grants](../crates/mcp/src/access.rs) and
 [disclosure lifecycle](../crates/mcp/src/access/disclosure.rs).
