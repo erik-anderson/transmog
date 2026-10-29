@@ -221,7 +221,7 @@ when changing the experience.
 
 ## Keep product contracts in their topic guides
 
-Human and agent rule editing uses the same saved rules and revision conflicts.
+Human and agent rule edits share saved revisions and conflict checks.
 Every authorized agent may read relevant rule effects; shared edits require an
 explicit permission. Preserve unsaved human drafts during agent refreshes and
 keep active agent access visible with a direct route to its controls.

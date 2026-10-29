@@ -3,10 +3,12 @@
 [Set up an agent](mcp.md) in the desktop before using these contracts. The
 [`transmog-mcp` crate](../crates/mcp/src/lib.rs) owns authorization, the local
 transport, the stdio connector and the application adapter. The
-[tool catalog](../crates/mcp/src/catalog.rs) and
-[public models](../crates/mcp/src/catalog/models.rs) define tool names, nested input
-schemas, output schemas, defaults and discovery descriptions. Validation uses
-those same input contracts and identifies invalid fields without echoing values.
+[tool catalog](../crates/mcp/src/catalog.rs),
+[public models](../crates/mcp/src/catalog/models.rs) and
+[session contracts](../crates/mcp/src/catalog/sessions.rs) define tool names,
+nested input schemas, output schemas, defaults and discovery descriptions.
+Validation uses those same input contracts and identifies invalid fields without
+echoing values.
 Tool annotations describe read-only, destructive, external and idempotent effects
 individually. Tool errors set `isError` and return
 `{ "error": { "code": "...", "message": "..." } }`.
@@ -47,11 +49,14 @@ session with `transmog_session_create`. List, renew and close it through
 `transmog_session_list`, `transmog_session_renew` and `transmog_session_close`.
 Private IDs, cursors, context references and operation IDs are owned by the key;
 knowing another key's IDs grants no access. Instance identity, current scope and
-disclosure are checked independently. Valid session activity renews a 30-minute
-idle lifetime; incoming traffic does not. Human review keeps a session alive.
+disclosure are checked independently. Calls targeting a private session renew its
+30-minute idle lifetime; use `transmog_session_renew` while idle. Listing sessions,
+polling operations and incoming traffic do not renew it. An open human review
+window keeps it alive.
 
 `transmog_capture_load` requires **Load capture files**, a private session,
-`path` and `operationId`. Selected-request scopes cannot authorize new imports.
+`path` and `operationId`. Loading and unloading require all-traffic or host scope;
+selected-request scopes cannot authorize these operations.
 Supported sources are native TMCap (including recoverable and encrypted captures),
 standard/extended/encrypted SAZ, HAR, and Chromium NetLog JSON/typed JSONL.
 `transmog_capture_list` groups each imported file under one `captureId`, including
@@ -69,13 +74,16 @@ Password entry does not approve unredacted reads.
 `transmog_capture_unload` removes the entire file group, its source indexes,
 markers and readers, and invalidates dependent evidence references. It preserves
 source files, separately saved copies and retained replay results. Unsaved human
-edits return `needs_human_action`. Closing a review window preserves the session;
-closing a session ends agent access and releases its evidence. Revocation and MCP
-shutdown preserve dirty human review work while ending agent access.
+edits return `needs_human_action`. Closing a review window preserves the session.
+Closing a session ends agent access; an already-open review window retains its
+backend until closed. Key revocation or expiry and MCP disablement preserve
+unsaved human review work while ending agent access. Private sessions do not
+survive app restarts.
 
 `transmog_session_live_subscribe` admits references to the single live engine,
-with optional request-side exact host/method filters and `includeExisting`.
-Unsubscribe stops new memberships; admitted requests continue receiving updates.
+with optional request-side exact host/method filters. `includeExisting` defaults
+to false. `transmog_session_live_unsubscribe` stops new memberships; admitted
+requests continue receiving updates.
 No subscription starts another proxy, runs another hook pipeline or sends a
 duplicate request. Direct sends retain evidence in their originating session;
 `live-rules` sends traverse the shared proxy once and reach matching subscribers.
@@ -83,16 +91,24 @@ Shared controls and their leases are independent of inspection-session lifetime.
 
 Private rules stay disabled. Prepare/test them in their session and publish an
 exact revision through `transmog_rule_publish` with **Edit shared rules**. Publishing
-creates a disabled shared saved rule. Shared updates and activation require the
-existing shared-rule/live-traffic permissions. Rule lists include shared side
-effects, and saved edits reject stale revisions without replacing human drafts.
+creates a disabled shared saved rule. To enable that copy, use
+`transmog_rule_update` with `sessionId: "main"`, its current `expectedRevision`,
+its `rule` definition and `enabled: true`. This requires **Edit shared rules** and
+**Change live traffic**; the saved change persists without a control lease.
+`transmog_rule_activate` is for the key's temporary main-workspace rules.
+Rule lists include private drafts and relevant shared rules with their owning
+`sessionId`; use that ID for edits. Saved edits reject stale revisions without
+replacing human drafts.
 
-Budgets are shared across sessions: eight sessions total/four per key, four pending
-capture operations, 256 MiB of imported indexes, 200,000 live memberships, and
-the existing context/snapshot and replay-retention budgets. A bounded main retention policy also reserves space for newer live traffic.
-Files are bounded to
-1 GiB; each session holds at most 16 captures (64 total). The operation ledger is
-bounded for the app run and never evicts IDs in a way that permits duplicate work.
+Private sessions share limits of eight sessions total (four per key), 256 MiB of
+imported indexes and 200,000 live memberships. Context, snapshot and replay budgets
+are also shared. Bounded main-workspace retention reserves space for newer live traffic.
+
+MCP capture loads accept files up to 1 GiB and at most 16 captures per session
+(64 total). Only one capture operation runs at a time; up to four may remain
+pending, including password waits. The capture-operation ledger retains at most
+128 operations for the app run and does not evict IDs to admit more work.
+
 ## Evidence and disclosure
 
 Host scopes match exact hosts on any port and apply before paging. Selected-request
@@ -202,10 +218,11 @@ input/output limit.
 
 Shared header/text edits use saved-rule revisions; stale writes conflict rather
 than overwrite newer human work. Rule reads need no separate capability, while
-their body and credential content follows the redaction setting. Temporary rules are
-owned by one key and require a control lease of 30–600 seconds. Other keys can
-read their effects but cannot edit them. Lease expiry, revocation, permission
-changes or master-off disable temporary effects and detach their controller.
+their body and credential content follows the redaction setting. Temporary rules
+are owned by one key; activating them requires a control lease of 30–600 seconds.
+Preparing disabled drafts requires no lease. Other keys can read their effects
+but cannot edit them. Lease expiry, revocation, permission changes and MCP
+disablement end temporary effects and detach their controller.
 Human **Keep changes…** converts a reviewed temporary rule into durable content.
 Revocation does not roll back shared saved edits.
 
@@ -237,7 +254,8 @@ body and consume up to 16 MiB of response body. Results identify the mode and an
 exchange ID for inspecting observed boundaries and rule attribution.
 Replay evidence remains available across later sends, within a history of
 100 exchanges and a 256 MiB aggregate body budget (the latest exchange is kept).
-Retention/source omissions remain explicit; replay history ends with the app run.
+Retention/source omissions remain explicit. Replay history is temporary and ends
+with its session or the app run.
 
 `transmog_request_prepare` creates an editable draft from an authorized request
 boundary without sending. It preserves duplicate headers, explains dropped
@@ -248,6 +266,7 @@ boundaries need an explicit replacement body. Review the draft, then pass its
 `request` to `transmog_request_send` with a unique `operationId`. Preparation never
 acknowledges credentials or non-idempotent sends on the caller's behalf.
 
-MCP exposes no arbitrary file reads, script source/execution, host private keys
-or TLS session secrets. Activity logs omit traffic bodies and credentials.
+MCP can read supported capture files but exposes no general-purpose file-reading
+tool, script source/execution, host private keys or TLS session secrets.
+Activity logs omit traffic bodies and credentials.
 See [verification](testing.md#local-mcp-access) for regression and startup checks.

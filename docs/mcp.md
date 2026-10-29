@@ -59,8 +59,8 @@ See [matching details](mcp-reference.md#evidence-and-disclosure).
 | Load capture files | Load and unload local captures in private inspection sessions |
 | Control collection | Start/stop the shared proxy and the agent's recordings |
 | Prepare changes | Create, edit and test the agent's disabled header/text rule drafts |
-| Edit shared rules | Edit existing saved header/text rules |
-| Change live traffic | Activate temporary rules or targeted breakpoints; with Edit shared rules, change or disable enabled saved rules |
+| Edit shared rules | Edit saved header/text rules and publish private drafts |
+| Change live traffic | Activate temporary rules or targeted breakpoints; with Edit shared rules, enable saved rules or change/disable active ones |
 | Send requests | Send authored or replayed requests within scope |
 
 Agents can read complete retained context in pages, test a rule against captured
@@ -68,12 +68,13 @@ traffic, and replay through live rules to verify its effect. Body and credential
 reads follow the redaction choice.
 
 Every valid key can read relevant rule effects without a separate permission;
-values follow the redaction setting. Review agent drafts in **Automation → Rules**.
+values follow the redaction setting. Review main-workspace drafts in
+**Automation → Rules** and private drafts in their session's review window.
 Agent refreshes preserve human drafts, and conflicting saved edits are rejected.
 
-Temporary rules show the agent's name and stop when its control session ends.
-Choose **Keep changes…** to retain reviewed rules. Shared saved edits remain after
-revoking a key.
+Temporary rules show the agent's name; their live effects stop when the control
+session ends. Choose **Keep changes…** to retain reviewed rules. Shared saved
+edits remain after revoking a key.
 
 ## Private inspection sessions
 
@@ -84,14 +85,17 @@ receives the password, and redaction stays unchanged.
 
 Open **MCP → Inspection sessions → Review** to inspect the same evidence in a
 separate capture window. Files opened there join the same session.
-**Review private rules** uses the normal header and text
-editors. Agent updates preserve your drafts; **Publish selected rule** creates a
-disabled shared rule for review in the main window.
+**Review private rules** opens the normal header and text editors. Agent updates
+preserve your drafts; **Publish selected rule** creates a disabled shared rule.
+Review and enable it in **Automation → Rules** in the main window.
 
-Closing the review window keeps the session. **End session** releases its files
-and evidence without deleting source files or stopping live capture. Resolve
-unsaved edits before ending it. Idle sessions expire after 30 minutes; an open
-review window keeps them available. Sessions end on app restart or revoked access.
+Closing the review window keeps the session. **End session** ends agent access;
+an already-open review window keeps its evidence until you close it. Resolve
+unsaved edits before ending a session. Source files and live capture are unaffected.
+
+Idle sessions expire after 30 minutes; an open review window keeps them available.
+Key revocation or expiry, disabling MCP and app restarts also end private sessions.
+When access ends while the app is running, unsaved human review work remains available.
 
 Sessions may also subscribe to live traffic. Subscribers share each real exchange
 and its updates; requests and live rules run once. Live rules and collection

@@ -80,18 +80,21 @@ archives go to `.local/sdk-linux-qualification/`. See
 
 ## Local MCP access
 
-The MCP crate covers authentication, scope, revocation, disclosure consent,
-shared-rule conflicts, temporary control, connection activity and loopback traffic.
-It also verifies complete-context paging, HTTP/HTTPS rule-aware replay, captured
-rule tests, retained replay evidence and send-outcome recovery.
+The MCP, application and session suites cover authentication, scope, revocation,
+disclosure consent, shared-rule conflicts, temporary control, connection activity
+and loopback traffic. They also verify complete-context paging, HTTP/HTTPS
+rule-aware replay, captured rule tests, retained replay evidence and send-outcome
+recovery.
+
 Session checks cover key isolation, expiry, private draft conflicts, shared live
 updates, idempotent imports, encrypted-file password retry, grouped unload and
 Windows source-reader release. Native desktop checks also reopen the same review
 backend and verify that closing its window preserves the agent session.
-Run from the repository root after preparing UI assets:
+Run these suites and the focused browser flow from the repository root after
+preparing UI assets:
 
 ```powershell
-python scripts/dev-env.py --run cargo test --locked -p transmog-mcp --all-features
+python scripts/dev-env.py --run cargo test --locked -p transmog-mcp -p transmog-app -p transmog-session --all-features
 node apps/desktop/ui/scripts/check-workspaces.mjs --mcp-only
 ```
 
