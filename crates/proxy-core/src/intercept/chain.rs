@@ -520,6 +520,7 @@ impl ExchangeChain {
                     name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
+            self.record_script_report(&entry, super::HookPhase::RequestHead);
             match action {
                 RequestHeadAction::Continue => {}
                 RequestHeadAction::Replace(replacement) => {
@@ -655,6 +656,7 @@ impl ExchangeChain {
         let plans = self.request_body_plans(head).await?;
         Ok(
             BodyPipeline::from_plans(plans, self.context.clone(), self.runner.clone(), limits)?
+                .with_head(super::BufferedHead::Request(head.clone()))
                 .with_measurement_scope("Request body"),
         )
     }
@@ -693,6 +695,7 @@ impl ExchangeChain {
                     name: Arc::clone(&entry.identity.name),
                     source,
                 })?;
+            self.record_script_report(entry, super::HookPhase::ResponseHead);
             match action {
                 ResponseHeadAction::Continue => {}
                 ResponseHeadAction::Replace(replacement) => {
@@ -802,8 +805,20 @@ impl ExchangeChain {
             .await?;
         Ok(
             BodyPipeline::from_plans(plans, self.context.clone(), self.runner.clone(), limits)?
+                .with_head(super::BufferedHead::Response(response_head.clone()))
                 .with_measurement_scope("Response body"),
         )
+    }
+
+    fn record_script_report(&self, entry: &ChainEntry, phase: super::HookPhase) {
+        if let Some(report) = entry.interceptor.take_script_report() {
+            self.context.audit().record(
+                entry.identity.clone(),
+                phase,
+                HookEffectAction::ScriptReport(report),
+                false,
+            );
+        }
     }
 
     /// Delivers successful terminal cleanup exactly once in reverse order.
@@ -853,17 +868,32 @@ impl ExchangeChain {
         let task = tokio::spawn(async move {
             let _owner = owner;
             // Exchange-local resources must outlive the remaining callbacks too.
-            let _context = context;
             let mut report = TerminalReport::default();
             for entry in entries.into_iter().rev() {
                 let result = match &outcome {
                     TerminalOutcome::Completed(outcome) => {
-                        runner.completed(entry.interceptor, outcome.clone()).await
+                        runner
+                            .completed(Arc::clone(&entry.interceptor), outcome.clone())
+                            .await
                     }
                     TerminalOutcome::Failed(failure) => {
-                        runner.failed(entry.interceptor, failure.clone()).await
+                        runner
+                            .failed(Arc::clone(&entry.interceptor), failure.clone())
+                            .await
                     }
                 };
+                if let Some(script_report) = entry.interceptor.take_script_report() {
+                    let phase = match &outcome {
+                        TerminalOutcome::Completed(_) => super::HookPhase::Completed,
+                        TerminalOutcome::Failed(_) => super::HookPhase::Failed,
+                    };
+                    context.audit().record(
+                        entry.identity.clone(),
+                        phase,
+                        HookEffectAction::ScriptReport(script_report),
+                        false,
+                    );
+                }
                 if let Err(source) = result {
                     report.errors.push(ChainExecutionError {
                         name: entry.identity.name,

@@ -6,6 +6,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
 import type {
   ScriptDraft,
+  ScriptParameter,
   ScriptStatus,
   ScriptCandidate,
   ScriptLanguage,
@@ -24,18 +25,30 @@ import type { EditorSurface } from "../editor-surface/editor-surface.js";
 import type * as Monaco from "monaco-editor/editor/editor.api";
 import { loadMonaco, waitForStyles } from "../editor-runtime.js";
 
-const SCRIPT_TEMPLATE = `import type { Action, Context, Request } from "transmog:api/v1";
+const SCRIPT_TEMPLATE = `import { pass, setHeader } from "transmog:api";
+import type { RequestHeadEvent, RequestHeadResult } from "transmog:api";
 
-export function onRequestHead(_context: Context, request: Request): Action {
-  if (request.host === "example.test") {
-    return {
-      action: "headers",
-      operations: [{ operation: "set", name: "User-Agent", value: "Transmog/1.0" }],
-    };
+export function onRequestHead(event: RequestHeadEvent): RequestHeadResult {
+  if (event.request.host === "example.test") {
+    return { decision: { action: "edit", edits: {
+      headers: [setHeader("User-Agent", "Transmog/1.0")],
+    } } };
   }
-  return { action: "continue" };
+  return pass();
 }
 `;
+interface ParameterRow {
+  id: number;
+  name: string;
+  type: "string" | "boolean" | "integer";
+  label: string;
+  defaultValue: string;
+  override: string;
+  useDefault: boolean;
+  choices: string;
+  min: string;
+  max: string;
+}
 interface ValidatedDraft {
   token: ScriptCandidate;
   draft: ScriptDraft;
@@ -91,6 +104,9 @@ export class ScriptEditor extends WorkspaceElement {
   @observable activeSettings = "";
   @observable draftSettings = "";
   @observable testHandlers: Array<{ name: string }> = [{ name: "onRequestHead" }];
+  @observable parameterRows: ParameterRow[] = [];
+  private nextParameterId = 0;
+  @observable settingsError = "";
   @observable testResult = "";
   @observable testEvidence = "";
   @observable testOutdated = false;
@@ -98,6 +114,10 @@ export class ScriptEditor extends WorkspaceElement {
   scriptTestMethod!: HTMLInputElement;
   scriptTestHeaders!: HTMLTextAreaElement;
   scriptTestBody!: HTMLTextAreaElement;
+  scriptTestResponseHeaders!: HTMLTextAreaElement;
+  scriptTestStatus!: HTMLInputElement;
+  scriptTestLocal!: HTMLInputElement;
+  scriptTestFailure!: HTMLInputElement;
   scriptTestHandler!: HTMLSelectElement;
   scriptMenu!: HTMLDivElement;
   scriptMore!: HTMLButtonElement;
@@ -153,7 +173,16 @@ export class ScriptEditor extends WorkspaceElement {
     if (!this.scriptReady) {
       return;
     }
-    const draft = this.scriptDraft();
+    let draft: ScriptDraft;
+    try {
+      draft = this.scriptDraft();
+      this.settingsError = "";
+    } catch (error) {
+      this.settingsError = describeError(error);
+      this.scriptDirty = true;
+      this.scriptUnapplied = true;
+      return;
+    }
     const fingerprint = scriptFingerprint(draft);
     this.scriptDirty = fingerprint !== this.savedFingerprint;
     this.scriptUnapplied = scriptExecutionFingerprint(draft) !== this.activeFingerprint;
@@ -217,6 +246,15 @@ export class ScriptEditor extends WorkspaceElement {
     set("scriptPath", draft.prefilter.pathPrefix ?? "");
     set("scriptHeaders", draft.capabilities.writeHeaders.join(", "));
     set("readBodies", draft.capabilities.readBodies);
+    set("rewriteRequest", draft.capabilities.rewriteRequest);
+    set("reroute", draft.capabilities.reroute);
+    set("writeStatus", draft.capabilities.writeStatus);
+    set("annotate", draft.capabilities.annotate);
+    set("requestTypes", draft.requestBodyFilter.contentTypes.join(", "));
+    set("responseTypes", draft.responseBodyFilter.contentTypes.join(", "));
+    set("responseStatuses", draft.responseBodyFilter.statuses.join(", "));
+    set("includeLocal", draft.responseBodyFilter.includeLocal);
+    this.loadParameters(draft.parameters);
     set("writeBody", draft.capabilities.writeBody);
     set("respond", draft.capabilities.respond);
     set("abort", draft.capabilities.abort);
@@ -478,6 +516,15 @@ export class ScriptEditor extends WorkspaceElement {
       set("scriptPath", draft.prefilter.pathPrefix ?? "");
       set("scriptHeaders", draft.capabilities.writeHeaders.join(", "));
       set("readBodies", draft.capabilities.readBodies);
+      set("rewriteRequest", draft.capabilities.rewriteRequest);
+      set("reroute", draft.capabilities.reroute);
+      set("writeStatus", draft.capabilities.writeStatus);
+      set("annotate", draft.capabilities.annotate);
+      set("requestTypes", draft.requestBodyFilter.contentTypes.join(", "));
+      set("responseTypes", draft.responseBodyFilter.contentTypes.join(", "));
+      set("responseStatuses", draft.responseBodyFilter.statuses.join(", "));
+      set("includeLocal", draft.responseBodyFilter.includeLocal);
+      this.loadParameters(draft.parameters);
       set("writeBody", draft.capabilities.writeBody);
       set("respond", draft.capabilities.respond);
       set("abort", draft.capabilities.abort);
@@ -588,6 +635,10 @@ export class ScriptEditor extends WorkspaceElement {
       method: this.scriptTestMethod.value,
       headers: this.scriptTestHeaders.value,
       body: this.scriptTestBody.value,
+      responseHeaders: this.scriptTestResponseHeaders.value,
+      status: Number(this.scriptTestStatus.value),
+      localResponse: this.scriptTestLocal.checked,
+      failure: this.scriptTestFailure.value,
       handler: this.scriptTestHandler.value,
     };
     try {
@@ -607,10 +658,14 @@ export class ScriptEditor extends WorkspaceElement {
       }
       this.scriptText = "Running the sandbox for this input…";
       this.statusKind = "progress";
-      const action = await invoke<Record<string, unknown>>("test_script", {
+      const result = await invoke<{ decision: { action: string } }>("test_script", {
         candidateId: candidate.token.candidateId,
         invocation: {
-          context: { exchangeId: "editor-test", nowUnixMs: 0, handler },
+          context: { exchangeId: "editor-test", nowUnixMs: Date.now(), handler },
+          parameters: {},
+          state: {},
+          localResponse: input.localResponse,
+          failure: handler === "onFailed" ? input.failure : null,
           request: {
             method: input.method,
             scheme: target.protocol.slice(0, -1),
@@ -622,11 +677,23 @@ export class ScriptEditor extends WorkspaceElement {
               name: header.name,
               value: Array.from(new TextEncoder().encode(header.value)),
               sensitive: false,
+              redacted: false,
             })),
           },
-          response: handler.startsWith("onResponse") ? { status: 200, headers: [] } : null,
+          response:
+            handler.startsWith("onResponse") || handler === "onCompleted"
+              ? {
+                  status: input.status,
+                  headers: parseHeaderLines(input.responseHeaders).map((h) => ({
+                    name: h.name,
+                    value: Array.from(new TextEncoder().encode(h.value)),
+                    sensitive: false,
+                    redacted: false,
+                  })),
+                }
+              : null,
           body: handler.endsWith("Body")
-            ? { bytes: Array.from(new TextEncoder().encode(input.body)), truncated: false }
+            ? { bytes: Array.from(new TextEncoder().encode(input.body)) }
             : null,
         },
       });
@@ -634,8 +701,8 @@ export class ScriptEditor extends WorkspaceElement {
         return;
       }
       this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
-      this.testResult = `Completed for this input · ${handler} · Action: ${String(action.action ?? "continue")}`;
-      this.testEvidence = `${input.method} ${input.url}\n${handler.startsWith("onResponse") ? "Response fixture: 200, no response headers\n" : ""}${input.headers ? `Request headers:\n${input.headers}\n` : ""}${handler.endsWith("Body") ? `Input body:\n${input.body}\n` : ""}\nReturned action:\n${JSON.stringify(action, null, 2)}`;
+      this.testResult = `Completed for this input · ${handler} · Action: ${result.decision.action}`;
+      this.testEvidence = `${input.method} ${input.url}\n${handler.startsWith("onResponse") ? `Response fixture: ${input.status}\n${input.responseHeaders}\n` : ""}${input.headers ? `Request headers:\n${input.headers}\n` : ""}${handler.endsWith("Body") ? `Input body:\n${input.body}\n` : ""}\nReturned result:\n${JSON.stringify(result, null, 2)}`;
       if (this.testEvidence.length > 32768) {
         this.testEvidence =
           this.testEvidence.slice(0, 32768) + "\n[Evidence preview shortened to 32,768 characters]";
@@ -788,6 +855,112 @@ export class ScriptEditor extends WorkspaceElement {
     this.scriptRevision = revision;
     return { draft: { ...draft, revision }, generation: status.generation };
   }
+  private csv(value: FormDataEntryValue | null): string[] {
+    return String(value ?? "")
+      .split(",")
+      .map((v) => v.trim())
+      .filter(Boolean);
+  }
+  private integer(value: string, label: string): number {
+    if (!/^-?\d+$/.test(value) || !Number.isSafeInteger(Number(value))) {
+      throw new Error(`${label} must be a whole number`);
+    }
+    return Number(value);
+  }
+  addParameter(): void {
+    if (this.parameterRows.length >= 64) {
+      return;
+    }
+    this.parameterRows = [
+      ...this.parameterRows,
+      {
+        id: this.nextParameterId++,
+        name: "",
+        label: "",
+        type: "string",
+        defaultValue: "",
+        override: "",
+        useDefault: true,
+        choices: "",
+        min: "0",
+        max: "100",
+      },
+    ];
+    this.markScriptChanged();
+  }
+  removeParameter(id: number): void {
+    this.parameterRows = this.parameterRows.filter((p) => p.id !== id);
+    this.markScriptChanged();
+  }
+  changeParameter(id: number, field: string, event: Event): void {
+    const input = event.target as HTMLInputElement;
+    const value = field === "useDefault" ? input.checked : input.value;
+    this.parameterRows = this.parameterRows.map((p) =>
+      p.id !== id
+        ? p
+        : {
+            ...p,
+            [field]: value,
+            ...(field === "type"
+              ? {
+                  defaultValue: value === "boolean" ? "false" : value === "integer" ? "0" : "",
+                  override: "",
+                  useDefault: true,
+                }
+              : {}),
+          },
+    );
+    this.markScriptChanged();
+  }
+  private loadParameters(parameters: Record<string, ScriptParameter>): void {
+    this.parameterRows = Object.entries(parameters).map(([name, p]) => ({
+      id: this.nextParameterId++,
+      name,
+      label: p.label,
+      type: p.type,
+      defaultValue: String(p.default),
+      override: p.value === null ? "" : String(p.value),
+      useDefault: p.value === null,
+      choices: p.type === "string" ? p.choices.join(", ") : "",
+      min: p.type === "integer" ? String(p.min) : "0",
+      max: p.type === "integer" ? String(p.max) : "100",
+    }));
+  }
+  private parameters(): Record<string, ScriptParameter> {
+    const entries = new Map<string, ScriptParameter>();
+    for (const p of this.parameterRows) {
+      if (!/^[A-Za-z0-9_]{1,64}$/.test(p.name) || entries.has(p.name)) {
+        throw new Error("Parameters need unique names using letters, numbers, or underscores");
+      }
+      const label = p.label || p.name;
+      const item: ScriptParameter =
+        p.type === "boolean"
+          ? {
+              type: p.type,
+              label,
+              default: p.defaultValue === "true",
+              value: p.override === "" ? null : p.override === "true",
+            }
+          : p.type === "integer"
+            ? {
+                type: p.type,
+                label,
+                default: this.integer(p.defaultValue, p.name),
+                value: p.useDefault ? null : this.integer(p.override, p.name),
+                min: this.integer(p.min, "Minimum"),
+                max: this.integer(p.max, "Maximum"),
+              }
+            : {
+                type: p.type,
+                label,
+                default: p.defaultValue,
+                value: p.useDefault ? null : p.override,
+                choices: this.csv(p.choices),
+              };
+      entries.set(p.name, item);
+    }
+    return Object.fromEntries(entries);
+  }
   private scriptDraft(): ScriptDraft {
     if (!this.sourceEditor) {
       throw new Error("Script editor is still loading");
@@ -811,12 +984,29 @@ export class ScriptEditor extends WorkspaceElement {
       retainedSource: this.reviewingTypeScript ? this.sourceEditor.getValue() : this.retainedSource,
       javascriptHistory: [...this.javascriptHistory],
       handlers,
+      parameters: this.parameters(),
+      requestBodyFilter: {
+        contentTypes: this.csv(data.get("requestTypes")),
+        statuses: [],
+        includeLocal: false,
+      },
+      responseBodyFilter: {
+        contentTypes: this.csv(data.get("responseTypes")),
+        statuses: this.csv(data.get("responseStatuses")).map((v) =>
+          this.integer(v, "Response status"),
+        ),
+        includeLocal: data.get("includeLocal") === "on",
+      },
       prefilter: {
         method: this.loadedDraft?.prefilter.method ?? null,
         host: optionalText(data.get("scriptHost")),
         pathPrefix: optionalText(data.get("scriptPath")),
       },
       capabilities: {
+        rewriteRequest: data.get("rewriteRequest") === "on",
+        reroute: data.get("reroute") === "on",
+        writeStatus: data.get("writeStatus") === "on",
+        annotate: data.get("annotate") === "on",
         readSensitiveHeaders: data.get("sensitive") === "on",
         readBodies: data.get("readBodies") === "on",
         writeHeaders,
@@ -871,9 +1061,16 @@ export class ScriptEditor extends WorkspaceElement {
     void this.refreshAuthoringStatus();
   }
   private sourceHandlers(source: string): ScriptDraft["handlers"] {
-    return (["onRequestHead", "onRequestBody", "onResponseHead", "onResponseBody"] as const).filter(
-      (handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source),
-    );
+    return (
+      [
+        "onRequestHead",
+        "onRequestBody",
+        "onResponseHead",
+        "onResponseBody",
+        "onCompleted",
+        "onFailed",
+      ] as const
+    ).filter((handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source));
   }
   private replaceSource(source: string, language: ScriptLanguage): void {
     const old = this.draftModel;
@@ -1019,7 +1216,7 @@ export class ScriptEditor extends WorkspaceElement {
           status.active.find((item) => item.manifest.id === "user-script");
         const seed =
           build?.javascript ??
-          'export function onRequestHead() { return { action: "continue" }; }\n';
+          'export function onRequestHead() { return { decision: { action: "continue" } }; }\n';
         const history =
           this.retainedSource && this.retainedSource !== seed
             ? this.rememberJavaScript(this.retainedSource)
@@ -1030,7 +1227,7 @@ export class ScriptEditor extends WorkspaceElement {
         this.closeComparison();
         this.replaceSource(
           build?.javascript ??
-            'export function onRequestHead() { return { action: "continue" }; }\n',
+            'export function onRequestHead() { return { decision: { action: "continue" } }; }\n',
           "javascript",
         );
         this.feedback(

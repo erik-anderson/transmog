@@ -575,6 +575,15 @@ pub(crate) fn write_session<W: Write>(
     for effect in &session.hook_effects {
         use transmog_core::intercept::{HeaderEditSnapshot, HookEffectAction, HookPhase};
         let header_edit = HeaderEditSnapshot::from_action(&effect.action);
+        let script_report = match &effect.action {
+            HookEffectAction::ScriptReport(report) if !report.annotations.is_empty() => {
+                Some(transmog_core::intercept::ScriptReport {
+                    annotations: report.annotations.clone(),
+                    diagnostics: Vec::new(),
+                })
+            }
+            _ => None,
+        };
         let body_edit = match &effect.action {
             HookEffectAction::BodyEdit(report) => Some(Box::new(report.clone())),
             _ => None,
@@ -583,17 +592,24 @@ pub(crate) fn write_session<W: Write>(
             HookEffectAction::Respond { snapshot, .. } => snapshot.clone(),
             _ => None,
         };
-        if header_edit.is_none() && response_snapshot.is_none() && body_edit.is_none() {
+        if header_edit.is_none()
+            && response_snapshot.is_none()
+            && body_edit.is_none()
+            && script_report.is_none()
+        {
             continue;
         }
         let phase = match effect.phase {
             HookPhase::RequestHead => "request-head",
             HookPhase::ResponseHead => "response-head",
             HookPhase::ResponseBody => "response-body",
-            HookPhase::RequestBody => continue,
+            HookPhase::Completed => "completed",
+            HookPhase::Failed => "failed",
+            HookPhase::RequestBody => "request-body",
         };
         let action = match effect.action {
             HookEffectAction::BodyEdit(_) => "body-edit",
+            HookEffectAction::ScriptReport(_) => "script-report",
             HookEffectAction::ReplaceRequestHead(_) => "replace-request-head",
             HookEffectAction::ReplaceResponseHead(_) => "replace-response-head",
             HookEffectAction::Respond { .. } => "respond",
@@ -609,6 +625,7 @@ pub(crate) fn write_session<W: Write>(
             effect_sequence: effect.sequence,
             header_edit,
             body_edit,
+            script_report,
             response_snapshot,
         })?;
     }

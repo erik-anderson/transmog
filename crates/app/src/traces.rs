@@ -2381,8 +2381,12 @@ fn apply_native_frame(
             effect_sequence,
             header_edit,
             body_edit,
+            script_report,
         } => {
-            if (header_edit.is_some() || response_snapshot.is_some() || body_edit.is_some())
+            if (header_edit.is_some()
+                || response_snapshot.is_some()
+                || body_edit.is_some()
+                || script_report.is_some())
                 && (effect_sequence == 0
                     || hook_id.len() > 512
                     || hook_name.len() > 512
@@ -2396,6 +2400,56 @@ fn apply_native_frame(
                 return Err(invalid(
                     "Saved hook identity or execution sequence is invalid",
                 ));
+            }
+            if let Some(report) = script_report {
+                use transmog_core::intercept::{
+                    HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
+                };
+                let phase = match phase.as_str() {
+                    "request-head" => HookPhase::RequestHead,
+                    "request-body" => HookPhase::RequestBody,
+                    "response-head" => HookPhase::ResponseHead,
+                    "response-body" => HookPhase::ResponseBody,
+                    "completed" => HookPhase::Completed,
+                    "failed" => HookPhase::Failed,
+                    _ => return Err(invalid("Saved script phase is invalid")),
+                };
+                if action != "script-report"
+                    || changed
+                    || header_edit.is_some()
+                    || body_edit.is_some()
+                    || response_snapshot.is_some()
+                    || !report.diagnostics.is_empty()
+                    || report.annotations.len() > 16
+                    || report.annotations.iter().any(|a| {
+                        a.note.is_empty()
+                            || a.note.len() > 2048
+                            || a.tags.len() > 8
+                            || a.tags.iter().any(|t| {
+                                t.is_empty() || t.len() > 64 || t.chars().any(char::is_control)
+                            })
+                    })
+                {
+                    return Err(invalid("Saved script annotations are invalid"));
+                }
+                *budget = budget.saturating_add(
+                    serde_json::to_vec(&report)
+                        .map_err(|_| invalid("Invalid script annotations"))?
+                        .len()
+                        + hook_id.len()
+                        + hook_name.len(),
+                );
+                row.response_effects.push(HookEffect {
+                    sequence: effect_sequence,
+                    interceptor: InterceptorIdentity {
+                        id: InterceptorId::new(hook_id.clone()),
+                        name: hook_name.clone().into(),
+                        chain_position,
+                    },
+                    phase,
+                    action: HookEffectAction::ScriptReport(report),
+                    changed: false,
+                });
             }
             if let Some(report) = body_edit {
                 use transmog_core::intercept::{
@@ -2461,7 +2515,7 @@ fn apply_native_frame(
                     .chain(&headers.removed)
                     .chain(&headers.changed)
                     .collect::<Vec<_>>();
-                if phase != expected_phase
+                if (phase != expected_phase && phase != expected_phase.replace("-head", "-body"))
                     || action != expected_action
                     || response_snapshot.is_some()
                     || names.len() > 768
@@ -2486,10 +2540,11 @@ fn apply_native_frame(
                         name: hook_name.clone().into(),
                         chain_position,
                     },
-                    phase: if phase == "request-head" {
-                        HookPhase::RequestHead
-                    } else {
-                        HookPhase::ResponseHead
+                    phase: match phase.as_str() {
+                        "request-head" => HookPhase::RequestHead,
+                        "request-body" => HookPhase::RequestBody,
+                        "response-body" => HookPhase::ResponseBody,
+                        _ => HookPhase::ResponseHead,
                     },
                     action: edit.into_action(),
                     changed,
@@ -5092,6 +5147,100 @@ mod tests {
             .unwrap();
         writer.seal().unwrap();
         (measured, protocols)
+    }
+
+    #[tokio::test]
+    async fn native_script_annotations_round_trip_without_live_diagnostics() {
+        use transmog_core::intercept::{
+            HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
+            ScriptAnnotation, ScriptReport, ScriptSeverity,
+        };
+        let root = tempfile::tempdir().unwrap();
+        let source = root.path().join("annotations.saz");
+        saz(&source);
+        let imported = app(root.path());
+        imported
+            .import_trace(request(source, "source"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let id = imported
+            .query_sessions(SessionQueryInput::default())
+            .unwrap()
+            .sessions[0]
+            .id
+            .clone();
+        let mut snapshot = imported
+            .service
+            .catalog()
+            .get(ExchangeId(crate::inspector::parse_session_id(&id).unwrap()))
+            .unwrap();
+        snapshot.hook_effects = vec![HookEffect {
+            sequence: 1,
+            interceptor: InterceptorIdentity {
+                id: InterceptorId::new("script/check@2"),
+                name: "Check".into(),
+                chain_position: 0,
+            },
+            phase: HookPhase::Completed,
+            changed: false,
+            action: HookEffectAction::ScriptReport(ScriptReport {
+                annotations: vec![ScriptAnnotation {
+                    note: "Review this response".into(),
+                    tags: vec!["needs-review".into()],
+                    severity: ScriptSeverity::Warning,
+                }],
+                diagnostics: vec!["ephemeral detail".into()],
+            }),
+        }];
+        let mut workspace = app(&root.path().join("workspace"));
+        workspace.traces = imported.traces.clone();
+        workspace
+            .service
+            .catalog()
+            .import_sessions(vec![snapshot])
+            .unwrap();
+        assert_eq!(
+            workspace
+                .query_sessions(SessionQueryInput {
+                    search: Some("needs-review".into()),
+                    limit: Some(1),
+                    ..Default::default()
+                })
+                .unwrap()
+                .total_matched,
+            1
+        );
+        let saved = root.path().join("annotations.tmcap");
+        workspace
+            .save_traffic_trace(
+                saved.clone(),
+                crate::TraceSaveOptions {
+                    format: crate::TraceSaveFormat::Native,
+                    ..Default::default()
+                },
+            )
+            .await
+            .unwrap();
+        let reopened = app(&root.path().join("reopened"));
+        reopened
+            .import_trace(request(saved, "annotations"), Arc::new(|_| {}))
+            .await
+            .unwrap();
+        let rows = reopened
+            .query_sessions(SessionQueryInput {
+                search: Some("NEEDS-REVIEW".into()),
+                ..Default::default()
+            })
+            .unwrap();
+        assert_eq!(rows.total_matched, 1);
+        let reports = reopened
+            .session_detail(&rows.sessions[0].id)
+            .unwrap()
+            .script_reports;
+        assert_eq!(reports.len(), 1);
+        assert_eq!(reports[0].script, "script/check@2");
+        assert_eq!(reports[0].annotations[0].note, "Review this response");
+        assert_eq!(reports[0].diagnostics, [] as [String; 0]);
     }
 
     #[tokio::test]

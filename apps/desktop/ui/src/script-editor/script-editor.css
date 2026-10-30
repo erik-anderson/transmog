@@ -40,3 +40,12 @@ script-editor { display: contents; }
 .script-issue { text-align:start; white-space:normal; overflow-wrap:anywhere; }
 .script-history { margin:.5rem 0; }
 .script-history > details { padding:.35rem; }
+
+.script-parameters { grid-column:1/-1; min-width:0; }
+.script-parameter { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,12rem),1fr)); gap:.5rem; margin:.5rem 0; min-width:0; }
+.script-parameter label { min-width:0; }
+.script-parameter input:not([type="checkbox"]), .script-parameter select { width:100%; min-width:0; box-sizing:border-box; }
+.script-parameter button { align-self:end; }
+
+.script-parameter label:has(input[type="checkbox"]) { display:flex; align-items:center; align-self:end; gap:.4rem; min-height:2rem; }
+.script-parameter input[type="checkbox"] { flex:none; width:auto; }

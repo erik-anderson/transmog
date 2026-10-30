@@ -186,7 +186,7 @@ pub use traces::{
 };
 pub use transmog_core::client_authentication::ClientCertificatePolicy;
 pub use transmog_core::connection_policy::AllowedHttpProtocols;
-pub use transmog_script::{ScriptAction, ScriptInvocation};
+pub use transmog_script::{ScriptAction, ScriptInvocation, ScriptResult};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
     ServiceStatus,
@@ -1140,7 +1140,7 @@ impl Application {
         &self,
         candidate_id: &str,
         invocation: ScriptInvocation,
-    ) -> Result<ScriptAction, AppError> {
+    ) -> Result<ScriptResult, AppError> {
         self.scripts.test(candidate_id, invocation).await
     }
 

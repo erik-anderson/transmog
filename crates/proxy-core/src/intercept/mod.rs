@@ -17,12 +17,12 @@ pub use action::{
 pub use audit::{
     BodyEditReport, BodyPlanKind, HeaderChanges, HeaderEditSnapshot, HookAuditTrail, HookEffect,
     HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity, LocalResponseSnapshot,
-    RequestHeadChanges, ResponseHeadChanges,
+    RequestHeadChanges, ResponseHeadChanges, ScriptAnnotation, ScriptReport, ScriptSeverity,
 };
 pub use body::{
     BodyFilter, BodyHookError, BodyPipeline, BodyPipelineError, BodyPipelineLimits, BodyPlan,
     BodyPlanSelection, BodyRepresentation, BodyRepresentationError, BoxBodyFuture, BufferedBody,
-    BufferedBodyHandler, HookAbort,
+    BufferedBodyHandler, BufferedHead, HookAbort,
 };
 pub use bridge::{
     BridgeCommand, BridgeCorrelationId, BridgeError, BridgeReplyError, DecisionBridge,
@@ -62,6 +62,10 @@ pub trait InterceptorFactory: Send + Sync {
 /// Request and response callbacks may overlap on duplex protocols. Mutable
 /// implementations must synchronize their exchange-local state.
 pub trait ExchangeInterceptor: Send + Sync {
+    /// Takes validated script evidence produced by the most recent head or terminal callback.
+    fn take_script_report(&self) -> Option<ScriptReport> {
+        None
+    }
     /// Inspects or changes the request head before route selection.
     fn on_request_head(&self, _event: RequestHeadEvent) -> BoxHookFuture<'_, RequestHeadAction> {
         Box::pin(async { RequestHeadAction::Continue })

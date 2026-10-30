@@ -304,6 +304,21 @@ impl ObserverEvent {
             ObserverEventKind::ResponseHeadObserved { head, .. }
             | ObserverEventKind::ResponseHeadFinalized(head) => headers(&head.headers),
             ObserverEventKind::BodyTrailers(trailers) => headers(&trailers.trailers),
+            ObserverEventKind::HookEffect(effect) => match &effect.action {
+                crate::intercept::HookEffectAction::ScriptReport(report) => report
+                    .annotations
+                    .iter()
+                    .fold(4096_usize, |n, a| {
+                        a.tags.iter().fold(
+                            n.saturating_add(a.note.len()).saturating_add(128),
+                            |n, tag| n.saturating_add(tag.len()).saturating_add(32),
+                        )
+                    })
+                    .saturating_add(report.diagnostics.iter().fold(0_usize, |n, text| {
+                        n.saturating_add(text.len()).saturating_add(32)
+                    })),
+                _ => 4096,
+            },
             ObserverEventKind::Performance(evidence) => evidence
                 .transports
                 .iter()

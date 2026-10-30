@@ -274,6 +274,8 @@ pub enum CaptureRecordKind {
         header_edit: Option<transmog_core::intercept::HeaderEditSnapshot>,
         /// Observed literal operation outcome, without text values.
         body_edit: Option<Box<transmog_core::intercept::BodyEditReport>>,
+        /// Explicit script annotations; ephemeral diagnostics are excluded.
+        script_report: Option<transmog_core::intercept::ScriptReport>,
         /// Frozen local entity identity; contains no external file path.
         response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
     },
@@ -528,6 +530,7 @@ struct HookPayload {
     effect_sequence: u64,
     header_edit: Option<transmog_core::intercept::HeaderEditSnapshot>,
     body_edit: Option<Box<transmog_core::intercept::BodyEditReport>>,
+    script_report: Option<transmog_core::intercept::ScriptReport>,
     response_snapshot: Option<transmog_core::intercept::LocalResponseSnapshot>,
 }
 
@@ -1493,6 +1496,15 @@ pub fn record_from_observer(
             chain_position: effect.interceptor.chain_position,
             effect_sequence: effect.sequence,
             header_edit: transmog_core::intercept::HeaderEditSnapshot::from_action(&effect.action),
+            script_report: match &effect.action {
+                HookEffectAction::ScriptReport(report) if !report.annotations.is_empty() => {
+                    Some(transmog_core::intercept::ScriptReport {
+                        annotations: report.annotations.clone(),
+                        diagnostics: Vec::new(),
+                    })
+                }
+                _ => None,
+            },
             body_edit: match &effect.action {
                 HookEffectAction::BodyEdit(report) => Some(Box::new(report.clone())),
                 _ => None,
@@ -1633,6 +1645,8 @@ const fn hook_phase(value: HookPhase) -> &'static str {
         HookPhase::RequestBody => "request-body",
         HookPhase::ResponseHead => "response-head",
         HookPhase::ResponseBody => "response-body",
+        HookPhase::Completed => "completed",
+        HookPhase::Failed => "failed",
     }
 }
 
@@ -1645,6 +1659,7 @@ const fn hook_action(value: &HookEffectAction) -> &'static str {
         HookEffectAction::Abort(_) => "abort",
         HookEffectAction::BodyPlan { .. } => "body-plan",
         HookEffectAction::BodyEdit(_) => "body-edit",
+        HookEffectAction::ScriptReport(_) => "script-report",
     }
 }
 
@@ -1742,6 +1757,7 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
             effect_sequence,
             header_edit,
             body_edit,
+            script_report,
             response_snapshot,
         } => (
             "hook-effect",
@@ -1755,6 +1771,7 @@ fn store(record: &CaptureRecord) -> Result<StoredRecord, CaptureError> {
                 effect_sequence: *effect_sequence,
                 header_edit: header_edit.clone(),
                 body_edit: body_edit.clone(),
+                script_report: script_report.clone(),
                 response_snapshot: response_snapshot.clone(),
             })?,
         ),
@@ -1895,6 +1912,7 @@ fn load(record: StoredRecord) -> Result<CaptureRecord, CaptureError> {
                 effect_sequence: value.effect_sequence,
                 header_edit: value.header_edit,
                 body_edit: value.body_edit,
+                script_report: value.script_report,
                 response_snapshot: value.response_snapshot,
             }
         }

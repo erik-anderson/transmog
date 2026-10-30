@@ -8,8 +8,8 @@ use std::io::{Read, Write};
 use std::collections::BTreeMap;
 use transmog_js_runtime::{ErrorKind, Runtime};
 use transmog_script::{
-    SCRIPT_HOST_PROTOCOL_VERSION, ScriptAction, ScriptFailure, ScriptFailureCategory,
-    ScriptHostReply, ScriptHostRequest, ScriptInvocation, ScriptManifest, read_host_frame,
+    SCRIPT_HOST_PROTOCOL_VERSION, ScriptFailure, ScriptFailureCategory, ScriptHostReply,
+    ScriptHostRequest, ScriptInvocation, ScriptManifest, ScriptResult, read_host_frame,
     write_host_frame,
 };
 use url::Url;
@@ -25,7 +25,7 @@ globalThis.__transmogInvoke = (name, inputJson) => {
   const handler = globalThis.__transmogHandlers[name];
   if (typeof handler !== "function") throw new Error("declared handler is unavailable");
   const input = __transmogDeepFreeze(JSON.parse(inputJson));
-  const result = handler(input.context, input.request, input.response, input.body);
+  const result = handler(input);
   if (result !== null && (typeof result === "object" || typeof result === "function") && typeof result.then === "function") {
     throw new Error("handlers must return synchronously");
   }
@@ -155,7 +155,16 @@ impl ScriptRuntime {
         let specifier = Url::parse("file:///transmog-script/main.js")
             .expect("constant module specifier is valid");
         runtime
-            .evaluate_modules(&specifier, BTreeMap::from([(specifier.clone(), module)]))
+            .evaluate_modules(
+                &specifier,
+                BTreeMap::from([
+                    (specifier.clone(), module),
+                    (
+                        Url::parse("transmog:api").expect("constant API URL"),
+                        include_str!("api.mjs").to_owned(),
+                    ),
+                ]),
+            )
             .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))?;
         Ok(Self {
             runtime,
@@ -163,14 +172,16 @@ impl ScriptRuntime {
         })
     }
 
-    fn invoke(&mut self, invocation: ScriptInvocation) -> Result<ScriptAction, ScriptFailure> {
+    fn invoke(&mut self, mut invocation: ScriptInvocation) -> Result<ScriptResult, ScriptFailure> {
         if !self.manifest.handlers.contains(&invocation.context.handler) {
             return Err(failure(
                 ScriptFailureCategory::Protocol,
                 "invocation requested an undeclared handler",
             ));
         }
-        let handler = invocation.context.handler.export_name();
+        let request = transmog_script::prepare_invocation(&self.manifest, &mut invocation)?;
+        let phase = invocation.context.handler;
+        let handler = phase.export_name();
         let json = serde_json::to_string(&invocation)
             .map_err(|error| failure(ScriptFailureCategory::Protocol, &error.to_string()))?;
         let json_string = serde_json::to_string(&json)
@@ -181,7 +192,9 @@ impl ScriptRuntime {
             .execute_string(
                 "transmog:invoke",
                 &source,
-                self.manifest.limits.max_output_bytes,
+                self.manifest.limits.max_output_bytes * 4
+                    + self.manifest.limits.max_log_bytes
+                    + 256 * 1024,
             )
             .map_err(|error| {
                 let category = match error.kind {
@@ -191,8 +204,10 @@ impl ScriptRuntime {
                 };
                 failure(category, &error.to_string())
             })?;
-        serde_json::from_str(&output)
-            .map_err(|error| failure(ScriptFailureCategory::InvalidAction, &error.to_string()))
+        let result = serde_json::from_str(&output)
+            .map_err(|error| failure(ScriptFailureCategory::InvalidAction, &error.to_string()))?;
+        transmog_script::validate_result(&self.manifest, phase, &request, &result)?;
+        Ok(result)
     }
 }
 
@@ -272,16 +287,23 @@ mod tests {
     };
 
     use super::*;
+    use transmog_script::ScriptAction;
 
     fn manifest() -> ScriptManifest {
         ScriptManifest {
+            parameters: std::collections::BTreeMap::new(),
+            request_body_filter: transmog_script::ScriptBodyFilter::default(),
+            response_body_filter: transmog_script::ScriptBodyFilter::default(),
             id: "test".to_owned(),
             revision: 1,
-            api_revision: 1,
+            api_revision: transmog_script::SCRIPT_API_REVISION,
             source_hash: "0".repeat(64),
             handlers: BTreeSet::from([ScriptHandler::RequestHead]),
             prefilter: ScriptPrefilter::default(),
-            capabilities: ScriptCapabilities::default(),
+            capabilities: ScriptCapabilities {
+                abort: true,
+                ..ScriptCapabilities::default()
+            },
             limits: ScriptLimits::default(),
             priority: 0,
         }
@@ -291,14 +313,18 @@ mod tests {
     fn v8_executes_a_synchronous_typed_action_without_ambient_deno() {
         configure_v8();
         let source = r#"
-          export function onRequestHead(context, request) {
+          export function onRequestHead({ context, request }) {
             if (typeof Deno !== "undefined" || typeof fetch !== "undefined") throw new Error("ambient API");
-            return { action: "abort", reason: `${request.host}:${context.handler}` };
+            return { decision: { action: "abort", reason: `${request.host}:${context.handler}` } };
           }
         "#;
         let mut runtime = ScriptRuntime::new(&manifest(), source.to_owned()).unwrap();
         let result = runtime
             .invoke(ScriptInvocation {
+                parameters: std::collections::BTreeMap::new(),
+                state: std::collections::BTreeMap::new(),
+                local_response: false,
+                failure: None,
                 context: ScriptContext {
                     exchange_id: "1".to_owned(),
                     now_unix_ms: 7,
@@ -318,7 +344,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(
-            result,
+            result.decision,
             ScriptAction::Abort {
                 reason: "example.test:onRequestHead".to_owned()
             }

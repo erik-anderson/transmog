@@ -15,9 +15,9 @@ use std::{
 };
 
 use transmog_script::{
-    BoxScriptFuture, CompiledScript, SCRIPT_HOST_PROTOCOL_VERSION, ScriptAction, ScriptFailure,
+    BoxScriptFuture, CompiledScript, SCRIPT_HOST_PROTOCOL_VERSION, ScriptFailure,
     ScriptFailureCategory, ScriptHostReply, ScriptHostRequest, ScriptHostToken, ScriptInvocation,
-    ScriptRunner, read_host_frame, write_host_frame,
+    ScriptResult, ScriptRunner, read_host_frame, write_host_frame,
 };
 
 /// Maximum simultaneously active isolated script processes.
@@ -215,7 +215,7 @@ impl Drop for SupervisedScriptRunner {
 struct Work {
     request_id: u64,
     invocation: ScriptInvocation,
-    reply: tokio::sync::oneshot::Sender<Result<ScriptAction, ScriptFailure>>,
+    reply: tokio::sync::oneshot::Sender<Result<ScriptResult, ScriptFailure>>,
 }
 
 // The caller owns the timeout future. If it disappears while work is queued or

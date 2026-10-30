@@ -43,6 +43,15 @@ pub enum ScriptLanguage {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptDraft {
+    /// Declared parameters and saved overrides.
+    #[serde(default)]
+    pub parameters: std::collections::BTreeMap<String, transmog_script::ScriptParameter>,
+    /// Request body admission before buffering.
+    #[serde(default)]
+    pub request_body_filter: transmog_script::ScriptBodyFilter,
+    /// Response body admission before buffering.
+    #[serde(default)]
+    pub response_body_filter: transmog_script::ScriptBodyFilter,
     /// Stable script identity.
     pub id: String,
     /// Monotonic caller-owned revision.
@@ -401,7 +410,7 @@ impl ScriptRegistry {
         &self,
         candidate_id: &str,
         invocation: ScriptInvocation,
-    ) -> Result<transmog_script::ScriptAction, AppError> {
+    ) -> Result<transmog_script::ScriptResult, AppError> {
         let revision = self
             .candidates
             .lock()
@@ -870,6 +879,9 @@ impl ScriptRunner for UnavailableRunner {
 
 fn build_revision(draft: ScriptDraft) -> Result<ScriptRevision, AppError> {
     let manifest = ScriptManifest {
+        parameters: draft.parameters.clone(),
+        request_body_filter: draft.request_body_filter.clone(),
+        response_body_filter: draft.response_body_filter.clone(),
         id: draft.id,
         revision: draft.revision,
         api_revision: transmog_script::SCRIPT_API_REVISION,
@@ -998,6 +1010,9 @@ fn save_activated_draft(
     }
     workspace.saved.retain(|draft| draft.id != manifest.id);
     workspace.saved.push(ScriptDraft {
+        parameters: revision.manifest.parameters.clone(),
+        request_body_filter: revision.manifest.request_body_filter.clone(),
+        response_body_filter: revision.manifest.response_body_filter.clone(),
         id: manifest.id.clone(),
         revision: manifest.revision,
         source: revision.source.clone(),
@@ -1165,9 +1180,14 @@ mod tests {
 
     fn draft(revision: u64) -> ScriptDraft {
         ScriptDraft {
+            parameters: std::collections::BTreeMap::new(),
+            request_body_filter: transmog_script::ScriptBodyFilter::default(),
+            response_body_filter: transmog_script::ScriptBodyFilter::default(),
             id: "user-script".to_owned(),
             revision,
-            source: "export function onRequestHead() { return { action: 'continue' }; }".to_owned(),
+            source:
+                "export function onRequestHead() { return { decision: { action: 'continue' } }; }"
+                    .to_owned(),
             language: ScriptLanguage::TypeScript,
             retained_source: None,
             javascript_history: Vec::new(),

@@ -50,8 +50,8 @@ use transmog_app::{
     DiagnosticLevel, DiagnosticsReport, ExportFormat, ExportRequest, ExportResult, ImportRequest,
     ImportResponseAsset, ProductState, ProxyRoute, ProxyStartRequest, RequestCommand,
     RequestCommandFormat, ResponseAsset, ResponseAssetEdit, ResponseAssetInspection,
-    ResponseFileResult, RuntimeDiagnostics, ScriptAction, ScriptCandidate, ScriptDraft,
-    ScriptInvocation, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
+    ResponseFileResult, RuntimeDiagnostics, ScriptCandidate, ScriptDraft, ScriptInvocation,
+    ScriptResult, ScriptStatus, SessionDetail, SessionHint, SessionPage, SessionQueryInput,
     SessionResponseAsset, SessionSummary, SupportBundleRequest, SupportBundleResult,
     SystemReplayExecutor, TraceSaveOptions, TraceSaveResult, TrafficTimelineRow, TrafficView,
     WindowState, WorkspacePreferences,
@@ -855,7 +855,7 @@ async fn test_script(
     candidate_id: String,
     invocation: ScriptInvocation,
     state: State<'_, DesktopState>,
-) -> Result<ScriptAction, AppError> {
+) -> Result<ScriptResult, AppError> {
     state
         .application
         .test_script(&candidate_id, invocation)

@@ -140,12 +140,40 @@ async fn literal_response_edits_preserve_fresh_data_codings_and_actual_outcomes(
         })
         .unwrap();
     app.activate_automation(&candidate.candidate_id).unwrap();
-    let script=app.validate_script(ScriptDraft{ language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, javascript_history: Vec::new(),id:"before-literal".into(),revision:1,source:r#"
-export function onResponseBody(_context: unknown, _request: unknown, _response: unknown, body:{bytes:number[]}) {
+    let script = app
+        .validate_script(ScriptDraft {
+            parameters: std::collections::BTreeMap::new(),
+            request_body_filter: transmog_script::ScriptBodyFilter::default(),
+            response_body_filter: transmog_script::ScriptBodyFilter::default(),
+            language: transmog_app::ScriptLanguage::TypeScript,
+            retained_source: None,
+            javascript_history: Vec::new(),
+            id: "before-literal".into(),
+            revision: 1,
+            source: r#"
+export function onResponseBody({body}: {body:{bytes:number[]}}) {
  const text=String.fromCharCode(...body.bytes).replace("seed","old");
- return {action:"replace-body",bytes:Array.from(text).map(c=>c.charCodeAt(0))};
+ return { decision: {action:"replace-body",bytes:Array.from(text).map(c=>c.charCodeAt(0))} };
 }
-"#.into(),handlers:BTreeSet::from([ScriptHandler::ResponseBody]),prefilter:ScriptPrefilter{path_prefix:Some("/text-edit/changed/".into()),..Default::default()},capabilities:ScriptCapabilities{read_bodies:true,write_body:true,..Default::default()},limits:ScriptLimits{max_duration_ms:1000,..Default::default()},priority:0}).unwrap();
+"#
+            .into(),
+            handlers: BTreeSet::from([ScriptHandler::ResponseBody]),
+            prefilter: ScriptPrefilter {
+                path_prefix: Some("/text-edit/changed/".into()),
+                ..Default::default()
+            },
+            capabilities: ScriptCapabilities {
+                read_bodies: true,
+                write_body: true,
+                ..Default::default()
+            },
+            limits: ScriptLimits {
+                max_duration_ms: 1000,
+                ..Default::default()
+            },
+            priority: 0,
+        })
+        .unwrap();
     app.activate_script(&script.candidate_id).unwrap();
     let listener = start(&app, &environment).await;
     let recording = workspace.root.join("literal-recorded.tmcap");
@@ -422,17 +450,18 @@ async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence(
     application
         .activate_automation(&candidate.candidate_id)
         .unwrap();
-    let script = application.validate_script(ScriptDraft { language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, javascript_history: Vec::new(),
+    let script = application.validate_script(ScriptDraft {
+        parameters: std::collections::BTreeMap::new(), request_body_filter: transmog_script::ScriptBodyFilter::default(), response_body_filter: transmog_script::ScriptBodyFilter::default(), language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, javascript_history: Vec::new(),
         id: "header-script".into(), revision: 1,
         source: r#"
-export function onRequestHead(_context: unknown, request: {headers: Array<{name:string;value:number[]}>}) {
+export function onRequestHead({ request }: {request: {headers: Array<{name:string;value:number[]}>}}) {
   const token = request.headers.find(h => h.name.toLowerCase() === "x-fresh-token");
   const native = request.headers.find(h => h.name.toLowerCase() === "user-agent");
   if (!token || !native || String.fromCharCode(...native.value) !== "native-agent") throw new Error("native request did not run first");
-  return {action:"headers",operations:[{operation:"set",name:"user-agent",value:String.fromCharCode(...token.value)}]};
+  return { decision: {action:"headers",operations:[{operation:"set",name:"user-agent",value:String.fromCharCode(...token.value)}]} };
 }
 export function onResponseHead() {
-  return {action:"headers",operations:[{operation:"set",name:"x-order",value:"script-first"}]};
+  return { decision: {action:"headers",operations:[{operation:"set",name:"x-order",value:"script-first"}]} };
 }
 "#.into(),
         handlers: BTreeSet::from([ScriptHandler::RequestHead, ScriptHandler::ResponseHead]),
@@ -1759,27 +1788,29 @@ function header(request: { headers: Array<{ name: string; value: number[] }> }, 
   return field === undefined ? "" : String.fromCharCode(...field.value);
 }
 
-export function onRequestHead(
-  _context: unknown,
-  request: { path: string; headers: Array<{ name: string; value: number[] }> },
-) {
+export function onRequestHead({ request }: {
+  request: { path: string; headers: Array<{ name: string; value: number[] }> }
+}) {
   if (request.path === "/echo/script" && header(request, "x-phase9") === "script") {
-    return {
+    return { decision: {
       action: "headers",
       operations: [{ operation: "set", name: "user-agent", value: "Transmog-Phase9" }],
-    };
+    } };
   }
   if (request.path === "/auto/script") {
-    return { action: "respond", assetRef: "phase9-small@1" };
+    return { decision: { action: "respond", assetRef: "phase9-small@1" } };
   }
   if (request.path === "/script/fail") {
     throw new Error("intentional phase 9 qualification failure");
   }
-  return { action: "continue" };
+  return { decision: { action: "continue" } };
 }
 "#;
     let candidate = application
         .validate_script(ScriptDraft {
+            parameters: std::collections::BTreeMap::new(),
+            request_body_filter: transmog_script::ScriptBodyFilter::default(),
+            response_body_filter: transmog_script::ScriptBodyFilter::default(),
             language: transmog_app::ScriptLanguage::TypeScript,
             retained_source: None,
             javascript_history: Vec::new(),
@@ -2101,6 +2132,7 @@ async fn curl_owned(
     }
 }
 
+#[track_caller]
 fn assert_success(output: &CurlOutput) {
     assert!(
         output.process.status.success(),

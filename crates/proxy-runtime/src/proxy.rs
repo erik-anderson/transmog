@@ -1841,6 +1841,7 @@ impl ProxyState {
             frames: request_body,
             headers: request_headers,
             modified: request_body_modified,
+            ..
         } = request_body_outcome;
         request_head.headers = request_headers;
 
@@ -1937,6 +1938,7 @@ impl ProxyState {
             == BodySemantics::Forbidden
         {
             ProcessedBody {
+                status: None,
                 frames: Vec::new(),
                 headers: response.head.headers.clone(),
                 modified: true,
@@ -1970,8 +1972,12 @@ impl ProxyState {
             frames: body,
             headers,
             modified: body_modified,
+            status,
         } = outcome;
         response.body = body;
+        if let Some(status) = status {
+            response.head.status = status;
+        }
         response.head.headers = headers;
         let prepared_response_headers = prepare_headers(
             &response.head.headers,
@@ -2430,6 +2436,7 @@ impl ProxyState {
                 &mut response_head,
                 local_response,
                 session.ingress_version,
+                &mut upstream.body,
             )
             .await?;
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
@@ -2524,7 +2531,7 @@ impl ProxyState {
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn handle_application_upstream(
         &self,
-        request: Request<Incoming>,
+        mut request: Request<Incoming>,
         mut session: SessionMetadata,
         mut request_head: RequestHead,
         ingress_version: HttpLegVersion,
@@ -2534,7 +2541,12 @@ impl ProxyState {
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         let destination = request_head.source_version;
         let request_pipeline = self
-            .prepare_streaming_request_pipeline(&chain, &mut request_head, destination)
+            .prepare_streaming_request_pipeline(
+                &chain,
+                &mut request_head,
+                destination,
+                request.body_mut(),
+            )
             .await?;
 
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
@@ -2662,6 +2674,7 @@ impl ProxyState {
                 &mut response_head,
                 local_response,
                 ingress_version,
+                &mut upstream.body,
             )
             .await?;
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
@@ -2694,7 +2707,7 @@ impl ProxyState {
     #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
     async fn handle_streaming_hyper(
         &self,
-        request: Request<Incoming>,
+        mut request: Request<Incoming>,
         mut session: SessionMetadata,
         mut request_head: RequestHead,
         ingress_version: HttpLegVersion,
@@ -2707,7 +2720,12 @@ impl ProxyState {
             HyperEgressMode::Http2Only | HyperEgressMode::Auto => HttpLegVersion::Http2,
         };
         let request_pipeline = self
-            .prepare_streaming_request_pipeline(&chain, &mut request_head, destination)
+            .prepare_streaming_request_pipeline(
+                &chain,
+                &mut request_head,
+                destination,
+                request.body_mut(),
+            )
             .await?;
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
@@ -2841,6 +2859,7 @@ impl ProxyState {
                 &mut response_head,
                 local_response,
                 ingress_version,
+                &mut upstream.body,
             )
             .await?;
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
@@ -2875,7 +2894,7 @@ impl ProxyState {
     #[allow(clippy::too_many_lines)]
     async fn handle_streaming_h3(
         &self,
-        request: Request<Incoming>,
+        mut request: Request<Incoming>,
         mut session: SessionMetadata,
         mut request_head: RequestHead,
         ingress_version: HttpLegVersion,
@@ -2894,7 +2913,12 @@ impl ProxyState {
             return Err(ProxyRuntimeError::Http3RequiresHttps);
         }
         let request_pipeline = self
-            .prepare_streaming_request_pipeline(&chain, &mut request_head, HttpLegVersion::Http3)
+            .prepare_streaming_request_pipeline(
+                &chain,
+                &mut request_head,
+                HttpLegVersion::Http3,
+                request.body_mut(),
+            )
             .await?;
         let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
             .ok_or(ProxyRuntimeError::InvalidConfiguration)?;
@@ -3033,6 +3057,7 @@ impl ProxyState {
                 &mut response_head,
                 local_response,
                 ingress_version,
+                &mut upstream.response.body,
             )
             .await?;
         let (downstream_sender, downstream_body) = BodyStream::channel(capacity);
@@ -3130,7 +3155,7 @@ impl ProxyState {
     ) -> Result<Response<DownstreamBody>, ProxyRuntimeError> {
         let transmog_core::LocalStreamingResponse {
             head,
-            body,
+            mut body,
             body_length: _,
         } = response;
         let outcome = chain.response_head(request, head, None, true).await;
@@ -3182,6 +3207,7 @@ impl ProxyState {
                         &mut head,
                         local_response,
                         session.ingress_version,
+                        &mut body,
                     )
                     .await?;
                 let capacity = NonZeroUsize::new(self.config.limits.body_channel_capacity)
@@ -3259,6 +3285,7 @@ impl ProxyState {
             let ProcessedBody {
                 frames: body,
                 headers,
+                status,
                 modified: body_modified,
             } = match processed {
                 Ok(body) => body,
@@ -3276,6 +3303,12 @@ impl ProxyState {
             };
             response.body = body;
             response.head.headers = headers;
+            if let Some(status) = status {
+                response.head.status = status;
+            }
+            if body_semantics(&request.method, response.head.status) == BodySemantics::Forbidden {
+                response.body.clear();
+            }
             let prepared_headers = prepare_headers(
                 &response.head.headers,
                 TranslationOptions {
@@ -3383,6 +3416,7 @@ impl ProxyState {
         publish_performance(chain, Some(Milestone::ClientResponseQueued)).await;
         publish_performance(chain, Some(Milestone::ExchangeDone)).await;
         let report = chain.completed(outcome.clone()).await;
+        observe_hook_effects(chain).await;
         for error in report.errors() {
             warn!(%error, "terminal hook cleanup failed");
         }
@@ -3457,12 +3491,125 @@ impl ProxyState {
         };
         publish_performance(chain, Some(Milestone::ExchangeDone)).await;
         let report = chain.failed(failure.clone()).await;
+        observe_hook_effects(chain).await;
         for error in report.errors() {
             warn!(%error, "terminal hook cleanup failed");
         }
         if let Some(observer) = runtime_observer(chain) {
             observer.failed(failure).await;
         }
+    }
+
+    async fn buffer_request_pipeline(
+        &self,
+        chain: &ExchangeChain,
+        source: &mut Incoming,
+        pipeline: &mut ContentBodyPipeline,
+    ) -> Result<(), ProxyRuntimeError> {
+        let limit = self
+            .config
+            .limits
+            .max_request_body_bytes
+            .min(self.config.limits.max_buffered_request_body_bytes)
+            .min(16 * 1024 * 1024);
+        let manual = chain
+            .context()
+            .extensions()
+            .get::<ManualCancellation>()
+            .map_or_else(ExchangeCancellation::new, |signal| signal.0.clone());
+        let mut input = StreamingBodyTracker::new(limit);
+        let mut output = BoundedBodyBuffer::new(limit);
+        loop {
+            let next = tokio::select! {
+                () = manual.cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
+                () = chain.context().cancellation().cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
+                next = timeout(self.config.limits.body_idle_timeout, source.frame()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
+            };
+            let Some(frame) = next else { break };
+            let Some(frame) = incoming_frame(frame).map_err(BodyPipelineError::Input)? else {
+                continue;
+            };
+            input.accept(&frame).map_err(BodyPipelineError::Input)?;
+            observe_body_frames(
+                chain,
+                ExchangeBoundary::ClientRequest,
+                std::slice::from_ref(&frame),
+            )
+            .await;
+            for frame in pipeline.process(frame).await? {
+                output.push(frame)?;
+            }
+        }
+        observe_complete_body(chain, ExchangeBoundary::ClientRequest, &[]).await;
+        publish_performance(chain, Some(Milestone::ClientRequestDone)).await;
+        for frame in pipeline.finish().await? {
+            output.push(frame)?;
+        }
+        let (data, trailers) = output.finish();
+        let mut frames = vec![BodyFrame::Data(data)];
+        if let Some(trailers) = trailers {
+            frames.push(BodyFrame::Trailers(trailers));
+        }
+        pipeline.retain_completed_output(frames);
+        observe_hook_effects(chain).await;
+        Ok(())
+    }
+
+    async fn buffer_response_pipeline(
+        &self,
+        chain: &ExchangeChain,
+        source: &mut BodyStream,
+        pipeline: &mut ContentBodyPipeline,
+        local: bool,
+    ) -> Result<(), ProxyRuntimeError> {
+        let limit = self
+            .config
+            .limits
+            .max_response_body_bytes
+            .min(16 * 1024 * 1024);
+        let manual = chain
+            .context()
+            .extensions()
+            .get::<ManualCancellation>()
+            .map_or_else(ExchangeCancellation::new, |signal| signal.0.clone());
+        let mut input = StreamingBodyTracker::new(limit);
+        let mut output = BoundedBodyBuffer::new(limit);
+        loop {
+            let next = tokio::select! {
+                () = manual.cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
+                () = chain.context().cancellation().cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
+                next = timeout(self.config.limits.body_idle_timeout, source.recv()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
+            };
+            let Some(frame) = next else { break };
+            let frame = frame.map_err(BodyPipelineError::Input)?;
+            input.accept(&frame).map_err(BodyPipelineError::Input)?;
+            if !local {
+                observe_body_frames(
+                    chain,
+                    ExchangeBoundary::UpstreamResponse,
+                    std::slice::from_ref(&frame),
+                )
+                .await;
+            }
+            for frame in pipeline.process(frame).await? {
+                output.push(frame)?;
+            }
+        }
+        if !local {
+            observe_complete_body(chain, ExchangeBoundary::UpstreamResponse, &[]).await;
+            publish_performance(chain, Some(Milestone::UpstreamResponseDone)).await;
+        }
+        for frame in pipeline.finish().await? {
+            output.push(frame)?;
+        }
+        let (data, trailers) = output.finish();
+        let mut frames = vec![BodyFrame::Data(data)];
+        if let Some(trailers) = trailers {
+            frames.push(BodyFrame::Trailers(trailers));
+        }
+        pipeline.retain_completed_output(frames);
+        observe_hook_effects(chain).await;
+        Ok(())
     }
 
     async fn process_request_body(
@@ -3487,6 +3634,7 @@ impl ProxyState {
                 .limits
                 .max_request_body_bytes
                 .min(self.config.limits.max_buffered_request_body_bytes),
+            None,
         )
         .await
     }
@@ -3512,8 +3660,9 @@ impl ProxyState {
         chain: &ExchangeChain,
         request_head: &mut RequestHead,
         destination: HttpLegVersion,
+        source: &mut Incoming,
     ) -> Result<ContentBodyPipeline, ProxyRuntimeError> {
-        let pipeline = match self.request_content_pipeline(chain, request_head).await {
+        let mut pipeline = match self.request_content_pipeline(chain, request_head).await {
             Ok(pipeline) => pipeline,
             Err(error) => {
                 self.fail_runtime_exchange(chain, ExchangeStage::RequestBody, &error, false, false)
@@ -3521,6 +3670,19 @@ impl ProxyState {
                 return Err(error);
             }
         };
+        if pipeline.buffers_head() {
+            if let Err(error) = self
+                .buffer_request_pipeline(chain, source, &mut pipeline)
+                .await
+            {
+                self.fail_runtime_exchange(chain, ExchangeStage::RequestBody, &error, false, false)
+                    .await;
+                return Err(error);
+            }
+            if let Some(transmog_core::intercept::BufferedHead::Request(head)) = pipeline.head() {
+                *request_head = head.clone();
+            }
+        }
         request_head.headers = pipeline.output_headers().clone();
         request_head.headers = match prepare_headers(
             &request_head.headers,
@@ -3582,8 +3744,9 @@ impl ProxyState {
         response_head: &mut ResponseHead,
         local_response: bool,
         destination: HttpLegVersion,
+        source: &mut BodyStream,
     ) -> Result<ContentBodyPipeline, ProxyRuntimeError> {
-        let pipeline = match self
+        let mut pipeline = match self
             .response_content_pipeline(chain, request_head, response_head, local_response)
             .await
         {
@@ -3594,6 +3757,25 @@ impl ProxyState {
                 return Err(error);
             }
         };
+        if pipeline.buffers_head() {
+            if let Err(error) = self
+                .buffer_response_pipeline(chain, source, &mut pipeline, local_response)
+                .await
+            {
+                self.fail_runtime_exchange(chain, ExchangeStage::ResponseBody, &error, true, false)
+                    .await;
+                return Err(error);
+            }
+            if let Some(transmog_core::intercept::BufferedHead::Response(head)) = pipeline.head() {
+                *response_head = head.clone();
+            }
+        }
+        if pipeline.has_buffered_output()
+            && body_semantics(&request_head.method, response_head.status)
+                == BodySemantics::Forbidden
+        {
+            pipeline.discard_completed_output();
+        }
         response_head.headers = pipeline.output_headers().clone();
         response_head.headers = match prepare_headers(
             &response_head.headers,
@@ -3645,6 +3827,7 @@ impl ProxyState {
             &response_head.headers,
             frames,
             self.config.limits.max_response_body_bytes,
+            Some(&request_head.method),
         )
         .await
     }
@@ -3658,19 +3841,31 @@ impl ProxyState {
         source_headers: &HeaderBlock,
         frames: Vec<BodyFrame>,
         limit: usize,
+        response_method: Option<&str>,
     ) -> Result<ProcessedBody, ProxyRuntimeError> {
         let mut pipeline =
             ContentBodyPipeline::from_policy(pipeline, source_headers, self.content)?;
         let modified = pipeline.modifies_body();
-        let headers = pipeline.output_headers().clone();
         let mut output = Vec::new();
         for frame in frames {
             output.extend(pipeline.process(frame).await?);
         }
         output.extend(pipeline.finish().await?);
+        if let (Some(method), Some(transmog_core::intercept::BufferedHead::Response(head))) =
+            (response_method, pipeline.head())
+            && body_semantics(method, head.status) == BodySemantics::Forbidden
+        {
+            output.clear();
+        }
         validate_frames(&output, limit)?;
         observe_complete_body(chain, output_boundary, &output).await;
+        let headers = pipeline.output_headers().clone();
+        let status = match pipeline.head() {
+            Some(transmog_core::intercept::BufferedHead::Response(head)) => Some(head.status),
+            _ => None,
+        };
         Ok(ProcessedBody {
+            status,
             frames: output,
             headers,
             modified,
@@ -3888,6 +4083,7 @@ struct RoutedResponse {
 }
 
 struct ProcessedBody {
+    status: Option<u16>,
     frames: Vec<BodyFrame>,
     headers: HeaderBlock,
     modified: bool,
@@ -4487,7 +4683,7 @@ async fn stream_incoming_through_hooks(
     let transfer = async move {
         let mut input = StreamingBodyTracker::new(limit);
         let mut output = StreamingBodyTracker::new(limit);
-        let mut client_body_completed = false;
+        let mut client_body_completed = pipeline.has_buffered_output();
         loop {
             let frame = match timeout(body_idle_timeout, body.frame()).await {
                 Ok(Some(frame)) => frame,
@@ -4687,8 +4883,10 @@ async fn stream_response_through_hooks(
                 return;
             }
         }
-        observe_complete_body(&chain, ExchangeBoundary::UpstreamResponse, &[]).await;
-        publish_performance(&chain, Some(Milestone::UpstreamResponseDone)).await;
+        if !pipeline.has_buffered_output() {
+            observe_complete_body(&chain, ExchangeBoundary::UpstreamResponse, &[]).await;
+            publish_performance(&chain, Some(Milestone::UpstreamResponseDone)).await;
+        }
         let frames = match pipeline.finish().await {
             Ok(frames) => frames,
             Err(error) => {
@@ -4856,6 +5054,7 @@ async fn stream_local_response_through_hooks(
         publish_performance(&chain, Some(Milestone::ClientResponseQueued)).await;
         publish_performance(&chain, Some(Milestone::ExchangeDone)).await;
         let report = chain.completed(outcome.clone()).await;
+        observe_hook_effects(&chain).await;
         for error in report.errors() {
             warn!(%error, "terminal hook cleanup failed");
         }
@@ -4895,6 +5094,7 @@ async fn complete_hook_streaming_exchange(
     publish_performance(chain, Some(Milestone::ClientResponseQueued)).await;
     publish_performance(chain, Some(Milestone::ExchangeDone)).await;
     let report = chain.completed(outcome.clone()).await;
+    observe_hook_effects(chain).await;
     for error in report.errors() {
         warn!(%error, "terminal hook cleanup failed");
     }
@@ -4960,6 +5160,7 @@ async fn emit_hook_failure(
     };
     publish_performance(chain, Some(Milestone::ExchangeDone)).await;
     let report = chain.failed(failure.clone()).await;
+    observe_hook_effects(chain).await;
     for error in report.errors() {
         warn!(%error, "terminal hook cleanup failed");
     }
@@ -9902,3 +10103,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod message_buffer_tests;

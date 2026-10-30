@@ -97,8 +97,8 @@ saved script source and settings without changing the active script.
 
 ## Traffic script authoring and execution
 
-Open **Automation → Scripts**, edit the TypeScript example, and review **Filters
-and capabilities** before choosing **Save & enable**. TypeScript is the default
+Open **Automation → Scripts**, edit the TypeScript example, and review **Filters, capabilities,
+and parameters** before choosing **Save & enable**. TypeScript is the default
 authoring language; traffic executes saved JavaScript. These scripts modify
 matching requests and responses. Packaged read-only visualizers use the separate
 [extension workflow](extensions.md).
@@ -129,7 +129,10 @@ output comparison. A successful validation, sandbox-test preparation or comparis
 can replace the latest compiled build without saving the editing draft or
 changing the applied build. Successful compilation does not prove that a sandbox
 can start or that the script works for every input. Sandbox testing is optional;
-its result identifies the handler and returned action for that sample only.
+its result identifies the handler, decision, state and evidence for that sample only.
+Response status, response headers and local-response identity are editable test
+inputs. Tests enforce live capabilities and use the candidate's parameter values.
+See the [script API](scripting.md) for events, helpers, body admission and limits.
 Changing source, capabilities or test input marks earlier test results outdated.
 Samples can be authored or copied from a selected Traffic request with sensitive
 headers omitted.
@@ -770,9 +773,9 @@ acknowledgement records the risk but cannot make the operation intrinsically
 safe.
 
 Compilation enforces caller-selected finite limits for rule count, header
-operations, regular-expression size, and replacement-body bytes. Scripts use
-the same validated action vocabulary but run in the separately sandboxed script
-host described by [ADR 0008](adr/0008-traffic-workspace-and-script-isolation.md).
+operations, regular-expression size, and replacement-body bytes. Scripts return
+phase-specific decisions, validated edits and bounded evidence from the separately
+sandboxed script host described by [ADR 0008](adr/0008-traffic-workspace-and-script-isolation.md).
 Script errors abort the affected exchange and produce bounded remediation
 diagnostics.
 

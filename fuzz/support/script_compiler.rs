@@ -50,7 +50,7 @@ fn structured(data: &[u8]) {
     };
     let bom = if selector & 128 == 0 { "" } else { "\u{feff}" };
     let source = format!(
-        "{bom}import type {{ScriptAction}} from 'transmog:api/v1';\r\n// retained authoring comment\r\n{declarations}\r\nexport function onRequestHead(_context:unknown):ScriptAction {{ const value:unknown={expression}; return {{action:'continue'}}; }}"
+        "{bom}import type {{ScriptAction}} from 'transmog:api';\r\n// retained authoring comment\r\n{declarations}\r\nexport function onRequestHead(_context:unknown):ScriptAction {{ const value:unknown={expression}; return {{action:'continue'}}; }}"
     );
     let compiled = compile_typescript(manifest(&source), &source)
         .expect("Structured valid script must reach TypeScript emission");
@@ -185,6 +185,9 @@ fn raw_source(source: &str) {
 
 fn manifest(source: &str) -> ScriptManifest {
     ScriptManifest {
+        parameters: std::collections::BTreeMap::new(),
+        request_body_filter: transmog_script::ScriptBodyFilter::default(),
+        response_body_filter: transmog_script::ScriptBodyFilter::default(),
         id: "fuzz".into(),
         revision: 1,
         api_revision: SCRIPT_API_REVISION,

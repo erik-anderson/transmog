@@ -39,6 +39,10 @@ pub struct InterceptorIdentity {
 /// Hook phase that produced an auditable traffic effect.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum HookPhase {
+    /// Successful terminal notification.
+    Completed,
+    /// Failed terminal notification.
+    Failed,
     /// Request-head processing.
     RequestHead,
     /// Request-body plan selection.
@@ -187,6 +191,8 @@ pub struct BodyEditReport {
 /// Traffic-affecting action attributed to one interceptor callback.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum HookEffectAction {
+    /// Bounded operator-authored script evidence, independent of traffic edits.
+    ScriptReport(ScriptReport),
     /// Actual result of a bounded body operation, independent of plan selection.
     BodyEdit(BodyEditReport),
     /// A request head was replaced.
@@ -226,6 +232,43 @@ pub enum HookEffectAction {
     },
 }
 
+/// Finding importance, independent of transport success.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptSeverity {
+    /// Informational finding.
+    #[default]
+    Info,
+    /// Condition worth investigating.
+    Warning,
+    /// Script-identified application problem.
+    Error,
+}
+
+/// An inert, bounded script finding retained with exchange evidence.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptAnnotation {
+    /// Short searchable tags.
+    #[serde(default)]
+    pub tags: Vec<String>,
+    /// Operator-visible explanation.
+    pub note: String,
+    /// Finding importance.
+    #[serde(default)]
+    pub severity: ScriptSeverity,
+}
+
+/// Output of one script invocation after validation.
+#[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptReport {
+    /// Durable findings, explicitly authorized by the script's capabilities.
+    pub annotations: Vec<ScriptAnnotation>,
+    /// Bounded diagnostic messages.
+    pub diagnostics: Vec<String>,
+}
+
 /// One immutable, ordered hook-effect audit record.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HookEffect {
@@ -250,7 +293,7 @@ struct HookAuditState {
 /// Exchange-local authoritative hook-effect trail.
 ///
 /// Its maximum record count is finite: each configured interceptor can produce
-/// at most one record in each of the four hook phases.
+/// finitely many decisions and reports across head, body and terminal phases.
 #[derive(Clone, Debug, Default)]
 pub struct HookAuditTrail {
     state: Arc<Mutex<HookAuditState>>,

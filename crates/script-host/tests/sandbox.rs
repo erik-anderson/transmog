@@ -13,9 +13,12 @@ use transmog_script_supervisor::{IsolationPolicy, ScriptHostConfig, SupervisedSc
 fn compile(source: &str, max_duration_ms: u64) -> transmog_script::CompiledScript {
     compile_typescript(
         ScriptManifest {
+            parameters: std::collections::BTreeMap::new(),
+            request_body_filter: transmog_script::ScriptBodyFilter::default(),
+            response_body_filter: transmog_script::ScriptBodyFilter::default(),
             id: "sandbox-test".to_owned(),
             revision: 1,
-            api_revision: 1,
+            api_revision: transmog_script::SCRIPT_API_REVISION,
             source_hash: source_hash(source.as_bytes()),
             handlers: BTreeSet::from([ScriptHandler::RequestHead]),
             prefilter: ScriptPrefilter::default(),
@@ -36,6 +39,10 @@ fn compile(source: &str, max_duration_ms: u64) -> transmog_script::CompiledScrip
 
 fn invocation() -> ScriptInvocation {
     ScriptInvocation {
+        parameters: std::collections::BTreeMap::new(),
+        state: std::collections::BTreeMap::new(),
+        local_response: false,
+        failure: None,
         context: ScriptContext {
             exchange_id: "1".to_owned(),
             now_unix_ms: 0,
@@ -63,6 +70,29 @@ fn config() -> ScriptHostConfig {
 }
 
 #[tokio::test]
+async fn bundled_helpers_work_inside_the_native_sandbox() {
+    let source = r#"
+      import { respondJson, requestUrl, utf8Decode, base64Decode } from "transmog:api";
+      export function onRequestHead(event) {
+        return { ...respondJson(201, { url: requestUrl(event.request), text: utf8Decode(base64Decode("aMOpbGxv")) }), diagnostics: ["constructed response"] };
+      }
+    "#;
+    let mut compiled = compile(source, 500);
+    compiled.manifest.capabilities.respond = true;
+    let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
+    let result = runner.invoke(invocation()).await.unwrap();
+    let ScriptAction::Response { response } = result.decision else {
+        panic!("inline response missing")
+    };
+    assert_eq!(response.status, 201);
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&response.bytes).unwrap(),
+        serde_json::json!({"url":"https://example.test/","text":"héllo"})
+    );
+    assert_eq!(result.diagnostics, ["constructed response"]);
+}
+
+#[tokio::test]
 async fn appcontainer_host_executes_without_ambient_authority() {
     let source = r#"
       export function onRequestHead() {
@@ -70,12 +100,12 @@ async fn appcontainer_host_executes_without_ambient_authority() {
             typeof WebSocket !== "undefined" || typeof WebAssembly !== "undefined") {
           throw new Error("ambient capability exposed");
         }
-        return { action: "abort", reason: "sandboxed" };
+        return { decision: { action: "abort", reason: "sandboxed" } };
       }
     "#;
     let runner = SupervisedScriptRunner::start(&config(), compile(source, 500)).unwrap();
     assert_eq!(
-        runner.invoke(invocation()).await.unwrap(),
+        runner.invoke(invocation()).await.unwrap().decision,
         ScriptAction::Abort {
             reason: "sandboxed".to_owned()
         }
@@ -117,14 +147,13 @@ async fn allocation_bomb_cannot_take_the_desktop_or_proxy_with_it() {
 
 #[tokio::test]
 async fn native_arraybuffer_memory_is_bounded_without_affecting_another_script() {
-    let healthy_source =
-        "export function onRequestHead() { return {action:'abort',reason:'healthy'}; }";
+    let healthy_source = "export function onRequestHead() { return { decision: {action:'abort',reason:'healthy'} }; }";
     let healthy = SupervisedScriptRunner::start(&config(), compile(healthy_source, 500)).unwrap();
     let source = r"
 export function onRequestHead() {
   const bytes = new Uint8Array(256 * 1024 * 1024);
   bytes.fill(165);
-  return {action:'abort',reason:String(bytes[bytes.length - 1])};
+  return { decision: {action:'abort',reason:String(bytes[bytes.length - 1])} };
 }
 ";
     let mut compiled = compile(source, 2_000);
@@ -139,7 +168,7 @@ export function onRequestHead() {
         "the allocation must hit the native limit before its deadline"
     );
     assert_eq!(
-        healthy.invoke(invocation()).await.unwrap(),
+        healthy.invoke(invocation()).await.unwrap().decision,
         ScriptAction::Abort {
             reason: "healthy".to_owned()
         }
@@ -151,7 +180,7 @@ fn recursively_queued_native_microtasks_are_contained_by_the_startup_deadline() 
     let source = r"
 function repeat() { queueMicrotask(repeat); }
 queueMicrotask(repeat);
-export function onRequestHead() { return {action:'continue'}; }
+export function onRequestHead() { return { decision: {action:'continue'} }; }
 ";
     let started = std::time::Instant::now();
     let Err(failure) = SupervisedScriptRunner::start(&config(), compile(source, 500)) else {
@@ -173,7 +202,7 @@ async fn hostile_output_and_exception_getters_do_not_poison_later_script_calls()
     ] {
         let source = format!(
             "let calls=0; export function onRequestHead() {{ \
-             if(++calls===1) {{ {hostile} }} return {{action:'abort',reason:'recovered'}}; }}"
+             if(++calls===1) {{ {hostile} }} return {{ decision: {{action:'abort',reason:'recovered'}} }}; }}"
         );
         let runner = SupervisedScriptRunner::start(&config(), compile(&source, 500)).unwrap();
         let failure = runner.invoke(invocation()).await.unwrap_err();
@@ -184,7 +213,7 @@ async fn hostile_output_and_exception_getters_do_not_poison_later_script_calls()
         );
         assert!(failure.message.len() <= 512);
         assert_eq!(
-            runner.invoke(invocation()).await.unwrap(),
+            runner.invoke(invocation()).await.unwrap().decision,
             ScriptAction::Abort {
                 reason: "recovered".to_owned()
             }
@@ -239,9 +268,9 @@ async fn abandoning_a_polled_invocation_keeps_the_script_watchdog_active() {
 #[tokio::test]
 async fn dropping_an_unpolled_script_invocation_cannot_strand_work() {
     let source = r"
-export function onRequestHead(context) {
+export function onRequestHead({ context }) {
   if(context.exchangeId === 'abandoned') while(true) {}
-  return {action:'abort',reason:'healthy'};
+  return { decision: {action:'abort',reason:'healthy'} };
 }
 ";
     let runner = SupervisedScriptRunner::start(&config(), compile(source, 75)).unwrap();
@@ -274,12 +303,12 @@ async fn module_initialization_awaits_promises_with_string_codegen_already_disab
       const initialized = await Promise.resolve("ready");
       export function onRequestHead() {
         if (!queued) throw new Error("initialization microtask did not run");
-        return {action: "abort", reason: initialized};
+        return { decision: {action: "abort", reason: initialized} };
       }
     "#;
     let runner = SupervisedScriptRunner::start(&config(), compile(source, 500)).unwrap();
     assert_eq!(
-        runner.invoke(invocation()).await.unwrap(),
+        runner.invoke(invocation()).await.unwrap().decision,
         ScriptAction::Abort {
             reason: "ready".to_owned()
         }
@@ -290,7 +319,7 @@ async fn module_initialization_awaits_promises_with_string_codegen_already_disab
 fn rejected_top_level_await_fails_script_initialization() {
     let source = r#"
       await Promise.reject(new Error("initialization rejected"));
-      export function onRequestHead() { return {action: "abort", reason: "unreachable"}; }
+      export function onRequestHead() { return { decision: {action: "abort", reason: "unreachable"} }; }
     "#;
     let Err(failure) = SupervisedScriptRunner::start(&config(), compile(source, 500)) else {
         panic!("a rejected module must not become ready");
@@ -303,7 +332,7 @@ fn rejected_top_level_await_fails_script_initialization() {
 
 #[test]
 fn throwing_native_microtasks_fail_script_initialization() {
-    let source = "queueMicrotask(() => { throw new Error('native microtask failed'); }); export function onRequestHead() { return {action:'continue'}; }";
+    let source = "queueMicrotask(() => { throw new Error('native microtask failed'); }); export function onRequestHead() { return { decision: {action:'continue'} }; }";
     let Err(failure) = SupervisedScriptRunner::start(&config(), compile(source, 500)) else {
         panic!("an uncaught initialization microtask must not become ready");
     };
@@ -322,7 +351,7 @@ fn initialization_errors_map_to_original_typescript_positions() {
         "interface Removed { value: number; }\n",
         "const marker: Marker = {message: 'initialization failure'};\n",
         "throw new Error(marker.message);\n",
-        "export function onRequestHead() { return {action: 'continue'}; }\n",
+        "export function onRequestHead() { return { decision: {action: 'continue'} }; }\n",
     );
     let Err(failure) = SupervisedScriptRunner::start(&config(), compile(source, 500)) else {
         panic!("the top-level exception must fail initialization");
@@ -338,10 +367,10 @@ fn initialization_errors_map_to_original_typescript_positions() {
 #[tokio::test]
 async fn handler_errors_map_to_original_typescript_positions() {
     let source = concat!(
-        "import type { Action } from 'transmog:api/v1';\n",
+        "import type { RequestHeadResult } from 'transmog:api';\n",
         "interface Removed { value: string; }\n",
         "// Preserve this comment without losing original positions.\n",
-        "export function onRequestHead(): Action {\n",
+        "export function onRequestHead(): RequestHeadResult {\n",
         "  const value: string = 'handler failure';\n",
         "  throw new Error(value);\n",
         "}\n",
@@ -361,19 +390,19 @@ async fn callbacks_keep_inputs_frozen_and_do_not_run_queued_microtasks() {
     let source = r#"
       let calls = 0;
       let microtasks = 0;
-      export function onRequestHead(context, request) {
+      export function onRequestHead({ context, request }) {
         if (!Object.isFrozen(context) || !Object.isFrozen(request) ||
             !Object.isFrozen(request.headers)) throw new Error("mutable callback input");
         if (microtasks !== 0) throw new Error("callback microtasks were executed");
         Promise.resolve().then(() => microtasks++);
         queueMicrotask(() => microtasks++);
-        return {action: "abort", reason: String(++calls)};
+        return { decision: {action: "abort", reason: String(++calls)} };
       }
     "#;
     let runner = SupervisedScriptRunner::start(&config(), compile(source, 500)).unwrap();
     for calls in 1..=3 {
         assert_eq!(
-            runner.invoke(invocation()).await.unwrap(),
+            runner.invoke(invocation()).await.unwrap().decision,
             ScriptAction::Abort {
                 reason: calls.to_string()
             }
@@ -390,7 +419,7 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_script() {
         let source = format!(
             "let calls = 0; export function onRequestHead() {{ \
              if (++calls === 1) return {result}; \
-             return {{action: 'abort', reason: 'recovered'}}; }}"
+             return {{ decision: {{action: 'abort', reason: 'recovered'}} }}; }}"
         );
         let runner = SupervisedScriptRunner::start(&config(), compile(&source, 500)).unwrap();
         assert_eq!(
@@ -398,7 +427,7 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_script() {
             transmog_script::ScriptFailureCategory::Exception
         );
         assert_eq!(
-            runner.invoke(invocation()).await.unwrap(),
+            runner.invoke(invocation()).await.unwrap().decision,
             ScriptAction::Abort {
                 reason: "recovered".to_owned()
             }

@@ -18,6 +18,7 @@ use crate::{
 /// coding stack before hooks and optionally restore it afterward.
 #[derive(Debug)]
 pub struct ContentBodyPipeline {
+    buffered_output: Option<Vec<BodyFrame>>,
     body: BodyPipeline,
     plan: Option<ContentPlan>,
     decoders: DecoderStack,
@@ -118,7 +119,9 @@ impl ContentBodyPipeline {
             } else {
                 source_headers.clone()
             };
+            body.set_head_headers(output_headers.clone());
             return Ok(Self {
+                buffered_output: None,
                 body,
                 plan: None,
                 decoders: DecoderStack::default(),
@@ -159,8 +162,10 @@ impl ContentBodyPipeline {
         };
         let hook_headers = plan.headers_for_decoded_hooks(source_headers);
         let output_headers = plan.headers_for_output(&hook_headers, ContentLength::Streaming);
+        body.set_head_headers(hook_headers.clone());
 
         Ok(Self {
+            buffered_output: None,
             body,
             plan: Some(plan),
             decoders,
@@ -175,6 +180,7 @@ impl ContentBodyPipeline {
 
     fn direct(body: BodyPipeline, source_headers: &HeaderBlock, limits: ContentLimits) -> Self {
         Self {
+            buffered_output: None,
             body,
             plan: None,
             decoders: DecoderStack::default(),
@@ -195,6 +201,38 @@ impl ContentBodyPipeline {
     /// Streaming output head fields, repaired before head commitment.
     pub const fn output_headers(&self) -> &HeaderBlock {
         &self.output_headers
+    }
+
+    /// Whether message hooks require completion before headers can be sent.
+    pub const fn buffers_head(&self) -> bool {
+        self.body.buffers_head()
+    }
+
+    /// Whether the source and all hooks completed before the transport pump began.
+    pub const fn has_buffered_output(&self) -> bool {
+        self.buffered_output.is_some()
+    }
+
+    /// Current message head; output headers are exposed separately after codec repair.
+    pub fn head(&self) -> Option<&transmog_core::intercept::BufferedHead> {
+        self.body.head()
+    }
+
+    /// Retains already-processed bounded output for the existing stream pump.
+    /// The source must have been fully consumed and this pipeline completed.
+    ///
+    /// # Panics
+    /// Panics if processing is unfinished or retained output has not been consumed.
+    pub fn retain_completed_output(&mut self, frames: Vec<BodyFrame>) {
+        assert!(self.terminal && self.buffered_output.is_none());
+        self.buffered_output = Some(frames);
+    }
+
+    /// Suppresses an already completed body for response statuses that forbid one.
+    pub fn discard_completed_output(&mut self) {
+        if let Some(frames) = &mut self.buffered_output {
+            frames.clear();
+        }
     }
 
     /// Final aggregate representation after optional-policy resolution.
@@ -241,6 +279,9 @@ impl ContentBodyPipeline {
     /// Fails closed on truncation, invalid sequencing, resource limits, hook
     /// failures, or repeated completion.
     pub async fn finish(&mut self) -> Result<Vec<BodyFrame>, ContentPipelineError> {
+        if let Some(frames) = self.buffered_output.take() {
+            return Ok(frames);
+        }
         self.ensure_active()?;
         self.terminal = true;
 
@@ -252,6 +293,12 @@ impl ContentBodyPipeline {
         };
         let mut output = self.process_hook_input(decoded, true).await?;
         let body_output = self.body.finish().await?;
+        if let Some(head) = self.body.head() {
+            self.output_headers = self.plan.as_ref().map_or_else(
+                || head.headers().clone(),
+                |plan| plan.headers_for_output(head.headers(), ContentLength::Streaming),
+            );
+        }
         output.extend(self.process_hook_output(body_output).await?);
         let encoded = {
             let _timing = (!self.encoders.0.is_empty())

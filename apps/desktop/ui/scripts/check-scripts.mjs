@@ -636,6 +636,63 @@ export async function checkScripts(page, root) {
   await scripts.evaluate((editor) => editor.keepJavaScript());
   await scripts.evaluate((editor) => editor.saveScript());
 
+  // Typed parameter and body-admission settings survive saving and discarding.
+  await scripts.locator(".script-settings > summary").evaluate((summary) => {
+    summary.parentElement.open = true;
+  });
+  await scripts
+    .getByLabel("Response body media types", { exact: true })
+    .fill("application/json, text/plain");
+  await scripts.getByLabel("Response body statuses", { exact: true }).fill("200, 202");
+  await scripts.getByLabel("Change response status", { exact: true }).check();
+  await scripts.getByRole("button", { name: "Add parameter", exact: true }).click();
+  const parameter = scripts.locator(".script-parameter").last();
+  await parameter.getByLabel("Name", { exact: true }).fill("limit");
+  await parameter.getByLabel("Type", { exact: true }).selectOption("integer");
+  await parameter.getByLabel("Default", { exact: true }).fill("5");
+  await parameter.getByLabel("Use default", { exact: true }).uncheck();
+  await parameter.getByLabel("Override", { exact: true }).fill("7");
+  await scripts.getByRole("button", { name: "Save draft", exact: true }).click();
+  await waitIdle();
+  const settings = await page.evaluate(() =>
+    structuredClone(globalThis.__workspaceFixture.savedScript),
+  );
+  assert.deepEqual(settings.parameters.limit, {
+    type: "integer",
+    label: "limit",
+    default: 5,
+    value: 7,
+    min: 0,
+    max: 100,
+  });
+  assert.deepEqual(settings.responseBodyFilter, {
+    contentTypes: ["application/json", "text/plain"],
+    statuses: [200, 202],
+    includeLocal: false,
+  });
+  assert.equal(settings.capabilities.writeStatus, true);
+  await parameter.getByLabel("Override", { exact: true }).fill("9");
+  await scripts.getByRole("button", { name: "Discard changes", exact: true }).click();
+  assert.equal(
+    await scripts
+      .locator(".script-parameter")
+      .last()
+      .getByLabel("Override", { exact: true })
+      .inputValue(),
+    "7",
+  );
+  await page.setViewportSize({ width: 800, height: 600 });
+  await scripts.locator(".script-parameter").last().scrollIntoViewIfNeeded();
+  assert.equal(
+    await scripts
+      .locator(".script-parameters")
+      .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    true,
+  );
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/script-parameters.png") });
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await scripts.locator(".script-settings > summary").click();
+
   // More remains anchored inside an expanded editor and Escape restores focus.
   await sourceSurface.getByRole("button", { name: "Expand editor", exact: true }).click();
   await scripts.getByRole("button", { name: "More", exact: true }).click();

@@ -340,3 +340,7 @@ traffic-workspace .trace-export-facts{display:grid;gap:.4rem;overflow-wrap:anywh
   .selection-actions { gap:.2rem; }
   .compact-inspector-side label { padding-inline:.4rem; }
 }
+
+.script-findings { padding:.5rem; border-bottom:1px solid var(--line); max-height:12rem; overflow:auto; overflow-wrap:anywhere; }
+.script-findings p { margin:.3rem 0; white-space:pre-wrap; }
+.script-tag { display:inline-block; margin-inline-start:.4rem; padding:0 .3rem; border:1px solid var(--line); border-radius:.2rem; }

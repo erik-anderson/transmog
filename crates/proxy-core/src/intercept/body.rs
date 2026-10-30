@@ -82,6 +82,33 @@ pub struct BufferedBody {
     data: Bytes,
     /// Optional terminal trailers.
     trailers: Option<HeaderBlock>,
+    head: Option<Box<BufferedHead>>,
+}
+
+/// An uncommitted message head carried through complete-message body hooks.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum BufferedHead {
+    /// Request head. Routing and method changes belong to the earlier head phase.
+    Request(crate::RequestHead),
+    /// Response head, including editable status.
+    Response(crate::ResponseHead),
+}
+
+impl BufferedHead {
+    /// Current effective headers.
+    pub fn headers(&self) -> &HeaderBlock {
+        match self {
+            Self::Request(head) => &head.headers,
+            Self::Response(head) => &head.headers,
+        }
+    }
+    /// Replaces headers after codec framing repair.
+    pub fn set_headers(&mut self, headers: HeaderBlock) {
+        match self {
+            Self::Request(head) => head.headers = headers,
+            Self::Response(head) => head.headers = headers,
+        }
+    }
 }
 
 impl BufferedBody {
@@ -102,7 +129,11 @@ impl BufferedBody {
                 attempted: data.len(),
             });
         }
-        Ok(Self { data, trailers })
+        Ok(Self {
+            data,
+            trailers,
+            head: None,
+        })
     }
 
     /// Validates and collects canonical frames under `limit`.
@@ -119,12 +150,28 @@ impl BufferedBody {
             buffer.push(frame)?;
         }
         let (data, trailers) = buffer.finish();
-        Ok(Self { data, trailers })
+        Ok(Self {
+            data,
+            trailers,
+            head: None,
+        })
     }
 
     /// Complete body bytes.
     pub fn data(&self) -> &Bytes {
         &self.data
+    }
+
+    /// Effective uncommitted head, when the runtime selected complete-message buffering.
+    pub fn head(&self) -> Option<&BufferedHead> {
+        self.head.as_deref()
+    }
+
+    /// Associates a validated head edit with this body.
+    #[must_use]
+    pub fn with_head(mut self, head: BufferedHead) -> Self {
+        self.head = Some(Box::new(head));
+        self
     }
 
     /// Optional terminal trailers.
@@ -161,6 +208,14 @@ pub trait BodyFilter: Send {
 
 /// Completion callback for an explicitly bounded body buffer.
 pub trait BufferedBodyHandler: Send {
+    /// Validated evidence from the completed invocation.
+    fn script_report(&self) -> Option<super::ScriptReport> {
+        None
+    }
+    /// Require the runtime to finish this pipeline before committing message headers.
+    fn edits_head(&self) -> bool {
+        false
+    }
     /// Optional redacted operation result. The pipeline supplies the actual hook identity.
     fn report(&self) -> Option<super::BodyEditReport> {
         None
@@ -439,7 +494,10 @@ struct BodyStage {
 /// the chain's global pause-permit pool. Pass-through frames are never
 /// whole-body buffered.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // Independent stream, decoding, and head-commit properties.
 pub struct BodyPipeline {
+    head: Option<BufferedHead>,
+    buffers_head: bool,
     stages: Vec<BodyStage>,
     input_sequence: FrameSequence,
     context: HookContext,
@@ -464,10 +522,14 @@ impl BodyPipeline {
         let mut inspects_source_body = false;
         let mut source_body_visible = true;
         let mut stages = Vec::new();
+        let mut buffers_head = false;
         for selection in plans {
             let (plan, selected_representation, measurement_label, identity) =
                 selection.into_parts();
             plan.validates_representation(selected_representation)?;
+            if let BodyPlan::Buffer { handler, .. } = &plan {
+                buffers_head |= handler.edits_head();
+            }
             representation = representation.combine(selected_representation)?;
             modifies_body |= !matches!(plan, BodyPlan::PassThrough);
             if source_body_visible && plan.inspects_input_bytes() {
@@ -498,6 +560,8 @@ impl BodyPipeline {
             stages.push(stage);
         }
         Ok(Self {
+            head: None,
+            buffers_head,
             stages,
             input_sequence: FrameSequence::default(),
             context,
@@ -509,6 +573,30 @@ impl BodyPipeline {
             modifies_body,
             finished: false,
         })
+    }
+
+    /// Supplies the message head to complete-message hooks.
+    #[must_use]
+    pub fn with_head(mut self, head: BufferedHead) -> Self {
+        self.head = Some(head);
+        self
+    }
+
+    /// Whether the complete pipeline must finish before head commitment.
+    pub const fn buffers_head(&self) -> bool {
+        self.buffers_head
+    }
+
+    /// Effective head after all completed body stages.
+    pub fn head(&self) -> Option<&BufferedHead> {
+        self.head.as_ref()
+    }
+
+    /// Installs repaired headers before invoking decoded message hooks.
+    pub fn set_head_headers(&mut self, headers: HeaderBlock) {
+        if let Some(head) = &mut self.head {
+            head.set_headers(headers);
+        }
     }
 
     /// Measures a content-codec operation on this pipeline's exchange clock.
@@ -718,6 +806,7 @@ impl BodyPipeline {
         Ok(output)
     }
 
+    #[allow(clippy::too_many_lines)] // Keep callback ownership, validation and audit in one finish transaction.
     async fn finish_stage(&mut self, index: usize) -> Result<Vec<BodyFrame>, BodyPipelineError> {
         let _timing = self.context.measure_work(
             "transform",
@@ -751,7 +840,11 @@ impl BodyPipeline {
                     return Ok(Vec::new());
                 };
                 let (data, trailers) = buffer.finish();
-                let body = BufferedBody { data, trailers };
+                let body = BufferedBody {
+                    data,
+                    trailers,
+                    head: self.head.clone().map(Box::new),
+                };
                 let mut owned = handler
                     .take()
                     .expect("unfinished buffer retains its handler");
@@ -761,6 +854,16 @@ impl BodyPipeline {
                     (owned, result)
                 });
                 let (owned, result) = self.gate.await_task(&self.context, task, permit).await?;
+                if let Some(report) = owned.script_report()
+                    && let Some(identity) = &identity
+                {
+                    self.context.audit().record(
+                        identity.clone(),
+                        phase,
+                        super::HookEffectAction::ScriptReport(report),
+                        false,
+                    );
+                }
                 if let Some(report) = owned.report()
                     && let Some(identity) = &identity
                 {
@@ -773,8 +876,51 @@ impl BodyPipeline {
                         changed,
                     );
                 }
+                let edits_head = owned.edits_head();
                 *handler = Some(owned);
-                result?.into_frames()
+                let body = result?;
+                if let Some(head) = body.head.as_deref() {
+                    if self.head.as_ref() != Some(head) {
+                        if !edits_head {
+                            return Err(BodyHookError::Failed(
+                                "Body handler did not declare head editing".into(),
+                            )
+                            .into());
+                        }
+                        let action = match (&self.head, head) {
+                            (Some(BufferedHead::Request(before)), BufferedHead::Request(after))
+                                if before.method == after.method
+                                    && before.target == after.target
+                                    && before.source_version == after.source_version =>
+                            {
+                                super::HookEffectAction::ReplaceRequestHead(
+                                    super::audit::request_changes(before, after),
+                                )
+                            }
+                            (
+                                Some(BufferedHead::Response(before)),
+                                BufferedHead::Response(after),
+                            ) if before.source_version == after.source_version => {
+                                super::HookEffectAction::ReplaceResponseHead(
+                                    super::audit::response_changes(before, after),
+                                )
+                            }
+                            _ => {
+                                return Err(BodyHookError::Failed(
+                                    "Invalid buffered message head edit".into(),
+                                )
+                                .into());
+                            }
+                        };
+                        if let Some(identity) = &identity {
+                            self.context
+                                .audit()
+                                .record(identity.clone(), phase, action, true);
+                        }
+                    }
+                    self.head = Some(head.clone());
+                }
+                body.into_frames()
             }
             BodyStageKind::Replace(body) => {
                 body.take().map_or_else(Vec::new, BufferedBody::into_frames)

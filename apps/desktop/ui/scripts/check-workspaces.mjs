@@ -4289,7 +4289,7 @@ await page.addInitScript(
               language === "javascript" ? source : await window.__compileFixtureScript(source);
             state.scriptBuilds = [
               {
-                manifest: { ...manifest, apiRevision: 1, sourceHash: "0".repeat(64) },
+                manifest: { ...manifest, apiRevision: 2, sourceHash: "0".repeat(64) },
                 source,
                 language,
                 retainedSource,
@@ -4316,8 +4316,10 @@ await page.addInitScript(
               await new Promise((resolve) => (state.finishScriptTest = resolve));
             }
             return {
-              action: "headers",
-              operations: [{ operation: "set", name: "User-Agent", value: "Fixture/1.0" }],
+              decision: {
+                action: "headers",
+                operations: [{ operation: "set", name: "User-Agent", value: "Fixture/1.0" }],
+              },
             };
           }
           case "activate_script": {

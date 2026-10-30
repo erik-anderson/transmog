@@ -30,29 +30,58 @@
   <details class="script-build"><summary>{{sourceAlignment}}</summary><pre tabindex="0" data-copy-surface>{{buildInfo}}</pre></details>
   <p class="editor-label">Ctrl+S saves the draft. Ctrl+M toggles Tab movement in the editor.</p>
   <details class="script-settings">
-    <summary>Filters and capabilities</summary>
+    <summary>Filters, capabilities, and parameters</summary>
     <form w-ref="{scriptForm}" @submit="{validateScript(e)}" @input="{markScriptChanged()}" class="script-form">
       <label>Host filter (optional) <input name="scriptHost" value="example.test" maxlength="255" ?disabled="{{!scriptReady}}"></label>
       <label>Path-prefix filter (optional) <input name="scriptPath" maxlength="2048" placeholder="/api" ?disabled="{{!scriptReady}}"></label>
       <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
+      <label>Request body media types <input name="requestTypes" placeholder="application/json" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
+      <label>Response body media types <input name="responseTypes" placeholder="application/json" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
+      <label>Response body statuses <input name="responseStatuses" placeholder="200, 201" maxlength="2048" ?disabled="{{!scriptReady}}"></label>
+      <p class="field-help">Comma-separated exact values; empty permits all. Body handlers receive complete decoded bytes before headers are sent. Unmatched bodies keep streaming.</p>
+      <label><input name="includeLocal" type="checkbox" ?disabled="{{!scriptReady}}"> Run response body handlers on local responses</label>
       <fieldset ?disabled="{{!scriptReady}}">
         <legend>Capabilities</legend>
+        <label><input name="rewriteRequest" type="checkbox"> Rewrite request method and URL</label>
+        <label><input name="reroute" type="checkbox"> Allow cross-origin URL changes</label>
+        <label><input name="writeStatus" type="checkbox"> Change response status</label>
+        <label><input name="annotate" type="checkbox"> Add saved traffic annotations</label>
         <label><input name="readBodies" type="checkbox"> Read bounded bodies</label>
         <label><input name="writeBody" type="checkbox"> Replace bodies</label>
-        <label><input name="respond" type="checkbox"> Select response assets</label>
+        <label><input name="respond" type="checkbox"> Return responses or select assets</label>
         <label><input name="abort" type="checkbox" checked> Abort requests</label>
         <label><input name="sensitive" type="checkbox"> Read sensitive headers</label>
       </fieldset>
+      <fieldset class="script-parameters" ?disabled="{{!scriptReady}}">
+        <legend>Parameters</legend>
+        <p class="field-help">Saved with each applied build. Read values from event.parameters; choose whether to use each default or override it.</p>
+        <for each="item in parameterRows"><fieldset key="{{item.id}}" class="script-parameter"><legend>Parameter {{item.name}}</legend>
+          <label>Name <input value="{{item.name}}" maxlength="64" @input="{changeParameter(item.id, 'name', e)}"></label>
+          <label>Label <input value="{{item.label}}" maxlength="128" @input="{changeParameter(item.id, 'label', e)}"></label>
+          <label>Type <select aria-label="Type" @input="{changeParameter(item.id, 'type', e)}"><option value="string" ?selected="{{item.type == 'string'}}">Text</option><option value="boolean" ?selected="{{item.type == 'boolean'}}">Boolean</option><option value="integer" ?selected="{{item.type == 'integer'}}">Integer</option></select></label>
+          <if condition="item.type == 'boolean'"><label>Default <select aria-label="Default" @input="{changeParameter(item.id, 'defaultValue', e)}"><option value="false" ?selected="{{item.defaultValue == 'false'}}">False</option><option value="true" ?selected="{{item.defaultValue == 'true'}}">True</option></select></label><label>Override <select aria-label="Override" @input="{changeParameter(item.id, 'override', e)}"><option value="" ?selected="{{item.override == ''}}">Use default</option><option value="false" ?selected="{{item.override == 'false'}}">False</option><option value="true" ?selected="{{item.override == 'true'}}">True</option></select></label></if>
+          <if condition="item.type != 'boolean'"><label>Default <input value="{{item.defaultValue}}" maxlength="4096" @input="{changeParameter(item.id, 'defaultValue', e)}"></label><label><input type="checkbox" ?checked="{{item.useDefault}}" @input="{changeParameter(item.id, 'useDefault', e)}"> Use default</label><label>Override <input value="{{item.override}}" ?disabled="{{item.useDefault}}" maxlength="4096" @input="{changeParameter(item.id, 'override', e)}"></label></if>
+          <if condition="item.type == 'integer'"><label>Minimum <input value="{{item.min}}" @input="{changeParameter(item.id, 'min', e)}"></label><label>Maximum <input value="{{item.max}}" @input="{changeParameter(item.id, 'max', e)}"></label></if>
+          <if condition="item.type == 'string'"><label>Choices (optional, comma-separated) <input value="{{item.choices}}" maxlength="65536" @input="{changeParameter(item.id, 'choices', e)}"></label></if>
+          <button type="button" class="secondary" @click="{removeParameter(item.id)}">Remove parameter</button>
+        </fieldset></for>
+        <button type="button" class="secondary" ?disabled="{{parameterRows.length >= 64}}" @click="{addParameter()}">Add parameter</button>
+      </fieldset>
+      <if condition="settingsError"><p class="operation-status" role="status">{{settingsError}}</p></if>
     </form>
   </details>
   <details class="script-test" @input="{markTestChanged()}" @change="{markTestChanged()}">
     <summary>Sandbox input and results</summary>
-    <p class="field-help">Test this input without sending a request. Response handlers use a 200 response with no response headers.</p>
+    <p class="field-help">Test this input without sending a request. Saved parameter values and live capability checks apply.</p>
     <div class="script-test-fields">
       <label>Test URL <input w-ref="{scriptTestUrl}" type="url" value="https://example.test/" maxlength="8192"></label>
       <label>Method <input w-ref="{scriptTestMethod}" value="GET" maxlength="32"></label>
       <label>Handler <select w-ref="{scriptTestHandler}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label>
       <label>Request headers <textarea w-ref="{scriptTestHeaders}" rows="3" maxlength="65536"></textarea></label>
+      <label>Response status <input w-ref="{scriptTestStatus}" type="number" value="200" min="200" max="599"></label>
+      <label>Response headers <textarea w-ref="{scriptTestResponseHeaders}" rows="3" maxlength="65536"></textarea></label>
+      <label><input w-ref="{scriptTestLocal}" type="checkbox"> Local response</label>
+      <label>Failure category (onFailed) <input w-ref="{scriptTestFailure}" value="upstream" maxlength="128"></label>
       <label>Body <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>
     </div>
     <div class="actions"><button type="button" class="secondary" @click="{useSelectedTestRequest()}" ?disabled="{{!selection}}">Use selected Traffic request</button><span class="field-help">Copies the URL, method, and nonsensitive headers. Body input is cleared.</span></div>

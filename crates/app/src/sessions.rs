@@ -151,6 +151,9 @@ pub struct SessionQueryInput {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionSummary {
+    /// Script annotation metadata used for whole-catalog filtering, omitted from row payloads.
+    #[serde(skip)]
+    pub script_search: Vec<String>,
     /// Exact workspace admission number, transported as decimal text.
     pub request_number: String,
     /// Opaque display identifier for subsequent detail queries.
@@ -543,6 +546,16 @@ fn summarize(snapshot: &SessionSnapshot, now: SystemTime, capturing: bool) -> Se
         .map_or(http_duration_ms, |stream| stream.duration_ms);
     let response_headers_ms = response_header_duration(snapshot);
     SessionSummary {
+        script_search: snapshot
+            .hook_effects
+            .iter()
+            .filter_map(|e| match &e.action {
+                transmog_core::intercept::HookEffectAction::ScriptReport(report) => Some(report),
+                _ => None,
+            })
+            .flat_map(|r| r.annotations.iter())
+            .flat_map(|a| std::iter::once(a.note.clone()).chain(a.tags.clone()))
+            .collect(),
         request_number: snapshot.request_number.to_string(),
         top_level_navigation,
         fetch_destination,
@@ -1187,6 +1200,10 @@ fn matches_search(row: &SessionSummary, search: &str) -> bool {
     ]
     .iter()
     .any(|value| value.to_lowercase().contains(search))
+        || row
+            .script_search
+            .iter()
+            .any(|v| v.to_lowercase().contains(search))
         || url_without_default_port(&row.url).is_some_and(|url| url.to_lowercase().contains(search))
         || row
             .caller

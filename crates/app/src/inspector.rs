@@ -29,6 +29,20 @@ const MAX_DIAGNOSTICS: usize = 64;
 pub(crate) const INSPECTION_DECODER_OPTIONS: ContentDecoderOptions =
     ContentDecoderOptions::new().with_deflate_compatibility(DeflateCompatibility::AllowRaw);
 
+/// Attributed script findings, separate from traffic-edit evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptReportView {
+    /// Exact script ID and applied revision.
+    pub script: String,
+    /// Phase that produced the evidence.
+    pub phase: String,
+    /// Notes saved with the exchange.
+    pub annotations: Vec<transmog_core::intercept::ScriptAnnotation>,
+    /// Bounded diagnostics available only in the live session.
+    pub diagnostics: Vec<String>,
+}
+
 /// Display-safe ordered header field.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -468,6 +482,8 @@ pub struct SessionDetail {
     pub diagnostics: Vec<String>,
     /// Centrally attributed hook effects.
     pub hook_effects: Vec<String>,
+    /// Script-authored annotations and live diagnostics, with immutable revision attribution.
+    pub script_reports: Vec<ScriptReportView>,
     /// Observed head edits in exchange-local execution order, excluding header values.
     pub header_effects: Vec<HeaderEffectView>,
     /// Actual bounded response-body edit outcomes, without body content.
@@ -868,6 +884,19 @@ pub(crate) fn detail_from_snapshot(
         stored_bodies,
         diagnostics,
         hook_effects,
+        script_reports: snapshot
+            .hook_effects
+            .iter()
+            .filter_map(|e| match &e.action {
+                HookEffectAction::ScriptReport(report) => Some(ScriptReportView {
+                    script: e.interceptor.id.as_str().to_owned(),
+                    phase: format!("{:?}", e.phase),
+                    annotations: report.annotations.clone(),
+                    diagnostics: report.diagnostics.clone(),
+                }),
+                _ => None,
+            })
+            .collect(),
         header_effects: header_effects(snapshot, MAX_DIAGNOSTICS),
         body_edits: body_edits(snapshot, MAX_DIAGNOSTICS),
         auto_response: auto_response_match(snapshot),

@@ -418,9 +418,9 @@ mod tests {
 
     #[test]
     fn type_imports_comments_and_original_source_maps_are_preserved() {
-        let source = "import type { Action } from 'transmog:api/v1';\n// keep this comment\nexport function onRequestHead(): Action {\n  const answer: number = 42;\n  return { action: 'continue', answer };\n}\n";
+        let source = "import type { RequestHeadResult } from 'transmog:api';\n// keep this comment\nexport function onRequestHead(): RequestHeadResult {\n  const answer: number = 42;\n  return { decision: { action: 'continue' }, diagnostics: [String(answer)] };\n}\n";
         let output = transpile(source);
-        assert!(!output.text.contains("transmog:api/v1"));
+        assert!(!output.text.contains("transmog:api"));
         assert!(!output.text.contains(": number"));
         assert!(output.text.contains("// keep this comment"));
         assert!(!output.text.contains("sourceMappingURL"));

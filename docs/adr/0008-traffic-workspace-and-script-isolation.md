@@ -4,7 +4,7 @@ Status: accepted
 
 ## Context
 
-Transmog needs Fiddler-style traffic inspection and automation without moving
+Transmog needs traffic inspection and automation without moving
 durable product state or a JavaScript runtime into the proxy core. Built-in
 rules and scripts must produce the same auditable interception actions. Response
 bodies are potentially sensitive and hostile, while locally-authored scripts
@@ -22,11 +22,16 @@ can still contain mistakes or compromised dependencies.
    eviction. Current defaults belong in
    [the retention guide](../product-state-and-support.md).
 3. Built-in rules are the preferred path for common conditions and mutations.
-   Scripts use the same validated action vocabulary for advanced decisions.
+   Scripts return phase-specific immutable results for advanced decisions. A
+   result validates related edits, bounded evidence and exchange-local state
+   together. Native body filters select complete-message hooks before decoding;
+   those hooks finish before outgoing headers are committed. Unselected bodies
+   retain streaming behavior. The [script API](../scripting.md) owns the contract.
 4. JavaScript runs in a dedicated `transmog-script-host` process, normally one
    process per active script. The host has no filesystem, network, environment,
    process, UI, registry, clipboard, timer, WebAssembly, dynamic import, or
-   string-code-generation capability. Execution loads immutable saved JavaScript;
+   string-code-generation capability. Only the bundled capability-free
+   `transmog:api` helper module can be imported. Execution loads immutable saved JavaScript;
    TypeScript is the default authoring language and emits JavaScript during
    explicit authoring actions. Direct JavaScript authoring preserves executable
    bytes. Saved drafts, the latest successful build, and applied/paused artifacts
@@ -50,7 +55,8 @@ can still contain mistakes or compromised dependencies.
 6. A script error aborts the affected exchange. An invalid saved revision never
    replaces the last valid active revision. Diagnostics identify the script,
    revision, phase, available source location, and resource failure without
-   including credentials or body bytes.
+   automatically including credentials or body bytes. Explicit script-authored
+   annotations are retained with exchanges; diagnostic strings remain live-only.
 7. Captured content never executes in the application origin. Text and byte
    views are bounded and escaped. Image decoding occurs in a separately
    restricted worker before the WebView receives raster output.

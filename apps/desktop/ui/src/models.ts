@@ -188,6 +188,12 @@ export interface SessionDetail {
   storedBodies: StoredBodyMetadata[];
   diagnostics: string[];
   hookEffects: string[];
+  scriptReports?: Array<{
+    script: string;
+    phase: string;
+    annotations: Array<{ note: string; tags: string[]; severity: string }>;
+    diagnostics: string[];
+  }>;
   headerEffects?: HeaderEffect[];
   bodyEdits?: Array<{ sequence: number; hookId: string; name: string; report: BodyEditReport }>;
   routeSelection: string | null;
@@ -840,9 +846,34 @@ export interface ExistingAutoResponseSource {
 }
 export type AutoResponseSource =
   CapturedAutoResponseSource | ScratchAutoResponseSource | ExistingAutoResponseSource;
-export type ScriptHandler = "onRequestHead" | "onRequestBody" | "onResponseHead" | "onResponseBody";
+export type ScriptHandler =
+  | "onRequestHead"
+  | "onRequestBody"
+  | "onResponseHead"
+  | "onResponseBody"
+  | "onCompleted"
+  | "onFailed";
 export type ScriptLanguage = "typescript" | "javascript";
+export type ScriptParameter =
+  | { type: "string"; label: string; default: string; value: string | null; choices: string[] }
+  | { type: "boolean"; label: string; default: boolean; value: boolean | null }
+  | {
+      type: "integer";
+      label: string;
+      default: number;
+      value: number | null;
+      min: number;
+      max: number;
+    };
+export interface ScriptBodyFilter {
+  contentTypes: string[];
+  statuses: number[];
+  includeLocal: boolean;
+}
 export interface ScriptDraft {
+  parameters: Record<string, ScriptParameter>;
+  requestBodyFilter: ScriptBodyFilter;
+  responseBodyFilter: ScriptBodyFilter;
   id: string;
   revision: number;
   source: string;
@@ -852,6 +883,10 @@ export interface ScriptDraft {
   handlers: ScriptHandler[];
   prefilter: { method: string | null; host: string | null; pathPrefix: string | null };
   capabilities: {
+    rewriteRequest: boolean;
+    reroute: boolean;
+    writeStatus: boolean;
+    annotate: boolean;
     readSensitiveHeaders: boolean;
     readBodies: boolean;
     writeHeaders: string[];
