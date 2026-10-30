@@ -879,6 +879,38 @@ fn disable_script(
 }
 
 #[tauri::command]
+fn resume_script(
+    script_id: String,
+    expected_generation: u64,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptStatus, AppError> {
+    state
+        .application
+        .resume_script(&script_id, expected_generation)
+}
+
+#[tauri::command]
+fn script_runtime_status(state: State<'_, DesktopState>) -> Vec<transmog_app::ScriptRuntimeStatus> {
+    state.application.script_runtime_status()
+}
+
+#[tauri::command]
+async fn retry_script(
+    script_id: String,
+    expected_generation: u64,
+    state: State<'_, DesktopState>,
+) -> Result<ScriptStatus, AppError> {
+    let application = state.application.clone();
+    tokio::task::spawn_blocking(move || application.retry_script(&script_id, expected_generation))
+        .await
+        .map_err(|_| AppError {
+            category: transmog_app::ErrorCategory::Unavailable,
+            message: "Script retry could not complete. Your draft is preserved.".into(),
+            retryable: true,
+        })?
+}
+
+#[tauri::command]
 fn response_assets(state: State<'_, DesktopState>) -> Vec<ResponseAsset> {
     state.application.response_assets()
 }
@@ -2529,6 +2561,9 @@ pub fn run() {
                 test_script,
                 activate_script,
                 disable_script,
+                resume_script,
+                retry_script,
+                script_runtime_status,
                 response_assets,
                 inspect_response_asset,
                 autoresponse_source_headers,

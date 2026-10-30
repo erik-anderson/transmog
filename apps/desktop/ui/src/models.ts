@@ -841,10 +841,14 @@ export interface ExistingAutoResponseSource {
 export type AutoResponseSource =
   CapturedAutoResponseSource | ScratchAutoResponseSource | ExistingAutoResponseSource;
 export type ScriptHandler = "onRequestHead" | "onRequestBody" | "onResponseHead" | "onResponseBody";
+export type ScriptLanguage = "typescript" | "javascript";
 export interface ScriptDraft {
   id: string;
   revision: number;
   source: string;
+  language: ScriptLanguage;
+  retainedSource: string | null;
+  javascriptHistory: string[];
   handlers: ScriptHandler[];
   prefilter: { method: string | null; host: string | null; pathPrefix: string | null };
   capabilities: {
@@ -865,15 +869,36 @@ export interface ScriptDraft {
   priority: number;
 }
 export interface ScriptRevision {
-  manifest: Omit<ScriptDraft, "source"> & { sourceHash: string; apiRevision: number };
+  manifest: Omit<ScriptDraft, "source" | "language" | "retainedSource" | "javascriptHistory"> & {
+    sourceHash: string;
+    apiRevision: number;
+  };
   source: string;
+  language: ScriptLanguage;
+  retainedSource: string | null;
+  javascriptHistory: string[];
+  javascript: string;
+  sourceMap: number[];
+  javascriptHash: string;
+  sourceMapHash: string;
+  compiler: string;
+  declarationsHash: string;
 }
 export interface ScriptStatus {
   generation: number;
   active: ScriptRevision[];
   saved: ScriptDraft[];
+  built: ScriptRevision[];
+  paused: ScriptRevision[];
+  runtimes: ScriptRuntimeStatus[];
   candidateCount: number;
   historyCount: number;
+}
+export interface ScriptRuntimeStatus {
+  scriptId: string;
+  revision: number;
+  available: boolean;
+  error: string | null;
 }
 export interface ScriptCandidate {
   candidateId: string;

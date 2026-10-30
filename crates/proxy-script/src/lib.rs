@@ -330,12 +330,28 @@ pub fn compile_typescript(
     manifest: ScriptManifest,
     source: &str,
 ) -> Result<CompiledScript, ScriptCompileError> {
-    transmog_script_compiler::with_compiler_stack(|| compile_typescript_inner(manifest, source))
+    transmog_script_compiler::with_compiler_stack(|| {
+        compile_source(manifest, source, ModuleSyntax::TypeScript)
+    })
 }
 
-fn compile_typescript_inner(
+/// Validates executable JavaScript without transpiling or rewriting it.
+///
+/// # Errors
+/// Returns bounded manifest, syntax, export, or capability errors.
+pub fn validate_javascript(
     manifest: ScriptManifest,
     source: &str,
+) -> Result<CompiledScript, ScriptCompileError> {
+    transmog_script_compiler::with_compiler_stack(|| {
+        compile_source(manifest, source, ModuleSyntax::JavaScript)
+    })
+}
+
+fn compile_source(
+    manifest: ScriptManifest,
+    source: &str,
+    syntax: ModuleSyntax,
 ) -> Result<CompiledScript, ScriptCompileError> {
     validate_manifest(&manifest)?;
     if source.len() > MAX_SCRIPT_SOURCE_BYTES {
@@ -349,7 +365,7 @@ fn compile_typescript_inner(
         .map_err(|_| {
         ScriptCompileError::InvalidManifest("script module identity is invalid")
     })?;
-    let parsed = parse_module(specifier, source, ModuleSyntax::TypeScript)
+    let parsed = parse_module(specifier, source, syntax)
         .map_err(|error| ScriptCompileError::Parse(bounded(&error, 512)))?;
     let mut exports = BTreeMap::new();
     for item in &parsed.module().body {
@@ -406,6 +422,13 @@ fn compile_typescript_inner(
         if exports.contains_key(handler.export_name()) && !manifest.handlers.contains(&handler) {
             return Err(ScriptCompileError::UndeclaredHandler(handler));
         }
+    }
+    if syntax == ModuleSyntax::JavaScript {
+        return Ok(CompiledScript {
+            manifest,
+            javascript: source.to_owned(),
+            source_map: Vec::new(),
+        });
     }
     let output = parsed
         .transpile_typescript()
@@ -1334,6 +1357,26 @@ mod tests {
             },
             request().target,
         )
+    }
+
+    #[test]
+    fn javascript_validation_preserves_bytes_and_enforces_the_same_contract() {
+        let source = "// retain formatting\nexport function onRequestHead() { return {action: 'continue'}; }\n";
+        let compiled =
+            validate_javascript(manifest(source, &[ScriptHandler::RequestHead]), source).unwrap();
+        assert_eq!(compiled.javascript, source);
+        assert_eq!(compiled.source_map, [] as [u8; 0]);
+        for invalid in [
+            "export function onRequestHead(): string { return 'bad'; }",
+            "export async function onRequestHead() {}",
+            "export function onRequestHead() { eval('bad'); }",
+            "import x from 'external'; export function onRequestHead() {}",
+        ] {
+            assert!(
+                validate_javascript(manifest(invalid, &[ScriptHandler::RequestHead]), invalid)
+                    .is_err()
+            );
+        }
     }
 
     #[test]

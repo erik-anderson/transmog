@@ -140,7 +140,7 @@ async fn literal_response_edits_preserve_fresh_data_codings_and_actual_outcomes(
         })
         .unwrap();
     app.activate_automation(&candidate.candidate_id).unwrap();
-    let script=app.validate_script(ScriptDraft{id:"before-literal".into(),revision:1,source:r#"
+    let script=app.validate_script(ScriptDraft{ language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, javascript_history: Vec::new(),id:"before-literal".into(),revision:1,source:r#"
 export function onResponseBody(_context: unknown, _request: unknown, _response: unknown, body:{bytes:number[]}) {
  const text=String.fromCharCode(...body.bytes).replace("seed","old");
  return {action:"replace-body",bytes:Array.from(text).map(c=>c.charCodeAt(0))};
@@ -422,7 +422,7 @@ async fn header_rules_compose_with_scripts_and_preserve_fresh_response_evidence(
     application
         .activate_automation(&candidate.candidate_id)
         .unwrap();
-    let script = application.validate_script(ScriptDraft {
+    let script = application.validate_script(ScriptDraft { language: transmog_app::ScriptLanguage::TypeScript, retained_source: None, javascript_history: Vec::new(),
         id: "header-script".into(), revision: 1,
         source: r#"
 export function onRequestHead(_context: unknown, request: {headers: Array<{name:string;value:number[]}>}) {
@@ -1780,6 +1780,9 @@ export function onRequestHead(
 "#;
     let candidate = application
         .validate_script(ScriptDraft {
+            language: transmog_app::ScriptLanguage::TypeScript,
+            retained_source: None,
+            javascript_history: Vec::new(),
             id: "phase9-script".to_owned(),
             revision: 1,
             source: source.to_owned(),

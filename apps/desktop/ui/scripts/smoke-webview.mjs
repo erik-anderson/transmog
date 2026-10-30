@@ -83,7 +83,12 @@ socket.addEventListener("message", ({ data }) => {
   }
 
   if (message.method === "Runtime.exceptionThrown") {
-    browserErrors.push(message.params.exceptionDetails.text);
+    const details = message.params.exceptionDetails;
+    browserErrors.push({
+      text: details.text,
+      description: details.exception?.description,
+      stack: details.stackTrace,
+    });
   }
   if (message.method === "Log.entryAdded" && message.params.entry.level === "error") {
     browserErrors.push({

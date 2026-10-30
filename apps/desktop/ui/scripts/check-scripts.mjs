@@ -19,6 +19,8 @@ export async function checkScripts(page, root) {
   const fixture = async (values) =>
     page.evaluate((values) => Object.assign(globalThis.__workspaceFixture, values), values);
   await waitIdle();
+  await scripts.evaluate((editor) => editor.validateScript());
+  assert.match(await scripts.locator("output").textContent(), /source and capabilities are valid/);
   await checkMonacoIcons(scripts.locator(".monaco-editor-host").first());
   assert.deepEqual(
     await scripts.evaluate(async (editor) => {
@@ -209,6 +211,17 @@ export async function checkScripts(page, root) {
     beforeRevision,
   );
 
+  // A later retry must compare against the loaded saved baseline, not silently adopt the latest generation.
+  await scripts.evaluate((editor) => editor.activateScript());
+  assert.equal(await scripts.evaluate((editor) => editor.conflictVisible), true);
+  await scripts.getByRole("button", { name: "Compare with saved script", exact: true }).click();
+  await waitIdle();
+  assert.match(
+    await scripts.evaluate((editor) => editor.diffModels[0].getValue()),
+    /saved concurrently/,
+  );
+  await scripts.getByRole("button", { name: "Keep my draft", exact: true }).click();
+
   // A failed activation keeps both the previous live version and the edited draft.
   await fixture({ scriptActivationError: true });
   await scripts.getByRole("button", { name: "Save & apply", exact: true }).click();
@@ -268,6 +281,9 @@ export async function checkScripts(page, root) {
   await waitIdle();
   await checkMonacoIcons(scripts.locator(".diff-editor"));
   assert.match(await scripts.locator(".script-settings-diff").textContent(), /writeHeaders/);
+  await scripts.locator(".script-settings-diff > summary").click();
+  await scripts.locator(".script-settings-diff pre").first().waitFor({ state: "visible" });
+  await scripts.locator(".script-settings-diff > summary").click();
   await append("\n// comparison is now old");
   assert.equal(await scripts.evaluate((editor) => editor.diffStale), true);
   await scripts.getByRole("button", { name: "More", exact: true }).click();
@@ -340,6 +356,285 @@ export async function checkScripts(page, root) {
   );
   await scripts.getByRole("button", { name: "Save & apply", exact: true }).click();
   await waitIdle();
+
+  // Type errors block publishing, but saving and editing last good JavaScript remain available.
+  const lastGood = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
+  await append('\nconst invalid: number = "keep this TypeScript draft";');
+  await scripts.getByRole("button", { name: "Save & apply", exact: true }).click();
+  await waitIdle();
+  assert.match(await scripts.locator("output").textContent(), /TypeScript has/);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.activeScripts[0].source),
+    lastGood,
+  );
+  await scripts.getByRole("button", { name: "Save draft", exact: true }).click();
+  await waitIdle();
+  await scripts.getByRole("button", { name: "More", exact: true }).click();
+  await scripts
+    .locator("#script-actions-menu")
+    .getByRole("button", { name: "Edit JavaScript", exact: true })
+    .click();
+  await waitIdle();
+  assert.equal(await scripts.evaluate((editor) => editor.language), "javascript");
+  await page.screenshot({ path: resolve(root, "../../../target/ui-check/scripts-javascript.png") });
+  assert.doesNotMatch(
+    await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
+    /const invalid/,
+  );
+  assert.match(await scripts.evaluate((editor) => editor.retainedSource), /const invalid/);
+  await append("\n// JavaScript-only edits must survive the round trip");
+  await scripts.getByRole("button", { name: "Save & apply", exact: true }).click();
+  await waitIdle();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.activeScripts[0].language),
+    "javascript",
+  );
+  await reopen();
+  assert.equal(await scripts.evaluate((editor) => editor.language), "javascript");
+  await sourceSurface.getByRole("button", { name: "Expand editor", exact: true }).click();
+  await scripts.getByRole("button", { name: "More", exact: true }).click();
+  await scripts.getByRole("button", { name: /Return to TypeScript/ }).click();
+  assert.match(await scripts.evaluate((editor) => editor.sourceEditor.getValue()), /const invalid/);
+  await scripts.getByRole("button", { name: "Compare generated JavaScript", exact: true }).click();
+  await waitIdle();
+  assert.equal(await scripts.evaluate((editor) => editor.returnReady), false);
+  await scripts.evaluate((editor) =>
+    editor.sourceEditor.setValue(
+      editor.sourceEditor
+        .getValue()
+        .replace('const invalid: number = "keep this TypeScript draft";', "// repaired TypeScript"),
+    ),
+  );
+  await scripts.getByRole("button", { name: "Compare generated JavaScript", exact: true }).click();
+  await waitIdle();
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.diffModels.every((model) => model.getLanguageId() === "javascript"),
+    ),
+    true,
+  );
+  assert.match(
+    await scripts.evaluate((editor) => editor.diffModels[0].getValue()),
+    /JavaScript-only edits/,
+  );
+  assert.equal(
+    await scripts
+      .locator("editor-surface")
+      .nth(1)
+      .locator("dialog")
+      .evaluate((dialog) => dialog.matches(":modal")),
+    true,
+  );
+  await scripts
+    .getByRole("button", { name: "Use TypeScript output", exact: true })
+    .click({ trial: true });
+  await scripts.getByRole("button", { name: "Close comparison", exact: true }).click();
+  await append("\n// invalidate reviewed comparison");
+  assert.equal(await scripts.evaluate((editor) => editor.returnReady), false);
+  await scripts.getByRole("button", { name: "Compare generated JavaScript", exact: true }).click();
+  await waitIdle();
+  const canceledDiff = await scripts.evaluate(async (editor) => {
+    const pending = editor.showJavascriptComparison(
+      "const x = 1;",
+      "const x = 2;",
+      "Canceled comparison",
+    );
+    editor.closeComparison();
+    return { ready: await pending, models: editor.diffModels.length, visible: editor.diffVisible };
+  });
+  assert.deepEqual(canceledDiff, { ready: false, models: 0, visible: false });
+  await scripts.getByRole("button", { name: "Compare generated JavaScript", exact: true }).click();
+  await waitIdle();
+  await scripts.locator(".diff-editor").scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/scripts-return-comparison.png"),
+  });
+  await scripts.getByRole("button", { name: "Use TypeScript output", exact: true }).click();
+  assert.equal(await scripts.evaluate((editor) => editor.language), "typescript");
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.sourceEditor.getOption(editor.monaco.editor.EditorOption.ariaLabel),
+    ),
+    "Traffic script TypeScript source",
+  );
+  await sourceSurface.getByRole("button", { name: "Return to panel", exact: true }).click();
+  assert.match(await scripts.evaluate((editor) => editor.retainedSource), /JavaScript-only edits/);
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.activeScripts[0].language),
+    "javascript",
+    "Selecting TypeScript must not publish it",
+  );
+  await scripts.getByRole("button", { name: "Save & apply", exact: true }).click();
+  await waitIdle();
+  await scripts.getByRole("button", { name: "Pause script", exact: true }).click();
+  await waitIdle();
+  const appliedBeforeResume = await page.evaluate(
+    () => globalThis.__workspaceFixture.pausedScripts[0].javascript,
+  );
+  const pausedDraftSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
+  await append('\nconst blocked: number = "unsaved and not applied";');
+  await scripts.getByRole("button", { name: "Save draft", exact: true }).click();
+  await waitIdle();
+  assert.equal(
+    await page.evaluate(
+      () =>
+        globalThis.__workspaceFixture.savedScript.revision >
+        globalThis.__workspaceFixture.pausedScripts[0].manifest.revision,
+    ),
+    true,
+  );
+  await scripts.getByRole("button", { name: "Resume applied script", exact: true }).click();
+  await waitIdle();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.activeScripts[0].javascript),
+    appliedBeforeResume,
+  );
+  assert.match(
+    await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
+    /unsaved and not applied/,
+  );
+  await scripts.evaluate(
+    (editor, source) => editor.sourceEditor.setValue(source),
+    pausedDraftSource,
+  );
+  await scripts.getByRole("button", { name: "Save draft", exact: true }).click();
+  await waitIdle();
+
+  // Previous JavaScript edits remain recoverable through another switch, publish and reopen.
+  await scripts.evaluate((editor) => editor.editJavaScript());
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.historyEntries.some((item) => item.source.includes("JavaScript-only edits")),
+    ),
+    true,
+  );
+  await scripts.evaluate((editor) => editor.activateScript());
+  await reopen();
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.sourceEditor.getOption(editor.monaco.editor.EditorOption.ariaLabel),
+    ),
+    "Traffic script JavaScript source",
+  );
+  const previousJsLabel = await scripts.evaluate(
+    (editor) =>
+      editor.historyEntries.find((item) => item.source.includes("JavaScript-only edits")).label,
+  );
+  await scripts.locator(".script-history > summary").click();
+  await scripts.locator(".script-history").getByText(previousJsLabel, { exact: true }).click();
+  await scripts.getByRole("button", { name: `Restore ${previousJsLabel}`, exact: true }).click();
+  assert.equal(await scripts.locator(".script-history").evaluate((details) => details.open), false);
+  assert.match(
+    await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
+    /JavaScript-only edits/,
+  );
+  await scripts.evaluate((editor) => editor.activateScript());
+
+  // Runtime availability is independent of activation and retry never applies the draft.
+  const appliedJs = await page.evaluate(
+    () => globalThis.__workspaceFixture.activeScripts[0].javascript,
+  );
+  await fixture({ scriptRuntimeError: "Fixture sandbox is unavailable" });
+  await scripts.evaluate((editor) => editor.refreshRuntime());
+  assert.match(await state().textContent(), /Unavailable/);
+  await fixture({ retryScriptError: true });
+  await scripts.getByRole("button", { name: "Retry applied script", exact: true }).click();
+  await waitIdle();
+  assert.match(await scripts.locator("output").textContent(), /Retry failed/);
+  await fixture({ retryScriptError: false });
+  await scripts.getByRole("button", { name: "Retry applied script", exact: true }).click();
+  await waitIdle();
+  assert.equal(await scripts.evaluate((editor) => editor.runtimeIssue), "");
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.activeScripts[0].javascript),
+    appliedJs,
+  );
+
+  // Conflicting saved edits remain intact until an explicit reviewed choice.
+  await append("\n// MY_LOCAL_WINDOW_WORK");
+  await page.evaluate(() => {
+    const f = globalThis.__workspaceFixture;
+    f.savedScript = {
+      ...structuredClone(f.savedScript),
+      revision: f.savedScript.revision + 1,
+      source: f.savedScript.source + "\n// OTHER_WINDOW_WORK",
+      retainedSource: (f.savedScript.retainedSource ?? "") + "\n// OTHER_WINDOW_TYPESCRIPT",
+    };
+    f.scriptGeneration++;
+  });
+  await scripts.evaluate((editor) => editor.saveScript());
+  assert.match(
+    await page.evaluate(() => globalThis.__workspaceFixture.savedScript.source),
+    /OTHER_WINDOW_WORK/,
+  );
+  assert.match(
+    await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
+    /MY_LOCAL_WINDOW_WORK/,
+  );
+  await scripts.evaluate((editor) => editor.scriptEditor.closest("editor-surface").toggle());
+  await scripts.getByRole("button", { name: "Compare with saved script", exact: true }).click();
+  await waitIdle();
+  await scripts.locator(".script-settings-diff > summary").click();
+  await scripts.locator(".script-settings-diff pre").first().waitFor({ state: "visible" });
+  assert.match(
+    await scripts.locator(".script-settings-diff").textContent(),
+    /OTHER_WINDOW_TYPESCRIPT/,
+  );
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/scripts-conflict-comparison.png"),
+  });
+  await scripts.getByRole("button", { name: "Load saved draft", exact: true }).click();
+  await scripts.evaluate((editor) => editor.scriptEditor.closest("editor-surface").toggle());
+  assert.match(
+    await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
+    /OTHER_WINDOW_WORK/,
+  );
+  await scripts.getByRole("button", { name: "Restore my previous draft", exact: true }).click();
+  assert.match(
+    await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
+    /MY_LOCAL_WINDOW_WORK/,
+  );
+  await scripts.evaluate((editor) => editor.saveScript());
+
+  // Repairing retained TypeScript changes only authoring state, with useful diagnostics.
+  await scripts.evaluate((editor) => editor.reviewTypeScript());
+  await append('\nconst retainedIssue: number = "wrong";');
+  await scripts.evaluate((editor) => editor.compareTypeScriptOutput());
+  assert.match(await scripts.locator("output").textContent(), /Keep JavaScript/);
+  assert.doesNotMatch(await scripts.evaluate((editor) => editor.sourceAlignment), /matches/);
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.typeScriptIssues.some((item) => item.message.includes("not assignable")),
+    ),
+    true,
+  );
+  await scripts.evaluate((editor) => editor.keepJavaScript());
+  // JS source includes an unapplied local edit here; compare directly with the saved baseline after activation below.
+  await scripts.evaluate((editor) => editor.activateScript());
+  await scripts.evaluate((editor) => editor.reviewTypeScript());
+  await append("\n// another retained TypeScript repair");
+  assert.equal(await scripts.evaluate((editor) => editor.scriptUnapplied), false);
+  assert.equal(await scripts.evaluate((editor) => editor.scriptDirty), true);
+  await scripts.evaluate((editor) =>
+    editor.sourceEditor.setValue(
+      'export function onRequestHead() { setTimeout(() => {}, 1); void fetch("https://example.test"); return {action:"continue"}; }',
+    ),
+  );
+  await scripts.evaluate((editor) => editor.compareTypeScriptOutput());
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.typeScriptIssues.some((item) => item.message.includes("setTimeout")),
+    ),
+    true,
+  );
+  assert.equal(
+    await scripts.evaluate((editor) =>
+      editor.typeScriptIssues.some((item) => item.message.includes("fetch")),
+    ),
+    true,
+  );
+  await scripts.evaluate((editor) => editor.keepJavaScript());
+  await scripts.evaluate((editor) => editor.saveScript());
 
   // More remains anchored inside an expanded editor and Escape restores focus.
   await sourceSurface.getByRole("button", { name: "Expand editor", exact: true }).click();

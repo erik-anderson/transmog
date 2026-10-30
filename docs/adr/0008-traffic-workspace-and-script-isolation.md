@@ -26,7 +26,10 @@ can still contain mistakes or compromised dependencies.
 4. JavaScript runs in a dedicated `transmog-script-host` process, normally one
    process per active script. The host has no filesystem, network, environment,
    process, UI, registry, clipboard, timer, WebAssembly, dynamic import, or
-   string-code-generation capability.
+   string-code-generation capability. Execution loads immutable saved JavaScript;
+   TypeScript authoring emits JavaScript before testing or activation. The exact
+   executable artifact and source map survive restart independently of compiler
+   changes and newer drafts.
 5. V8 limits are defense in depth. Windows Job Object and restricted-token or
    AppContainer policy form the operating-system containment boundary. The
    supervisor owns authenticated bounded IPC, deadlines, termination, and

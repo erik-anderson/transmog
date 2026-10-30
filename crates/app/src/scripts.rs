@@ -14,7 +14,7 @@ use transmog_core::intercept::{
 use transmog_script::{
     BoxScriptFuture, CompiledScript, ScriptCapabilities, ScriptFailure, ScriptHandler,
     ScriptInvocation, ScriptLimits, ScriptManifest, ScriptPrefilter, ScriptResponseAssetResolver,
-    ScriptRunner, compile_typescript, registration_with_assets, source_hash,
+    ScriptRunner, compile_typescript, registration_with_assets, source_hash, validate_javascript,
 };
 use transmog_script_supervisor::{
     IsolationPolicy, MAX_ACTIVE_SCRIPT_HOSTS, ScriptHostConfig, SupervisedScriptRunner,
@@ -22,11 +22,22 @@ use transmog_script_supervisor::{
 
 use crate::{AppError, ErrorCategory};
 
-const SCRIPT_WORKSPACE_SCHEMA_VERSION: u32 = 1;
+const SCRIPT_WORKSPACE_SCHEMA_VERSION: u32 = 2;
 const MAX_SCRIPT_WORKSPACE_BYTES: u64 = 40 * 1024 * 1024;
 const MAX_CANDIDATES: usize = 16;
 const MAX_HISTORY: usize = 32;
 const MAX_SAVED_DRAFTS: usize = 64;
+
+/// Preferred authoring language; execution always uses saved JavaScript.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ScriptLanguage {
+    /// Default typed authoring experience.
+    #[default]
+    TypeScript,
+    /// Direct JavaScript authoring.
+    JavaScript,
+}
 
 /// Editable source and explicit authority for one script revision.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -36,8 +47,17 @@ pub struct ScriptDraft {
     pub id: String,
     /// Monotonic caller-owned revision.
     pub revision: u64,
-    /// TypeScript ES module source.
+    /// Editable ES module source.
     pub source: String,
+    /// Current authoring language.
+    #[serde(default)]
+    pub language: ScriptLanguage,
+    /// Preserved source from the other authoring language.
+    #[serde(default)]
+    pub retained_source: Option<String>,
+    /// Explicitly recoverable earlier JavaScript drafts, newest first.
+    #[serde(default)]
+    pub javascript_history: Vec<String>,
     /// Named synchronous handlers.
     pub handlers: std::collections::BTreeSet<ScriptHandler>,
     /// Native prefilter.
@@ -56,8 +76,27 @@ pub struct ScriptDraft {
 pub struct ScriptRevision {
     /// Validated manifest including exact source hash.
     pub manifest: ScriptManifest,
-    /// Exact TypeScript source.
+    /// Exact source used for this build.
     pub source: String,
+    /// Source authoring language.
+    pub language: ScriptLanguage,
+    /// Other-language draft retained through activation.
+    pub retained_source: Option<String>,
+    /// Explicitly recoverable earlier JavaScript drafts, newest first.
+    #[serde(default)]
+    pub javascript_history: Vec<String>,
+    /// Executable bytes, never regenerated during loading or activation.
+    pub javascript: String,
+    /// Map belonging to these exact executable bytes and source.
+    pub source_map: Vec<u8>,
+    /// SHA-256 of executable bytes.
+    pub javascript_hash: String,
+    /// SHA-256 of the separate map.
+    pub source_map_hash: String,
+    /// Versioned emission recipe for provenance, not a load requirement.
+    pub compiler: String,
+    /// API declaration identity at build time.
+    pub declarations_hash: String,
 }
 
 /// Non-active validated candidate token.
@@ -74,6 +113,20 @@ pub struct ScriptCandidate {
     pub source_hash: String,
 }
 
+/// Availability of one exact applied JavaScript build.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptRuntimeStatus {
+    /// Stable script identity.
+    pub script_id: String,
+    /// Applied revision, independently of newer drafts or builds.
+    pub revision: u64,
+    /// Whether the initialized sandbox is available for invocations.
+    pub available: bool,
+    /// Bounded failure and recovery detail when unavailable.
+    pub error: Option<String>,
+}
+
 /// Current atomic script registry status.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -84,6 +137,12 @@ pub struct ScriptStatus {
     pub active: Vec<ScriptRevision>,
     /// Saved drafts, including drafts that have not validated yet.
     pub saved: Vec<ScriptDraft>,
+    /// Last successful authoring build per script, independently of activation.
+    pub built: Vec<ScriptRevision>,
+    /// Last applied versions retained while paused.
+    pub paused: Vec<ScriptRevision>,
+    /// Actual sandbox availability, separate from configured activation.
+    pub runtimes: Vec<ScriptRuntimeStatus>,
     /// Validated candidates awaiting activation.
     pub candidate_count: usize,
     /// Retained prior active snapshots.
@@ -98,11 +157,17 @@ struct ScriptWorkspace {
     active: Vec<ScriptRevision>,
     #[serde(default)]
     saved: Vec<ScriptDraft>,
+    #[serde(default)]
+    built: Vec<ScriptRevision>,
+    #[serde(default)]
+    paused: Vec<ScriptRevision>,
 }
 
 #[derive(Clone)]
 struct ActiveScript {
     registration: InterceptorRegistration,
+    runner: Option<Arc<SupervisedScriptRunner>>,
+    startup_error: Option<String>,
 }
 
 struct ActiveSnapshot {
@@ -135,13 +200,22 @@ impl ScriptRegistry {
         host: Option<PathBuf>,
         assets: Arc<dyn ScriptResponseAssetResolver>,
     ) -> Result<Self, AppError> {
-        let workspace = path
-            .as_deref()
-            .and_then(load_latest)
-            .unwrap_or(ScriptWorkspace {
-                schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
-                ..ScriptWorkspace::default()
-            });
+        let loaded = path.as_deref().and_then(load_latest);
+        if loaded.is_none()
+            && path
+                .as_deref()
+                .is_some_and(|path| (0..=1).any(|slot| slot_path(path, slot).exists()))
+        {
+            return Err(AppError::new(
+                ErrorCategory::InvalidInput,
+                "saved script workspace is unsupported or damaged; original files have been preserved",
+                false,
+            ));
+        }
+        let workspace = loaded.unwrap_or(ScriptWorkspace {
+            schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+            ..ScriptWorkspace::default()
+        });
         validate_workspace(&workspace)?;
         let registry = Self {
             mutation: Arc::new(Mutex::new(())),
@@ -175,6 +249,10 @@ impl ScriptRegistry {
         draft: ScriptDraft,
         expected_generation: Option<u64>,
     ) -> Result<ScriptCandidate, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let generation = {
             let active = self
                 .active
@@ -184,22 +262,42 @@ impl ScriptRegistry {
             active.workspace.generation
         };
         validate_draft_shape(&draft)?;
-        let manifest = ScriptManifest {
-            id: draft.id,
-            revision: draft.revision,
-            api_revision: transmog_script::SCRIPT_API_REVISION,
-            source_hash: source_hash(draft.source.as_bytes()),
-            handlers: draft.handlers,
-            prefilter: draft.prefilter,
-            capabilities: draft.capabilities,
-            limits: draft.limits,
-            priority: draft.priority,
-        };
-        let revision = ScriptRevision {
-            manifest: manifest.clone(),
-            source: draft.source,
-        };
-        compile_typescript(manifest, &revision.source).map_err(script_compile_error)?;
+        let revision = build_revision(draft)?;
+        // Authoring builds are durable, but never alter live registrations or drafts.
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut workspace = active.workspace.clone();
+        let scripts = active.scripts.clone();
+        drop(active);
+        workspace
+            .built
+            .retain(|item| item.manifest.id != revision.manifest.id);
+        workspace.built.push(revision.clone());
+        if workspace.built.len() > MAX_SAVED_DRAFTS {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "script build limit exceeded",
+                false,
+            ));
+        }
+        workspace.generation = generation.checked_add(1).ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Limit,
+                "script generation is exhausted",
+                false,
+            )
+        })?;
+        if let Some(path) = self.path.as_deref() {
+            persist(path, &workspace)?;
+        }
+        let generation = workspace.generation;
+        *self
+            .active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) =
+            Arc::new(ActiveSnapshot { workspace, scripts });
         let encoded = serde_json::to_vec(&revision).map_err(|_| {
             AppError::new(
                 ErrorCategory::Internal,
@@ -253,9 +351,14 @@ impl ScriptRegistry {
         let scripts = active.scripts.clone();
         drop(active);
         check_generation(&workspace, expected_generation)?;
-        if workspace.active.iter().any(|active| {
-            active.manifest.id == draft.id && active.manifest.revision >= draft.revision
-        }) {
+        if workspace
+            .active
+            .iter()
+            .chain(&workspace.paused)
+            .any(|active| {
+                active.manifest.id == draft.id && active.manifest.revision >= draft.revision
+            })
+        {
             return Err(AppError::new(
                 ErrorCategory::Conflict,
                 "script draft revision must increase after activation",
@@ -313,8 +416,7 @@ impl ScriptRegistry {
                     false,
                 )
             })?;
-        let compiled = compile_typescript(revision.manifest, &revision.source)
-            .map_err(script_compile_error)?;
+        let compiled = executable(&revision)?;
         let runner = self.start_runner(compiled)?;
         runner.invoke(invocation).await.map_err(|failure| {
             let location = failure
@@ -366,10 +468,16 @@ impl ScriptRegistry {
             .active
             .read()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if current.workspace.active.iter().any(|revision| {
-            revision.manifest.id == candidate.revision.manifest.id
-                && revision.manifest.revision >= candidate.revision.manifest.revision
-        }) {
+        if current
+            .workspace
+            .active
+            .iter()
+            .chain(&current.workspace.paused)
+            .any(|revision| {
+                revision.manifest.id == candidate.revision.manifest.id
+                    && revision.manifest.revision >= candidate.revision.manifest.revision
+            })
+        {
             return Err(AppError::new(
                 ErrorCategory::Conflict,
                 "script revision must increase before activation",
@@ -390,6 +498,9 @@ impl ScriptRegistry {
             .active
             .retain(|revision| revision.manifest.id != candidate.revision.manifest.id);
         save_activated_draft(&mut workspace, &candidate.revision)?;
+        workspace
+            .paused
+            .retain(|item| item.manifest.id != candidate.revision.manifest.id);
         workspace.active.push(candidate.revision);
         workspace.active.sort_by(|left, right| {
             left.manifest
@@ -469,6 +580,15 @@ impl ScriptRegistry {
         {
             save_activated_draft(&mut workspace, &revision)?;
         }
+        if let Some(revision) = workspace
+            .active
+            .iter()
+            .find(|item| item.manifest.id == id)
+            .cloned()
+        {
+            workspace.paused.retain(|item| item.manifest.id != id);
+            workspace.paused.push(revision);
+        }
         workspace
             .active
             .retain(|revision| revision.manifest.id != id);
@@ -504,6 +624,67 @@ impl ScriptRegistry {
         Ok(self.status())
     }
 
+    pub(crate) fn resume(
+        &self,
+        id: &str,
+        expected_generation: u64,
+    ) -> Result<ScriptStatus, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let mut workspace = current.workspace.clone();
+        drop(current);
+        check_generation(&workspace, Some(expected_generation))?;
+        let index = workspace
+            .paused
+            .iter()
+            .position(|item| item.manifest.id == id)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Conflict,
+                    "paused script is unavailable",
+                    false,
+                )
+            })?;
+        let revision = workspace.paused.remove(index);
+        workspace.active.push(revision);
+        workspace
+            .active
+            .sort_by_key(|item| (item.manifest.priority, item.manifest.id.clone()));
+        if workspace.active.len() > MAX_ACTIVE_SCRIPT_HOSTS {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "active script process limit exceeded",
+                false,
+            ));
+        }
+        workspace.generation = workspace.generation.checked_add(1).ok_or_else(|| {
+            AppError::new(
+                ErrorCategory::Limit,
+                "script generation is exhausted",
+                false,
+            )
+        })?;
+        let snapshot = self.build_snapshot(workspace, true)?;
+        if let Some(path) = self.path.as_deref() {
+            persist(path, &snapshot.workspace)?;
+        }
+        *self
+            .active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(snapshot);
+        self.candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clear();
+        Ok(self.status())
+    }
+
     pub(crate) fn status(&self) -> ScriptStatus {
         let active = self
             .active
@@ -513,6 +694,9 @@ impl ScriptRegistry {
             generation: active.workspace.generation,
             active: active.workspace.active.clone(),
             saved: active.workspace.saved.clone(),
+            built: active.workspace.built.clone(),
+            paused: active.workspace.paused.clone(),
+            runtimes: snapshot_runtimes(&active),
             candidate_count: self
                 .candidates
                 .lock()
@@ -539,32 +723,100 @@ impl ScriptRegistry {
         workspace: ScriptWorkspace,
         strict: bool,
     ) -> Result<ActiveSnapshot, AppError> {
-        let mut scripts = Vec::with_capacity(workspace.active.len());
-        for revision in &workspace.active {
-            let compiled = compile_typescript(revision.manifest.clone(), &revision.source)
-                .map_err(script_compile_error)?;
-            let runner: Arc<dyn ScriptRunner> = match self.start_runner(compiled) {
-                Ok(runner) => runner,
-                Err(error) if !strict => Arc::new(UnavailableRunner(ScriptFailure {
-                    category: transmog_script::ScriptFailureCategory::Unavailable,
-                    message: error.message,
-                    line: None,
-                    column: None,
-                })),
-                Err(error) => return Err(error),
-            };
-            let registration = registration_with_assets(
-                revision.manifest.clone(),
-                runner,
-                Some(self.assets.clone()),
-            )
-            .map_err(script_compile_error)?;
-            scripts.push(ActiveScript { registration });
-        }
+        let scripts = workspace
+            .active
+            .iter()
+            .map(|revision| self.build_active(revision, strict))
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(ActiveSnapshot { workspace, scripts })
     }
 
-    fn start_runner(&self, compiled: CompiledScript) -> Result<Arc<dyn ScriptRunner>, AppError> {
+    fn build_active(
+        &self,
+        revision: &ScriptRevision,
+        strict: bool,
+    ) -> Result<ActiveScript, AppError> {
+        let (runner, startup_error) =
+            match executable(revision).and_then(|compiled| self.start_runner(compiled)) {
+                Ok(runner) => (Some(runner), None),
+                Err(error) if !strict => (None, Some(error.message)),
+                Err(error) => return Err(error),
+            };
+        let invocation_runner: Arc<dyn ScriptRunner> = match &runner {
+            Some(runner) => runner.clone(),
+            None => Arc::new(UnavailableRunner(ScriptFailure {
+                category: transmog_script::ScriptFailureCategory::Unavailable,
+                message: startup_error.clone().unwrap_or_default(),
+                line: None,
+                column: None,
+            })),
+        };
+        let registration = registration_with_assets(
+            revision.manifest.clone(),
+            invocation_runner,
+            Some(self.assets.clone()),
+        )
+        .map_err(script_compile_error)?;
+        Ok(ActiveScript {
+            registration,
+            runner,
+            startup_error,
+        })
+    }
+
+    pub(crate) fn runtime_status(&self) -> Vec<ScriptRuntimeStatus> {
+        snapshot_runtimes(
+            &self
+                .active
+                .read()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+        )
+    }
+
+    pub(crate) fn retry(
+        &self,
+        id: &str,
+        expected_generation: u64,
+    ) -> Result<ScriptStatus, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        check_generation(&current.workspace, Some(expected_generation))?;
+        let index = current
+            .workspace
+            .active
+            .iter()
+            .position(|item| item.manifest.id == id)
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Conflict,
+                    "applied script changed; refresh before retrying",
+                    false,
+                )
+            })?;
+        let replacement = self.build_active(&current.workspace.active[index], true)?;
+        let mut scripts = current.scripts.clone();
+        scripts[index] = replacement;
+        *self
+            .active
+            .write()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(ActiveSnapshot {
+            workspace: current.workspace.clone(),
+            scripts,
+        });
+        Ok(self.status())
+    }
+
+    fn start_runner(
+        &self,
+        compiled: CompiledScript,
+    ) -> Result<Arc<SupervisedScriptRunner>, AppError> {
         let executable = self.host.as_deref().ok_or_else(|| {
             AppError::new(
                 ErrorCategory::Unavailable,
@@ -579,7 +831,6 @@ impl ScriptRegistry {
             },
             compiled,
         )
-        .map(|runner| runner as Arc<dyn ScriptRunner>)
         .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.message, true))
     }
 }
@@ -600,6 +851,14 @@ impl InterceptorRegistrationProvider for ScriptRegistry {
     }
 }
 
+fn snapshot_runtimes(snapshot: &ActiveSnapshot) -> Vec<ScriptRuntimeStatus> {
+    snapshot.workspace.active.iter().zip(&snapshot.scripts).map(|(revision, script)| {
+        let available = script.runner.as_ref().is_some_and(|runner| !runner.has_failed());
+        ScriptRuntimeStatus { script_id: revision.manifest.id.clone(), revision: revision.manifest.revision,
+            available, error: if available { None } else { Some(script.startup_error.clone().unwrap_or_else(|| "The script host stopped after a runtime failure. Retry the applied build or pause this script.".to_owned())) } }
+    }).collect()
+}
+
 struct UnavailableRunner(ScriptFailure);
 
 impl ScriptRunner for UnavailableRunner {
@@ -609,16 +868,103 @@ impl ScriptRunner for UnavailableRunner {
     }
 }
 
+fn build_revision(draft: ScriptDraft) -> Result<ScriptRevision, AppError> {
+    let manifest = ScriptManifest {
+        id: draft.id,
+        revision: draft.revision,
+        api_revision: transmog_script::SCRIPT_API_REVISION,
+        source_hash: source_hash(draft.source.as_bytes()),
+        handlers: draft.handlers,
+        prefilter: draft.prefilter,
+        capabilities: draft.capabilities,
+        limits: draft.limits,
+        priority: draft.priority,
+    };
+    let compiled = match draft.language {
+        ScriptLanguage::TypeScript => compile_typescript(manifest.clone(), &draft.source),
+        ScriptLanguage::JavaScript => validate_javascript(manifest.clone(), &draft.source),
+    }
+    .map_err(script_compile_error)?;
+    let mut javascript_manifest = manifest.clone();
+    javascript_manifest.source_hash = source_hash(compiled.javascript.as_bytes());
+    validate_javascript(javascript_manifest, &compiled.javascript).map_err(script_compile_error)?;
+    let revision = ScriptRevision {
+        manifest,
+        source: draft.source,
+        language: draft.language,
+        retained_source: draft.retained_source,
+        javascript_history: draft.javascript_history,
+        javascript_hash: source_hash(compiled.javascript.as_bytes()),
+        source_map_hash: source_hash(&compiled.source_map),
+        javascript: compiled.javascript,
+        source_map: compiled.source_map,
+        compiler: format!(
+            "swc;recipe=1;lock={}",
+            source_hash(include_bytes!("../../../Cargo.lock"))
+        ),
+        declarations_hash: source_hash(transmog_script::typescript_declarations().as_bytes()),
+    };
+    Ok(revision)
+}
+
+// This path validates stored JavaScript only; TypeScript is inert provenance.
+fn executable(revision: &ScriptRevision) -> Result<CompiledScript, AppError> {
+    if source_hash(revision.source.as_bytes()) != revision.manifest.source_hash
+        || source_hash(revision.javascript.as_bytes()) != revision.javascript_hash
+        || source_hash(&revision.source_map) != revision.source_map_hash
+    {
+        return Err(AppError::new(
+            ErrorCategory::InvalidInput,
+            "saved script build integrity check failed",
+            false,
+        ));
+    }
+    let mut manifest = revision.manifest.clone();
+    manifest.source_hash.clone_from(&revision.javascript_hash);
+    let mut compiled =
+        validate_javascript(manifest, &revision.javascript).map_err(script_compile_error)?;
+    compiled.manifest = revision.manifest.clone();
+    compiled.source_map.clone_from(&revision.source_map);
+    Ok(compiled)
+}
+
 fn validate_workspace(workspace: &ScriptWorkspace) -> Result<(), AppError> {
     if workspace.schema_version != SCRIPT_WORKSPACE_SCHEMA_VERSION
         || workspace.active.len() > MAX_ACTIVE_SCRIPT_HOSTS
         || workspace.saved.len() > MAX_SAVED_DRAFTS
+        || workspace.built.len() > MAX_SAVED_DRAFTS
+        || workspace.paused.len() > MAX_SAVED_DRAFTS
     {
         return Err(AppError::new(
             ErrorCategory::InvalidInput,
             "script workspace is unsupported",
             false,
         ));
+    }
+    for draft in &workspace.saved {
+        validate_draft_shape(draft)?;
+    }
+    for revision in workspace
+        .active
+        .iter()
+        .chain(&workspace.paused)
+        .chain(&workspace.built)
+    {
+        validate_javascript_history(&revision.javascript_history)?;
+        if revision.source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES
+            || revision.javascript.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES
+            || revision.source_map.len() > 8 * transmog_script::MAX_SCRIPT_SOURCE_BYTES
+            || revision
+                .retained_source
+                .as_ref()
+                .is_some_and(|source| source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES)
+        {
+            return Err(AppError::new(
+                ErrorCategory::Limit,
+                "saved script build exceeds limits",
+                false,
+            ));
+        }
     }
     Ok(())
 }
@@ -655,6 +1001,9 @@ fn save_activated_draft(
         id: manifest.id.clone(),
         revision: manifest.revision,
         source: revision.source.clone(),
+        language: revision.language,
+        retained_source: revision.retained_source.clone(),
+        javascript_history: revision.javascript_history.clone(),
         handlers: manifest.handlers.clone(),
         prefilter: manifest.prefilter.clone(),
         capabilities: manifest.capabilities.clone(),
@@ -665,6 +1014,21 @@ fn save_activated_draft(
         return Err(AppError::new(
             ErrorCategory::Limit,
             "saved script draft limit exceeded",
+            false,
+        ));
+    }
+    Ok(())
+}
+
+fn validate_javascript_history(history: &[String]) -> Result<(), AppError> {
+    if history.len() > 8
+        || history
+            .iter()
+            .any(|source| source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES)
+    {
+        return Err(AppError::new(
+            ErrorCategory::Limit,
+            "previous JavaScript drafts exceed limits; remove a draft before retaining another",
             false,
         ));
     }
@@ -686,7 +1050,13 @@ fn validate_draft_shape(draft: &ScriptDraft) -> Result<(), AppError> {
             false,
         ));
     }
-    if draft.source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES {
+    validate_javascript_history(&draft.javascript_history)?;
+    if draft.source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES
+        || draft
+            .retained_source
+            .as_ref()
+            .is_some_and(|source| source.len() > transmog_script::MAX_SCRIPT_SOURCE_BYTES)
+    {
         return Err(AppError::new(
             ErrorCategory::Limit,
             "script source exceeds one MiB",
@@ -726,6 +1096,7 @@ fn load_latest(path: &Path) -> Option<ScriptWorkspace> {
 }
 
 fn persist(path: &Path, workspace: &ScriptWorkspace) -> Result<(), AppError> {
+    validate_workspace(workspace)?;
     let bytes = serde_json::to_vec_pretty(workspace).map_err(|_| {
         AppError::new(
             ErrorCategory::Internal,
@@ -797,6 +1168,9 @@ mod tests {
             id: "user-script".to_owned(),
             revision,
             source: "export function onRequestHead() { return { action: 'continue' }; }".to_owned(),
+            language: ScriptLanguage::TypeScript,
+            retained_source: None,
+            javascript_history: Vec::new(),
             handlers: [ScriptHandler::RequestHead].into_iter().collect(),
             prefilter: ScriptPrefilter::default(),
             capabilities: ScriptCapabilities::default(),
@@ -828,6 +1202,145 @@ mod tests {
     }
 
     #[test]
+    fn stored_execution_never_recompiles_typescript_and_detects_modified_artifacts() {
+        let registry = registry(None);
+        let mut built = revision(&registry, draft(1));
+        // Simulate a future compiler that cannot parse the retained authored source.
+        built.source = "future TypeScript syntax not understood by this version".to_owned();
+        built.manifest.source_hash = source_hash(built.source.as_bytes());
+        assert!(executable(&built).is_ok());
+        built.javascript.push_str("// changed outside authoring");
+        assert!(
+            executable(&built)
+                .unwrap_err()
+                .message
+                .contains("integrity")
+        );
+    }
+
+    #[test]
+    fn successful_build_survives_restart_and_failed_authoring_with_retained_source() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let registry = registry(Some(path.clone()));
+        let mut javascript = draft(1);
+        javascript.language = ScriptLanguage::JavaScript;
+        javascript.retained_source = Some("const bad: number = 'draft';".to_owned());
+        let built = revision(&registry, javascript.clone());
+        assert_eq!(built.javascript, javascript.source);
+        assert_eq!(built.source_map, [] as [u8; 0]);
+        let mut broken = javascript;
+        broken.source = "export function {".to_owned();
+        assert!(registry.validate(broken).is_err());
+        let reopened = registry_with_path(path);
+        assert_eq!(reopened.status().built[0].javascript, built.javascript);
+        assert_eq!(
+            reopened.status().built[0].retained_source,
+            built.retained_source
+        );
+        assert!(reopened.status().active.is_empty());
+    }
+
+    #[test]
+    fn paused_applied_revision_cannot_be_reused_for_new_edits() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let registry = registry(None);
+        let applied = revision(&registry, draft(4));
+        persist(
+            &path,
+            &ScriptWorkspace {
+                schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+                generation: 1,
+                paused: vec![applied],
+                saved: vec![draft(4)],
+                ..ScriptWorkspace::default()
+            },
+        )
+        .unwrap();
+        let reopened = registry_with_path(path);
+        assert!(
+            reopened
+                .save(draft(4))
+                .unwrap_err()
+                .message
+                .contains("revision must increase")
+        );
+        let candidate = reopened.validate(draft(4)).unwrap();
+        assert!(
+            reopened
+                .activate(&candidate.candidate_id)
+                .unwrap_err()
+                .message
+                .contains("revision must increase")
+        );
+        reopened.save(draft(5)).unwrap();
+        assert_eq!(reopened.status().saved[0].revision, 5);
+        assert_eq!(reopened.status().paused[0].manifest.revision, 4);
+    }
+
+    #[test]
+    fn javascript_recovery_history_survives_build_save_and_restart() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let registry = registry(Some(path.clone()));
+        let mut input = draft(1);
+        input.javascript_history = vec!["// earlier authored JavaScript".to_owned()];
+        registry.validate(input.clone()).unwrap();
+        registry.save(input.clone()).unwrap();
+        let reopened = registry_with_path(path);
+        assert_eq!(
+            reopened.status().saved[0].javascript_history,
+            input.javascript_history
+        );
+        assert_eq!(
+            reopened.status().built[0].javascript_history,
+            input.javascript_history
+        );
+        let mut over_limit = draft(2);
+        over_limit.javascript_history = vec![String::new(); 9];
+        assert!(reopened.save(over_limit).is_err());
+        assert_eq!(
+            reopened.status().saved[0].javascript_history,
+            input.javascript_history
+        );
+    }
+
+    #[test]
+    fn unavailable_applied_build_exposes_health_and_failed_retry_preserves_drafts() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let registry = registry(None);
+        let active = revision(&registry, draft(1));
+        persist(
+            &path,
+            &ScriptWorkspace {
+                schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+                generation: 1,
+                active: vec![active],
+                saved: vec![draft(2)],
+                ..ScriptWorkspace::default()
+            },
+        )
+        .unwrap();
+        let reopened = registry_with_path(path);
+        let before = reopened.status();
+        assert!(!before.runtimes[0].available);
+        assert_eq!(before.runtimes[0].revision, 1);
+        assert!(
+            before.runtimes[0]
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("unavailable")
+        );
+        assert!(reopened.retry("user-script", before.generation).is_err());
+        assert_eq!(reopened.status().generation, before.generation);
+        assert_eq!(reopened.status().saved[0].revision, 2);
+        assert_eq!(reopened.status().active[0].manifest.revision, 1);
+    }
+
+    #[test]
     fn activation_baseline_round_trips_exact_source_and_authority() {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join("scripts");
@@ -844,6 +1357,7 @@ mod tests {
             generation: 1,
             active: vec![active.clone()],
             saved: vec![draft(6)],
+            ..ScriptWorkspace::default()
         };
         save_activated_draft(&mut workspace, &active).unwrap();
         persist(&path, &workspace).unwrap();
@@ -867,7 +1381,9 @@ mod tests {
         let candidate = registry.validate(draft(1)).unwrap();
         let mut newer = draft(2);
         newer.source.push_str("\n// newer saved work");
-        registry.save_checked(newer.clone(), Some(0)).unwrap();
+        registry
+            .save_checked(newer.clone(), Some(registry.status().generation))
+            .unwrap();
         let error = registry.activate(&candidate.candidate_id).unwrap_err();
         assert!(error.message.contains("workspace changed"));
         assert!(
@@ -927,6 +1443,7 @@ mod tests {
             generation: 1,
             active: vec![active.clone()],
             saved: vec![draft(1)],
+            ..ScriptWorkspace::default()
         };
         persist(&path, &workspace).unwrap();
         let reopened = registry_with_path(path.clone());
@@ -942,7 +1459,10 @@ mod tests {
         );
         assert_eq!(reopened.status().active[0].source, active.source);
         assert_eq!(reopened.status().saved[0].revision, 1);
-        assert_eq!(load_latest(&path).unwrap().generation, 1);
+        assert_eq!(
+            load_latest(&path).unwrap().generation,
+            reopened.status().generation
+        );
         assert_eq!(
             reopened.status().candidate_count,
             1,
@@ -963,6 +1483,7 @@ mod tests {
                 generation: 1,
                 active: vec![active],
                 saved: Vec::new(),
+                ..ScriptWorkspace::default()
             },
         )
         .unwrap();
@@ -986,6 +1507,7 @@ mod tests {
                 generation: 1,
                 active: vec![active],
                 saved: vec![draft(2)],
+                ..ScriptWorkspace::default()
             },
         )
         .unwrap();

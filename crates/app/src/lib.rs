@@ -164,7 +164,9 @@ pub use response_assets::{
     ResponseBodyFileInfo, ResponseBodyFileMode, SessionResponseAsset,
 };
 pub use response_file::{ResponseFile, ResponseFileResult};
-pub use scripts::{ScriptCandidate, ScriptDraft, ScriptRevision, ScriptStatus};
+pub use scripts::{
+    ScriptCandidate, ScriptDraft, ScriptLanguage, ScriptRevision, ScriptRuntimeStatus, ScriptStatus,
+};
 pub use search::{
     TrafficSearchEntry, TrafficSearchMatch, TrafficSearchMode, TrafficSearchProgress,
     TrafficSearchRequest, TrafficSearchResult,
@@ -1156,6 +1158,35 @@ impl Application {
     /// Returns a persistence error without changing the active snapshot.
     pub fn disable_script(&self, script_id: &str) -> Result<ScriptStatus, AppError> {
         self.scripts.disable(script_id)
+    }
+
+    /// Resumes the last applied JavaScript without rebuilding the editable draft.
+    ///
+    /// # Errors
+    /// Returns a stale generation, missing artifact, sandbox or persistence error.
+    pub fn resume_script(
+        &self,
+        script_id: &str,
+        expected_generation: u64,
+    ) -> Result<ScriptStatus, AppError> {
+        self.scripts.resume(script_id, expected_generation)
+    }
+
+    /// Returns lightweight availability for applied script sandboxes.
+    pub fn script_runtime_status(&self) -> Vec<ScriptRuntimeStatus> {
+        self.scripts.runtime_status()
+    }
+
+    /// Retries an applied artifact while preserving all authored drafts.
+    ///
+    /// # Errors
+    /// Returns stale generation, sandbox startup, or artifact validation errors.
+    pub fn retry_script(
+        &self,
+        script_id: &str,
+        expected_generation: u64,
+    ) -> Result<ScriptStatus, AppError> {
+        self.scripts.retry(script_id, expected_generation)
     }
 
     /// Lists durable immutable response assets.

@@ -8,6 +8,7 @@ import {
   ScriptTarget,
   getTypeScriptWorker,
   typescriptDefaults,
+  javascriptDefaults,
 } from "monaco-editor/languages/features/typescript/register";
 
 export {
@@ -17,6 +18,7 @@ export {
   getTypeScriptWorker,
   monaco,
   typescriptDefaults,
+  javascriptDefaults,
 };
 
 monaco.editor.addEditorAction({

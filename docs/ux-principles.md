@@ -158,6 +158,16 @@ when changing the experience.
   and live activation. Show unavailable evidence with its remembered identity;
   replacing it requires an explicit choice rather than matching a later URL.
 
+- Script authoring defaults to TypeScript while execution uses immutable saved
+  JavaScript. Preserve the applied build through authoring failures and language
+  changes. Retain both language drafts; returning to TypeScript requires an
+  explicit review of generated JavaScript against current JavaScript. Source/build
+  alignment, current type-check results and applied state remain distinct. Show
+  actual runtime availability independently of configured activation. Reveal
+  comparisons in a reachable surface, and preserve recoverable language drafts
+  through later switches. Shared script saves compare with the loaded authoring
+  baseline and require an explicit reviewed choice on conflict.
+
 ## Present evidence and failures honestly
 
 - Agent inspection offers complete retained sources through bounded pages, with

@@ -4,9 +4,23 @@ import "../editor-surface/editor-surface.js";
 import { attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { WorkspaceElement } from "../workspace-element.js";
-import type { ScriptDraft, ScriptStatus, ScriptCandidate, SelectedResponse } from "../models.js";
+import type {
+  ScriptDraft,
+  ScriptStatus,
+  ScriptCandidate,
+  ScriptLanguage,
+  ScriptRuntimeStatus,
+  SelectedResponse,
+} from "../models.js";
 import { describeError, optionalText, parseHeaderLines } from "../utilities.js";
-import { activeDraft, editingDraft, scriptFingerprint, scriptSettings } from "./script-state.js";
+import {
+  activeDraft,
+  editingDraft,
+  scriptFingerprint,
+  scriptExecutionFingerprint,
+  scriptSettings,
+} from "./script-state.js";
+import type { EditorSurface } from "../editor-surface/editor-surface.js";
 import type * as Monaco from "monaco-editor/editor/editor.api";
 import { loadMonaco, waitForStyles } from "../editor-runtime.js";
 
@@ -32,6 +46,37 @@ export class ScriptEditor extends WorkspaceElement {
   @attr theme = "system";
   @attr({ mode: "boolean" }) active = false;
   @observable selection: SelectedResponse | null = null;
+  @observable language: ScriptLanguage = "typescript";
+  @observable reviewingTypeScript = false;
+  @observable authoringStatus = "";
+  @observable buildInfo = "No successful build yet.";
+  @observable sourceAlignment = "";
+  private lastBuild: ScriptStatus["built"][number] | null = null;
+  @observable sourceLabel = "TypeScript source";
+  @observable diffLabel = "Active (left) and draft (right)";
+  @observable returnReady = false;
+  @observable canResume = false;
+  @observable runtimeIssue = "";
+  @observable appliedBuildText = "No applied build.";
+  @observable historyEntries: Array<{ index: number; label: string; source: string }> = [];
+  @observable canUndoHistoryRemoval = false;
+  @observable historyOpen = false;
+  @observable conflictVisible = false;
+  @observable conflictReviewed = false;
+  @observable canUndoSavedLoad = false;
+  @observable typeScriptIssues: Array<{ line: number; column: number; message: string }> = [];
+  @observable typeScriptIssue = false;
+  private javascriptHistory: string[] = [];
+  private removedHistorySource: string | null = null;
+  private conflictSaved: ScriptDraft | null = null;
+  private previousConflictDraft: ScriptDraft | null = null;
+  private appliedRevision: number | null = null;
+  private runtimeTimer: ReturnType<typeof setTimeout> | null = null;
+  private returnToExpandedSource = false;
+  @observable retainedSource: string | null = null;
+  private reviewJavascript = "";
+  private returnVersion = -1;
+  private diagnosticsVersion = 0;
   @observable scriptBusy = false;
   @observable scriptReady = false;
   @observable scriptDirty = true;
@@ -71,11 +116,13 @@ export class ScriptEditor extends WorkspaceElement {
   private draftModel: Monaco.editor.ITextModel | null = null;
   private revisionDiff: Monaco.editor.IStandaloneDiffEditor | null = null;
   private diffModels: Monaco.editor.ITextModel[] = [];
+  private diffViewModel: Monaco.editor.IDiffEditorViewModel | null = null;
   private candidate: ValidatedDraft | null = null;
   private scriptRevision = 1;
   private loading: Promise<void> | null = null;
   private monaco: typeof Monaco | null = null;
   private declarationsDisposable: Monaco.IDisposable | null = null;
+  private javascriptDeclarationsDisposable: Monaco.IDisposable | null = null;
   private readonly systemTheme = window.matchMedia("(prefers-color-scheme: dark)");
   private readonly forcedColors = window.matchMedia("(forced-colors: active)");
   private readonly systemThemeChanged = (): void => {
@@ -84,6 +131,10 @@ export class ScriptEditor extends WorkspaceElement {
 
   markScriptChanged(): void {
     this.editVersion++;
+    this.returnReady = false;
+    this.conflictReviewed = false;
+    this.typeScriptIssues = [];
+    this.typeScriptIssue = false;
     this.candidate = null;
     this.testOutdated = Boolean(this.testResult);
     this.diffStale = this.diffVisible;
@@ -92,6 +143,7 @@ export class ScriptEditor extends WorkspaceElement {
       this.monaco?.editor.setModelMarkers(model, "transmog-rust", []);
     }
     this.updateDraftState();
+    void this.refreshAuthoringStatus();
   }
   markTestChanged(): void {
     this.testVersion++;
@@ -104,8 +156,19 @@ export class ScriptEditor extends WorkspaceElement {
     const draft = this.scriptDraft();
     const fingerprint = scriptFingerprint(draft);
     this.scriptDirty = fingerprint !== this.savedFingerprint;
-    this.scriptUnapplied = fingerprint !== this.activeFingerprint;
+    this.scriptUnapplied = scriptExecutionFingerprint(draft) !== this.activeFingerprint;
     this.testHandlers = draft.handlers.map((name) => ({ name }));
+    const visibleSource = this.sourceEditor!.getValue();
+    const visibleLanguage = this.reviewingTypeScript ? "typescript" : this.language;
+    const label = visibleLanguage === "typescript" ? "TypeScript" : "JavaScript";
+    const build = this.lastBuild;
+    this.sourceAlignment = !build
+      ? "No compiled build yet."
+      : visibleLanguage === "typescript" && build.language !== "typescript"
+        ? "Retained TypeScript has not been compared with the current compiled JavaScript."
+        : visibleSource === (visibleLanguage === "javascript" ? build.javascript : build.source)
+          ? `${label} source matches compiled build ${build.manifest.revision}.`
+          : `${label} source differs from compiled build ${build.manifest.revision}.`;
   }
   scriptKeyboard(event: KeyboardEvent): void {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
@@ -137,6 +200,11 @@ export class ScriptEditor extends WorkspaceElement {
     if (this.scriptBusy || !this.scriptReady || !draft) {
       return;
     }
+    this.applyDraft(draft);
+    this.feedback("Changes discarded. The applied script is unchanged.");
+  }
+  private applyDraft(draft: ScriptDraft): void {
+    this.loadedDraft = structuredClone(draft);
     const set = (name: string, value: string | boolean) => {
       const input = this.scriptForm.elements.namedItem(name) as HTMLInputElement;
       if (typeof value === "boolean") {
@@ -153,18 +221,28 @@ export class ScriptEditor extends WorkspaceElement {
     set("respond", draft.capabilities.respond);
     set("abort", draft.capabilities.abort);
     set("sensitive", draft.capabilities.readSensitiveHeaders);
-    this.sourceEditor!.setValue(draft.source);
+    this.reviewingTypeScript = false;
+    this.language = draft.language ?? "typescript";
+    this.retainedSource = draft.retainedSource ?? null;
+    this.setJavaScriptHistory(draft.javascriptHistory ?? []);
+    this.closeComparison();
+    this.replaceSource(draft.source, this.language);
     this.markScriptChanged();
-    this.feedback("Changes discarded. The active script is unchanged.");
   }
   async validateScript(event?: Event): Promise<void> {
     event?.preventDefault();
+    if (this.reviewingTypeScript) {
+      return;
+    }
     this.closeMenu();
     await this.runScript("Validating current source and capabilities…", async () => {
       await this.validateDraft();
     });
   }
   async testScript(): Promise<void> {
+    if (this.reviewingTypeScript) {
+      return;
+    }
     await this.runScript("Checking source and running the sandbox…", () => this.testDraft());
   }
   async primaryAction(): Promise<void> {
@@ -197,11 +275,29 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   closeComparison(): void {
+    const diffSurface = this.scriptDiffEditor?.closest("editor-surface") as EditorSurface | null;
+    const restoreSource = Boolean(diffSurface?.expanded && this.returnToExpandedSource);
+    if (diffSurface?.expanded) {
+      diffSurface.toggle();
+    }
+    this.returnToExpandedSource = false;
+    this.returnReady = false;
+    this.conflictReviewed = false;
     this.diffVisible = false;
+    this.activeSettings = "";
+    this.draftSettings = "";
     this.disposeComparison();
+    const sourceSurface = this.scriptEditor?.closest("editor-surface") as EditorSurface | null;
+    if (restoreSource && sourceSurface && !sourceSurface.expanded) {
+      sourceSurface.toggle();
+    }
     this.focusEditor();
   }
   private disposeComparison(): void {
+    this.revisionDiff?.setModel(null);
+    // Cancel asynchronous diff work before releasing either text model.
+    this.diffViewModel?.dispose();
+    this.diffViewModel = null;
     this.revisionDiff?.dispose();
     this.revisionDiff = null;
     for (const model of this.diffModels) {
@@ -235,6 +331,9 @@ export class ScriptEditor extends WorkspaceElement {
   activeChanged(): void {
     if (this.active) {
       void this.ensureEditor();
+      this.scheduleRuntimeRefresh();
+    } else {
+      this.stopRuntimeRefresh();
     }
   }
   focusEditor(): void {
@@ -279,6 +378,7 @@ export class ScriptEditor extends WorkspaceElement {
     this.editVersion++;
     this.testVersion++;
     this.scriptReady = false;
+    this.stopRuntimeRefresh();
     this.systemTheme.removeEventListener("change", this.systemThemeChanged);
     this.forcedColors.removeEventListener("change", this.systemThemeChanged);
     this.sourceEditor?.dispose();
@@ -288,6 +388,8 @@ export class ScriptEditor extends WorkspaceElement {
     this.disposeComparison();
     this.declarationsDisposable?.dispose();
     this.declarationsDisposable = null;
+    this.javascriptDeclarationsDisposable?.dispose();
+    this.javascriptDeclarationsDisposable = null;
     super.disconnectedCallback();
   }
   private async initializeScriptEditor(): Promise<void> {
@@ -295,7 +397,7 @@ export class ScriptEditor extends WorkspaceElement {
       return;
     }
     const [
-      { ModuleKind, ModuleResolutionKind, ScriptTarget, typescriptDefaults },
+      { ModuleKind, ModuleResolutionKind, ScriptTarget, typescriptDefaults, javascriptDefaults },
       declarations,
       status,
     ] = await Promise.all([
@@ -318,6 +420,7 @@ export class ScriptEditor extends WorkspaceElement {
       moduleResolution: ModuleResolutionKind.NodeJs,
       noEmit: true,
       strict: true,
+      lib: ["esnext"],
       target: ScriptTarget.ESNext,
     });
     typescriptDefaults.setDiagnosticsOptions({
@@ -328,18 +431,35 @@ export class ScriptEditor extends WorkspaceElement {
       declarations,
       "file:///transmog-script-api/v1.d.ts",
     );
+    javascriptDefaults.setCompilerOptions({
+      ...typescriptDefaults.getCompilerOptions(),
+      allowJs: true,
+      checkJs: false,
+    });
+    this.javascriptDeclarationsDisposable?.dispose();
+    this.javascriptDeclarationsDisposable = javascriptDefaults.addExtraLib(
+      declarations,
+      "file:///transmog-script-api/v1.d.ts",
+    );
     const draft = editingDraft(status);
     this.loadedDraft = draft ?? null;
+    this.language = draft?.language ?? "typescript";
+    this.retainedSource = draft?.retainedSource ?? null;
+    this.setJavaScriptHistory(draft?.javascriptHistory ?? []);
+    this.conflictVisible = false;
+    this.sourceLabel = this.language === "typescript" ? "TypeScript source" : "JavaScript source";
     this.draftModel = this.monaco!.editor.createModel(
       draft?.source ?? SCRIPT_TEMPLATE,
-      "typescript",
-      this.monaco!.Uri.parse("file:///transmog-scripts/draft/main.ts"),
+      draft?.language ?? "typescript",
+      this.monaco!.Uri.parse(
+        `file:///transmog-scripts/draft/main.${draft?.language === "javascript" ? "js" : "ts"}`,
+      ),
     );
     this.sourceEditor = this.monaco!.editor.create(this.scriptEditor, {
       model: this.draftModel,
       automaticLayout: true,
       accessibilitySupport: "on",
-      ariaLabel: "Traffic script TypeScript source",
+      ariaLabel: `Traffic script ${this.language === "typescript" ? "TypeScript" : "JavaScript"} source`,
       minimap: { enabled: false },
       tabFocusMode: true,
       theme: this.monacoTheme(),
@@ -371,6 +491,8 @@ export class ScriptEditor extends WorkspaceElement {
     this.$flushUpdates();
     this.renderScriptStatus(status);
     this.updateDraftState();
+    void this.refreshAuthoringStatus();
+    this.scheduleRuntimeRefresh();
     this.scriptText = draft
       ? "Ready to edit. Changes apply to new requests when saved and enabled."
       : "Start with this example, then save and enable it for new requests.";
@@ -401,7 +523,9 @@ export class ScriptEditor extends WorkspaceElement {
       );
     } catch (error: unknown) {
       this.scriptFailure("Save failed", error);
-      await this.showError("Script draft could not be saved", this.scriptText);
+      if (!this.conflictVisible) {
+        await this.showError("Script draft could not be saved", this.scriptText);
+      }
     }
   }
   private current(version: number): boolean {
@@ -415,6 +539,7 @@ export class ScriptEditor extends WorkspaceElement {
   private async validateDraft(): Promise<ValidatedDraft | null> {
     const version = this.editVersion;
     try {
+      await this.checkTypeScript();
       const { draft, generation } = await this.prepareDraft();
       if (!this.current(version)) {
         this.changedDuring("validation");
@@ -429,6 +554,14 @@ export class ScriptEditor extends WorkspaceElement {
         return null;
       }
       this.candidate = { token, draft, version };
+      const status = await invoke<ScriptStatus>("script_status");
+      if (!this.current(version)) {
+        this.candidate = null;
+        this.changedDuring("validation");
+        return null;
+      }
+      this.renderScriptStatus(status);
+      this.updateDraftState();
       const model = this.sourceEditor?.getModel();
       if (model) {
         this.monaco!.editor.setModelMarkers(model, "transmog-rust", []);
@@ -526,6 +659,9 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   private async activateDraft(): Promise<void> {
+    if (this.reviewingTypeScript) {
+      return;
+    }
     const version = this.editVersion;
     try {
       // Always revalidate against the current workspace generation, including after Save draft.
@@ -535,6 +671,11 @@ export class ScriptEditor extends WorkspaceElement {
       }
       this.scriptText = "Starting the script and saving this version…";
       this.statusKind = "progress";
+      await this.checkTypeScript();
+      if (!this.current(version)) {
+        this.changedDuring("activation");
+        return;
+      }
       const status = await invoke<ScriptStatus>("activate_script", {
         candidateId: candidate.token.candidateId,
       });
@@ -583,39 +724,60 @@ export class ScriptEditor extends WorkspaceElement {
       if (!active) {
         throw new Error("This script is not currently enabled");
       }
-      this.disposeComparison();
-      this.diffModels = [
-        this.monaco!.editor.createModel(active.source, "typescript"),
-        this.monaco!.editor.createModel(draft.source, "typescript"),
-      ];
-      this.activeSettings = scriptSettings(activeDraft(active));
-      this.draftSettings = scriptSettings(draft);
-      this.diffStale = false;
-      this.diffVisible = true;
-      this.$flushUpdates();
-      this.revisionDiff = this.monaco!.editor.createDiffEditor(this.scriptDiffEditor, {
-        automaticLayout: true,
-        accessibilitySupport: "on",
-        ariaLabel: "Enabled script and current draft comparison",
-        readOnly: true,
-        theme: this.monacoTheme(),
-      });
-      const [original, modified] = this.diffModels;
-      if (!original || !modified) {
-        throw new Error("Script comparison could not be prepared");
-      }
-      this.revisionDiff.setModel({ original, modified });
+      await this.showSourceComparison(
+        activeDraft(active),
+        draft,
+        "Active (left) and draft (right)",
+      );
       this.feedback("Comparing active source and settings with the current draft.");
     } catch (error: unknown) {
       this.scriptFailure("Script comparison unavailable", error);
     }
   }
+  private async showSourceComparison(
+    originalDraft: ScriptDraft,
+    draft: ScriptDraft,
+    label: string,
+  ): Promise<boolean> {
+    if (!this.active || !this.isConnected) {
+      return false;
+    }
+    this.disposeComparison();
+    this.diffLabel = label;
+    this.diffModels = [
+      this.monaco!.editor.createModel(originalDraft.source, originalDraft.language),
+      this.monaco!.editor.createModel(draft.source, draft.language),
+    ];
+    this.activeSettings = scriptSettings(originalDraft);
+    this.draftSettings = scriptSettings(draft);
+    this.diffStale = false;
+    this.diffVisible = true;
+    this.$flushUpdates();
+    this.revisionDiff = this.monaco!.editor.createDiffEditor(this.scriptDiffEditor, {
+      automaticLayout: true,
+      accessibilitySupport: "on",
+      ariaLabel: label,
+      readOnly: true,
+      theme: this.monacoTheme(),
+    });
+    const [original, modified] = this.diffModels;
+    if (!original || !modified) {
+      throw new Error("Script comparison could not be prepared");
+    }
+    this.diffViewModel = this.revisionDiff.createViewModel({ original, modified });
+    const viewModel = this.diffViewModel;
+    this.revisionDiff.setModel(viewModel);
+    this.revealComparison();
+    await viewModel.waitForDiff();
+    return this.isConnected && this.diffViewModel === viewModel && this.diffVisible;
+  }
   private async prepareDraft(): Promise<{ draft: ScriptDraft; generation: number }> {
     const draft = this.scriptDraft();
     const status = await invoke<ScriptStatus>("script_status");
+    this.requireSavedBaseline(status);
     const revisions = [
       ...status.saved.filter((item) => item.id === draft.id).map((item) => item.revision),
-      ...status.active
+      ...[...status.active, ...(status.paused ?? [])]
         .filter((item) => item.manifest.id === draft.id)
         .map((item) => item.manifest.revision + 1),
     ];
@@ -631,10 +793,8 @@ export class ScriptEditor extends WorkspaceElement {
       throw new Error("Script editor is still loading");
     }
     const data = new FormData(this.scriptForm);
-    const source = this.sourceEditor.getValue();
-    const handlers = (
-      ["onRequestHead", "onRequestBody", "onResponseHead", "onResponseBody"] as const
-    ).filter((handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source));
+    const source = this.reviewingTypeScript ? this.reviewJavascript : this.sourceEditor.getValue();
+    const handlers = this.sourceHandlers(source);
     const writeHeaders = [
       ...new Set(
         String(data.get("scriptHeaders") ?? "")
@@ -647,6 +807,9 @@ export class ScriptEditor extends WorkspaceElement {
       id: "user-script",
       revision: this.scriptRevision,
       source,
+      language: this.language,
+      retainedSource: this.reviewingTypeScript ? this.sourceEditor.getValue() : this.retainedSource,
+      javascriptHistory: [...this.javascriptHistory],
       handlers,
       prefilter: {
         method: this.loadedDraft?.prefilter.method ?? null,
@@ -672,18 +835,668 @@ export class ScriptEditor extends WorkspaceElement {
     };
   }
   private renderScriptStatus(status: ScriptStatus): void {
+    this.lastBuild = status.built?.find((item) => item.manifest.id === "user-script") ?? null;
+    const applied =
+      status.active.find((item) => item.manifest.id === "user-script") ??
+      status.paused?.find((item) => item.manifest.id === "user-script");
+    const buildIsApplied =
+      applied &&
+      this.lastBuild?.manifest.revision === applied.manifest.revision &&
+      this.lastBuild?.javascriptHash === applied.javascriptHash;
+    this.buildInfo = this.lastBuild
+      ? `Compiled build ${this.lastBuild.manifest.revision}${buildIsApplied ? " (applied)" : " (not applied)"}\nLanguage: ${this.lastBuild.language}\nCompiler: ${this.lastBuild.compiler}\nSource SHA-256: ${this.lastBuild.manifest.sourceHash}\nJavaScript SHA-256: ${this.lastBuild.javascriptHash}\nAPI declarations SHA-256: ${this.lastBuild.declarationsHash}`
+      : "No successful build yet.";
+    this.canResume = Boolean(status.paused?.some((item) => item.manifest.id === "user-script"));
     this.$emit("script-activity-change", {
       generation: status.generation,
       activeCount: status.active.length,
     });
     const active = status.active.find((item) => item.manifest.id === "user-script");
     this.scriptActive = Boolean(active);
-    this.activeScriptText = active ? "On" : "Paused";
-    const fingerprint = active ? scriptFingerprint(activeDraft(active)) : "";
+    this.appliedRevision = active?.manifest.revision ?? null;
+    this.activeScriptText = active
+      ? `On - applied build ${active.manifest.revision}`
+      : applied
+        ? `Paused - applied build ${applied.manifest.revision}`
+        : "Paused";
+    this.appliedBuildText = applied
+      ? `Applied build ${applied.manifest.revision}${active ? " is selected for live traffic." : " is paused."}`
+      : "No applied build.";
+    this.updateRuntimeStatus(status.runtimes ?? []);
+    const fingerprint = active ? scriptExecutionFingerprint(activeDraft(active)) : "";
     if (this.diffVisible && fingerprint !== this.activeFingerprint) {
       this.diffStale = true;
     }
     this.activeFingerprint = fingerprint;
+    void this.refreshAuthoringStatus();
+  }
+  private sourceHandlers(source: string): ScriptDraft["handlers"] {
+    return (["onRequestHead", "onRequestBody", "onResponseHead", "onResponseBody"] as const).filter(
+      (handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source),
+    );
+  }
+  private replaceSource(source: string, language: ScriptLanguage): void {
+    const old = this.draftModel;
+    this.sourceEditor!.setModel(null);
+    old?.dispose();
+    this.draftModel = this.monaco!.editor.createModel(
+      source,
+      language,
+      this.monaco!.Uri.parse(
+        `file:///transmog-scripts/draft/main.${language === "typescript" ? "ts" : "js"}`,
+      ),
+    );
+    this.sourceEditor!.setModel(this.draftModel);
+    this.sourceEditor!.updateOptions({
+      ariaLabel: this.reviewingTypeScript
+        ? "Retained TypeScript source for review"
+        : `Traffic script ${language === "typescript" ? "TypeScript" : "JavaScript"} source`,
+    });
+    this.sourceLabel = this.reviewingTypeScript
+      ? "Retained TypeScript for review"
+      : language === "typescript"
+        ? "TypeScript source"
+        : "JavaScript source";
+    this.markScriptChanged();
+  }
+  private async checkTypeScript(): Promise<void> {
+    if (this.language !== "typescript" && !this.reviewingTypeScript) {
+      return;
+    }
+    const model = this.draftModel!;
+    const version = model.getVersionId();
+    const { getTypeScriptWorker } = await loadMonaco();
+    const check = async () => {
+      // Monaco registers rich language services after attaching the first model.
+      // Publishing can be requested before that asynchronous registration finishes.
+      const started = performance.now();
+      let createWorker: Awaited<ReturnType<typeof getTypeScriptWorker>>;
+      for (;;) {
+        if (model.isDisposed() || model !== this.draftModel || model.getVersionId() !== version) {
+          throw new Error(
+            "Source changed during TypeScript checking. Retry with the current draft.",
+          );
+        }
+        try {
+          createWorker = await getTypeScriptWorker();
+          break;
+        } catch (error: unknown) {
+          if (describeError(error) !== "TypeScript not registered!") {
+            throw error;
+          }
+          if (performance.now() - started >= 5000) {
+            throw new Error(
+              "TypeScript is still starting. Check TypeScript again before publishing.",
+              { cause: error },
+            );
+          }
+          await new Promise<void>((resolve) => setTimeout(resolve, 50));
+        }
+      }
+      const worker = await createWorker(model.uri);
+      const diagnostics = [
+        ...(await worker.getSyntacticDiagnostics(model.uri.toString())),
+        ...(await worker.getSemanticDiagnostics(model.uri.toString())),
+      ];
+      if (model.isDisposed() || model !== this.draftModel || model.getVersionId() !== version) {
+        throw new Error("Source changed during TypeScript checking. Retry with the current draft.");
+      }
+      const errors = diagnostics.filter((item) => item.category === 1);
+      this.typeScriptIssues = errors.slice(0, 20).map((item) => {
+        const position = model.getPositionAt(item.start ?? 0);
+        return {
+          line: position.lineNumber,
+          column: position.column,
+          message: this.diagnosticMessage(item.messageText),
+        };
+      });
+      this.typeScriptIssue = errors.length > 0;
+      if (errors.length) {
+        throw new Error(
+          `TypeScript has ${errors.length} error(s). Choose an issue below to fix it, or ${this.reviewingTypeScript ? "Keep JavaScript" : "Edit JavaScript"}.`,
+        );
+      }
+    };
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        check(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(
+            () =>
+              reject(
+                new Error(
+                  `TypeScript checking is unavailable. Retry, or ${this.reviewingTypeScript ? "Keep JavaScript" : "Edit JavaScript"}.`,
+                ),
+              ),
+            15000,
+          );
+        }),
+      ]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  private async refreshAuthoringStatus(): Promise<void> {
+    const request = ++this.diagnosticsVersion;
+    const version = this.editVersion;
+    if (!this.scriptReady) {
+      return;
+    }
+    if (this.language === "javascript" && !this.reviewingTypeScript) {
+      this.authoringStatus =
+        "Editing JavaScript. Retained TypeScript is used again only by your explicit choice.";
+      return;
+    }
+    this.authoringStatus = "Checking TypeScript…";
+    await new Promise<void>((resolve) => setTimeout(resolve, 250));
+    if (request !== this.diagnosticsVersion || !this.current(version)) {
+      return;
+    }
+    try {
+      await this.checkTypeScript();
+      if (request === this.diagnosticsVersion && this.current(version)) {
+        this.authoringStatus = "TypeScript checks passed.";
+      }
+    } catch (error: unknown) {
+      if (request === this.diagnosticsVersion && this.current(version)) {
+        this.typeScriptIssue = true;
+        this.authoringStatus = `${describeError(error)} ${this.runtimeIssue ? "The applied script is unavailable; see the runtime issue." : this.appliedBuildText}`;
+      }
+    }
+  }
+  async editJavaScript(): Promise<void> {
+    this.closeMenu();
+    await this.runScript("Opening JavaScript draft…", async () => {
+      const version = this.editVersion;
+      try {
+        const status = await invoke<ScriptStatus>("script_status");
+        if (!this.current(version)) {
+          return this.changedDuring("language switching");
+        }
+        const build =
+          status.built?.find((item) => item.manifest.id === "user-script") ??
+          status.active.find((item) => item.manifest.id === "user-script");
+        const seed =
+          build?.javascript ??
+          'export function onRequestHead() { return { action: "continue" }; }\n';
+        const history =
+          this.retainedSource && this.retainedSource !== seed
+            ? this.rememberJavaScript(this.retainedSource)
+            : this.javascriptHistory;
+        this.setJavaScriptHistory(history);
+        this.retainedSource = this.sourceEditor!.getValue();
+        this.language = "javascript";
+        this.closeComparison();
+        this.replaceSource(
+          build?.javascript ??
+            'export function onRequestHead() { return { action: "continue" }; }\n',
+          "javascript",
+        );
+        this.feedback(
+          build
+            ? `Editing JavaScript from compiled build ${build.manifest.revision}${[...status.active, ...(status.paused ?? [])].some((item) => item.manifest.id === "user-script" && item.manifest.revision === build.manifest.revision && item.javascriptHash === build.javascriptHash) ? " (applied)" : " (not applied)"}. TypeScript edits and previous JavaScript drafts are retained. ${this.appliedBuildText}`
+            : "No successful build exists. A JavaScript starter is ready; your TypeScript is retained.",
+        );
+      } catch (error: unknown) {
+        this.scriptFailure("Language switch failed", error);
+      }
+    });
+  }
+  reviewTypeScript(): void {
+    this.closeMenu();
+    if (
+      this.scriptBusy ||
+      this.reviewingTypeScript ||
+      this.language !== "javascript" ||
+      this.retainedSource === null
+    ) {
+      return;
+    }
+    this.reviewJavascript = this.sourceEditor!.getValue();
+    this.reviewingTypeScript = true;
+    this.closeComparison();
+    this.replaceSource(this.retainedSource, "typescript");
+    this.feedback(
+      "Repair retained TypeScript if needed, then compare its generated JavaScript with your current JavaScript.",
+    );
+  }
+  keepJavaScript(): void {
+    if (this.scriptBusy) {
+      return;
+    }
+    this.retainedSource = this.sourceEditor!.getValue();
+    this.reviewingTypeScript = false;
+    this.closeComparison();
+    this.replaceSource(this.reviewJavascript, "javascript");
+    this.feedback("Continuing with JavaScript. TypeScript edits are retained.");
+  }
+  async compareTypeScriptOutput(): Promise<void> {
+    await this.runScript(
+      "Checking retained TypeScript and preparing output comparison…",
+      async () => {
+        const version = this.editVersion;
+        try {
+          await this.checkTypeScript();
+          const { draft, generation } = await this.prepareDraft();
+          if (!this.current(version)) {
+            return this.changedDuring("comparison");
+          }
+          const source = this.sourceEditor!.getValue();
+          await invoke<ScriptCandidate>("validate_script", {
+            draft: {
+              ...draft,
+              source,
+              handlers: this.sourceHandlers(source),
+              language: "typescript",
+              retainedSource: this.reviewJavascript,
+            },
+            expectedGeneration: generation,
+          });
+          const status = await invoke<ScriptStatus>("script_status");
+          if (!this.current(version)) {
+            return this.changedDuring("comparison");
+          }
+          const build = status.built.find((item) => item.manifest.id === draft.id);
+          if (!build || build.source !== source) {
+            throw new Error("The build changed. Compare again.");
+          }
+          this.renderScriptStatus(status);
+          this.updateDraftState();
+          const ready = await this.showJavascriptComparison(
+            this.reviewJavascript,
+            build.javascript,
+            "Current JavaScript (left) and TypeScript output (right)",
+          );
+          if (!ready || !this.current(version)) {
+            return;
+          }
+          this.returnVersion = version;
+          this.returnReady = true;
+          this.feedback(
+            "Review the JavaScript differences, then explicitly choose Use TypeScript output.",
+          );
+        } catch (error: unknown) {
+          if (this.current(version)) {
+            this.scriptFailure("Comparison failed", error);
+          }
+        }
+      },
+    );
+  }
+  useTypeScriptOutput(): void {
+    if (!this.returnReady || this.returnVersion !== this.editVersion || this.scriptBusy) {
+      return;
+    }
+    this.retainedSource = this.reviewJavascript;
+    this.reviewingTypeScript = false;
+    this.language = "typescript";
+    this.sourceLabel = "TypeScript source";
+    this.sourceEditor!.updateOptions({ ariaLabel: "Traffic script TypeScript source" });
+    this.closeComparison();
+    this.markScriptChanged();
+    this.feedback(
+      "TypeScript selected. Save and apply to publish its output; the previous JavaScript draft is retained.",
+    );
+  }
+  private revealComparison(): void {
+    if (!this.active || !this.isConnected || !this.diffVisible) {
+      return;
+    }
+    const source = this.scriptEditor.closest("editor-surface") as EditorSurface;
+    const diff = this.scriptDiffEditor.closest("editor-surface") as EditorSurface;
+    if (source.expanded) {
+      source.toggle();
+      this.returnToExpandedSource = true;
+      if (!diff.expanded) {
+        diff.toggle();
+      }
+    } else if (!diff.expanded) {
+      diff.scrollIntoView({ block: "nearest" });
+    }
+    this.revisionDiff?.getOriginalEditor().focus();
+  }
+  private async showJavascriptComparison(
+    original: string,
+    modified: string,
+    label: string,
+  ): Promise<boolean> {
+    if (!this.active || !this.isConnected) {
+      return false;
+    }
+    this.returnReady = false;
+    this.disposeComparison();
+    this.diffLabel = label;
+    this.activeSettings = "";
+    this.draftSettings = "";
+    this.diffModels = [
+      this.monaco!.editor.createModel(original, "javascript"),
+      this.monaco!.editor.createModel(modified, "javascript"),
+    ];
+    this.diffStale = false;
+    this.diffVisible = true;
+    this.$flushUpdates();
+    this.revisionDiff = this.monaco!.editor.createDiffEditor(this.scriptDiffEditor, {
+      automaticLayout: true,
+      accessibilitySupport: "on",
+      ariaLabel: label,
+      readOnly: true,
+      theme: this.monacoTheme(),
+    });
+    const viewModel = this.revisionDiff.createViewModel({
+      original: this.diffModels[0]!,
+      modified: this.diffModels[1]!,
+    });
+    this.diffViewModel = viewModel;
+    this.revisionDiff.setModel(viewModel);
+    this.revealComparison();
+    await viewModel.waitForDiff();
+    return this.isConnected && this.diffViewModel === viewModel && this.diffVisible;
+  }
+  async viewAppliedJavaScript(): Promise<void> {
+    this.closeMenu();
+    await this.runScript("Opening applied JavaScript...", async () => {
+      const version = this.editVersion;
+      try {
+        const status = await invoke<ScriptStatus>("script_status");
+        if (!this.current(version)) {
+          return;
+        }
+        const applied =
+          status.active.find((item) => item.manifest.id === "user-script") ??
+          status.paused?.find((item) => item.manifest.id === "user-script");
+        if (!applied) {
+          throw new Error("No applied JavaScript is available.");
+        }
+        await this.showJavascriptComparison(
+          applied.javascript,
+          applied.javascript,
+          `Applied JavaScript - build ${applied.manifest.revision}`,
+        );
+      } catch (error: unknown) {
+        if (this.current(version)) {
+          this.scriptFailure("Applied JavaScript unavailable", error);
+        }
+      }
+    });
+  }
+  async resumeScript(): Promise<void> {
+    await this.runScript("Resuming applied JavaScript…", async () => {
+      try {
+        const status = await invoke<ScriptStatus>("script_status");
+        const resumed = await invoke<ScriptStatus>("resume_script", {
+          scriptId: "user-script",
+          expectedGeneration: status.generation,
+        });
+        if (!this.isConnected) {
+          return;
+        }
+        this.renderScriptStatus(resumed);
+        this.updateDraftState();
+        this.feedback("Previously applied JavaScript resumed. Draft edits remain unapplied.");
+      } catch (error: unknown) {
+        this.scriptFailure("Resume failed", error);
+      }
+    });
+  }
+  private requireSavedBaseline(status: ScriptStatus): void {
+    const saved = editingDraft(status);
+    if (
+      (saved ? scriptFingerprint(saved) : "") !==
+      (this.savedDraft ? scriptFingerprint(this.savedDraft) : "")
+    ) {
+      this.conflictSaved = saved ? structuredClone(saved) : null;
+      this.conflictReviewed = false;
+      this.conflictVisible = true;
+      throw new Error(
+        "The saved script changed in another window. Compare the saved script before replacing it.",
+      );
+    }
+  }
+  async compareSavedScript(): Promise<void> {
+    await this.runScript("Comparing your draft with the saved script...", async () => {
+      const version = this.editVersion;
+      try {
+        const status = await invoke<ScriptStatus>("script_status");
+        if (!this.current(version)) {
+          return;
+        }
+        const saved = editingDraft(status);
+        if (!saved) {
+          throw new Error("The saved script is no longer available. Your draft is preserved.");
+        }
+        this.conflictSaved = structuredClone(saved);
+        const ready = await this.showSourceComparison(
+          saved,
+          this.scriptDraft(),
+          "Saved in another window (left) and your draft (right)",
+        );
+        if (ready && this.current(version)) {
+          this.conflictReviewed = true;
+        }
+      } catch (error: unknown) {
+        if (this.current(version)) {
+          this.scriptFailure("Conflict comparison failed", error);
+        }
+      }
+    });
+  }
+  keepMyDraft(): void {
+    if (this.scriptBusy || !this.conflictSaved || !this.conflictReviewed) {
+      return;
+    }
+    this.savedDraft = structuredClone(this.conflictSaved);
+    this.savedFingerprint = scriptFingerprint(this.savedDraft);
+    this.conflictVisible = false;
+    this.closeComparison();
+    this.updateDraftState();
+    this.feedback("Your draft is kept. Save it explicitly to replace the reviewed saved version.");
+  }
+  loadSavedDraft(): void {
+    if (this.scriptBusy || !this.conflictSaved || !this.conflictReviewed) {
+      return;
+    }
+    this.previousConflictDraft = this.scriptDraft();
+    this.savedDraft = structuredClone(this.conflictSaved);
+    this.savedFingerprint = scriptFingerprint(this.savedDraft);
+    this.conflictVisible = false;
+    this.applyDraft(this.savedDraft);
+    this.canUndoSavedLoad = true;
+    this.feedback(
+      "Saved script loaded. Restore your previous draft if needed; live traffic is unchanged.",
+    );
+  }
+  restorePreviousDraft(): void {
+    if (this.scriptBusy || !this.previousConflictDraft) {
+      return;
+    }
+    const previous = this.previousConflictDraft;
+    this.previousConflictDraft = this.scriptDraft();
+    this.applyDraft(previous);
+    this.feedback("Previous draft restored. Save and apply are explicit.");
+  }
+  private setJavaScriptHistory(history: string[]): void {
+    this.javascriptHistory = [...history];
+    this.historyEntries = history.map((source, index) => ({
+      source,
+      index,
+      label: `JavaScript draft ${index + 1}`,
+    }));
+  }
+  private rememberJavaScript(source: string, history = this.javascriptHistory): string[] {
+    if (!source || history.includes(source)) {
+      return [...history];
+    }
+    if (history.length >= 8) {
+      throw new Error(
+        "Previous JavaScript drafts are full. Remove a draft below before retaining another.",
+      );
+    }
+    return [source, ...history];
+  }
+  historyToggled(event: Event): void {
+    this.historyOpen = (event.currentTarget as HTMLDetailsElement).open;
+  }
+  restoreJavaScriptDraft(index: number): void {
+    const source = this.javascriptHistory[index];
+    if (this.scriptBusy || this.reviewingTypeScript || source === undefined) {
+      return;
+    }
+    try {
+      const currentJs =
+        this.language === "javascript" ? this.sourceEditor!.getValue() : this.retainedSource;
+      const history = this.javascriptHistory.filter((_, item) => item !== index);
+      this.setJavaScriptHistory(
+        currentJs && currentJs !== source ? this.rememberJavaScript(currentJs, history) : history,
+      );
+      const typescript =
+        this.language === "typescript" ? this.sourceEditor!.getValue() : this.retainedSource;
+      this.retainedSource = typescript;
+      this.language = "javascript";
+      this.closeComparison();
+      this.replaceSource(source, "javascript");
+      this.historyOpen = false;
+      this.$flushUpdates();
+      this.scriptEditor.scrollIntoView({ block: "nearest" });
+      this.focusEditor();
+      this.feedback(
+        "Previous JavaScript draft restored. Current JavaScript was retained. Save and apply to change live traffic.",
+      );
+    } catch (error: unknown) {
+      this.scriptFailure("Restore failed", error);
+    }
+  }
+  removeJavaScriptDraft(index: number): void {
+    if (
+      this.scriptBusy ||
+      this.reviewingTypeScript ||
+      this.javascriptHistory[index] === undefined
+    ) {
+      return;
+    }
+    this.removedHistorySource = this.javascriptHistory[index]!;
+    this.setJavaScriptHistory(this.javascriptHistory.filter((_, item) => item !== index));
+    this.canUndoHistoryRemoval = true;
+    this.markScriptChanged();
+  }
+  undoJavaScriptRemoval(): void {
+    if (this.scriptBusy || this.removedHistorySource === null) {
+      return;
+    }
+    try {
+      this.setJavaScriptHistory(this.rememberJavaScript(this.removedHistorySource));
+      this.canUndoHistoryRemoval = false;
+      this.removedHistorySource = null;
+      this.markScriptChanged();
+    } catch (error: unknown) {
+      this.scriptFailure("Undo failed", error);
+    }
+  }
+  private diagnosticMessage(value: unknown): string {
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "object" && value !== null && "messageText" in value) {
+      const next =
+        "next" in value && Array.isArray(value.next)
+          ? value.next.map((item: unknown) => this.diagnosticMessage(item)).join(" ")
+          : "";
+      return `${String(value.messageText)}${next ? ` ${next}` : ""}`;
+    }
+    return String(value);
+  }
+  retryTypeScriptCheck(): void {
+    void this.refreshAuthoringStatus();
+  }
+  goToTypeScriptIssue(issue: { line: number; column: number }): void {
+    this.sourceEditor?.setPosition({ lineNumber: issue.line, column: issue.column });
+    this.sourceEditor?.revealLineInCenter(issue.line);
+    this.focusEditor();
+  }
+  private updateRuntimeStatus(status: ScriptRuntimeStatus[]): void {
+    const runtime = status.find(
+      (item) => item.scriptId === "user-script" && item.revision === this.appliedRevision,
+    );
+    this.runtimeIssue =
+      this.scriptActive && runtime && !runtime.available
+        ? (runtime.error ?? "The applied script is unavailable.")
+        : "";
+    if (this.runtimeIssue) {
+      this.activeScriptText = `Unavailable - applied build ${this.appliedRevision}`;
+    } else if (this.scriptActive) {
+      this.activeScriptText = `On - applied build ${this.appliedRevision}`;
+    }
+  }
+  private stopRuntimeRefresh(): void {
+    if (this.runtimeTimer !== null) {
+      clearTimeout(this.runtimeTimer);
+      this.runtimeTimer = null;
+    }
+  }
+  private scheduleRuntimeRefresh(): void {
+    this.stopRuntimeRefresh();
+    if (!this.active || !this.scriptReady || !this.isConnected) {
+      return;
+    }
+    this.runtimeTimer = setTimeout(() => {
+      void this.refreshRuntime();
+    }, 1000);
+  }
+  private async refreshRuntime(): Promise<void> {
+    try {
+      if (!this.active || !this.isConnected || this.scriptBusy) {
+        return;
+      }
+      const revision = this.appliedRevision;
+      const runtimes = await invoke<ScriptRuntimeStatus[]>("script_runtime_status");
+      if (
+        !this.active ||
+        !this.isConnected ||
+        this.scriptBusy ||
+        revision !== this.appliedRevision
+      ) {
+        return;
+      }
+      const current = runtimes.find((item) => item.scriptId === "user-script");
+      if ((current?.revision ?? null) !== revision) {
+        const status = await invoke<ScriptStatus>("script_status");
+        if (
+          !this.active ||
+          !this.isConnected ||
+          this.scriptBusy ||
+          revision !== this.appliedRevision
+        ) {
+          return;
+        }
+        this.renderScriptStatus(status);
+        this.updateDraftState();
+      } else {
+        this.updateRuntimeStatus(runtimes);
+      }
+    } catch {
+      /* A later refresh or explicit retry can recover; authored work is preserved. */
+    } finally {
+      this.scheduleRuntimeRefresh();
+    }
+  }
+  async retryScript(): Promise<void> {
+    await this.runScript("Retrying the applied JavaScript build...", async () => {
+      try {
+        const status = await invoke<ScriptStatus>("script_status");
+        const result = await invoke<ScriptStatus>("retry_script", {
+          scriptId: "user-script",
+          expectedGeneration: status.generation,
+        });
+        if (!this.isConnected) {
+          return;
+        }
+        this.renderScriptStatus(result);
+        this.updateDraftState();
+        this.feedback("Applied JavaScript is available again. Draft edits are unchanged.");
+      } catch (error: unknown) {
+        this.scriptFailure("Retry failed", error);
+      }
+    });
   }
   private feedback(message: string): void {
     this.scriptText = message;
@@ -696,14 +1509,16 @@ export class ScriptEditor extends WorkspaceElement {
       /revision must increase|candidate is unknown|workspace changed|newer script draft/.test(
         message,
       );
-    const recovery = conflict
-      ? "The workspace changed. Run the action again to validate the current edits."
-      : prefix === "Validation failed" || prefix === "Sandbox test aborted"
-        ? "Review the source, capabilities, and test input, then retry."
-        : "Your draft and the previously active script are preserved. Try the action again.";
+    const recovery = this.conflictVisible
+      ? "Your edits are preserved. Compare with the saved script, then explicitly keep your draft or load the saved version."
+      : conflict
+        ? "The workspace changed. Run the action again to validate the current edits."
+        : prefix === "Validation failed" || prefix === "Sandbox test aborted"
+          ? "Review the source, capabilities, and test input, then retry."
+          : "Your draft and the previously active script are preserved. Try the action again.";
     this.scriptText = `${prefix}: ${message}\n\n${recovery}`;
     this.statusKind = "error";
-    if (prefix !== "Validation failed") {
+    if (prefix !== "Validation failed" || this.typeScriptIssue) {
       return;
     }
     const model = this.sourceEditor?.getModel();

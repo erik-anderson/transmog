@@ -4,6 +4,9 @@ import type { ScriptDraft, ScriptRevision, ScriptStatus } from "../models.js";
 export function scriptFingerprint(draft: ScriptDraft): string {
   return JSON.stringify({
     source: draft.source,
+    language: draft.language ?? "typescript",
+    retainedSource: draft.retainedSource ?? null,
+    javascriptHistory: draft.javascriptHistory ?? [],
     handlers: [...new Set(draft.handlers)].sort(),
     prefilter: draft.prefilter,
     capabilities: {
@@ -31,6 +34,9 @@ export function activeDraft(revision: ScriptRevision): ScriptDraft {
     id,
     revision: version,
     source: revision.source,
+    language: revision.language ?? "typescript",
+    retainedSource: revision.retainedSource ?? null,
+    javascriptHistory: revision.javascriptHistory ?? [],
     handlers,
     prefilter,
     capabilities,
@@ -53,13 +59,21 @@ export function editingDraft(status: ScriptStatus, id = "user-script"): ScriptDr
 export function scriptSettings(draft: ScriptDraft): string {
   return JSON.stringify(
     {
+      language: draft.language,
       handlers: draft.handlers,
       prefilter: draft.prefilter,
       capabilities: draft.capabilities,
       limits: draft.limits,
       priority: draft.priority,
+      retainedSource: draft.retainedSource,
+      javascriptHistory: draft.javascriptHistory,
     },
     null,
     2,
   );
+}
+
+/** Alternate-language recovery work never changes the applied executable snapshot. */
+export function scriptExecutionFingerprint(draft: ScriptDraft): string {
+  return scriptFingerprint({ ...draft, retainedSource: null, javascriptHistory: [] });
 }

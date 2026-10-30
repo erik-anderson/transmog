@@ -116,7 +116,7 @@ claim which patches are applied.
 | UI component model | `@microsoft/webui-framework`, `@microsoft/webui` | Rust-oriented WebUI projection and the browser-side component runtime used by the desktop interface. |
 | Code editing | `monaco-editor` | TypeScript automation editing and diagnostics in the desktop UI. |
 | Sandboxed script execution | `v8` (`rusty_v8`) | An application-owned embedding executes user automation in a separate capability-restricted process with explicit time and memory containment. No Deno runtime or host ops are installed. |
-| TypeScript parsing/transpilation | Direct SWC crates | A runtime-free compiler validates and transpiles the supported TypeScript subset, preserving separate source maps before isolated execution. |
+| TypeScript parsing/transpilation | Direct SWC crates | A runtime-free compiler emits JavaScript only during traffic-script authoring, preserving separate source maps. Execution validates and loads saved JavaScript without TypeScript transpilation. |
 | Protocol visualizers | `v8` and direct SWC crates | Executes JavaScript ES2022 in an isolated read-only worker; validates static modules without runtime transpilation. Bundled MAPI is authored in TypeScript and compiled at build time. |
 | Browser-side code | TypeScript and `esbuild` | Typed UI components, browser interactions and projections. Generated bundles are reproducibly verified from the npm lockfile. |
 | Windows integration | `windows-sys` | Current-user proxy settings, process attribution, AppContainer and Job Object sandboxing, console suppression, and related host APIs. |

@@ -1,3 +1,4 @@
+import { transformSync } from "esbuild";
 import { checkCaptureTools } from "./check-capture-tools.mjs";
 import { checkResponseSetFollowups } from "./check-response-set-followups.mjs";
 import { checkFormatConverter } from "./check-format-converter.mjs";
@@ -190,6 +191,10 @@ await page.route("https://workspace.test/**", async (route) => {
       });
       return;
     }
+    if (process.argv.includes("--scripts-only") && path.startsWith("/chunks/tsMode-")) {
+      // Exercise publishing while Monaco's first TypeScript registration is still pending.
+      await new Promise((resolve) => setTimeout(resolve, 750));
+    }
     const asset = resources.get(path);
     if (!asset) {
       await route.fulfill({ status: 404, body: "Not found" });
@@ -201,6 +206,10 @@ await page.route("https://workspace.test/**", async (route) => {
     });
   }
 });
+await page.exposeFunction(
+  "__compileFixtureScript",
+  (source) => transformSync(source, { loader: "ts", target: "es2022" }).code,
+);
 await page.addInitScript(
   (configuration) => {
     const { workspace, networkProfiles, scriptDeclarations, authConversions } = configuration;
@@ -3241,6 +3250,14 @@ await page.addInitScript(
               rules: [],
               diagnostics: [],
               usage: [],
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
               candidateCount: 0,
               historyCount: 0,
             };
@@ -3975,6 +3992,14 @@ await page.addInitScript(
               ...structuredClone(state.candidate),
               responseSets: state.automation?.responseSets ?? [],
               generation: (state.automation?.generation ?? 0) + 1,
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
               candidateCount: 0,
               historyCount: 0,
             };
@@ -4163,11 +4188,47 @@ await page.addInitScript(
           }
           case "script_declarations":
             return scriptDeclarations;
+          case "script_runtime_status":
+            return (state.activeScripts ?? []).map((item) => ({
+              scriptId: item.manifest.id,
+              revision: item.manifest.revision,
+              available: !state.scriptRuntimeError,
+              error: state.scriptRuntimeError ?? null,
+            }));
+          case "retry_script": {
+            if (args.expectedGeneration !== state.scriptGeneration)
+              throw new Error("script workspace changed");
+            if (state.retryScriptError) throw new Error("Fixture retry failed");
+            state.scriptRuntimeError = null;
+            return {
+              generation: state.scriptGeneration,
+              active: state.activeScripts ?? [],
+              saved: state.savedScript ? [state.savedScript] : [],
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: true,
+                error: null,
+              })),
+              candidateCount: 0,
+              historyCount: 0,
+            };
+          }
           case "script_status":
             return {
               generation: state.scriptGeneration ?? 0,
               active: state.activeScripts ?? [],
               saved: state.savedScripts ?? (state.savedScript ? [state.savedScript] : []),
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
               candidateCount: 0,
               historyCount: 0,
             };
@@ -4184,6 +4245,14 @@ await page.addInitScript(
               generation: state.scriptGeneration,
               active: state.activeScripts ?? [],
               saved: [state.savedScript],
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
               candidateCount: 0,
               historyCount: 0,
             };
@@ -4203,7 +4272,8 @@ await page.addInitScript(
             )
               throw new Error("script workspace changed");
             state.scriptCandidate = structuredClone(args.draft);
-            state.scriptCandidateGeneration = state.scriptGeneration ?? 0;
+            state.scriptGeneration = (state.scriptGeneration ?? 0) + 1;
+            state.scriptCandidateGeneration = state.scriptGeneration;
             state.scriptCandidate.capabilities.writeHeaders = [
               ...new Set(state.scriptCandidate.capabilities.writeHeaders),
             ].sort();
@@ -4213,6 +4283,25 @@ await page.addInitScript(
             }
             if (state.scriptValidationError)
               throw new Error("Fixture TypeScript validation failed");
+            const { source, language, retainedSource, javascriptHistory, ...manifest } =
+              state.scriptCandidate;
+            const javascript =
+              language === "javascript" ? source : await window.__compileFixtureScript(source);
+            state.scriptBuilds = [
+              {
+                manifest: { ...manifest, apiRevision: 1, sourceHash: "0".repeat(64) },
+                source,
+                language,
+                retainedSource,
+                javascriptHistory,
+                javascript,
+                sourceMap: [],
+                javascriptHash: "0".repeat(64),
+                sourceMapHash: "0".repeat(64),
+                compiler: "fixture",
+                declarationsHash: "0".repeat(64),
+              },
+            ];
             return {
               candidateId: "fixture-script",
               scriptId: args.draft.id,
@@ -4246,10 +4335,8 @@ await page.addInitScript(
               )
             )
               throw new Error("script revision must increase before activation");
-            const { source, ...manifest } = draft;
-            state.activeScripts = [
-              { manifest: { ...manifest, apiRevision: 1, sourceHash: "0".repeat(64) }, source },
-            ];
+            state.activeScripts = structuredClone(state.scriptBuilds);
+            state.pausedScripts = [];
             state.savedScript = draft;
             delete state.savedScripts;
             state.scriptGeneration = (state.scriptGeneration ?? 0) + 1;
@@ -4257,17 +4344,56 @@ await page.addInitScript(
               generation: state.scriptGeneration,
               active: state.activeScripts,
               saved: [draft],
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
+              candidateCount: 0,
+              historyCount: 0,
+            };
+          }
+          case "resume_script": {
+            if (args.expectedGeneration !== state.scriptGeneration)
+              throw new Error("script workspace changed");
+            state.activeScripts = structuredClone(state.pausedScripts);
+            state.pausedScripts = [];
+            state.scriptGeneration++;
+            return {
+              generation: state.scriptGeneration,
+              active: state.activeScripts,
+              saved: state.savedScript ? [state.savedScript] : [],
+              built: state.scriptBuilds ?? [],
+              paused: [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
               candidateCount: 0,
               historyCount: 0,
             };
           }
           case "disable_script":
+            state.pausedScripts = structuredClone(state.activeScripts);
             state.activeScripts = [];
             state.scriptGeneration = (state.scriptGeneration ?? 0) + 1;
             return {
               generation: state.scriptGeneration,
               active: [],
               saved: state.savedScript ? [state.savedScript] : [],
+              built: state.scriptBuilds ?? [],
+              paused: state.pausedScripts ?? [],
+              runtimes: (state.activeScripts ?? []).map((item) => ({
+                scriptId: item.manifest.id,
+                revision: item.manifest.revision,
+                available: !state.scriptRuntimeError,
+                error: state.scriptRuntimeError ?? null,
+              })),
               candidateCount: 0,
               historyCount: 0,
             };

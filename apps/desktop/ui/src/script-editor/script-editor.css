@@ -33,3 +33,10 @@ script-editor { display: contents; }
   .script-state span, .script-workspace .field-help, .script-workspace .editor-label { color:CanvasText; }
   .script-toolbar .operation-status { border-color:CanvasText; color:CanvasText; background:Canvas; }
 }
+
+.script-recovery { margin:.5rem 0; padding:.5rem; border-inline-start:3px solid var(--focus); overflow-wrap:anywhere; }
+.script-recovery p { margin:.25rem 0; }
+.script-recovery ul { max-height:10rem; overflow:auto; margin:.35rem 0; padding-inline-start:1.2rem; }
+.script-issue { text-align:start; white-space:normal; overflow-wrap:anywhere; }
+.script-history { margin:.5rem 0; }
+.script-history > details { padding:.35rem; }
