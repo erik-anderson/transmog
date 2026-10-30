@@ -1,5 +1,10 @@
 # Extension contracts and packages
 
+This guide covers packaged read-only visualizers. Scripts that modify traffic
+are authored under **Automation → Scripts**; see the separate
+[traffic-script guide](automation.md#traffic-script-authoring-and-execution)
+for TypeScript/JavaScript editing and saved executable builds.
+
 `transmog-extensions` provides the UI-independent revision-1 visualizer metadata,
 native matching, input projection, output validation and `.tmext` container
 primitives. `transmog-extension-host` and `transmog-extension-supervisor` provide

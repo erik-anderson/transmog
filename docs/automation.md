@@ -97,73 +97,147 @@ saved script source and settings without changing the active script.
 
 ## Traffic script authoring and execution
 
-Traffic scripts execute saved JavaScript. TypeScript is the default authoring
-language; compilation happens only during explicit validation, sandbox-test
-preparation, output comparison, or Save & enable / Save & apply. Restarting,
-resuming and recovering a script worker reuse the applied JavaScript and its
-associated source map. A successful build is retained separately from saved
-drafts and the version applied to live traffic.
+Open **Automation → Scripts**, edit the TypeScript example, and review **Filters
+and capabilities** before choosing **Save & enable**. TypeScript is the default
+authoring language; traffic executes saved JavaScript. These scripts modify
+matching requests and responses. Packaged read-only visualizers use the separate
+[extension workflow](extensions.md).
 
-The editor's TypeScript environment includes ECMAScript and the Transmog API,
-without browser or Node globals. Its existing syntax and type diagnostics block
-publishing TypeScript with errors. Save draft still preserves invalid or unfinished work.
-Opening the editor checks source against the current bundled declarations;
-it never automatically rebuilds or replaces the applied JavaScript. If an app
-update exposes type errors, the editor explains that the previously applied
-JavaScript remains applied. Its runtime availability is shown separately, with
-an error and **Retry applied script** when a sandbox cannot run. Retry restarts
-only that exact applied artifact; newer drafts remain unchanged. A successful
-type check and source/build alignment are independent: unchanged source can match its saved build and have new errors.
-JavaScript remains subject to native syntax, export, capability and sandbox
-validation. Editor type checks are a desktop authoring policy; native callers
-retain their existing structural-validation contract.
+### Drafts, builds and live traffic
 
-**More > Edit JavaScript** starts from the last successfully built JavaScript,
-retaining the latest TypeScript draft, including edits that failed checking.
-The feedback identifies the starting build and explains that newer TypeScript
-edits are retained. If there is no successful build, an explicit JavaScript
-starter is provided. Before replacing a retained JavaScript draft, the editor keeps
-it under **Previous JavaScript drafts**, newest first. Expand a draft to inspect
-and restore it; restoring retains current JavaScript as well. Up to eight drafts
-are retained; when full, explicitly remove a draft before switching. Removal has
-Undo. These recovery drafts survive saving, publishing and restart. Language
-changes become saved with Save draft; changing
-live behavior still requires Save & enable / Save & apply.
+| Version | What it means |
+| --- | --- |
+| Editing draft | Current source, settings, retained other-language source and previous JavaScript drafts. **Save draft** persists it without building or enabling it. |
+| Compiled build | The latest successful authoring build, including its JavaScript and source map. It can be newer than both the saved draft and applied build. |
+| Applied build | The exact artifact selected for new matching requests while the script is on. Pausing retains it for later resumption. |
 
-**More > Return to TypeScript...** opens retained TypeScript for repair while
-preserving the current JavaScript draft. **Compare generated JavaScript** checks
-and builds that source and compares current JavaScript on the left with generated
-JavaScript on the right. **Use TypeScript output** is available only for a current,
-successful comparison and explicitly selects TypeScript authoring. The comparison
-is revealed directly; from an expanded source editor it opens as the expanded
-comparison, with acceptance available inside it. Closing it returns to expanded
-source editing. Diagnostic buttons identify the existing type errors and jump
-to their source; retained-source errors offer **Keep JavaScript**. Subsequent
-edits invalidate the comparison. **Keep JavaScript** retains TypeScript repairs
-and returns to the JavaScript draft. Selecting a language or viewing a comparison
-never publishes it. Returning to TypeScript retains the displaced JavaScript.
+**Saved** describes the editing draft; **Unapplied changes** describes differences
+from the active source and settings. Retained-source or recovery-history changes
+need saving, but do not mark unchanged executable code as unapplied.
 
-**Pause script** retains the exact applied build. **Resume applied script** uses
-that build, preserving newer or invalid drafts. **More > View applied JavaScript**
-shows the executable code even when the script is paused. The build disclosure
-shows provenance and exact source/JavaScript identities. Runtime errors map to
-the source captured with the executed build, independently of newer drafts.
+| Action | Effect |
+| --- | --- |
+| **Save draft** or Ctrl+S | Saves unfinished source, settings and recovery drafts. Passing type checks is not required; no JavaScript is emitted and live traffic is unchanged. |
+| **More → Validate only** | Checks the current draft and retains a successful build. Does not save the editing draft or activate it. |
+| **Test in sandbox** | Validates/builds first, then tests the authored sample in a fresh sandbox without sending a request. Does not save the editing draft or activate it. |
+| **Save & enable** / **Save & apply** | Validates/builds, starts the sandbox, saves that exact version as the editing baseline and atomically applies it to new requests. |
+| **Pause script** | Stops selecting the applied build for new requests and retains it. |
+| **Resume applied script** | Restarts the paused applied artifact, preserving newer or invalid drafts without rebuilding them. |
 
-The script workspace format stores executable artifacts and does not migrate
-older source-only workspaces. Unsupported or damaged workspace files are
-preserved and reported. Build provenance does not promise compatibility with
-future scripting API changes; runtime/API compatibility remains a separate
-contract from TypeScript authoring compatibility.
+Compilation happens only during explicit authoring actions, including generated
+output comparison. A successful validation, sandbox-test preparation or comparison
+can replace the latest compiled build without saving the editing draft or
+changing the applied build. Successful compilation does not prove that a sandbox
+can start or that the script works for every input. Sandbox testing is optional;
+its result identifies the handler and returned action for that sample only.
+Changing source, capabilities or test input marks earlier test results outdated.
+Samples can be authored or copied from a selected Traffic request with sensitive
+headers omitted.
 
-Saving and publishing compare with the editing baseline loaded by this window.
-A save in another window preserves both sources and requires **Compare with
-saved script**, then **Keep my draft** or **Load saved draft**. The comparison
-includes a disclosure for settings and retained language drafts inside the same
-surface, including when expanded. Keeping a draft
-does not save it until the next explicit save/apply. Loading saved work offers
-**Restore my previous draft**. Changes to retained source or recovery drafts need
-saving but do not mark unchanged executable code as unapplied. Build feedback
-identifies compiled and applied revisions independently.
+Failed publishing preserves the applied version and current edits. In-flight
+requests retain their original registration snapshot. Concurrent workspace
+changes invalidate stale activation candidates. **More → Compare with active**
+compares source and settings without applying the draft. Reopening restores the
+newest saved draft or applied source. Save the editing draft before closing the
+app; a compiled artifact does not replace its saved baseline.
+
+### TypeScript checks and JavaScript recovery
+
+The editor checks TypeScript against the current bundled declarations when it
+first opens in a window, after edits, and before validation, sandbox testing or
+publishing. These checks do not emit JavaScript or change the applied build.
+The type environment includes ECMAScript and the Transmog API without browser
+or Node globals.
+Type errors, syntax errors or an unavailable checker block those TypeScript
+actions; **Save draft** remains available. Diagnostic buttons jump to the reported
+source location, and **Check TypeScript again** retries the check.
+
+If an app update exposes new TypeScript errors, the previously applied JavaScript
+remains selected; the editor reports runtime availability separately. Fix the
+TypeScript or choose **More → Edit JavaScript**. That action starts from the
+**last successfully compiled JavaScript**, which may have come from validation or
+testing and may never have been applied. Newer TypeScript edits are retained
+separately and are not included in that JavaScript draft. Feedback identifies the
+starting build and whether it is applied. With no successful build, the editor
+provides a JavaScript starter while retaining the TypeScript draft.
+
+JavaScript authoring does not require the retained TypeScript to pass checking.
+Its syntax, exports, declared capabilities and sandbox startup still undergo
+native validation. The backend transpiles TypeScript without full TypeScript
+type checking; the desktop adds its existing Monaco diagnostics before authoring
+actions. Headless callers must supply any type-checking policy they require.
+
+### Return to TypeScript and recover earlier JavaScript
+
+1. Choose **More → Return to TypeScript…** to repair the retained TypeScript while
+   preserving the current JavaScript draft.
+2. Choose **Compare generated JavaScript**. This checks and builds the TypeScript,
+   then compares current JavaScript on the left with generated JavaScript on the
+   right. Fix reported errors before continuing.
+3. Choose **Use TypeScript output** to select TypeScript authoring, or **Keep
+   JavaScript** to return to JavaScript while retaining TypeScript repairs.
+4. **Save draft** to persist the choice, or **Save & enable** / **Save & apply** to
+   publish it. Selecting a language or viewing the comparison never publishes it.
+
+**Use TypeScript output** requires a successful, current comparison; subsequent
+edits invalidate it. Closing the comparison keeps the TypeScript review open.
+From an expanded source editor, the comparison opens expanded with its acceptance
+action inside; closing it returns to expanded source editing. Saving during a
+TypeScript review saves the repairs as retained source while JavaScript remains
+the selected authoring language.
+
+Returning to TypeScript retains the displaced JavaScript. Before a later language
+switch replaces that retained work, the editor moves it into **Previous
+JavaScript drafts**, newest first. Expand an entry to inspect, restore or remove
+it. Restoring also retains the current JavaScript draft. The list holds up to
+eight earlier drafts; when full, explicitly remove one before retaining another.
+**Undo draft removal** restores the most recent removal in the current editor.
+Save the draft or publish to persist language changes and recovery drafts across
+restart; merely switching or restoring does not save them.
+
+### Resolve a save conflict
+
+Saving and publishing compare with the saved editing baseline loaded by this
+window. If another window changes it, both versions are preserved and **Compare
+with saved script** becomes available. Review the source and the **Compare
+settings and retained drafts** disclosure, then choose **Keep my draft** or
+**Load saved draft**. The disclosure and decision controls remain inside the
+comparison when expanded.
+
+**Keep my draft** accepts the reviewed baseline without saving over it; the next
+explicit save/apply replaces it. **Load saved draft** replaces the editor's
+contents and offers **Restore my previous draft** for the displaced local work.
+That recovery choice lasts in the current editor; save restored work before
+closing the app. Neither choice changes live traffic by itself.
+
+### Runtime availability and compatibility
+
+An enabled script shows **On** when its sandbox is available and **Unavailable**
+when it cannot run. **Paused** stops selecting the applied build for new requests.
+An unavailable runtime does not mean a newer draft was applied. **Retry applied
+script** restarts only that exact applied JavaScript artifact and preserves draft
+edits. Pause the script if its effects should stop while you repair it. The
+Automation activity count describes configured activation, not successful script
+execution.
+
+**More → View applied JavaScript** shows executable code even while paused. The
+build disclosure identifies the latest compiled build, whether it is applied,
+its compiler provenance, and source/JavaScript/declaration hashes. Source/build
+alignment, current type-check results and runtime availability are independent:
+unchanged source can match its compiled build and have new type errors. Runtime
+failures with a source location use the executed artifact's source map when
+available; direct JavaScript locations refer to its unchanged executable bytes.
+
+Restart, resume and retry validate and load stored JavaScript without TypeScript
+transpilation. Compiler provenance and declaration hashes do not require a
+rebuild. They also do not promise compatibility with future scripting API or
+JavaScript runtime changes; those remain separate contracts.
+
+Older source-only script workspaces are not migrated. If workspace files exist
+but none can be read as a valid supported workspace, loading reports an error and
+preserves the original files.
+See [persisted state](product-state-and-support.md#persisted-state) for storage
+and recovery boundaries.
 
 ## Choose an editing workflow
 
@@ -539,29 +613,9 @@ Details without mapping it onto a local rule definition. That immutable evidence
 remains meaningful after a rule is
 renamed, reordered, disabled, or deleted.
 
-Scripts have their own Automation tab. **Save & enable** validates, saves and
-activates a new or paused script in one action. **Save & apply** does the same for
-edits to an active script. Validation is authoritative in the backend; activation
-starts the sandbox and persists the exact source and settings before atomically
-replacing the running revision for newly admitted requests. Failure preserves the
-previous active version and the current edits. In-flight requests retain their
-original snapshot. Concurrent changes invalidate stale candidates.
-
-**Save draft** (Ctrl+S) remains available without enabling the script, including
-unfinished source. **Validate only** is available in More. **Test in sandbox**
-automatically validates when needed and evaluates the authored sample without
-sending a request or changing traffic. Testing is optional. Its result identifies
-the handler and returned action; it describes that input only. Editing source,
-capabilities or test input marks earlier test results outdated.
-
-Live state and draft state are separate. An active script can have unapplied
-changes, and a paused script can have a saved draft. Successful activation makes
-that exact source and settings the saved editing baseline. Reopening recovers the
-active version when it is newer than the saved draft, while retaining newer saved
-work. Late asynchronous results cannot mark newer edits saved or enabled. Pause
-is directly available while running; More offers comparison of both source and
-settings. Sandbox input can be authored or copied from a selected Traffic request
-with sensitive headers omitted.
+Scripts have a separate authoring and activation flow under **Automation →
+Scripts**. See [traffic script authoring and execution](#traffic-script-authoring-and-execution)
+for TypeScript/JavaScript editing, saved builds, sandbox tests and draft recovery.
 
 ### Linked-file snapshots and historical evidence
 

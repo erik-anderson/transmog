@@ -114,9 +114,9 @@ claim which patches are applied.
 | --- | --- | --- |
 | Native desktop shell | `tauri`, Wry, Evergreen WebView2 | Window lifecycle, native commands, and the Windows system WebView. Transmog expects Evergreen WebView2 to be present rather than bundling a browser runtime. |
 | UI component model | `@microsoft/webui-framework`, `@microsoft/webui` | Rust-oriented WebUI projection and the browser-side component runtime used by the desktop interface. |
-| Code editing | `monaco-editor` | TypeScript automation editing and diagnostics in the desktop UI. |
+| Code editing | `monaco-editor` | TypeScript and JavaScript traffic-script authoring, with TypeScript syntax and type diagnostics in the desktop UI. |
 | Sandboxed script execution | `v8` (`rusty_v8`) | An application-owned embedding executes user automation in a separate capability-restricted process with explicit time and memory containment. No Deno runtime or host ops are installed. |
-| TypeScript parsing/transpilation | Direct SWC crates | A runtime-free compiler emits JavaScript only during traffic-script authoring, preserving separate source maps. Execution validates and loads saved JavaScript without TypeScript transpilation. |
+| Script validation and TypeScript emission | Direct SWC crates | Explicit traffic-script authoring builds transpile TypeScript with separate source maps or validate JavaScript without rewriting it. Execution validates and loads saved JavaScript without TypeScript transpilation. |
 | Protocol visualizers | `v8` and direct SWC crates | Executes JavaScript ES2022 in an isolated read-only worker; validates static modules without runtime transpilation. Bundled MAPI is authored in TypeScript and compiled at build time. |
 | Browser-side code | TypeScript and `esbuild` | Typed UI components, browser interactions and projections. Generated bundles are reproducibly verified from the npm lockfile. |
 | Windows integration | `windows-sys` | Current-user proxy settings, process attribution, AppContainer and Job Object sandboxing, console suppression, and related host APIs. |
@@ -127,6 +127,11 @@ used only by the isolated hosts. `transmog-script-compiler` owns the pinned SWC
 configuration without depending on V8, so SDK consumers do not acquire an
 embedded engine. Both hosts retain their authenticated IPC and external process
 watchdogs; V8 heap limits supplement AppContainer and Job Object containment.
+
+Monaco's desktop TypeScript diagnostics and native source validation have
+different roles: SWC does not perform full TypeScript type checking. The
+[traffic-script guide](automation.md#traffic-script-authoring-and-execution)
+describes the authoring gate, persisted artifacts and JavaScript recovery flow.
 
 The desktop updater uses Tauri's separate HTTPS client, scoped to signed update
 retrieval. Its Rustls/Reqwest dependencies are allowed only on that desktop edge;

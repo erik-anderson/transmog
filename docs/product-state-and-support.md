@@ -22,6 +22,24 @@ Live traffic, captured headers and bodies, credentials, breakpoint envelopes,
 controller capabilities, replay drafts and CA private keys are not settings.
 Recent artifact references are retained only when the user opts in.
 
+Traffic scripts use a separate workspace for saved drafts, retained language
+sources and JavaScript recovery history, the latest successful authoring build,
+and applied or paused artifacts. Saving a draft does not build or activate it;
+building does not save the editing draft or apply it. Persisted artifacts include
+the exact executable JavaScript, source map and provenance. Unsaved editor work,
+validation candidate tokens and editor Undo/recovery choices are not the saved
+editing baseline. See [script authoring](automation.md#traffic-script-authoring-and-execution)
+for save, language-switch and conflict recovery actions.
+
+On Windows the script workspace uses `scripts-v1.0.json` and `scripts-v1.1.json`
+under `%LOCALAPPDATA%\Transmog`. The filename prefix is independent of the payload
+schema. Startup selects the newest readable supported generation. If files exist
+but neither slot is usable, loading reports an error and preserves them. Older
+source-only workspaces are not migrated. A loaded applied artifact can remain
+configured while its sandbox is unavailable; the editor exposes that state and
+can retry the exact artifact without applying a newer draft. Field and validation
+details belong to [the script workspace model](../crates/app/src/scripts.rs).
+
 Response sets persist one current response collection, notes, explicitly named
 versions, and an independent applied live snapshot. Saving current content does
 not alter applied live traffic. Named versions, live pause and the global

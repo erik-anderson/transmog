@@ -308,14 +308,14 @@ pub struct ScriptManifest {
     pub priority: i32,
 }
 
-/// Authoritative TypeScript compilation output.
+/// Validated executable artifact from TypeScript compilation or direct JavaScript authoring.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompiledScript {
     /// Validated immutable manifest.
     pub manifest: ScriptManifest,
-    /// Transpiled ECMAScript module.
+    /// Exact executable ECMAScript module, transpiled from TypeScript or unchanged JavaScript.
     pub javascript: String,
-    /// Separate source map emitted with inline original source.
+    /// Separate map with original TypeScript source; empty for direct JavaScript validation.
     pub source_map: Vec<u8>,
 }
 

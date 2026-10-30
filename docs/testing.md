@@ -196,10 +196,38 @@ That gate authenticates AES-256 exports with native 7-Zip, compares decrypted
 members, rejects a wrong password and imports a 7-Zip ZipCrypto fixture. It runs
 without signing credentials. See [SAZ compatibility](saz-compatibility.md).
 
+### Traffic script authoring
+
+After preparing UI assets, run the scripting/application suites and focused
+browser flow from the repository root:
+
+```powershell
+python scripts/dev-env.py --run cargo test --locked -p transmog-script -p transmog-script-host -p transmog-app
+npm --prefix apps/desktop/ui run test:workspaces -- --scripts-only
+```
+
+The backend suites cover stored JavaScript execution, artifact integrity,
+authoring builds and preservation of drafts through restart and runtime failure.
+The browser flow covers TypeScript diagnostics, delayed language-service startup,
+language switching and retained drafts, save conflicts, applied-versus-compiled
+state, runtime retry and expanded comparisons. It uses fixture commands rather
+than a production sandbox.
+
+The ordinary main-window WebView2 gate above exercises the real native commands,
+sandbox publishing/testing, language recovery, saved-draft conflicts, retry,
+pause/resume and reopen. Build the desktop and its helpers using the
+[build-and-launch guide](building.md#build-and-launch-the-windows-desktop).
+`-ScreenshotPath` retains the native script-editor screenshot along with other
+workspace screenshots; `-AutomationScreenshotPath` separately captures the
+automation overview.
+
 ### Direct WebView2 smoke probe
 
-For the local WebView2 delivery smoke test, launch the debug or release binary
-with a loopback DevTools port and, while it is running, execute:
+Prefer the isolated `scripts/test-windows-desktop.ps1` harness above. The direct
+probe invokes real commands and writes automation/script fixtures; it requires
+an owned disposable app profile with an empty script workspace and the packaged
+helpers. To use it, launch that test instance with a loopback DevTools port and,
+while it is running, execute:
 
 ```powershell
 Push-Location ./apps/desktop/ui
@@ -207,9 +235,10 @@ npm run smoke:webview -- --port 9333
 Pop-Location
 ```
 
-The script reloads the real WebView, activates the TypeScript island, and fails
-on WebUI hydration, the typed status command, missing module/CSS assets, a CSP
-violation, or a browser error. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
+The script reloads the real WebView, exercises client components and the script
+editor, and fails on WebUI hydration, native command failures, missing module/CSS
+assets, a CSP violation or a browser error. Do not attach it to a regular working
+profile. `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS=--remote-debugging-port=9333` is
 test-only and must not be set for production launches.
 
 ## Portable investigations

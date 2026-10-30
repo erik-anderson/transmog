@@ -27,9 +27,13 @@ can still contain mistakes or compromised dependencies.
    process per active script. The host has no filesystem, network, environment,
    process, UI, registry, clipboard, timer, WebAssembly, dynamic import, or
    string-code-generation capability. Execution loads immutable saved JavaScript;
-   TypeScript authoring emits JavaScript before testing or activation. The exact
-   executable artifact and source map survive restart independently of compiler
-   changes and newer drafts.
+   TypeScript is the default authoring language and emits JavaScript during
+   explicit authoring actions. Direct JavaScript authoring preserves executable
+   bytes. Saved drafts, the latest successful build, and applied/paused artifacts
+   are distinct. Loading, resuming and retrying validate stored JavaScript without
+   TypeScript transpilation. The executable artifact and its source map survive
+   restart independently of compiler changes and newer drafts; provenance is not
+   a compatibility guarantee for later scripting API or runtime changes.
 5. V8 limits are defense in depth. Windows Job Object and restricted-token or
    AppContainer policy form the operating-system containment boundary. The
    supervisor owns authenticated bounded IPC, deadlines, termination, and
@@ -45,13 +49,18 @@ can still contain mistakes or compromised dependencies.
    verifies both boundaries before reading the authenticated pipe.
 6. A script error aborts the affected exchange. An invalid saved revision never
    replaces the last valid active revision. Diagnostics identify the script,
-   revision, phase, source location, and resource failure without including
-   credentials or body bytes.
+   revision, phase, available source location, and resource failure without
+   including credentials or body bytes.
 7. Captured content never executes in the application origin. Text and byte
    views are bounded and escaped. Image decoding occurs in a separately
    restricted worker before the WebView receives raster output.
-8. Monaco is a locally-packaged authoring component. Rust-side validation and
-   the script host are authoritative; Monaco never executes traffic scripts.
+8. Monaco is a locally-packaged authoring component. The desktop gates TypeScript
+   builds on its existing syntax and type diagnostics; saving drafts remains
+   available with errors. Native validation enforces syntax, exports, capabilities
+   and artifact integrity without full TypeScript type checking. The script host
+   remains authoritative for runtime behavior; Monaco never executes traffic
+   scripts. An unavailable applied sandbox is reported separately from draft
+   errors and configured activation.
 
 ## Consequences
 
@@ -61,6 +70,10 @@ can still contain mistakes or compromised dependencies.
   exchanges remain deterministic.
 - Script activation consumes a finite process slot and fails atomically when
   isolation or capacity is unavailable.
+- Language changes preserve authored work and require explicit save/apply.
+  Returning to TypeScript requires comparing generated JavaScript with the current
+  JavaScript draft; the [authoring guide](../automation.md#traffic-script-authoring-and-execution)
+  owns that workflow and its recovery controls.
 - Body retention requires explicit quota, cleanup, range-read, and loss-state
   APIs rather than growing the in-memory session catalog.
 - The V8 binary and Monaco assets increase build and package size and therefore

@@ -1082,23 +1082,28 @@ impl Application {
         self.automation.activate(candidate_id)
     }
 
-    /// Returns active script revisions and candidate/history counts.
+    /// Returns saved drafts, built/applied revisions, runtime health and candidate/history counts.
     pub fn script_status(&self) -> ScriptStatus {
         self.scripts.status()
     }
 
-    /// Authoritatively compiles a script draft without changing traffic.
+    /// Builds a draft and retains its latest successful artifact without changing traffic.
+    ///
+    /// TypeScript is transpiled without full type checking; JavaScript is validated
+    /// without rewriting it. The editing draft is not saved by this operation.
     ///
     /// # Errors
-    /// Returns bounded manifest, TypeScript, capability, or resource errors.
+    /// Returns bounded manifest, source, capability, persistence or resource errors.
     pub fn validate_script(&self, draft: ScriptDraft) -> Result<ScriptCandidate, AppError> {
         self.scripts.validate(draft)
     }
 
-    /// Compiles only if the script workspace still matches the editor's snapshot.
+    /// Builds only if the script workspace still matches the caller's snapshot.
+    ///
+    /// Uses the same authoring and persistence contract as [`Self::validate_script`].
     ///
     /// # Errors
-    /// Returns stale workspace, manifest, TypeScript, capability, or resource errors.
+    /// Returns stale workspace, manifest, source, capability, persistence or resource errors.
     pub fn validate_script_checked(
         &self,
         draft: ScriptDraft,
@@ -1144,7 +1149,7 @@ impl Application {
         transmog_script::typescript_declarations()
     }
 
-    /// Starts a sandboxed host and atomically activates a validated revision.
+    /// Starts a sandboxed host, saves the editing baseline and atomically applies a built artifact.
     ///
     /// # Errors
     /// Returns a stale candidate, sandbox startup, or persistence failure.
@@ -1152,7 +1157,7 @@ impl Application {
         self.scripts.activate(candidate_id)
     }
 
-    /// Disables one active script for newly admitted exchanges.
+    /// Pauses one active script for new exchanges, retaining its exact artifact for resumption.
     ///
     /// # Errors
     /// Returns a persistence error without changing the active snapshot.
