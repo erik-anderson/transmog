@@ -10,21 +10,21 @@ build = "build.rs"
 
 [dependencies]
 serde_json.workspace = true
-transmog-js-runtime = { version = "=0.1.16", path = "../js-runtime" }
+transmog-js-runtime = { version = "=0.1.17", path = "../js-runtime" }
 url.workspace = true
-transmog-process-sandbox = { version = "=0.1.16", path = "../process-sandbox" }
-transmog-script = { version = "=0.1.16", path = "../proxy-script" }
-transmog-extension-host = { version = "=0.1.16", path = "../extension-host" }
+transmog-process-sandbox = { version = "=0.1.17", path = "../process-sandbox" }
+transmog-script = { version = "=0.1.17", path = "../proxy-script" }
+transmog-extension-host = { version = "=0.1.17", path = "../extension-host" }
 
 [dev-dependencies]
 serde.workspace = true
 tokio.workspace = true
-transmog-script-supervisor = { version = "=0.1.16", path = "../script-supervisor" }
+transmog-script-supervisor = { version = "=0.1.17", path = "../script-supervisor" }
 base64.workspace = true
 tempfile.workspace = true
-transmog-extensions = { version = "=0.1.16", path = "../extensions" }
-transmog-extension-supervisor = { version = "=0.1.16", path = "../extension-supervisor" }
-transmog-extension-registry = { version = "=0.1.16", path = "../extension-registry" }
+transmog-extensions = { version = "=0.1.17", path = "../extensions" }
+transmog-extension-supervisor = { version = "=0.1.17", path = "../extension-supervisor" }
+transmog-extension-registry = { version = "=0.1.17", path = "../extension-registry" }
 
 [[test]]
 name = "extension_sandbox"
