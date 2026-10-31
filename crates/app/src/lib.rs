@@ -186,7 +186,9 @@ pub use traces::{
 };
 pub use transmog_core::client_authentication::ClientCertificatePolicy;
 pub use transmog_core::connection_policy::AllowedHttpProtocols;
-pub use transmog_script::{ScriptAction, ScriptInvocation, ScriptResult};
+pub use transmog_script::{
+    ScriptAction, ScriptInvocation, ScriptResult, ScriptScenario, ScriptScenarioResult,
+};
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
     ServiceStatus,
@@ -1147,6 +1149,17 @@ impl Application {
     /// Returns bundled script guidance, including the installed API revision.
     pub fn script_help(&self) -> serde_json::Value {
         transmog_script::help()
+    }
+
+    /// Runs a finite decoded exchange through the production script adapter in a fresh host.
+    /// # Errors
+    /// Rejects invalid candidates, unavailable hosts and malformed fixtures.
+    pub async fn test_script_scenario(
+        &self,
+        candidate_id: &str,
+        scenario: transmog_script::ScriptScenario,
+    ) -> Result<transmog_script::ScriptScenarioResult, AppError> {
+        self.scripts.test_scenario(candidate_id, scenario).await
     }
 
     /// Returns the exact versioned TypeScript API declarations bundled in Rust.

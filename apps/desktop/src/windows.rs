@@ -876,6 +876,18 @@ fn activate_script(
 }
 
 #[tauri::command]
+async fn test_script_scenario(
+    candidate_id: String,
+    scenario: transmog_app::ScriptScenario,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ScriptScenarioResult, AppError> {
+    state
+        .application
+        .test_script_scenario(&candidate_id, scenario)
+        .await
+}
+
+#[tauri::command]
 fn disable_script(
     script_id: String,
     state: State<'_, DesktopState>,
@@ -2565,6 +2577,7 @@ pub fn run() {
                 save_script,
                 validate_script,
                 test_script,
+                test_script_scenario,
                 activate_script,
                 disable_script,
                 resume_script,

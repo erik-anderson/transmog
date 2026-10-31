@@ -4295,7 +4295,7 @@ await page.addInitScript(
               language === "javascript" ? source : await window.__compileFixtureScript(source);
             state.scriptBuilds = [
               {
-                manifest: { ...manifest, apiRevision: 2, sourceHash: "0".repeat(64) },
+                manifest: { ...manifest, apiRevision: 3, sourceHash: "0".repeat(64) },
                 source,
                 language,
                 retainedSource,
@@ -4313,6 +4313,35 @@ await page.addInitScript(
               scriptId: args.draft.id,
               revision: args.draft.revision,
               sourceHash: "0".repeat(64),
+            };
+          }
+          case "test_script_scenario": {
+            state.scriptScenarioInput = structuredClone(args.scenario);
+            if (state.deferScriptTest) {
+              state.scriptTestPending = true;
+              await new Promise((resolve) => (state.finishScriptTest = resolve));
+            }
+            return {
+              outcome: args.scenario.failure ? "failed" : "completed",
+              admitted: true,
+              steps: [
+                {
+                  handler: "onRequestHead",
+                  selection: "invoked",
+                  state: {},
+                  result: { decision: { action: "continue" }, state: { seen: true } },
+                },
+                {
+                  handler: args.scenario.failure ? "onFailed" : "onCompleted",
+                  selection: "invoked",
+                  state: { seen: true },
+                  result: { decision: { action: "continue" } },
+                },
+              ],
+              request: args.scenario.request,
+              response: args.scenario.response,
+              requestBody: args.scenario.requestBody,
+              responseBody: args.scenario.responseBody,
             };
           }
           case "test_script": {

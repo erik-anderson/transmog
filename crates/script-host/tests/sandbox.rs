@@ -47,6 +47,7 @@ fn invocation() -> ScriptInvocation {
             exchange_id: "1".to_owned(),
             now_unix_ms: 0,
             handler: ScriptHandler::RequestHead,
+            ..ScriptContext::default()
         },
         request: ScriptRequest {
             method: "GET".to_owned(),
@@ -70,6 +71,101 @@ fn config() -> ScriptHostConfig {
 }
 
 #[tokio::test]
+async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
+    let source = r#"
+      import {pass, readCookies, readForm, replaceForm, replaceJson} from 'transmog:api';
+      export function onRequestHead(event) { return pass({state:{cookies:readCookies(event.request.headers)}}); }
+      export function onRequestBody(event) {
+        const form=readForm(event.body,event.request.headers);
+        return {...replaceForm([...form,['extra','yes']]),state:{...event.state,form}};
+      }
+      export function onResponseBody(event) { return replaceJson(event.state); }
+      export function onCompleted(event) {
+        if(event.context.source !== 'sandbox' || event.context.elapsedMs !== 400 || event.context.nowUnixMs !== 1400) throw new Error('wrong context');
+        return pass({diagnostics:['scenario complete']});
+      }
+    "#;
+    let mut manifest = compile(
+        "export function onRequestHead() { return {decision:{action:'continue'}}; }",
+        1000,
+    )
+    .manifest;
+    manifest.source_hash = source_hash(source.as_bytes());
+    manifest.handlers = BTreeSet::from([
+        ScriptHandler::RequestHead,
+        ScriptHandler::RequestBody,
+        ScriptHandler::ResponseBody,
+        ScriptHandler::Completed,
+    ]);
+    manifest.capabilities.read_bodies = true;
+    manifest.capabilities.read_sensitive_headers = true;
+    manifest.capabilities.write_body = true;
+    manifest
+        .capabilities
+        .write_headers
+        .insert("content-type".into());
+    manifest.request_body_filter.content_types = vec!["application/x-www-form-urlencoded".into()];
+    manifest.response_body_filter.content_types = vec!["application/json".into()];
+    let compiled = compile_typescript(manifest.clone(), source).unwrap();
+    let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
+    let mut request = invocation().request;
+    request.headers = vec![
+        transmog_script::ScriptHeader {
+            name: "cookie".into(),
+            value: b"a=1; a=2".to_vec(),
+            sensitive: false,
+            redacted: false,
+        },
+        transmog_script::ScriptHeader {
+            name: "content-type".into(),
+            value: b"application/x-www-form-urlencoded".to_vec(),
+            sensitive: false,
+            redacted: false,
+        },
+    ];
+    let result = transmog_script::test_scenario(
+        manifest,
+        runner,
+        transmog_script::ScriptScenario {
+            request,
+            response: Some(transmog_script::ScriptResponse {
+                status: 200,
+                headers: vec![transmog_script::ScriptHeader {
+                    name: "content-type".into(),
+                    value: b"application/json".to_vec(),
+                    sensitive: false,
+                    redacted: false,
+                }],
+            }),
+            request_body: b"x=one&x=two".to_vec(),
+            response_body: b"{}".to_vec(),
+            local_response: false,
+            failure: None,
+            http_version: invocation().context.http_version,
+            started_unix_ms: 1000,
+            duration_ms: 400,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(result.request_body, b"x=one&x=two&extra=yes");
+    let output: serde_json::Value = serde_json::from_slice(&result.response_body).unwrap();
+    assert_eq!(
+        output["cookies"],
+        serde_json::json!([["a", "1"], ["a", "2"]])
+    );
+    assert_eq!(
+        output["form"],
+        serde_json::json!([["x", "one"], ["x", "two"]])
+    );
+    assert_eq!(
+        result.steps[4].result.as_ref().unwrap().diagnostics,
+        ["scenario complete"]
+    );
+}
+
+#[tokio::test]
 async fn bundled_helpers_work_inside_the_native_sandbox() {
     let source = r#"
       import { respondJson, requestUrl, utf8Decode, base64Decode } from "transmog:api";
@@ -81,7 +177,10 @@ async fn bundled_helpers_work_inside_the_native_sandbox() {
     compiled.manifest.capabilities.respond = true;
     let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
     let result = runner.invoke(invocation()).await.unwrap();
-    let ScriptAction::Response { response } = result.decision else {
+    let ScriptAction::Respond {
+        response: transmog_script::ScriptResponseSource::Inline(response),
+    } = result.decision
+    else {
         panic!("inline response missing")
     };
     assert_eq!(response.status, 201);
@@ -509,7 +608,10 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                 );
             }
             2 => {
-                let ScriptAction::Response { response } = result.decision else {
+                let ScriptAction::Respond {
+                    response: transmog_script::ScriptResponseSource::Inline(response),
+                } = result.decision
+                else {
                     panic!("local response")
                 };
                 assert_eq!(response.status, 200);
@@ -522,6 +624,7 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                 input.state = result.state.unwrap();
                 input.context.handler = ScriptHandler::Completed;
                 input.context.now_unix_ms = 125;
+                input.context.elapsed_ms = 25;
                 input.response = Some(transmog_script::ScriptResponse {
                     status: 200,
                     headers: vec![],

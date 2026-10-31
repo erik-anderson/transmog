@@ -6,9 +6,9 @@ through MCP `transmog_help`. The editor supplies the [complete types](../crates/
 
 ## Authoring and activation
 
-Traffic scripts use API revision 2. Export synchronous handlers and import types or pure helpers from transmog:api. Use native rules for fixed header/text changes; use scripts for conditional logic, structured body edits, generated responses or request/response state.
+Traffic scripts use API revision 3. Export synchronous handlers and import types or pure helpers from transmog:api. Use native rules for fixed header/text changes; use scripts for conditional logic, structured body edits, generated responses or request/response state.
 
-Save draft preserves edits. Save & enable validates, builds, saves and enables the revision; Save & apply replaces the applied revision for new requests. Pause stops admission of new requests; existing exchanges keep their pinned revision. Edits and failed builds do not change the applied script. Scripts process live traffic, including live replays, not historical imported requests.
+Save draft preserves edits. Save & enable validates, builds, saves and enables the revision; Save & apply replaces the applied revision for new requests. Pause stops admission of new requests; existing exchanges keep their pinned revision. Edits and failed builds do not change the applied script. Scripts process traffic received by the proxy, including external clients replaying requests. Direct Composer sends and historical imported requests do not run these callbacks.
 
 Timeouts and host failures can make the applied build unavailable. It stays enabled, so later matching callbacks fail. Pause script to stop selecting it, Retry applied script to restart the exact applied build, or fix and apply a new revision.
 
@@ -16,7 +16,9 @@ The editor supplies completion and types. Only transmog:api can be imported. The
 
 ## Events, decisions and permissions
 
-Each handler receives one immutable event: context (exchangeId, handler, nowUnixMs), request, parameters, state and localResponse. The additional fields below are null when inapplicable. Return one envelope: { decision, annotations?, diagnostics?, state? }. Related header/status/body edits belong in a single edit decision.
+Each handler receives one immutable event: context (exchangeId, handler, nowUnixMs, source, httpVersion, startedUnixMs, elapsedMs), request, parameters, state and localResponse. The additional fields below are null when inapplicable. Return one envelope: { decision, annotations?, diagnostics?, state? }. Related header/status/body edits belong in a single edit decision.
+
+The four decisions are continue, edit, respond and abort. Use edit for every header/status/body change. Replacing bytes removes original trailers; bytes: [] clears the body. respond takes response: { status, headers, bytes } or response: { assetRef }; assets are request-head only. Related changes are validated together.
 
 The host validates the entire result before applying it. An invalid field, missing capability, exception or exceeded limit aborts the exchange. Terminal callbacks can only return continue with evidence; their failures become diagnostics. An explicit abort requires the abort capability.
 
@@ -27,9 +29,9 @@ The engine owns Host, content length, transfer/content encoding and connection-m
 | Handler | Additional input | Decisions |
 | --- | --- | --- |
 | `onRequestHead` | None | Continue; edit headers, method or URL; inline response; named response asset; abort |
-| `onRequestBody` | Complete decoded body | Continue; edit headers/body; discard body; abort |
+| `onRequestBody` | Complete decoded body | Continue; edit headers/body; clear body with empty bytes; abort |
 | `onResponseHead` | response | Continue; edit headers/status; inline response; abort |
-| `onResponseBody` | response and complete decoded body | Continue; edit headers/status/body; discard body; abort |
+| `onResponseBody` | response and complete decoded body | Continue; edit headers/status/body; clear body with empty bytes; abort |
 | `onCompleted` | Final response | Continue with evidence |
 | `onFailed` | failure category | Continue with evidence |
 
@@ -49,13 +51,19 @@ Parameters are declared text (optionally constrained to choices), booleans or bo
 
 Returning state replaces this script’s exchange-local JSON object; omission retains it. State is limited to 128 keys and 64 KiB, serialized between callbacks and released at termination. Module globals are shared across exchanges within the script host. Use event.state for request/response correlation.
 
+context.source is proxy for traffic received by the live proxy and sandbox for synthetic tests. External client replays cannot be distinguished from other proxy traffic. httpVersion is the client-facing protocol at admission. startedUnixMs is the wall-clock exchange start; elapsedMs is monotonic time since script admission. Use elapsedMs for durations. Scenario times are controlled fixture values.
+
 ## Bundled helpers
 
-pass constructs continue with optional evidence. setHeader, appendHeader and removeHeader construct ordered header operations. headerValues and headerText preserve duplicate values. requestUrl, parseQuery, formatQuery and setQuery work with URLs and ordered query pairs; malformed query escapes fail.
+pass constructs continue; edit constructs an atomic edit with optional evidence/state. setHeader, appendHeader and removeHeader construct ordered header operations. headerValues and headerText preserve duplicate values. requestUrl, parseQuery, formatQuery and setQuery work with URLs and ordered query pairs; malformed query escapes fail.
 
 utf8Encode/utf8Decode and base64Encode/base64Decode convert byte arrays. UTF-8 decoding is strict by default; base64 requires canonical padded encoding. readText/readJson require UTF-8 and reject conflicting or incompatible charset declarations.
 
-replaceText/replaceJson edit bytes and content-type together; allow Replace bodies and the writable header content-type. respondText/respondJson build inline responses. A named asset uses { decision: { action: "respond", assetRef: "response-id@revision" } } at request head only; the exact saved asset must be available.
+replaceText/replaceJson edit bytes and content-type together; allow Replace bodies and the writable header content-type. respondText/respondJson build inline responses. A named asset uses respondAsset("response-id@revision") at request head only; the exact saved asset must be available.
+
+readCookies/replaceCookies preserve ordered Cookie pairs without URL-decoding values. readSetCookies/replaceSetCookies preserve separate Set-Cookie fields and ordered attributes (null means a flag); Expires commas are retained. Replacement helpers return header operations and require the matching writable header. Reading withheld cookie fields throws.
+
+readForm/replaceForm handle UTF-8 application/x-www-form-urlencoded bodies as ordered pairs, retaining repeated and empty fields. replaceForm returns one body/content-type edit and needs Replace bodies plus writable content-type. Multipart forms are not supported by these helpers.
 
 ## Findings and failure categories
 
@@ -71,11 +79,15 @@ onFailed receives a case-sensitive failure category from the list below, without
 
 ## What a sandbox test establishes
 
-Test in sandbox invokes one chosen callback in a fresh host with empty exchange state. It uses the tested draft’s parameters and the same phase, capability and result validation as live execution. No request is sent and the script is not enabled.
+Single callback mode invokes one chosen callback in a fresh host with empty exchange state. It uses the tested draft’s parameters and the same phase, capability and result validation as live execution. No request is sent and the script is not enabled.
 
 The test bypasses native request and body filters. Success does not establish that live traffic selects this handler. Check Draft traffic scope and Filters, capabilities, and parameters. The test does not run preceding callbacks, resolve response assets, authorize routes or exercise transport, decoding or buffering. Verify those behaviors with matching live traffic after applying the script.
 
-For request/response correlation, verify a complete live exchange. Use selected Traffic request copies only the URL, method and nonsensitive headers into the fixture; body input is cleared.
+Use Exchange scenario to verify request/response correlation and filter selection, then verify network behavior with matching live proxy traffic. Use selected Traffic request copies only the URL, method and nonsensitive headers into the fixture; request body input is cleared.
+
+Exchange scenario runs a complete decoded request and a simulated response or upstream failure in a fresh host. Native request/body filters, head/body edits, local responses, state and terminal callbacks run through the production interceptor pipelines. Every phase reports execution or its skip reason. Controlled start and duration values make timing assertions repeatable.
+
+Scenarios send no traffic, activate nothing, and do not authorize routes, resolve saved assets, decode compressed bodies or verify transport/framing. Supply decoded bodies and omit Content-Encoding. Asset results stop as unresolved. Use a matching live proxy exchange to verify network behavior.
 
 ## Complete examples
 
@@ -86,13 +98,13 @@ Each example includes the native settings needed to select traffic and authorize
 Host filter: example.test. Writable headers: user-agent. No other capabilities required.
 
 ```ts
-import { setHeader } from "transmog:api";
+import { edit, setHeader } from "transmog:api";
 import type { RequestHeadEvent, RequestHeadResult } from "transmog:api";
 
 export function onRequestHead(_event: RequestHeadEvent): RequestHeadResult {
-  return { decision: { action: "edit", edits: {
+  return edit({
     headers: [setHeader("User-Agent", "Transmog/1.0")],
-  } } };
+  });
 }
 ```
 
@@ -125,20 +137,20 @@ export function onRequestHead(_event: RequestHeadEvent): RequestHeadResult {
 
 ### Correlate a request and its completion
 
-Host filter: example.test. Enable Add saved traffic annotations. Verify with a complete live exchange; single-callback tests start with empty state.
+Host filter: example.test. Enable Add saved traffic annotations. Test with Exchange scenario or a complete live proxy exchange.
 
 ```ts
 import { pass } from "transmog:api";
 import type { RequestHeadEvent, CompletedEvent, TerminalResult } from "transmog:api";
 
 export function onRequestHead(event: RequestHeadEvent): TerminalResult {
-  return pass({ state: { started: event.context.nowUnixMs } });
+  return pass({ state: { started: event.context.elapsedMs } });
 }
 export function onCompleted(event: CompletedEvent): TerminalResult {
   const started = event.state.started;
   if (typeof started !== "number") return pass();
   return pass({ annotations: [{
-    note: `Completed after ${event.context.nowUnixMs - started} ms`,
+    note: `Completed after ${event.context.elapsedMs - started} ms`,
     tags: ["timing"],
   }] });
 }

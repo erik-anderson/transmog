@@ -329,6 +329,7 @@ mod tests {
                     exchange_id: "1".to_owned(),
                     now_unix_ms: 7,
                     handler: ScriptHandler::RequestHead,
+                    ..ScriptContext::default()
                 },
                 request: ScriptRequest {
                     method: "GET".to_owned(),

@@ -26,7 +26,16 @@ declare module "transmog:api" {
     | "onResponseBody"
     | "onCompleted"
     | "onFailed";
-  export type Context = Readonly<{ exchangeId: string; nowUnixMs: number; handler: Handler }>;
+  export type Context = Readonly<{
+    exchangeId: string;
+    nowUnixMs: number;
+    handler: Handler;
+    source: "proxy" | "sandbox";
+    httpVersion: "Http1" | "Http2" | "Http3";
+    startedUnixMs: number;
+    /** Monotonic milliseconds since script exchange admission. */
+    elapsedMs: number;
+  }>;
   export type Json =
     null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
   type EventBase = Readonly<{
@@ -77,42 +86,48 @@ declare module "transmog:api" {
   }>;
   type Continue = Readonly<{ action: "continue" }>;
   type Abort = Readonly<{ action: "abort"; reason: string }>;
-  type Headers = Readonly<{ action: "headers"; operations: readonly HeaderOperation[] }>;
   type InlineResponse = Readonly<{
-    action: "response";
+    action: "respond";
     response: { status: number; headers: readonly (readonly [string, string])[]; bytes: Bytes };
   }>;
-  type BodyChange =
-    Readonly<{ action: "replace-body"; bytes: Bytes }> | Readonly<{ action: "discard-body" }>;
   type Edit<T> = Readonly<{ action: "edit"; edits: Readonly<T> }>;
   type HeaderEdits = { headers?: readonly HeaderOperation[] };
+  export type MessageEdits = HeaderEdits & {
+    method?: string;
+    url?: string;
+    status?: number;
+    bytes?: Bytes;
+  };
   export type RequestHeadResult = Evidence &
     Readonly<{
       decision:
         | Continue
         | Abort
-        | Headers
         | InlineResponse
-        | { action: "respond"; assetRef: string }
-        | Edit<HeaderEdits & { method?: string; url?: string }>;
+        | { action: "respond"; response: { assetRef: string } }
+        | Edit<HeaderEdits & { method?: string; url?: string; status?: never; bytes?: never }>;
     }>;
   export type RequestBodyResult = Evidence &
     Readonly<{
-      decision: Continue | Abort | Headers | BodyChange | Edit<HeaderEdits & { bytes?: Bytes }>;
+      decision:
+        | Continue
+        | Abort
+        | Edit<HeaderEdits & { bytes?: Bytes; method?: never; url?: never; status?: never }>;
     }>;
   export type ResponseHeadResult = Evidence &
     Readonly<{
       decision:
-        Continue | Abort | Headers | InlineResponse | Edit<HeaderEdits & { status?: number }>;
+        | Continue
+        | Abort
+        | InlineResponse
+        | Edit<HeaderEdits & { status?: number; method?: never; url?: never; bytes?: never }>;
     }>;
   export type ResponseBodyResult = Evidence &
     Readonly<{
       decision:
         | Continue
         | Abort
-        | Headers
-        | BodyChange
-        | Edit<HeaderEdits & { status?: number; bytes?: Bytes }>;
+        | Edit<HeaderEdits & { status?: number; bytes?: Bytes; method?: never; url?: never }>;
     }>;
   export type TerminalResult = Evidence & Readonly<{ decision: Continue }>;
   export type Result =
@@ -128,6 +143,10 @@ declare module "transmog:api" {
   export type CompletedHandler = (event: CompletedEvent) => TerminalResult;
   export type FailedHandler = (event: FailedEvent) => TerminalResult;
   export function pass(evidence?: Evidence): TerminalResult;
+  export function edit<T extends MessageEdits>(
+    edits: T,
+    evidence?: Evidence,
+  ): Evidence & Readonly<{ decision: Readonly<{ action: "edit"; edits: Readonly<T> }> }>;
   export function utf8Encode(text: string): number[];
   export function utf8Decode(bytes: Bytes, options?: { fatal?: boolean }): string;
   export function base64Encode(bytes: Bytes): string;
@@ -143,6 +162,20 @@ declare module "transmog:api" {
   export function parseQuery(query: string | null): [string, string][];
   export function formatQuery(pairs: readonly (readonly [string, string])[]): string;
   export function setQuery(query: string | null, name: string, value: string): string;
+  export type Pairs = readonly (readonly [string, string])[];
+  /** Raw cookie values, with duplicate names and field order preserved. */
+  export function readCookies(headers: readonly Header[]): [string, string][];
+  export function replaceCookies(pairs: Pairs): HeaderOperation;
+  export type SetCookie = Readonly<{
+    name: string;
+    value: string;
+    attributes?: readonly (readonly [string, string | null])[];
+  }>;
+  export function readSetCookies(headers: readonly Header[]): SetCookie[];
+  export function replaceSetCookies(cookies: readonly SetCookie[]): HeaderOperation[];
+  /** UTF-8 application/x-www-form-urlencoded, retaining duplicate fields and order. */
+  export function readForm(body: Body, headers: readonly Header[]): [string, string][];
+  export function replaceForm(pairs: Pairs): RequestBodyResult & ResponseBodyResult;
   /** Strict UTF-8; rejects an explicitly incompatible charset. */
   export function readText(body: Body, headers?: readonly Header[]): string;
   export function readJson(body: Body, headers?: readonly Header[]): Json;
@@ -151,6 +184,7 @@ declare module "transmog:api" {
     mediaType?: string,
   ): RequestBodyResult & ResponseBodyResult;
   export function replaceJson(value: Json): RequestBodyResult & ResponseBodyResult;
+  export function respondAsset(assetRef: string): RequestHeadResult;
   export function respondText(
     status: number,
     text: string,

@@ -8,12 +8,14 @@
 
 mod adapter;
 mod contract;
+mod scenario;
 use adapter::ScriptFactory;
 pub use adapter::{prepare_invocation, validate_result};
 pub use contract::{
     ScriptAnnotation, ScriptBodyFilter, ScriptEdits, ScriptInlineResponse, ScriptParameter,
     ScriptResult, ScriptSeverity,
 };
+pub use scenario::{ScriptScenario, ScriptScenarioResult, ScriptScenarioStep, test_scenario};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -46,11 +48,11 @@ use transmog_script_compiler::{
 };
 
 /// Current script API revision.
-pub const SCRIPT_API_REVISION: u32 = 2;
+pub const SCRIPT_API_REVISION: u32 = 3;
 /// Maximum accepted source length.
 pub const MAX_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
 /// Version of the private host/supervisor wire protocol.
-pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 2;
+pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 3;
 /// Maximum one-way host protocol frame, including JavaScript source.
 pub const MAX_SCRIPT_HOST_FRAME_BYTES: usize = 68 * 1024 * 1024;
 
@@ -604,6 +606,38 @@ pub struct ScriptContext {
     pub now_unix_ms: u64,
     /// Handler being invoked.
     pub handler: ScriptHandler,
+    /// Trusted invocation provenance; network clients may themselves be replaying traffic.
+    pub source: ScriptSource,
+    /// Client-facing HTTP protocol at exchange admission.
+    pub http_version: transmog_core::HttpLegVersion,
+    /// Exchange start on the wall clock, milliseconds since Unix epoch.
+    pub started_unix_ms: u64,
+    /// Monotonic elapsed time since script exchange admission.
+    pub elapsed_ms: u64,
+}
+
+/// Trusted origin of script execution, independent of request headers.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptSource {
+    /// Traffic received by the live proxy, including external clients replaying requests.
+    Proxy,
+    /// Synthetic callback or exchange scenario in a fresh host.
+    Sandbox,
+}
+
+impl Default for ScriptContext {
+    fn default() -> Self {
+        Self {
+            exchange_id: String::new(),
+            now_unix_ms: 0,
+            handler: ScriptHandler::RequestHead,
+            source: ScriptSource::Sandbox,
+            http_version: transmog_core::HttpLegVersion::Http1,
+            started_unix_ms: 0,
+            elapsed_ms: 0,
+        }
+    }
 }
 
 /// One complete bounded host invocation.
@@ -677,32 +711,28 @@ pub enum ScriptAction {
         edits: ScriptEdits,
     },
     /// Supply a complete local response at a head phase.
-    Response {
-        /// Bounded status, headers and identity bytes.
-        response: ScriptInlineResponse,
-    },
-    /// Apply ordered header operations at a head phase.
-    Headers {
-        /// Ordered operations.
-        operations: Vec<ScriptHeaderOperation>,
-    },
-    /// Replace a complete decoded body.
-    ReplaceBody {
-        /// Replacement bytes.
-        bytes: Vec<u8>,
-    },
-    /// Consume a body without output.
-    DiscardBody,
-    /// Serve an exact response asset revision.
     Respond {
-        /// `id@revision` asset reference.
-        #[serde(rename = "assetRef")]
-        asset_ref: String,
+        /// Inline response or exact saved response asset.
+        response: ScriptResponseSource,
     },
     /// Abort with a redaction-safe operator reason.
     Abort {
         /// Bounded reason.
         reason: String,
+    },
+}
+
+/// Exactly one source for a local response.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(untagged, deny_unknown_fields)]
+pub enum ScriptResponseSource {
+    /// Complete bounded identity response.
+    Inline(ScriptInlineResponse),
+    /// Exact saved response revision, request-head only.
+    Asset {
+        /// `id@revision` asset reference.
+        #[serde(rename = "assetRef")]
+        asset_ref: String,
     },
 }
 
@@ -1272,11 +1302,14 @@ mod tests {
             "export function onRequestHead() { return { decision: { action: 'continue' } }; }";
         let manifest = manifest(source, &[ScriptHandler::RequestHead]);
         let runner = Arc::new(FakeScriptRunner(|_invocation| {
-            Ok(ScriptAction::Headers {
-                operations: vec![ScriptHeaderOperation::Set {
-                    name: "user-agent".to_owned(),
-                    value: "Transmog-Script/3".to_owned(),
-                }],
+            Ok(ScriptAction::Edit {
+                edits: ScriptEdits {
+                    headers: vec![ScriptHeaderOperation::Set {
+                        name: "user-agent".to_owned(),
+                        value: "Transmog-Script/3".to_owned(),
+                    }],
+                    ..Default::default()
+                },
             })
         }));
         let registration = registration(manifest, runner).unwrap();
@@ -1302,11 +1335,14 @@ mod tests {
         let source =
             "export function onRequestHead() { return { decision: { action: 'continue' } }; }";
         let runner = Arc::new(FakeScriptRunner(|_invocation| {
-            Ok(ScriptAction::Headers {
-                operations: vec![ScriptHeaderOperation::Set {
-                    name: "authorization".to_owned(),
-                    value: "secret".to_owned(),
-                }],
+            Ok(ScriptAction::Edit {
+                edits: ScriptEdits {
+                    headers: vec![ScriptHeaderOperation::Set {
+                        name: "authorization".to_owned(),
+                        value: "secret".to_owned(),
+                    }],
+                    ..Default::default()
+                },
             })
         }));
         let registration =
@@ -1332,23 +1368,27 @@ mod tests {
         let declarations = typescript_declarations();
         assert!(declarations.contains("transmog:api"));
         assert!(declarations.contains("onRequestHead"));
-        assert!(declarations.contains("replace-body"));
+        assert!(declarations.contains("respondAsset"));
         assert!(!declarations.contains("Deno"));
     }
 
     #[test]
     fn response_assets_use_the_documented_camel_case_wire_field() {
-        let action: ScriptAction =
-            serde_json::from_str(r#"{"action":"respond","assetRef":"saved-response@7"}"#).unwrap();
+        let action: ScriptAction = serde_json::from_str(
+            r#"{"action":"respond","response":{"assetRef":"saved-response@7"}}"#,
+        )
+        .unwrap();
         assert_eq!(
             action,
             ScriptAction::Respond {
-                asset_ref: "saved-response@7".to_owned()
+                response: ScriptResponseSource::Asset {
+                    asset_ref: "saved-response@7".to_owned()
+                }
             }
         );
         assert!(
             serde_json::from_str::<ScriptAction>(
-                r#"{"action":"respond","asset_ref":"saved-response@7"}"#
+                r#"{"action":"respond","response":{"asset_ref":"saved-response@7"}}"#
             )
             .is_err()
         );

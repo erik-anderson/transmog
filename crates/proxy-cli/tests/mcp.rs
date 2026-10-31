@@ -36,7 +36,7 @@ fn script_help_is_offline_and_validated_at_the_cli_boundary() {
         );
         if expected {
             let help: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-            assert_eq!(help["apiRevision"], 2);
+            assert_eq!(help["apiRevision"], 3);
             assert_eq!(help["sections"][0]["id"], "examples");
             assert!(help["mcpSupport"].as_str().unwrap().contains("cannot"));
         }

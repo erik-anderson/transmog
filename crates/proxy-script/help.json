@@ -1,6 +1,6 @@
 {
   "topic": "scripts",
-  "apiRevision": 2,
+  "apiRevision": 3,
   "mcpSupport": "MCP can read this bundled help and inspect script effects on authorized traffic. It cannot list script source, create, edit, validate, sandbox-test or activate scripts. Author and apply scripts in Automation → Scripts. Native rule tools can prepare/test header and text changes without scripting. Read help before proposing a script; do not invent script tools or treat rule-test results as script tests.",
   "failureCategories": [
     "HookInitialization",
@@ -21,8 +21,8 @@
       "id": "overview",
       "title": "Authoring and activation",
       "paragraphs": [
-        "Traffic scripts use API revision 2. Export synchronous handlers and import types or pure helpers from transmog:api. Use native rules for fixed header/text changes; use scripts for conditional logic, structured body edits, generated responses or request/response state.",
-        "Save draft preserves edits. Save & enable validates, builds, saves and enables the revision; Save & apply replaces the applied revision for new requests. Pause stops admission of new requests; existing exchanges keep their pinned revision. Edits and failed builds do not change the applied script. Scripts process live traffic, including live replays, not historical imported requests.",
+        "Traffic scripts use API revision 3. Export synchronous handlers and import types or pure helpers from transmog:api. Use native rules for fixed header/text changes; use scripts for conditional logic, structured body edits, generated responses or request/response state.",
+        "Save draft preserves edits. Save & enable validates, builds, saves and enables the revision; Save & apply replaces the applied revision for new requests. Pause stops admission of new requests; existing exchanges keep their pinned revision. Edits and failed builds do not change the applied script. Scripts process traffic received by the proxy, including external clients replaying requests. Direct Composer sends and historical imported requests do not run these callbacks.",
         "Timeouts and host failures can make the applied build unavailable. It stays enabled, so later matching callbacks fail. Pause script to stop selecting it, Retry applied script to restart the exact applied build, or fix and apply a new revision.",
         "The editor supplies completion and types. Only transmog:api can be imported. The sandbox has no network, filesystem, timers, UI, dynamic imports or string-code generation. Handlers must return synchronously; returning a Promise or thenable is rejected."
       ],
@@ -33,7 +33,8 @@
       "id": "events",
       "title": "Events, decisions and permissions",
       "paragraphs": [
-        "Each handler receives one immutable event: context (exchangeId, handler, nowUnixMs), request, parameters, state and localResponse. The additional fields below are null when inapplicable. Return one envelope: { decision, annotations?, diagnostics?, state? }. Related header/status/body edits belong in a single edit decision.",
+        "Each handler receives one immutable event: context (exchangeId, handler, nowUnixMs, source, httpVersion, startedUnixMs, elapsedMs), request, parameters, state and localResponse. The additional fields below are null when inapplicable. Return one envelope: { decision, annotations?, diagnostics?, state? }. Related header/status/body edits belong in a single edit decision.",
+        "The four decisions are continue, edit, respond and abort. Use edit for every header/status/body change. Replacing bytes removes original trailers; bytes: [] clears the body. respond takes response: { status, headers, bytes } or response: { assetRef }; assets are request-head only. Related changes are validated together.",
         "The host validates the entire result before applying it. An invalid field, missing capability, exception or exceeded limit aborts the exchange. Terminal callbacks can only return continue with evidence; their failures become diagnostics. An explicit abort requires the abort capability.",
         "Header edits require each name in Writable headers. Method/URL edits require Rewrite request method and URL; cross-origin URL edits additionally require Allow cross-origin URL changes and normal route authorization. Use an absolute HTTP(S) URL without credentials or a fragment. Status edits require Change response status and accept 200–599.",
         "The engine owns Host, content length, transfer/content encoding and connection-management headers. Scripts cannot write them. Sensitive header values are withheld unless Read sensitive headers is enabled. Withheld values are marked redacted; header helpers throw on access. Inline responses require Return responses or select assets; their headers are validated separately from the writable-header list."
@@ -47,7 +48,7 @@
         {
           "handler": "onRequestBody",
           "input": "Complete decoded body",
-          "decisions": "Continue; edit headers/body; discard body; abort"
+          "decisions": "Continue; edit headers/body; clear body with empty bytes; abort"
         },
         {
           "handler": "onResponseHead",
@@ -57,7 +58,7 @@
         {
           "handler": "onResponseBody",
           "input": "response and complete decoded body",
-          "decisions": "Continue; edit headers/status/body; discard body; abort"
+          "decisions": "Continue; edit headers/status/body; clear body with empty bytes; abort"
         },
         {
           "handler": "onCompleted",
@@ -89,7 +90,8 @@
       "title": "Parameters and exchange state",
       "paragraphs": [
         "Parameters are declared text (optionally constrained to choices), booleans or bounded integers. Defaults and overrides are pinned to the applied revision; sandbox tests use the tested draft values. Parameters are ordinary saved configuration, not a secret store.",
-        "Returning state replaces this script’s exchange-local JSON object; omission retains it. State is limited to 128 keys and 64 KiB, serialized between callbacks and released at termination. Module globals are shared across exchanges within the script host. Use event.state for request/response correlation."
+        "Returning state replaces this script’s exchange-local JSON object; omission retains it. State is limited to 128 keys and 64 KiB, serialized between callbacks and released at termination. Module globals are shared across exchanges within the script host. Use event.state for request/response correlation.",
+        "context.source is proxy for traffic received by the live proxy and sandbox for synthetic tests. External client replays cannot be distinguished from other proxy traffic. httpVersion is the client-facing protocol at admission. startedUnixMs is the wall-clock exchange start; elapsedMs is monotonic time since script admission. Use elapsedMs for durations. Scenario times are controlled fixture values."
       ],
       "phases": [],
       "examples": []
@@ -98,9 +100,11 @@
       "id": "helpers",
       "title": "Bundled helpers",
       "paragraphs": [
-        "pass constructs continue with optional evidence. setHeader, appendHeader and removeHeader construct ordered header operations. headerValues and headerText preserve duplicate values. requestUrl, parseQuery, formatQuery and setQuery work with URLs and ordered query pairs; malformed query escapes fail.",
+        "pass constructs continue; edit constructs an atomic edit with optional evidence/state. setHeader, appendHeader and removeHeader construct ordered header operations. headerValues and headerText preserve duplicate values. requestUrl, parseQuery, formatQuery and setQuery work with URLs and ordered query pairs; malformed query escapes fail.",
         "utf8Encode/utf8Decode and base64Encode/base64Decode convert byte arrays. UTF-8 decoding is strict by default; base64 requires canonical padded encoding. readText/readJson require UTF-8 and reject conflicting or incompatible charset declarations.",
-        "replaceText/replaceJson edit bytes and content-type together; allow Replace bodies and the writable header content-type. respondText/respondJson build inline responses. A named asset uses { decision: { action: \"respond\", assetRef: \"response-id@revision\" } } at request head only; the exact saved asset must be available."
+        "replaceText/replaceJson edit bytes and content-type together; allow Replace bodies and the writable header content-type. respondText/respondJson build inline responses. A named asset uses respondAsset(\"response-id@revision\") at request head only; the exact saved asset must be available.",
+        "readCookies/replaceCookies preserve ordered Cookie pairs without URL-decoding values. readSetCookies/replaceSetCookies preserve separate Set-Cookie fields and ordered attributes (null means a flag); Expires commas are retained. Replacement helpers return header operations and require the matching writable header. Reading withheld cookie fields throws.",
+        "readForm/replaceForm handle UTF-8 application/x-www-form-urlencoded bodies as ordered pairs, retaining repeated and empty fields. replaceForm returns one body/content-type edit and needs Replace bodies plus writable content-type. Multipart forms are not supported by these helpers."
       ],
       "phases": [],
       "examples": []
@@ -121,9 +125,11 @@
       "id": "sandbox",
       "title": "What a sandbox test establishes",
       "paragraphs": [
-        "Test in sandbox invokes one chosen callback in a fresh host with empty exchange state. It uses the tested draft’s parameters and the same phase, capability and result validation as live execution. No request is sent and the script is not enabled.",
+        "Single callback mode invokes one chosen callback in a fresh host with empty exchange state. It uses the tested draft’s parameters and the same phase, capability and result validation as live execution. No request is sent and the script is not enabled.",
         "The test bypasses native request and body filters. Success does not establish that live traffic selects this handler. Check Draft traffic scope and Filters, capabilities, and parameters. The test does not run preceding callbacks, resolve response assets, authorize routes or exercise transport, decoding or buffering. Verify those behaviors with matching live traffic after applying the script.",
-        "For request/response correlation, verify a complete live exchange. Use selected Traffic request copies only the URL, method and nonsensitive headers into the fixture; body input is cleared."
+        "Use Exchange scenario to verify request/response correlation and filter selection, then verify network behavior with matching live proxy traffic. Use selected Traffic request copies only the URL, method and nonsensitive headers into the fixture; request body input is cleared.",
+        "Exchange scenario runs a complete decoded request and a simulated response or upstream failure in a fresh host. Native request/body filters, head/body edits, local responses, state and terminal callbacks run through the production interceptor pipelines. Every phase reports execution or its skip reason. Controlled start and duration values make timing assertions repeatable.",
+        "Scenarios send no traffic, activate nothing, and do not authorize routes, resolve saved assets, decode compressed bodies or verify transport/framing. Supply decoded bodies and omit Content-Encoding. Asset results stop as unresolved. Use a matching live proxy exchange to verify network behavior."
       ],
       "phases": [],
       "examples": []
@@ -139,7 +145,7 @@
         {
           "title": "Rewrite a header",
           "settings": "Host filter: example.test. Writable headers: user-agent. No other capabilities required.",
-          "code": "import { setHeader } from \"transmog:api\";\nimport type { RequestHeadEvent, RequestHeadResult } from \"transmog:api\";\n\nexport function onRequestHead(_event: RequestHeadEvent): RequestHeadResult {\n  return { decision: { action: \"edit\", edits: {\n    headers: [setHeader(\"User-Agent\", \"Transmog/1.0\")],\n  } } };\n}"
+          "code": "import { edit, setHeader } from \"transmog:api\";\nimport type { RequestHeadEvent, RequestHeadResult } from \"transmog:api\";\n\nexport function onRequestHead(_event: RequestHeadEvent): RequestHeadResult {\n  return edit({\n    headers: [setHeader(\"User-Agent\", \"Transmog/1.0\")],\n  });\n}"
         },
         {
           "title": "Transform a JSON response",
@@ -153,8 +159,8 @@
         },
         {
           "title": "Correlate a request and its completion",
-          "settings": "Host filter: example.test. Enable Add saved traffic annotations. Verify with a complete live exchange; single-callback tests start with empty state.",
-          "code": "import { pass } from \"transmog:api\";\nimport type { RequestHeadEvent, CompletedEvent, TerminalResult } from \"transmog:api\";\n\nexport function onRequestHead(event: RequestHeadEvent): TerminalResult {\n  return pass({ state: { started: event.context.nowUnixMs } });\n}\nexport function onCompleted(event: CompletedEvent): TerminalResult {\n  const started = event.state.started;\n  if (typeof started !== \"number\") return pass();\n  return pass({ annotations: [{\n    note: `Completed after ${event.context.nowUnixMs - started} ms`,\n    tags: [\"timing\"],\n  }] });\n}"
+          "settings": "Host filter: example.test. Enable Add saved traffic annotations. Test with Exchange scenario or a complete live proxy exchange.",
+          "code": "import { pass } from \"transmog:api\";\nimport type { RequestHeadEvent, CompletedEvent, TerminalResult } from \"transmog:api\";\n\nexport function onRequestHead(event: RequestHeadEvent): TerminalResult {\n  return pass({ state: { started: event.context.elapsedMs } });\n}\nexport function onCompleted(event: CompletedEvent): TerminalResult {\n  const started = event.state.started;\n  if (typeof started !== \"number\") return pass();\n  return pass({ annotations: [{\n    note: `Completed after ${event.context.elapsedMs - started} ms`,\n    tags: [\"timing\"],\n  }] });\n}"
         }
       ]
     }

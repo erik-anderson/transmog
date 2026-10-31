@@ -75,17 +75,23 @@
   </details>
   <details class="script-test" @input="{markTestChanged()}" @change="{markTestChanged()}">
     <summary>Sandbox input and results</summary>
-    <p class="field-help">Invokes one callback in a fresh host with empty exchange state. Draft parameter values and live capability checks apply. Request and body filters are bypassed; success does not prove live selection, routing, response assets or transport behavior.</p>
+    <label>Test mode <select aria-label="Test mode" @change="{changeTestMode(e)}"><option value="callback">Single callback</option><option value="scenario">Exchange scenario</option></select></label>
+    <if condition="testMode == 'callback'"><p class="field-help">Invokes one callback in a fresh host with empty exchange state. Draft parameters and capability checks apply; request and body filters are bypassed.</p></if>
+    <if condition="testMode == 'scenario'"><p class="field-help">Runs selected callbacks in order with native filters, edits and shared exchange state. Bodies are decoded fixtures; omit Content-Encoding. Routes, saved assets and transport remain unverified. No request is sent.</p></if>
     <div class="script-test-fields">
       <label>Test URL <input w-ref="{scriptTestUrl}" type="url" value="https://example.test/" maxlength="8192"></label>
       <label>Method <input w-ref="{scriptTestMethod}" value="GET" maxlength="32"></label>
-      <label>Handler <select w-ref="{scriptTestHandler}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label>
+      <label ?hidden="{{testMode != 'callback'}}">Handler <select w-ref="{scriptTestHandler}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label>
+      <label ?hidden="{{testMode != 'scenario'}}">Scenario outcome <select w-ref="{scriptScenarioOutcome}" aria-label="Scenario outcome" @input="{changeScenarioOutcome(e)}"><option value="response">Response</option><option value="failure">Upstream failure</option></select></label>
+      <label>Fixture protocol <select w-ref="{scriptScenarioProtocol}" aria-label="Fixture protocol"><option value="Http1">HTTP/1.1</option><option value="Http2">HTTP/2</option><option value="Http3">HTTP/3</option></select></label>
+      <label ?hidden="{{testMode != 'scenario'}}">Scenario duration (ms) <input w-ref="{scriptScenarioDuration}" type="number" value="100" min="0" max="86400000"></label>
       <label>Request headers <textarea w-ref="{scriptTestHeaders}" rows="3" maxlength="65536"></textarea></label>
-      <label>Response status <input w-ref="{scriptTestStatus}" type="number" value="200" min="100" max="599"></label>
-      <label>Response headers <textarea w-ref="{scriptTestResponseHeaders}" rows="3" maxlength="65536"></textarea></label>
-      <label><input w-ref="{scriptTestLocal}" type="checkbox"> Local response</label>
-      <label>Failure category (onFailed) <select w-ref="{scriptTestFailure}" aria-label="Failure category (onFailed)"><for each="category in failureCategories"><option value="{{category}}" ?selected="{{category == 'Upstream'}}">{{category}}</option></for></select></label>
-      <label>Body <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>
+      <label ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}">Response status <input w-ref="{scriptTestStatus}" type="number" value="200" min="100" max="599"></label>
+      <label ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}">Response headers <textarea w-ref="{scriptTestResponseHeaders}" rows="3" maxlength="65536"></textarea></label>
+      <label ?hidden="{{testMode == 'scenario' && scenarioOutcome == 'failure'}}"><input w-ref="{scriptTestLocal}" type="checkbox"> Local response</label>
+      <label ?hidden="{{testMode == 'scenario' && scenarioOutcome != 'failure'}}">Failure category (onFailed) <select w-ref="{scriptTestFailure}" aria-label="Failure category (onFailed)" @input="{changeTestFailure(e)}"><for each="category in failureCategories"><option value="{{category}}" ?selected="{{category == testFailure}}">{{category}}</option></for></select></label>
+      <label><if condition="testMode == 'callback'">Body</if><if condition="testMode == 'scenario'">Request body</if> <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>
+      <label ?hidden="{{testMode != 'scenario' || scenarioOutcome == 'failure'}}">Response body <textarea w-ref="{scriptScenarioResponseBody}" rows="4" maxlength="1048576"></textarea></label>
     </div>
     <div class="actions"><button type="button" class="secondary" @click="{useSelectedTestRequest()}" ?disabled="{{!selection}}">Use selected Traffic request</button><span class="field-help">Copies the URL, method, and nonsensitive headers. Body input is cleared.</span></div>
     <if condition="testResult"><section class="script-test-result" aria-label="Sandbox result"><p>{{testResult}}<if condition="testOutdated"> · Outdated: source, settings, or input changed</if></p><details><summary>Test input and returned changes</summary><pre tabindex="0" data-copy-surface>{{testEvidence}}</pre></details></section></if>

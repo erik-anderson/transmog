@@ -325,7 +325,13 @@ async fn failed_callback_receives_category_and_reports_validation_failures() {
             assert!(event.response.is_none());
             assert!(event.body.is_none());
             if invalid {
-                ScriptAction::DiscardBody.into()
+                ScriptAction::Edit {
+                    edits: ScriptEdits {
+                        bytes: Some(vec![]),
+                        ..Default::default()
+                    },
+                }
+                .into()
             } else {
                 ScriptResult {
                     diagnostics: vec!["Upstream failed".into()],
@@ -416,4 +422,216 @@ fn help_failure_choices_and_types_match_the_runtime_contract() {
         assert!(crate::typescript_declarations().contains(&format!("| \"{}\"", category.as_str())));
     }
     assert!(serde_json::from_str::<ExchangeFailureCategory>("\"upstream\"").is_err());
+}
+
+fn scenario_fixture() -> ScriptScenario {
+    ScriptScenario {
+        request: script_request(&request(), true),
+        response: Some(ScriptResponse {
+            status: 200,
+            headers: vec![ScriptHeader {
+                name: "content-type".into(),
+                value: b"application/json".to_vec(),
+                sensitive: false,
+                redacted: false,
+            }],
+        }),
+        request_body: b"upload".to_vec(),
+        response_body: b"{}".to_vec(),
+        local_response: false,
+        failure: None,
+        http_version: HttpLegVersion::Http2,
+        started_unix_ms: 1_700_000_000_000,
+        duration_ms: 100,
+    }
+}
+
+#[tokio::test]
+async fn scenario_applies_edits_state_filters_and_controlled_context_through_completion() {
+    let handlers = [
+        ScriptHandler::RequestHead,
+        ScriptHandler::RequestBody,
+        ScriptHandler::ResponseHead,
+        ScriptHandler::ResponseBody,
+        ScriptHandler::Completed,
+    ];
+    let mut manifest = manifest("", &handlers);
+    manifest.capabilities.rewrite_request = true;
+    manifest.capabilities.reroute = true;
+    manifest.capabilities.read_bodies = true;
+    manifest.capabilities.write_body = true;
+    manifest.capabilities.write_status = true;
+    manifest.capabilities.write_headers.insert("x-seen".into());
+    let result = test_scenario(
+        manifest,
+        Arc::new(Runner(|event: ScriptInvocation| {
+            assert_eq!(event.context.source, ScriptSource::Sandbox);
+            assert_eq!(event.context.http_version, HttpLegVersion::Http2);
+            assert_eq!(
+                event.context.now_unix_ms,
+                event.context.started_unix_ms + event.context.elapsed_ms
+            );
+            if event.context.handler == ScriptHandler::RequestHead {
+                return ScriptResult {
+                    state: Some(BTreeMap::from([("seen".into(), serde_json::json!(true))])),
+                    ..ScriptAction::Edit {
+                        edits: ScriptEdits {
+                            url: Some("https://other.test/changed".into()),
+                            ..Default::default()
+                        },
+                    }
+                    .into()
+                };
+            }
+            assert_eq!(event.state["seen"], true);
+            assert_eq!(event.request.host, "other.test");
+            match event.context.handler {
+                ScriptHandler::RequestBody => ScriptAction::Edit {
+                    edits: ScriptEdits {
+                        bytes: Some(b"changed upload".to_vec()),
+                        headers: vec![ScriptHeaderOperation::Set {
+                            name: "x-seen".into(),
+                            value: "yes".into(),
+                        }],
+                        ..Default::default()
+                    },
+                }
+                .into(),
+                ScriptHandler::ResponseBody => ScriptAction::Edit {
+                    edits: ScriptEdits {
+                        bytes: Some(vec![]),
+                        status: Some(202),
+                        ..Default::default()
+                    },
+                }
+                .into(),
+                ScriptHandler::Completed => {
+                    assert_eq!(event.context.elapsed_ms, 100);
+                    assert_eq!(event.response.unwrap().status, 202);
+                    assert!(event.request.headers.iter().any(|h| h.name == "x-seen"));
+                    ScriptAction::Continue.into()
+                }
+                _ => ScriptAction::Continue.into(),
+            }
+        })),
+        scenario_fixture(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert!(result.admitted);
+    assert_eq!(result.request_body, b"changed upload");
+    assert_eq!(result.response_body, [] as [u8; 0]);
+    assert!(result.steps[..5].iter().all(|s| s.selection == "invoked"));
+}
+
+#[tokio::test]
+async fn scenario_explains_native_selection_and_body_forbidden_responses() {
+    let mut manifest = manifest("", &[ScriptHandler::ResponseBody]);
+    manifest.capabilities.read_bodies = true;
+    let runner = Arc::new(Runner(|_: ScriptInvocation| ScriptAction::Continue.into()));
+    let mut fixture = scenario_fixture();
+    fixture.request.host = "unmatched.test".into();
+    let result = test_scenario(manifest.clone(), runner.clone(), fixture)
+        .await
+        .unwrap();
+    assert!(!result.admitted);
+    assert_eq!(result.steps[3].selection, "request-filter");
+    let mut fixture = scenario_fixture();
+    fixture.local_response = true;
+    let result = test_scenario(manifest.clone(), runner.clone(), fixture)
+        .await
+        .unwrap();
+    assert_eq!(result.steps[3].selection, "body-filter");
+    for status in [204, 304] {
+        let mut fixture = scenario_fixture();
+        fixture.response.as_mut().unwrap().status = status;
+        let result = test_scenario(manifest.clone(), runner.clone(), fixture)
+            .await
+            .unwrap();
+        assert_eq!(result.steps[3].selection, "body-forbidden");
+        assert_eq!(result.response_body, [] as [u8; 0]);
+    }
+}
+
+#[tokio::test]
+async fn scenario_handles_inline_responses_failures_and_unresolved_assets() {
+    let mut manifest = manifest(
+        "",
+        &[
+            ScriptHandler::RequestHead,
+            ScriptHandler::Completed,
+            ScriptHandler::Failed,
+        ],
+    );
+    manifest.capabilities.respond = true;
+    let runner = Arc::new(Runner(|event: ScriptInvocation| {
+        if event.context.handler == ScriptHandler::RequestHead {
+            ScriptAction::Respond {
+                response: ScriptResponseSource::Inline(ScriptInlineResponse {
+                    status: 201,
+                    headers: vec![],
+                    bytes: b"local".to_vec(),
+                }),
+            }
+            .into()
+        } else {
+            assert!(event.local_response);
+            ScriptAction::Continue.into()
+        }
+    }));
+    let mut fixture = scenario_fixture();
+    fixture.response = None;
+    fixture.failure = Some(transmog_core::intercept::ExchangeFailureCategory::Upstream);
+    let result = test_scenario(manifest.clone(), runner, fixture)
+        .await
+        .unwrap();
+    assert_eq!(result.outcome, "completed");
+    assert_eq!(result.response_body, b"local");
+    assert_eq!(result.steps[1].selection, "not-exported");
+    let runner = Arc::new(Runner(|event: ScriptInvocation| {
+        if event.context.handler == ScriptHandler::RequestHead {
+            ScriptAction::Respond {
+                response: ScriptResponseSource::Asset {
+                    asset_ref: "saved@1".into(),
+                },
+            }
+            .into()
+        } else {
+            ScriptAction::Continue.into()
+        }
+    }));
+    let result = test_scenario(manifest, runner, scenario_fixture())
+        .await
+        .unwrap();
+    assert_eq!(result.outcome, "asset-unresolved");
+    let manifest = super::tests::manifest("", &[ScriptHandler::RequestHead, ScriptHandler::Failed]);
+    let runner = Arc::new(Runner(|event: ScriptInvocation| {
+        if event.context.handler == ScriptHandler::Failed {
+            assert_eq!(
+                event.failure,
+                Some(transmog_core::intercept::ExchangeFailureCategory::Route)
+            );
+        }
+        ScriptAction::Continue.into()
+    }));
+    let mut fixture = scenario_fixture();
+    fixture.response = None;
+    fixture.failure = Some(transmog_core::intercept::ExchangeFailureCategory::Route);
+    let result = test_scenario(manifest, runner, fixture).await.unwrap();
+    assert_eq!(result.outcome, "failed");
+    assert_eq!(result.steps[5].selection, "invoked");
+}
+
+#[test]
+fn result_vocabulary_rejects_removed_aliases_and_ambiguous_response_sources() {
+    for value in [
+        serde_json::json!({"action":"headers","operations":[]}),
+        serde_json::json!({"action":"replace-body","bytes":[]}),
+        serde_json::json!({"action":"discard-body"}),
+        serde_json::json!({"action":"response","response":{"status":200,"headers":[],"bytes":[]}}),
+        serde_json::json!({"action":"respond","response":{"status":200,"headers":[],"bytes":[],"assetRef":"asset@1"}}),
+    ] {
+        assert!(serde_json::from_value::<ScriptAction>(value).is_err());
+    }
 }

@@ -27,7 +27,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
     const contract = await evaluate(
       `(()=>{const editor=${editor};editor.scriptHelpButton.click();editor.scriptHelpSearch.value='onFailed';editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();return {revision:editor.apiRevision,failure:editor.scriptTestFailure.value,scope:editor.draftScope,modal:editor.scriptHelpDialog.matches(':modal'),content:editor.scriptHelpDialog.textContent};})()`,
     );
-    assert.equal(contract.revision, 2);
+    assert.equal(contract.revision, 3);
     assert.equal(contract.failure, "Upstream");
     assert.equal(contract.modal, true);
     assert.match(contract.content, /onFailed/);
@@ -48,12 +48,37 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
         windowsVirtualKeyCode: 27,
       });
     await wait(`!${editor}.scriptHelpDialog.open && ${editor}.scriptHelpButton.matches(':focus')`);
+    const fixtureBefore = await evaluate(
+      `(()=>{const editor=${editor};return {testMode:editor.testMode,testResult:editor.testResult,testEvidence:editor.testEvidence,testOutdated:editor.testOutdated,scriptText:editor.scriptText,statusKind:editor.statusKind,open:editor.querySelector('.script-test').open};})()`,
+    );
+    let scenario;
+    try {
+      scenario = await evaluate(
+        `(async()=>{const editor=${editor};const mode=editor.querySelector('[aria-label="Test mode"]');mode.value='scenario';mode.dispatchEvent(new Event('change',{bubbles:true}));editor.querySelector('.script-test').open=true;editor.$flushUpdates();await editor.testScript();return {summary:editor.testResult,evidence:editor.testEvidence};})()`,
+      );
+      assert.match(scenario.summary, /Exchange scenario completed.*Request filter: matched/);
+      assert.match(scenario.evidence, /onRequestHead: invoked/);
+      if (screenshotPath)
+        await writeFile(
+          screenshotPath.replace(/\.png$/i, "-script-scenario.png"),
+          Buffer.from(
+            (await call("Page.captureScreenshot", { format: "png", captureBeyondViewport: false }))
+              .data,
+            "base64",
+          ),
+        );
+    } finally {
+      await evaluate(
+        `(()=>{const editor=${editor};const prior=${JSON.stringify(fixtureBefore)};editor.querySelector('[aria-label="Test mode"]').value=prior.testMode;editor.querySelector('.script-test').open=prior.open;delete prior.open;Object.assign(editor,prior);editor.$flushUpdates();})()`,
+      );
+    }
     return {
       revision: contract.revision,
       scope: contract.scope,
       search: true,
       searchScrollReset: true,
       keyboardClose: true,
+      exchangeScenario: true,
     };
   } finally {
     await evaluate(

@@ -81,7 +81,7 @@ async fn stdio_discovery_initializes_without_desktop_or_key_and_calls_explain_se
         assert_ne!(response.is_error, Some(true));
         let help = response.structured_content.unwrap();
         crate::catalog::validation::validate(&help_spec.output_schema, &help).unwrap();
-        assert_eq!(help["apiRevision"], 2);
+        assert_eq!(help["apiRevision"], 3);
         assert!(help["mcpSupport"].as_str().unwrap().contains("cannot"));
         assert_ne!(
             help["sections"].as_array().unwrap().as_slice(),

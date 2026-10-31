@@ -24,7 +24,7 @@ export async function checkScripts(page, root) {
   const help = scripts.locator(".script-help-dialog");
   await helpButton.click();
   assert.equal(await help.evaluate((dialog) => dialog.matches(":modal")), true);
-  assert.match(await help.textContent(), /revision 2/);
+  assert.match(await help.textContent(), /revision 3/);
   await help.getByLabel("Search Script API", { exact: true }).fill("bypass");
   assert.match(
     await help.locator(".script-help-content").textContent(),
@@ -131,6 +131,30 @@ export async function checkScripts(page, root) {
     }),
     [],
     "Bundled help examples have TypeScript errors",
+  );
+  assert.equal(
+    await scripts.evaluate(async (editor) => {
+      const { getTypeScriptWorker } = await import("/monaco.js");
+      const model = editor.monaco.editor.createModel(
+        `import {edit} from 'transmog:api';
+import type {RequestHeadResult,ResponseHeadResult} from 'transmog:api';
+const valid: RequestHeadResult=edit({method:'POST'});
+// @ts-expect-error response status cannot be changed at request head
+const invalid: RequestHeadResult=edit({headers:[],status:202});
+// @ts-expect-error body bytes cannot be changed at response head
+const body: ResponseHeadResult=edit({headers:[],bytes:[]});`,
+        "typescript",
+        editor.monaco.Uri.parse("file:///script-help/phase-check.ts"),
+      );
+      try {
+        const worker = await (await getTypeScriptWorker())(model.uri);
+        return (await worker.getSemanticDiagnostics(model.uri.toString())).length;
+      } finally {
+        model.dispose();
+      }
+    }),
+    0,
+    "Phase-specific edit restrictions failed",
   );
   assert.ok(
     (await scripts.locator(".monaco-editor-host").first().boundingBox()).height >= 192,
@@ -308,6 +332,68 @@ export function onFailed() { return { decision: { action: "continue" } }; }
   const failureEvidence = await scripts.locator(".script-test-result pre").textContent();
   assert.match(failureEvidence, /Handler: onFailed.*Local response: no.*Failure category: Route/s);
   assert.doesNotMatch(failureEvidence, /Response fixture|X-Fixture/);
+  await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("scenario");
+  await scripts.getByLabel("Scenario duration (ms)", { exact: true }).fill("73");
+  await scripts
+    .getByRole("combobox", { name: "Fixture protocol", exact: true })
+    .selectOption("Http3");
+  await scripts.getByRole("textbox", { name: "Request body", exact: true }).fill("scenario upload");
+  await scripts.getByLabel("Response body", { exact: true }).fill('{"ready":true}');
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.match(
+    await scripts.locator(".script-test-result").textContent(),
+    /Exchange scenario completed.*Request filter: matched/s,
+  );
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      duration: globalThis.__workspaceFixture.scriptScenarioInput.durationMs,
+      protocol: globalThis.__workspaceFixture.scriptScenarioInput.httpVersion,
+      body: new TextDecoder().decode(
+        Uint8Array.from(globalThis.__workspaceFixture.scriptScenarioInput.responseBody),
+      ),
+    })),
+    { duration: 73, protocol: "Http3", body: '{"ready":true}' },
+  );
+  assert.match(
+    await scripts.locator(".script-test-result pre").textContent(),
+    /onCompleted: invoked/,
+  );
+  await scripts
+    .getByRole("combobox", { name: "Scenario outcome", exact: true })
+    .selectOption("failure");
+  assert.equal(await scripts.getByLabel("Response body", { exact: true }).isVisible(), false);
+  assert.equal(await scripts.getByLabel("Local response", { exact: true }).isVisible(), false);
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.equal(
+    await page.evaluate(() => globalThis.__workspaceFixture.scriptScenarioInput.failure),
+    "Route",
+  );
+  assert.match(await scripts.locator(".script-test-result pre").textContent(), /onFailed: invoked/);
+  await fixture({ deferScriptTest: true });
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await page.waitForFunction(() => globalThis.__workspaceFixture.scriptTestPending);
+  await scripts
+    .getByRole("textbox", { name: "Request body", exact: true })
+    .fill("newer scenario input");
+  await page.evaluate(() => {
+    globalThis.__workspaceFixture.deferScriptTest = false;
+    globalThis.__workspaceFixture.finishScriptTest();
+  });
+  await waitIdle();
+  assert.equal(await scripts.evaluate((editor) => editor.testOutdated), true);
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+    await scripts
+      .getByRole("combobox", { name: "Test mode", exact: true })
+      .scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/script-scenario-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("callback");
   await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), requestSource);
   await scripts
     .getByRole("combobox", { name: "Handler", exact: true })

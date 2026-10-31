@@ -168,7 +168,9 @@ when changing the experience.
   through later switches. Shared script saves compare with the loaded authoring
   baseline and require an explicit reviewed choice on conflict. Keep the draft's
   native traffic scope visible beside its source. Single-callback sandbox results
-  explain skipped selection and lifecycle checks; bundled API help is available
+  explain bypassed filters; exchange scenarios show native selection, carried state,
+  final fixture messages and per-phase outcomes. Both distinguish simulation from
+  network verification. Bundled API help is available
   without leaving the editor and is shared with agent help.
 
 ## Present evidence and failures honestly

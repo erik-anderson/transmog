@@ -16,9 +16,9 @@ use super::{
     ResponseBodyAction, ResponseBodyEvent, ResponseHead, ResponseHeadAction, ResponseHeadEvent,
     ScriptAction, ScriptBody, ScriptBodyFilter, ScriptContext, ScriptFailure, ScriptHandler,
     ScriptHeaderOperation, ScriptInlineResponse, ScriptInvocation, ScriptManifest,
-    ScriptResolvedResponse, ScriptResponse, ScriptResponseAssetResolver, ScriptResult,
-    ScriptRunner, apply_header_operations, script_abort, script_failure_abort, script_headers,
-    script_request, valid_asset_ref,
+    ScriptResolvedResponse, ScriptResponse, ScriptResponseAssetResolver, ScriptResponseSource,
+    ScriptResult, ScriptRunner, apply_header_operations, script_abort, script_failure_abort,
+    script_headers, script_request, valid_asset_ref,
 };
 
 pub(super) struct ScriptFactory {
@@ -38,12 +38,13 @@ impl InterceptorFactory for ScriptFactory {
                 runner: Arc::clone(&self.runner),
                 metadata: metadata.clone(),
                 state: tokio::sync::Mutex::new(BTreeMap::new()),
+                started: std::time::Instant::now(),
+                request: Mutex::new(None),
             }),
             admitted: AtomicBool::new(false),
             local: AtomicBool::new(false),
             assets: self.assets.clone(),
             report: Mutex::new(None),
-            request: Mutex::new(None),
         }))
     }
 }
@@ -53,6 +54,8 @@ struct Shared {
     runner: Arc<dyn ScriptRunner>,
     metadata: ExchangeMetadata,
     state: tokio::sync::Mutex<BTreeMap<String, serde_json::Value>>,
+    started: std::time::Instant,
+    request: Mutex<Option<RequestHead>>,
 }
 
 impl Shared {
@@ -77,6 +80,18 @@ impl Shared {
         event.state = state.clone();
         event.local_response = local;
         event.failure = failure;
+        event.context.source = super::ScriptSource::Proxy;
+        event.context.http_version = self.metadata.ingress_version;
+        event.context.started_unix_ms = u64::try_from(
+            self.metadata
+                .started_at
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis(),
+        )
+        .unwrap_or(u64::MAX);
+        event.context.elapsed_ms =
+            u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let result = self.runner.invoke(event).await?;
         validate_result(&self.manifest, handler, request, &result)?;
         if let Some(next) = &result.state {
@@ -92,7 +107,6 @@ struct ScriptInterceptor {
     shared: Arc<Shared>,
     assets: Option<Arc<dyn ScriptResponseAssetResolver>>,
     report: Mutex<Option<ScriptReport>>,
-    request: Mutex<Option<RequestHead>>,
 }
 
 fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
@@ -180,7 +194,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
             self.shared.manifest.prefilter.matches(&event.head),
             Ordering::Release,
         );
-        *lock(&self.request) = Some(event.head.clone());
+        *lock(&self.shared.request) = Some(event.head.clone());
         Box::pin(async move {
             if !self.selected(ScriptHandler::RequestHead) {
                 return RequestHeadAction::Continue;
@@ -208,14 +222,6 @@ impl ExchangeInterceptor for ScriptInterceptor {
             *lock(&self.report) = report(&result);
             match result.decision {
                 ScriptAction::Continue => RequestHeadAction::Continue,
-                ScriptAction::Headers { operations } => {
-                    let mut head = event.head;
-                    if apply_header_operations(&mut head.headers, &operations).is_err() {
-                        return RequestHeadAction::Abort(script_abort("invalid header edit"));
-                    }
-                    *lock(&self.request) = Some(head.clone());
-                    RequestHeadAction::Replace(head)
-                }
                 ScriptAction::Edit { edits } => {
                     let mut head = event.head;
                     let original = head.target.clone();
@@ -228,7 +234,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
                     if let Some(url) = edits.url {
                         head.target = target(&url).expect("validated URL");
                     }
-                    *lock(&self.request) = Some(head.clone());
+                    *lock(&self.shared.request) = Some(head.clone());
                     if same_origin(&original, &head.target) {
                         RequestHeadAction::Replace(head)
                     } else {
@@ -238,10 +244,12 @@ impl ExchangeInterceptor for ScriptInterceptor {
                         }
                     }
                 }
-                ScriptAction::Response { response } => {
-                    RequestHeadAction::Respond(inline(response, event.head.source_version))
-                }
-                ScriptAction::Respond { asset_ref } => match self
+                ScriptAction::Respond {
+                    response: ScriptResponseSource::Inline(response),
+                } => RequestHeadAction::Respond(inline(response, event.head.source_version)),
+                ScriptAction::Respond {
+                    response: ScriptResponseSource::Asset { asset_ref },
+                } => match self
                     .assets
                     .as_ref()
                     .ok_or_else(|| "No response asset resolver".to_owned())
@@ -258,14 +266,13 @@ impl ExchangeInterceptor for ScriptInterceptor {
                 ScriptAction::Abort { reason } => {
                     RequestHeadAction::Abort(HookAbort::Policy(reason))
                 }
-                _ => unreachable!("validated request phase"),
             }
         })
     }
 
     fn on_response_head(&self, event: ResponseHeadEvent) -> BoxHookFuture<'_, ResponseHeadAction> {
         self.local.store(event.local_response, Ordering::Release);
-        *lock(&self.request) = Some(event.request_head.clone());
+        *lock(&self.shared.request) = Some(event.request_head.clone());
         Box::pin(async move {
             if !self.selected(ScriptHandler::ResponseHead) {
                 return ResponseHeadAction::Continue;
@@ -293,12 +300,6 @@ impl ExchangeInterceptor for ScriptInterceptor {
             *lock(&self.report) = report(&result);
             match result.decision {
                 ScriptAction::Continue => ResponseHeadAction::Continue,
-                ScriptAction::Headers { operations } => {
-                    let mut head = event.head;
-                    apply_header_operations(&mut head.headers, &operations)
-                        .expect("validated headers");
-                    ResponseHeadAction::Replace(head)
-                }
                 ScriptAction::Edit { edits } => {
                     let mut head = event.head;
                     apply_header_operations(&mut head.headers, &edits.headers)
@@ -308,14 +309,16 @@ impl ExchangeInterceptor for ScriptInterceptor {
                     }
                     ResponseHeadAction::Replace(head)
                 }
-                ScriptAction::Response { response } => {
+                ScriptAction::Respond {
+                    response: ScriptResponseSource::Inline(response),
+                } => {
                     self.local.store(true, Ordering::Release);
                     ResponseHeadAction::Respond(inline(response, event.head.source_version))
                 }
                 ScriptAction::Abort { reason } => {
                     ResponseHeadAction::Abort(HookAbort::Policy(reason))
                 }
-                _ => unreachable!("validated response phase"),
+                ScriptAction::Respond { .. } => unreachable!("validated response phase"),
             }
         })
     }
@@ -373,7 +376,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
     }
 
     fn on_failed(&self, failure: ExchangeFailure) -> BoxHookFuture<'_, ()> {
-        let request = lock(&self.request).clone();
+        let request = lock(&self.shared.request).clone();
         Box::pin(async move {
             if let Some(request) = request {
                 self.terminal(
@@ -438,16 +441,6 @@ impl BufferedBodyHandler for ScriptBodyHandler {
             let mut trailers = body.trailers().cloned();
             match result.decision {
                 ScriptAction::Continue => {}
-                ScriptAction::ReplaceBody { bytes } => data = Bytes::from(bytes),
-                ScriptAction::DiscardBody => {
-                    data = Bytes::new();
-                    trailers = None;
-                }
-                ScriptAction::Headers { operations } => {
-                    let mut headers = head.headers().clone();
-                    apply_header_operations(&mut headers, &operations).expect("validated headers");
-                    head.set_headers(headers);
-                }
                 ScriptAction::Edit { edits } => {
                     let mut headers = head.headers().clone();
                     apply_header_operations(&mut headers, &edits.headers)
@@ -460,12 +453,16 @@ impl BufferedBodyHandler for ScriptBodyHandler {
                     }
                     if let Some(bytes) = edits.bytes {
                         data = Bytes::from(bytes);
+                        trailers = None;
                     }
                 }
                 ScriptAction::Abort { reason } => {
                     return Err(BodyHookError::Abort(HookAbort::Policy(reason)));
                 }
-                _ => unreachable!("validated body phase"),
+                ScriptAction::Respond { .. } => unreachable!("validated body phase"),
+            }
+            if let BufferedHead::Request(request) = &head {
+                *lock(&self.shared.request) = Some(request.clone());
             }
             Ok(
                 BufferedBody::try_new(
@@ -498,6 +495,8 @@ pub(super) fn invocation(
             )
             .unwrap_or(u64::MAX),
             handler,
+            http_version: request.source_version,
+            ..ScriptContext::default()
         },
         request: script_request(request, manifest.capabilities.read_sensitive_headers),
         response: response.map(|head| ScriptResponse {
@@ -518,7 +517,7 @@ pub(super) fn invocation(
     }
 }
 
-fn admits(
+pub(super) fn admits(
     filter: &ScriptBodyFilter,
     headers: &HeaderBlock,
     status: Option<u16>,
@@ -697,20 +696,6 @@ pub fn validate_result(
     }
     match &result.decision {
         ScriptAction::Continue => {}
-        ScriptAction::Headers { operations } => validate_headers(manifest, operations)?,
-        ScriptAction::ReplaceBody { bytes } => {
-            if !body
-                || !manifest.capabilities.write_body
-                || bytes.len() > manifest.limits.max_output_bytes
-            {
-                return Err(invalid());
-            }
-        }
-        ScriptAction::DiscardBody => {
-            if !body || !manifest.capabilities.write_body {
-                return Err(invalid());
-            }
-        }
         ScriptAction::Edit { edits } => {
             validate_headers(manifest, &edits.headers)?;
             if let Some(method) = &edits.method
@@ -747,7 +732,9 @@ pub fn validate_result(
                 return Err(invalid());
             }
         }
-        ScriptAction::Response { response } => {
+        ScriptAction::Respond {
+            response: ScriptResponseSource::Inline(response),
+        } => {
             if body
                 || !manifest.capabilities.respond
                 || !(200..=599).contains(&response.status)
@@ -768,7 +755,9 @@ pub fn validate_result(
                 }
             }
         }
-        ScriptAction::Respond { asset_ref } => {
+        ScriptAction::Respond {
+            response: ScriptResponseSource::Asset { asset_ref },
+        } => {
             if handler != ScriptHandler::RequestHead
                 || !manifest.capabilities.respond
                 || !valid_asset_ref(asset_ref)
@@ -862,7 +851,7 @@ pub fn prepare_invocation(
         method: request.method.clone(),
         target: target(&url)?,
         headers: HeaderBlock::new(),
-        source_version: transmog_core::HttpLegVersion::Http1,
+        source_version: event.context.http_version,
     };
     for headers in std::iter::once(&mut event.request.headers)
         .chain(event.response.iter_mut().map(|r| &mut r.headers))

@@ -2,6 +2,9 @@
 export function pass(evidence = {}) {
   return { ...evidence, decision: { action: "continue" } };
 }
+export function edit(edits, evidence = {}) {
+  return { ...evidence, decision: { action: "edit", edits } };
+}
 
 function checkedBytes(bytes) {
   if (!Array.isArray(bytes) || bytes.some((b) => !Number.isInteger(b) || b < 0 || b > 255)) {
@@ -143,7 +146,13 @@ export function parseQuery(query) {
 export function formatQuery(pairs) {
   return pairs
     .map(([name, value]) =>
-      [name, value].map((part) => encodeURIComponent(part).replace(/%20/g, "+")).join("="),
+      [name, value]
+        .map((part) =>
+          encodeURIComponent(part)
+            .replace(/[!'()~]/g, (c) => `%${c.charCodeAt(0).toString(16).toUpperCase()}`)
+            .replace(/%20/g, "+"),
+        )
+        .join("="),
     )
     .join("&");
 }
@@ -182,7 +191,7 @@ export function replaceJson(value) {
 export function respondText(status, text, headers = []) {
   return {
     decision: {
-      action: "response",
+      action: "respond",
       response: {
         status,
         headers: [
@@ -197,7 +206,7 @@ export function respondText(status, text, headers = []) {
 export function respondJson(status, value, headers = []) {
   return {
     decision: {
-      action: "response",
+      action: "respond",
       response: {
         status,
         headers: [
@@ -208,4 +217,89 @@ export function respondJson(status, value, headers = []) {
       },
     },
   };
+}
+
+export function respondAsset(assetRef) {
+  return { decision: { action: "respond", response: { assetRef } } };
+}
+
+/** Cookie values stay encoded as supplied; fields and duplicate names retain order. */
+export function readCookies(headers) {
+  return headerText(headers, "cookie").flatMap((field) =>
+    field.split(";").map((part) => {
+      const index = part.indexOf("=");
+      if (index < 1) throw new TypeError("Invalid Cookie pair");
+      const pair = [part.slice(0, index).trim(), part.slice(index + 1).trim()];
+      cookiePair(...pair);
+      return pair;
+    }),
+  );
+}
+function cookiePair(name, value) {
+  if (
+    typeof name !== "string" ||
+    !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
+    typeof value !== "string" ||
+    !/^(?:[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*|"[\x21\x23-\x2B\x2D-\x3A\x3C-\x5B\x5D-\x7E]*")$/.test(
+      value,
+    )
+  )
+    throw new TypeError("Invalid cookie name or value");
+  return `${name}=${value}`;
+}
+export function replaceCookies(pairs) {
+  return pairs.length
+    ? setHeader("cookie", pairs.map(([name, value]) => cookiePair(name, value)).join("; "))
+    : removeHeader("cookie");
+}
+export function readSetCookies(headers) {
+  return headerText(headers, "set-cookie").map((field) => {
+    const [pair, ...parts] = field.split(";");
+    const index = pair.indexOf("=");
+    if (index < 1) throw new TypeError("Invalid Set-Cookie pair");
+    const name = pair.slice(0, index).trim(),
+      value = pair.slice(index + 1).trim();
+    cookiePair(name, value);
+    const attributes = parts.map((part) => {
+      const index = part.indexOf("=");
+      return index < 0
+        ? [part.trim(), null]
+        : [part.slice(0, index).trim(), part.slice(index + 1).trim()];
+    });
+    formatSetCookie({ name, value, attributes });
+    return { name, value, attributes };
+  });
+}
+function formatSetCookie({ name, value, attributes = [] }) {
+  return (
+    cookiePair(name, value) +
+    attributes
+      .map(([name, value]) => {
+        if (
+          !/^[!#$%&'*+.^_`|~0-9A-Za-z-]+$/.test(name) ||
+          (value !== null && (typeof value !== "string" || /[^\x20-\x3A\x3C-\x7E]/.test(value)))
+        )
+          throw new TypeError("Invalid cookie attribute");
+        return `; ${name}${value === null ? "" : `=${value}`}`;
+      })
+      .join("")
+  );
+}
+export function replaceSetCookies(cookies) {
+  return [
+    removeHeader("set-cookie"),
+    ...cookies.map((cookie) => appendHeader("set-cookie", formatSetCookie(cookie))),
+  ];
+}
+export function readForm(body, headers) {
+  const types = headerText(headers, "content-type");
+  if (
+    types.length !== 1 ||
+    types[0].split(";", 1)[0].trim().toLowerCase() !== "application/x-www-form-urlencoded"
+  )
+    throw new TypeError("Expected URL-encoded form content type");
+  return parseQuery(readText(body, headers));
+}
+export function replaceForm(pairs) {
+  return replaceText(formatQuery(pairs), "application/x-www-form-urlencoded");
 }

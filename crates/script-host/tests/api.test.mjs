@@ -53,6 +53,10 @@ test("headers and queries retain duplicates, order and withheld-value identity",
 });
 
 test("body helpers make content type and bytes one edit without mutating input", () => {
+  assert.deepEqual(api.edit({ headers: [api.setHeader("x", "y")] }, { state: { seen: true } }), {
+    decision: { action: "edit", edits: { headers: [api.setHeader("x", "y")] } },
+    state: { seen: true },
+  });
   const result = api.replaceJson({ enabled: true });
   assert.equal(api.readText({ bytes: result.decision.edits.bytes }), '{"enabled":true}');
   assert.deepEqual(result.decision.edits.headers, [
@@ -77,5 +81,63 @@ test("body helpers make content type and bytes one edit without mutating input",
     decision: { action: "continue" },
     state: { count: 1 },
     diagnostics: ["observed"],
+  });
+});
+
+test("cookie helpers preserve duplicate names, attributes and Expires commas", () => {
+  const field = (name, value) => ({ name, value: api.utf8Encode(value), redacted: false });
+  const pairs = api.readCookies([field("Cookie", 'a=1; a="2"'), field("cookie", "x=%FF")]);
+  assert.deepEqual(pairs, [
+    ["a", "1"],
+    ["a", '"2"'],
+    ["x", "%FF"],
+  ]);
+  assert.equal(api.replaceCookies(pairs).value, 'a=1; a="2"; x=%FF');
+  assert.equal(api.replaceCookies([]).operation, "remove");
+  const values = [
+    "id=one; Expires=Wed, 21 Oct 2037 07:28:00 GMT; HttpOnly",
+    "id=two; Path=/; Secure; SameSite=None",
+  ];
+  const cookies = api.readSetCookies(values.map((value) => field("Set-Cookie", value)));
+  assert.deepEqual(
+    api
+      .replaceSetCookies(cookies)
+      .slice(1)
+      .map((op) => op.value),
+    values,
+  );
+  for (const name of ["cookie", "set-cookie"]) {
+    assert.throws(() =>
+      (name === "cookie" ? api.readCookies : api.readSetCookies)([
+        { ...field(name, "a=b"), redacted: true },
+      ]),
+    );
+  }
+  assert.throws(() => api.replaceCookies([["a", "x; injected=y"]]));
+  assert.throws(() =>
+    api.replaceSetCookies([{ name: "a", value: "b", attributes: [["Path", "/\r\nX: y"]] }]),
+  );
+  assert.throws(() => api.readCookies([field("Cookie", "broken")]));
+});
+
+test("URL-encoded form helpers preserve repeats, blanks, Unicode and strict decoding", () => {
+  const pairs = [
+    ["a", "1"],
+    ["a", ""],
+    ["", "🌍 +!'()~*"],
+  ];
+  const result = api.replaceForm(pairs);
+  const headers = result.decision.edits.headers.map((h) => ({
+    name: h.name,
+    value: api.utf8Encode(h.value),
+    redacted: false,
+  }));
+  assert.deepEqual(api.readForm({ bytes: result.decision.edits.bytes }, headers), pairs);
+  assert.equal(api.utf8Decode(result.decision.edits.bytes), new URLSearchParams(pairs).toString());
+  assert.throws(() => api.readForm({ bytes: [] }, []));
+  assert.throws(() => api.readForm({ bytes: api.utf8Encode("a=%FF") }, headers));
+  assert.throws(() => api.readForm({ bytes: [] }, [...headers, ...headers]));
+  assert.deepEqual(api.respondAsset("fixture@1"), {
+    decision: { action: "respond", response: { assetRef: "fixture@1" } },
   });
 });

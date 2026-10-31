@@ -153,7 +153,7 @@ async fn literal_response_edits_preserve_fresh_data_codings_and_actual_outcomes(
             source: r#"
 export function onResponseBody({body}: {body:{bytes:number[]}}) {
  const text=String.fromCharCode(...body.bytes).replace("seed","old");
- return { decision: {action:"replace-body",bytes:Array.from(text).map(c=>c.charCodeAt(0))} };
+ return { decision: {action:"edit",edits:{bytes:Array.from(text).map(c=>c.charCodeAt(0))}} };
 }
 "#
             .into(),
@@ -458,10 +458,10 @@ export function onRequestHead({ request }: {request: {headers: Array<{name:strin
   const token = request.headers.find(h => h.name.toLowerCase() === "x-fresh-token");
   const native = request.headers.find(h => h.name.toLowerCase() === "user-agent");
   if (!token || !native || String.fromCharCode(...native.value) !== "native-agent") throw new Error("native request did not run first");
-  return { decision: {action:"headers",operations:[{operation:"set",name:"user-agent",value:String.fromCharCode(...token.value)}]} };
+  return { decision: {action:"edit",edits:{headers:[{operation:"set",name:"user-agent",value:String.fromCharCode(...token.value)}]}} };
 }
 export function onResponseHead() {
-  return { decision: {action:"headers",operations:[{operation:"set",name:"x-order",value:"script-first"}]} };
+  return { decision: {action:"edit",edits:{headers:[{operation:"set",name:"x-order",value:"script-first"}]}} };
 }
 "#.into(),
         handlers: BTreeSet::from([ScriptHandler::RequestHead, ScriptHandler::ResponseHead]),
@@ -1793,12 +1793,12 @@ export function onRequestHead({ request }: {
 }) {
   if (request.path === "/echo/script" && header(request, "x-phase9") === "script") {
     return { decision: {
-      action: "headers",
-      operations: [{ operation: "set", name: "user-agent", value: "Transmog-Phase9" }],
+      action: "edit",
+      edits: { headers: [{ operation: "set", name: "user-agent", value: "Transmog-Phase9" }] },
     } };
   }
   if (request.path === "/auto/script") {
-    return { decision: { action: "respond", assetRef: "phase9-small@1" } };
+    return { decision: { action: "respond", response: { assetRef: "phase9-small@1" } } };
   }
   if (request.path === "/script/fail") {
     throw new Error("intentional phase 9 qualification failure");

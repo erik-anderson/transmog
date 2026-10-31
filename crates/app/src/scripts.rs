@@ -409,7 +409,7 @@ impl ScriptRegistry {
     pub(crate) async fn test(
         &self,
         candidate_id: &str,
-        invocation: ScriptInvocation,
+        mut invocation: ScriptInvocation,
     ) -> Result<transmog_script::ScriptResult, AppError> {
         let revision = self
             .candidates
@@ -425,6 +425,7 @@ impl ScriptRegistry {
                     false,
                 )
             })?;
+        invocation.context.source = transmog_script::ScriptSource::Sandbox;
         let compiled = executable(&revision)?;
         let runner = self.start_runner(compiled)?;
         runner.invoke(invocation).await.map_err(|failure| {
@@ -449,6 +450,33 @@ impl ScriptRegistry {
                 ),
             )
         })
+    }
+
+    pub(crate) async fn test_scenario(
+        &self,
+        candidate_id: &str,
+        scenario: transmog_script::ScriptScenario,
+    ) -> Result<transmog_script::ScriptScenarioResult, AppError> {
+        let revision = self
+            .candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|entry| entry.id == candidate_id)
+            .map(|entry| entry.revision.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Conflict,
+                    "script candidate is unknown or expired",
+                    false,
+                )
+            })?;
+        let compiled = executable(&revision)?;
+        let manifest = compiled.manifest.clone();
+        let runner = self.start_runner(compiled)?;
+        transmog_script::test_scenario(manifest, runner, scenario)
+            .await
+            .map_err(|e| AppError::new(ErrorCategory::InvalidInput, e.to_string(), false))
     }
 
     pub(crate) fn activate(&self, candidate_id: &str) -> Result<ScriptStatus, AppError> {

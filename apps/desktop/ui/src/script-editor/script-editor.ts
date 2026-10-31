@@ -140,6 +140,13 @@ export class ScriptEditor extends WorkspaceElement {
   @observable testResult = "";
   @observable testEvidence = "";
   @observable testOutdated = false;
+  @observable testMode = "callback";
+  @observable testFailure = "Upstream";
+  @observable scenarioOutcome = "response";
+  scriptScenarioOutcome!: HTMLSelectElement;
+  scriptScenarioResponseBody!: HTMLTextAreaElement;
+  scriptScenarioDuration!: HTMLInputElement;
+  scriptScenarioProtocol!: HTMLSelectElement;
   scriptTestUrl!: HTMLInputElement;
   scriptTestMethod!: HTMLInputElement;
   scriptTestHeaders!: HTMLTextAreaElement;
@@ -234,6 +241,16 @@ export class ScriptEditor extends WorkspaceElement {
   markTestChanged(): void {
     this.testVersion++;
     this.testOutdated = Boolean(this.testResult);
+  }
+  changeTestMode(event: Event): void {
+    this.testMode = (event.target as HTMLSelectElement).value;
+    this.markTestChanged();
+  }
+  changeTestFailure(event: Event): void {
+    this.testFailure = (event.target as HTMLSelectElement).value;
+  }
+  changeScenarioOutcome(event: Event): void {
+    this.scenarioOutcome = (event.target as HTMLSelectElement).value;
   }
   private updateDraftState(): void {
     if (!this.scriptReady) {
@@ -719,6 +736,11 @@ export class ScriptEditor extends WorkspaceElement {
       localResponse: this.scriptTestLocal.checked,
       failure: this.scriptTestFailure.value,
       handler: this.scriptTestHandler.value,
+      mode: this.testMode,
+      outcome: this.scriptScenarioOutcome.value,
+      responseBody: this.scriptScenarioResponseBody.value,
+      durationMs: Number(this.scriptScenarioDuration.value),
+      httpVersion: this.scriptScenarioProtocol.value,
     };
     try {
       const candidate = this.candidate ?? (await this.validateDraft());
@@ -738,29 +760,36 @@ export class ScriptEditor extends WorkspaceElement {
       const hasResponse = handler.startsWith("onResponse") || handler === "onCompleted";
       this.scriptText = "Running the sandbox for this input…";
       this.statusKind = "progress";
-      const result = await invoke<{ decision: { action: string } }>("test_script", {
-        candidateId: candidate.token.candidateId,
-        invocation: {
-          context: { exchangeId: "editor-test", nowUnixMs: Date.now(), handler },
-          parameters: {},
-          state: {},
-          localResponse: input.localResponse,
-          failure: handler === "onFailed" ? input.failure : null,
-          request: {
-            method: input.method,
-            scheme: target.protocol.slice(0, -1),
-            host: target.hostname,
-            port: Number(target.port || (target.protocol === "https:" ? 443 : 80)),
-            path: target.pathname,
-            query: target.search ? target.search.slice(1) : null,
-            headers: parseHeaderLines(input.headers).map((header) => ({
-              name: header.name,
-              value: Array.from(new TextEncoder().encode(header.value)),
-              sensitive: false,
-              redacted: false,
-            })),
-          },
-          response: hasResponse
+      const invocation = {
+        context: {
+          exchangeId: "editor-test",
+          nowUnixMs: 1700000000000,
+          handler,
+          source: "sandbox",
+          httpVersion: input.httpVersion,
+          startedUnixMs: 1700000000000,
+          elapsedMs: 0,
+        },
+        parameters: {},
+        state: {},
+        localResponse: input.localResponse,
+        failure: handler === "onFailed" ? input.failure : null,
+        request: {
+          method: input.method,
+          scheme: target.protocol.slice(0, -1),
+          host: target.hostname,
+          port: Number(target.port || (target.protocol === "https:" ? 443 : 80)),
+          path: target.pathname,
+          query: target.search ? target.search.slice(1) : null,
+          headers: parseHeaderLines(input.headers).map((header) => ({
+            name: header.name,
+            value: Array.from(new TextEncoder().encode(header.value)),
+            sensitive: false,
+            redacted: false,
+          })),
+        },
+        response:
+          hasResponse || input.mode === "scenario"
             ? {
                 status: input.status,
                 headers: parseHeaderLines(input.responseHeaders).map((h) => ({
@@ -771,10 +800,48 @@ export class ScriptEditor extends WorkspaceElement {
                 })),
               }
             : null,
-          body: handler.endsWith("Body")
-            ? { bytes: Array.from(new TextEncoder().encode(input.body)) }
-            : null,
-        },
+        body: handler.endsWith("Body")
+          ? { bytes: Array.from(new TextEncoder().encode(input.body)) }
+          : null,
+      };
+      if (input.mode === "scenario") {
+        const result = await invoke<{
+          outcome: string;
+          admitted: boolean;
+          steps: Array<{ handler: string; selection: string }>;
+        }>("test_script_scenario", {
+          candidateId: candidate.token.candidateId,
+          scenario: {
+            request: invocation.request,
+            response: input.outcome === "response" ? invocation.response : null,
+            requestBody: Array.from(new TextEncoder().encode(input.body)),
+            responseBody: Array.from(new TextEncoder().encode(input.responseBody)),
+            localResponse: input.outcome === "response" && input.localResponse,
+            failure: input.outcome === "failure" ? input.failure : null,
+            httpVersion: input.httpVersion,
+            startedUnixMs: 1700000000000,
+            durationMs: input.durationMs,
+          },
+        });
+        if (!this.isConnected) {
+          return;
+        }
+        this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
+        this.testResult = `Exchange scenario ${result.outcome} · Request filter: ${result.admitted ? "matched" : "skipped"}`;
+        this.testEvidence =
+          result.steps.map((step) => `${step.handler}: ${step.selection}`).join("\n") +
+          `\n\nScenario evidence:\n${JSON.stringify(result, null, 2)}`;
+        this.trimTestEvidence();
+        this.feedback(
+          this.testOutdated
+            ? "Scenario completed for earlier edits or input. Run it again to check the current version."
+            : "Scenario finished with native filters and shared exchange state. No request was sent; routing, assets and transport remain unverified.",
+        );
+        return;
+      }
+      const result = await invoke<{ decision: { action: string } }>("test_script", {
+        candidateId: candidate.token.candidateId,
+        invocation,
       });
       if (!this.isConnected) {
         return;
@@ -791,10 +858,7 @@ export class ScriptEditor extends WorkspaceElement {
         ...(handler.endsWith("Body") ? [`Input body:\n${input.body}`] : []),
         `\nReturned result:\n${JSON.stringify(result, null, 2)}`,
       ].join("\n");
-      if (this.testEvidence.length > 32768) {
-        this.testEvidence =
-          this.testEvidence.slice(0, 32768) + "\n[Evidence preview shortened to 32,768 characters]";
-      }
+      this.trimTestEvidence();
       this.feedback(
         this.testOutdated
           ? "Sandbox completed for earlier edits or input. Run it again to check the current version."
@@ -811,6 +875,12 @@ export class ScriptEditor extends WorkspaceElement {
           "The earlier sandbox test failed after its draft or input changed. Test the current version.",
         );
       }
+    }
+  }
+  private trimTestEvidence(): void {
+    if (this.testEvidence.length > 32768) {
+      this.testEvidence =
+        this.testEvidence.slice(0, 32768) + "\n[Evidence preview shortened to 32,768 characters]";
     }
   }
   private async activateDraft(): Promise<void> {

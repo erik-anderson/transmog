@@ -128,12 +128,13 @@ Compilation happens only during explicit authoring actions, including generated
 output comparison. A successful validation, sandbox-test preparation or comparison
 can replace the latest compiled build without saving the editing draft or
 changing the applied build. Successful compilation does not prove that a sandbox
-can start or that the script works for every input. Sandbox testing is optional;
-it invokes one callback in a fresh host with empty state and bypasses native
-request/body filters. Success does not establish live selection, preceding
-callbacks, route/asset resolution or transport behavior.
-Response status, response headers and local-response identity are editable test
-inputs. Tests enforce live capabilities and use the candidate's parameter values.
+can start or that the script works for every input. Sandbox testing is optional.
+**Single callback** starts with empty state and bypasses request/body filters.
+**Exchange scenario** runs native selection, related edits and shared state through
+completion or a simulated upstream failure. Each phase explains whether it ran or
+was skipped. Scenarios use decoded request/response fixtures and controlled timing;
+they do not send traffic, authorize routes, resolve saved assets or verify transport.
+Both modes enforce live capabilities and use the candidate's parameter values.
 The draft’s native traffic scope stays visible beside the editor. **Script API**
 opens searchable bundled help and complete examples with required settings; the
 [repository reference](scripting.md) and MCP help use the same content.
