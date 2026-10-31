@@ -166,7 +166,10 @@ when changing the experience.
   actual runtime availability independently of configured activation. Reveal
   comparisons in a reachable surface, and preserve recoverable language drafts
   through later switches. Shared script saves compare with the loaded authoring
-  baseline and require an explicit reviewed choice on conflict.
+  baseline and require an explicit reviewed choice on conflict. Keep the draft's
+  native traffic scope visible beside its source. Single-callback sandbox results
+  explain skipped selection and lifecycle checks; bundled API help is available
+  without leaving the editor and is shared with agent help.
 
 ## Present evidence and failures honestly
 

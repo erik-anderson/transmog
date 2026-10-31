@@ -19,6 +19,64 @@ export async function checkScripts(page, root) {
   const fixture = async (values) =>
     page.evaluate((values) => Object.assign(globalThis.__workspaceFixture, values), values);
   await waitIdle();
+  assert.match(await scripts.locator(".script-scope").textContent(), /example.test/);
+  const helpButton = scripts.getByRole("button", { name: "Script API", exact: true });
+  const help = scripts.locator(".script-help-dialog");
+  await helpButton.click();
+  assert.equal(await help.evaluate((dialog) => dialog.matches(":modal")), true);
+  assert.match(await help.textContent(), /revision 2/);
+  await help.getByLabel("Search Script API", { exact: true }).fill("bypass");
+  assert.match(
+    await help.locator(".script-help-content").textContent(),
+    /fresh host with empty exchange state/,
+  );
+  await page.keyboard.press("Escape");
+  await page.waitForFunction(() =>
+    document
+      .querySelector("app-shell")
+      .shadowRoot.querySelector("script-editor")
+      .scriptHelpButton.matches(":focus"),
+  );
+  await helpButton.click();
+  await help.getByLabel("Search Script API", { exact: true }).fill("Upstream");
+  assert.match(await help.locator(".script-help-content").textContent(), /Failure categories/);
+  await help.getByLabel("Search Script API", { exact: true }).fill("no-such-help-section");
+  assert.match(await help.locator(".script-help-content").textContent(), /No matching help/);
+  await help.getByLabel("Search Script API", { exact: true }).fill("Complete examples");
+  for (const viewport of [
+    { width: 1440, height: 900 },
+    { width: 800, height: 600 },
+  ]) {
+    await page.setViewportSize(viewport);
+    assert.equal(await help.getByRole("button", { name: "Close", exact: true }).isVisible(), true);
+    assert.equal(await help.evaluate((dialog) => dialog.scrollWidth <= dialog.clientWidth), true);
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/script-help-${viewport.width}.png`),
+    });
+    await help.getByLabel("Search Script API", { exact: true }).fill("onFailed");
+    assert.equal(
+      await help
+        .locator(".script-help-table")
+        .evaluate((table) => table.scrollWidth <= table.clientWidth),
+      true,
+      "The phase contract requires horizontal scrolling",
+    );
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/script-help-events-${viewport.width}.png`),
+    });
+    await help.getByLabel("Search Script API", { exact: true }).fill("Complete examples");
+  }
+  await page.emulateMedia({ forcedColors: "active" });
+  await page.screenshot({
+    path: resolve(root, "../../../target/ui-check/script-help-forced-colors.png"),
+  });
+  await page.emulateMedia({ forcedColors: "none" });
+  await help.getByRole("button", { name: "Close", exact: true }).click();
+  await page.setViewportSize({ width: 1440, height: 900 });
+  assert.equal(
+    await scripts.getByLabel("Failure category (onFailed)", { exact: true }).inputValue(),
+    "Upstream",
+  );
   await scripts.evaluate((editor) => editor.validateScript());
   assert.match(await scripts.locator("output").textContent(), /source and capabilities are valid/);
   await checkMonacoIcons(scripts.locator(".monaco-editor-host").first());
@@ -32,6 +90,33 @@ export async function checkScripts(page, root) {
     }),
     [],
     "Default script API import has TypeScript errors",
+  );
+  assert.deepEqual(
+    await scripts.evaluate(async (editor) => {
+      const { getTypeScriptWorker } = await import("/monaco.js");
+      const examples = editor.allHelpSections.find((section) => section.id === "examples").examples;
+      const issues = [];
+      for (const [index, example] of examples.entries()) {
+        const model = editor.monaco.editor.createModel(
+          example.code,
+          "typescript",
+          editor.monaco.Uri.parse(`file:///script-help/example-${index}.ts`),
+        );
+        try {
+          const worker = await (await getTypeScriptWorker())(model.uri);
+          issues.push(
+            ...(await worker.getSemanticDiagnostics(model.uri.toString())).map(
+              (item) => item.messageText,
+            ),
+          );
+        } finally {
+          model.dispose();
+        }
+      }
+      return issues;
+    }),
+    [],
+    "Bundled help examples have TypeScript errors",
   );
   assert.ok(
     (await scripts.locator(".monaco-editor-host").first().boundingBox()).height >= 192,
@@ -126,6 +211,7 @@ export async function checkScripts(page, root) {
   );
   await scripts.locator(".script-settings > summary").click();
 
+  assert.match(await scripts.locator(".script-scope").textContent(), /sandbox.example.test/);
   // Optional sandbox automatically validates and describes its actual input and action.
   await scripts.locator(".script-test summary").first().click();
   await scripts
@@ -137,7 +223,7 @@ export async function checkScripts(page, root) {
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result").textContent(),
-    /Completed for this input.*onRequestHead.*Action: headers/s,
+    /Callback completed.*onRequestHead.*Action: headers.*Filters bypassed/s,
   );
   assert.deepEqual(
     await page.evaluate(() => {
@@ -649,7 +735,10 @@ export async function checkScripts(page, root) {
   const parameter = scripts.locator(".script-parameter").last();
   await parameter.getByLabel("Name", { exact: true }).fill("limit");
   await parameter.getByLabel("Type", { exact: true }).selectOption("integer");
+  await parameter.getByLabel("Default", { exact: true }).fill("1.5");
+  assert.match(await scripts.locator(".script-scope").textContent(), /Unavailable/);
   await parameter.getByLabel("Default", { exact: true }).fill("5");
+  assert.doesNotMatch(await scripts.locator(".script-scope").textContent(), /Unavailable/);
   await parameter.getByLabel("Use default", { exact: true }).uncheck();
   await parameter.getByLabel("Override", { exact: true }).fill("7");
   await scripts.getByRole("button", { name: "Save draft", exact: true }).click();

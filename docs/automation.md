@@ -129,10 +129,14 @@ output comparison. A successful validation, sandbox-test preparation or comparis
 can replace the latest compiled build without saving the editing draft or
 changing the applied build. Successful compilation does not prove that a sandbox
 can start or that the script works for every input. Sandbox testing is optional;
-its result identifies the handler, decision, state and evidence for that sample only.
+it invokes one callback in a fresh host with empty state and bypasses native
+request/body filters. Success does not establish live selection, preceding
+callbacks, route/asset resolution or transport behavior.
 Response status, response headers and local-response identity are editable test
 inputs. Tests enforce live capabilities and use the candidate's parameter values.
-See the [script API](scripting.md) for events, helpers, body admission and limits.
+The draft’s native traffic scope stays visible beside the editor. **Script API**
+opens searchable bundled help and complete examples with required settings; the
+[repository reference](scripting.md) and MCP help use the same content.
 Changing source, capabilities or test input marks earlier test results outdated.
 Samples can be authored or copied from a selected Traffic request with sensitive
 headers omitted.

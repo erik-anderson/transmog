@@ -37,8 +37,8 @@ pub use context::{
     ExchangeCancellation, ExchangeId, ExchangeMetadata, HookContext, OriginalTarget,
 };
 pub use failure::{
-    CompletedExchange, ExchangeFailure, ExchangeFailureKind, ExchangeStage, HookExecutionError,
-    HookInitError,
+    CompletedExchange, ExchangeFailure, ExchangeFailureCategory, ExchangeFailureKind,
+    ExchangeStage, HookExecutionError, HookInitError,
 };
 
 /// Boxed asynchronous hook result.

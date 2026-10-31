@@ -168,6 +168,31 @@ fn rule_summary() -> Value {
 )]
 pub(super) fn complete(tool: &mut ToolSpec) {
     match tool.name {
+        "transmog_help" => {
+            let phase = object(
+                json!({"handler":text(64),"input":text(256),"decisions":text(1024)}),
+                &["handler", "input", "decisions"],
+            );
+            let example = object(
+                json!({"title":text(128),"settings":text(4096),"code":text(65_536)}),
+                &["title", "settings", "code"],
+            );
+            let section = object(
+                json!({"id":text(64),"title":text(128),"paragraphs":array(text(4096),32),"phases":array(phase,6),"examples":array(example,16)}),
+                &["id", "title", "paragraphs", "phases", "examples"],
+            );
+            tool.output_schema = object(
+                json!({"topic":choice(&["scripts"]),"apiRevision":uint(u32::MAX.into()),"mcpSupport":text(4096),"failureCategories":array(text(64),32),"sections":array(section,16)}),
+                &[
+                    "topic",
+                    "apiRevision",
+                    "mcpSupport",
+                    "failureCategories",
+                    "sections",
+                ],
+            );
+        }
+
         "transmog_connect" | "transmog_status" => {
             tool.output_schema = object(
                 json!({"connected":flag(),"instanceId":instance(),"grant":grant(),"sensitiveAccess":disclosure(),"proxy":app_status(),"recordingActive":flag(),"limits":object(json!({"pageSize":uint(200),"bodyReadBytes":uint(65_536),"controlLeaseSeconds":uint(600)}), &["pageSize","bodyReadBytes","controlLeaseSeconds"])}),
@@ -220,6 +245,7 @@ pub(super) fn complete(tool: &mut ToolSpec) {
         "transmog_exchange_get" => {
             tool.output_schema["properties"]["context"] = super::context_ref();
             tool.output_schema["properties"]["inlineComplete"] = flag();
+            tool.output_schema["properties"]["terminalDetailsAvailable"] = flag();
             tool.output_schema["properties"]["requests"] = array(head(), 4);
             tool.output_schema["properties"]["responses"] = array(head(), 4);
             tool.output_schema["properties"]["bodies"] = array(body_metadata(), 4);
@@ -228,11 +254,11 @@ pub(super) fn complete(tool: &mut ToolSpec) {
                 "Measured request-relative timing; negative offsets precede request admission.",
             );
             tool.output_schema["properties"]["changes"] = open(
-                json!({"hooks":strings(),"headers":array(json!({"type":"object","description":"Recorded hook ID, name, phase, changed flag and changed header names; no credential values."}),1024),"bodies":array(json!({"type":"object","description":"Recorded literal replacement outcomes with revision attribution; no payloads."}),1024),"autoResponse":nullable(json!({"type":"object","description":"Recorded winning local response and its immutable revision."}))}),
+                json!({"hooks":strings(),"scripts":array(object(json!({"script":text(256),"phase":text(64),"contentAvailable":flag(),"annotationCount":count(),"diagnosticCount":count(),"annotations":array(object(json!({"note":text(2048),"tags":array(text(64),8),"severity":choice(&["info","warning","error"])}), &["note","tags","severity"]),16),"diagnostics":array(text(65_536),32)}), &["script","phase","contentAvailable","annotationCount","diagnosticCount"]),1024),"headers":array(json!({"type":"object","description":"Recorded hook ID, name, phase, changed flag and changed header names; no credential values."}),1024),"bodies":array(json!({"type":"object","description":"Recorded literal replacement outcomes with revision attribution; no payloads."}),1024),"autoResponse":nullable(json!({"type":"object","description":"Recorded winning local response and its immutable revision."}))}),
                 "Captured change attribution independent of current saved rules.",
             );
             tool.output_schema["properties"]["transport"] = open(
-                json!({"connections":array(json!({"type":"object","description":"Observed connection, protocol, TLS, setup and route evidence; no private TLS material."}),16),"routeSelection":maybe_text(),"routeAttempts":strings(),"diagnostics":strings(),"stream":nullable(json!({"type":"object","description":"Stream lifecycle, retention, loss and byte counters; no message payloads."})),"sequenceLoss":count()}),
+                json!({"connections":array(json!({"type":"object","description":"Observed connection, protocol, TLS, setup and route evidence; no private TLS material."}),16),"routeSelection":maybe_text(),"routeAttempts":strings(),"diagnostics":strings(),"diagnosticsAvailable":flag(),"stream":nullable(json!({"type":"object","description":"Stream lifecycle, retention, loss and byte counters; no message payloads."})),"sequenceLoss":count()}),
                 "Observed transport and stream context.",
             );
         }

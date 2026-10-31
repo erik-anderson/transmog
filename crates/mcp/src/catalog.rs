@@ -44,6 +44,13 @@ pub fn tool_catalog() -> Vec<ToolSpec> {
     let boundary = || json!({"type":"string","enum":["client-request","upstream-request","upstream-response","client-response"]});
     let mut tools = vec![
         spec(
+            "transmog_help",
+            "Read trusted bundled guidance for the installed script API: phases, capabilities, filters, sandbox limits, examples or exact types. Available without a desktop connection or access key. Scripts support conditional traffic changes; prefer native rules for fixed header/text changes. Help describes which script operations MCP actually supports; it does not enable script authoring tools.",
+            true,
+            json!({"topic":{"type":"string","enum":["scripts"]},"section":{"type":"string","enum":crate::help::section_names(),"default":"overview"}}),
+            &["topic"],
+        ),
+        spec(
             "transmog_sensitive_access_request",
             "Ask the user in Transmog for unredacted authentication headers and message bodies within this key's existing traffic scope. Requires an explicit reason. Creates one pending request; it grants nothing until the user chooses For next 1 minute or Always in the app. Ask the user to respond near the top of Transmog, then poll transmog_sensitive_access_status. Never assume approval or work around a denial.",
             false,

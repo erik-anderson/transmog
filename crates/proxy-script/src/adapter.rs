@@ -63,7 +63,7 @@ impl Shared {
         response: Option<&ResponseHead>,
         body: Option<&Bytes>,
         local: bool,
-        failure: Option<String>,
+        failure: Option<transmog_core::intercept::ExchangeFailureCategory>,
     ) -> Result<ScriptResult, ScriptFailure> {
         let mut state = self.state.lock().await;
         let mut event = invocation(
@@ -139,7 +139,7 @@ impl ScriptInterceptor {
         handler: ScriptHandler,
         request: RequestHead,
         response: Option<ResponseHead>,
-        failure: Option<String>,
+        failure: Option<transmog_core::intercept::ExchangeFailureCategory>,
     ) {
         if self.selected(handler) {
             match self
@@ -380,7 +380,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
                     ScriptHandler::Failed,
                     request,
                     None,
-                    Some(failure.kind.category().to_owned()),
+                    Some(failure.kind.category_kind()),
                 )
                 .await;
             }
@@ -817,7 +817,6 @@ pub fn prepare_invocation(
                 || b.bytes.len() > manifest.limits.max_input_body_bytes
         })
         || event.context.exchange_id.len() > 128
-        || event.failure.as_ref().is_some_and(|v| v.len() > 128)
         || event.state.len() > 128
         || serde_json::to_vec(&event.state).map_or(true, |v| v.len() > 64 * 1024)
     {

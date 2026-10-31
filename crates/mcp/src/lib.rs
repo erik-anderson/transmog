@@ -6,6 +6,7 @@ pub use access::{AccessKey, AccessManager, AccessStatus, Grant, GrantInput, Perm
 mod transport;
 pub use transport::{CallFuture, Endpoint, Handler, LocalClient, LocalServer};
 mod catalog;
+mod help;
 pub use catalog::{ToolSpec, tool_catalog};
 #[cfg(feature = "desktop")]
 mod application;

@@ -49,3 +49,26 @@ script-editor { display: contents; }
 
 .script-parameter label:has(input[type="checkbox"]) { display:flex; align-items:center; align-self:end; gap:.4rem; min-height:2rem; }
 .script-parameter input[type="checkbox"] { flex:none; width:auto; }
+
+.script-scope { overflow-wrap:anywhere; }
+.script-help-dialog { box-sizing:border-box; color:var(--text); background:var(--panel); border:1px solid var(--line-strong); border-radius:.5rem; font-size:.875rem; width:min(54rem,calc(100vw - 3rem)); max-height:calc(100dvh - 3rem); padding:1rem; overflow:auto; }
+.script-help-dialog[open] { display:flex; flex-direction:column; gap:.75rem; }
+.script-help-dialog header { display:flex; align-items:center; justify-content:space-between; gap:1rem; }
+.script-help-dialog h2 { margin:0; font-size:1rem; }
+.script-help-dialog label { display:flex; flex-direction:column; gap:.25rem; }
+.script-help-content { min-height:0; overflow:auto; overflow-wrap:anywhere; }
+.script-help-content > details { border-top:1px solid var(--line); padding:.65rem 0; }
+.script-help-content summary { cursor:pointer; font-weight:600; }
+.script-help-content p { line-height:1.5; }
+.script-help-content pre { max-height:none; user-select:text; }
+.script-help-table { overflow:auto; }
+.script-help-table table { width:100%; min-width:0; table-layout:fixed; border-collapse:collapse; font-size:.8125rem; }
+.script-help-table th, .script-help-table td { height:auto; padding:.4rem; text-align:start; vertical-align:top; white-space:normal; text-overflow:clip; border-bottom:1px solid var(--line); }
+.script-help-table th { position:static; font-size:inherit; text-transform:none; letter-spacing:0; }
+.script-help-table th:first-child { width:26%; }
+.script-help-table th:nth-child(2) { width:28%; }
+
+.script-help-dialog::backdrop { background:rgb(0 0 0 / .4); }
+.script-help-content h3 { font-size:1rem; margin:1rem 0 .5rem; }
+.script-help-content pre { font-size:.8125rem; }
+@media (forced-colors:active) { .script-help-dialog { border-color:CanvasText; } }

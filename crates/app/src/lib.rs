@@ -1144,6 +1144,11 @@ impl Application {
         self.scripts.test(candidate_id, invocation).await
     }
 
+    /// Returns bundled script guidance, including the installed API revision.
+    pub fn script_help(&self) -> serde_json::Value {
+        transmog_script::help()
+    }
+
     /// Returns the exact versioned TypeScript API declarations bundled in Rust.
     pub fn script_declarations(&self) -> &'static str {
         transmog_script::typescript_declarations()

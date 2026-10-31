@@ -70,7 +70,16 @@ impl Application {
             snapshot
                 .hook_effects
                 .iter()
-                .map(|item| format!("{item:?}"))
+                .map(|item| format!(
+                    "{} · {} ({}, position {}) · {:?} · {} · changed={}",
+                    item.sequence,
+                    item.interceptor.id.as_str(),
+                    item.interceptor.name,
+                    item.interceptor.chain_position,
+                    item.phase,
+                    inspector::hook_action_summary(&item.action),
+                    item.changed
+                ))
                 .collect::<Vec<_>>()
         );
         result["headerEffects"] =

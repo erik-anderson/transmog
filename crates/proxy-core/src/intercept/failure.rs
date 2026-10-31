@@ -52,16 +52,62 @@ pub enum ExchangeFailureKind {
     Shutdown,
 }
 
-impl ExchangeFailureKind {
-    /// Stable capture category, independent of operator-facing explanations.
+/// Stable failure names shared by script events and native capture evidence.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+pub enum ExchangeFailureCategory {
+    /// An interceptor could not be created.
+    HookInitialization,
+    /// A hook exceeded its deadline.
+    HookTimedOut,
+    /// A hook panicked.
+    HookPanicked,
+    /// A hook aborted with a policy reason.
+    #[serde(rename = "HookAborted(Policy)")]
+    HookAbortedPolicy,
+    /// A hook rejected the exchange.
+    #[serde(rename = "HookAborted(Rejected)")]
+    HookAbortedRejected,
+    /// The client or application cancelled the exchange.
+    Cancelled,
+    /// Body processing failed.
+    Body,
+    /// Request translation failed.
+    RequestTranslation,
+    /// Response translation failed.
+    ResponseTranslation,
+    /// Routing or destination authorization failed.
+    Route,
+    /// The upstream connection or protocol failed.
+    Upstream,
+    /// The runtime is shutting down.
+    Shutdown,
+}
+
+impl ExchangeFailureCategory {
+    /// All supported failure categories.
+    pub const ALL: &[Self] = &[
+        Self::HookInitialization,
+        Self::HookTimedOut,
+        Self::HookPanicked,
+        Self::HookAbortedPolicy,
+        Self::HookAbortedRejected,
+        Self::Cancelled,
+        Self::Body,
+        Self::RequestTranslation,
+        Self::ResponseTranslation,
+        Self::Route,
+        Self::Upstream,
+        Self::Shutdown,
+    ];
+    /// Stable case-sensitive wire name.
     #[must_use]
-    pub const fn category(&self) -> &'static str {
+    pub const fn as_str(self) -> &'static str {
         match self {
             Self::HookInitialization => "HookInitialization",
             Self::HookTimedOut => "HookTimedOut",
             Self::HookPanicked => "HookPanicked",
-            Self::HookAborted(HookAbort::Policy(_)) => "HookAborted(Policy)",
-            Self::HookAborted(HookAbort::Rejected) => "HookAborted(Rejected)",
+            Self::HookAbortedPolicy => "HookAborted(Policy)",
+            Self::HookAbortedRejected => "HookAborted(Rejected)",
             Self::Cancelled => "Cancelled",
             Self::Body => "Body",
             Self::RequestTranslation => "RequestTranslation",
@@ -69,6 +115,33 @@ impl ExchangeFailureKind {
             Self::Route => "Route",
             Self::Upstream => "Upstream",
             Self::Shutdown => "Shutdown",
+        }
+    }
+}
+
+impl ExchangeFailureKind {
+    /// Stable capture category, independent of operator-facing explanations.
+    #[must_use]
+    pub const fn category(&self) -> &'static str {
+        self.category_kind().as_str()
+    }
+
+    /// Typed category without the failure's diagnostic text.
+    #[must_use]
+    pub const fn category_kind(&self) -> ExchangeFailureCategory {
+        match self {
+            Self::HookInitialization => ExchangeFailureCategory::HookInitialization,
+            Self::HookTimedOut => ExchangeFailureCategory::HookTimedOut,
+            Self::HookPanicked => ExchangeFailureCategory::HookPanicked,
+            Self::HookAborted(HookAbort::Policy(_)) => ExchangeFailureCategory::HookAbortedPolicy,
+            Self::HookAborted(HookAbort::Rejected) => ExchangeFailureCategory::HookAbortedRejected,
+            Self::Cancelled => ExchangeFailureCategory::Cancelled,
+            Self::Body => ExchangeFailureCategory::Body,
+            Self::RequestTranslation => ExchangeFailureCategory::RequestTranslation,
+            Self::ResponseTranslation => ExchangeFailureCategory::ResponseTranslation,
+            Self::Route => ExchangeFailureCategory::Route,
+            Self::Upstream => ExchangeFailureCategory::Upstream,
+            Self::Shutdown => ExchangeFailureCategory::Shutdown,
         }
     }
 }

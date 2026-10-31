@@ -102,6 +102,9 @@ const authConversions = [
 ].map(([, id, label, hint, bare]) => ({ id, label, hint, acceptsBareBase64: bare === "true" }));
 assert.equal(authConversions.length, 8);
 const initial = JSON.parse(await readFile(resolve(root, "src/initial-state.json"), "utf8"));
+const scriptHelp = JSON.parse(
+  await readFile(resolve(root, "../../../crates/proxy-script/help.json"), "utf8"),
+);
 const scriptDeclarations = await readFile(
   resolve(root, "../../../crates/proxy-script/generated/transmog-script.d.ts"),
   "utf8",
@@ -212,7 +215,8 @@ await page.exposeFunction(
 );
 await page.addInitScript(
   (configuration) => {
-    const { workspace, networkProfiles, scriptDeclarations, authConversions } = configuration;
+    const { workspace, networkProfiles, scriptDeclarations, scriptHelp, authConversions } =
+      configuration;
     const caller = { kind: "local-process", processName: "Fixture", processId: 42 };
     const summary = (id, index = 0) => ({
       id,
@@ -4186,6 +4190,8 @@ await page.addInitScript(
               source: state.composerResultSource ?? null,
             };
           }
+          case "script_help":
+            return scriptHelp;
           case "script_declarations":
             return scriptDeclarations;
           case "script_runtime_status":
@@ -4421,6 +4427,7 @@ await page.addInitScript(
     authConversions,
     networkProfiles: initial.networkProfiles,
     scriptDeclarations,
+    scriptHelp,
     filterCatalog,
   },
 );

@@ -10,10 +10,12 @@
         <if condition="scriptActive"><button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady}}" @click="{disableScript()}">Pause script</button></if>
         <button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady || !scriptDirty}}" @click="{saveScript()}">Save draft</button><button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady || !scriptDirty}}" @click="{discardScript()}">Discard changes</button>
         <button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady}}" @click="{testScript()}" ?hidden="{{reviewingTypeScript}}">Test in sandbox</button>
+        <button w-ref="{scriptHelpButton}" type="button" class="secondary" ?disabled="{{!apiRevision}}" @click="{openScriptHelp()}">Script API</button>
         <button w-ref="{scriptMore}" type="button" class="secondary" popovertarget="script-actions-menu" ?disabled="{{scriptBusy || !scriptReady}}">More</button>
         <div id="script-actions-menu" w-ref="{scriptMenu}" class="table-popover script-menu" popover="auto" @toggle="{menuClosed(e)}"><button type="button" ?disabled="{{reviewingTypeScript}}" @click="{validateScript()}">Validate only</button><if condition="scriptActive"><button type="button" ?disabled="{{reviewingTypeScript}}" @click="{compareActiveScript()}">Compare with active</button></if><if condition="language == 'typescript'"><button type="button" @click="{editJavaScript()}">Edit JavaScript</button></if><if condition="language == 'javascript'"><button type="button" ?disabled="{{reviewingTypeScript || retainedSource == null}}" @click="{reviewTypeScript()}">Return to TypeScript…</button></if><button type="button" ?disabled="{{!scriptActive && !canResume}}" @click="{viewAppliedJavaScript()}">View applied JavaScript</button></div>
       </div>
       <p class="field-help">{{appliedBuildText}}</p>
+      <p class="field-help script-scope">Draft traffic scope: {{draftScope}}</p>
       <if condition="runtimeIssue"><section class="script-recovery" role="alert"><p>Applied script unavailable: {{runtimeIssue}}</p><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{retryScript()}">Retry applied script</button><span>Pause script stops its effects while you repair it.</span></section></if>
       <if condition="conflictVisible"><section class="script-recovery" role="alert"><p>The saved script changed in another window. Your draft is preserved. Compare both versions before replacing either.</p><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{compareSavedScript()}">Compare with saved script</button></section></if>
       <if condition="canUndoSavedLoad"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{restorePreviousDraft()}">Restore my previous draft</button></if>
@@ -72,16 +74,16 @@
   </details>
   <details class="script-test" @input="{markTestChanged()}" @change="{markTestChanged()}">
     <summary>Sandbox input and results</summary>
-    <p class="field-help">Test this input without sending a request. Saved parameter values and live capability checks apply.</p>
+    <p class="field-help">Invokes one callback in a fresh host with empty exchange state. Draft parameter values and live capability checks apply. Request and body filters are bypassed; success does not prove live selection, routing, response assets or transport behavior.</p>
     <div class="script-test-fields">
       <label>Test URL <input w-ref="{scriptTestUrl}" type="url" value="https://example.test/" maxlength="8192"></label>
       <label>Method <input w-ref="{scriptTestMethod}" value="GET" maxlength="32"></label>
       <label>Handler <select w-ref="{scriptTestHandler}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label>
       <label>Request headers <textarea w-ref="{scriptTestHeaders}" rows="3" maxlength="65536"></textarea></label>
-      <label>Response status <input w-ref="{scriptTestStatus}" type="number" value="200" min="200" max="599"></label>
+      <label>Response status <input w-ref="{scriptTestStatus}" type="number" value="200" min="100" max="599"></label>
       <label>Response headers <textarea w-ref="{scriptTestResponseHeaders}" rows="3" maxlength="65536"></textarea></label>
       <label><input w-ref="{scriptTestLocal}" type="checkbox"> Local response</label>
-      <label>Failure category (onFailed) <input w-ref="{scriptTestFailure}" value="upstream" maxlength="128"></label>
+      <label>Failure category (onFailed) <select w-ref="{scriptTestFailure}" aria-label="Failure category (onFailed)"><for each="category in failureCategories"><option value="{{category}}" ?selected="{{category == 'Upstream'}}">{{category}}</option></for></select></label>
       <label>Body <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>
     </div>
     <div class="actions"><button type="button" class="secondary" @click="{useSelectedTestRequest()}" ?disabled="{{!selection}}">Use selected Traffic request</button><span class="field-help">Copies the URL, method, and nonsensitive headers. Body input is cleared.</span></div>
@@ -92,5 +94,18 @@
     <div slot="actions" class="script-comparison-toolbar"><div class="actions"><if condition="conflictVisible"><button type="button" ?disabled="{{scriptBusy || !conflictReviewed}}" @click="{keepMyDraft()}">Keep my draft</button><button type="button" class="secondary" ?disabled="{{scriptBusy || !conflictReviewed}}" @click="{loadSavedDraft()}">Load saved draft</button></if><if condition="reviewingTypeScript"><button type="button" ?disabled="{{scriptBusy || !returnReady}}" @click="{useTypeScriptOutput()}">Use TypeScript output</button></if><button type="button" class="secondary" @click="{closeComparison()}">Close comparison</button><if condition="diffStale"><span>Active script or draft changed since this comparison. Compare again to refresh.</span></if></div><if condition="activeSettings"><details class="script-settings-diff"><summary>Compare settings and retained drafts</summary><div class="script-settings-columns"><section><h3>Left settings</h3><pre tabindex="0" data-copy-surface>{{activeSettings}}</pre></section><section><h3>Right settings</h3><pre tabindex="0" data-copy-surface>{{draftSettings}}</pre></section></div></details></if></div>
     <div w-ref="{scriptDiffEditor}" class="monaco-editor-host diff-editor" aria-label="Active and draft script comparison"></div>
   </editor-surface>
+  <dialog w-ref="{scriptHelpDialog}" class="script-help-dialog" aria-labelledby="script-help-heading" @keydown="{scriptHelpKeyboard(e)}" @close="{scriptHelpClosed()}">
+    <header><h2 id="script-help-heading">Script API · revision {{apiRevision}}</h2><button type="button" class="secondary" @click="{closeScriptHelp()}">Close</button></header>
+    <label>Search Script API <input w-ref="{scriptHelpSearch}" type="search" value="{{helpSearch}}" @input="{searchScriptHelp(e)}"></label>
+    <div class="script-help-content">
+      <if condition="!helpSections.length"><p>No matching help. Try a handler, capability or helper name.</p></if>
+      <for each="section in helpSections"><details key="{{section.id}}" ?open="{{helpSearch != ''}}"><summary>{{section.title}}</summary>
+        <for each="paragraph in section.paragraphs"><p>{{paragraph}}</p></for>
+        <if condition="section.phases.length"><div class="script-help-table" tabindex="0" aria-label="Handler contract"><table><thead><tr><th>Handler</th><th>Additional input</th><th>Decisions</th></tr></thead><tbody><for each="phase in section.phases"><tr><td><code>{{phase.handler}}</code></td><td>{{phase.input}}</td><td>{{phase.decisions}}</td></tr></for></tbody></table></div></if>
+        <if condition="section.id == 'evidence'"><p>Failure categories:</p><ul><for each="category in failureCategories"><li><code>{{category}}</code></li></for></ul></if>
+        <for each="example in section.examples"><h3>{{example.title}}</h3><p>{{example.settings}}</p><pre tabindex="0" data-copy-surface>{{example.code}}</pre></for>
+      </details></for>
+    </div>
+  </dialog>
 </section>
 </template>

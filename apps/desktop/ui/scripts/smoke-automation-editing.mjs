@@ -46,7 +46,7 @@ export async function smokeAutomationEditing(call, evaluate, screenshotPath, wai
     if(status.saved[0].source!==status.active[0].source)throw new Error('Enabled source was not saved as editing baseline');
     const source=editor.sourceEditor.getValue();editor.sourceEditor.setValue(source+'\\n// native edited version');await editor.activateScript();
     status=await invoke('script_status');if(!status.active[0].source.includes('native edited version')||status.saved[0].source!==status.active[0].source||editor.scriptDirty)throw new Error('One-click edited script activation failed');
-    editor.scriptTestUrl.value='https://example.test/';await editor.testScript();if(!editor.testResult.includes('Completed for this input'))throw new Error('Native sandbox result missing: '+editor.scriptText);
+    editor.scriptTestUrl.value='https://example.test/';await editor.testScript();if(!editor.testResult.includes('Callback completed')||!editor.testResult.includes('Filters bypassed'))throw new Error('Native sandbox result missing: '+editor.scriptText);
     editor.scriptTestUrl.value='https://example.test/changed';editor.markTestChanged();if(!editor.testOutdated)throw new Error('Native sandbox result was not invalidated');
     const good=structuredClone(status.active[0]);editor.sourceEditor.setValue('export function onRequestHead( {');await editor.activateScript();
     status=await invoke('script_status');if(status.active[0].source!==good.source||!editor.scriptDirty)throw new Error('Invalid source replaced the active script');

@@ -24,6 +24,12 @@ and stream payload reads follow the same unredacted-access setting as body reads
 Use a separate key for each agent. Anyone with a key can use its permissions;
 agent names alone do not authorize connections. Enabling MCP does not start capture.
 
+Bundled script guidance is available without connecting or starting the desktop:
+use `transmog_help` with `topic: "scripts"` and a section such as `examples`,
+`sandbox` or `types`. It includes the installed API revision and required settings.
+MCP can inspect script effects but cannot author, test or activate scripts.
+Use **Automation → Scripts → Script API** for the same reference in the app.
+
 The desktop must be running for traffic operations. Select **Start Transmog when
 needed** in the configuration dialog to let an explicit agent connection launch it.
 The CLI must be beside the desktop executable. This never enables MCP or starts capture.
@@ -32,8 +38,10 @@ The CLI must be beside the desktop executable. This never enables MCP or starts 
 
 **Redact authentication headers and bodies** is on by default. It hides
 credential-like header values and all message bodies from agents, including
-sensitive rule content. Human inspection is unchanged. Turning it off allows
-unredacted reads within the existing scope.
+sensitive rule content, script-authored findings and free-text failure diagnostics.
+Script attribution and counts remain visible; annotation text is excluded from
+metadata matching while redacted. Human inspection is unchanged. Turning it off
+allows unredacted reads within the existing scope.
 
 An agent can request unredacted values with a reason. Open its request badge on
 the top **MCP** indicator, review the agent and scope, then choose:

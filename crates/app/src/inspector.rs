@@ -43,6 +43,21 @@ pub struct ScriptReportView {
     pub diagnostics: Vec<String>,
 }
 
+// Findings have their own structured projection and disclosure policy. Never duplicate
+// script-authored strings into generic hook descriptions.
+pub(crate) fn hook_action_summary(action: &HookEffectAction) -> String {
+    match action {
+        HookEffectAction::ScriptReport(_) => "ScriptReport".into(),
+        HookEffectAction::Abort(transmog_core::intercept::HookAbort::Policy(_)) => {
+            "Abort(Policy)".into()
+        }
+        HookEffectAction::Abort(transmog_core::intercept::HookAbort::Rejected) => {
+            "Abort(Rejected)".into()
+        }
+        _ => format!("{action:?}"),
+    }
+}
+
 /// Display-safe ordered header field.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -784,11 +799,11 @@ pub(crate) fn detail_from_snapshot(
         .map(|effect| {
             display_text(
                 format!(
-                    "{} · {} · {:?} · {:?} · changed={}",
+                    "{} · {} · {:?} · {} · changed={}",
                     effect.sequence,
                     effect.interceptor.id.as_str(),
                     effect.phase,
-                    effect.action,
+                    hook_action_summary(&effect.action),
                     effect.changed
                 )
                 .as_bytes(),

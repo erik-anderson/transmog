@@ -434,3 +434,102 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_script() {
         );
     }
 }
+
+#[tokio::test]
+async fn bundled_help_examples_execute_with_the_documented_permissions() {
+    let help = transmog_script::help();
+    let examples = help["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["id"] == "examples")
+        .unwrap()["examples"]
+        .as_array()
+        .unwrap();
+    for (index, example) in examples.iter().enumerate() {
+        let source = example["code"].as_str().unwrap();
+        let mut manifest = compile(
+            "export function onRequestHead() { return { decision: { action: 'continue' } }; }",
+            500,
+        )
+        .manifest;
+        manifest.source_hash = source_hash(source.as_bytes());
+        manifest.capabilities = ScriptCapabilities::default();
+        manifest.prefilter.host = Some("example.test".into());
+        let mut input = invocation();
+        match index {
+            0 => {
+                manifest
+                    .capabilities
+                    .write_headers
+                    .insert("user-agent".into());
+            }
+            1 => {
+                manifest.handlers = BTreeSet::from([ScriptHandler::ResponseBody]);
+                manifest.capabilities.read_bodies = true;
+                manifest.capabilities.write_body = true;
+                manifest
+                    .capabilities
+                    .write_headers
+                    .insert("content-type".into());
+                manifest.response_body_filter.content_types = vec!["application/json".into()];
+                input.context.handler = ScriptHandler::ResponseBody;
+                input.response = Some(transmog_script::ScriptResponse {
+                    status: 200,
+                    headers: vec![],
+                });
+                input.body = Some(transmog_script::ScriptBody {
+                    bytes: br#"{"value":42}"#.to_vec(),
+                });
+            }
+            2 => {
+                manifest.capabilities.respond = true;
+                manifest.prefilter.path_prefix = Some("/fixture".into());
+                input.request.path = "/fixture".into();
+            }
+            3 => {
+                manifest.handlers.insert(ScriptHandler::Completed);
+                manifest.capabilities.annotate = true;
+                input.context.now_unix_ms = 100;
+            }
+            _ => panic!("Add execution coverage for the new help example"),
+        }
+        let compiled = compile_typescript(manifest, source).unwrap();
+        let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
+        let result = runner.invoke(input.clone()).await.unwrap();
+        match index {
+            0 => assert!(matches!(result.decision, ScriptAction::Edit { .. })),
+            1 => {
+                let ScriptAction::Edit { edits } = result.decision else {
+                    panic!("JSON edit")
+                };
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&edits.bytes.unwrap()).unwrap(),
+                    serde_json::json!({"original":{"value":42},"inspected":true})
+                );
+            }
+            2 => {
+                let ScriptAction::Response { response } = result.decision else {
+                    panic!("local response")
+                };
+                assert_eq!(response.status, 200);
+                assert_eq!(
+                    serde_json::from_slice::<serde_json::Value>(&response.bytes).unwrap(),
+                    serde_json::json!({"ready":true})
+                );
+            }
+            3 => {
+                input.state = result.state.unwrap();
+                input.context.handler = ScriptHandler::Completed;
+                input.context.now_unix_ms = 125;
+                input.response = Some(transmog_script::ScriptResponse {
+                    status: 200,
+                    headers: vec![],
+                });
+                let completed = runner.invoke(input).await.unwrap();
+                assert_eq!(completed.annotations[0].note, "Completed after 25 ms");
+            }
+            _ => unreachable!(),
+        }
+    }
+}

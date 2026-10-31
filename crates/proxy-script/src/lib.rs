@@ -534,6 +534,13 @@ pub fn typescript_declarations() -> &'static str {
     include_str!("../generated/transmog-script.d.ts")
 }
 
+/// Bundled, versioned script guidance shared by the editor and MCP connector.
+/// # Panics
+/// Panics if the bundled reference is invalid JSON; contract tests validate it.
+pub fn help() -> serde_json::Value {
+    serde_json::from_str(include_str!("../help.json")).expect("bundled script help")
+}
+
 /// One immutable header visible to a script.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -614,7 +621,7 @@ pub struct ScriptInvocation {
     pub local_response: bool,
     /// Terminal failure category; absent on successful/nonterminal events.
     #[serde(default)]
-    pub failure: Option<String>,
+    pub failure: Option<transmog_core::intercept::ExchangeFailureCategory>,
     /// Deterministic invocation context.
     pub context: ScriptContext,
     /// Final/effective request data.

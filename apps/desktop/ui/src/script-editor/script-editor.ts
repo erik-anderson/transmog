@@ -25,18 +25,38 @@ import type { EditorSurface } from "../editor-surface/editor-surface.js";
 import type * as Monaco from "monaco-editor/editor/editor.api";
 import { loadMonaco, waitForStyles } from "../editor-runtime.js";
 
-const SCRIPT_TEMPLATE = `import { pass, setHeader } from "transmog:api";
-import type { RequestHeadEvent, RequestHeadResult } from "transmog:api";
-
-export function onRequestHead(event: RequestHeadEvent): RequestHeadResult {
-  if (event.request.host === "example.test") {
-    return { decision: { action: "edit", edits: {
-      headers: [setHeader("User-Agent", "Transmog/1.0")],
-    } } };
-  }
-  return pass();
+interface ScriptHelpSection {
+  id: string;
+  title: string;
+  paragraphs: string[];
+  phases: Array<{ handler: string; input: string; decisions: string }>;
+  examples: Array<{ title: string; settings: string; code: string }>;
 }
-`;
+interface ScriptHelp {
+  apiRevision: number;
+  failureCategories: string[];
+  sections: ScriptHelpSection[];
+}
+function trafficScope(draft: ScriptDraft): string {
+  const filters = draft.prefilter;
+  const scope = [
+    filters.method || "all methods",
+    filters.host || "all hosts",
+    filters.pathPrefix ? `path starts with ${filters.pathPrefix}` : "all paths",
+  ];
+  if (draft.handlers.includes("onRequestBody")) {
+    scope.push(
+      `request bodies: ${draft.requestBodyFilter.contentTypes.join(", ") || "all media types"}`,
+    );
+  }
+  if (draft.handlers.includes("onResponseBody")) {
+    const body = draft.responseBodyFilter;
+    scope.push(
+      `response bodies: ${body.contentTypes.join(", ") || "all media types"}; ${body.statuses.join(", ") || "all statuses"}; ${body.includeLocal ? "including" : "excluding"} local responses`,
+    );
+  }
+  return scope.join(" · ");
+}
 interface ParameterRow {
   id: number;
   name: string;
@@ -59,6 +79,15 @@ export class ScriptEditor extends WorkspaceElement {
   @attr theme = "system";
   @attr({ mode: "boolean" }) active = false;
   @observable selection: SelectedResponse | null = null;
+  @observable apiRevision = 0;
+  @observable failureCategories: string[] = [];
+  @observable helpSections: ScriptHelpSection[] = [];
+  @observable helpSearch = "";
+  @observable draftScope = "Loading filters…";
+  private allHelpSections: ScriptHelpSection[] = [];
+  scriptHelpDialog!: HTMLDialogElement;
+  scriptHelpButton!: HTMLButtonElement;
+  scriptHelpSearch!: HTMLInputElement;
   @observable language: ScriptLanguage = "typescript";
   @observable reviewingTypeScript = false;
   @observable authoringStatus = "";
@@ -117,7 +146,7 @@ export class ScriptEditor extends WorkspaceElement {
   scriptTestResponseHeaders!: HTMLTextAreaElement;
   scriptTestStatus!: HTMLInputElement;
   scriptTestLocal!: HTMLInputElement;
-  scriptTestFailure!: HTMLInputElement;
+  scriptTestFailure!: HTMLSelectElement;
   scriptTestHandler!: HTMLSelectElement;
   scriptMenu!: HTMLDivElement;
   scriptMore!: HTMLButtonElement;
@@ -149,6 +178,39 @@ export class ScriptEditor extends WorkspaceElement {
     this.themeChanged();
   };
 
+  openScriptHelp(): void {
+    this.scriptHelpDialog.showModal();
+    this.scriptHelpSearch.focus();
+  }
+  scriptHelpKeyboard(event: KeyboardEvent): void {
+    event.stopPropagation();
+    if (event.key === "Escape" && !event.isComposing) {
+      event.preventDefault();
+      this.closeScriptHelp();
+    }
+  }
+  closeScriptHelp(): void {
+    this.scriptHelpDialog.close();
+  }
+  scriptHelpClosed(): void {
+    if (this.active && this.isConnected) {
+      this.scriptHelpButton.focus();
+    }
+  }
+  searchScriptHelp(event: Event): void {
+    this.helpSearch = (event.target as HTMLInputElement).value;
+    const search = this.helpSearch.trim().toLocaleLowerCase();
+    this.helpSections = this.allHelpSections.filter((section) => {
+      const text = [
+        section.title,
+        ...section.paragraphs,
+        ...section.phases.flatMap((phase) => [phase.handler, phase.input, phase.decisions]),
+        ...section.examples.flatMap((example) => [example.title, example.settings, example.code]),
+        ...(section.id === "evidence" ? this.failureCategories : []),
+      ];
+      return text.join(" ").toLocaleLowerCase().includes(search);
+    });
+  }
   markScriptChanged(): void {
     this.editVersion++;
     this.returnReady = false;
@@ -179,10 +241,12 @@ export class ScriptEditor extends WorkspaceElement {
       this.settingsError = "";
     } catch (error) {
       this.settingsError = describeError(error);
+      this.draftScope = "Unavailable until settings errors are resolved.";
       this.scriptDirty = true;
       this.scriptUnapplied = true;
       return;
     }
+    this.draftScope = trafficScope(draft);
     const fingerprint = scriptFingerprint(draft);
     this.scriptDirty = fingerprint !== this.savedFingerprint;
     this.scriptUnapplied = scriptExecutionFingerprint(draft) !== this.activeFingerprint;
@@ -371,6 +435,7 @@ export class ScriptEditor extends WorkspaceElement {
       void this.ensureEditor();
       this.scheduleRuntimeRefresh();
     } else {
+      this.scriptHelpDialog?.close();
       this.stopRuntimeRefresh();
     }
   }
@@ -413,6 +478,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   disconnectedCallback(): void {
+    this.scriptHelpDialog?.close();
     this.editVersion++;
     this.testVersion++;
     this.scriptReady = false;
@@ -438,14 +504,20 @@ export class ScriptEditor extends WorkspaceElement {
       { ModuleKind, ModuleResolutionKind, ScriptTarget, typescriptDefaults, javascriptDefaults },
       declarations,
       status,
+      help,
     ] = await Promise.all([
       loadMonaco(),
       invoke<string>("script_declarations"),
       invoke<ScriptStatus>("script_status"),
+      invoke<ScriptHelp>("script_help"),
     ]);
     if (!this.isConnected) {
       return;
     }
+    this.apiRevision = help.apiRevision;
+    this.failureCategories = help.failureCategories;
+    this.helpSections = help.sections;
+    this.allHelpSections = help.sections;
     this.editorLoaded = true;
     this.$flushUpdates();
     await waitForStyles(this.monacoStyles);
@@ -467,7 +539,7 @@ export class ScriptEditor extends WorkspaceElement {
     });
     this.declarationsDisposable = typescriptDefaults.addExtraLib(
       declarations,
-      "file:///transmog-script-api/v1.d.ts",
+      `file:///transmog-script-api/v${help.apiRevision}.d.ts`,
     );
     javascriptDefaults.setCompilerOptions({
       ...typescriptDefaults.getCompilerOptions(),
@@ -477,7 +549,7 @@ export class ScriptEditor extends WorkspaceElement {
     this.javascriptDeclarationsDisposable?.dispose();
     this.javascriptDeclarationsDisposable = javascriptDefaults.addExtraLib(
       declarations,
-      "file:///transmog-script-api/v1.d.ts",
+      `file:///transmog-script-api/v${help.apiRevision}.d.ts`,
     );
     const draft = editingDraft(status);
     this.loadedDraft = draft ?? null;
@@ -487,7 +559,8 @@ export class ScriptEditor extends WorkspaceElement {
     this.conflictVisible = false;
     this.sourceLabel = this.language === "typescript" ? "TypeScript source" : "JavaScript source";
     this.draftModel = this.monaco!.editor.createModel(
-      draft?.source ?? SCRIPT_TEMPLATE,
+      draft?.source ??
+        help.sections.find((section) => section.id === "examples")!.examples[0]!.code,
       draft?.language ?? "typescript",
       this.monaco!.Uri.parse(
         `file:///transmog-scripts/draft/main.${draft?.language === "javascript" ? "js" : "ts"}`,
@@ -701,7 +774,7 @@ export class ScriptEditor extends WorkspaceElement {
         return;
       }
       this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
-      this.testResult = `Completed for this input · ${handler} · Action: ${result.decision.action}`;
+      this.testResult = `Callback completed · ${handler} · Action: ${result.decision.action} · Filters bypassed`;
       this.testEvidence = `${input.method} ${input.url}\n${handler.startsWith("onResponse") ? `Response fixture: ${input.status}\n${input.responseHeaders}\n` : ""}${input.headers ? `Request headers:\n${input.headers}\n` : ""}${handler.endsWith("Body") ? `Input body:\n${input.body}\n` : ""}\nReturned result:\n${JSON.stringify(result, null, 2)}`;
       if (this.testEvidence.length > 32768) {
         this.testEvidence =
@@ -710,7 +783,7 @@ export class ScriptEditor extends WorkspaceElement {
       this.feedback(
         this.testOutdated
           ? "Sandbox completed for earlier edits or input. Run it again to check the current version."
-          : "Sandbox completed for this input. No request was sent; the script was not enabled.",
+          : "Callback completed with empty exchange state. Filters were bypassed. No request was sent; the script was not enabled.",
       );
     } catch (error: unknown) {
       if (this.current(version) && testVersion === this.testVersion) {
@@ -1050,7 +1123,7 @@ export class ScriptEditor extends WorkspaceElement {
         ? `Paused - applied build ${applied.manifest.revision}`
         : "Paused";
     this.appliedBuildText = applied
-      ? `Applied build ${applied.manifest.revision}${active ? " is selected for live traffic." : " is paused."}`
+      ? `Applied build ${applied.manifest.revision}${active ? " is enabled" : " is paused"} · ${trafficScope(activeDraft(applied))}`
       : "No applied build.";
     this.updateRuntimeStatus(status.runtimes ?? []);
     const fingerprint = active ? scriptExecutionFingerprint(activeDraft(active)) : "";

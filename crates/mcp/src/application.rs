@@ -300,6 +300,9 @@ impl AgentApplication {
         input: Value,
     ) -> Result<Value, Error> {
         validate_arguments(operation, &input)?;
+        if operation == "transmog_help" {
+            return Ok(crate::help::read(&input));
+        }
         if operation == "transmog_sensitive_access_request" {
             return self
                 .access
@@ -518,6 +521,7 @@ impl AgentApplication {
             fields.remove("authRevisions");
         }
         mask_headers(&mut detail, grant.allows(Permission::ReadCredentials));
+        project_script_reports(&mut detail, grant);
         Ok(detail)
     }
 
@@ -1297,6 +1301,44 @@ fn mask_headers(value: &mut Value, reveal: bool) {
             }
         }
         _ => {}
+    }
+}
+// Scripts can copy any accessible header or body into a finding. Treat the entire
+// payload as sensitive rather than attempting to recognize secrets in free text.
+fn can_read_script_reports(grant: &Grant) -> bool {
+    grant.allows(Permission::ReadCredentials) && grant.allows(Permission::ReadBodies)
+}
+fn project_script_reports(detail: &mut Value, grant: &Grant) {
+    let reveal = can_read_script_reports(grant);
+    // Script exceptions and abort reasons also enter native diagnostic strings.
+    // Preserve structural state while withholding free text through every view.
+    detail["diagnosticsAvailable"] = json!(reveal);
+    detail["terminalDetailsAvailable"] = json!(reveal);
+    if !reveal {
+        detail["diagnostics"] = json!([]);
+        detail["terminal"] = detail["terminalState"].clone();
+    }
+    if let Some(reports) = detail
+        .get_mut("scriptReports")
+        .and_then(Value::as_array_mut)
+    {
+        for report in reports {
+            report["contentAvailable"] = json!(reveal);
+            report["annotationCount"] = json!(report["annotations"].as_array().map_or(0, Vec::len));
+            report["diagnosticCount"] = json!(report["diagnostics"].as_array().map_or(0, Vec::len));
+            if !reveal {
+                let fields = report.as_object_mut().expect("script report");
+                fields.remove("annotations");
+                fields.remove("diagnostics");
+            }
+        }
+    }
+}
+fn script_search_permissions(grant: &Grant, input: &Value) -> Vec<Permission> {
+    if can_read_script_reports(grant) && input["query"]["search"].is_string() {
+        vec![Permission::ReadCredentials, Permission::ReadBodies]
+    } else {
+        Vec::new()
     }
 }
 fn hide_bodies(detail: &mut Value) {

@@ -2,10 +2,14 @@ use crate::Connector;
 use rmcp::{ServiceExt as _, model::CallToolRequestParams};
 
 #[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "One offline MCP session verifies discovery, static help and authorization failures."
+)]
 async fn stdio_discovery_initializes_without_desktop_or_key_and_calls_explain_setup() {
     let root = tempfile::tempdir().unwrap();
     let (server_io, client_io) = tokio::io::duplex(128 * 1024);
-    let connector = Connector::new(root.path().into(), String::new(), false);
+    let connector = Connector::new(root.path().into(), String::new(), true);
     let server = tokio::spawn(async move {
         rmcp::ServiceExt::serve(connector, server_io)
             .await
@@ -58,6 +62,44 @@ async fn stdio_discovery_initializes_without_desktop_or_key_and_calls_explain_se
             .iter()
             .any(|tool| tool.name == "transmog_connect")
     );
+    let help_spec = crate::tool_catalog()
+        .into_iter()
+        .find(|spec| spec.name == "transmog_help")
+        .unwrap();
+    for section in crate::help::section_names() {
+        let response = client
+            .call_tool(
+                CallToolRequestParams::new("transmog_help").with_arguments(
+                    serde_json::json!({"topic":"scripts","section":section})
+                        .as_object()
+                        .unwrap()
+                        .clone(),
+                ),
+            )
+            .await
+            .unwrap();
+        assert_ne!(response.is_error, Some(true));
+        let help = response.structured_content.unwrap();
+        crate::catalog::validation::validate(&help_spec.output_schema, &help).unwrap();
+        assert_eq!(help["apiRevision"], 2);
+        assert!(help["mcpSupport"].as_str().unwrap().contains("cannot"));
+        assert_ne!(
+            help["sections"].as_array().unwrap().as_slice(),
+            &[] as &[serde_json::Value]
+        );
+    }
+    let invalid_help = client
+        .call_tool(
+            CallToolRequestParams::new("transmog_help").with_arguments(
+                serde_json::json!({"topic":"scripts","section":"invented"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await
+        .unwrap();
+    assert_eq!(invalid_help.is_error, Some(true));
     let response = client
         .call_tool(CallToolRequestParams::new("transmog_status"))
         .await

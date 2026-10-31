@@ -24,6 +24,7 @@ impl AgentApplication {
         let filters = &input["query"];
         let mut query = SessionQueryInput {
             search: optional_string(filters, "search")?,
+            exclude_script_annotations: !can_read_script_reports(grant),
             method: optional_string(filters, "method")?,
             host: optional_string(filters, "host")?,
             terminal: filters["terminal"].as_bool(),
@@ -238,7 +239,12 @@ impl AgentApplication {
             }
             cursor.to_owned()
         } else {
-            self.save_snapshot(grant, self.scoped_ids(grant, input)?, Vec::new(), None)?
+            self.save_snapshot(
+                grant,
+                self.scoped_ids(grant, input)?,
+                script_search_permissions(grant, input),
+                None,
+            )?
         };
         self.read_snapshot(grant, &cursor, limit)
     }
@@ -260,6 +266,7 @@ impl AgentApplication {
                 .expect("exchange context")
                 .remove("authRevisions");
             mask_headers(&mut complete, grant.allows(Permission::ReadCredentials));
+            project_script_reports(&mut complete, grant);
             hide_bodies(&mut complete);
             for side in ["requests", "responses"] {
                 if let Some(heads) = complete[side].as_array_mut() {
@@ -282,11 +289,14 @@ impl AgentApplication {
                 .application
                 .copy_message_url(string(input, "id")?, "client-request")
                 .map_err(app_error)?;
-            let required = if grant.allows(Permission::ReadCredentials) {
+            let mut required = if grant.allows(Permission::ReadCredentials) {
                 vec![Permission::Inspect, Permission::ReadCredentials]
             } else {
                 vec![Permission::Inspect]
             };
+            if can_read_script_reports(grant) {
+                required.push(Permission::ReadBodies);
+            }
             Some(self.context_json(
                 grant,
                 &complete,
@@ -298,7 +308,7 @@ impl AgentApplication {
         } else {
             None
         };
-        let mut result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"]});
+        let mut result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"],"terminalDetailsAvailable":detail["terminalDetailsAvailable"]});
         if sections.contains(&"headers") || sections.contains(&"all") {
             result["requests"] = detail["requests"].take();
             result["responses"] = detail["responses"].take();
@@ -310,10 +320,10 @@ impl AgentApplication {
             result["timing"] = json!({"points":detail["performance"]["points"],"work":detail["performance"]["work"],"protocols":detail["performance"]["protocols"]});
         }
         if sections.contains(&"changes") || sections.contains(&"all") {
-            result["changes"] = json!({"hooks":detail["hookEffects"],"headers":detail["headerEffects"],"bodies":detail["bodyEdits"],"autoResponse":detail["autoResponse"]});
+            result["changes"] = json!({"hooks":detail["hookEffects"],"scripts":detail["scriptReports"],"headers":detail["headerEffects"],"bodies":detail["bodyEdits"],"autoResponse":detail["autoResponse"]});
         }
         if sections.contains(&"transport") || sections.contains(&"all") {
-            result["transport"] = json!({"connections":detail["performance"]["transports"],"routeSelection":detail["routeSelection"],"routeAttempts":detail["routeAttempts"],"diagnostics":detail["diagnostics"],"stream":detail["stream"],"sequenceLoss":detail["sequenceLoss"]});
+            result["transport"] = json!({"connections":detail["performance"]["transports"],"routeSelection":detail["routeSelection"],"routeAttempts":detail["routeAttempts"],"diagnostics":detail["diagnostics"],"diagnosticsAvailable":detail["diagnosticsAvailable"],"stream":detail["stream"],"sequenceLoss":detail["sequenceLoss"]});
         }
         if let Some(context) = context {
             result["context"] = context;
@@ -321,7 +331,7 @@ impl AgentApplication {
         if result.get("context").is_some()
             && serde_json::to_vec(&result).is_ok_and(|bytes| bytes.len() > 512 * 1024)
         {
-            result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"],"context":result["context"],"inlineComplete":false});
+            result = json!({"instanceId":self.instance_id,"id":detail["id"],"requestNumber":detail["requestNumber"],"startedAt":detail["startedAt"],"terminal":detail["terminal"],"terminalState":detail["terminalState"],"terminalDetailsAvailable":detail["terminalDetailsAvailable"],"context":result["context"],"inlineComplete":false});
         }
         bounded(result, 512 * 1024)
     }
@@ -410,7 +420,7 @@ impl AgentApplication {
         let matched: HashSet<_> = result.ids.iter().collect();
         let ids = ids.into_iter().filter(|id| matched.contains(id)).collect();
         let coverage = json!({"examined":result.examined,"binaryBodies":result.binary_bodies,"unavailableBodies":result.unavailable_bodies});
-        let mut required = Vec::new();
+        let mut required = script_search_permissions(grant, input);
         if sensitive_search {
             required.push(Permission::ReadBodies);
         }
@@ -454,7 +464,8 @@ impl AgentApplication {
             }
             let timed_out = tokio::time::Instant::now() >= deadline;
             if !ids.is_empty() || timed_out {
-                let cursor = self.save_snapshot(grant, ids, Vec::new(), None)?;
+                let cursor =
+                    self.save_snapshot(grant, ids, script_search_permissions(grant, input), None)?;
                 let mut result =
                     self.read_snapshot(grant, &cursor, index(input, "limit", 50, 200)?)?;
                 result["timedOut"] = json!(timed_out && result["totalMatched"] == 0);

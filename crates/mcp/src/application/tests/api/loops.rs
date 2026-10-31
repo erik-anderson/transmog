@@ -475,3 +475,213 @@ async fn decoded_binary_context_is_lossless_and_incomplete_sources_are_not_docum
     );
     h.adapter.application.shutdown().await.unwrap();
 }
+
+#[tokio::test]
+#[allow(
+    clippy::too_many_lines,
+    reason = "Exercises one disclosure lifecycle across inline, paged and searched evidence."
+)]
+async fn script_findings_follow_disclosure_in_changes_context_search_and_later_pages() {
+    use transmog_core::intercept::{
+        HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
+        ScriptAnnotation, ScriptReport, ScriptSeverity,
+    };
+    let h = fixture();
+    let owner = full(&h);
+    let mut entries = Vec::new();
+    for name in ["script-one", "script-two"] {
+        let sent = send(&h, &owner, name).await;
+        let id = transmog_core::intercept::ExchangeId(
+            u128::from_str_radix(sent["id"].as_str().unwrap(), 16).unwrap(),
+        );
+        let catalog = h.adapter.application.session_service().catalog();
+        let mut snapshot = catalog.get(id).unwrap();
+        let imported_id = transmog_core::intercept::ExchangeId(id.0 + 1000);
+        snapshot.exchange_id = imported_id;
+        Arc::make_mut(&mut snapshot.metadata).exchange_id = imported_id;
+        snapshot.hook_effects = vec![HookEffect {
+            sequence: 1,
+            interceptor: InterceptorIdentity {
+                id: InterceptorId::new("user-script@7"),
+                name: "User script".into(),
+                chain_position: 0,
+            },
+            phase: HookPhase::Completed,
+            action: HookEffectAction::ScriptReport(ScriptReport {
+                annotations: vec![ScriptAnnotation {
+                    note: "script-secret-note".into(),
+                    tags: vec!["script-secret-tag".into()],
+                    severity: ScriptSeverity::Warning,
+                }],
+                diagnostics: vec!["script-secret-diagnostic".into()],
+            }),
+            changed: false,
+        }];
+        snapshot.hook_effects.push(HookEffect {
+            sequence: 2,
+            interceptor: snapshot.hook_effects[0].interceptor.clone(),
+            phase: HookPhase::ResponseHead,
+            action: HookEffectAction::Abort(transmog_core::intercept::HookAbort::Policy(
+                "script-secret-abort".into(),
+            )),
+            changed: false,
+        });
+        snapshot.terminal = Some(transmog_session::SessionTerminal::Failed(
+            transmog_core::intercept::ExchangeFailure {
+                metadata: snapshot.metadata.clone(),
+                stage: transmog_core::intercept::ExchangeStage::ResponseHead,
+                kind: transmog_core::intercept::ExchangeFailureKind::HookAborted(
+                    transmog_core::intercept::HookAbort::Policy("script-secret-abort".into()),
+                ),
+                request_committed: true,
+                response_committed: false,
+                message: "script-secret-exception".into(),
+            },
+        ));
+        catalog.import_sessions(vec![snapshot]).unwrap();
+        let sent = json!({"id":format!("{:032x}", imported_id.0)});
+        // Human inspection retains the original report, without duplicating it in hook text.
+        let detail = h
+            .adapter
+            .application
+            .session_detail(sent["id"].as_str().unwrap())
+            .unwrap();
+        assert_eq!(
+            detail.script_reports[0].annotations[0].note,
+            "script-secret-note"
+        );
+        assert!(!detail.hook_effects.join(" ").contains("script-secret"));
+        entries.push(sent);
+    }
+    let (reader, key) = h
+        .access
+        .create(GrantInput {
+            omit_sensitive_values: true,
+            name: "Redacted script reader".into(),
+            permissions: [Permission::Inspect].into_iter().collect(),
+            scope: Scope::All,
+            expires_at: None,
+        })
+        .unwrap();
+    let input = json!({"id":entries[0]["id"],"include":["all"]});
+    let redacted = h
+        .call(&reader, "transmog_exchange_get", input.clone())
+        .await
+        .unwrap();
+    contract("transmog_exchange_get", &redacted);
+    assert!(!redacted.to_string().contains("script-secret"));
+    let report = &redacted["changes"]["scripts"][0];
+    assert_eq!(report["script"], "user-script@7");
+    assert_eq!(report["annotationCount"], 1);
+    assert_eq!(report["diagnosticCount"], 1);
+    assert_eq!(report["contentAvailable"], false);
+    assert!(report.get("annotations").is_none());
+    let complete = context_bytes(&h, &reader, &redacted["context"]).await;
+    assert!(
+        !String::from_utf8(complete)
+            .unwrap()
+            .contains("script-secret")
+    );
+    for needle in ["script-secret-note", "script-secret-tag"] {
+        let result = h
+            .call(
+                &reader,
+                "transmog_traffic_list",
+                json!({"query":{"search":needle}}),
+            )
+            .await
+            .unwrap();
+        assert_eq!(result["totalMatched"], 0);
+    }
+    let approval = h
+        .access
+        .request_sensitive_access(&reader, "Inspect script findings")
+        .unwrap();
+    let approval_id = approval["request"]["id"].as_str().unwrap();
+    h.access
+        .decide_sensitive_access(approval_id, "minute")
+        .unwrap();
+    let allowed = h.access.authenticate(key.expose()).unwrap();
+    let revealed = h
+        .call(&allowed, "transmog_exchange_get", input.clone())
+        .await
+        .unwrap();
+    contract("transmog_exchange_get", &revealed);
+    assert_eq!(revealed["changes"]["scripts"][0]["contentAvailable"], true);
+    for needle in [
+        "script-secret-note",
+        "script-secret-tag",
+        "script-secret-diagnostic",
+        "script-secret-exception",
+        "script-secret-abort",
+    ] {
+        assert!(revealed.to_string().contains(needle));
+        assert!(
+            String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
+                .unwrap()
+                .contains(needle)
+        );
+    }
+    let matches = h
+        .call(
+            &allowed,
+            "transmog_traffic_list",
+            json!({"query":{"search":"script-secret"},"limit":1}),
+        )
+        .await
+        .unwrap();
+    assert_eq!(matches["totalMatched"], 2);
+    assert!(matches["nextCursor"].is_string());
+    // Either disclosure permission is necessary even if the grant revision is unchanged.
+    for permission in [Permission::ReadBodies, Permission::ReadCredentials] {
+        let mut restricted = allowed.clone();
+        restricted.permissions.remove(&permission);
+        assert!(
+            h.call(
+                &restricted,
+                "transmog_context_read",
+                json!({"contextId":revealed["context"]["contextId"]})
+            )
+            .await
+            .is_err()
+        );
+        assert!(
+            h.call(
+                &restricted,
+                "transmog_traffic_list",
+                json!({"cursor":matches["nextCursor"]})
+            )
+            .await
+            .is_err()
+        );
+    }
+    h.access.revoke_sensitive_access(approval_id).unwrap();
+    let revoked = h.access.authenticate(key.expose()).unwrap();
+    assert_eq!(revoked.revision, allowed.revision);
+    assert!(
+        h.call(
+            &revoked,
+            "transmog_context_read",
+            json!({"contextId":revealed["context"]["contextId"]})
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        h.call(
+            &revoked,
+            "transmog_traffic_list",
+            json!({"cursor":matches["nextCursor"]})
+        )
+        .await
+        .is_err()
+    );
+    assert!(
+        !h.call(&revoked, "transmog_exchange_get", input)
+            .await
+            .unwrap()
+            .to_string()
+            .contains("script-secret")
+    );
+    h.adapter.application.shutdown().await.unwrap();
+}

@@ -46,7 +46,22 @@ declare module "transmog:api" {
     Readonly<{ response: Response; body: Body; failure: null }>;
   export type CompletedEvent = EventBase &
     Readonly<{ response: Response; body: null; failure: null }>;
-  export type FailedEvent = EventBase & Readonly<{ response: null; body: null; failure: string }>;
+  /** Stable, case-sensitive terminal failure names; native descriptions are withheld. */
+  export type FailureCategory =
+    | "HookInitialization"
+    | "HookTimedOut"
+    | "HookPanicked"
+    | "HookAborted(Policy)"
+    | "HookAborted(Rejected)"
+    | "Cancelled"
+    | "Body"
+    | "RequestTranslation"
+    | "ResponseTranslation"
+    | "Route"
+    | "Upstream"
+    | "Shutdown";
+  export type FailedEvent = EventBase &
+    Readonly<{ response: null; body: null; failure: FailureCategory }>;
   export type HeaderOperation =
     | Readonly<{ operation: "set" | "append"; name: string; value: string }>
     | Readonly<{ operation: "remove"; name: string }>;

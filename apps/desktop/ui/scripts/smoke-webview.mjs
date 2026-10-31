@@ -10,6 +10,7 @@ import { smokeUserAgent } from "./smoke-user-agent.mjs";
 import { smokeStreams } from "./smoke-streams.mjs";
 import { smokeBodyEditor } from "./smoke-body-editor.mjs";
 import { smokeAutomationEditing } from "./smoke-automation-editing.mjs";
+import { smokeScriptHelp } from "./smoke-script-help.mjs";
 import { smokeMcp } from "./smoke-mcp.mjs";
 import { smokeAutoResponseFiles, smokeAutoResponseDragging } from "./smoke-autoresponses.mjs";
 
@@ -913,6 +914,7 @@ try {
     );
   }
   result.networkSettings = await smokeNetworkSettings(call, evaluate, screenshotPath);
+  result.scriptHelp = await smokeScriptHelp(call, evaluate, screenshotPath);
   result.mcp = await smokeMcp(call, evaluate, screenshotPath);
   result.extensions = await smokeExtensions(call, evaluate, screenshotPath, visualizerTracePath);
   result.about = await smokeAbout(call, evaluate, screenshotPath);

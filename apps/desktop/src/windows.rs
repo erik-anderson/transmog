@@ -824,6 +824,11 @@ fn script_status(state: State<'_, DesktopState>) -> ScriptStatus {
 }
 
 #[tauri::command]
+fn script_help(state: State<'_, DesktopState>) -> serde_json::Value {
+    state.application.script_help()
+}
+
+#[tauri::command]
 fn script_declarations(state: State<'_, DesktopState>) -> String {
     state.application.script_declarations().to_owned()
 }
@@ -2556,6 +2561,7 @@ pub fn run() {
                 activate_automation,
                 script_status,
                 script_declarations,
+                script_help,
                 save_script,
                 validate_script,
                 test_script,

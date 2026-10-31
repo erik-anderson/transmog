@@ -318,7 +318,10 @@ async fn failed_callback_receives_category_and_reports_validation_failures() {
         let manifest = manifest("", &[ScriptHandler::Failed]);
         let runner = Arc::new(Runner(move |event: ScriptInvocation| {
             assert_eq!(event.context.handler, ScriptHandler::Failed);
-            assert_eq!(event.failure.as_deref(), Some("Upstream"));
+            assert_eq!(
+                event.failure,
+                Some(transmog_core::intercept::ExchangeFailureCategory::Upstream)
+            );
             assert!(event.response.is_none());
             assert!(event.body.is_none());
             if invalid {
@@ -391,4 +394,26 @@ fn informational_response_heads_are_valid_inputs_but_not_edit_targets() {
     }
     .into();
     assert!(validate_result(&manifest, ScriptHandler::ResponseHead, &request(), &result).is_err());
+}
+
+#[test]
+fn help_failure_choices_and_types_match_the_runtime_contract() {
+    use transmog_core::intercept::ExchangeFailureCategory;
+    let help = crate::help();
+    assert_eq!(help["apiRevision"], crate::SCRIPT_API_REVISION);
+    let categories = ExchangeFailureCategory::ALL
+        .iter()
+        .map(|v| v.as_str())
+        .collect::<Vec<_>>();
+    assert_eq!(help["failureCategories"], serde_json::json!(categories));
+    for category in ExchangeFailureCategory::ALL {
+        let encoded = serde_json::to_value(category).unwrap();
+        assert_eq!(encoded, category.as_str());
+        assert_eq!(
+            serde_json::from_value::<ExchangeFailureCategory>(encoded).unwrap(),
+            *category
+        );
+        assert!(crate::typescript_declarations().contains(&format!("| \"{}\"", category.as_str())));
+    }
+    assert!(serde_json::from_str::<ExchangeFailureCategory>("\"upstream\"").is_err());
 }

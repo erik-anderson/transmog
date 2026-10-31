@@ -28,7 +28,6 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), Box<dyn Error>> 
             println!("{}", serde_json::to_string_pretty(&result)?);
         }
         Some("call") if arguments.len() == 2 => {
-            require_key(&key)?;
             if !transmog_mcp::tool_catalog()
                 .iter()
                 .any(|tool| tool.name == arguments[1])
@@ -56,8 +55,8 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), Box<dyn Error>> 
             if !input.is_object() {
                 return Err(super::invalid_input("stdin must contain a JSON object").into());
             }
-            let result = LocalClient::new(root)
-                .call(&key, &arguments[1], input)
+            let result = Connector::new(root, key.to_string(), false)
+                .call(&arguments[1], input)
                 .await?;
             println!("{}", serde_json::to_string_pretty(&result)?);
         }

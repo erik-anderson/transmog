@@ -124,6 +124,9 @@ pub struct SessionQueryInput {
     /// Global metadata substring search.
     #[serde(default)]
     pub search: Option<String>,
+    /// Omit script-authored annotation text from metadata matching for restricted readers.
+    #[serde(default)]
+    pub exclude_script_annotations: bool,
     /// Column filters, combined with AND.
     #[serde(default)]
     pub filters: Vec<SessionColumnFilter>,
@@ -1099,7 +1102,8 @@ fn matches_query_row(
         && input
             .terminal
             .is_none_or(|terminal| (row.terminal != "active") == terminal)
-        && search.is_none_or(|search| matches_search(row, search))
+        && search
+            .is_none_or(|search| matches_search(row, search, !input.exclude_script_annotations))
         && (input.fetch_destinations.is_empty()
             || row
                 .fetch_destination
@@ -1189,7 +1193,7 @@ impl PreparedFilter {
     }
 }
 
-fn matches_search(row: &SessionSummary, search: &str) -> bool {
+fn matches_search(row: &SessionSummary, search: &str, include_script_annotations: bool) -> bool {
     [
         row.url.as_str(),
         row.method.as_str(),
@@ -1200,10 +1204,11 @@ fn matches_search(row: &SessionSummary, search: &str) -> bool {
     ]
     .iter()
     .any(|value| value.to_lowercase().contains(search))
-        || row
-            .script_search
-            .iter()
-            .any(|v| v.to_lowercase().contains(search))
+        || include_script_annotations
+            && row
+                .script_search
+                .iter()
+                .any(|v| v.to_lowercase().contains(search))
         || url_without_default_port(&row.url).is_some_and(|url| url.to_lowercase().contains(search))
         || row
             .caller

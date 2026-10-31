@@ -33,7 +33,11 @@ ambient proxies and follows no redirects. The server validates Host, rejects
 Origin headers and rechecks authorization during work and before returning data.
 See [transport implementation](../crates/mcp/src/transport.rs).
 
-`mcp serve` initializes and lists tools without contacting the desktop. Only
+`mcp serve` initializes and lists tools without contacting the desktop.
+`transmog_help({topic: "scripts", section: "overview"})` also runs locally without
+a key or desktop. Sections include events, selection, state, helpers, evidence,
+sandbox, examples, types and all. It returns the installed API revision and
+explicit MCP support limits; the content is shared with in-app Script API help. Only
 `transmog_connect`, with `--start-app` configured, may launch the sibling desktop
 executable. Status and ordinary calls never launch it. Every desktop run has a
 fresh instance ID; retained references and control handles must be rediscovered.
@@ -175,7 +179,14 @@ explicit errors rather than a purported complete document. Inline test/extractio
 results set `inlineComplete: false` when the full result needs its context reader.
 
 The default redaction policy suppresses known authentication-header values and all
-message bodies, including sensitive authored rule content. It does not sanitize
+message bodies, including sensitive authored rule content. Script annotations,
+diagnostics and free-text terminal details also require both unredacted header
+and body access. `changes.scripts` retains attribution and counts with
+`contentAvailable: false` when text is withheld; generic hook descriptions never
+duplicate findings or abort reasons. `terminalDetailsAvailable` and
+`transport.diagnosticsAvailable` distinguish withheld text from empty evidence.
+Annotation substring queries exclude hidden text, and their cursors recheck
+disclosure on every page. It does not sanitize
 arbitrary URLs or identify every possible custom secret. Header names are matched
 case-insensitively after removing separators, using `auth`, `ticket`, `token`,
 `secret`, `credential`, `cookie`, `session`, `password`, `passwd`, `passphrase`,
