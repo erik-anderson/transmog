@@ -3,12 +3,13 @@
 use super::*;
 use std::sync::Mutex;
 use transmog_core::intercept::{
-    BodyPipeline, BodyPipelineLimits, BufferedHead, CompletedExchange, ExchangeFailure,
-    ExchangeFailureCategory, ExchangeFailureKind, ExchangeStage, HookLimits,
-    InterceptorChainFactory, RequestHeadOutcome, ResponseHeadOutcome,
+    BodyPipeline, BodyPipelineError, BodyPipelineLimits, BufferedHead, CompletedExchange,
+    ExchangeFailure, ExchangeFailureCategory, ExchangeFailureKind, ExchangeStage,
+    HookExecutionError, HookLimits, InterceptorChainFactory, RequestHeadOutcome,
+    ResponseHeadOutcome, TerminalReport,
 };
 use transmog_core::{
-    BodyFrame, ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId,
+    BodyFrame, BodyLimitError, ConnectionId, HttpLegVersion, SessionId, SessionMetadata, StreamId,
 };
 
 /// A complete decoded fixture. No network, route authorization or asset lookup occurs.
@@ -35,6 +36,42 @@ pub struct ScriptScenario {
     pub duration_ms: u64,
 }
 
+/// Sandbox execution verdict, independent of the fixture's exchange outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptScenarioVerdict {
+    /// All selected callbacks and pipelines succeeded, including an expected upstream failure.
+    Passed,
+    /// A callback or pipeline failed.
+    Failed,
+    /// Execution stopped at a simulation boundary.
+    Incomplete,
+}
+
+/// Native phase selection or execution outcome.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptScenarioSelection {
+    /// Callback returned a valid result.
+    Invoked,
+    /// Callback failed.
+    Failed,
+    /// Callback was not exported.
+    NotExported,
+    /// Original request did not match.
+    RequestFilter,
+    /// An earlier phase stopped execution.
+    NotReached,
+    /// Message did not match the body filter.
+    BodyFilter,
+    /// HTTP semantics prohibit this body.
+    BodyForbidden,
+    /// Selected body exceeded its input buffer before callback invocation.
+    InputLimit,
+    /// Body planning or processing failed; a returned callback result may still be available.
+    PipelineFailed,
+}
+
 /// One phase's selection and execution evidence.
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -42,7 +79,7 @@ pub struct ScriptScenarioStep {
     /// Exported callback name.
     pub handler: ScriptHandler,
     /// Invoked, failed, or a concrete reason the callback was skipped.
-    pub selection: String,
+    pub selection: ScriptScenarioSelection,
     /// State seen by the callback, before its result.
     pub state: BTreeMap<String, serde_json::Value>,
     /// Returned result, when successful.
@@ -55,6 +92,8 @@ pub struct ScriptScenarioStep {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptScenarioResult {
+    /// Whether sandbox execution succeeded; this is not an assertion about network behavior.
+    pub verdict: ScriptScenarioVerdict,
     /// Completed, failed, or asset-unresolved.
     pub outcome: String,
     /// Original native request filter admission.
@@ -105,6 +144,15 @@ impl ScriptRunner for RecordingRunner {
             event.context.elapsed_ms = elapsed;
             event.context.now_unix_ms = self.start + elapsed;
             let state = event.state.clone();
+            // Retain invocation evidence even if the outer hook gate cancels or contains a panic.
+            {
+                let mut steps = self
+                    .steps
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner);
+                steps[index].selection = ScriptScenarioSelection::Invoked;
+                steps[index].state = state.clone();
+            }
             let result = match prepare_invocation(&self.manifest, &mut event) {
                 Ok(request) => self.inner.invoke(event).await.and_then(|result| {
                     validate_result(&self.manifest, phase, &request, &result)?;
@@ -118,7 +166,11 @@ impl ScriptRunner for RecordingRunner {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             steps[index] = ScriptScenarioStep {
                 handler: phase,
-                selection: if result.is_ok() { "invoked" } else { "failed" }.into(),
+                selection: if result.is_ok() {
+                    ScriptScenarioSelection::Invoked
+                } else {
+                    ScriptScenarioSelection::Failed
+                },
                 state,
                 result: result.as_ref().ok().cloned(),
                 error: result.as_ref().err().cloned(),
@@ -220,13 +272,12 @@ pub async fn test_scenario(
                 .map(|handler| ScriptScenarioStep {
                     handler: *handler,
                     selection: if !manifest.handlers.contains(handler) {
-                        "not-exported"
+                        ScriptScenarioSelection::NotExported
                     } else if !admitted {
-                        "request-filter"
+                        ScriptScenarioSelection::RequestFilter
                     } else {
-                        "not-reached"
-                    }
-                    .into(),
+                        ScriptScenarioSelection::NotReached
+                    },
                     state: BTreeMap::new(),
                     result: None,
                     error: None,
@@ -282,8 +333,14 @@ pub async fn test_scenario(
                 let mut pipeline = chain
                     .request_body_pipeline(&request, BodyPipelineLimits::default())
                     .await
-                    .map_err(|e| e.to_string())?;
-                request_body = run_body(&mut pipeline, &request_body).await?;
+                    .map_err(|error| body_error(&recorder, ScriptHandler::RequestBody, &error))?;
+                request_body = run_body(
+                    &recorder,
+                    ScriptHandler::RequestBody,
+                    &mut pipeline,
+                    &request_body,
+                )
+                .await?;
                 if let Some(BufferedHead::Request(head)) = pipeline.head() {
                     request = head.clone();
                 }
@@ -304,7 +361,7 @@ pub async fn test_scenario(
         }
         if let Some(category) = input.failure.filter(|_| !local) {
             outcome = "failed";
-            chain
+            let report = chain
                 .failed(ExchangeFailure {
                     metadata: Arc::clone(chain.context().metadata()),
                     stage: ExchangeStage::Upstream,
@@ -314,6 +371,7 @@ pub async fn test_scenario(
                     message: "Simulated upstream failure".into(),
                 })
                 .await;
+            error = terminal_error(&recorder, ScriptHandler::Failed, &report);
             response = None;
             response_body.clear();
             return Ok(());
@@ -353,7 +411,11 @@ pub async fn test_scenario(
             || matches!(head.status, 204 | 304)
             || (request.method.eq_ignore_ascii_case("CONNECT") && (200..300).contains(&head.status))
         {
-            mark_skip(&recorder, ScriptHandler::ResponseBody, "body-forbidden");
+            mark_skip(
+                &recorder,
+                ScriptHandler::ResponseBody,
+                ScriptScenarioSelection::BodyForbidden,
+            );
             response_body.clear();
         } else {
             stage = ExchangeStage::ResponseBody;
@@ -368,8 +430,14 @@ pub async fn test_scenario(
             let mut pipeline = chain
                 .response_body_pipeline(&request, head, local, BodyPipelineLimits::default())
                 .await
-                .map_err(|e| e.to_string())?;
-            response_body = run_body(&mut pipeline, &response_body).await?;
+                .map_err(|error| body_error(&recorder, ScriptHandler::ResponseBody, &error))?;
+            response_body = run_body(
+                &recorder,
+                ScriptHandler::ResponseBody,
+                &mut pipeline,
+                &response_body,
+            )
+            .await?;
             if let Some(BufferedHead::Response(head)) = pipeline.head() {
                 response = Some(head.clone());
             }
@@ -380,7 +448,7 @@ pub async fn test_scenario(
                 response_body.clear();
             }
         }
-        chain
+        let report = chain
             .completed(CompletedExchange {
                 metadata: Arc::clone(chain.context().metadata()),
                 request_head: request.clone(),
@@ -389,6 +457,7 @@ pub async fn test_scenario(
                     .ok_or_else(|| "No response fixture".to_owned())?,
             })
             .await;
+        error = terminal_error(&recorder, ScriptHandler::Completed, &report);
         Ok(())
     }
     .await;
@@ -434,7 +503,7 @@ pub async fn test_scenario(
                     "Scenario callback failed".into(),
                 )),
             };
-            chain
+            let report = chain
                 .failed(ExchangeFailure {
                     metadata: Arc::clone(chain.context().metadata()),
                     stage,
@@ -444,6 +513,7 @@ pub async fn test_scenario(
                     message: "Scenario stopped".into(),
                 })
                 .await;
+            let _ = terminal_error(&recorder, ScriptHandler::Failed, &report);
         }
     }
     let steps = recorder
@@ -451,7 +521,22 @@ pub async fn test_scenario(
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
+    let verdict = if steps.iter().any(|step| step.error.is_some())
+        || (error.is_some() && outcome != "asset-unresolved")
+    {
+        ScriptScenarioVerdict::Failed
+    } else if outcome == "asset-unresolved" {
+        ScriptScenarioVerdict::Incomplete
+    } else {
+        ScriptScenarioVerdict::Passed
+    };
+    if error.is_none() {
+        error = steps
+            .iter()
+            .find_map(|step| step.error.as_ref().map(ToString::to_string));
+    }
     Ok(ScriptScenarioResult {
+        verdict,
         outcome: outcome.into(),
         admitted,
         steps,
@@ -467,7 +552,37 @@ pub async fn test_scenario(
     })
 }
 
-fn mark_skip(recorder: &RecordingRunner, handler: ScriptHandler, reason: &str) {
+fn terminal_error(
+    recorder: &RecordingRunner,
+    handler: ScriptHandler,
+    report: &TerminalReport,
+) -> Option<String> {
+    let error = report.errors().first()?;
+    let mut steps = recorder
+        .steps
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let step = steps
+        .iter_mut()
+        .find(|step| step.handler == handler)
+        .expect("phase");
+    step.selection = ScriptScenarioSelection::Failed;
+    step.error = Some(ScriptFailure {
+        category: match error.source {
+            HookExecutionError::TimedOut => ScriptFailureCategory::Timeout,
+            HookExecutionError::Panicked => ScriptFailureCategory::Crash,
+            HookExecutionError::Cancelled | HookExecutionError::ShuttingDown => {
+                ScriptFailureCategory::Unavailable
+            }
+        },
+        message: bounded(&error.to_string(), 512),
+        line: None,
+        column: None,
+    });
+    Some(error.to_string())
+}
+
+fn mark_skip(recorder: &RecordingRunner, handler: ScriptHandler, reason: ScriptScenarioSelection) {
     let mut steps = recorder
         .steps
         .lock()
@@ -476,8 +591,8 @@ fn mark_skip(recorder: &RecordingRunner, handler: ScriptHandler, reason: &str) {
         .iter_mut()
         .find(|s| s.handler == handler)
         .expect("phase");
-    if step.selection == "not-reached" {
-        step.selection = reason.into();
+    if step.selection == ScriptScenarioSelection::NotReached {
+        step.selection = reason;
     }
 }
 fn mark_body(
@@ -494,16 +609,53 @@ fn mark_body(
         &manifest.response_body_filter
     };
     if !super::adapter::admits(filter, headers, status, local) {
-        mark_skip(recorder, handler, "body-filter");
+        mark_skip(recorder, handler, ScriptScenarioSelection::BodyFilter);
     }
 }
-async fn run_body(pipeline: &mut BodyPipeline, body: &[u8]) -> Result<Vec<u8>, String> {
-    let mut output = pipeline
-        .process(BodyFrame::Data(Bytes::copy_from_slice(body)))
-        .await
-        .map_err(|e| e.to_string())?;
-    output.extend(pipeline.finish().await.map_err(|e| e.to_string())?);
-    Ok(frames(output))
+async fn run_body(
+    recorder: &RecordingRunner,
+    handler: ScriptHandler,
+    pipeline: &mut BodyPipeline,
+    body: &[u8],
+) -> Result<Vec<u8>, String> {
+    let run = async {
+        let mut output = pipeline
+            .process(BodyFrame::Data(Bytes::copy_from_slice(body)))
+            .await?;
+        output.extend(pipeline.finish().await?);
+        Ok(frames(output))
+    }
+    .await;
+    run.map_err(|error| body_error(recorder, handler, &error))
+}
+fn body_error(
+    recorder: &RecordingRunner,
+    handler: ScriptHandler,
+    error: &BodyPipelineError,
+) -> String {
+    let input_limit = matches!(
+        error,
+        BodyPipelineError::InvalidSequence(BodyLimitError::LimitExceeded { .. })
+    );
+    let mut steps = recorder
+        .steps
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let step = steps
+        .iter_mut()
+        .find(|step| step.handler == handler)
+        .expect("phase");
+    if matches!(
+        step.selection,
+        ScriptScenarioSelection::NotReached | ScriptScenarioSelection::Invoked
+    ) {
+        step.selection = if input_limit && step.selection == ScriptScenarioSelection::NotReached {
+            ScriptScenarioSelection::InputLimit
+        } else {
+            ScriptScenarioSelection::PipelineFailed
+        };
+    }
+    error.to_string()
 }
 fn frames(frames: Vec<BodyFrame>) -> Vec<u8> {
     frames

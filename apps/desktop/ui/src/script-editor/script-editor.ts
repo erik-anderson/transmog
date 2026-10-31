@@ -37,6 +37,22 @@ interface ScriptHelp {
   failureCategories: string[];
   sections: ScriptHelpSection[];
 }
+const handlerContracts = [
+  ["onRequestHead", "RequestHeadHandler"],
+  ["onRequestBody", "RequestBodyHandler"],
+  ["onResponseHead", "ResponseHeadHandler"],
+  ["onResponseBody", "ResponseBodyHandler"],
+  ["onCompleted", "CompletedHandler"],
+  ["onFailed", "FailedHandler"],
+] as const;
+const handlerContractSource = [
+  'import * as script from "./main";',
+  'import type * as api from "transmog:api";',
+  "type Export<K extends string> = K extends keyof typeof script ? (typeof script)[K] : never;",
+  ...handlerContracts.map(
+    ([handler, contract]) => `const ${handler}: api.${contract} = null! as Export<"${handler}">;`,
+  ),
+].join("\n");
 function trafficScope(draft: ScriptDraft): string {
   const filters = draft.prefilter;
   const scope = [
@@ -171,6 +187,7 @@ export class ScriptEditor extends WorkspaceElement {
   private loadedDraft: ScriptDraft | null = null;
   private sourceEditor: Monaco.editor.IStandaloneCodeEditor | null = null;
   private draftModel: Monaco.editor.ITextModel | null = null;
+  private handlerContractModel: Monaco.editor.ITextModel | null = null;
   private revisionDiff: Monaco.editor.IStandaloneDiffEditor | null = null;
   private diffModels: Monaco.editor.ITextModel[] = [];
   private diffViewModel: Monaco.editor.IDiffEditorViewModel | null = null;
@@ -512,6 +529,8 @@ export class ScriptEditor extends WorkspaceElement {
     this.draftModel?.dispose();
     this.draftModel = null;
     this.disposeComparison();
+    this.handlerContractModel?.dispose();
+    this.handlerContractModel = null;
     this.declarationsDisposable?.dispose();
     this.declarationsDisposable = null;
     this.javascriptDeclarationsDisposable?.dispose();
@@ -788,18 +807,17 @@ export class ScriptEditor extends WorkspaceElement {
             redacted: false,
           })),
         },
-        response:
-          hasResponse || input.mode === "scenario"
-            ? {
-                status: input.status,
-                headers: parseHeaderLines(input.responseHeaders).map((h) => ({
-                  name: h.name,
-                  value: Array.from(new TextEncoder().encode(h.value)),
-                  sensitive: false,
-                  redacted: false,
-                })),
-              }
-            : null,
+        response: (input.mode === "scenario" ? input.outcome === "response" : hasResponse)
+          ? {
+              status: input.status,
+              headers: parseHeaderLines(input.responseHeaders).map((h) => ({
+                name: h.name,
+                value: Array.from(new TextEncoder().encode(h.value)),
+                sensitive: false,
+                redacted: false,
+              })),
+            }
+          : null,
         body: handler.endsWith("Body")
           ? { bytes: Array.from(new TextEncoder().encode(input.body)) }
           : null,
@@ -807,6 +825,7 @@ export class ScriptEditor extends WorkspaceElement {
       if (input.mode === "scenario") {
         const result = await invoke<{
           outcome: string;
+          verdict: "passed" | "failed" | "incomplete";
           admitted: boolean;
           steps: Array<{ handler: string; selection: string }>;
         }>("test_script_scenario", {
@@ -815,7 +834,10 @@ export class ScriptEditor extends WorkspaceElement {
             request: invocation.request,
             response: input.outcome === "response" ? invocation.response : null,
             requestBody: Array.from(new TextEncoder().encode(input.body)),
-            responseBody: Array.from(new TextEncoder().encode(input.responseBody)),
+            responseBody:
+              input.outcome === "response"
+                ? Array.from(new TextEncoder().encode(input.responseBody))
+                : [],
             localResponse: input.outcome === "response" && input.localResponse,
             failure: input.outcome === "failure" ? input.failure : null,
             httpVersion: input.httpVersion,
@@ -827,7 +849,7 @@ export class ScriptEditor extends WorkspaceElement {
           return;
         }
         this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
-        this.testResult = `Exchange scenario ${result.outcome} · Request filter: ${result.admitted ? "matched" : "skipped"}`;
+        this.testResult = `Scenario ${result.verdict} · Exchange: ${result.outcome} · Request filter: ${result.admitted ? "matched" : "skipped"}`;
         this.testEvidence =
           result.steps.map((step) => `${step.handler}: ${step.selection}`).join("\n") +
           `\n\nScenario evidence:\n${JSON.stringify(result, null, 2)}`;
@@ -835,8 +857,13 @@ export class ScriptEditor extends WorkspaceElement {
         this.feedback(
           this.testOutdated
             ? "Scenario completed for earlier edits or input. Run it again to check the current version."
-            : "Scenario finished with native filters and shared exchange state. No request was sent; routing, assets and transport remain unverified.",
+            : result.verdict === "failed"
+              ? "Scenario failed. Review the phase evidence, source, capabilities and input, then retry."
+              : result.verdict === "incomplete"
+                ? "Scenario incomplete: saved assets require a matching live proxy exchange. Review the phase evidence."
+                : "Scenario passed with native filters and shared exchange state. No request was sent; routing, assets and transport remain unverified.",
         );
+        this.statusKind = result.verdict === "passed" ? "success" : "error";
         return;
       }
       const result = await invoke<{ decision: { action: string } }>("test_script", {
@@ -1288,10 +1315,29 @@ export class ScriptEditor extends WorkspaceElement {
           await new Promise<void>((resolve) => setTimeout(resolve, 50));
         }
       }
-      const worker = await createWorker(model.uri);
+      if (model.isDisposed() || model !== this.draftModel || model.getVersionId() !== version) {
+        throw new Error("Source changed during TypeScript checking. Retry with the current draft.");
+      }
+      this.handlerContractModel ??= this.monaco!.editor.createModel(
+        handlerContractSource,
+        "typescript",
+        this.monaco!.Uri.parse("file:///transmog-scripts/draft/handlers.ts"),
+      );
+      const contractModel = this.handlerContractModel;
+      const worker = await createWorker(model.uri, contractModel.uri);
+      const contractDiagnostics = await worker.getSemanticDiagnostics(contractModel.uri.toString());
+      const navigation: { childItems?: Array<{ text: string; spans: Array<{ start: number }> }> } =
+        await worker.getNavigationTree(model.uri.toString());
+      const symbols = navigation.childItems ?? [];
       const diagnostics = [
         ...(await worker.getSyntacticDiagnostics(model.uri.toString())),
         ...(await worker.getSemanticDiagnostics(model.uri.toString())),
+        ...contractDiagnostics.map((item) => {
+          const line = contractModel.getPositionAt(item.start ?? 0).lineNumber;
+          const handler = handlerContracts[line - 4]?.[0];
+          const symbol = symbols.find((item) => item.text === handler);
+          return { ...item, start: symbol?.spans[0]?.start ?? 0 };
+        }),
       ];
       if (model.isDisposed() || model !== this.draftModel || model.getVersionId() !== version) {
         throw new Error("Source changed during TypeScript checking. Retry with the current draft.");

@@ -519,10 +519,15 @@ async fn scenario_applies_edits_state_filters_and_controlled_context_through_com
     .await
     .unwrap();
     assert_eq!(result.outcome, "completed");
+    assert_eq!(result.verdict, ScriptScenarioVerdict::Passed);
     assert!(result.admitted);
     assert_eq!(result.request_body, b"changed upload");
     assert_eq!(result.response_body, [] as [u8; 0]);
-    assert!(result.steps[..5].iter().all(|s| s.selection == "invoked"));
+    assert!(
+        result.steps[..5]
+            .iter()
+            .all(|s| s.selection == ScriptScenarioSelection::Invoked)
+    );
 }
 
 #[tokio::test]
@@ -536,20 +541,29 @@ async fn scenario_explains_native_selection_and_body_forbidden_responses() {
         .await
         .unwrap();
     assert!(!result.admitted);
-    assert_eq!(result.steps[3].selection, "request-filter");
+    assert_eq!(
+        result.steps[3].selection,
+        ScriptScenarioSelection::RequestFilter
+    );
     let mut fixture = scenario_fixture();
     fixture.local_response = true;
     let result = test_scenario(manifest.clone(), runner.clone(), fixture)
         .await
         .unwrap();
-    assert_eq!(result.steps[3].selection, "body-filter");
+    assert_eq!(
+        result.steps[3].selection,
+        ScriptScenarioSelection::BodyFilter
+    );
     for status in [204, 304] {
         let mut fixture = scenario_fixture();
         fixture.response.as_mut().unwrap().status = status;
         let result = test_scenario(manifest.clone(), runner.clone(), fixture)
             .await
             .unwrap();
-        assert_eq!(result.steps[3].selection, "body-forbidden");
+        assert_eq!(
+            result.steps[3].selection,
+            ScriptScenarioSelection::BodyForbidden
+        );
         assert_eq!(result.response_body, [] as [u8; 0]);
     }
 }
@@ -587,8 +601,12 @@ async fn scenario_handles_inline_responses_failures_and_unresolved_assets() {
         .await
         .unwrap();
     assert_eq!(result.outcome, "completed");
+    assert_eq!(result.verdict, ScriptScenarioVerdict::Passed);
     assert_eq!(result.response_body, b"local");
-    assert_eq!(result.steps[1].selection, "not-exported");
+    assert_eq!(
+        result.steps[1].selection,
+        ScriptScenarioSelection::NotExported
+    );
     let runner = Arc::new(Runner(|event: ScriptInvocation| {
         if event.context.handler == ScriptHandler::RequestHead {
             ScriptAction::Respond {
@@ -605,6 +623,7 @@ async fn scenario_handles_inline_responses_failures_and_unresolved_assets() {
         .await
         .unwrap();
     assert_eq!(result.outcome, "asset-unresolved");
+    assert_eq!(result.verdict, ScriptScenarioVerdict::Incomplete);
     let manifest = super::tests::manifest("", &[ScriptHandler::RequestHead, ScriptHandler::Failed]);
     let runner = Arc::new(Runner(|event: ScriptInvocation| {
         if event.context.handler == ScriptHandler::Failed {
@@ -620,7 +639,8 @@ async fn scenario_handles_inline_responses_failures_and_unresolved_assets() {
     fixture.failure = Some(transmog_core::intercept::ExchangeFailureCategory::Route);
     let result = test_scenario(manifest, runner, fixture).await.unwrap();
     assert_eq!(result.outcome, "failed");
-    assert_eq!(result.steps[5].selection, "invoked");
+    assert_eq!(result.verdict, ScriptScenarioVerdict::Passed);
+    assert_eq!(result.steps[5].selection, ScriptScenarioSelection::Invoked);
 }
 
 #[test]
@@ -633,5 +653,153 @@ fn result_vocabulary_rejects_removed_aliases_and_ambiguous_response_sources() {
         serde_json::json!({"action":"respond","response":{"status":200,"headers":[],"bytes":[],"assetRef":"asset@1"}}),
     ] {
         assert!(serde_json::from_value::<ScriptAction>(value).is_err());
+    }
+}
+
+#[tokio::test]
+async fn scenario_verdict_reports_terminal_errors_independently_of_exchange_outcome() {
+    for terminal in [ScriptHandler::Completed, ScriptHandler::Failed] {
+        let manifest = manifest("", &[terminal]);
+        let runner = Arc::new(Runner(|_: ScriptInvocation| {
+            ScriptAction::Edit {
+                edits: ScriptEdits {
+                    status: Some(202),
+                    ..Default::default()
+                },
+            }
+            .into()
+        }));
+        let mut fixture = scenario_fixture();
+        if terminal == ScriptHandler::Failed {
+            fixture.response = None;
+            fixture.failure = Some(transmog_core::intercept::ExchangeFailureCategory::Upstream);
+        }
+        let result = test_scenario(manifest, runner, fixture).await.unwrap();
+        assert_eq!(
+            result.outcome,
+            if terminal == ScriptHandler::Completed {
+                "completed"
+            } else {
+                "failed"
+            }
+        );
+        assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
+        assert!(result.error.is_some());
+        let step = result
+            .steps
+            .iter()
+            .find(|step| step.handler == terminal)
+            .unwrap();
+        assert_eq!(step.selection, ScriptScenarioSelection::Failed);
+        assert_eq!(
+            step.error.as_ref().unwrap().category,
+            ScriptFailureCategory::InvalidAction
+        );
+        assert!(
+            result
+                .steps
+                .iter()
+                .filter(|step| step.handler != terminal)
+                .all(|step| step.result.is_none())
+        );
+    }
+}
+
+#[tokio::test]
+async fn scenario_body_input_limits_explain_the_selected_phase_without_invoking_it() {
+    for handler in [ScriptHandler::RequestBody, ScriptHandler::ResponseBody] {
+        let mut manifest = manifest("", &[handler, ScriptHandler::Failed]);
+        manifest.capabilities.read_bodies = true;
+        manifest.limits.max_input_body_bytes = 4;
+        let runner = Arc::new(Runner(|event: ScriptInvocation| {
+            assert_eq!(event.context.handler, ScriptHandler::Failed);
+            assert_eq!(
+                event.failure,
+                Some(transmog_core::intercept::ExchangeFailureCategory::Body)
+            );
+            ScriptAction::Continue.into()
+        }));
+        let mut fixture = scenario_fixture();
+        fixture.request_body = b"upload".to_vec();
+        fixture.response_body = b"response".to_vec();
+        let result = test_scenario(manifest, runner, fixture).await.unwrap();
+        assert_eq!(result.outcome, "failed");
+        assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
+        let step = result
+            .steps
+            .iter()
+            .find(|step| step.handler == handler)
+            .unwrap();
+        assert_eq!(step.selection, ScriptScenarioSelection::InputLimit);
+        assert!(step.result.is_none());
+        assert!(
+            result
+                .error
+                .as_ref()
+                .unwrap()
+                .contains("body buffer limit 4")
+        );
+        assert_eq!(
+            serde_json::to_value(step).unwrap()["selection"],
+            "input-limit"
+        );
+    }
+}
+
+#[tokio::test]
+async fn scenario_preserves_callback_evidence_when_body_output_processing_fails() {
+    let mut manifest = manifest("", &[ScriptHandler::ResponseBody]);
+    manifest.capabilities.read_bodies = true;
+    manifest.capabilities.write_body = true;
+    manifest.limits.max_output_bytes = 16 * 1024 * 1024;
+    let runner = Arc::new(Runner(|_: ScriptInvocation| {
+        ScriptAction::Edit {
+            edits: ScriptEdits {
+                bytes: Some(vec![0; 8 * 1024 * 1024 + 1]),
+                ..Default::default()
+            },
+        }
+        .into()
+    }));
+    let result = test_scenario(manifest, runner, scenario_fixture())
+        .await
+        .unwrap();
+    assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
+    assert_eq!(
+        result.steps[3].selection,
+        ScriptScenarioSelection::PipelineFailed
+    );
+    assert!(result.steps[3].result.is_some());
+    assert!(result.steps[3].error.is_none());
+    assert!(result.error.as_ref().unwrap().contains("body hook emitted"));
+}
+
+#[tokio::test]
+async fn scenario_reports_terminal_gate_panics_and_timeouts() {
+    struct GateFailure(bool);
+    impl ScriptRunner for GateFailure {
+        fn invoke(&self, _: ScriptInvocation) -> BoxScriptFuture<'_> {
+            Box::pin(async move {
+                assert!(!self.0, "contained terminal panic");
+                std::future::pending().await
+            })
+        }
+    }
+    for (panic, category) in [
+        (true, ScriptFailureCategory::Crash),
+        (false, ScriptFailureCategory::Timeout),
+    ] {
+        let result = test_scenario(
+            manifest("", &[ScriptHandler::Completed]),
+            Arc::new(GateFailure(panic)),
+            scenario_fixture(),
+        )
+        .await
+        .unwrap();
+        assert_eq!(result.outcome, "completed");
+        assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
+        assert_eq!(result.steps[4].selection, ScriptScenarioSelection::Failed);
+        assert_eq!(result.steps[4].error.as_ref().unwrap().category, category);
+        assert!(result.error.is_some());
     }
 }

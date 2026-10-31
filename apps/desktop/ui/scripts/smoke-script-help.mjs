@@ -49,15 +49,23 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       });
     await wait(`!${editor}.scriptHelpDialog.open && ${editor}.scriptHelpButton.matches(':focus')`);
     const fixtureBefore = await evaluate(
-      `(()=>{const editor=${editor};return {testMode:editor.testMode,testResult:editor.testResult,testEvidence:editor.testEvidence,testOutdated:editor.testOutdated,scriptText:editor.scriptText,statusKind:editor.statusKind,open:editor.querySelector('.script-test').open};})()`,
+      `(()=>{const editor=${editor};return {testMode:editor.testMode,scenarioOutcome:editor.scenarioOutcome,responseHeaders:editor.scriptTestResponseHeaders.value,testResult:editor.testResult,testEvidence:editor.testEvidence,testOutdated:editor.testOutdated,scriptText:editor.scriptText,statusKind:editor.statusKind,open:editor.querySelector('.script-test').open};})()`,
     );
     let scenario;
     try {
       scenario = await evaluate(
         `(async()=>{const editor=${editor};const mode=editor.querySelector('[aria-label="Test mode"]');mode.value='scenario';mode.dispatchEvent(new Event('change',{bubbles:true}));editor.querySelector('.script-test').open=true;editor.$flushUpdates();await editor.testScript();return {summary:editor.testResult,evidence:editor.testEvidence};})()`,
       );
-      assert.match(scenario.summary, /Exchange scenario completed.*Request filter: matched/);
+      assert.match(
+        scenario.summary,
+        /Scenario passed.*Exchange: completed.*Request filter: matched/,
+      );
       assert.match(scenario.evidence, /onRequestHead: invoked/);
+      const failure = await evaluate(
+        `(async()=>{const editor=${editor};editor.scriptTestResponseHeaders.value='invalid hidden header';editor.scriptScenarioOutcome.value='failure';editor.scriptScenarioOutcome.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();await editor.testScript();return {summary:editor.testResult,kind:editor.statusKind,text:editor.scriptText};})()`,
+      );
+      assert.match(failure.summary, /Scenario passed.*Exchange: failed/, failure.text);
+      assert.equal(failure.kind, "success");
       if (screenshotPath)
         await writeFile(
           screenshotPath.replace(/\.png$/i, "-script-scenario.png"),
@@ -69,7 +77,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
         );
     } finally {
       await evaluate(
-        `(()=>{const editor=${editor};const prior=${JSON.stringify(fixtureBefore)};editor.querySelector('[aria-label="Test mode"]').value=prior.testMode;editor.querySelector('.script-test').open=prior.open;delete prior.open;Object.assign(editor,prior);editor.$flushUpdates();})()`,
+        `(()=>{const editor=${editor};const prior=${JSON.stringify(fixtureBefore)};editor.querySelector('[aria-label="Test mode"]').value=prior.testMode;editor.scriptScenarioOutcome.value=prior.scenarioOutcome;editor.querySelector('.script-test').open=prior.open;editor.scriptTestResponseHeaders.value=prior.responseHeaders;delete prior.open;delete prior.responseHeaders;Object.assign(editor,prior);editor.$flushUpdates();})()`,
       );
     }
     return {
@@ -79,6 +87,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       searchScrollReset: true,
       keyboardClose: true,
       exchangeScenario: true,
+      failedExchangeVerdict: true,
     };
   } finally {
     await evaluate(

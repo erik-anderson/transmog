@@ -15,7 +15,10 @@ pub use contract::{
     ScriptAnnotation, ScriptBodyFilter, ScriptEdits, ScriptInlineResponse, ScriptParameter,
     ScriptResult, ScriptSeverity,
 };
-pub use scenario::{ScriptScenario, ScriptScenarioResult, ScriptScenarioStep, test_scenario};
+pub use scenario::{
+    ScriptScenario, ScriptScenarioResult, ScriptScenarioSelection, ScriptScenarioStep,
+    ScriptScenarioVerdict, test_scenario,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},

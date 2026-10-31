@@ -260,12 +260,14 @@ export function readSetCookies(headers) {
     const name = pair.slice(0, index).trim(),
       value = pair.slice(index + 1).trim();
     cookiePair(name, value);
-    const attributes = parts.map((part) => {
-      const index = part.indexOf("=");
-      return index < 0
-        ? [part.trim(), null]
-        : [part.slice(0, index).trim(), part.slice(index + 1).trim()];
-    });
+    const attributes = parts
+      .filter((part) => part.trim() !== "")
+      .map((part) => {
+        const index = part.indexOf("=");
+        return index < 0
+          ? [part.trim(), null]
+          : [part.slice(0, index).trim(), part.slice(index + 1).trim()];
+      });
     formatSetCookie({ name, value, attributes });
     return { name, value, attributes };
   });

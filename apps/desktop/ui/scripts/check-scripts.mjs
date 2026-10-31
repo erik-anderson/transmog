@@ -156,6 +156,44 @@ const body: ResponseHeadResult=edit({headers:[],bytes:[]});`,
     0,
     "Phase-specific edit restrictions failed",
   );
+  const phaseSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
+  for (const [handler, edits] of [
+    ["onRequestHead", "{status:202}"],
+    ["onRequestBody", "{status:202}"],
+    ["onResponseHead", "{bytes:[]}"],
+    ["onResponseBody", "{method:'POST'}"],
+    ["onCompleted", "{headers:[]}"],
+    ["onFailed", "{headers:[]}"],
+  ]) {
+    await scripts.evaluate(
+      (editor, source) => editor.sourceEditor.setValue(source),
+      `import {edit} from 'transmog:api';\nexport function ${handler}() { return edit(${edits}); }`,
+    );
+    const issues = await scripts.evaluate(async (editor) => {
+      try {
+        await editor.checkTypeScript();
+      } catch {
+        /* inspect authoring evidence below */
+      }
+      return editor.typeScriptIssues;
+    });
+    assert.equal(issues.length, 1, `${handler} accepted edits from another phase`);
+    assert.equal(issues[0].line, 2, `${handler} diagnostic did not point to the export`);
+  }
+  await scripts.evaluate((editor) =>
+    editor.sourceEditor.setValue(`
+import {edit, pass} from 'transmog:api';
+export function onRequestHead() { return edit({method:'POST'}); }
+export function onRequestBody() { return edit({bytes:[]}); }
+export function onResponseHead() { return edit({status:202}); }
+export function onResponseBody() { return edit({status:202,bytes:[]}); }
+export function onCompleted() { return pass(); }
+export function onFailed() { return pass(); }
+`),
+  );
+  await scripts.evaluate((editor) => editor.checkTypeScript());
+  await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), phaseSource);
+  await scripts.evaluate((editor) => editor.checkTypeScript());
   assert.ok(
     (await scripts.locator(".monaco-editor-host").first().boundingBox()).height >= 192,
     "Source editor has insufficient space",
@@ -311,8 +349,8 @@ const body: ResponseHeadResult=edit({headers:[],bytes:[]});`,
   assert.match(await scripts.locator(".script-test-result pre").textContent(), /User-Agent/);
   const requestSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
   await append(`
-export function onCompleted() { return { decision: { action: "continue" } }; }
-export function onFailed() { return { decision: { action: "continue" } }; }
+export function onCompleted() { return { decision: { action: "continue" as const } }; }
+export function onFailed() { return { decision: { action: "continue" as const } }; }
 `);
   await scripts.getByRole("combobox", { name: "Handler", exact: true }).selectOption("onCompleted");
   await scripts.getByLabel("Response status", { exact: true }).fill("202");
@@ -343,7 +381,7 @@ export function onFailed() { return { decision: { action: "continue" } }; }
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result").textContent(),
-    /Exchange scenario completed.*Request filter: matched/s,
+    /Scenario passed.*Exchange: completed.*Request filter: matched/s,
   );
   assert.deepEqual(
     await page.evaluate(() => ({
@@ -360,6 +398,9 @@ export function onFailed() { return { decision: { action: "continue" } }; }
     /onCompleted: invoked/,
   );
   await scripts
+    .getByLabel("Response headers", { exact: true })
+    .fill("invalid hidden response header");
+  await scripts
     .getByRole("combobox", { name: "Scenario outcome", exact: true })
     .selectOption("failure");
   assert.equal(await scripts.getByLabel("Response body", { exact: true }).isVisible(), false);
@@ -370,7 +411,35 @@ export function onFailed() { return { decision: { action: "continue" } }; }
     await page.evaluate(() => globalThis.__workspaceFixture.scriptScenarioInput.failure),
     "Route",
   );
+  assert.deepEqual(
+    await page.evaluate(() => globalThis.__workspaceFixture.scriptScenarioInput.responseBody),
+    [],
+    "Failure scenarios included the hidden response body",
+  );
   assert.match(await scripts.locator(".script-test-result pre").textContent(), /onFailed: invoked/);
+  assert.match(
+    await scripts.locator(".script-test-result").textContent(),
+    /Scenario passed.*Exchange: failed/,
+  );
+  await fixture({ scriptScenarioVerdict: "failed" });
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.match(await scripts.locator(".script-test-result").textContent(), /Scenario failed/);
+  assert.equal(await scripts.evaluate((editor) => editor.statusKind), "error");
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+    await scripts.locator(".script-test-result > p").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/script-scenario-failed-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await fixture({ scriptScenarioVerdict: "incomplete" });
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.match(await scripts.locator(".script-test-result").textContent(), /Scenario incomplete/);
+  assert.equal(await scripts.evaluate((editor) => editor.statusKind), "error");
+  await fixture({ scriptScenarioVerdict: "passed" });
   await fixture({ deferScriptTest: true });
   await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
   await page.waitForFunction(() => globalThis.__workspaceFixture.scriptTestPending);
@@ -394,6 +463,7 @@ export function onFailed() { return { decision: { action: "continue" } }; }
   }
   await page.setViewportSize({ width: 1440, height: 900 });
   await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("callback");
+  await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");
   await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), requestSource);
   await scripts
     .getByRole("combobox", { name: "Handler", exact: true })

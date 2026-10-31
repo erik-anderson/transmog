@@ -171,6 +171,7 @@ declare module "transmog:api" {
     value: string;
     attributes?: readonly (readonly [string, string | null])[];
   }>;
+  /** Separate fields and ordered attributes; ignores empty attribute segments. */
   export function readSetCookies(headers: readonly Header[]): SetCookie[];
   export function replaceSetCookies(cookies: readonly SetCookie[]): HeaderOperation[];
   /** UTF-8 application/x-www-form-urlencoded, retaining duplicate fields and order. */

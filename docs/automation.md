@@ -99,7 +99,8 @@ saved script source and settings without changing the active script.
 
 Open **Automation → Scripts**, edit the TypeScript example, and review **Filters, capabilities,
 and parameters** before choosing **Save & enable**. TypeScript is the default
-authoring language; traffic executes saved JavaScript. These scripts modify
+authoring language; exported handlers are checked against their phase contracts.
+Traffic executes saved JavaScript. These scripts modify
 matching requests and responses. Packaged read-only visualizers use the separate
 [extension workflow](extensions.md).
 
@@ -132,7 +133,10 @@ can start or that the script works for every input. Sandbox testing is optional.
 **Single callback** starts with empty state and bypasses request/body filters.
 **Exchange scenario** runs native selection, related edits and shared state through
 completion or a simulated upstream failure. Each phase explains whether it ran or
-was skipped. Scenarios use decoded request/response fixtures and controlled timing;
+was skipped. The verdict reports callback/pipeline errors independently of the exchange
+outcome: an expected upstream failure can pass, while a terminal callback error fails
+a completed exchange. Unresolved assets are incomplete. Inspect phase selection and
+final messages to check your intent. Scenarios use decoded fixtures and controlled timing;
 they do not send traffic, authorize routes, resolve saved assets or verify transport.
 Both modes enforce live capabilities and use the candidate's parameter values.
 The draft’s native traffic scope stays visible beside the editor. **Script API**

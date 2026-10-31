@@ -118,6 +118,20 @@ test("cookie helpers preserve duplicate names, attributes and Expires commas", (
     api.replaceSetCookies([{ name: "a", value: "b", attributes: [["Path", "/\r\nX: y"]] }]),
   );
   assert.throws(() => api.readCookies([field("Cookie", "broken")]));
+  assert.deepEqual(api.readSetCookies([field("Set-Cookie", "sid=one; Path=/; ; Secure;;")]), [
+    {
+      name: "sid",
+      value: "one",
+      attributes: [
+        ["Path", "/"],
+        ["Secure", null],
+      ],
+    },
+  ]);
+  assert.throws(() =>
+    api.replaceSetCookies([{ name: "sid", value: "one", attributes: [["", null]] }]),
+  );
+  assert.throws(() => api.readSetCookies([field("Set-Cookie", "sid=one; =bad")]));
 });
 
 test("URL-encoded form helpers preserve repeats, blanks, Unicode and strict decoding", () => {

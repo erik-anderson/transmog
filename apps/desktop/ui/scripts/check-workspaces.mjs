@@ -4321,8 +4321,15 @@ await page.addInitScript(
               state.scriptTestPending = true;
               await new Promise((resolve) => (state.finishScriptTest = resolve));
             }
+            const failed = state.scriptScenarioVerdict === "failed";
             return {
-              outcome: args.scenario.failure ? "failed" : "completed",
+              outcome:
+                state.scriptScenarioVerdict === "incomplete"
+                  ? "asset-unresolved"
+                  : args.scenario.failure
+                    ? "failed"
+                    : "completed",
+              verdict: state.scriptScenarioVerdict ?? "passed",
               admitted: true,
               steps: [
                 {
@@ -4333,9 +4340,17 @@ await page.addInitScript(
                 },
                 {
                   handler: args.scenario.failure ? "onFailed" : "onCompleted",
-                  selection: "invoked",
+                  selection: failed ? "failed" : "invoked",
                   state: { seen: true },
-                  result: { decision: { action: "continue" } },
+                  result: failed ? null : { decision: { action: "continue" } },
+                  error: failed
+                    ? {
+                        category: "exception",
+                        message: "Terminal fixture failure",
+                        line: null,
+                        column: null,
+                      }
+                    : null,
                 },
               ],
               request: args.scenario.request,
@@ -7905,11 +7920,12 @@ try {
       .refreshBreakpoints();
   });
   await page.waitForFunction(
-    () =>
+    (expected) =>
       document
         .querySelector("app-shell")
         .shadowRoot.querySelector("script-editor")
-        .monaco.editor.getModels().length === 1,
+        .monaco.editor.getModels().length === expected,
+    editorsBefore,
   );
   await page.evaluate(async () => {
     globalThis.__workspaceFixture.lifecycle = "running";
