@@ -4322,10 +4322,20 @@ await page.addInitScript(
               await new Promise((resolve) => (state.finishScriptTest = resolve));
             }
             return {
-              decision: {
-                action: "headers",
-                operations: [{ operation: "set", name: "User-Agent", value: "Fixture/1.0" }],
-              },
+              decision: ["onCompleted", "onFailed"].includes(args.invocation.context.handler)
+                ? { action: "continue" }
+                : {
+                    action: "edit",
+                    edits: {
+                      headers: [
+                        {
+                          operation: "set",
+                          name: "User-Agent",
+                          value: "Fixture/1.0",
+                        },
+                      ],
+                    },
+                  },
             };
           }
           case "activate_script": {

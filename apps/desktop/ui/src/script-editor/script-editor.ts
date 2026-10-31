@@ -88,6 +88,7 @@ export class ScriptEditor extends WorkspaceElement {
   scriptHelpDialog!: HTMLDialogElement;
   scriptHelpButton!: HTMLButtonElement;
   scriptHelpSearch!: HTMLInputElement;
+  scriptHelpContent!: HTMLDivElement;
   @observable language: ScriptLanguage = "typescript";
   @observable reviewingTypeScript = false;
   @observable authoringStatus = "";
@@ -199,7 +200,7 @@ export class ScriptEditor extends WorkspaceElement {
   }
   searchScriptHelp(event: Event): void {
     this.helpSearch = (event.target as HTMLInputElement).value;
-    const search = this.helpSearch.trim().toLocaleLowerCase();
+    const terms = this.helpSearch.toLocaleLowerCase().split(/\s+/).filter(Boolean);
     this.helpSections = this.allHelpSections.filter((section) => {
       const text = [
         section.title,
@@ -208,8 +209,11 @@ export class ScriptEditor extends WorkspaceElement {
         ...section.examples.flatMap((example) => [example.title, example.settings, example.code]),
         ...(section.id === "evidence" ? this.failureCategories : []),
       ];
-      return text.join(" ").toLocaleLowerCase().includes(search);
+      const searchable = text.join(" ").toLocaleLowerCase();
+      return terms.every((term) => searchable.includes(term));
     });
+    this.$flushUpdates();
+    this.scriptHelpContent.scrollTop = 0;
   }
   markScriptChanged(): void {
     this.editVersion++;
@@ -307,6 +311,7 @@ export class ScriptEditor extends WorkspaceElement {
       }
     };
     set("scriptHost", draft.prefilter.host ?? "");
+    set("scriptMethod", draft.prefilter.method ?? "");
     set("scriptPath", draft.prefilter.pathPrefix ?? "");
     set("scriptHeaders", draft.capabilities.writeHeaders.join(", "));
     set("readBodies", draft.capabilities.readBodies);
@@ -586,6 +591,7 @@ export class ScriptEditor extends WorkspaceElement {
         }
       };
       set("scriptHost", draft.prefilter.host ?? "");
+      set("scriptMethod", draft.prefilter.method ?? "");
       set("scriptPath", draft.prefilter.pathPrefix ?? "");
       set("scriptHeaders", draft.capabilities.writeHeaders.join(", "));
       set("readBodies", draft.capabilities.readBodies);
@@ -729,6 +735,7 @@ export class ScriptEditor extends WorkspaceElement {
       if (!handler) {
         throw new Error("Export at least one supported handler");
       }
+      const hasResponse = handler.startsWith("onResponse") || handler === "onCompleted";
       this.scriptText = "Running the sandbox for this input…";
       this.statusKind = "progress";
       const result = await invoke<{ decision: { action: string } }>("test_script", {
@@ -753,18 +760,17 @@ export class ScriptEditor extends WorkspaceElement {
               redacted: false,
             })),
           },
-          response:
-            handler.startsWith("onResponse") || handler === "onCompleted"
-              ? {
-                  status: input.status,
-                  headers: parseHeaderLines(input.responseHeaders).map((h) => ({
-                    name: h.name,
-                    value: Array.from(new TextEncoder().encode(h.value)),
-                    sensitive: false,
-                    redacted: false,
-                  })),
-                }
-              : null,
+          response: hasResponse
+            ? {
+                status: input.status,
+                headers: parseHeaderLines(input.responseHeaders).map((h) => ({
+                  name: h.name,
+                  value: Array.from(new TextEncoder().encode(h.value)),
+                  sensitive: false,
+                  redacted: false,
+                })),
+              }
+            : null,
           body: handler.endsWith("Body")
             ? { bytes: Array.from(new TextEncoder().encode(input.body)) }
             : null,
@@ -775,7 +781,16 @@ export class ScriptEditor extends WorkspaceElement {
       }
       this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
       this.testResult = `Callback completed · ${handler} · Action: ${result.decision.action} · Filters bypassed`;
-      this.testEvidence = `${input.method} ${input.url}\n${handler.startsWith("onResponse") ? `Response fixture: ${input.status}\n${input.responseHeaders}\n` : ""}${input.headers ? `Request headers:\n${input.headers}\n` : ""}${handler.endsWith("Body") ? `Input body:\n${input.body}\n` : ""}\nReturned result:\n${JSON.stringify(result, null, 2)}`;
+      this.testEvidence = [
+        `Handler: ${handler}`,
+        `${input.method} ${input.url}`,
+        `Local response: ${input.localResponse ? "yes" : "no"}`,
+        ...(handler === "onFailed" ? [`Failure category: ${input.failure}`] : []),
+        ...(hasResponse ? [`Response fixture: ${input.status}\n${input.responseHeaders}`] : []),
+        ...(input.headers ? [`Request headers:\n${input.headers}`] : []),
+        ...(handler.endsWith("Body") ? [`Input body:\n${input.body}`] : []),
+        `\nReturned result:\n${JSON.stringify(result, null, 2)}`,
+      ].join("\n");
       if (this.testEvidence.length > 32768) {
         this.testEvidence =
           this.testEvidence.slice(0, 32768) + "\n[Evidence preview shortened to 32,768 characters]";
@@ -1071,7 +1086,7 @@ export class ScriptEditor extends WorkspaceElement {
         includeLocal: data.get("includeLocal") === "on",
       },
       prefilter: {
-        method: this.loadedDraft?.prefilter.method ?? null,
+        method: optionalText(data.get("scriptMethod")),
         host: optionalText(data.get("scriptHost")),
         pathPrefix: optionalText(data.get("scriptPath")),
       },

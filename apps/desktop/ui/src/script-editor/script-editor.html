@@ -35,13 +35,14 @@
     <summary>Filters, capabilities, and parameters</summary>
     <form w-ref="{scriptForm}" @submit="{validateScript(e)}" @input="{markScriptChanged()}" class="script-form">
       <label>Host filter (optional) <input name="scriptHost" value="example.test" maxlength="255" ?disabled="{{!scriptReady}}"></label>
+      <label>Method filter (optional) <input name="scriptMethod" maxlength="32" placeholder="GET" ?disabled="{{!scriptReady}}"></label>
       <label>Path-prefix filter (optional) <input name="scriptPath" maxlength="2048" placeholder="/api" ?disabled="{{!scriptReady}}"></label>
       <label>Writable headers <input name="scriptHeaders" value="user-agent" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
       <label>Request body media types <input name="requestTypes" placeholder="application/json" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
       <label>Response body media types <input name="responseTypes" placeholder="application/json" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
       <label>Response body statuses <input name="responseStatuses" placeholder="200, 201" maxlength="2048" ?disabled="{{!scriptReady}}"></label>
-      <p class="field-help">Comma-separated exact values; empty permits all. Body handlers receive complete decoded bytes before headers are sent. Unmatched bodies keep streaming.</p>
       <label><input name="includeLocal" type="checkbox" ?disabled="{{!scriptReady}}"> Run response body handlers on local responses</label>
+      <p class="field-help script-filter-help">Body media types and statuses use comma-separated exact values; empty permits all. Body handlers receive complete decoded bytes before headers are sent. Unmatched bodies keep streaming.</p>
       <fieldset ?disabled="{{!scriptReady}}">
         <legend>Capabilities</legend>
         <label><input name="rewriteRequest" type="checkbox"> Rewrite request method and URL</label>
@@ -97,7 +98,7 @@
   <dialog w-ref="{scriptHelpDialog}" class="script-help-dialog" aria-labelledby="script-help-heading" @keydown="{scriptHelpKeyboard(e)}" @close="{scriptHelpClosed()}">
     <header><h2 id="script-help-heading">Script API · revision {{apiRevision}}</h2><button type="button" class="secondary" @click="{closeScriptHelp()}">Close</button></header>
     <label>Search Script API <input w-ref="{scriptHelpSearch}" type="search" value="{{helpSearch}}" @input="{searchScriptHelp(e)}"></label>
-    <div class="script-help-content">
+    <div w-ref="{scriptHelpContent}" class="script-help-content">
       <if condition="!helpSections.length"><p>No matching help. Try a handler, capability or helper name.</p></if>
       <for each="section in helpSections"><details key="{{section.id}}" ?open="{{helpSearch != ''}}"><summary>{{section.title}}</summary>
         <for each="paragraph in section.paragraphs"><p>{{paragraph}}</p></for>

@@ -51,6 +51,7 @@ script-editor { display: contents; }
 .script-parameter input[type="checkbox"] { flex:none; width:auto; }
 
 .script-scope { overflow-wrap:anywhere; }
+.script-filter-help { grid-column:1/-1; }
 .script-help-dialog { box-sizing:border-box; color:var(--text); background:var(--panel); border:1px solid var(--line-strong); border-radius:.5rem; font-size:.875rem; width:min(54rem,calc(100vw - 3rem)); max-height:calc(100dvh - 3rem); padding:1rem; overflow:auto; }
 .script-help-dialog[open] { display:flex; flex-direction:column; gap:.75rem; }
 .script-help-dialog header { display:flex; align-items:center; justify-content:space-between; gap:1rem; }

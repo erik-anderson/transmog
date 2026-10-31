@@ -18,6 +18,12 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       `(async()=>{const shell=document.querySelector('app-shell');shell.shadowRoot.querySelector('a[data-view="automation"]').click();await shell.automation.showAutomationSection('scripts');shell.automation.$flushUpdates();})()`,
     );
     await wait(`Boolean(${editor}?.scriptReady)`);
+    const search = await evaluate(
+      `(()=>{const editor=${editor};editor.scriptHelpButton.click();const search=(value)=>{editor.scriptHelpSearch.value=value;editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();};search('Complete examples');editor.scriptHelpContent.scrollTop=editor.scriptHelpContent.scrollHeight;const scrolled=editor.scriptHelpContent.scrollTop>0;search('request body');return {scrolled,top:editor.scriptHelpContent.scrollTop,content:editor.scriptHelpContent.textContent};})()`,
+    );
+    assert.equal(search.scrolled, true);
+    assert.equal(search.top, 0);
+    assert.match(search.content, /Filters, buffering and limits/);
     const contract = await evaluate(
       `(()=>{const editor=${editor};editor.scriptHelpButton.click();editor.scriptHelpSearch.value='onFailed';editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();return {revision:editor.apiRevision,failure:editor.scriptTestFailure.value,scope:editor.draftScope,modal:editor.scriptHelpDialog.matches(':modal'),content:editor.scriptHelpDialog.textContent};})()`,
     );
@@ -46,6 +52,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
       revision: contract.revision,
       scope: contract.scope,
       search: true,
+      searchScrollReset: true,
       keyboardClose: true,
     };
   } finally {

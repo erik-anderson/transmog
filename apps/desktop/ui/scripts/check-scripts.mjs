@@ -43,6 +43,20 @@ export async function checkScripts(page, root) {
   await help.getByLabel("Search Script API", { exact: true }).fill("no-such-help-section");
   assert.match(await help.locator(".script-help-content").textContent(), /No matching help/);
   await help.getByLabel("Search Script API", { exact: true }).fill("Complete examples");
+  const helpContent = help.locator(".script-help-content");
+  await helpContent.evaluate((content) => (content.scrollTop = content.scrollHeight));
+  assert.ok(await helpContent.evaluate((content) => content.scrollTop > 0));
+  await help.getByLabel("Search Script API", { exact: true }).fill("onFailed");
+  assert.equal(
+    await helpContent.evaluate((content) => content.scrollTop),
+    0,
+    "A new help search retained the previous result's scroll position",
+  );
+  for (const query of ["request body", "body limits"]) {
+    await help.getByLabel("Search Script API", { exact: true }).fill(query);
+    assert.match(await helpContent.textContent(), /Filters, buffering and limits/);
+  }
+  await help.getByLabel("Search Script API", { exact: true }).fill("Complete examples");
   for (const viewport of [
     { width: 1440, height: 900 },
     { width: 800, height: 600 },
@@ -131,6 +145,10 @@ export async function checkScripts(page, root) {
     await sourceSurface.getByRole("button", { name: "Save & enable", exact: true }).isVisible(),
     true,
   );
+  await helpButton.click();
+  await page.keyboard.press("Escape");
+  assert.equal(await sourceSurface.locator("dialog").evaluate((dialog) => dialog.open), true);
+  assert.equal(await helpButton.evaluate((button) => button.matches(":focus")), true);
   await page.keyboard.press("Escape");
   assert.equal(
     await sourceSurface.locator("dialog").evaluate((dialog) => dialog.matches(":modal")),
@@ -161,6 +179,7 @@ export async function checkScripts(page, root) {
   await append("\n// discard this edit");
   await scripts.locator(".script-settings > summary").click();
   await scripts.getByLabel("Host filter (optional)", { exact: true }).fill("discard.example.test");
+  await scripts.getByLabel("Method filter (optional)", { exact: true }).fill("DELETE");
   await scripts.getByRole("button", { name: "Discard changes", exact: true }).click();
   assert.equal(
     await scripts.evaluate((editor) => editor.sourceEditor.getValue()),
@@ -169,6 +188,10 @@ export async function checkScripts(page, root) {
   assert.equal(
     await scripts.getByLabel("Host filter (optional)", { exact: true }).inputValue(),
     activated.prefilter.host ?? "",
+  );
+  assert.equal(
+    await scripts.getByLabel("Method filter (optional)", { exact: true }).inputValue(),
+    activated.prefilter.method ?? "",
   );
   assert.equal(
     await scripts.getByRole("button", { name: "Save draft", exact: true }).isDisabled(),
@@ -188,6 +211,7 @@ export async function checkScripts(page, root) {
   assert.equal(await scripts.evaluate((editor) => editor.scriptDirty), false);
   await scripts.locator(".script-settings > summary").click();
   await scripts.getByLabel("Host filter (optional)", { exact: true }).fill("sandbox.example.test");
+  await scripts.getByLabel("Method filter (optional)", { exact: true }).fill("PATCH");
   await scripts.getByLabel("Writable headers", { exact: true }).fill("User-Agent, user-agent");
   await scripts.getByRole("button", { name: "Save & apply", exact: true }).click();
   await waitIdle();
@@ -196,6 +220,12 @@ export async function checkScripts(page, root) {
       () => globalThis.__workspaceFixture.activeScripts[0].manifest.prefilter.host,
     ),
     "sandbox.example.test",
+  );
+  assert.equal(
+    await page.evaluate(
+      () => globalThis.__workspaceFixture.activeScripts[0].manifest.prefilter.method,
+    ),
+    "PATCH",
   );
   assert.equal(
     await scripts.evaluate((editor) => editor.scriptDirty || editor.scriptUnapplied),
@@ -209,9 +239,18 @@ export async function checkScripts(page, root) {
     ["user-agent"],
     "Writable headers were not normalized as a set",
   );
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+    await scripts.getByLabel("Method filter (optional)", { exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/script-filters-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
   await scripts.locator(".script-settings > summary").click();
 
   assert.match(await scripts.locator(".script-scope").textContent(), /sandbox.example.test/);
+  assert.match(await scripts.locator(".script-scope").textContent(), /PATCH/);
   // Optional sandbox automatically validates and describes its actual input and action.
   await scripts.locator(".script-test summary").first().click();
   await scripts
@@ -223,7 +262,7 @@ export async function checkScripts(page, root) {
   await waitIdle();
   assert.match(
     await scripts.locator(".script-test-result").textContent(),
-    /Callback completed.*onRequestHead.*Action: headers.*Filters bypassed/s,
+    /Callback completed.*onRequestHead.*Action: edit.*Filters bypassed/s,
   );
   assert.deepEqual(
     await page.evaluate(() => {
@@ -246,6 +285,33 @@ export async function checkScripts(page, root) {
   );
   await scripts.getByText("Test input and returned changes", { exact: true }).click();
   assert.match(await scripts.locator(".script-test-result pre").textContent(), /User-Agent/);
+  const requestSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
+  await append(`
+export function onCompleted() { return { decision: { action: "continue" } }; }
+export function onFailed() { return { decision: { action: "continue" } }; }
+`);
+  await scripts.getByRole("combobox", { name: "Handler", exact: true }).selectOption("onCompleted");
+  await scripts.getByLabel("Response status", { exact: true }).fill("202");
+  await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");
+  await scripts.getByLabel("Local response", { exact: true }).check();
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.match(
+    await scripts.locator(".script-test-result pre").textContent(),
+    /Handler: onCompleted.*Local response: yes.*Response fixture: 202\nX-Fixture: completed/s,
+  );
+  await scripts.getByRole("combobox", { name: "Handler", exact: true }).selectOption("onFailed");
+  await scripts.getByLabel("Failure category (onFailed)", { exact: true }).selectOption("Route");
+  await scripts.getByLabel("Local response", { exact: true }).uncheck();
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  const failureEvidence = await scripts.locator(".script-test-result pre").textContent();
+  assert.match(failureEvidence, /Handler: onFailed.*Local response: no.*Failure category: Route/s);
+  assert.doesNotMatch(failureEvidence, /Response fixture|X-Fixture/);
+  await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), requestSource);
+  await scripts
+    .getByRole("combobox", { name: "Handler", exact: true })
+    .selectOption("onRequestHead");
   await scripts.getByLabel("Method", { exact: true }).fill("GET");
   assert.match(await scripts.locator(".script-test-result").textContent(), /Outdated/);
   await fixture({ deferScriptTest: true });
@@ -262,6 +328,7 @@ export async function checkScripts(page, root) {
     true,
     "Delayed test input was treated as current",
   );
+  assert.match(await scripts.locator(".script-test-result pre").textContent(), /GET https:/);
 
   // Source/capability edits during validation must not proceed to activation.
   await fixture({ deferScriptValidation: true });
