@@ -203,7 +203,7 @@ browser flow from the repository root:
 
 ```powershell
 python scripts/dev-env.py --run cargo test --locked -p transmog-script -p transmog-script-host -p transmog-app
-npm --prefix apps/desktop/ui run test:workspaces -- --scripts-only
+node apps/desktop/ui/scripts/check-workspaces.mjs --scripts-only
 ```
 
 The backend suites cover stored JavaScript execution, artifact integrity,
@@ -456,10 +456,12 @@ qualification are in [the Windows release guide](windows-release.md).
 Run the script/extension host tests on Windows for actual AppContainer coverage.
 They cover initialization, exception policies, steps, inert locals, native Stop,
 idle detach/reattach, preserved globals, pause-aware header/body/terminal timing,
-competing live admissions and pinned exchanges. Browser coverage includes
-`npm run test:workspaces -- --script-debugger-only` from `apps/desktop/ui`.
+competing live admissions and pinned exchanges. The default
+`npm --prefix apps/desktop/ui run test:workspaces` includes the debugger flow.
+To run only that flow from the repository root, use
+`node apps/desktop/ui/scripts/check-workspaces.mjs --script-debugger-only`.
 
-After building the desktop with its matching script and extension hosts, use
+After building the desktop with its matching packaged helpers, use
 `scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath <absolute-exe> -ScriptDebuggerChecks`
 for owned-profile WebView2 journeys, or `-ScriptDiagnosticsChecks` for exception,
 console and immutable-source journeys. The debugger fixture routes its clients

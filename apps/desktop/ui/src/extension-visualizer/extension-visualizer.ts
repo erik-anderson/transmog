@@ -4,7 +4,12 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { describeError } from "../utilities.js";
 import "../script-diagnostics/script-diagnostics.js";
 import "../script-debugger/script-debugger.js";
-import type { DebugSessionInfo, SourceBreakpoint } from "../script-debugger/models.js";
+import type {
+  DebugConfiguration,
+  DebugSessionInfo,
+  SourceBreakpoint,
+} from "../script-debugger/models.js";
+import type { ScriptDebugger } from "../script-debugger/script-debugger.js";
 import { errorEvidence, type DeveloperEvidence } from "../script-diagnostics/models.js";
 import { decodeBytes } from "../hex-viewer/hex-formats.js";
 import type { HexPreview } from "../hex-viewer/hex-viewer.js";
@@ -68,10 +73,14 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable debugInfo: DebugSessionInfo | null = null;
   @observable debugBreakpoints: SourceBreakpoint[] = [];
   @observable debugPolicy = "uncaught";
+  debugPanel?: ScriptDebugger;
+  showDebugButton?: HTMLButtonElement;
+  @observable debugLinesText = "";
   debugModule!: HTMLInputElement;
   debugLines!: HTMLInputElement;
   debugExceptions!: HTMLSelectElement;
   debugOptions?: HTMLDetailsElement;
+  debugOptionsSummary?: HTMLElement;
   showDebuggerOptions(): void {
     if (this.debugOptions) {
       this.debugOptions.open = true;
@@ -173,6 +182,9 @@ export class ExtensionVisualizer extends WebUIElement {
   choiceChanged(previous: VisualizerChoice | null | undefined): void {
     if (previous?.key !== this.choice?.key) {
       this.paused = false;
+      this.debugBreakpoints = [];
+      this.debugLinesText = "";
+      this.debugPolicy = "uncaught";
     }
     this.schedule();
   }
@@ -531,7 +543,7 @@ export class ExtensionVisualizer extends WebUIElement {
     }
   }
   private debugConfiguration(): { exceptions: string; breakpoints: SourceBreakpoint[] } {
-    const lines = this.debugLines.value
+    const lines = this.debugLinesText
       .split(/[\s,]+/)
       .filter(Boolean)
       .map(Number);
@@ -545,11 +557,48 @@ export class ExtensionVisualizer extends WebUIElement {
         "main.js",
       "file:///transmog-extension/",
     ).href;
-    this.debugBreakpoints = [...new Set(lines)].map((line, index) => ({
-      id: index + 1,
-      location: { source, line, column: 1 },
-    }));
-    return { exceptions: this.debugExceptions.value, breakpoints: this.debugBreakpoints };
+    const other = this.debugBreakpoints.filter((value) => value.location.source !== source);
+    let id = Math.max(0, ...other.map((value) => value.id));
+    this.debugBreakpoints = [
+      ...other,
+      ...[...new Set(lines)].map((line) => ({
+        id: ++id,
+        location: { source, line, column: 1 },
+      })),
+    ];
+    return { exceptions: this.debugPolicy, breakpoints: this.debugBreakpoints };
+  }
+  showDebugger(): void {
+    this.debugPanel?.show();
+  }
+  debugHidden(): void {
+    this.showDebugButton?.focus();
+  }
+  debugConfigurationChanged(event: CustomEvent<DebugConfiguration>): void {
+    this.debugBreakpoints = event.detail.breakpoints;
+    this.debugPolicy = event.detail.exceptions;
+    const source = new URL(
+      this.debugModule.value || this.choice?.entry || "main.js",
+      "file:///transmog-extension/",
+    ).href;
+    this.debugLinesText = this.debugBreakpoints
+      .filter((value) => value.location.source === source)
+      .map((value) => value.location.line)
+      .join(", ");
+  }
+  editDebugOptions(): void {
+    this.debugLinesText = this.debugLines.value;
+    this.debugPolicy = this.debugExceptions.value;
+  }
+  async restartDebug(): Promise<void> {
+    // The previous start may still be awaiting a paused initializer. Its late
+    // completion must not replace the fresh instance or clear its busy state.
+    ++this.revision;
+    this.pending = null;
+    this.visualizerBusy = false;
+    this.debugInfo = null;
+    this.$flushUpdates();
+    await this.debugFresh();
   }
   async debugFresh(): Promise<void> {
     if (this.debugInfo || this.visualizerBusy) {
@@ -589,6 +638,8 @@ export class ExtensionVisualizer extends WebUIElement {
   debugClosed(event: CustomEvent<{ detached: boolean }>): void {
     this.debugEnded(event);
     this.debugInfo = null;
+    this.$flushUpdates();
+    this.debugOptionsSummary?.focus();
   }
   private async reload(): Promise<void> {
     const previous = this.view;

@@ -36,13 +36,14 @@ and thread start only with the first console/debug event; silent execution keeps
 the original synchronous result path. A validated result completes a completely
 silent stream. Any observed console prefix still requires its ordered end marker.
 
-Native supervisors own independent pause/session leases and inspection deadlines.
-Only authenticated pause transitions update cumulative clocks; execution budgets
-exclude that time while cancellation, process limits and client timeouts remain
-effective. Termination is bound as soon as an attachment is accepted, including
-before command transport initialization. Attach and detach confirmations are
-ordering barriers before the next callback. Window destruction, document reload
-and controller closure release ownership independently of UI polling.
+Native supervisors own independent pause/session leases and inspection
+deadlines. Only authenticated pause transitions update cumulative clocks;
+execution budgets exclude that time while cancellation, process limits and
+client timeouts remain effective. Termination is bound as soon as an attachment
+is accepted, including before command transport initialization. Attach and
+detach confirmations are ordering barriers before the next callback. Hiding the
+debugger leaves ownership intact. Explicit stop-and-close, window destruction
+and document reload release ownership independently of UI polling.
 
 Live traffic debugging reserves the actual idle worker for one native-filtered
 exchange. Track outstanding exchange factory leases, including older pinned
@@ -68,13 +69,14 @@ evidence. They are excluded from normal trace/case persistence, support errors a
 MCP projections. Desktop commands are scoped to the calling window and are not
 registered as MCP tools. An explicit copy action can copy local developer details.
 
-At most four controllers and 16 recent session histories are shared across app
-instances. Each session retains 64 events/128 KiB plus separately bounded source
-and breakpoint inventory; property replies are at most 32 KiB. Sources share a
-32 MiB cache, log captures a 12 MiB pool, and catalog snapshots an 8 MiB pool.
-Existing inputs/packages and worker memory retain their own independent budgets.
-These caps intentionally trade older evidence and unavailable locals for bounded
-resource use. UI state explains expiry, loss and explicit recovery.
+Each process permits up to four active controllers and tracks up to 16 session
+records across application instances. Each session retains 64 events/128 KiB
+plus separately bounded source and breakpoint inventory; property replies are at
+most 32 KiB. Sources share a 32 MiB cache, log captures a 12 MiB pool, and
+catalog snapshots an 8 MiB pool. Existing inputs/packages and worker memory
+retain their own independent budgets. These caps intentionally trade older
+evidence and unavailable locals for bounded resource use. UI state explains
+expiry, loss and explicit recovery.
 
 Native AppContainer tests, production-template browser checks, WebView2 journeys,
 protocol fuzzing and lifecycle/resource measurements qualify the combined feature.

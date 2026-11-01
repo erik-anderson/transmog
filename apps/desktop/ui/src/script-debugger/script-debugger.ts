@@ -1,6 +1,7 @@
 import { WebUIElement, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import "../script-diagnostics/script-diagnostics.js";
+import "../pane-divider/pane-divider.js";
 import type {
   DeveloperEvidence,
   ExceptionDiagnostic,
@@ -19,6 +20,7 @@ import {
   type DebugSessionView,
   type SourceBreakpoint,
   type BreakpointResolution,
+  type DebugConfiguration,
 } from "./models.js";
 interface FrameView extends DebugFrame {
   label: string;
@@ -30,7 +32,22 @@ interface ScopeView extends DebugScope {
   selected: boolean;
 }
 interface PropertyView extends DebugProperty {
+  key: string;
+  depth: number;
   expandable: boolean;
+  expanded: boolean;
+  more: boolean;
+  pageOffset?: number;
+  branch: string;
+}
+interface ValueBranch {
+  handle: number;
+  path: string[];
+  depth: number;
+  properties: DebugProperty[];
+  next: number | null;
+  offset: number;
+  pages: number[];
 }
 interface SourceLine {
   number: number;
@@ -53,6 +70,10 @@ export class ScriptDebugger extends WebUIElement {
   @observable issue = "";
   @observable paused = false;
   @observable closed = false;
+  @observable closeLabel = "Stop and close debugger";
+  closedChanged(): void {
+    this.closeLabel = this.closed ? "Close debugger" : "Stop and close debugger";
+  }
   @observable attached = false;
   @observable idle = false;
   @observable detached = false;
@@ -76,11 +97,26 @@ export class ScriptDebugger extends WebUIElement {
   }
   @observable previousSource = false;
   @observable nextSource = false;
-  @observable nextProperties = false;
-  @observable canBack = false;
   @observable valuesLabel = "Select a lexical scope to inspect its own values.";
   @observable frameLimit = false;
   @observable breakpointCount = 0;
+  @observable restartable = false;
+  @observable restartLabel = "Restart with current draft and fixture";
+  @observable busy = false;
+  @observable detaching = false;
+  @observable narrowTab = "source";
+  @observable sourceSplit = "60";
+  @observable sourceShare = "60%";
+  surface!: HTMLDialogElement;
+  sourceViewport!: HTMLDivElement;
+  private returnFocus: HTMLElement | null = null;
+  private readonly branches = new Map<string, ValueBranch>();
+  private readonly pendingProperties = new Map<string, Set<string>>();
+  private queuedProperties: string[] = [];
+  private readingProperties: string | null = null;
+  private readonly expandedPaths = new Set<string>();
+  private preferredScope = "";
+  private scopePath: string[] = [];
   private timer: ReturnType<typeof setTimeout> | null = null;
   private generation = 0;
   private sourceGeneration = 0;
@@ -88,17 +124,30 @@ export class ScriptDebugger extends WebUIElement {
   private sourcePage: SourcePage | null = null;
   private statement: SourceLocation | null = null;
   private selectedFrame = 0;
-  private selectedHandle = 0;
-  private nextOffset: number | null = null;
-  private parents: number[] = [];
   private exception: ExceptionDiagnostic | null = null;
   private breakpoints: SourceBreakpoint[] = [];
   private bound = new Map<number, BreakpointResolution>();
   private outcomeKey = "";
   private ended = false;
+  private readonly sourceResize = new ResizeObserver(() => {
+    if (!this.surface?.open || !this.paused || !this.sourceViewport.clientHeight) {
+      return;
+    }
+    const line = this.sourceViewport.querySelector<HTMLElement>(".current");
+    if (!line) {
+      return;
+    }
+    const viewport = this.sourceViewport.getBoundingClientRect();
+    const current = line.getBoundingClientRect();
+    const top = viewport.top + this.sourceViewport.clientTop;
+    if (current.top < top || current.bottom > top + this.sourceViewport.clientHeight) {
+      this.revealStatement();
+    }
+  });
   connectedCallback(): void {
     super.connectedCallback();
     this.start();
+    this.sourceResize.observe(this.sourceViewport);
   }
   sessionInfoChanged(): void {
     this.start();
@@ -109,6 +158,8 @@ export class ScriptDebugger extends WebUIElement {
     this.idle = false;
     this.detached = false;
     this.ended = false;
+    this.detaching = false;
+    this.busy = false;
     ++this.generation;
     this.stopPolling();
     this.cursor = 0;
@@ -128,10 +179,70 @@ export class ScriptDebugger extends WebUIElement {
     this.exception = null;
     this.status = "Attaching debugger…";
     if (this.sessionInfo) {
+      this.restartable = this.sessionInfo.mode !== "Live exchange";
+      this.restartLabel = this.sessionInfo.mode.startsWith("Sandbox")
+        ? "Restart with current draft and fixture"
+        : "Restart fresh fixture";
       this.sourceName = this.sessionInfo.source;
       void this.loadSource(this.sourceName, 1, 1);
       void this.poll(this.generation);
+      queueMicrotask(() => this.show());
     }
+  }
+  show(): void {
+    if (!this.isConnected || !this.surface || this.surface.open) {
+      return;
+    }
+    this.returnFocus =
+      this.getRootNode() instanceof ShadowRoot
+        ? ((this.getRootNode() as ShadowRoot).activeElement as HTMLElement | null)
+        : (document.activeElement as HTMLElement | null);
+    this.surface.showModal();
+    this.surface.focus();
+    this.revealStatement();
+  }
+  hide(event?: Event): void {
+    event?.preventDefault();
+    this.surface.close();
+    this.returnFocus?.focus();
+    this.$emit("debug-hidden");
+  }
+  private revealStatement(): void {
+    this.$flushUpdates();
+    const line = this.sourceViewport?.querySelector<HTMLElement>(".current");
+    if (line) {
+      this.sourceViewport.scrollTop +=
+        line.getBoundingClientRect().top -
+        this.sourceViewport.getBoundingClientRect().top -
+        this.sourceViewport.clientHeight / 2;
+    }
+  }
+  selectTab(tab: string): void {
+    this.narrowTab = tab;
+    if (tab === "source") {
+      this.revealStatement();
+    }
+  }
+  private configurationChanged(): void {
+    this.dispatchEvent(
+      new CustomEvent<DebugConfiguration>("debug-configuration", {
+        detail: {
+          exceptions: this.exceptions,
+          breakpoints: this.breakpoints.map((value) => ({
+            ...value,
+            location: { ...value.location },
+          })),
+        },
+        bubbles: true,
+        composed: true,
+      }),
+    );
+  }
+  resizeSource(event: CustomEvent<{ value: number }>): void {
+    const value = Math.max(15, Math.min(85, event.detail.value));
+    this.sourceSplit = String(value);
+    this.sourceShare = `${value}%`;
+    this.revealStatement();
   }
   /** Sets requested source positions before initialization; native resolution remains authoritative. */
   configure(values: SourceBreakpoint[], exceptions = "none"): void {
@@ -178,6 +289,10 @@ export class ScriptDebugger extends WebUIElement {
         this.lease += ` · Exchange ${view.stream.exchangeId}`;
       }
       this.idle = view.stream.active === false;
+      if (this.detaching && this.idle && this.attached && !view.stream.closed) {
+        this.detaching = false;
+        await this.detach();
+      }
       this.details = evidence(view, this.exception);
       if (view.outcome) {
         const key = `${view.outcome.status}:${view.outcome.summary}`;
@@ -262,6 +377,12 @@ export class ScriptDebugger extends WebUIElement {
         this.invalidateValues();
         this.pause = event.pause;
         this.paused = true;
+        if (this.detaching) {
+          // Authored `debugger` statements can still pause after source breakpoints
+          // are cleared. Finish the operation before the native idle detach barrier.
+          void this.resume("continue");
+          break;
+        }
         this.issue = "";
         this.status = `Paused · ${event.reason} · operation ${this.invocation}`;
         this.frames = event.frames.map((frame) => ({
@@ -271,7 +392,7 @@ export class ScriptDebugger extends WebUIElement {
         }));
         this.frameLimit = event.truncated;
         this.exception = event.exception;
-        void this.selectFrame(0);
+        void this.selectFrame(0, false);
         break;
       case "resumed":
         this.paused = false;
@@ -288,21 +409,50 @@ export class ScriptDebugger extends WebUIElement {
             label: `${scope.kind}${scope.name ? ` · ${scope.name}` : ""}${scope.handle === null ? " · unavailable or handle limit" : ""}`,
             selected: false,
           }));
+          const scope =
+            this.scopes.find(
+              (value) => value.available && `${value.kind}:${value.name}` === this.preferredScope,
+            ) ??
+            this.scopes.find((value) => value.available && value.kind === "local") ??
+            this.scopes.find((value) => value.available);
+          if (scope) {
+            void this.selectScope(scope, false);
+          }
         }
         break;
       case "properties":
-        if (event.pause === this.pause && this.paused && event.handle === this.selectedHandle) {
-          this.properties = event.properties.map((property) => ({
-            ...property,
-            expandable: property.value.handle !== null,
-          }));
-          this.nextOffset = event.next;
-          this.nextProperties = event.next !== null;
-          this.valuesLabel = `Own properties ${event.offset + 1}–${event.offset + event.properties.length} · getters and proxies are not evaluated`;
+        if (event.pause === this.pause && this.paused) {
+          const request = `${event.handle}:${event.offset}`;
+          const keys = this.pendingProperties.get(request);
+          this.pendingProperties.delete(request);
+          if (this.readingProperties === request) {
+            this.readingProperties = null;
+          }
+          for (const key of keys ?? []) {
+            const branch = this.branches.get(key);
+            if (!branch || branch.handle !== event.handle || branch.offset !== event.offset) {
+              continue;
+            }
+            branch.properties = event.properties;
+            branch.next = event.next;
+            for (const property of event.properties) {
+              const path = [...branch.path, property.name];
+              if (property.value.handle !== null && this.expandedPaths.has(JSON.stringify(path))) {
+                void this.openBranch(property.value.handle, path, branch.depth + 1);
+              }
+            }
+          }
+          this.redrawProperties();
+          void this.readNextProperties();
         }
         break;
       case "rejected":
         this.issue = event.message;
+        if (this.readingProperties) {
+          this.pendingProperties.delete(this.readingProperties);
+          this.readingProperties = null;
+          void this.readNextProperties();
+        }
         break;
       case "stopped":
         this.status = event.reason;
@@ -317,14 +467,13 @@ export class ScriptDebugger extends WebUIElement {
     }
   }
   private invalidateValues(): void {
-    this.valuesLabel = "Select a lexical scope to inspect its own values.";
+    this.valuesLabel = "Variables appear automatically when execution pauses.";
     this.scopes = [];
     this.properties = [];
-    this.selectedHandle = 0;
-    this.parents = [];
-    this.nextOffset = null;
-    this.nextProperties = false;
-    this.canBack = false;
+    this.branches.clear();
+    this.pendingProperties.clear();
+    this.queuedProperties = [];
+    this.readingProperties = null;
   }
   async action(action: DebugAction): Promise<boolean> {
     if (!this.sessionInfo || this.closed) {
@@ -364,9 +513,56 @@ export class ScriptDebugger extends WebUIElement {
     this.idle = false;
     await this.action({ kind: "detach" });
   }
-  async close(): Promise<void> {
-    if (!this.sessionInfo) {
+  async continueAndDetach(): Promise<void> {
+    if (this.closed || !this.attached || this.detaching) {
       return;
+    }
+    if (this.idle) {
+      await this.detach();
+      return;
+    }
+    this.busy = true;
+    // Suppress further pauses for this operation without changing the next-run configuration.
+    const cleared =
+      (await this.action({ kind: "breakpoints", values: [] })) &&
+      (await this.action({ kind: "exceptions", policy: "none" }));
+    if (cleared) {
+      this.detaching = true;
+      await this.resume("continue");
+    } else if (!this.closed) {
+      await this.action({ kind: "breakpoints", values: this.breakpoints });
+      if (
+        this.exceptions === "none" ||
+        this.exceptions === "all" ||
+        this.exceptions === "uncaught"
+      ) {
+        await this.action({ kind: "exceptions", policy: this.exceptions });
+      }
+    }
+    this.busy = false;
+  }
+  async restart(): Promise<void> {
+    if (!this.restartable || this.busy) {
+      return;
+    }
+    this.busy = true;
+    const closed = await this.closeSession();
+    this.busy = false;
+    if (closed) {
+      this.surface.close();
+      this.$emit("debug-restart");
+    }
+  }
+  async close(): Promise<void> {
+    if (await this.closeSession()) {
+      this.surface.close();
+      this.$emit("debug-closed", { detached: this.detached });
+      this.returnFocus?.focus();
+    }
+  }
+  private async closeSession(): Promise<boolean> {
+    if (!this.sessionInfo) {
+      return false;
     }
     const id = this.sessionInfo.session;
     ++this.generation;
@@ -374,23 +570,21 @@ export class ScriptDebugger extends WebUIElement {
     this.stopPolling();
     try {
       await invoke("close_debug_session", { session: id });
-      this.dispatchEvent(
-        new CustomEvent("debug-closed", {
-          detail: { detached: this.detached },
-          bubbles: true,
-          composed: true,
-        }),
-      );
+      return true;
     } catch (error: unknown) {
       this.issue = describeError(error);
       void this.poll(this.generation);
+      return false;
     }
   }
-  async selectFrame(index: number): Promise<void> {
+  async selectFrame(index: number, reveal = true): Promise<void> {
     if (!this.paused) {
       return;
     }
     this.selectedFrame = index;
+    if (reveal) {
+      this.narrowTab = "source";
+    }
     this.invalidateValues();
     this.frames = this.frames.map((frame) => ({ ...frame, selected: frame.index === index }));
     const frame = this.frames.find((frame) => frame.index === index);
@@ -401,48 +595,173 @@ export class ScriptDebugger extends WebUIElement {
     } else {
       this.sourcePage = null;
       this.sourceLines = [];
+      this.previousSource = false;
+      this.nextSource = false;
       this.sourceStatus =
         "Source unavailable for this frame. Internal invocation sources are excluded.";
     }
     await this.action({ kind: "scopes", pause: this.pause, frame: index });
   }
-  async selectScope(scope: ScopeView): Promise<void> {
+  async selectScope(scope: ScopeView, remember = true): Promise<void> {
     if (scope.handle === null) {
       return;
     }
-    this.parents = [];
-    this.canBack = false;
+    this.branches.clear();
+    this.pendingProperties.clear();
+    this.queuedProperties = [];
+    this.readingProperties = null;
+    const identity = `${scope.kind}:${scope.name}`;
+    if (remember) {
+      this.preferredScope = identity;
+    }
+    this.scopePath = [identity];
     this.scopes = this.scopes.map((value) => ({
       ...value,
       selected: value.handle === scope.handle,
     }));
-    await this.readProperties(scope.handle, 0);
+    this.valuesLabel = scope.label;
+    await this.openBranch(scope.handle, this.scopePath, 0);
   }
-  private async readProperties(handle: number, offset: number): Promise<void> {
-    this.selectedHandle = handle;
-    this.properties = [];
-    this.nextProperties = false;
-    await this.action({ kind: "properties", pause: this.pause, handle, offset });
-  }
-  async expand(value: DebugProperty): Promise<void> {
-    if (value.value.handle === null || this.parents.length >= 16) {
+  private async openBranch(handle: number, path: string[], depth: number): Promise<void> {
+    const key = JSON.stringify(path);
+    if (depth > 16 || this.branches.size >= 64 || this.branches.has(key)) {
       return;
     }
-    this.parents.push(this.selectedHandle);
-    this.canBack = true;
-    await this.readProperties(value.value.handle, 0);
+    this.branches.set(key, {
+      handle,
+      path,
+      depth,
+      properties: [],
+      next: null,
+      offset: 0,
+      pages: [0],
+    });
+    await this.readBranch(key, 0);
   }
-  async back(): Promise<void> {
-    const handle = this.parents.pop();
-    this.canBack = this.parents.length > 0;
-    if (handle !== undefined) {
-      await this.readProperties(handle, 0);
+  private async readBranch(key: string, offset: number): Promise<void> {
+    const branch = this.branches.get(key);
+    if (!branch) {
+      return;
+    }
+    branch.offset = offset;
+    if (!branch.pages.includes(offset)) {
+      branch.pages.push(offset);
+      branch.pages.sort((left, right) => left - right);
+    }
+    const request = `${branch.handle}:${offset}`;
+    const pending = this.pendingProperties.get(request);
+    if (pending) {
+      pending.add(key);
+      return;
+    }
+    this.pendingProperties.set(request, new Set([key]));
+    this.queuedProperties.push(request);
+    await this.readNextProperties();
+  }
+  private async readNextProperties(): Promise<void> {
+    if (this.readingProperties || !this.paused) {
+      return;
+    }
+    const request = this.queuedProperties.shift();
+    if (!request) {
+      return;
+    }
+    const key = this.pendingProperties.get(request)?.values().next().value;
+    const branch = key ? this.branches.get(key) : null;
+    if (!branch) {
+      this.pendingProperties.delete(request);
+      await this.readNextProperties();
+      return;
+    }
+    const pause = this.pause;
+    this.readingProperties = request;
+    if (
+      !(await this.action({
+        kind: "properties",
+        pause,
+        handle: branch.handle,
+        offset: branch.offset,
+      })) &&
+      pause === this.pause
+    ) {
+      this.pendingProperties.delete(request);
+      this.readingProperties = null;
+      await this.readNextProperties();
     }
   }
-  async moreProperties(): Promise<void> {
-    if (this.nextOffset !== null) {
-      await this.readProperties(this.selectedHandle, this.nextOffset);
+  async expand(value: PropertyView): Promise<void> {
+    if (value.more) {
+      const branch = this.branches.get(value.branch);
+      if (branch && value.pageOffset !== undefined) {
+        await this.readBranch(value.branch, value.pageOffset);
+      }
+    } else if (value.value.handle !== null) {
+      if (this.expandedPaths.has(value.key)) {
+        this.expandedPaths.delete(value.key);
+      } else {
+        if (this.expandedPaths.size >= 256) {
+          this.issue = "Collapse an expanded value before opening another.";
+          return;
+        }
+        this.expandedPaths.add(value.key);
+        const path = JSON.parse(value.key) as string[];
+        await this.openBranch(value.value.handle, path, value.depth + 1);
+      }
     }
+    this.redrawProperties();
+  }
+  private redrawProperties(): void {
+    const rows: PropertyView[] = [];
+    const visit = (key: string): void => {
+      const branch = this.branches.get(key);
+      if (!branch) {
+        return;
+      }
+      if (branch.offset > 0) {
+        rows.push({
+          name: "Previous properties",
+          value: { kind: "", display: "", handle: null, truncated: false },
+          key: `${key}:previous`,
+          depth: branch.depth,
+          expandable: false,
+          expanded: false,
+          more: true,
+          branch: key,
+          pageOffset: branch.pages.filter((offset) => offset < branch.offset).at(-1) ?? 0,
+        });
+      }
+      for (const property of branch.properties) {
+        const path = JSON.stringify([...branch.path, property.name]);
+        const expanded = property.value.handle !== null && this.expandedPaths.has(path);
+        rows.push({
+          ...property,
+          key: path,
+          depth: branch.depth,
+          expandable: property.value.handle !== null && branch.depth < 16,
+          expanded,
+          more: false,
+          branch: key,
+        });
+        if (expanded) {
+          visit(path);
+        }
+      }
+      if (branch.next !== null) {
+        rows.push({
+          name: "Next properties",
+          value: { kind: "", display: "", handle: null, truncated: false },
+          key: `${key}:more`,
+          depth: branch.depth,
+          expandable: false,
+          expanded: false,
+          more: true,
+          branch: key,
+          pageOffset: branch.next,
+        });
+      }
+    };
+    visit(JSON.stringify(this.scopePath));
+    this.properties = rows;
   }
   async policy(event: Event): Promise<void> {
     const value = (event.target as HTMLSelectElement).value;
@@ -450,6 +769,7 @@ export class ScriptDebugger extends WebUIElement {
       return;
     }
     this.exceptions = value;
+    this.configurationChanged();
     await this.action({ kind: "exceptions", policy: value });
   }
   async changeSource(event: Event): Promise<void> {
@@ -477,6 +797,8 @@ export class ScriptDebugger extends WebUIElement {
       this.nextSource = page.lines.at(-1)!.number < page.totalLines;
       this.sourceStatus = `Read-only executing snapshot · ${source}:${line}:${column}`;
       this.redrawSource();
+      this.sourceViewport.scrollTop = 0;
+      this.revealStatement();
     } catch (error: unknown) {
       if (version === this.sourceGeneration) {
         this.sourcePage = null;
@@ -515,6 +837,7 @@ export class ScriptDebugger extends WebUIElement {
     this.bound.clear();
     this.resolutions = [];
     this.redrawSource();
+    this.configurationChanged();
     await this.action({ kind: "breakpoints", values: this.breakpoints });
   }
   private redrawSource(): void {
@@ -544,18 +867,14 @@ export class ScriptDebugger extends WebUIElement {
   }
   keyboard(event: KeyboardEvent): void {
     event.stopPropagation();
-    if (
-      event
-        .composedPath()
-        .some(
-          (target) =>
-            target instanceof HTMLElement &&
-            (target.matches("input,select,textarea") || target.isContentEditable),
-        )
-    ) {
+    if (event.isComposing || event.repeat || event.altKey || event.metaKey) {
       return;
     }
-    if (event.key === "F5") {
+    if (event.key === "F8" || (event.ctrlKey && event.key === "\\")) {
+      event.preventDefault();
+      void this.resume("continue");
+    }
+    if (event.key === "F5" && !event.ctrlKey) {
       event.preventDefault();
       if (event.shiftKey) {
         void this.stop();
@@ -579,6 +898,7 @@ export class ScriptDebugger extends WebUIElement {
     }
   }
   disconnectedCallback(): void {
+    this.sourceResize.disconnect();
     ++this.generation;
     ++this.sourceGeneration;
     this.stopPolling();

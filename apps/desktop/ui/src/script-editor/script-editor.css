@@ -5,6 +5,7 @@ script-editor { display: contents; }
 .script-state span { font-size:.8125rem; color:var(--muted); }
 .script-workspace editor-surface { --panel-editor-height:clamp(12rem,34dvh,24rem); --panel-editor-min-height:12rem; }
 .script-workspace .monaco-editor-host { min-height:12rem; }
+.script-breakpoint::after { content:""; display:block; width:10px; height:10px; margin:5px auto; border-radius:50%; background:var(--error-color,#bd3030); outline:1px solid CanvasText; }
 .script-toolbar { min-width:0; }
 .script-toolbar .actions { margin:0; }
 .script-toolbar .field-help { margin:.35rem 0 0; }

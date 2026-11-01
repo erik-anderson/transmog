@@ -171,12 +171,13 @@ redaction and context choices. [Trace saving](trace-saving.md) covers formats,
 source metadata, import/recovery and conversion. **Save case…** shares selected
 rules and evidence through [portable cases](portable-investigations.md#desktop-transfer-and-package-apis-k3).
 
-**Capture tools → Record to file** chooses a destination before starting its proxy
-and writes directly to that file without retaining entries in Traffic. Switching
-from live capture waits for active requests and offers cancellation while waiting.
-Choose **Headers only** or **Headers and bodies**. Stopping seals the file and
-restores Windows proxy settings. The separate [CLI recorder](cli-support-capture.md)
-is distributed outside the installer.
+**Capture tools → Record to file** chooses a destination before starting its
+proxy and writes directly to that file without retaining entries in Traffic.
+Switching from live capture waits for active requests and offers cancellation
+while waiting. Choose **Headers only** or **Headers and bodies**. Stopping seals
+the file and restores Windows proxy settings. The [CLI
+recorder](cli-support-capture.md) also runs without the desktop; it is included
+in the installer and published separately.
 
 ## Editing and replay
 

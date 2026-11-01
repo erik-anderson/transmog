@@ -22,7 +22,7 @@ export function installDebuggerFixture() {
             index: 0,
             function: "nested <img src=x onerror=alert(1)>",
             location: { source: "file:///transmog-script/main.js", line: 2, column: 3 },
-            original: { source: debug.info.source, line: 2, column: 3 },
+            original: { source: debug.info.source, line: state.debugSourceLine ?? 2, column: 3 },
             unavailable: false,
           },
           { index: 1, function: "internal invocation", location: null, unavailable: true },
@@ -130,15 +130,19 @@ export function installDebuggerFixture() {
             kind: "scopes",
             pause: debug.pause,
             frame: action.frame,
-            scopes: [
-              { kind: "local", name: "nested", handle: 1 },
-              { kind: "closure", name: "outer", handle: 2 },
-            ],
+            scopes:
+              state.debugInitializerScope && debug.invocation === 0
+                ? [{ kind: "module", name: "", handle: 2 }]
+                : [
+                    { kind: "local", name: "nested", handle: 1 },
+                    { kind: "closure", name: "outer", handle: 2 },
+                  ],
           },
           request,
         );
         break;
       case "properties": {
+        const pageSize = state.debugPropertyPageSize ?? 100;
         const properties =
           action.handle === 1
             ? [
@@ -183,8 +187,8 @@ export function installDebuggerFixture() {
             pause: debug.pause,
             handle: action.handle,
             offset: action.offset,
-            properties: properties.slice(action.offset, action.offset + 100),
-            next: properties.length > action.offset + 100 ? action.offset + 100 : null,
+            properties: properties.slice(action.offset, action.offset + pageSize),
+            next: properties.length > action.offset + pageSize ? action.offset + pageSize : null,
           },
           request,
         );

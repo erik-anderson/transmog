@@ -741,40 +741,47 @@ the MAPI parity corpus before any compatibility promise.
 
 ## Debugging a visualizer
 
-Choose a matching retained message and visualizer in Traffic, then open
-**Developer debugging**. **Debug fresh fixture** creates a fresh sandbox with
-initializer breakpoints installed before the module runs. **Attach to this
-instance** attaches at an idle operation boundary to the actual parser, preserving
-its module globals, parsed document and continuation state. Extensions settings
-provides **Debug in Traffic…** for the selected message. If no selected message
-matches, select one before starting. Merely inspecting installed extensions does
-not execute their code.
+Select a retained message and matching visualizer in Traffic, then open
+**Developer debugging**. Extensions settings also offers **Debug in Traffic…**
+for a matching selected message. Inspecting installed extensions does not execute
+code.
 
-The same controller covers visualize, declared input/context/decoded
-continuations, expansion and explicitly enabled live updates. Access declarations,
-retained-input authorization, source bounds and document validation still apply.
-Choose a package-relative module and initial source lines before initialization,
-or use the executing snapshot's gutter later. Optional original maps are bound
-to the package digest; generated JavaScript remains available when mapping fails.
-Missing or evicted sources are labeled unavailable. Changing unpacked files or
-a draft never changes the running snapshot. Reload or open a fresh fixture to
-execute new code.
+- **Debug fresh fixture** starts a new parser with breakpoints installed before
+  initialization. Enter the package-relative module and initial line numbers;
+  once attached, use the executing source gutter.
+- **Attach to this instance** attaches at an idle boundary to the actual parser,
+  preserving globals, the parsed document and continuation state. Trigger a new
+  operation, such as expansion, to reach a breakpoint in that operation.
 
-Continue (F5), step over (F10), into (F11), out (Shift+F11) and Stop (Shift+F5)
-apply while focus is inside the debugger. Stack and scope reads are native and
-read-only, with 32 frames, 64 handles per pause, 100 own properties per page and
-2 KiB primitive previews. Getters, proxies and authored formatters are not run.
-Some lexical, optimized or uninitialized values may be unavailable. There is no
-arbitrary evaluation, mutation, remote endpoint or conditional expression.
+The controller covers initialization, input/context/decoded continuations,
+expansion and explicitly enabled live updates. Input authorization and document
+validation still apply. Source snapshots are immutable; original maps are tied
+to the package digest, with generated JavaScript as fallback. Reload or start a
+fresh fixture to run changed development files.
 
-A pause expires after 60 seconds, a session after 10 minutes, and native inspection
-commands after 100 ms. Only authenticated pause time is excluded from operation
-and live-retention timing. Stop, controller loss, selection changes and native
-cancellation still release the instance. The last valid document may stay visible
-as a frozen result; **Open visualizer** starts a new instance. Idle **Detach**
-removes debugging while retaining the actual healthy parser.
+Pauses reveal the executing statement and load Local variables when available.
+Expand properties in place and switch between **Source** and **Stack and
+variables** in narrow windows. Continue uses F8 or `Ctrl+\` (also F5), step over
+F10, into F11, out Shift+F11, and Stop Shift+F5. Shortcuts work throughout the
+debugger; toolbar buttons expose hover and focus tooltips.
 
-At most four controllers and 16 recent histories are shared across application
-windows. Detailed values, source and console evidence remain ephemeral and are
-excluded from normal support, trace, case and MCP output. Console copying is an
-explicit local action.
+**Return to editor** or Escape hides the debugger without ending the session;
+**Show debugger** returns to it. **Continue and detach** lets current work finish
+without further pauses, then detaches while retaining a healthy parser. **Restart
+fresh fixture** stops the current instance and starts a new one with the retained
+breakpoint and exception choices. It does not preserve the old parser's globals.
+**Stop and close debugger** aborts active work. Stopped instances may leave their
+last valid result frozen; **Open visualizer** starts a new instance.
+
+Inspection is read-only: no evaluation, watches, mutation or conditional
+expressions. Getters, proxies and authored formatters are not run. A pause permits
+32 frames and 64 value handles, with up to 100 properties per page and 2 KiB
+primitive previews; unavailable values are labeled. Pauses expire after 60 seconds,
+sessions after 10 minutes, and native inspection commands after 100 ms. Expiry,
+window loss, selection changes and cancellation release owned work. Only native
+pause time is excluded from operation and live-retention timing.
+
+The process shares a limit of four active controllers and tracks up to 16 session
+records. Detailed source, values, exceptions and console output are ephemeral and
+excluded from normal support, trace, case and MCP output. Copying developer details
+is an explicit local action.

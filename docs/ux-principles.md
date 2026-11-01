@@ -151,6 +151,11 @@ when changing the experience.
   consequential irreversible actions; keep routine selection fluid.
 - Closing a progress view is not cancellation. Keep monitoring ongoing work and
   make its result available without reopening dialogs or moving focus.
+- Debugging keeps controls reachable, reveals the paused statement and loads Local
+  variables without extra selection. Preserve breakpoint and exception choices
+  through reruns, and distinguish hiding the controller, stopping execution and
+  detaching a healthy worker. Compact action icons retain accessible names and
+  readable tooltips for pointer and keyboard use.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.

@@ -2142,6 +2142,7 @@
   "debugOutdated": false,
   "debugBreakpoints": [],
   "debugPolicy": "uncaught",
+  "debugLinesText": "",
   "runtimeDetails": [],
   "developerDetails": [],
   "scriptDetails": [],

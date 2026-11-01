@@ -51,8 +51,8 @@ build scripts cannot detect newly created untracked files.
 
 ## Development cache maintenance
 
-For a comprehensive disk cleanup, preview build caches and completed test-run
-bulk data together:
+Preview build caches and completed test-run bulk data together, then add
+`--apply` to delete the selected data:
 
 ```text
 python scripts/clean-disk.py
@@ -60,93 +60,67 @@ python scripts/clean-disk.py --apply
 python scripts/clean-disk.py --conservative
 ```
 
-By default, cleanup retains one compiled variant, removes older variants without
-an age delay, considers obsolete native build outputs with their dependency
-closure, and clears all eligible completed-run captures/profiles and unpinned
-incremental caches. Reports, logs, screenshots and diagnostic JSON remain,
-including failure evidence. Valid completed legacy load reports are recognized.
-Active, interrupted, unknown and pinned data remains protected. Release caches
-require `--include-release`; installed tools, signed bundles, arbitrary `.local`
-directories and unregistered artifact directories are outside this command.
-Aggressive cleanup can require rebuilding older configurations and rerunning
-fixtures. Pins on containing target directories also protect discovered
-independent caches.
+The default policy retains one build variant, removes eligible older variants
+without an age delay, and clears unpinned incremental caches and completed-run
+captures/profiles. It removes obsolete native build outputs only when their
+fingerprint dependency graph proves they are unused. Reports, logs, screenshots
+and diagnostic JSON remain, including failure evidence.
 
-Use `--conservative` to retain three build variants and recent success/failure
-bulk data under the usual age and space budgets. Both policies clear unpinned
-incremental caches. `--deep` remains an explicit alias for the default aggressive
-policy. Deletion always requires
-`--apply`; without it either policy only previews the cleanup.
+`--conservative` retains three variants and recent test-run bulk data under the
+age and space budgets described below. Both policies clear unpinned incremental
+caches. `--deep` is an alias for the default aggressive policy; `--include-release`
+also considers recognized release caches. Every policy previews unless `--apply`
+is supplied. Removed caches may need rebuilding and fixtures may need rerunning.
 
-The JSON report includes each build profile, test-output decisions, errors,
-estimated reclaimable bytes and the observed free-space change. Estimates exclude
-hardlinks outside each deletion plan and can undercount shared content released
-across several profiles. Data retained because a native fingerprint graph is
-incomplete remains listed explicitly; no native dependency is guessed obsolete.
+Active builds, incomplete or unknown runs, pins, installed tools and signed
+bundles are protected. A `.transmog-cache-pin` file in a target root, profile,
+fingerprint or incremental/build directory protects that scope; a parent pin also
+protects nested caches. Pin release qualification caches while needed. There is
+no blanket cleanup of `.local`, `.tools` or unregistered `artifacts` directories.
 
-Configured Python Cargo commands and PowerShell environment setup check the
-development cache once per 24 hours. Cleanup retains the three newest complete
-variants for each Cargo target, removing older artifact sets with their matching
-fingerprints and excess incremental caches. Variants built within the last day
-are protected, and metadata-only checks do not displace retained rlib/PDB builds.
-Below 20 GiB free space, an extra check can trim excess recent
-variants while still retaining three. Active Cargo builds are skipped using
-Cargo's profile locks, including related host and cross-target profiles. Automatic
-cleanup preserves release outputs, native build-script output, unknown artifact
-layouts and target directories outside this repository.
+The JSON report explains decisions, incomplete dependency graphs, errors and
+estimated reclaimable bytes. Estimates exclude hardlinks retained outside each
+deletion plan and can undercount content released across profiles. Observed
+free-space change is reported separately and can be affected by concurrent disk
+activity.
 
-Preview or run cleanup manually:
+### Automatic build-cache retention
+
+Configured Python Cargo commands and PowerShell environment setup check caches
+once per 24 hours. They retain three complete variants per target, protect builds
+used within the last day, and remove excess matching artifacts, fingerprints and
+incremental caches. Successful configured build/check/Clippy use records supplement
+file timestamps; metadata-only checks do not displace compiled variants. Below
+20 GiB free, an extra check can trim excess recent variants while retaining three.
+
+Automatic cleanup uses Cargo profile locks and skips active builds. It preserves
+release and native build-script outputs, unknown layouts and targets outside this
+repository. CI and explicitly redirected/custom layouts skip it.
+`TRANSMOG_BUILD_CACHE_TRIM=0` disables automatic checks.
+
+### Targeted build-cache cleanup
 
 ```text
 python scripts/trim-build-cache.py
 python scripts/trim-build-cache.py --apply
-```
-
-Use `--keep`, `--min-age-hours` and `--min-free-gib` to adjust manual retention.
-`TRANSMOG_BUILD_CACHE_TRIM=0` disables automatic checks. CI and explicitly
-redirected/custom Cargo layouts skip automatic cleanup. Deleting an older
-variant may require recompiling that configuration next time it is used; removing
-its fingerprint together with its artifacts lets Cargo rebuild coherently.
-
-Additional tiers are manual and preview by default:
-
-```text
 python scripts/trim-build-cache.py --purge-incremental
 python scripts/trim-build-cache.py --build-scripts
 python scripts/trim-build-cache.py --registered --purge-incremental
 python scripts/trim-build-cache.py --target-dir sdk/target --target-triple x86_64-pc-windows-msvc
 ```
 
-Add `--apply` to delete the previewed groups. `--purge-incremental` removes all
-unpinned incremental directories, regardless of age or variant count, while
-preserving compiled artifacts and fingerprints. The next changed-source build
-may take longer. `--build-scripts` removes complete build directories together
-with their fingerprints, retaining the dependency closure of other retained
-units. It preserves native output when the fingerprint graph is incomplete;
-deleting only an `out` directory can leave cached link paths pointing at missing
-libraries. Interrupted staging is recovered under the same profile locks.
+Use `--keep`, `--min-age-hours` and `--min-free-gib` to adjust retention.
+`--purge-incremental` removes all unpinned incremental caches regardless of age;
+compiled artifacts remain. `--build-scripts` removes complete output directories
+and fingerprints only when retained units' dependency closure permits it. Unknown
+or incomplete native dependency graphs remain protected. Interrupted staging is
+recovered under the same locks.
 
-`--registered` visits only the workspace, SDK, fuzz, SDK model-codegen and
-SDK Crubit target roots declared in `scripts/build_cache.py`, including their
-cross-target profiles. It also discovers independent Cargo caches immediately
-inside workspace `target/` using Cargo's cache signature, compiler metadata and
-profile layout. These are separate roots, not target triples, regardless of their
-names. Experiments elsewhere require an explicit `--target-dir`.
-Release cleanup additionally requires `--profile release`; signed bundles and
-other files outside recognized cache groups remain untouched. A file named
-`.transmog-cache-pin` in a target root, profile, fingerprint or incremental/build
-directory protects that scope. Pin release qualification caches while needed.
-There is no blanket cleanup of `.local`, `.tools` or `artifacts`.
-
-Ordinary configured root `cargo build`, `cargo check` and `cargo clippy` commands
-record successful use of recognized units, including fresh cache hits, without touching
-artifact timestamps. Matching use records supplement modification times for
-retention. Unhashed outputs with no provable unit identity, other commands and
-explicit Cargo message formats retain timestamp fallback behavior. JSON reports
-explain retention decisions and distinguish
-logical file sizes, unique content and estimated reclaimable content. Hardlinks
-outside a deletion plan retain their storage. The observed free-space change is
-reported separately; concurrent disk activity can affect it.
+`--registered` visits roots declared in [build_cache.py](../scripts/build_cache.py)
+and discovers independent Cargo caches immediately inside workspace `target/`
+using their cache signature, compiler metadata and profile layout. Experiments
+elsewhere need an explicit `--target-dir`. Targeted release cleanup also requires
+`--profile release`. Add `--apply` to any preview command to perform deletion.
 
 ### Test output retention
 

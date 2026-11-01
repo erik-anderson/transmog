@@ -4379,6 +4379,19 @@ await page.addInitScript(
               });
             if (state.scriptSourceError)
               throw new Error("The exact source snapshot is unavailable");
+            if (state.debugLongSource) {
+              const first = Math.max(1, args.line - 20);
+              return {
+                ...args,
+                totalLines: 200,
+                lines: Array.from({ length: Math.min(41, 201 - first) }, (_, index) => ({
+                  number: first + index,
+                  startColumn: 1,
+                  text: `  const value${first + index}: number = ${first + index};`,
+                  shortened: false,
+                })),
+              };
+            }
             return {
               ...args,
               totalLines: 3,

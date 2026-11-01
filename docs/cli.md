@@ -36,6 +36,7 @@ are deferred; existing command output and exit behavior remain unchanged.
 | Command | Task |
 | --- | --- |
 | `record` | Guided recording to a new `.tmcap` file; Ctrl+C stops and saves it. |
+| `profile validate` | Validate a support capture profile without setup or writes. |
 | `mcp serve` | Run the stdio MCP connector for an agent. |
 | `mcp status` / `mcp call` | Check desktop status or call an MCP tool with JSON arguments. |
 | `context` | List or extract original recorded configuration, support metadata, incidents and source notes. |
@@ -52,10 +53,11 @@ are deferred; existing command output and exit behavior remain unchanged.
 ## MCP agent connections
 
 Create a key in **Settings → Integrations** and use the generated agent
-configuration; see [MCP setup](mcp.md). Every invocation requires its own
-`TRANSMOG_ACCESS_KEY` environment value. Keys are never command-line arguments.
-On Windows, preserve the generated `LOCALAPPDATA` environment entry too.
-Agents normally launch `mcp serve`; for direct status or tool calls:
+configuration; see [MCP setup](mcp.md). Traffic operations require
+`TRANSMOG_ACCESS_KEY` in the CLI process environment. Keys are never
+command-line arguments; offline discovery and bundled help need no key. On
+Windows, preserve the generated `LOCALAPPDATA` environment entry too. Agents
+normally launch `mcp serve`; for direct status or tool calls:
 
 ```powershell
 .\transmog-cli.exe mcp status

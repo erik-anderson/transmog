@@ -50,8 +50,9 @@ validation and the public symbols archives.
 Retrying failed jobs can reuse successful upstream artifacts. Timestamp-service
 failures retry up to three times from the original input bytes; permission and
 other signing failures stop immediately. Every attempt still requires valid
-signatures and timestamps. The CLI is signed separately and excluded from the
-desktop installer; lifecycle checks run before signing and against the final CLI.
+signatures and timestamps. The CLI is signed separately, included beside the
+desktop for MCP connections, and published as a standalone asset. Lifecycle
+checks run before signing and against the final CLI.
 
 Hosted WebView and client-certificate checks isolate product data and temporarily
 set loopback DevTools arguments through machine policy for elevated runners.

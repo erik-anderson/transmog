@@ -1,8 +1,9 @@
 # Record a trace for support
 
-Download the separate signed `transmog-cli.exe` from the project's official
-[release assets](https://github.com/erik-anderson/transmog/releases). It is
-not installed with the desktop app and requires no Rust or Cargo installation.
+Use the signed `transmog-cli.exe` installed beside the desktop, or download it
+separately from the official
+[release assets](https://github.com/erik-anderson/transmog/releases). It runs
+without the desktop, Rust or Cargo.
 Right-click **transmog-cli.exe → Properties → Digital Signatures**,
 open the signature's details and confirm Windows says it is valid. Compare the
 signer with the publisher named in that release's notes. Resolve a missing or

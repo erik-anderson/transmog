@@ -834,28 +834,44 @@ representation, coverage, exclusion and processing limits.
 
 ## Debug script execution
 
-Use **Debug test** in Scripts for an isolated callback or exchange scenario. It
-uses the current input and exact built snapshot; edits and applying a revision
-remain separate actions. Set initializer breakpoints and exception policy in
-**Debugger options** before starting. While paused, use the source gutter, call
-stack, lexical scopes and paged own properties. Variables and source are read-only;
-getters, proxies and unavailable optimized values are never evaluated to display
-them. Continue and step preserve normal validation and script decisions.
+Choose **Debug test** in Scripts to run the current callback or exchange-scenario
+fixture in a fresh sandbox without applying the draft. Click the editor gutter to
+set initializer breakpoints, or use **Debugger options** for line numbers and
+exception policy. When execution pauses, the debugger reveals the statement and
+loads an available scope, preferring Local unless you selected another scope.
+Select frames or scopes and expand properties in place; narrow windows
+switch between **Source** and **Stack and variables**. Executing source and values
+are read-only, and getters and proxies are not evaluated.
+
+Continue uses F8 or `Ctrl+\` (also F5); step over uses F10, into F11, out
+Shift+F11, and Stop Shift+F5. Shortcuts work throughout the debugger, including
+selectors. Hover or focus a toolbar button for its action and shortcut.
+
+**Restart** stops the sandbox and runs the current draft and fixture.
+Breakpoints and exception choices survive reruns in the current workspace.
+**Return to editor** or Escape hides the debugger and preserves its running or
+paused state; **Show debugger** returns to it. **Stop and close debugger**
+aborts active work. **Continue and detach** lets current work finish without
+further pauses before detaching. Test sandboxes are released on completion.
 
 For live traffic, open **Debug next matching exchange**, review the applied
-revision and filter, then choose **Arm for 60 seconds**. This reserves the actual
-worker with its current globals. Outstanding pinned exchanges or another owner
-prevent arming. Other requests requiring that worker can fail while it is reserved;
-traffic using other workers continues normally. Client and upstream timeouts
-still apply. The selected exchange owns its later body and terminal callbacks.
-Normal completion detaches and preserves the worker. Stop, cancellation or losing
-the owning window can terminate it; use **Retry applied script** if unavailable.
-Applying a replacement or pausing activation ends the previous controller without
-restoring old activation. HTTP editing breakpoints and Pause script are separate
-features.
+revision and method/host/path filter, then choose **Arm for 60 seconds**. This
+reserves the actual idle worker with its globals. Outstanding pinned exchanges
+or another owner prevent arming. Other requests requiring that worker can fail
+while it is reserved, even outside the debugger filter. Client and upstream
+timeouts still apply; the selected exchange keeps ownership through body and
+terminal callbacks.
 
-Pauses last at most 60 seconds and sessions 10 minutes. Closing or reloading the
-controller's document releases its ownership. Locals, console records and detailed
-exceptions stay ephemeral; ordinary trace, case, support and MCP output do not gain
-these values. See the generated [Script API](scripting.md#findings-and-failure-categories)
-for controls, limits and console semantics.
+Normal live completion or **Continue and detach** releases the reservation and
+preserves a healthy worker. Stop, cancellation or window loss can terminate it;
+use **Retry applied script** if unavailable. Applying a replacement or pausing
+activation ends the previous debugger without restoring its revision. **Pause
+script** controls admission of new traffic; it is separate from a debugger pause
+and from HTTP editing breakpoints.
+
+Pauses expire after 60 seconds and sessions after 10 minutes; expiry, document
+reload or window loss stops active owned work. Console output is under **Console
+output and diagnostics**. Locals, console records and rich exceptions stay local
+and ephemeral, outside normal trace, case, support and MCP output. See the
+[Script API](scripting.md#debug-script-execution) for inspection limits and
+[console semantics](scripting.md#findings-and-failure-categories).

@@ -36,7 +36,7 @@ See [transport implementation](../crates/mcp/src/transport.rs).
 `mcp serve` initializes and lists tools without contacting the desktop.
 `transmog_help({topic: "scripts", section: "overview"})` also runs locally without
 a key or desktop. Sections include events, selection, state, helpers, evidence,
-sandbox, examples, types and all. It returns the installed API revision and
+sandbox, debugging, examples, types and all. It returns the installed API revision and
 explicit MCP support limits; the content is shared with in-app Script API help. Only
 `transmog_connect`, with `--start-app` configured, may launch the sibling desktop
 executable. Status and ordinary calls never launch it. Every desktop run has a

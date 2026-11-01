@@ -37,6 +37,10 @@ export interface SourceBreakpoint {
   id: number;
   location: SourceLocation;
 }
+export interface DebugConfiguration {
+  exceptions: string;
+  breakpoints: SourceBreakpoint[];
+}
 export interface BreakpointResolution {
   id: number;
   requested: SourceLocation;

@@ -1,7 +1,12 @@
 import "../draft-status/draft-status.js";
 import "../script-diagnostics/script-diagnostics.js";
 import "../script-debugger/script-debugger.js";
-import type { DebugSessionInfo, SourceBreakpoint } from "../script-debugger/models.js";
+import type {
+  DebugConfiguration,
+  DebugSessionInfo,
+  SourceBreakpoint,
+} from "../script-debugger/models.js";
+import type { ScriptDebugger } from "../script-debugger/script-debugger.js";
 import {
   errorEvidence,
   type DeveloperEvidence,
@@ -180,6 +185,12 @@ export class ScriptEditor extends WorkspaceElement {
     null;
   debugBreakpointLines!: HTMLInputElement;
   debugExceptionPolicy!: HTMLSelectElement;
+  debugPanel?: ScriptDebugger;
+  debugButton!: HTMLButtonElement;
+  showDebugButton?: HTMLButtonElement;
+  @observable debugLinesText = "";
+  private breakpointDecorations: Monaco.editor.IEditorDecorationsCollection | null = null;
+  private decoratedLines: number[] = [];
   @observable testMode = "callback";
   @observable testFailure = "Upstream";
   @observable scenarioOutcome = "response";
@@ -434,6 +445,62 @@ export class ScriptEditor extends WorkspaceElement {
   debugClosed(): void {
     this.debugInfo = null;
     this.debugOutdated = false;
+    this.$flushUpdates();
+    this.debugButton.focus();
+  }
+  debugHidden(): void {
+    this.showDebugButton?.focus();
+  }
+  showDebugger(): void {
+    this.debugPanel?.show();
+  }
+  async restartDebug(): Promise<void> {
+    this.debugClosed();
+    this.$flushUpdates();
+    await this.debugTest();
+  }
+  debugConfigurationChanged(event: CustomEvent<DebugConfiguration>): void {
+    this.debugBreakpoints = event.detail.breakpoints;
+    this.debugPolicy = event.detail.exceptions;
+    this.debugLinesText = this.debugBreakpoints
+      .filter((value) => value.location.source === this.draftDebugSource())
+      .map((value) => value.location.line)
+      .join(", ");
+    this.$flushUpdates();
+    this.renderBreakpoints();
+  }
+  changeDebugLines(event: Event): void {
+    this.debugLinesText = (event.target as HTMLInputElement).value;
+    this.renderBreakpoints();
+  }
+  changeDebugPolicy(event: Event): void {
+    this.debugPolicy = (event.target as HTMLSelectElement).value;
+  }
+  private draftDebugSource(): string {
+    return this.language === "typescript"
+      ? "file:///transmog-scripts/user-script/main.ts"
+      : "file:///transmog-script/main.js";
+  }
+  private renderBreakpoints(): void {
+    if (!this.sourceEditor || !this.monaco) {
+      return;
+    }
+    const lines = [...new Set(this.debugLinesText.split(/[\s,]+/).map(Number))].filter(
+      (line) =>
+        Number.isSafeInteger(line) && line > 0 && line <= (this.draftModel?.getLineCount() ?? 0),
+    );
+    this.decoratedLines = lines;
+    this.breakpointDecorations ??= this.sourceEditor.createDecorationsCollection();
+    this.breakpointDecorations.set(
+      lines.map((line) => ({
+        range: new this.monaco!.Range(line, 1, line, 1),
+        options: {
+          glyphMarginClassName: "script-breakpoint",
+          glyphMarginHoverMessage: { value: "Breakpoint · click to remove" },
+          stickiness: this.monaco!.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
+        },
+      })),
+    );
   }
   async reviewLiveDebug(): Promise<void> {
     this.scriptMenu.hidePopover();
@@ -731,6 +798,7 @@ export class ScriptEditor extends WorkspaceElement {
       accessibilitySupport: "on",
       ariaLabel: `Traffic script ${this.language === "typescript" ? "TypeScript" : "JavaScript"} source`,
       minimap: { enabled: false },
+      glyphMargin: true,
       tabFocusMode: true,
       theme: this.monacoTheme(),
     });
@@ -764,12 +832,51 @@ export class ScriptEditor extends WorkspaceElement {
       set("sensitive", draft.capabilities.readSensitiveHeaders);
       this.savedFingerprint = scriptFingerprint(draft);
     }
-    this.sourceEditor.onDidChangeModelContent(() => this.markScriptChanged());
+    this.sourceEditor.onDidChangeModelContent(() => {
+      const moved = this.breakpointDecorations?.getRanges() ?? [];
+      if (moved.length) {
+        const unrendered = this.debugLinesText
+          .split(/[\s,]+/)
+          .map(Number)
+          .filter(
+            (line) => Number.isSafeInteger(line) && line > 0 && !this.decoratedLines.includes(line),
+          );
+        this.debugLinesText = [
+          ...new Set([...moved.map((range) => range.startLineNumber), ...unrendered]),
+        ]
+          .sort((a, b) => a - b)
+          .join(", ");
+        this.renderBreakpoints();
+      }
+      this.markScriptChanged();
+    });
+    this.sourceEditor.onMouseDown((event) => {
+      if (
+        event.target.type !== this.monaco!.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
+        !event.target.position
+      ) {
+        return;
+      }
+      const line = event.target.position.lineNumber;
+      const lines = this.debugLinesText
+        .split(/[\s,]+/)
+        .map(Number)
+        .filter((value) => Number.isSafeInteger(value) && value > 0);
+      this.debugLinesText = (
+        lines.includes(line)
+          ? lines.filter((value) => value !== line)
+          : [...lines, line].slice(0, 128)
+      )
+        .sort((a, b) => a - b)
+        .join(", ");
+      this.renderBreakpoints();
+    });
     this.scriptReady = true;
     this.initialDraft = structuredClone(this.scriptDraft());
     this.savedDraft = draft ? structuredClone(draft) : null;
     this.$flushUpdates();
     this.renderScriptStatus(status);
+    this.renderBreakpoints();
     this.updateDraftState();
     void this.refreshAuthoringStatus();
     this.scheduleRuntimeRefresh();
@@ -1069,7 +1176,7 @@ export class ScriptEditor extends WorkspaceElement {
         invocation,
         scenario,
         configuration: {
-          exceptions: this.debugExceptionPolicy.value,
+          exceptions: this.debugPolicy,
           breakpoints: this.debugBreakpoints,
         },
       },
@@ -1078,7 +1185,6 @@ export class ScriptEditor extends WorkspaceElement {
       await invoke("close_debug_session", { session: info.session });
       return;
     }
-    this.debugPolicy = this.debugExceptionPolicy.value;
     this.debugInfo = info;
     this.debugOutdated = !this.current(version);
     this.scriptText =
@@ -1086,17 +1192,22 @@ export class ScriptEditor extends WorkspaceElement {
     this.statusKind = "success";
   }
   private sourceBreakpoints(source: string): SourceBreakpoint[] {
-    const lines = this.debugBreakpointLines.value
+    const lines = this.debugLinesText
       .split(/[\s,]+/)
       .filter(Boolean)
       .map(Number);
     if (lines.length > 128 || lines.some((line) => !Number.isSafeInteger(line) || line < 1)) {
       throw new Error("Use up to 128 positive source line numbers, separated by commas.");
     }
-    return [...new Set(lines)].map((line, index) => ({
-      id: index + 1,
-      location: { source, line, column: 1 },
-    }));
+    const values = this.debugBreakpoints.filter((value) => value.location.source !== source);
+    let id = Math.max(0, ...values.map((value) => value.id));
+    return [
+      ...values,
+      ...[...new Set(lines)].map((line) => ({
+        id: ++id,
+        location: { source, line, column: 1 },
+      })),
+    ];
   }
   private trimTestEvidence(): void {
     if (this.testEvidence.length > 32768) {
@@ -1452,6 +1563,9 @@ export class ScriptEditor extends WorkspaceElement {
     ).filter((handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source));
   }
   private replaceSource(source: string, language: ScriptLanguage): void {
+    this.breakpointDecorations?.clear();
+    this.breakpointDecorations = null;
+    this.decoratedLines = [];
     const old = this.draftModel;
     this.sourceEditor!.setModel(null);
     old?.dispose();
@@ -1474,6 +1588,7 @@ export class ScriptEditor extends WorkspaceElement {
         ? "TypeScript source"
         : "JavaScript source";
     this.markScriptChanged();
+    this.renderBreakpoints();
   }
   private async checkTypeScript(): Promise<void> {
     if (this.language !== "typescript" && !this.reviewingTypeScript) {

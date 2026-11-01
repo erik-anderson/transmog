@@ -53,10 +53,11 @@ and qualification.
 
 ## Record from the command line
 
-The separate `transmog-cli.exe` release asset runs without the desktop or a Rust
-installation. See [releases](https://github.com/erik-anderson/transmog/releases)
-and the [support capture guide](docs/cli-support-capture.md) for download and
-signature verification. In PowerShell, run:
+`transmog-cli.exe` runs without the desktop or a Rust installation. It is
+included in the desktop installer and also published separately. See
+[releases](https://github.com/erik-anderson/transmog/releases) and the [support
+capture guide](docs/cli-support-capture.md) for download and signature
+verification. In PowerShell, run:
 
 ```powershell
 .\transmog-cli.exe record --output .\support-trace.tmcap

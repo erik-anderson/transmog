@@ -43,15 +43,21 @@ async function paused(panel, after = 0) {
   return panel.evaluate((element) => element.pause);
 }
 async function continueExecution(panel) {
-  await panel.getByRole("button", { name: /^Continue/ }).click();
+  await panel.getByRole("button", { name: "Continue (F8)", exact: true }).click();
 }
 async function localSeven(panel) {
+  const variables = panel.getByRole("button", { name: "Stack and variables", exact: true });
+  if (await variables.isVisible()) {
+    await variables.click();
+  }
   const local = panel.getByRole("button", { name: /^local(?: ·|$)/ }).first();
-  await local.click();
+  await local.waitFor();
   await panel.getByRole("cell", { name: "7", exact: true }).first().waitFor();
 }
 async function closeDebugger(panel) {
-  await panel.getByRole("button", { name: "Close debugger", exact: true }).click();
+  await panel
+    .getByRole("button", { name: /^(?:Stop and close debugger|Close debugger)$/, exact: true })
+    .click();
   await panel.waitFor({ state: "detached" });
 }
 const invoke = (command, args = {}) =>
@@ -61,7 +67,7 @@ const invoke = (command, args = {}) =>
   );
 function proxyGet(listener, url) {
   const [hostname, port] = listener.split(":");
-  return new Promise((done, fail) => {
+  const operation = new Promise((done, fail) => {
     const request = httpRequest(
       { hostname, port, path: url, headers: { Host: new URL(url).host }, agent: false },
       (response) => {
@@ -83,6 +89,10 @@ function proxyGet(listener, url) {
     request.on("error", fail);
     request.end();
   });
+  // A selected exchange intentionally waits while the UI is paused. Keep its
+  // rejection available to the later await without bypassing failure screenshots.
+  void operation.catch(() => {});
+  return operation;
 }
 try {
   await page.waitForFunction(() => {
@@ -117,15 +127,17 @@ try {
   let panel = editor.locator("script-debugger");
   let pause = await paused(panel);
   assert.equal(await panel.evaluate((element) => element.invocation), 0);
+  await panel.locator(".debug-evidence > details > summary").click();
   await panel.locator("script-diagnostics .developer-details > summary").first().click();
   await panel
     .getByText(/native debug initializer/)
     .first()
     .waitFor();
-  await continueExecution(panel);
+  await panel.getByRole("combobox", { name: "Pause on exceptions", exact: true }).focus();
+  await page.keyboard.press("F8");
   pause = await paused(panel, pause);
   await localSeven(panel);
-  await panel.getByRole("button", { name: "[Object]", exact: true }).click();
+  await panel.getByRole("button", { name: "object", exact: true }).click();
   await panel.getByRole("cell", { name: /Accessor/ }).waitFor();
   await editor.evaluate((element) =>
     element.sourceEditor.setValue(
@@ -149,15 +161,31 @@ try {
     ["small", 800, 600],
   ]) {
     await page.setViewportSize({ width, height });
-    await panel.scrollIntoViewIfNeeded();
-    assert.ok(await panel.evaluate((element) => element.scrollWidth <= element.clientWidth + 1));
+    await waitFor(
+      () =>
+        panel.locator(".source-code").evaluate((element) => {
+          const line = element.querySelector(".current").getBoundingClientRect();
+          const top = element.getBoundingClientRect().top + element.clientTop;
+          return line.top >= top && line.bottom <= top + element.clientHeight;
+        }),
+      "paused statement remains visible after resize",
+    );
+
+    assert.ok(
+      await panel
+        .locator(".debugger")
+        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+    );
     await page.screenshot({
       path: resolve(argument("--output"), `script-debugger-native-${name}.png`),
     });
   }
   await continueExecution(panel);
   await panel.getByText("Callback completed", { exact: true }).waitFor();
-  assert.equal(await panel.getByRole("button", { name: /^Continue/ }).isDisabled(), true);
+  assert.equal(
+    await panel.getByRole("button", { name: "Continue (F8)", exact: true }).isDisabled(),
+    true,
+  );
   await closeDebugger(panel);
   evidence.sandbox = {
     initializer: true,
@@ -251,12 +279,14 @@ try {
     (element, text) => element.sourceEditor.setValue(text),
     liveSource.replace("let count=0", "let count=100"),
   );
+  await panel.getByRole("button", { name: "Return to editor", exact: true }).click();
   await editor.getByRole("button", { name: "Save & apply", exact: true }).click();
   await waitFor(
     () => editor.evaluate((element) => !element.scriptBusy && !element.scriptUnapplied),
     "replacement applied",
   );
   await waitFor(() => panel.evaluate((element) => element.closed), "replaced debugger ended");
+  await editor.getByRole("button", { name: "Show debugger", exact: true }).click();
   assert.notEqual((await replaced).status, 200);
   assert.equal((await proxyGet(status.listener, `${base}/replacement`)).observed, "101");
   await closeDebugger(panel);
@@ -293,6 +323,17 @@ try {
   await visualizer.getByRole("button", { name: "Debug fresh fixture", exact: true }).click();
   panel = visualizer.locator("script-debugger");
   pause = await paused(panel);
+  const firstVisualizerSession = await panel.evaluate((element) => element.sessionInfo.session);
+  await panel.getByRole("button", { name: "Restart fresh fixture", exact: true }).click();
+  await waitFor(
+    () =>
+      panel.evaluate(
+        (element, previous) => !!element.sessionInfo && element.sessionInfo.session !== previous,
+        firstVisualizerSession,
+      ),
+    "fresh visualizer restart",
+  );
+  pause = await paused(panel);
   await continueExecution(panel);
   for (let index = 0; index < 2; index++) {
     pause = await paused(panel, pause);
@@ -303,10 +344,20 @@ try {
     () => visualizer.evaluate((element) => !element.visualizerBusy && !!element.view),
     "debugged visualizer continuation result",
   );
-  await panel.getByRole("button", { name: "Detach", exact: true }).click();
+  await panel.getByRole("button", { name: "Continue and detach", exact: true }).click();
   await waitFor(
     () => panel.evaluate((element) => element.closed && element.detached),
     "visualizer idle detach",
+  );
+  await closeDebugger(panel);
+  await visualizer.getByRole("button", { name: "Debug fresh fixture", exact: true }).click();
+  panel = visualizer.locator("script-debugger");
+  await paused(panel);
+  await panel.getByRole("button", { name: "Continue and detach", exact: true }).click();
+  await waitFor(
+    () => panel.evaluate((element) => element.closed && element.detached),
+    "detach continues through authored debugger statements",
+    20000,
   );
   await closeDebugger(panel);
   await visualizer.getByRole("button", { name: "Attach to this instance", exact: true }).click();
@@ -321,7 +372,7 @@ try {
     await visualizer.evaluate((element) => element.view.document.roots[0].children[0].value.value),
     "9007199254740993",
   );
-  await panel.getByRole("button", { name: /^Stop/ }).click();
+  await panel.getByRole("button", { name: "Stop (Shift+F5)", exact: true }).click();
   await visualizer
     .getByText("Debugger stopped. Open the visualizer to start a fresh instance.", { exact: true })
     .waitFor();
@@ -330,6 +381,8 @@ try {
     inputContinuation: true,
     existingHeapExpansion: true,
     stopFrozenResult: true,
+    restartDuringInitializer: true,
+    continueAndDetachPastDebuggerStatements: true,
   };
   await page.evaluate(async () => {
     const shell = document.querySelector("app-shell");
@@ -348,7 +401,7 @@ try {
     await paused(panel);
     await localSeven(panel);
     if (iteration % 2) {
-      await panel.getByRole("button", { name: /^Stop/ }).click();
+      await panel.getByRole("button", { name: "Stop (Shift+F5)", exact: true }).click();
       await waitFor(() => panel.evaluate((element) => element.closed), "native stop");
     } else {
       await continueExecution(panel);
