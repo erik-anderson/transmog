@@ -16,6 +16,7 @@ thiserror.workspace = true
 tokio.workspace = true
 transmog-core = { version = "=0.1.18", path = "../proxy-core" }
 transmog-script-compiler = { version = "=0.1.18", path = "../script-compiler" }
+transmog-script-diagnostics = { version = "=0.1.18", path = "../script-diagnostics" }
 url.workspace = true
 
 [dev-dependencies]

@@ -1,4 +1,12 @@
 import "../draft-status/draft-status.js";
+import "../script-diagnostics/script-diagnostics.js";
+import "../script-debugger/script-debugger.js";
+import type { DebugSessionInfo, SourceBreakpoint } from "../script-debugger/models.js";
+import {
+  errorEvidence,
+  type DeveloperEvidence,
+  type LogRun,
+} from "../script-diagnostics/models.js";
 import initialState from "../initial-state.json";
 import "../editor-surface/editor-surface.js";
 import { attr, observable } from "@microsoft/webui-framework";
@@ -155,7 +163,23 @@ export class ScriptEditor extends WorkspaceElement {
   @observable settingsError = "";
   @observable testResult = "";
   @observable testEvidence = "";
+  @observable sandboxDetails: DeveloperEvidence[] = [];
+  @observable runtimeDetails: DeveloperEvidence[] = [];
+  @observable operationDetails: DeveloperEvidence[] = [];
   @observable testOutdated = false;
+  @observable debugInfo: DebugSessionInfo | null = null;
+  @observable debugOutdated = false;
+  @observable debugBreakpoints: SourceBreakpoint[] = [];
+  @observable debugPolicy = "uncaught";
+  @observable liveReview = false;
+  @observable liveTargetText = "";
+  @observable liveMethod = "";
+  @observable liveHost = "";
+  @observable livePath = "";
+  private liveTarget: { generation: number; revision: ScriptStatus["active"][number] } | null =
+    null;
+  debugBreakpointLines!: HTMLInputElement;
+  debugExceptionPolicy!: HTMLSelectElement;
   @observable testMode = "callback";
   @observable testFailure = "Upstream";
   @observable scenarioOutcome = "response";
@@ -240,6 +264,7 @@ export class ScriptEditor extends WorkspaceElement {
     this.scriptHelpContent.scrollTop = 0;
   }
   markScriptChanged(): void {
+    this.debugOutdated = Boolean(this.debugInfo);
     this.editVersion++;
     this.returnReady = false;
     this.conflictReviewed = false;
@@ -255,8 +280,20 @@ export class ScriptEditor extends WorkspaceElement {
     this.updateDraftState();
     void this.refreshAuthoringStatus();
   }
-  markTestChanged(): void {
+  markTestChanged(event?: Event): void {
+    if (
+      event
+        ?.composedPath()
+        .some(
+          (node) =>
+            node instanceof Element &&
+            ["script-diagnostics", "script-debugger"].includes(node.localName),
+        )
+    ) {
+      return;
+    }
     this.testVersion++;
+    this.debugOutdated = Boolean(this.debugInfo);
     this.testOutdated = Boolean(this.testResult);
   }
   changeTestMode(event: Event): void {
@@ -312,6 +349,7 @@ export class ScriptEditor extends WorkspaceElement {
       return;
     }
     this.scriptBusy = true;
+    this.operationDetails = [];
     this.scriptText = message;
     this.statusKind = "progress";
     try {
@@ -385,6 +423,86 @@ export class ScriptEditor extends WorkspaceElement {
       return;
     }
     await this.runScript("Checking source and running the sandbox…", () => this.testDraft());
+  }
+  async debugTest(): Promise<void> {
+    if (this.debugInfo) {
+      this.feedback("Close the current debugger before starting another snapshot.");
+      return;
+    }
+    await this.runScript("Checking source and starting debugger…", () => this.testDraft(true));
+  }
+  debugClosed(): void {
+    this.debugInfo = null;
+    this.debugOutdated = false;
+  }
+  async reviewLiveDebug(): Promise<void> {
+    this.scriptMenu.hidePopover();
+    await this.runScript("Checking applied revision…", async () => {
+      const status = await invoke<ScriptStatus>("script_status");
+      const revision = status.active.find((item) => item.manifest.id === "user-script");
+      if (!revision) {
+        throw new Error("Enable an applied script before debugging live traffic.");
+      }
+      this.liveTarget = { generation: status.generation, revision };
+      this.liveTargetText = `Applied revision ${revision.manifest.revision} · ${trafficScope(activeDraft(revision))}`;
+      this.liveMethod = revision.manifest.prefilter.method ?? "";
+      this.liveHost = revision.manifest.prefilter.host ?? "";
+      this.livePath = revision.manifest.prefilter.pathPrefix ?? "";
+      this.liveReview = true;
+    });
+  }
+  changeLiveFilter(field: "method" | "host" | "path", event: Event): void {
+    const value = (event.target as HTMLInputElement).value;
+    if (field === "method") {
+      this.liveMethod = value;
+    } else if (field === "host") {
+      this.liveHost = value;
+    } else {
+      this.livePath = value;
+    }
+  }
+  cancelLiveReview(): void {
+    this.liveReview = false;
+    this.liveTarget = null;
+  }
+  async armLiveDebug(): Promise<void> {
+    if (!this.liveTarget || this.debugInfo) {
+      return;
+    }
+    const target = this.liveTarget;
+    await this.runScript("Arming the applied script debugger…", async () => {
+      const revision = target.revision;
+      const source =
+        revision.language === "typescript"
+          ? `file:///transmog-scripts/${revision.manifest.id}/main.ts`
+          : "file:///transmog-script/main.js";
+      const breakpoints = this.sourceBreakpoints(source);
+      const policy = this.debugExceptionPolicy.value;
+      const info = await invoke<DebugSessionInfo>("debug_next_script_exchange", {
+        request: {
+          expectedGeneration: target.generation,
+          scriptId: revision.manifest.id,
+          revision: revision.manifest.revision,
+          javascriptHash: revision.javascriptHash,
+          filter: {
+            method: this.liveMethod.trim() || null,
+            host: this.liveHost.trim() || null,
+            pathPrefix: this.livePath || null,
+          },
+          configuration: { exceptions: policy, breakpoints },
+        },
+      });
+      if (!this.isConnected) {
+        await invoke("close_debug_session", { session: info.session });
+        return;
+      }
+      this.debugBreakpoints = breakpoints;
+      this.debugPolicy = policy;
+      this.debugInfo = info;
+      this.debugOutdated = this.scriptUnapplied;
+      this.liveReview = false;
+      this.feedback("Debugger armed for the next matching exchange for 60 seconds.");
+    });
   }
   async primaryAction(): Promise<void> {
     if (!this.scriptActive || this.scriptUnapplied) {
@@ -741,7 +859,7 @@ export class ScriptEditor extends WorkspaceElement {
       return null;
     }
   }
-  private async testDraft(): Promise<void> {
+  private async testDraft(debug = false): Promise<void> {
     const testVersion = this.testVersion;
     const version = this.editVersion;
     this.testOutdated = Boolean(this.testResult);
@@ -823,33 +941,49 @@ export class ScriptEditor extends WorkspaceElement {
           : null,
       };
       if (input.mode === "scenario") {
+        const scenario = {
+          request: invocation.request,
+          response: input.outcome === "response" ? invocation.response : null,
+          requestBody: Array.from(new TextEncoder().encode(input.body)),
+          responseBody:
+            input.outcome === "response"
+              ? Array.from(new TextEncoder().encode(input.responseBody))
+              : [],
+          localResponse: input.outcome === "response" && input.localResponse,
+          failure: input.outcome === "failure" ? input.failure : null,
+          httpVersion: input.httpVersion,
+          startedUnixMs: 1700000000000,
+          durationMs: input.durationMs,
+        };
+        if (debug) {
+          await this.startDebug(candidate, version, null, scenario);
+          return;
+        }
         const result = await invoke<{
           outcome: string;
           verdict: "passed" | "failed" | "incomplete";
           admitted: boolean;
-          steps: Array<{ handler: string; selection: string }>;
+          steps: Array<{
+            handler: string;
+            selection: string;
+            result?: { logs?: LogRun[]; diagnostics?: string[] };
+            error?: { exception?: DeveloperEvidence["exception"]; logs?: LogRun[] };
+          }>;
         }>("test_script_scenario", {
           candidateId: candidate.token.candidateId,
-          scenario: {
-            request: invocation.request,
-            response: input.outcome === "response" ? invocation.response : null,
-            requestBody: Array.from(new TextEncoder().encode(input.body)),
-            responseBody:
-              input.outcome === "response"
-                ? Array.from(new TextEncoder().encode(input.responseBody))
-                : [],
-            localResponse: input.outcome === "response" && input.localResponse,
-            failure: input.outcome === "failure" ? input.failure : null,
-            httpVersion: input.httpVersion,
-            startedUnixMs: 1700000000000,
-            durationMs: input.durationMs,
-          },
+          scenario,
         });
         if (!this.isConnected) {
           return;
         }
         this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
         this.testResult = `Scenario ${result.verdict} · Exchange: ${result.outcome} · Request filter: ${result.admitted ? "matched" : "skipped"}`;
+        this.sandboxDetails = result.steps.map((step) => ({
+          label: `Scenario · ${step.handler}`,
+          exception: step.error?.exception,
+          logs: step.error?.logs ?? step.result?.logs,
+          diagnostics: step.result?.diagnostics,
+        }));
         this.testEvidence =
           result.steps.map((step) => `${step.handler}: ${step.selection}`).join("\n") +
           `\n\nScenario evidence:\n${JSON.stringify(result, null, 2)}`;
@@ -866,7 +1000,15 @@ export class ScriptEditor extends WorkspaceElement {
         this.statusKind = result.verdict === "passed" ? "success" : "error";
         return;
       }
-      const result = await invoke<{ decision: { action: string } }>("test_script", {
+      if (debug) {
+        await this.startDebug(candidate, version, invocation, null);
+        return;
+      }
+      const result = await invoke<{
+        decision: { action: string };
+        logs?: LogRun[];
+        diagnostics?: string[];
+      }>("test_script", {
         candidateId: candidate.token.candidateId,
         invocation,
       });
@@ -875,6 +1017,9 @@ export class ScriptEditor extends WorkspaceElement {
       }
       this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
       this.testResult = `Callback completed · ${handler} · Action: ${result.decision.action} · Filters bypassed`;
+      this.sandboxDetails = [
+        { label: `Sandbox · ${handler}`, logs: result.logs, diagnostics: result.diagnostics },
+      ];
       this.testEvidence = [
         `Handler: ${handler}`,
         `${input.method} ${input.url}`,
@@ -892,17 +1037,66 @@ export class ScriptEditor extends WorkspaceElement {
           : "Callback completed with empty exchange state. Filters were bypassed. No request was sent; the script was not enabled.",
       );
     } catch (error: unknown) {
-      if (this.current(version) && testVersion === this.testVersion) {
+      if (this.isConnected) {
         this.testResult = "Sandbox did not complete for this input";
         this.testEvidence = describeError(error);
-        this.testOutdated = false;
-        this.scriptFailure("Sandbox test aborted", error);
-      } else {
-        this.feedback(
-          "The earlier sandbox test failed after its draft or input changed. Test the current version.",
-        );
+        this.sandboxDetails = [errorEvidence(error, "Earlier sandbox run")];
+        this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
+        if (!this.testOutdated) {
+          this.scriptFailure("Sandbox test aborted", error);
+        } else {
+          this.feedback(
+            "The earlier sandbox failed. Its details refer to that executed revision; test the current version to check your edits.",
+          );
+        }
       }
     }
+  }
+  private async startDebug(
+    candidate: ValidatedDraft,
+    version: number,
+    invocation: unknown,
+    scenario: unknown,
+  ): Promise<void> {
+    const source =
+      candidate.draft.language === "typescript"
+        ? `file:///transmog-scripts/${candidate.draft.id}/main.ts`
+        : "file:///transmog-script/main.js";
+    this.debugBreakpoints = this.sourceBreakpoints(source);
+    const info = await invoke<DebugSessionInfo>("start_debug_test", {
+      request: {
+        candidateId: candidate.token.candidateId,
+        invocation,
+        scenario,
+        configuration: {
+          exceptions: this.debugExceptionPolicy.value,
+          breakpoints: this.debugBreakpoints,
+        },
+      },
+    });
+    if (!this.isConnected) {
+      await invoke("close_debug_session", { session: info.session });
+      return;
+    }
+    this.debugPolicy = this.debugExceptionPolicy.value;
+    this.debugInfo = info;
+    this.debugOutdated = !this.current(version);
+    this.scriptText =
+      "Debugger started. Use its controls to continue, step, inspect values, or stop.";
+    this.statusKind = "success";
+  }
+  private sourceBreakpoints(source: string): SourceBreakpoint[] {
+    const lines = this.debugBreakpointLines.value
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number);
+    if (lines.length > 128 || lines.some((line) => !Number.isSafeInteger(line) || line < 1)) {
+      throw new Error("Use up to 128 positive source line numbers, separated by commas.");
+    }
+    return [...new Set(lines)].map((line, index) => ({
+      id: index + 1,
+      location: { source, line, column: 1 },
+    }));
   }
   private trimTestEvidence(): void {
     if (this.testEvidence.length > 32768) {
@@ -1818,6 +2012,16 @@ export class ScriptEditor extends WorkspaceElement {
     const runtime = status.find(
       (item) => item.scriptId === "user-script" && item.revision === this.appliedRevision,
     );
+    this.runtimeDetails = runtime
+      ? [
+          {
+            label: `Applied build ${runtime.revision}`,
+            exception: runtime.exception,
+            logs: runtime.logs,
+            logRunsOmitted: runtime.logRunsOmitted,
+          },
+        ]
+      : [];
     this.runtimeIssue =
       this.scriptActive && runtime && !runtime.available
         ? (runtime.error ?? "The applied script is unavailable.")
@@ -1825,7 +2029,7 @@ export class ScriptEditor extends WorkspaceElement {
     if (this.runtimeIssue) {
       this.activeScriptText = `Unavailable - applied build ${this.appliedRevision}`;
     } else if (this.scriptActive) {
-      this.activeScriptText = `On - applied build ${this.appliedRevision}`;
+      this.activeScriptText = `On - applied build ${this.appliedRevision}${runtime?.debugging ? " · Debugger reserved" : ""}`;
     }
   }
   private stopRuntimeRefresh(): void {
@@ -1904,6 +2108,9 @@ export class ScriptEditor extends WorkspaceElement {
     this.statusKind = "success";
   }
   private scriptFailure(prefix: string, error: unknown): void {
+    if (prefix !== "Sandbox test aborted") {
+      this.operationDetails = [errorEvidence(error, prefix)];
+    }
     this.candidate = null;
     const message = describeError(error);
     const conflict =

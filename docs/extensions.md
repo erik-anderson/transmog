@@ -616,8 +616,87 @@ Authors may use TypeScript, JavaScript with JSDoc, or another language that emit
 compatible JavaScript. Pin that compiler in the extension's own build, target
 ES2022 and emit ES modules before packaging. Compiler upgrades do not change
 Transmog's executable contract. The SDK declarations are optional authoring aids,
-not runtime imports. Optional TypeScript sources and source maps are inert payloads;
-source-map diagnostics are not yet implemented.
+not runtime imports. Optional TypeScript sources and source maps are inert payloads.
+The native worker failure contract retains bounded exception messages, causes,
+and engine-owned frames separately from the ordinary host-controlled status.
+Desktop navigation and presentation of that structured evidence are still under
+development.
+
+Packages can declare source maps without changing their executable module graph:
+
+```json
+{
+  "sourceMaps": {
+    "version": 1,
+    "modules": {
+      "src/main.js": "maps/main.js.map"
+    }
+  }
+}
+```
+
+Both names refer to the exact package inventory. Maps participate in the package
+digest. Relative original-source paths resolve against the map file; include
+original sources as inventory payloads or inline `sourcesContent` for later source
+inspection. The host never fetches map URLs or reads source files outside the
+package. A missing, malformed, unsupported, or excessive optional map retains
+generated JavaScript positions with a structured fallback reason. Valid
+JavaScript execution does not depend on a valid optional map.
+
+Mapping currently accepts flat version-3 maps up to 256 KiB, 128 sources, and
+8,192 mapping segments/line separators. At most 64 module declarations are used.
+Indexed maps and original URLs outside the package namespace use the generated
+position. Each native mapping operation decodes at most 1 MiB of distinct maps;
+additional maps retain generated positions with a budget marker. Exception evidence shares a 16 KiB text budget and 32 frames across
+the outer exception and up to four causes; unavailable or shortened evidence is
+marked explicitly. Detailed exception evidence is ephemeral and excluded from
+ordinary trace saving and MCP projections.
+All live catalogs share at most 64 combined exception/console snapshots,
+conservatively charged at 128 KiB each (8 MiB). Older details are evicted with an omission marker while summaries
+and other traffic evidence remain available.
+
+The native `console` provides `log`, `debug`, `info`, `warn`, `error`, and `trace`
+during initialization and every operation. Arguments are separated by spaces,
+without format substitutions. Primitive values use their text; objects, arrays,
+typed views, functions, symbols, and proxies use inert labels. Log individual
+primitive properties to inspect object values. Formatting never executes getters,
+proxy traps, `toJSON`, or authored conversion methods. `trace` includes native
+frames and uses the same optional package source maps as exceptions.
+
+Each initializer/operation permits 128 records, 16 KiB total text, 2 KiB per record,
+16 arguments per call, eight frames per trace, and 32 trace frames per operation. Excess output is shortened or
+dropped with an explicit count. The supervisor retains accepted records when
+execution throws, returns invalid data, or times out; a missing stream-end marks
+the output incomplete. The instance retains its initializer and eight recent
+operation streams, with an eviction count. Logging does not grant additional
+inputs or change returned-document validation. Pending microtasks are processed
+under, and attributed to, the following native operation's checkpoint.
+
+All traffic/visualizer worker captures share a 256-stream pool, conservatively
+charged at 48 KiB per stream (12 MiB). Old records can be evicted under pressure;
+their loss and stream-completion markers remain truthful. Public worker identities
+distinguish repeated instances of the same package without revealing IPC tokens.
+
+Open Developer details in the selected visualizer to inspect exception causes,
+call frames and console output, including failures before the first document.
+An expansion or replacement failure preserves the last good result separately
+from the failing operation's details. Filter console levels, clear displayed
+records, or explicitly copy all pages and levels of retained details. Cleared
+records are excluded from later copies in that view.
+
+Click a call frame to open a read-only excerpt of the executing snapshot. The
+native cache retains verified package modules and inventoried or inline original
+sources; it never reopens a changed developer directory or fetches a URL. Original
+and generated positions remain separate. Missing or expired source snapshots are
+labeled unavailable. The source cache is limited to 32 artifacts/32 MiB across
+both scripting surfaces, with 16 MiB per artifact and 4 MiB per complete file;
+oversized files remain unavailable. Each source read returns at most 41 lines and
+32 KiB of text, with large-line previews marked explicitly.
+
+Console content remains ephemeral and is excluded from ordinary trace saving,
+generic application errors, and MCP projections. The
+[authoring declarations](../crates/extensions/sdk/transmog-extensions.d.ts)
+include the supported methods.
 
 Source transfer is authenticated and chunked, then checked against the immutable
 manifest inventory. The worker validates and loads only the selected contribution's
@@ -659,3 +738,43 @@ The authoring declaration source is
 Contract revisions are explicit; private worker IPC is independently
 versioned. Runtime budgets and SDK details remain subject to qualification with
 the MAPI parity corpus before any compatibility promise.
+
+## Debugging a visualizer
+
+Choose a matching retained message and visualizer in Traffic, then open
+**Developer debugging**. **Debug fresh fixture** creates a fresh sandbox with
+initializer breakpoints installed before the module runs. **Attach to this
+instance** attaches at an idle operation boundary to the actual parser, preserving
+its module globals, parsed document and continuation state. Extensions settings
+provides **Debug in Traffic…** for the selected message. If no selected message
+matches, select one before starting. Merely inspecting installed extensions does
+not execute their code.
+
+The same controller covers visualize, declared input/context/decoded
+continuations, expansion and explicitly enabled live updates. Access declarations,
+retained-input authorization, source bounds and document validation still apply.
+Choose a package-relative module and initial source lines before initialization,
+or use the executing snapshot's gutter later. Optional original maps are bound
+to the package digest; generated JavaScript remains available when mapping fails.
+Missing or evicted sources are labeled unavailable. Changing unpacked files or
+a draft never changes the running snapshot. Reload or open a fresh fixture to
+execute new code.
+
+Continue (F5), step over (F10), into (F11), out (Shift+F11) and Stop (Shift+F5)
+apply while focus is inside the debugger. Stack and scope reads are native and
+read-only, with 32 frames, 64 handles per pause, 100 own properties per page and
+2 KiB primitive previews. Getters, proxies and authored formatters are not run.
+Some lexical, optimized or uninitialized values may be unavailable. There is no
+arbitrary evaluation, mutation, remote endpoint or conditional expression.
+
+A pause expires after 60 seconds, a session after 10 minutes, and native inspection
+commands after 100 ms. Only authenticated pause time is excluded from operation
+and live-retention timing. Stop, controller loss, selection changes and native
+cancellation still release the instance. The last valid document may stay visible
+as a frozen result; **Open visualizer** starts a new instance. Idle **Detach**
+removes debugging while retaining the actual healthy parser.
+
+At most four controllers and 16 recent histories are shared across application
+windows. Detailed values, source and console evidence remain ephemeral and are
+excluded from normal support, trace, case and MCP output. Console copying is an
+explicit local action.

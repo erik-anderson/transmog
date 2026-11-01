@@ -11,6 +11,9 @@ use crate::{ScriptAction, ScriptHeaderOperation};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptResult {
+    /// Native console evidence, supplied only by the supervisor.
+    #[serde(skip_deserializing, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<crate::LogRun>,
     /// The single traffic decision. Evidence and state do not imply a traffic change.
     pub decision: ScriptAction,
     /// Operator-visible findings saved with the exchange.
@@ -27,6 +30,7 @@ pub struct ScriptResult {
 impl From<ScriptAction> for ScriptResult {
     fn from(decision: ScriptAction) -> Self {
         Self {
+            logs: Vec::new(),
             decision,
             annotations: Vec::new(),
             diagnostics: Vec::new(),
@@ -36,6 +40,40 @@ impl From<ScriptAction> for ScriptResult {
 }
 
 pub use transmog_core::intercept::{ScriptAnnotation, ScriptSeverity};
+
+#[cfg(test)]
+mod native_console_tests {
+    #[test]
+    fn console_replies_cannot_use_the_large_result_frame_class() {
+        let reply = crate::ScriptHostReply::Console {
+            protocol_version: crate::SCRIPT_HOST_PROTOCOL_VERSION,
+            token: crate::ScriptHostToken([0; 32]),
+            request_id: 0,
+            event: crate::ConsoleEvent::End { dropped: 0 },
+        };
+        let mut wrong = Vec::new();
+        crate::write_host_frame(&mut wrong, &reply).unwrap();
+        assert!(matches!(
+            crate::read_host_reply_frame(&mut wrong.as_slice()),
+            Err(crate::ScriptProtocolError::FrameClass)
+        ));
+        let mut proper = Vec::new();
+        crate::write_host_reply_frame(&mut proper, &reply).unwrap();
+        assert!(matches!(
+            crate::read_host_reply_frame(&mut proper.as_slice()),
+            Ok(crate::ScriptHostReply::Console { .. })
+        ));
+    }
+    #[test]
+    fn authored_results_cannot_supply_native_console_evidence() {
+        assert!(
+            serde_json::from_str::<super::ScriptResult>(
+                r#"{"decision":{"action":"continue"},"logs":[]}"#
+            )
+            .is_err()
+        );
+    }
+}
 
 /// Related message edits validated as a unit before application.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]

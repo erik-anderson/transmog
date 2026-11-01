@@ -1,11 +1,48 @@
 //! Read-only visualizer commands scoped to the calling window's retained capture.
-use super::DesktopState;
+use super::{DesktopState, ScriptCommandError};
 use tauri::{Emitter as _, Manager as _, State};
 use transmog_app::{
     AppError, VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerLiveStatus,
     VisualizerLiveUpdate, VisualizerReadRequest, VisualizerReload, VisualizerSelection,
     VisualizerSourcePage, VisualizerView,
 };
+
+#[tauri::command]
+pub(super) async fn debug_visualizer(
+    request: transmog_app::DebugVisualizerRequest,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::DebugSessionInfo, AppError> {
+    state
+        .window_application(&window)?
+        .debug_visualizer(window.label(), request)
+}
+#[tauri::command]
+pub(super) async fn await_debug_visualizer(
+    session: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<VisualizerView, ScriptCommandError> {
+    let view = state
+        .window_application(&window)?
+        .await_debug_visualizer(window.label(), &session)
+        .await?;
+    if view.metadata_changed {
+        let _ = window.app_handle().emit("extensions-changed", ());
+    }
+    Ok(view)
+}
+#[tauri::command]
+pub(super) async fn attach_visualizer_debugger(
+    handle: VisualizerHandle,
+    configuration: transmog_app::DebugConfiguration,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::DebugSessionInfo, AppError> {
+    state
+        .window_application(&window)?
+        .attach_visualizer_debugger(window.label(), &handle, &configuration)
+}
 
 #[tauri::command]
 pub(super) fn visualizer_page(
@@ -29,7 +66,7 @@ pub(super) async fn activate_visualizer(
     request: VisualizerActivation,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
-) -> Result<VisualizerView, AppError> {
+) -> Result<VisualizerView, ScriptCommandError> {
     let view = state
         .window_application(&window)?
         .activate_visualizer(request)
@@ -55,7 +92,7 @@ pub(super) async fn reload_visualizer(
     request: VisualizerReload,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
-) -> Result<VisualizerView, AppError> {
+) -> Result<VisualizerView, ScriptCommandError> {
     let view = state
         .window_application(&window)?
         .reload_visualizer(request)
@@ -71,22 +108,24 @@ pub(super) async fn expand_visualizer(
     token: String,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
-) -> Result<VisualizerView, AppError> {
+) -> Result<VisualizerView, ScriptCommandError> {
     state
         .window_application(&window)?
         .expand_visualizer(&handle, token)
         .await
+        .map_err(ScriptCommandError::from)
 }
 #[tauri::command]
 pub(super) async fn poll_visualizer_live(
     handle: VisualizerHandle,
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
-) -> Result<VisualizerLiveUpdate, AppError> {
+) -> Result<VisualizerLiveUpdate, ScriptCommandError> {
     state
         .window_application(&window)?
         .poll_visualizer_live(&handle)
         .await
+        .map_err(ScriptCommandError::from)
 }
 #[tauri::command]
 pub(super) fn stop_visualizer_live(

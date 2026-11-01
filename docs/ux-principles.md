@@ -274,7 +274,7 @@ other guides rather than repeated inventories.
 | Proxy/window lifecycle and update interaction | [Desktop](product-shell.md) |
 | Scratch conversions and converter-window lifetime | [Format converter](format-converter.md) |
 | Persistence, retention defaults and privacy | [Product state](product-state-and-support.md) |
-| Rule editing and activation | [Automation](automation.md) |
+| Rule editing, activation and local script debugging | [Automation](automation.md) and [extension debugging](extensions.md#debugging-a-visualizer) |
 | Agent permissions, key lifecycle and shared rule collaboration | [Local MCP access](mcp.md) |
 | Preview isolation | [Safe previews](safe-previews.md) and [page preview](captured-page-preview.md) |
 | Save/import behavior and fidelity | [Trace saving](trace-saving.md) |

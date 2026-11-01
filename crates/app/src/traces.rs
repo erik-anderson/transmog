@@ -5150,6 +5150,7 @@ mod tests {
     }
 
     #[tokio::test]
+    #[allow(clippy::too_many_lines)] // Exercise the complete save/reopen disclosure boundary with both canaries.
     async fn native_script_annotations_round_trip_without_live_diagnostics() {
         use transmog_core::intercept::{
             HookEffect, HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity,
@@ -5184,6 +5185,15 @@ mod tests {
             phase: HookPhase::Completed,
             changed: false,
             action: HookEffectAction::ScriptReport(ScriptReport {
+                details_omitted: false,
+                        logs:serde_json::from_value(serde_json::json!([{
+"context":{"revision":"executed-build","callback":"onCompleted","invocation":1,"exchangeId":"1"},
+"records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"ephemeral console canary","frames":[],"truncated":false}],"dropped":0,"incomplete":false
+}])).unwrap(),
+                exception: Some(serde_json::from_value(serde_json::json!({
+                    "exception":{"name":"Error","message":"ephemeral exception canary","frames":[],"unavailable":false},
+                    "causes":[],"truncated":false
+                })).unwrap()),
                 annotations: vec![ScriptAnnotation {
                     note: "Review this response".into(),
                     tags: vec!["needs-review".into()],
@@ -5241,6 +5251,8 @@ mod tests {
         assert_eq!(reports[0].script, "script/check@2");
         assert_eq!(reports[0].annotations[0].note, "Review this response");
         assert_eq!(reports[0].diagnostics, [] as [String; 0]);
+        assert!(reports[0].exception.is_none());
+        assert_eq!(reports[0].logs, Vec::new());
     }
 
     #[tokio::test]

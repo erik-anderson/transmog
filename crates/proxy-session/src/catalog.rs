@@ -1,5 +1,5 @@
 use std::{
-    collections::{BTreeMap, HashMap, HashSet},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     num::NonZeroUsize,
     sync::{Arc, Mutex},
     time::SystemTime,
@@ -627,7 +627,7 @@ impl SessionCatalog {
             }
         }
 
-        let Some(delta) = update_session(&mut state, event, self.inner.limits) else {
+        let Some(delta) = update_session(&mut state, event, self.inner.limits, &self.inner) else {
             return CatalogApply::UnknownExchange;
         };
         drop(state);
@@ -919,6 +919,10 @@ impl SessionCatalog {
                     stream_history: snapshot.stream_history,
                 },
             );
+            let count = state.by_id[&id].hook_effects.len();
+            for index in 0..count {
+                retain_script_details(&mut state, id, index, &self.inner);
+            }
         }
         drop(state);
         self.notify_view_change(&ids.into_iter().collect::<Vec<_>>());
@@ -1406,13 +1410,16 @@ fn update_session(
     state: &mut CatalogState,
     mut event: ObserverEvent,
     limits: SessionLimits,
+    owner: &Arc<CatalogInner>,
 ) -> Option<CatalogDelta> {
     let mut detail_dropped = 0_u64;
     retain_stream_content(&mut event.kind, state.retain_stream_content);
     let session = state.by_id.get_mut(&event.exchange_id)?;
     session.last_sequence = event.sequence;
     let change = CatalogChange::from_kind(&event.kind);
+    let new_effect = session.hook_effects.len();
     apply_kind(session, event.kind, limits, &mut detail_dropped);
+    let effect_added = session.hook_effects.len() > new_effect;
     let delta = CatalogDelta {
         exchange_id: event.exchange_id,
         sequence: session.last_sequence,
@@ -1423,8 +1430,128 @@ fn update_session(
         .counters
         .detail_records_dropped
         .saturating_add(detail_dropped);
+    if effect_added {
+        retain_script_details(state, event.exchange_id, new_effect, owner);
+    }
     trim_live_entries(state);
     Some(delta)
+}
+
+// Each combined exception/console snapshot is charged 128 KiB. This queue
+// bounds canonical retained detail to 64 snapshots (8 MiB) across all catalogs.
+struct DetailTarget {
+    catalog: std::sync::Weak<CatalogInner>,
+    id: ExchangeId,
+    generation: u64,
+    index: usize,
+}
+static SCRIPT_DETAILS: Mutex<VecDeque<DetailTarget>> = Mutex::new(VecDeque::new());
+
+fn retain_script_details(
+    state: &mut CatalogState,
+    id: ExchangeId,
+    index: usize,
+    owner: &Arc<CatalogInner>,
+) {
+    use transmog_core::intercept::HookEffectAction;
+    let Some(session) = state.by_id.get(&id) else {
+        return;
+    };
+    let Some(effect) = session.hook_effects.get(index) else {
+        return;
+    };
+    let HookEffectAction::ScriptReport(report) = &effect.action else {
+        return;
+    };
+    if report.exception.is_none() && report.logs.is_empty() {
+        return;
+    }
+    let target = DetailTarget {
+        catalog: Arc::downgrade(owner),
+        id,
+        generation: session.request_number,
+        index,
+    };
+    if report
+        .exception
+        .as_ref()
+        .is_some_and(|exception| !exception.is_bounded())
+        || report.logs.len() > 2
+        || report.logs.iter().any(|run| !run.is_bounded())
+    {
+        omit_script_detail(state, &target);
+        return;
+    }
+    let mut queue = SCRIPT_DETAILS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    queue.retain(|entry| entry.catalog.strong_count() > 0);
+    let mut remaining = queue.len();
+    while queue.len() >= 64 && remaining > 0 {
+        remaining -= 1;
+        let Some(previous) = queue.pop_front() else {
+            break;
+        };
+        if !evict_script_detail(&previous, owner, state) {
+            queue.push_back(previous);
+        }
+    }
+    if queue.len() >= 64 {
+        // All older catalogs are busy. Do not introduce a cross-catalog lock
+        // cycle or block traffic; omit this incoming detail with a marker.
+        omit_script_detail(state, &target);
+    } else {
+        queue.push_back(target);
+    }
+}
+
+fn evict_script_detail(
+    target: &DetailTarget,
+    owner: &Arc<CatalogInner>,
+    state: &mut CatalogState,
+) -> bool {
+    let Some(catalog) = target.catalog.upgrade() else {
+        return true;
+    };
+    let delta = if Arc::ptr_eq(&catalog, owner) {
+        omit_script_detail(state, target)
+    } else {
+        let mut previous = match catalog.state.try_lock() {
+            Ok(guard) => guard,
+            Err(std::sync::TryLockError::Poisoned(error)) => error.into_inner(),
+            Err(std::sync::TryLockError::WouldBlock) => return false,
+        };
+        omit_script_detail(&mut previous, target)
+    };
+    if let Some(delta) = delta {
+        let _ = catalog.deltas.send(delta);
+    }
+    true
+}
+
+fn omit_script_detail(state: &mut CatalogState, target: &DetailTarget) -> Option<CatalogDelta> {
+    use transmog_core::intercept::HookEffectAction;
+    let session = state.by_id.get_mut(&target.id)?;
+    if session.request_number != target.generation {
+        return None;
+    }
+    let effect = session.hook_effects.get_mut(target.index)?;
+    let HookEffectAction::ScriptReport(report) = &mut effect.action else {
+        return None;
+    };
+    if report.exception.is_none() && report.logs.is_empty() {
+        return None;
+    }
+    report.exception = None;
+    report.logs.clear();
+    report.details_omitted = true;
+    state.counters.detail_records_dropped = state.counters.detail_records_dropped.saturating_add(1);
+    Some(CatalogDelta {
+        exchange_id: target.id,
+        sequence: session.last_sequence,
+        terminal: !session.is_active(),
+        change: CatalogChange::Metadata,
+    })
 }
 
 fn retain_stream_content(kind: &mut ObserverEventKind, retention: [bool; 2]) {
@@ -1688,6 +1815,96 @@ fn forget_dismissed(state: &mut CatalogState, ids: &[ExchangeId]) -> Vec<Exchang
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    #[allow(clippy::too_many_lines)] // One scenario checks global eviction and cross-catalog lock contention.
+    fn exception_retention_is_bounded_across_sessions_without_losing_other_evidence() {
+        use transmog_core::intercept::{
+            HookEffectAction, HookPhase, InterceptorId, InterceptorIdentity, ScriptReport,
+        };
+        for with_exception in [true, false] {
+            let catalogs = [
+                SessionCatalog::new(SessionLimits::default()),
+                SessionCatalog::new(SessionLimits::default()),
+            ];
+            for id in 1..=65 {
+                let catalog = &catalogs[usize::try_from(id % 2).unwrap()];
+                start(catalog, id, "example.test");
+                let exception = serde_json::from_value(serde_json::json!({
+                "exception":{"name":"Error","message":"bounded detail","frames":[],"unavailable":false},
+                "causes":[],"truncated":false
+            })).unwrap();
+                catalog.apply(event(
+                id,
+                2,
+                ObserverEventKind::HookEffect(HookEffect {
+                    sequence: 1,
+                    interceptor: InterceptorIdentity {
+                        id: InterceptorId::new("script@1"),
+                        name: "Script".into(),
+                        chain_position: 0,
+                    },
+                    phase: HookPhase::RequestHead,
+                    changed: false,
+                    action: HookEffectAction::ScriptReport(ScriptReport {
+                        annotations: vec![],
+                        diagnostics: vec!["retained diagnostic".into()],
+                        exception: with_exception.then_some(exception),
+                        details_omitted: false,
+                        logs:serde_json::from_value(serde_json::json!([{
+"context":{"revision":"executed-build","callback":"onRequestHead","invocation":1,"exchangeId":"1"},
+"records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"bounded console detail","frames":[],"truncated":false}],"dropped":0,"incomplete":false
+}])).unwrap(),
+                    }),
+                }),
+            ));
+            }
+            let first = catalogs[1].get(ExchangeId(1)).unwrap();
+            let HookEffectAction::ScriptReport(report) = &first.hook_effects[0].action else {
+                panic!("report")
+            };
+            assert!(report.exception.is_none());
+            assert_eq!(report.logs, Vec::new());
+            assert!(report.details_omitted);
+            assert_eq!(report.diagnostics, ["retained diagnostic"]);
+            let last = catalogs[1].get(ExchangeId(65)).unwrap();
+            let HookEffectAction::ScriptReport(report) = &last.hook_effects[0].action else {
+                panic!("report")
+            };
+            assert_eq!(report.exception.is_some(), with_exception);
+            assert_ne!(report.logs, Vec::new());
+            assert!(!report.details_omitted);
+            assert_eq!(SCRIPT_DETAILS.lock().unwrap().len(), 64);
+            let contender = SessionCatalog::new(SessionLimits::default());
+            start(&contender, 9999, "example.test");
+            let incoming = last.hook_effects[0].clone();
+            let locks = catalogs
+                .iter()
+                .map(SessionCatalog::lock_state)
+                .collect::<Vec<_>>();
+            let owned = contender.clone();
+            let (done, finished) = std::sync::mpsc::channel();
+            let task = std::thread::spawn(move || {
+                owned.apply(event(9999, 2, ObserverEventKind::HookEffect(incoming)));
+                let _ = done.send(());
+            });
+            let nonblocking = finished
+                .recv_timeout(std::time::Duration::from_secs(1))
+                .is_ok();
+            drop(locks);
+            task.join().unwrap();
+            assert!(
+                nonblocking,
+                "retention must not wait for another catalog writer"
+            );
+            let snapshot = contender.get(ExchangeId(9999)).unwrap();
+            let HookEffectAction::ScriptReport(report) = &snapshot.hook_effects[0].action else {
+                panic!("report");
+            };
+            assert!(report.details_omitted);
+            assert_eq!(report.logs, Vec::new());
+            assert_eq!(report.diagnostics, ["retained diagnostic"]);
+        }
+    }
     #[test]
     fn private_pins_leave_room_for_the_main_catalog_to_rotate() {
         let root = SessionCatalog::new(limits(2));

@@ -831,3 +831,31 @@ saved rule snapshots; comparing does not save a draft for preview.
 
 See [Traffic comparison](traffic-inspection.md#comparing-captured-evidence) for
 representation, coverage, exclusion and processing limits.
+
+## Debug script execution
+
+Use **Debug test** in Scripts for an isolated callback or exchange scenario. It
+uses the current input and exact built snapshot; edits and applying a revision
+remain separate actions. Set initializer breakpoints and exception policy in
+**Debugger options** before starting. While paused, use the source gutter, call
+stack, lexical scopes and paged own properties. Variables and source are read-only;
+getters, proxies and unavailable optimized values are never evaluated to display
+them. Continue and step preserve normal validation and script decisions.
+
+For live traffic, open **Debug next matching exchange**, review the applied
+revision and filter, then choose **Arm for 60 seconds**. This reserves the actual
+worker with its current globals. Outstanding pinned exchanges or another owner
+prevent arming. Other requests requiring that worker can fail while it is reserved;
+traffic using other workers continues normally. Client and upstream timeouts
+still apply. The selected exchange owns its later body and terminal callbacks.
+Normal completion detaches and preserves the worker. Stop, cancellation or losing
+the owning window can terminate it; use **Retry applied script** if unavailable.
+Applying a replacement or pausing activation ends the previous controller without
+restoring old activation. HTTP editing breakpoints and Pause script are separate
+features.
+
+Pauses last at most 60 seconds and sessions 10 minutes. Closing or reloading the
+controller's document releases its ownership. Locals, console records and detailed
+exceptions stay ephemeral; ordinary trace, case, support and MCP output do not gain
+these values. See the generated [Script API](scripting.md#findings-and-failure-categories)
+for controls, limits and console semantics.

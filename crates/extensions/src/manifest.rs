@@ -375,6 +375,16 @@ pub struct Payload {
 /// Inert metadata discovered without compiling or launching extension code.
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceMaps {
+    /// Metadata revision. Unsupported revisions use generated JavaScript positions.
+    pub version: u32,
+    /// Executable module to map payload, both package-relative inventory names.
+    pub modules: BTreeMap<String, String>,
+}
+
+/// Inert metadata discovered without compiling or launching extension code.
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
     /// Container/metadata format version.
     pub format_version: u32,
@@ -395,6 +405,9 @@ pub struct Manifest {
     pub traffic_columns: Vec<crate::ClassificationColumn>,
     /// Complete payload inventory, excluding manifest.json itself.
     pub files: Vec<Payload>,
+    /// Optional development source maps. They never authorize executable imports.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_maps: Option<SourceMaps>,
 }
 impl Manifest {
     /// Decodes bounded metadata and validates it before registration.

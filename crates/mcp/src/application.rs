@@ -1323,6 +1323,20 @@ fn project_script_reports(detail: &mut Value, grant: &Grant) {
         .and_then(Value::as_array_mut)
     {
         for report in reports {
+            // Detailed source/exception inspection is a local authoring surface.
+            // Keep the existing MCP findings contract independent of it.
+            report
+                .as_object_mut()
+                .expect("script report")
+                .remove("exception");
+            report
+                .as_object_mut()
+                .expect("script report")
+                .remove("detailsOmitted");
+            report
+                .as_object_mut()
+                .expect("script report")
+                .remove("logs");
             report["contentAvailable"] = json!(reveal);
             report["annotationCount"] = json!(report["annotations"].as_array().map_or(0, Vec::len));
             report["diagnosticCount"] = json!(report["diagnostics"].as_array().map_or(0, Vec::len));

@@ -38,6 +38,8 @@ fn lock() -> std::sync::MutexGuard<'static, HashMap<String, WindowCase>> {
 }
 fn error(message: &str) -> AppError {
     AppError {
+        exception: None,
+        logs: Vec::new(),
         category: ErrorCategory::InvalidInput,
         message: message.into(),
         retryable: false,
@@ -54,6 +56,8 @@ fn portable(error: transmog_portable::Error) -> AppError {
     };
     AppError {
         category,
+        exception: None,
+        logs: Vec::new(),
         message: error.to_string(),
         retryable: false,
     }
@@ -84,6 +88,8 @@ impl Operation {
     fn update<T>(&self, action: impl FnOnce(&mut WindowCase) -> T) -> Result<T, AppError> {
         if self.flag.load(Ordering::Acquire) {
             return Err(AppError {
+                exception: None,
+                logs: Vec::new(),
                 category: ErrorCategory::Canceled,
                 message: "Case operation canceled".into(),
                 retryable: false,

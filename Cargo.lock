@@ -6641,6 +6641,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2 0.11.1",
+ "sourcemap",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.21",
@@ -6656,6 +6657,7 @@ dependencies = [
  "transmog-control-transport",
  "transmog-core",
  "transmog-extension-registry",
+ "transmog-extension-supervisor",
  "transmog-extensions",
  "transmog-h3",
  "transmog-http",
@@ -6666,6 +6668,7 @@ dependencies = [
  "transmog-runtime",
  "transmog-saz",
  "transmog-script",
+ "transmog-script-diagnostics",
  "transmog-script-supervisor",
  "transmog-session",
  "transmog-tls",
@@ -6798,6 +6801,7 @@ dependencies = [
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "transmog-script-diagnostics",
 ]
 
 [[package]]
@@ -6893,8 +6897,11 @@ dependencies = [
  "base64 0.22.1",
  "getrandom 0.4.3",
  "serde_json",
+ "sourcemap",
  "tokio",
  "transmog-extensions",
+ "transmog-script-diagnostics",
+ "url",
 ]
 
 [[package]]
@@ -6910,6 +6917,7 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "transmog-package-zip",
+ "transmog-script-diagnostics",
 ]
 
 [[package]]
@@ -6974,6 +6982,9 @@ name = "transmog-js-runtime"
 version = "0.1.18"
 dependencies = [
  "percent-encoding",
+ "serde_json",
+ "transmog-process-sandbox",
+ "transmog-script-diagnostics",
  "url",
  "v8",
 ]
@@ -7139,6 +7150,7 @@ dependencies = [
  "tokio",
  "transmog-core",
  "transmog-script-compiler",
+ "transmog-script-diagnostics",
  "url",
 ]
 
@@ -7155,7 +7167,18 @@ dependencies = [
  "swc_ecma_transforms_base",
  "swc_ecma_transforms_typescript",
  "swc_ecma_visit",
+ "transmog-script-diagnostics",
  "url",
+]
+
+[[package]]
+name = "transmog-script-diagnostics"
+version = "0.1.18"
+dependencies = [
+ "futures-util",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -7187,6 +7210,7 @@ dependencies = [
  "sourcemap",
  "tokio",
  "transmog-script",
+ "transmog-script-diagnostics",
 ]
 
 [[package]]

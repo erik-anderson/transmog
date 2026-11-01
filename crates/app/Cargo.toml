@@ -27,6 +27,9 @@ regex.workspace = true
 unicode-normalization.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sourcemap.workspace = true
+transmog-script-diagnostics = { version = "=0.1.18", path = "../script-diagnostics" }
+transmog-extension-supervisor = { version = "=0.1.18", path = "../extension-supervisor" }
 hex.workspace = true
 sha2.workspace = true
 thiserror.workspace = true

@@ -1,0 +1,397 @@
+//! Native-only debugger contracts. No expression evaluation, mutation or Inspector wire API.
+
+use crate::{ExceptionDiagnostic, SourceLocation};
+use serde::{Deserialize, Serialize};
+
+/// Source breakpoints per session, including unresolved requests.
+pub const MAX_BREAKPOINTS: usize = 128;
+/// Aggregate source-name bytes in one breakpoint configuration.
+pub const MAX_BREAKPOINT_TEXT_BYTES: usize = 8192;
+/// Registered module identities per debugger session.
+pub const MAX_DEBUG_SOURCES: usize = 128;
+/// Stack frames retained for one pause.
+pub const MAX_DEBUG_FRAMES: usize = 32;
+/// Own properties returned by one read.
+pub const MAX_PROPERTIES: usize = 100;
+/// Retained engine values in one pause epoch.
+pub const MAX_OBJECT_HANDLES: usize = 64;
+/// Maximum serialized native debug reply.
+pub const MAX_DEBUG_REPLY_BYTES: usize = 32 * 1024;
+/// Maximum preview/name text; reads never invoke conversion on objects.
+pub const MAX_VALUE_BYTES: usize = 2048;
+/// Finite controller commands awaiting the engine thread.
+pub const MAX_DEBUG_COMMANDS: usize = 32;
+/// One native pause lease; UI heartbeats cannot extend it.
+pub const PAUSE_LEASE_MS: u64 = 60_000;
+/// Absolute session lifetime, independent of continued controller activity.
+pub const SESSION_LEASE_MS: u64 = 10 * 60_000;
+/// Maximum explicit live reservation wait for an exchange.
+pub const ARM_LEASE_MS: u64 = 60_000;
+
+/// Inspector exception policy, selected explicitly by the local author.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ExceptionPolicy {
+    /// Pause only at source breakpoints or authored debugger statements.
+    #[default]
+    None,
+    /// Pause on exceptions that escape a handler.
+    Uncaught,
+    /// Pause on caught and uncaught exceptions.
+    All,
+}
+
+/// Requested generated-code position. Supervisors map original sources before transport.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SourceBreakpoint {
+    /// Client identity, unique within this finite breakpoint list.
+    pub id: u32,
+    /// Exact registered module identity, never a URL pattern or file-read permission.
+    pub location: SourceLocation,
+}
+
+/// Explicit opt-in before initialization or on an idle existing worker.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugOptions {
+    /// Native random 128-bit session identity, encoded as 32 lowercase hexadecimal digits.
+    pub session: String,
+    /// Initial pause-on-exception policy.
+    pub exceptions: ExceptionPolicy,
+    /// Initial generated positions, resolved against actual compiled engine script IDs.
+    pub breakpoints: Vec<SourceBreakpoint>,
+}
+impl DebugOptions {
+    /// Validates finite native configuration before creating an Inspector session.
+    pub fn is_bounded(&self) -> bool {
+        self.session.len() == 32
+            && self
+                .session
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && valid_breakpoints(&self.breakpoints)
+    }
+}
+/// Validates exact generated breakpoint coordinates and distinct client IDs.
+pub fn valid_breakpoints(values: &[SourceBreakpoint]) -> bool {
+    values.len() <= MAX_BREAKPOINTS
+        && values
+            .iter()
+            .map(|value| value.location.source.len())
+            .sum::<usize>()
+            <= MAX_BREAKPOINT_TEXT_BYTES
+        && values.iter().all(|value| {
+            !value.location.source.is_empty()
+                && value.location.source.len() <= 2048
+                && !value.location.source.chars().any(char::is_control)
+                && value.location.line > 0
+                && value.location.column > 0
+                && i32::try_from(value.location.line).is_ok()
+                && i32::try_from(value.location.column).is_ok()
+        })
+        && values
+            .iter()
+            .map(|value| value.id)
+            .collect::<std::collections::BTreeSet<_>>()
+            .len()
+            == values.len()
+}
+
+/// A scoped execution action; no expression can be supplied as a step condition.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ResumeAction {
+    /// Continue until another breakpoint, exception or debugger statement.
+    Continue,
+    /// Enter the next called function.
+    Into,
+    /// Execute the current statement in the selected call frame.
+    Over,
+    /// Return from the current call frame.
+    Out,
+}
+
+/// Narrow typed command. The containing host envelope authenticates its worker.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugCommand {
+    /// Exact authorized session identity.
+    pub session: String,
+    /// Monotonic native request identity, independently correlated from invocations.
+    pub request: u64,
+    /// Allowed operation; unknown fields, conditions and arbitrary protocol methods are rejected.
+    pub action: DebugAction,
+}
+impl DebugCommand {
+    /// Validates finite work before accepting it into a native control queue.
+    pub fn is_bounded(&self) -> bool {
+        self.request > 0
+            && self.session.len() == 32
+            && self
+                .session
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+            && match &self.action {
+                DebugAction::Breakpoints { values } => valid_breakpoints(values),
+                DebugAction::Release { pause, handles } => {
+                    *pause > 0 && handles.len() <= MAX_OBJECT_HANDLES
+                }
+                DebugAction::Scopes { pause, frame } => {
+                    *pause > 0 && (*frame as usize) < MAX_DEBUG_FRAMES
+                }
+                DebugAction::Properties { pause, handle, .. } => *pause > 0 && *handle > 0,
+                DebugAction::Resume { pause, .. } => *pause > 0,
+                DebugAction::Exceptions { .. } | DebugAction::Stop | DebugAction::Detach => true,
+            }
+    }
+}
+
+/// Commands execute on the engine's own thread; Stop also has independent native enforcement.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DebugAction {
+    /// Atomically replace source breakpoints, returning actual resolved positions.
+    Breakpoints {
+        /// Finite exact-source requests.
+        values: Vec<SourceBreakpoint>,
+    },
+    /// Select caught/uncaught exception handling.
+    Exceptions {
+        /// Explicit policy.
+        policy: ExceptionPolicy,
+    },
+    /// Continue or step in this exact pause epoch.
+    Resume {
+        /// Current pause generation, invalidated on every resume.
+        pause: u64,
+        /// Continue/step operation.
+        action: ResumeAction,
+    },
+    /// Read scopes of a retained call frame, with lexical scope order preserved.
+    Scopes {
+        /// Current pause generation.
+        pause: u64,
+        /// Native stack index from the paused event.
+        frame: u32,
+    },
+    /// Read a bounded page of own data descriptors; getters and proxies stay unavailable.
+    Properties {
+        /// Current pause generation.
+        pause: u64,
+        /// Native value handle returned in this pause only.
+        handle: u32,
+        /// Zero-based property offset, without running code between pages.
+        offset: u32,
+    },
+    /// Release value handles early without changing execution.
+    Release {
+        /// Current pause generation.
+        pause: u64,
+        /// Handles to release, bounded by the per-pause handle ceiling.
+        handles: Vec<u32>,
+    },
+    /// Stop execution. Session and worker owners independently kill unresponsive processes.
+    Stop,
+    /// Detach from an idle worker after normal completion, preserving its actual heap.
+    Detach,
+}
+
+/// An exact engine-registered module. Inspector-reported sourceURL labels are not authoritative.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugSource {
+    /// Exact verified module identity.
+    pub source: String,
+    /// Byte length of immutable executing code, when retained by this attachment.
+    pub bytes: Option<u32>,
+}
+/// Resolution of one source request; missing locations remain visibly unbound.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct BreakpointResolution {
+    /// Original client identity.
+    pub id: u32,
+    /// Requested generated coordinates.
+    pub requested: SourceLocation,
+    /// Actual executable position; absent while pending or unbound.
+    pub resolved: Option<SourceLocation>,
+    /// Host-owned explanation for an unresolved request.
+    pub issue: Option<String>,
+}
+/// Bounded native frame; internal Inspector call-frame IDs never leave the runtime.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugFrame {
+    /// Pause-local native stack index.
+    pub index: u32,
+    /// Bounded engine-owned name.
+    pub function: String,
+    /// Generated position, attributed through authoritative engine script IDs.
+    pub location: Option<SourceLocation>,
+    /// Original position verified by the native supervisor against the executing map.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub original: Option<SourceLocation>,
+    /// Whether some scopes or frame metadata were unavailable.
+    pub unavailable: bool,
+}
+/// A lexical environment. Reading it never evaluates a watch expression.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugScope {
+    /// Local/closure/module/global/etc., as inert text.
+    pub kind: String,
+    /// Optional bounded engine name.
+    pub name: String,
+    /// Native pause-local handle, absent when unavailable or at the handle limit.
+    pub handle: Option<u32>,
+}
+/// Inert read-only value preview; objects are never stringified or expanded implicitly.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugValue {
+    /// Host-owned primitive/object/array/function/proxy/unavailable classification.
+    pub kind: String,
+    /// Bounded primitive text or inert label.
+    pub display: String,
+    /// Native pause-local value identity, with no Inspector object ID or pointer.
+    pub handle: Option<u32>,
+    /// Some primitive text was shortened.
+    pub truncated: bool,
+}
+/// Own property descriptor. Accessors are represented without invoking them.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugProperty {
+    /// Bounded primitive key text; symbols retain an explicit label.
+    pub name: String,
+    /// Inert value or unavailable/accessor marker.
+    pub value: DebugValue,
+}
+/// Bounded event/reply stream, separate from ordinary callback results and logs.
+#[derive(Clone, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DebugEvent {
+    /// Authenticated session identity, independent of display labels.
+    pub session: String,
+    /// Active callback, zero for module initialization.
+    pub invocation: u64,
+    /// Correlated controller request; zero denotes an unsolicited state transition.
+    pub request: u64,
+    /// Native typed result.
+    pub event: DebugEventKind,
+}
+impl std::fmt::Debug for DebugEvent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let kind = match &self.event {
+            DebugEventKind::Attached => "attached",
+            DebugEventKind::Detached => "detached",
+            DebugEventKind::Sources { .. } => "sources",
+            DebugEventKind::Paused { .. } => "paused",
+            DebugEventKind::Resumed => "resumed",
+            DebugEventKind::Scopes { .. } => "scopes",
+            DebugEventKind::Properties { .. } => "properties",
+            DebugEventKind::Acknowledged => "acknowledged",
+            DebugEventKind::Rejected { .. } => "rejected",
+            DebugEventKind::Stopped { .. } => "stopped",
+        };
+        f.debug_struct("DebugEvent")
+            .field("invocation", &self.invocation)
+            .field("request", &self.request)
+            .field("kind", &kind)
+            .finish_non_exhaustive()
+    }
+}
+/// Typed event payloads; source text, locals and exceptions remain ephemeral local evidence.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
+pub enum DebugEventKind {
+    /// Session is attached; ordinary script activation remains independent.
+    Attached,
+    /// Idle debugger detached; script activation and worker globals are unchanged.
+    Detached,
+    /// Exact compiled modules or breakpoint resolution changed.
+    Sources {
+        /// Finite module inventory.
+        sources: Vec<DebugSource>,
+        /// Truthful current resolution, including unbound breakpoints.
+        breakpoints: Vec<BreakpointResolution>,
+    },
+    /// Engine is paused in one exact invocation and epoch.
+    Paused {
+        /// Monotonically increasing pause generation.
+        pause: u64,
+        /// Host-controlled pause reason.
+        reason: String,
+        /// Bounded engine-owned stack.
+        frames: Vec<DebugFrame>,
+        /// Safely captured thrown value when this is an exception pause.
+        exception: Option<Box<ExceptionDiagnostic>>,
+        /// Frames were omitted by an evidence limit.
+        truncated: bool,
+    },
+    /// Previous stack and value handles are invalid from this point onward.
+    Resumed,
+    /// Read-only lexical scope reply.
+    Scopes {
+        /// Current pause generation.
+        pause: u64,
+        /// Selected stack index.
+        frame: u32,
+        /// In lexical order, preserving shadowing between scopes.
+        scopes: Vec<DebugScope>,
+    },
+    /// Read-only own-property page.
+    Properties {
+        /// Current pause generation.
+        pause: u64,
+        /// Requested native value handle.
+        handle: u32,
+        /// Requested property offset.
+        offset: u32,
+        /// Finite own descriptors.
+        properties: Vec<DebugProperty>,
+        /// Another explicit page is available; no data was expanded implicitly.
+        next: Option<u32>,
+    },
+    /// Non-state command completed without exposing Inspector protocol internals.
+    Acknowledged,
+    /// Safe host-controlled rejection; this never includes authored command text.
+    Rejected {
+        /// Fixed explanation of stale, unsupported or bounded work.
+        message: String,
+    },
+    /// Stop or native lifetime expiry; this session cannot resume.
+    Stopped {
+        /// Fixed host-controlled reason.
+        reason: String,
+    },
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn configuration_rejects_ambiguous_breakpoint_identities_and_invalid_coordinates() {
+        let mut config = super::DebugOptions {
+            session: "a".repeat(32),
+            exceptions: super::ExceptionPolicy::None,
+            breakpoints: vec![super::SourceBreakpoint {
+                id: 1,
+                location: crate::SourceLocation {
+                    source: "file:///main.js".into(),
+                    line: 1,
+                    column: 1,
+                },
+            }],
+        };
+        assert!(config.is_bounded());
+        config.breakpoints.push(config.breakpoints[0].clone());
+        assert!(!config.is_bounded());
+        config.breakpoints.pop();
+        config.breakpoints[0].location.column = 0;
+        assert!(!config.is_bounded());
+        config.breakpoints.clear();
+        config.session = "untrusted label".into();
+        assert!(!config.is_bounded());
+    }
+}

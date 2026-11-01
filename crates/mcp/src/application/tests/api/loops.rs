@@ -508,6 +508,15 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
             },
             phase: HookPhase::Completed,
             action: HookEffectAction::ScriptReport(ScriptReport {
+                details_omitted: false,
+                        logs:serde_json::from_value(serde_json::json!([{
+"context":{"revision":"executed-build","callback":"onCompleted","invocation":1,"exchangeId":"1"},
+"records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"local-console-canary","frames":[],"truncated":false}],"dropped":0,"incomplete":false
+}])).unwrap(),
+                exception: Some(serde_json::from_value(json!({
+                    "exception":{"name":"Error","message":"local-exception-canary","frames":[],"unavailable":false},
+                    "causes":[],"truncated":false
+                })).unwrap()),
                 annotations: vec![ScriptAnnotation {
                     note: "script-secret-note".into(),
                     tags: vec!["script-secret-tag".into()],
@@ -550,6 +559,19 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
             detail.script_reports[0].annotations[0].note,
             "script-secret-note"
         );
+        assert_eq!(
+            detail.script_reports[0]
+                .exception
+                .as_ref()
+                .unwrap()
+                .exception
+                .message,
+            "local-exception-canary"
+        );
+        assert_eq!(
+            detail.script_reports[0].logs[0].records[0].text,
+            "local-console-canary"
+        );
         assert!(!detail.hook_effects.join(" ").contains("script-secret"));
         entries.push(sent);
     }
@@ -570,6 +592,8 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
         .unwrap();
     contract("transmog_exchange_get", &redacted);
     assert!(!redacted.to_string().contains("script-secret"));
+    assert!(!redacted.to_string().contains("local-exception-canary"));
+    assert!(!redacted.to_string().contains("local-console-canary"));
     let report = &redacted["changes"]["scripts"][0];
     assert_eq!(report["script"], "user-script@7");
     assert_eq!(report["annotationCount"], 1);
@@ -607,6 +631,18 @@ async fn script_findings_follow_disclosure_in_changes_context_search_and_later_p
         .await
         .unwrap();
     contract("transmog_exchange_get", &revealed);
+    assert!(!revealed.to_string().contains("local-exception-canary"));
+    assert!(!revealed.to_string().contains("local-console-canary"));
+    assert!(
+        !String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
+            .unwrap()
+            .contains("local-console-canary")
+    );
+    assert!(
+        !String::from_utf8(context_bytes(&h, &allowed, &revealed["context"]).await)
+            .unwrap()
+            .contains("local-exception-canary")
+    );
     assert_eq!(revealed["changes"]["scripts"][0]["contentAvailable"], true);
     for needle in [
         "script-secret-note",

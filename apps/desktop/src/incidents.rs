@@ -40,6 +40,8 @@ pub(super) async fn mark_incident(
 }
 fn error(message: &str) -> AppError {
     AppError {
+        exception: None,
+        logs: Vec::new(),
         category: ErrorCategory::Unavailable,
         message: message.into(),
         retryable: false,

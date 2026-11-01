@@ -62,6 +62,15 @@ pub trait InterceptorFactory: Send + Sync {
 /// Request and response callbacks may overlap on duplex protocols. Mutable
 /// implementations must synchronize their exchange-local state.
 pub trait ExchangeInterceptor: Send + Sync {
+    /// Native debugger admission before the outer request callback starts its clock.
+    /// This never evaluates authored code and defaults to no operation.
+    fn prepare_debug_request(&self, _head: &crate::RequestHead) {}
+    /// Exact native debugger pause clock for this exchange, when explicitly authorized.
+    fn debug_pause_clock(
+        &self,
+    ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        None
+    }
     /// Takes validated script evidence produced by the most recent head or terminal callback.
     fn take_script_report(&self) -> Option<ScriptReport> {
         None

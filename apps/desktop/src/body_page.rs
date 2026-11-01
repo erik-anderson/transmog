@@ -20,12 +20,16 @@ pub(crate) fn encode(page: &BodyBytePage) -> Result<Vec<u8>, AppError> {
         read_limit: page.read_limit,
     })
     .map_err(|_| AppError {
+        exception: None,
+        logs: Vec::new(),
         category: ErrorCategory::Internal,
         message: "Body metadata could not be encoded".into(),
         retryable: false,
     })?;
     if header.len() > MAX_METADATA_BYTES {
         return Err(AppError {
+            exception: None,
+            logs: Vec::new(),
             category: ErrorCategory::Limit,
             message: "Body metadata exceeds the per-call budget".into(),
             retryable: false,

@@ -25,8 +25,7 @@ fn main() {
         std::process::exit(72);
     }
     transmog_script_host::configure_v8();
-    if let Err(error) = transmog_script_host::run(std::io::stdin().lock(), std::io::stdout().lock())
-    {
+    if let Err(error) = transmog_script_host::run(std::io::stdin(), std::io::stdout()) {
         eprintln!("script host failed: {error}");
         std::process::exit(70);
     }

@@ -492,6 +492,19 @@ impl Registry {
         visualizer: &str,
         canceled: impl Fn() -> bool,
     ) -> Result<Instance, Failure> {
+        self.activate_cancellable_debug(owner, id, visualizer, canceled, None)
+    }
+    /// Starts one selected contribution with an explicitly owned local initializer debugger.
+    /// # Errors
+    /// Returns the same native admission, revision, containment and cancellation failures.
+    pub fn activate_cancellable_debug(
+        &self,
+        owner: &str,
+        id: &str,
+        visualizer: &str,
+        canceled: impl Fn() -> bool,
+        debug: Option<(Arc<transmog_extension_supervisor::DebugSession>, String)>,
+    ) -> Result<Instance, Failure> {
         if !valid_id(owner) {
             return Err(Failure::new(
                 transmog_extensions::FailureKind::Validation,
@@ -506,6 +519,14 @@ impl Registry {
         let watch = watch::prepare(&entry);
         let snapshot = self.snapshot(id).map_err(management_failure)?;
         let digest = snapshot.digest.clone();
+        if debug
+            .as_ref()
+            .is_some_and(|(_, expected)| *expected != digest)
+        {
+            return Err(management_failure(invalid(
+                "Package changed before debugger initialization",
+            )));
+        }
         let manifest = snapshot.manifest.clone();
         let watch_files = watch::paths(&manifest);
         watch::update(watch.as_ref(), &watch_files);
@@ -521,15 +542,21 @@ impl Registry {
                 "The installed extension helper is unavailable",
             )
         })?;
-        let runner = Runner::start_cancellable(host, snapshot, visualizer, || {
-            canceled()
-                || self.inner.state.lock().map_or(true, |state| {
-                    !state
-                        .entries
-                        .iter()
-                        .any(|e| activation_current(e, &entry, &digest))
-                })
-        })?;
+        let runner = Runner::start_cancellable_debug(
+            host,
+            snapshot,
+            visualizer,
+            || {
+                canceled()
+                    || self.inner.state.lock().map_or(true, |state| {
+                        !state
+                            .entries
+                            .iter()
+                            .any(|e| activation_current(e, &entry, &digest))
+                    })
+            },
+            debug.map(|(session, _)| session),
+        )?;
         let mut nonce = [0; 16];
         getrandom::fill(&mut nonce).map_err(|_| {
             Failure::new(

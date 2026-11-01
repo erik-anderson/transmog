@@ -19,6 +19,7 @@ import { decodeBytes } from "../hex-viewer/hex-formats.js";
 import type { HexPreview } from "../hex-viewer/hex-viewer.js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type { VisualizerChoice, VisualizerSelection } from "../extension-visualizer/models.js";
+import type { ExtensionVisualizer } from "../extension-visualizer/extension-visualizer.js";
 import type { AuthSelection, AuthSourceNavigation } from "../auth-inspector/models.js";
 import { authBodyFormats } from "../auth-inspector/models.js";
 import type { AuthInspector } from "../auth-inspector/auth-inspector.js";
@@ -35,6 +36,34 @@ const stages: Record<string, string> = {
 const exactHeaderBytes = (value: number | null | undefined): string =>
   value == null ? "Size unavailable" : value.toLocaleString() + (value === 1 ? " byte" : " bytes");
 export class MessageInspector extends WebUIElement {
+  headerVisualization?: ExtensionVisualizer;
+  bodyVisualization?: ExtensionVisualizer;
+  async reviewExtensionDebugger(extensionId: string, visualizerId: string): Promise<boolean> {
+    if (!this.detail) {
+      return false;
+    }
+    await this.refreshChoices(true);
+    const match = (choice: VisualizerChoice): boolean =>
+      choice.extensionId === extensionId && choice.visualizerId === visualizerId;
+    const body = this.bodyChoices.find(match),
+      headers = this.headerChoices.find(match);
+    if (!body && !headers) {
+      return false;
+    }
+    if (body) {
+      this.viewer = body.key;
+      this.mode = "body";
+    } else if (headers) {
+      this.headerViewer = headers.key;
+      this.mode = "headers";
+    }
+    this.setChoices();
+    this.rememberView();
+    this.$flushUpdates();
+    const visualization = body ? this.bodyVisualization : this.headerVisualization;
+    visualization?.showDebuggerOptions();
+    return true;
+  }
   @observable authVisible = false;
   @observable authSelection: AuthSelection | null = null;
   @observable authBadge = "";

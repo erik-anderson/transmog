@@ -2,6 +2,10 @@ import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { describeError } from "../utilities.js";
+import "../script-diagnostics/script-diagnostics.js";
+import "../script-debugger/script-debugger.js";
+import type { DebugSessionInfo, SourceBreakpoint } from "../script-debugger/models.js";
+import { errorEvidence, type DeveloperEvidence } from "../script-diagnostics/models.js";
 import { decodeBytes } from "../hex-viewer/hex-formats.js";
 import type { HexPreview } from "../hex-viewer/hex-viewer.js";
 import { ReloadObserver } from "./reload.js";
@@ -60,6 +64,22 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable visualizerLiveWarning = "";
   @observable visualizerFrozen = false;
   @observable visualizerError = "";
+  @observable developerDetails: DeveloperEvidence[] = [];
+  @observable debugInfo: DebugSessionInfo | null = null;
+  @observable debugBreakpoints: SourceBreakpoint[] = [];
+  @observable debugPolicy = "uncaught";
+  debugModule!: HTMLInputElement;
+  debugLines!: HTMLInputElement;
+  debugExceptions!: HTMLSelectElement;
+  debugOptions?: HTMLDetailsElement;
+  showDebuggerOptions(): void {
+    if (this.debugOptions) {
+      this.debugOptions.open = true;
+      this.debugOptions.scrollIntoView({ block: "nearest" });
+      this.debugOptions.querySelector("summary")?.focus();
+    }
+  }
+  private lastGoodDetails: DeveloperEvidence | null = null;
   @observable visualizerTitle = "";
   @observable visualizerStatus = "";
   @observable visualizerSummary = "";
@@ -349,6 +369,10 @@ export class ExtensionVisualizer extends WebUIElement {
     this.listeners = [];
   }
   private stop(preserveResult = false): void {
+    if (this.debugInfo) {
+      void invoke("close_debug_session", { session: this.debugInfo.session }).catch(() => {});
+      this.debugInfo = null;
+    }
     this.revision++;
     const pending = this.pending;
     this.pending = null;
@@ -374,6 +398,8 @@ export class ExtensionVisualizer extends WebUIElement {
     }
   }
   private clear(): void {
+    this.developerDetails = [];
+    this.lastGoodDetails = null;
     this.view = null;
     this.root = null;
     this.nodes.clear();
@@ -416,11 +442,16 @@ export class ExtensionVisualizer extends WebUIElement {
     this.selected = DOCUMENT_NODE;
     this.tableOffset = 0;
   }
-  private fail(message: string): void {
+  private fail(message: string, error?: unknown): void {
     const signature = this.signature;
-    this.stop();
+    const previous = this.lastGoodDetails;
+    this.stop(Boolean(this.root));
     this.signature = signature;
     this.visualizerError = message;
+    this.developerDetails = [
+      ...(previous ? [previous] : []),
+      errorEvidence(error, "Failed visualizer operation"),
+    ];
   }
   private pause(): void {
     this.paused = true;
@@ -428,7 +459,7 @@ export class ExtensionVisualizer extends WebUIElement {
     this.visualizerError =
       "Visualizer paused. Open it again to continue with available retained evidence.";
   }
-  private async start(live = false): Promise<void> {
+  private async start(live = false, debug = false): Promise<void> {
     const selection = this.selection,
       choice = this.choice;
     if (!selection || !choice) {
@@ -437,7 +468,7 @@ export class ExtensionVisualizer extends WebUIElement {
     const revision = ++this.revision,
       slot = this.slot,
       generation = next(),
-      automatic = this.automatic;
+      automatic = debug ? false : this.automatic;
     this.visualizerBusy = true;
     this.liveWanted = live;
     this.visualizerLive = live;
@@ -448,16 +479,30 @@ export class ExtensionVisualizer extends WebUIElement {
         return;
       }
       this.pending = { slot, generation, pageId };
-      const view = await invoke<VisualizerView>("activate_visualizer", {
-        request: {
-          ...this.pending,
-          selection,
-          extensionId: choice.extensionId,
-          visualizerId: choice.visualizerId,
-          live,
-          automatic,
-        },
-      });
+      const activation = {
+        ...this.pending,
+        selection,
+        extensionId: choice.extensionId,
+        visualizerId: choice.visualizerId,
+        live,
+        automatic,
+      };
+      let view: VisualizerView;
+      if (debug) {
+        const configuration = this.debugConfiguration();
+        const info = await invoke<DebugSessionInfo>("debug_visualizer", {
+          request: { activation: { ...activation, automatic: false }, configuration },
+        });
+        if (revision !== this.revision || !this.visible) {
+          void invoke("close_debug_session", { session: info.session }).catch(() => {});
+          return;
+        }
+        this.debugPolicy = configuration.exceptions;
+        this.debugInfo = info;
+        view = await invoke<VisualizerView>("await_debug_visualizer", { session: info.session });
+      } else {
+        view = await invoke<VisualizerView>("activate_visualizer", { request: activation });
+      }
       if (revision !== this.revision || !this.visible) {
         void invoke("deactivate_visualizer", { slot, generation, pageId }).catch(() => undefined);
         return;
@@ -472,9 +517,9 @@ export class ExtensionVisualizer extends WebUIElement {
           this.stop();
           this.$emit("automatic-rejected", { selection, key: choice.key });
         } else if (live && this.root) {
-          this.failLive(describeError(error));
+          this.failLive(describeError(error), error);
         } else {
-          this.fail(describeError(error));
+          this.fail(describeError(error), error);
         }
       }
     } finally {
@@ -484,6 +529,66 @@ export class ExtensionVisualizer extends WebUIElement {
         this.reloadObserver.checkSoon();
       }
     }
+  }
+  private debugConfiguration(): { exceptions: string; breakpoints: SourceBreakpoint[] } {
+    const lines = this.debugLines.value
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number);
+    if (lines.length > 128 || lines.some((line) => !Number.isSafeInteger(line) || line < 1)) {
+      throw new Error("Use up to 128 positive source line numbers.");
+    }
+    const source = new URL(
+      this.debugModule.value ||
+        this.choice?.entry ||
+        this.view?.instance.declaration.entry ||
+        "main.js",
+      "file:///transmog-extension/",
+    ).href;
+    this.debugBreakpoints = [...new Set(lines)].map((line, index) => ({
+      id: index + 1,
+      location: { source, line, column: 1 },
+    }));
+    return { exceptions: this.debugExceptions.value, breakpoints: this.debugBreakpoints };
+  }
+  async debugFresh(): Promise<void> {
+    if (this.debugInfo || this.visualizerBusy) {
+      return;
+    }
+    await this.start(false, true);
+  }
+  async debugExisting(): Promise<void> {
+    if (this.debugInfo || this.visualizerBusy || !this.view) {
+      return;
+    }
+    const revision = this.revision;
+    try {
+      const configuration = this.debugConfiguration();
+      const info = await invoke<DebugSessionInfo>("attach_visualizer_debugger", {
+        handle: this.view.handle,
+        configuration,
+      });
+      if (revision !== this.revision || !this.visible) {
+        await invoke("close_debug_session", { session: info.session });
+        return;
+      }
+      this.debugPolicy = configuration.exceptions;
+      this.debugInfo = info;
+    } catch (error: unknown) {
+      this.visualizerError = describeError(error);
+    }
+  }
+  debugEnded(event: CustomEvent<{ detached: boolean }>): void {
+    if (!event.detail.detached && this.view) {
+      this.visualizerFrozen = true;
+      this.visualizerPaused = true;
+      this.visualizerError = "Debugger stopped. Open the visualizer to start a fresh instance.";
+      this.stopPolling();
+    }
+  }
+  debugClosed(event: CustomEvent<{ detached: boolean }>): void {
+    this.debugEnded(event);
+    this.debugInfo = null;
   }
   private async reload(): Promise<void> {
     const previous = this.view;
@@ -521,6 +626,10 @@ export class ExtensionVisualizer extends WebUIElement {
       }
     } catch (error: unknown) {
       if (revision === this.revision) {
+        this.developerDetails = [
+          ...(this.lastGoodDetails ? [this.lastGoodDetails] : []),
+          errorEvidence(error, "Failed replacement revision"),
+        ];
         this.visualizerReloadNotice =
           "Reload failed: " +
           describeError(error) +
@@ -582,12 +691,16 @@ export class ExtensionVisualizer extends WebUIElement {
         ? "Some updates may be missing. Reopen the visualizer to rebuild context."
         : "";
   }
-  private failLive(message: string): void {
+  private failLive(message: string, error?: unknown): void {
     const signature = this.signature;
     this.stop(true);
     this.signature = signature;
     this.retryLive = true;
     this.visualizerError = message;
+    this.developerDetails = [
+      ...(this.lastGoodDetails ? [this.lastGoodDetails] : []),
+      errorEvidence(error, "Failed live visualizer operation"),
+    ];
   }
   reopenLive(): void {
     if (!this.visible || this.visualizerBusy) {
@@ -628,7 +741,7 @@ export class ExtensionVisualizer extends WebUIElement {
       }
     } catch (error: unknown) {
       if (revision === this.revision) {
-        this.failLive(describeError(error));
+        this.failLive(describeError(error), error);
       }
     }
   }
@@ -673,11 +786,17 @@ export class ExtensionVisualizer extends WebUIElement {
       }
     } catch (error: unknown) {
       if (revision === this.revision) {
-        this.failLive(describeError(error));
+        this.failLive(describeError(error), error);
       }
     }
   }
   private accept(view: VisualizerView): void {
+    this.lastGoodDetails = {
+      label: `${view.instance.extensionId} · ${view.instance.visualizerId} · ${view.instance.digest}`,
+      logs: view.logs,
+      logRunsOmitted: view.logRunsOmitted,
+    };
+    this.developerDetails = [this.lastGoodDetails];
     const preserveMode = !!this.root;
     const previousIndex = this.allRows.findIndex((row) => row.selected);
     const previousTop = previousIndex * 26;
@@ -966,7 +1085,7 @@ export class ExtensionVisualizer extends WebUIElement {
         }
       } catch (error: unknown) {
         if (revision === this.revision) {
-          this.fail(describeError(error));
+          this.fail(describeError(error), error);
         }
       } finally {
         if (revision === this.revision) {

@@ -126,6 +126,13 @@ pub struct ScriptCandidate {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptRuntimeStatus {
+    /// An explicit local controller owns this worker; commands remain window scoped.
+    pub debugging: bool,
+    /// Older operation streams evicted from the finite worker history.
+    pub log_runs_omitted: u64,
+    /// Bounded initializer/recent operation output, local authoring only.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<transmog_script::LogRun>,
     /// Stable script identity.
     pub script_id: String,
     /// Applied revision, independently of newer drafts or builds.
@@ -134,6 +141,9 @@ pub struct ScriptRuntimeStatus {
     pub available: bool,
     /// Bounded failure and recovery detail when unavailable.
     pub error: Option<String>,
+    /// Ephemeral startup details for local script authoring, never persisted.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
 }
 
 /// Current atomic script registry status.
@@ -174,9 +184,11 @@ struct ScriptWorkspace {
 
 #[derive(Clone)]
 struct ActiveScript {
+    startup_logs: Vec<transmog_script::LogRun>,
     registration: InterceptorRegistration,
     runner: Option<Arc<SupervisedScriptRunner>>,
     startup_error: Option<String>,
+    startup_exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
 }
 
 struct ActiveSnapshot {
@@ -204,6 +216,87 @@ pub struct ScriptRegistry {
 }
 
 impl ScriptRegistry {
+    pub(crate) fn with_debug_revision<T>(
+        &self,
+        request: &crate::debugging::DebugLiveRequest,
+        attach: impl FnOnce(&ScriptRevision, Arc<SupervisedScriptRunner>) -> Result<T, AppError>,
+    ) -> Result<T, AppError> {
+        let _mutation = self
+            .mutation
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let current = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone();
+        check_generation(&current.workspace, Some(request.expected_generation))?;
+        let index = current
+            .workspace
+            .active
+            .iter()
+            .position(|revision| {
+                revision.manifest.id == request.script_id
+                    && revision.manifest.revision == request.revision
+                    && revision.javascript_hash == request.javascript_hash
+            })
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Conflict,
+                    "Applied script changed or is paused. Refresh before arming its debugger.",
+                    false,
+                )
+            })?;
+        let runner = current.scripts[index]
+            .runner
+            .clone()
+            .filter(|runner| !runner.has_failed())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "The applied script is unavailable. Retry it before arming.",
+                    true,
+                )
+            })?;
+        attach(&current.workspace.active[index], runner)
+    }
+    pub(crate) fn debug_candidate(
+        &self,
+        candidate_id: &str,
+    ) -> Result<(ScriptRevision, ScriptHostConfig), AppError> {
+        let revision = self
+            .candidates
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .iter()
+            .find(|candidate| candidate.id == candidate_id)
+            .map(|candidate| candidate.revision.clone())
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Conflict,
+                    "Script candidate is unknown or expired",
+                    false,
+                )
+            })?;
+        let executable = self
+            .host
+            .as_deref()
+            .ok_or_else(|| {
+                AppError::new(
+                    ErrorCategory::Unavailable,
+                    "Packaged script host is unavailable",
+                    true,
+                )
+            })?
+            .clone();
+        Ok((
+            revision,
+            ScriptHostConfig {
+                executable,
+                isolation: IsolationPolicy::RequireSandbox,
+            },
+        ))
+    }
     pub(crate) fn load(
         path: Option<PathBuf>,
         host: Option<PathBuf>,
@@ -449,6 +542,8 @@ impl ScriptRegistry {
                         | transmog_script::ScriptFailureCategory::Unavailable
                 ),
             )
+            .with_exception(failure.exception)
+            .with_logs(failure.logs)
         })
     }
 
@@ -566,6 +661,7 @@ impl ScriptRegistry {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             std::mem::replace(&mut *active, replacement)
         };
+        retire_debuggers(&previous);
         let mut history = self
             .history
             .lock()
@@ -649,6 +745,7 @@ impl ScriptRegistry {
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             std::mem::replace(&mut *active, replacement)
         };
+        retire_debuggers(&previous);
         let mut history = self
             .history
             .lock()
@@ -711,10 +808,14 @@ impl ScriptRegistry {
         if let Some(path) = self.path.as_deref() {
             persist(path, &snapshot.workspace)?;
         }
-        *self
-            .active
-            .write()
-            .unwrap_or_else(std::sync::PoisonError::into_inner) = Arc::new(snapshot);
+        let previous = std::mem::replace(
+            &mut *self
+                .active
+                .write()
+                .unwrap_or_else(std::sync::PoisonError::into_inner),
+            Arc::new(snapshot),
+        );
+        retire_debuggers(&previous);
         self.candidates
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner)
@@ -773,19 +874,21 @@ impl ScriptRegistry {
         revision: &ScriptRevision,
         strict: bool,
     ) -> Result<ActiveScript, AppError> {
-        let (runner, startup_error) =
+        let (runner, startup_error, startup_exception, startup_logs) =
             match executable(revision).and_then(|compiled| self.start_runner(compiled)) {
-                Ok(runner) => (Some(runner), None),
-                Err(error) if !strict => (None, Some(error.message)),
+                Ok(runner) => (Some(runner), None, None, Vec::new()),
+                Err(error) if !strict => (None, Some(error.message), error.exception, error.logs),
                 Err(error) => return Err(error),
             };
         let invocation_runner: Arc<dyn ScriptRunner> = match &runner {
             Some(runner) => runner.clone(),
             None => Arc::new(UnavailableRunner(ScriptFailure {
+                logs: startup_logs.clone(),
                 category: transmog_script::ScriptFailureCategory::Unavailable,
                 message: startup_error.clone().unwrap_or_default(),
                 line: None,
                 column: None,
+                exception: startup_exception.clone(),
             })),
         };
         let registration = registration_with_assets(
@@ -795,9 +898,11 @@ impl ScriptRegistry {
         )
         .map_err(script_compile_error)?;
         Ok(ActiveScript {
+            startup_logs,
             registration,
             runner,
             startup_error,
+            startup_exception,
         })
     }
 
@@ -847,6 +952,9 @@ impl ScriptRegistry {
             workspace: current.workspace.clone(),
             scripts,
         });
+        if let Some(runner) = &current.scripts[index].runner {
+            runner.end_debugger();
+        }
         Ok(self.status())
     }
 
@@ -868,7 +976,11 @@ impl ScriptRegistry {
             },
             compiled,
         )
-        .map_err(|error| AppError::new(ErrorCategory::Unavailable, error.message, true))
+        .map_err(|error| {
+            AppError::new(ErrorCategory::Unavailable, error.message, true)
+                .with_exception(error.exception)
+                .with_logs(error.logs)
+        })
     }
 }
 
@@ -891,9 +1003,17 @@ impl InterceptorRegistrationProvider for ScriptRegistry {
 fn snapshot_runtimes(snapshot: &ActiveSnapshot) -> Vec<ScriptRuntimeStatus> {
     snapshot.workspace.active.iter().zip(&snapshot.scripts).map(|(revision, script)| {
         let available = script.runner.as_ref().is_some_and(|runner| !runner.has_failed());
-        ScriptRuntimeStatus { script_id: revision.manifest.id.clone(), revision: revision.manifest.revision,
+        ScriptRuntimeStatus { debugging:script.runner.as_ref().is_some_and(|runner|runner.debugger_attached()), log_runs_omitted:script.runner.as_ref().map_or(0,|runner|runner.log_runs_omitted()), logs:script.runner.as_ref().map_or_else(||script.startup_logs.clone(),|runner|runner.logs()), exception: script.startup_exception.clone(), script_id: revision.manifest.id.clone(), revision: revision.manifest.revision,
             available, error: if available { None } else { Some(script.startup_error.clone().unwrap_or_else(|| "The script host stopped after a runtime failure. Retry the applied build or pause this script.".to_owned())) } }
     }).collect()
+}
+
+fn retire_debuggers(snapshot: &ActiveSnapshot) {
+    for script in &snapshot.scripts {
+        if let Some(runner) = &script.runner {
+            runner.end_debugger();
+        }
+    }
 }
 
 struct UnavailableRunner(ScriptFailure);

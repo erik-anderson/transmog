@@ -38,13 +38,23 @@ pub(super) struct Queued {
     pub(super) direction: Direction,
     pub(super) phase: TrafficPhase,
     ready_since: std::time::Instant,
+    pause_total: std::time::Duration,
 }
 #[derive(Default)]
 struct Queue {
     serial: u64,
     pending: BTreeMap<u64, Queued>,
 }
+type DebugPauseState = (
+    std::time::Duration,
+    Option<(
+        Arc<transmog_script_diagnostics::supervision::PauseClock>,
+        std::time::Duration,
+    )>,
+);
 pub(super) struct Feed {
+    debug_clock: Mutex<DebugPauseState>,
+    has_debug_clock: AtomicBool,
     pub(super) guard: Arc<RelatedGuard>,
     pub(super) selected: Boundaries,
     pub(super) declaration: Visualizer,
@@ -69,6 +79,8 @@ impl Feed {
                 || declaration.inputs.response.body != BodyAccess::None
         });
         Arc::new(Self {
+            debug_clock: Mutex::new((std::time::Duration::ZERO, None)),
+            has_debug_clock: AtomicBool::new(false),
             guard,
             selected,
             declaration,
@@ -88,6 +100,44 @@ impl Feed {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .pending
             .retain(|_, event| event.exchange != self.anchor || event.revision > revision);
+    }
+    pub(super) fn set_debug_clock(
+        &self,
+        clock: Arc<transmog_script_diagnostics::supervision::PauseClock>,
+    ) {
+        let mut state = self
+            .debug_clock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if state
+            .1
+            .as_ref()
+            .is_some_and(|(prior, _)| Arc::ptr_eq(prior, &clock))
+        {
+            return;
+        }
+        if let Some((prior, start)) = state.1.take() {
+            state.0 += prior.elapsed().saturating_sub(start);
+        }
+        let start = clock.elapsed();
+        state.1 = Some((clock, start));
+        self.has_debug_clock.store(true, Ordering::Release);
+    }
+    fn debug_elapsed(&self) -> std::time::Duration {
+        if !self.has_debug_clock.load(Ordering::Acquire) {
+            return std::time::Duration::ZERO;
+        }
+        let state = self
+            .debug_clock
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.0
+            + state
+                .1
+                .as_ref()
+                .map_or(std::time::Duration::ZERO, |(clock, start)| {
+                    clock.elapsed().saturating_sub(*start)
+                })
     }
     pub(super) fn enabled(&self) -> bool {
         self.enabled.load(Ordering::Acquire)
@@ -438,6 +488,7 @@ impl Hub {
                 direction,
                 phase,
                 ready_since: std::time::Instant::now(),
+                pause_total: feed.debug_elapsed(),
             });
         }
     }
@@ -543,8 +594,16 @@ impl super::Application {
             });
         };
         let operation = self.poll_live_batch(handle, &ticket, &instance, &resources);
-        let result = tokio::time::timeout(
+        let clock = ticket
+            .debug
+            .lock()
+            .ok()
+            .and_then(|run| run.as_ref().and_then(std::sync::Weak::upgrade))
+            .filter(|run| !run.session.is_closed())
+            .map(|run| run.session.clock());
+        let result = transmog_script_diagnostics::supervision::wait_budget(
             std::time::Duration::from_millis(instance.declaration.limits.duration_ms),
+            clock.as_ref(),
             operation,
         )
         .await
@@ -607,6 +666,8 @@ impl super::Application {
         let status = resources.finish_document(&mut document);
         Ok(super::VisualizerLiveUpdate {
             view: Some(super::VisualizerView {
+                logs: self.visualizer_logs(instance),
+                log_runs_omitted: self.visualizer_log_runs_omitted(instance),
                 metadata_changed: false,
                 handle: handle.clone(),
                 instance: instance.clone(),
@@ -672,7 +733,10 @@ fn project_batch(
             continue;
         }
         if !body_ready(&snapshot, feed, queued) {
-            if queued.ready_since.elapsed()
+            if queued
+                .ready_since
+                .elapsed()
+                .saturating_sub(feed.debug_elapsed().saturating_sub(queued.pause_total))
                 > std::time::Duration::from_millis(feed.declaration.limits.duration_ms)
             {
                 return Err(unavailable());

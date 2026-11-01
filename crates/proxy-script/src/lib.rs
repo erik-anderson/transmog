@@ -19,6 +19,13 @@ pub use scenario::{
     ScriptScenario, ScriptScenarioResult, ScriptScenarioSelection, ScriptScenarioStep,
     ScriptScenarioVerdict, test_scenario,
 };
+pub use transmog_script_diagnostics::LogCapture;
+pub use transmog_script_diagnostics::debugger;
+pub use transmog_script_diagnostics::sources as diagnostic_sources;
+pub use transmog_script_diagnostics::{
+    ConsoleEvent, ExceptionDiagnostic, LogContext, LogRecord, LogRun, MappingIssue, SourceLocation,
+    stream,
+};
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -55,7 +62,7 @@ pub const SCRIPT_API_REVISION: u32 = 3;
 /// Maximum accepted source length.
 pub const MAX_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
 /// Version of the private host/supervisor wire protocol.
-pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 3;
+pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 6;
 /// Maximum one-way host protocol frame, including JavaScript source.
 pub const MAX_SCRIPT_HOST_FRAME_BYTES: usize = 68 * 1024 * 1024;
 
@@ -77,6 +84,9 @@ pub enum ScriptHostRequest {
         manifest: ScriptManifest,
         /// Authoritatively transpiled JavaScript.
         javascript: String,
+        /// Explicit native debug attachment; absent in ordinary execution.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        debug: Option<debugger::DebugOptions>,
     },
     /// Invokes one handler after successful initialization.
     Invoke {
@@ -88,6 +98,26 @@ pub enum ScriptHostRequest {
         request_id: u64,
         /// Already bounded immutable input.
         invocation: ScriptInvocation,
+    },
+    /// Attach to an idle actual worker without recreating its module instances.
+    AttachDebugger {
+        /// Wire protocol revision.
+        protocol_version: u32,
+        /// Native channel authentication.
+        token: ScriptHostToken,
+        /// Correlated controller request.
+        request_id: u64,
+        /// Bounded explicit session configuration.
+        options: debugger::DebugOptions,
+    },
+    /// Narrow typed control; no Inspector method or expression can be supplied.
+    ControlDebugger {
+        /// Wire protocol revision.
+        protocol_version: u32,
+        /// Native channel authentication.
+        token: ScriptHostToken,
+        /// Current native session and pause identities.
+        command: debugger::DebugCommand,
     },
     /// Requests an orderly host exit.
     Shutdown {
@@ -102,6 +132,26 @@ pub enum ScriptHostRequest {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "message", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ScriptHostReply {
+    /// Bounded native debugger event, separate from ordinary results and console.
+    Debugger {
+        /// Wire protocol revision.
+        protocol_version: u32,
+        /// Echoed per-worker authentication.
+        token: ScriptHostToken,
+        /// Typed native event or correlated command result.
+        event: debugger::DebugEvent,
+    },
+    /// Independent native console output and ordered stream end.
+    Console {
+        /// Wire protocol revision.
+        protocol_version: u32,
+        /// Echoed channel token.
+        token: ScriptHostToken,
+        /// Operation identity; zero denotes initialization.
+        request_id: u64,
+        /// Bounded native snapshot or stream-end counter.
+        event: ConsoleEvent,
+    },
     /// Host initialized the exact requested revision.
     Ready {
         /// Wire protocol revision.
@@ -174,9 +224,90 @@ pub fn write_host_frame<T: Serialize>(
         .map_err(ScriptProtocolError::Io)
 }
 
+/// Reads a worker reply with an independent small console-frame ceiling.
+/// # Errors
+/// Rejects invalid lengths/classes or a malformed typed reply.
+pub fn read_host_reply_frame(
+    reader: &mut impl std::io::Read,
+) -> Result<ScriptHostReply, ScriptProtocolError> {
+    let (log, payload) = stream::read_payload(reader, MAX_SCRIPT_HOST_FRAME_BYTES)
+        .map_err(ScriptProtocolError::Io)?;
+    let reply: ScriptHostReply =
+        serde_json::from_slice(&payload).map_err(ScriptProtocolError::Json)?;
+    if matches!(
+        reply,
+        ScriptHostReply::Console { .. } | ScriptHostReply::Debugger { .. }
+    ) != log
+    {
+        return Err(ScriptProtocolError::FrameClass);
+    }
+    Ok(reply)
+}
+/// Writes one reply, marking console frames before their JSON payload.
+/// # Errors
+/// Rejects oversized output or transport failure.
+pub fn write_host_reply_frame(
+    writer: &mut impl std::io::Write,
+    reply: &ScriptHostReply,
+) -> Result<(), ScriptProtocolError> {
+    let payload = serde_json::to_vec(reply).map_err(ScriptProtocolError::Json)?;
+    stream::write_payload(
+        writer,
+        &payload,
+        matches!(
+            reply,
+            ScriptHostReply::Console { .. } | ScriptHostReply::Debugger { .. }
+        ),
+        MAX_SCRIPT_HOST_FRAME_BYTES,
+    )
+    .map_err(ScriptProtocolError::Io)
+}
+
+/// Reads a typed request, enforcing the small debug-control frame class before allocation.
+/// # Errors
+/// Rejects malformed classes, sizes, JSON or transport failure.
+pub fn read_host_request_frame(
+    reader: &mut impl std::io::Read,
+) -> Result<ScriptHostRequest, ScriptProtocolError> {
+    let (small, bytes) = stream::read_payload(reader, MAX_SCRIPT_HOST_FRAME_BYTES)
+        .map_err(ScriptProtocolError::Io)?;
+    let request: ScriptHostRequest =
+        serde_json::from_slice(&bytes).map_err(ScriptProtocolError::Json)?;
+    if matches!(
+        request,
+        ScriptHostRequest::AttachDebugger { .. } | ScriptHostRequest::ControlDebugger { .. }
+    ) != small
+    {
+        return Err(ScriptProtocolError::FrameClass);
+    }
+    Ok(request)
+}
+/// Writes one typed request; debug controls cannot raise the 64-KiB event ceiling.
+/// # Errors
+/// Rejects excessive output or transport failure.
+pub fn write_host_request_frame(
+    writer: &mut impl std::io::Write,
+    request: &ScriptHostRequest,
+) -> Result<(), ScriptProtocolError> {
+    let bytes = serde_json::to_vec(request).map_err(ScriptProtocolError::Json)?;
+    stream::write_payload(
+        writer,
+        &bytes,
+        matches!(
+            request,
+            ScriptHostRequest::AttachDebugger { .. } | ScriptHostRequest::ControlDebugger { .. }
+        ),
+        MAX_SCRIPT_HOST_FRAME_BYTES,
+    )
+    .map_err(ScriptProtocolError::Io)
+}
+
 /// Private host wire framing failure.
 #[derive(Debug, Error)]
 pub enum ScriptProtocolError {
+    /// Console frames must declare their independently bounded class.
+    #[error("script host frame class is invalid")]
+    FrameClass,
     /// Transport read or write failed.
     #[error("script host transport failed")]
     Io(#[source] std::io::Error),
@@ -760,10 +891,13 @@ pub enum ScriptFailureCategory {
 }
 
 /// Redacted source-mappable script failure.
-#[derive(Clone, Debug, Eq, Error, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Eq, Error, PartialEq, Serialize, Deserialize)]
 #[error("{message}")]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptFailure {
+    /// Ephemeral native console streams, supplied by the supervisor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<LogRun>,
     /// Stable category.
     pub category: ScriptFailureCategory,
     /// Operator-safe bounded message.
@@ -772,6 +906,22 @@ pub struct ScriptFailure {
     pub line: Option<u32>,
     /// Source column when mapped.
     pub column: Option<u32>,
+    /// Ephemeral authored exception evidence; follows diagnostic disclosure rules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exception: Option<Box<transmog_script_diagnostics::ExceptionDiagnostic>>,
+}
+
+impl std::fmt::Debug for ScriptFailure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScriptFailure")
+            .field("category", &self.category)
+            .field("message", &self.message)
+            .field("line", &self.line)
+            .field("column", &self.column)
+            .field("exception_available", &self.exception.is_some())
+            .field("log_runs", &self.logs.len())
+            .finish()
+    }
 }
 
 impl ScriptFailure {
@@ -782,6 +932,8 @@ impl ScriptFailure {
             message: bounded(&message, 512),
             line: None,
             column: None,
+            exception: None,
+            logs: Vec::new(),
         }
     }
 }
@@ -792,8 +944,35 @@ pub type BoxScriptFuture<'a> =
 
 /// Runtime-neutral execution boundary implemented by fake and V8 runners.
 pub trait ScriptRunner: Send + Sync {
+    /// Pins one production exchange before any phase can be queued on this revision.
+    /// # Errors
+    /// Rejects unavailable or exhausted native admission state.
+    fn exchange_open(&self) -> Result<(), ScriptFailure> {
+        Ok(())
+    }
+    /// Releases that exchange after every interceptor/body owner has gone away.
+    fn exchange_closed(&self, _exchange: &str, _terminal: bool) {}
+    /// Selects or rejects a reserved live exchange before constructing any callback future.
+    /// # Errors
+    /// Returns a bounded busy outcome without canceling another exchange's worker.
+    fn debug_admit(
+        &self,
+        _exchange: &str,
+        _method: &str,
+        _host: &str,
+        _path: &str,
+    ) -> Result<(), ScriptFailure> {
+        Ok(())
+    }
     /// Executes one already-bounded invocation.
     fn invoke(&self, invocation: ScriptInvocation) -> BoxScriptFuture<'_>;
+    /// Authenticated pause clock for this exact exchange; ordinary runners return none.
+    fn debug_pause_clock(
+        &self,
+        _exchange: &str,
+    ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        None
+    }
 }
 
 /// Validated product response selected by a script action.

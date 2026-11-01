@@ -38,6 +38,67 @@ fn feed(app: &Application, anchor: &SessionSnapshot, declaration: &Visualizer) -
     feed.baseline(anchor.last_sequence);
     feed
 }
+#[test]
+fn retention_pause_accounting_is_scoped_and_survives_reattachment() {
+    use transmog_script_diagnostics::{
+        debugger::{DebugEvent, DebugEventKind, DebugOptions, ExceptionPolicy},
+        supervision::Session,
+    };
+    let app = Application::new(AppConfig::default()).unwrap();
+    let (anchor, declaration) = live_fixture(&app);
+    let feed = feed(&app, &anchor, &declaration);
+    assert_eq!(feed.debug_elapsed(), Duration::ZERO);
+    let session = Session::new(DebugOptions {
+        session: "a".repeat(32),
+        exceptions: ExceptionPolicy::None,
+        breakpoints: vec![],
+    })
+    .unwrap();
+    session.begin(0);
+    let emit = |kind| {
+        session
+            .accept(DebugEvent {
+                session: session.id().into(),
+                invocation: 0,
+                request: 0,
+                event: kind,
+            })
+            .unwrap();
+    };
+    emit(DebugEventKind::Attached);
+    feed.set_debug_clock(session.clock());
+    emit(DebugEventKind::Paused {
+        pause: 1,
+        reason: "fixture".into(),
+        frames: vec![],
+        exception: None,
+        truncated: false,
+    });
+    std::thread::sleep(Duration::from_millis(20));
+    emit(DebugEventKind::Resumed);
+    let total = feed.debug_elapsed();
+    assert!(total >= Duration::from_millis(20));
+    feed.set_debug_clock(session.clock());
+    assert_eq!(feed.debug_elapsed(), total);
+    session.completed();
+    session
+        .accept(DebugEvent {
+            session: session.id().into(),
+            invocation: 0,
+            request: 0,
+            event: DebugEventKind::Detached,
+        })
+        .unwrap();
+    let next = Session::new(DebugOptions {
+        session: "b".repeat(32),
+        exceptions: ExceptionPolicy::None,
+        breakpoints: vec![],
+    })
+    .unwrap();
+    feed.set_debug_clock(next.clock());
+    assert_eq!(feed.debug_elapsed(), total);
+    next.stop("Test ended");
+}
 fn resources(feed: &Arc<Feed>) -> Resources {
     Resources {
         live_available: true,
@@ -314,6 +375,7 @@ fn changed_input_rules_are_rechecked_before_projection() {
         direction: Direction::Response,
         phase: TrafficPhase::Head,
         ready_since: std::time::Instant::now(),
+        pause_total: std::time::Duration::ZERO,
     });
     let mut changed = selected.request_heads[0].head.clone();
     changed.method = "PUT".into();
@@ -348,6 +410,7 @@ fn queues_coalesce_and_bound_metadata_and_report_lost_hints() {
         direction: Direction::Response,
         phase: TrafficPhase::Head,
         ready_since: std::time::Instant::now(),
+        pause_total: std::time::Duration::ZERO,
     };
     for revision in 1..=100 {
         feed.offer(update(301, revision));
@@ -464,6 +527,7 @@ async fn final_updates_wait_for_admitted_retention_metadata_without_flushing_unr
         direction: Direction::Response,
         phase: TrafficPhase::BodyCompleted,
         ready_since: std::time::Instant::now(),
+        pause_total: std::time::Duration::ZERO,
     });
     assert_eq!(
         project_batch(app.service.catalog(), &feed, &resources, "worker").unwrap(),
@@ -533,6 +597,7 @@ async fn final_updates_wait_for_admitted_retention_metadata_without_flushing_unr
         direction: Direction::Response,
         phase: TrafficPhase::Ended,
         ready_since: std::time::Instant::now(),
+        pause_total: std::time::Duration::ZERO,
     });
     assert_eq!(
         project_batch(app.service.catalog(), &feed, &resources, "worker").unwrap(),

@@ -9,6 +9,8 @@ param(
     [switch]$StartupOnly,
     [switch]$FormatConverterChecks,
     [switch]$AuthChecks,
+    [switch]$ScriptDiagnosticsChecks,
+    [switch]$ScriptDebuggerChecks,
     [switch]$WindowGeometryChecks,
     [switch]$PortableCaseChecks,
     [switch]$ViewerChecks,
@@ -30,6 +32,7 @@ if ($ExecutablePath) {
     $executable = (Resolve-Path -LiteralPath $ExecutablePath).Path
 }
 if ($StartupOnly -and $SoakMinutes) { throw 'StartupOnly cannot claim a soak.' }
+if (($ScriptDiagnosticsChecks -or $ScriptDebuggerChecks) -and ($StartupOnly -or $AuthChecks -or $ViewerChecks -or $PortableCaseChecks -or $FormatConverterChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'ScriptDiagnosticsChecks is an isolated sandbox and imported-evidence flow.' }
 if ($AuthChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $FormatConverterChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'AuthChecks is an isolated read-only imported-evidence flow.' }
 if ($FormatConverterChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $WindowGeometryChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'FormatConverterChecks is an isolated converter-window flow.' }
 if ($WindowGeometryChecks -and ($StartupOnly -or $ViewerChecks -or $PortableCaseChecks -or $KeyRecoveryChecks -or $SoakMinutes)) { throw 'WindowGeometryChecks is an isolated close/reopen flow.' }
@@ -92,7 +95,7 @@ $env:WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS = $debugArguments
 $probeRoot = Join-Path $repositoryRoot ('artifacts\windows-desktop-validation\' + [Guid]::NewGuid().ToString('N'))
 New-Item -ItemType Directory -Force -Path (Join-Path $probeRoot 'profile') | Out-Null
 . (Join-Path $PSScriptRoot 'test-output-run.ps1')
-$outputGroup = "startup=$StartupOnly;auth=$AuthChecks;cases=$PortableCaseChecks;converter=$FormatConverterChecks;viewer=$ViewerChecks;body=$BodySourceChecks;trace=$TraceSaveChecks;keys=$KeyRecoveryChecks"
+$outputGroup = "startup=$StartupOnly;auth=$AuthChecks;scriptDiagnostics=$ScriptDiagnosticsChecks;scriptDebugger=$ScriptDebuggerChecks;cases=$PortableCaseChecks;converter=$FormatConverterChecks;viewer=$ViewerChecks;body=$BodySourceChecks;trace=$TraceSaveChecks;keys=$KeyRecoveryChecks"
 $outputLease = Start-TestOutputRun $probeRoot $outputGroup
 $outputPassed = $false
 $outputStopped = $false
@@ -104,7 +107,7 @@ if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly -and
     $extensionSource = Join-Path $probeRoot 'extension-source'
     $extensionRegistry = Join-Path $env:LOCALAPPDATA 'Transmog/extensions-v1'
     New-Item -ItemType Directory -Force -Path $extensionSource, $extensionRegistry | Out-Null
-    $extensionScript = "throw new Error('Management must not evaluate extension code'); export function visualize() {}"
+    $extensionScript = "console.error('native initializer log'); throw new Error('Management must not evaluate extension code'); export function visualize() {}"
     [IO.File]::WriteAllText((Join-Path $extensionSource 'main.js'), $extensionScript)
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/visualizer.js') -Destination (Join-Path $extensionSource 'parser.js')
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'fixtures/visualizer-context.js') -Destination (Join-Path $extensionSource 'context.js')
@@ -148,6 +151,14 @@ if (-not $ViewerChecks -and -not $PortableCaseChecks -and -not $StartupOnly -and
     . (Join-Path $PSScriptRoot 'python-tools.ps1')
     Invoke-TransmogPython 'generate-mapi-native-fixture.py' @((Join-Path $probeRoot 'mapi-fixture.saz'))
     Invoke-TransmogPython 'generate-binary-native-fixture.py' @((Join-Path $probeRoot 'binary-fixture.saz'))
+    if ($ScriptDebuggerChecks) {
+        $parserPath = Join-Path $extensionSource 'parser.js'
+        $parserText = [IO.File]::ReadAllText($parserPath)
+        foreach ($signature in @('visualize(input)', 'resume(token,pages)', 'expand(token)', 'onTraffic(events)')) {
+            $parserText = $parserText.Replace("export function $signature {", "export function $signature {const local=7;debugger;")
+        }
+        [IO.File]::WriteAllText($parserPath, "const nativeInit=7;debugger;`n" + $parserText)
+    }
     $extensionManifestJson = $extensionManifest | ConvertTo-Json -Depth 16 -Compress
     [IO.File]::WriteAllText((Join-Path $extensionSource 'manifest.json'), $extensionManifestJson)
     $extensionDigest = [Convert]::ToHexString([Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($extensionManifestJson))).ToLowerInvariant()
@@ -307,6 +318,24 @@ try {
             ConvertTo-Json | Set-Content -LiteralPath (Join-Path $probeRoot 'startup.json') -Encoding utf8NoBOM
         Get-Content -LiteralPath (Join-Path $probeRoot 'stderr.txt') -Tail 30 | ForEach-Object { Write-Host $_ }
         throw "WebView2 DevTools endpoint did not become ready (exited=$exited, exit=$exitCode); startup diagnostics were retained."
+    }
+    if ($ScriptDebuggerChecks) {
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-script-debugger.mjs --port "$DevToolsPort" --output $probeRoot --trace $visualizerTrace --process-id "$($process.Id)"
+            if ($LASTEXITCODE -ne 0) { throw 'Native script debugger checks failed.' }
+        } finally { Pop-Location }
+        $outputPassed = $true
+        return [pscustomobject]@{ ScriptDebuggerVerified = $true; EvidenceRoot = $probeRoot }
+    }
+    if ($ScriptDiagnosticsChecks) {
+        Push-Location $desktopUi
+        try {
+            & node scripts/smoke-script-diagnostics.mjs --port "$DevToolsPort" --output $probeRoot --trace $visualizerTrace
+            if ($LASTEXITCODE -ne 0) { throw 'Native script diagnostics checks failed.' }
+        } finally { Pop-Location }
+        $outputPassed = $true
+        return [pscustomobject]@{ ScriptDiagnosticsVerified = $true; EvidenceRoot = $probeRoot }
     }
     if ($AuthChecks) {
         $mapiCopyFixture = Join-Path $probeRoot 'mapi-copy.saz'

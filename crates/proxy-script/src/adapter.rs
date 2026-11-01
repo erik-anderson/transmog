@@ -32,6 +32,9 @@ impl InterceptorFactory for ScriptFactory {
         &self,
         metadata: &ExchangeMetadata,
     ) -> Result<Arc<dyn ExchangeInterceptor>, HookInitError> {
+        self.runner
+            .exchange_open()
+            .map_err(|failure| HookInitError::new(failure.message))?;
         Ok(Arc::new(ScriptInterceptor {
             shared: Arc::new(Shared {
                 manifest: Arc::clone(&self.manifest),
@@ -40,11 +43,13 @@ impl InterceptorFactory for ScriptFactory {
                 state: tokio::sync::Mutex::new(BTreeMap::new()),
                 started: std::time::Instant::now(),
                 request: Mutex::new(None),
+                terminal: AtomicBool::new(false),
             }),
             admitted: AtomicBool::new(false),
             local: AtomicBool::new(false),
             assets: self.assets.clone(),
             report: Mutex::new(None),
+            debug_admission: Mutex::new(None),
         }))
     }
 }
@@ -56,6 +61,15 @@ struct Shared {
     state: tokio::sync::Mutex<BTreeMap<String, serde_json::Value>>,
     started: std::time::Instant,
     request: Mutex<Option<RequestHead>>,
+    terminal: AtomicBool,
+}
+impl Drop for Shared {
+    fn drop(&mut self) {
+        self.runner.exchange_closed(
+            &format!("{:032x}", self.metadata.exchange_id.0),
+            self.terminal.load(Ordering::Acquire),
+        );
+    }
 }
 
 impl Shared {
@@ -102,6 +116,7 @@ impl Shared {
 }
 
 struct ScriptInterceptor {
+    debug_admission: Mutex<Option<ScriptFailure>>,
     admitted: AtomicBool,
     local: AtomicBool,
     shared: Arc<Shared>,
@@ -116,10 +131,24 @@ fn lock<T>(mutex: &Mutex<T>) -> std::sync::MutexGuard<'_, T> {
 }
 
 fn report(result: &ScriptResult) -> Option<ScriptReport> {
-    (!result.annotations.is_empty() || !result.diagnostics.is_empty()).then(|| ScriptReport {
-        annotations: result.annotations.clone(),
-        diagnostics: result.diagnostics.clone(),
-    })
+    (!result.annotations.is_empty() || !result.diagnostics.is_empty() || !result.logs.is_empty())
+        .then(|| ScriptReport {
+            logs: result.logs.clone(),
+            details_omitted: false,
+            annotations: result.annotations.clone(),
+            diagnostics: result.diagnostics.clone(),
+            exception: None,
+        })
+}
+
+fn failure_report(failure: &ScriptFailure) -> ScriptReport {
+    ScriptReport {
+        logs: failure.logs.clone(),
+        details_omitted: false,
+        annotations: Vec::new(),
+        diagnostics: vec![format!("Script callback failed: {:?}", failure.category)],
+        exception: failure.exception.clone(),
+    }
 }
 
 impl ScriptInterceptor {
@@ -171,20 +200,45 @@ impl ScriptInterceptor {
                 Ok(result) => *lock(&self.report) = report(&result),
                 Err(error) => {
                     *lock(&self.report) = Some(ScriptReport {
+                        logs: error.logs,
+                        details_omitted: false,
                         annotations: Vec::new(),
                         diagnostics: vec![format!(
                             "Terminal script callback failed: {:?}",
                             error.category
                         )],
+                        exception: error.exception,
                     });
                 }
             }
         }
         self.shared.state.lock().await.clear();
+        self.shared.terminal.store(true, Ordering::Release);
     }
 }
 
 impl ExchangeInterceptor for ScriptInterceptor {
+    fn prepare_debug_request(&self, head: &RequestHead) {
+        if self.shared.manifest.prefilter.matches(head) {
+            *lock(&self.debug_admission) = self
+                .shared
+                .runner
+                .debug_admit(
+                    &format!("{:032x}", self.shared.metadata.exchange_id.0),
+                    &head.method,
+                    &head.target.host,
+                    &head.target.path,
+                )
+                .err();
+        }
+    }
+    fn debug_pause_clock(
+        &self,
+    ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        self.shared
+            .runner
+            .debug_pause_clock(&format!("{:032x}", self.shared.metadata.exchange_id.0))
+    }
     fn take_script_report(&self) -> Option<ScriptReport> {
         lock(&self.report).take()
     }
@@ -196,6 +250,13 @@ impl ExchangeInterceptor for ScriptInterceptor {
         );
         *lock(&self.shared.request) = Some(event.head.clone());
         Box::pin(async move {
+            if let Some(error) = lock(&self.debug_admission).take() {
+                *lock(&self.report) = Some(failure_report(&error));
+                return RequestHeadAction::Abort(script_failure_abort(
+                    &self.shared.manifest,
+                    &error,
+                ));
+            }
             if !self.selected(ScriptHandler::RequestHead) {
                 return RequestHeadAction::Continue;
             }
@@ -213,6 +274,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
             {
                 Ok(result) => result,
                 Err(error) => {
+                    *lock(&self.report) = Some(failure_report(&error));
                     return RequestHeadAction::Abort(script_failure_abort(
                         &self.shared.manifest,
                         &error,
@@ -291,6 +353,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
             {
                 Ok(result) => result,
                 Err(error) => {
+                    *lock(&self.report) = Some(failure_report(&error));
                     return ResponseHeadAction::Abort(script_failure_abort(
                         &self.shared.manifest,
                         &error,
@@ -387,6 +450,7 @@ impl ExchangeInterceptor for ScriptInterceptor {
                 )
                 .await;
             }
+            self.shared.terminal.store(true, Ordering::Release);
         })
     }
 }
@@ -401,6 +465,13 @@ struct ScriptBodyHandler {
 }
 
 impl BufferedBodyHandler for ScriptBodyHandler {
+    fn debug_pause_clock(
+        &self,
+    ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        self.shared
+            .runner
+            .debug_pause_clock(&format!("{:032x}", self.shared.metadata.exchange_id.0))
+    }
     fn edits_head(&self) -> bool {
         true
     }
@@ -434,6 +505,7 @@ impl BufferedBodyHandler for ScriptBodyHandler {
                 )
                 .await
                 .map_err(|error| {
+                    self.report = Some(failure_report(&error));
                     BodyHookError::Abort(script_failure_abort(&self.shared.manifest, &error))
                 })?;
             self.report = report(&result);

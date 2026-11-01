@@ -123,7 +123,11 @@ claim which patches are applied.
 
 `transmog-js-runtime` owns V8 platform and isolate lifetime, in-memory module
 linking, explicit microtask checkpoints and bounded diagnostics/output. It is
-used only by the isolated hosts. `transmog-script-compiler` owns the pinned SWC
+used only by the isolated hosts. The runtime-neutral `transmog-script-diagnostics`
+crate carries bounded ephemeral exceptions, console records and typed debugger
+contracts. Its native supervision uses Tokio/futures timers and standard-library
+synchronization; V8 remains confined to the worker runtime.
+`transmog-script-compiler` owns the pinned SWC
 configuration without depending on V8, so SDK consumers do not acquire an
 embedded engine. Both hosts retain their authenticated IPC and external process
 watchdogs; V8 heap limits supplement AppContainer and Job Object containment.

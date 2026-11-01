@@ -131,6 +131,27 @@ struct RecordingRunner {
     manifest: ScriptManifest,
 }
 impl ScriptRunner for RecordingRunner {
+    fn exchange_open(&self) -> Result<(), ScriptFailure> {
+        self.inner.exchange_open()
+    }
+    fn exchange_closed(&self, exchange: &str, terminal: bool) {
+        self.inner.exchange_closed(exchange, terminal);
+    }
+    fn debug_admit(
+        &self,
+        exchange: &str,
+        method: &str,
+        host: &str,
+        path: &str,
+    ) -> Result<(), ScriptFailure> {
+        self.inner.debug_admit(exchange, method, host, path)
+    }
+    fn debug_pause_clock(
+        &self,
+        exchange: &str,
+    ) -> Option<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        self.inner.debug_pause_clock(exchange)
+    }
     fn invoke(&self, mut event: ScriptInvocation) -> BoxScriptFuture<'_> {
         Box::pin(async move {
             let phase = event.context.handler;
@@ -568,6 +589,7 @@ fn terminal_error(
         .expect("phase");
     step.selection = ScriptScenarioSelection::Failed;
     step.error = Some(ScriptFailure {
+        logs: Vec::new(),
         category: match error.source {
             HookExecutionError::TimedOut => ScriptFailureCategory::Timeout,
             HookExecutionError::Panicked => ScriptFailureCategory::Crash,
@@ -578,6 +600,7 @@ fn terminal_error(
         message: bounded(&error.to_string(), 512),
         line: None,
         column: None,
+        exception: None,
     });
     Some(error.to_string())
 }

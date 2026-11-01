@@ -1499,6 +1499,9 @@ pub fn record_from_observer(
             script_report: match &effect.action {
                 HookEffectAction::ScriptReport(report) if !report.annotations.is_empty() => {
                     Some(transmog_core::intercept::ScriptReport {
+                        details_omitted: false,
+                        logs: Vec::new(),
+                        exception: None,
                         annotations: report.annotations.clone(),
                         diagnostics: Vec::new(),
                     })

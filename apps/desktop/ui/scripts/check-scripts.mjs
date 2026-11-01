@@ -199,23 +199,17 @@ export function onFailed() { return pass(); }
     "Source editor has insufficient space",
   );
   await sourceSurface.getByRole("button", { name: "Expand editor", exact: true }).click();
-  assert.equal(
-    await sourceSurface.locator("dialog").evaluate((dialog) => dialog.matches(":modal")),
-    true,
-  );
+  assert.equal(await sourceSurface.evaluate((surface) => surface.surface.matches(":modal")), true);
   assert.equal(
     await sourceSurface.getByRole("button", { name: "Save & enable", exact: true }).isVisible(),
     true,
   );
   await helpButton.click();
   await page.keyboard.press("Escape");
-  assert.equal(await sourceSurface.locator("dialog").evaluate((dialog) => dialog.open), true);
+  assert.equal(await sourceSurface.evaluate((surface) => surface.surface.open), true);
   assert.equal(await helpButton.evaluate((button) => button.matches(":focus")), true);
   await page.keyboard.press("Escape");
-  assert.equal(
-    await sourceSurface.locator("dialog").evaluate((dialog) => dialog.matches(":modal")),
-    false,
-  );
+  assert.equal(await sourceSurface.evaluate((surface) => surface.surface.matches(":modal")), false);
 
   // One action validates, saves, and enables; reopening selects the same source and settings.
   await scripts.getByRole("button", { name: "Save & enable", exact: true }).click();

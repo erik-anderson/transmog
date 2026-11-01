@@ -1,0 +1,268 @@
+use super::*;
+use crate::debugger::{ExceptionPolicy, ResumeAction};
+use std::sync::atomic::{AtomicBool, Ordering};
+fn session() -> Arc<Session> {
+    Session::new(DebugOptions {
+        session: "a".repeat(32),
+        exceptions: ExceptionPolicy::None,
+        breakpoints: vec![],
+    })
+    .unwrap()
+}
+fn event(session: &Session, event: DebugEventKind) -> DebugEvent {
+    DebugEvent {
+        session: session.id().into(),
+        invocation: 0,
+        request: 0,
+        event,
+    }
+}
+fn paused() -> DebugEventKind {
+    DebugEventKind::Paused {
+        pause: 1,
+        reason: "breakpoint".into(),
+        frames: vec![],
+        exception: None,
+        truncated: false,
+    }
+}
+#[test]
+fn native_session_rejects_forged_identity_duplicate_pauses_and_stale_commands() {
+    let session = session();
+    session.begin(0);
+    let mut forged = event(&session, DebugEventKind::Attached);
+    forged.session = "b".repeat(32);
+    assert!(session.accept(forged).is_err());
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session.accept(event(&session, paused())).unwrap();
+    assert!(session.accept(event(&session, paused())).is_err());
+    session
+        .accept(event(&session, DebugEventKind::Resumed))
+        .unwrap();
+    assert!(
+        session
+            .command(DebugAction::Resume {
+                pause: 1,
+                action: ResumeAction::Continue
+            })
+            .is_err()
+    );
+    assert!(
+        session
+            .accept(event(&session, DebugEventKind::Resumed))
+            .is_err()
+    );
+    session.stop("Test ended");
+    assert!(session.page(0).closed);
+}
+#[test]
+fn stalled_inspection_is_killed_by_the_native_watchdog_without_ui_polling() {
+    let session = session();
+    let killed = Arc::new(AtomicBool::new(false));
+    let marker = Arc::clone(&killed);
+    session.bind(|_| true, move || marker.store(true, Ordering::Release));
+    session.begin(0);
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session.accept(event(&session, paused())).unwrap();
+    session
+        .command(DebugAction::Scopes { pause: 1, frame: 0 })
+        .unwrap();
+    let start = Instant::now();
+    while !killed.load(Ordering::Acquire) && start.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(killed.load(Ordering::Acquire));
+    assert!(session.page(0).closed);
+}
+#[test]
+fn detached_session_does_not_terminate_its_reusable_worker() {
+    let session = session();
+    let killed = Arc::new(AtomicBool::new(false));
+    let marker = Arc::clone(&killed);
+    session.bind(|_| true, move || marker.store(true, Ordering::Release));
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session
+        .accept(event(&session, DebugEventKind::Detached))
+        .unwrap();
+    session.stop("Window closed");
+    assert!(!killed.load(Ordering::Acquire));
+    assert!(session.page(0).closed);
+}
+#[test]
+fn a_stopped_attachment_binds_termination_before_its_control_transport_exists() {
+    let session = session();
+    session.stop("Window was lost before attachment");
+    let killed = Arc::new(AtomicBool::new(false));
+    let marker = Arc::clone(&killed);
+    session.bind_stop(move || marker.store(true, Ordering::Release));
+    assert!(killed.load(Ordering::Acquire));
+}
+#[test]
+fn native_arming_expiry_requests_idle_detach_and_pause_expiry_kills_without_polling() {
+    let session = session();
+    let (commands, receiver) = std::sync::mpsc::sync_channel(1);
+    let killed = Arc::new(AtomicBool::new(false));
+    let marker = Arc::clone(&killed);
+    session.bind(
+        move |command| commands.try_send(command).is_ok(),
+        move || marker.store(true, Ordering::Release),
+    );
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    assert!(session.arm());
+    session.state.lock().unwrap().armed_at = Some(
+        Instant::now()
+            .checked_sub(Duration::from_millis(ARM_LEASE_MS))
+            .unwrap(),
+    );
+    let command = receiver.recv_timeout(Duration::from_secs(2)).unwrap();
+    assert!(matches!(command.action, DebugAction::Detach));
+    assert!(!session.claim_exchange("late"));
+    let mut detached = event(&session, DebugEventKind::Detached);
+    detached.request = command.request;
+    session.accept(detached).unwrap();
+    assert!(!killed.load(Ordering::Acquire));
+    let session = super::tests::session();
+    let marker = Arc::clone(&killed);
+    session.bind(|_| true, move || marker.store(true, Ordering::Release));
+    session.begin(0);
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session.accept(event(&session, paused())).unwrap();
+    session.state.lock().unwrap().paused_at = Some(
+        Instant::now()
+            .checked_sub(Duration::from_millis(PAUSE_LEASE_MS))
+            .unwrap(),
+    );
+    let start = Instant::now();
+    while !killed.load(Ordering::Acquire) && start.elapsed() < Duration::from_secs(2) {
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert!(killed.load(Ordering::Acquire));
+    assert!(session.is_closed());
+}
+#[test]
+fn inventory_survives_transient_history_and_configuration_replies_can_cross_operation_boundaries() {
+    let session = session();
+    session.bind(|_| true, || {});
+    for index in 0..128 {
+        session
+            .accept(event(
+                &session,
+                DebugEventKind::Sources {
+                    sources: vec![crate::debugger::DebugSource {
+                        source: format!("file:///module-{index}.js"),
+                        bytes: Some(7),
+                    }],
+                    breakpoints: vec![],
+                },
+            ))
+            .unwrap();
+    }
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    let request = session
+        .command(DebugAction::Exceptions {
+            policy: ExceptionPolicy::All,
+        })
+        .unwrap();
+    assert!(session.begin(1));
+    let mut reply = event(&session, DebugEventKind::Acknowledged);
+    reply.request = request;
+    session.accept(reply).unwrap();
+    let page = session.page(0);
+    assert!(page.omitted);
+    assert_eq!(page.inventory.unwrap().sources.len(), 128);
+    assert!(!session.is_closed());
+    session.stop("Test ended");
+}
+#[test]
+fn arming_claim_is_atomic_with_expiry_and_only_one_exchange_is_selected() {
+    let session = session();
+    assert!(session.arm());
+    assert!(session.claim_exchange("first"));
+    assert!(!session.claim_exchange("second"));
+    assert_eq!(session.page(0).exchange_id.as_deref(), Some("first"));
+    session.stop("Test ended");
+    let session = super::tests::session();
+    assert!(session.arm());
+    session.state.lock().unwrap().armed_at = Some(
+        Instant::now()
+            .checked_sub(Duration::from_millis(ARM_LEASE_MS))
+            .unwrap(),
+    );
+    assert!(!session.claim_exchange("late"));
+    session.stop("Test ended");
+}
+#[test]
+fn value_reply_must_match_the_requested_frame_and_page_and_cleanup_composes() {
+    let session = session();
+    session.bind(|_| true, || {});
+    session.begin(0);
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session.accept(event(&session, paused())).unwrap();
+    let request = session
+        .command(DebugAction::Scopes { pause: 1, frame: 0 })
+        .unwrap();
+    let mut reply = event(
+        &session,
+        DebugEventKind::Scopes {
+            pause: 1,
+            frame: 1,
+            scopes: vec![],
+        },
+    );
+    reply.request = request;
+    assert!(session.accept(reply).is_err());
+    let cleaned = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    for _ in 0..2 {
+        let marker = Arc::clone(&cleaned);
+        session.on_closed(move || {
+            marker.fetch_add(1, Ordering::Relaxed);
+        });
+    }
+    session.stop("Test ended");
+    assert_eq!(cleaned.load(Ordering::Relaxed), 2);
+    let marker = Arc::clone(&cleaned);
+    session.on_closed(move || {
+        marker.fetch_add(1, Ordering::Relaxed);
+    });
+    assert_eq!(cleaned.load(Ordering::Relaxed), 3);
+}
+#[tokio::test]
+async fn active_budget_excludes_authenticated_pause_but_retains_its_execution_limit() {
+    let clock = Arc::new(PauseClock::default());
+    let state = Arc::clone(&clock);
+    let future = async move {
+        state.pause();
+        tokio::time::sleep(Duration::from_millis(60)).await;
+        state.resume();
+        7
+    };
+    assert_eq!(
+        wait_budget(Duration::from_millis(30), Some(&clock), future)
+            .await
+            .unwrap(),
+        7
+    );
+    assert!(
+        wait_budget(
+            Duration::from_millis(15),
+            Some(&clock),
+            std::future::pending::<()>()
+        )
+        .await
+        .is_err()
+    );
+}

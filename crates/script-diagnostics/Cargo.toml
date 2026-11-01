@@ -1,0 +1,17 @@
+[package]
+name = "transmog-script-diagnostics"
+description = "Runtime-neutral bounded exception and source-location contracts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+futures-util.workspace = true
+
+[lints]
+workspace = true

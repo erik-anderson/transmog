@@ -65,6 +65,29 @@ pub struct EmittedModule {
     pub source_map: Vec<u8>,
 }
 
+/// Structured parse evidence for native authoring surfaces.
+#[derive(Debug)]
+pub struct ModuleDiagnostic {
+    /// Existing bounded-by-caller diagnostic, including the authoring snippet.
+    pub message: String,
+    /// Native parser position with a one-based UTF-16 column.
+    pub location: Option<transmog_script_diagnostics::SourceLocation>,
+}
+
+impl From<String> for ModuleDiagnostic {
+    fn from(message: String) -> Self {
+        Self {
+            message,
+            location: None,
+        }
+    }
+}
+impl From<&str> for ModuleDiagnostic {
+    fn from(message: &str) -> Self {
+        message.to_owned().into()
+    }
+}
+
 /// Parses a module without loading dependencies or accessing the filesystem.
 ///
 /// Recoverable TypeScript diagnostics are retained until emission so callers can
@@ -78,6 +101,18 @@ pub fn parse_module(
     source: &str,
     syntax: ModuleSyntax,
 ) -> Result<ParsedModule, String> {
+    parse_module_detailed(specifier, source, syntax).map_err(|diagnostic| diagnostic.message)
+}
+
+/// Parses a module while retaining structured positions independently of text.
+///
+/// # Errors
+/// Returns syntax or bounded-complexity diagnostics without accessing imports.
+pub fn parse_module_detailed(
+    specifier: Url,
+    source: &str,
+    syntax: ModuleSyntax,
+) -> Result<ParsedModule, ModuleDiagnostic> {
     with_compiler_stack(|| parse_module_inner(specifier, source, syntax))
 }
 
@@ -93,7 +128,7 @@ fn parse_module_inner(
     specifier: Url,
     source: &str,
     syntax: ModuleSyntax,
-) -> Result<ParsedModule, String> {
+) -> Result<ParsedModule, ModuleDiagnostic> {
     if source.len() > 1024 * 1024 {
         return Err("JavaScript module exceeds the 1 MiB source limit".into());
     }
@@ -145,7 +180,29 @@ fn parse_module_inner(
     let module = match parsed {
         Ok(module) => module,
         Err(_) if resource_limit => return Err(COMPLEXITY_LIMIT.into()),
-        Err(error) => return Err(parser_error(&source_map, &error)),
+        Err(error) => {
+            let position = source_map.lookup_byte_offset(error.span().lo);
+            let source = position.sf.src.as_str();
+            let end = source.floor_char_boundary(position.pos.to_usize().min(source.len()));
+            let prefix = &source[..end];
+            let line = prefix.bytes().filter(|byte| *byte == b'\n').count() + 1;
+            let line_start = prefix.rfind('\n').map_or(0, |offset| offset + 1);
+            let column = prefix[line_start..].encode_utf16().count() + 1;
+            let location = u32::try_from(line)
+                .ok()
+                .zip(u32::try_from(column).ok())
+                .map(
+                    |(line, column)| transmog_script_diagnostics::SourceLocation {
+                        source: position.sf.name.to_string(),
+                        line,
+                        column,
+                    },
+                );
+            return Err(ModuleDiagnostic {
+                message: parser_error(&source_map, &error),
+                location,
+            });
+        }
     };
     let parsed = ParsedModule {
         module,
@@ -403,6 +460,20 @@ fn fatal_syntax(error: &SyntaxError) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn structured_parser_positions_use_utf16_columns_without_parsing_diagnostic_text() {
+        let error = super::parse_module_detailed(
+            url::Url::parse("file:///source/main.js").unwrap(),
+            "const smile = \"😀\"; const value = ;",
+            super::ModuleSyntax::JavaScript,
+        )
+        .err()
+        .expect("invalid expression");
+        let location = error.location.unwrap();
+        assert_eq!(location.source, "file:///source/main.js");
+        assert_eq!((location.line, location.column), (1, 35));
+        assert!(error.message.contains("SyntaxError"));
+    }
     use super::*;
 
     fn transpile(source: &str) -> EmittedModule {

@@ -5,6 +5,9 @@ mod manifest;
 mod matching;
 mod package;
 mod protocol;
+pub use transmog_script_diagnostics::LogCapture;
+pub use transmog_script_diagnostics::debugger;
+pub use transmog_script_diagnostics::sources as diagnostic_sources;
 
 pub use columns::*;
 pub use document::*;
@@ -12,6 +15,10 @@ pub use manifest::*;
 pub use matching::*;
 pub use package::*;
 pub use protocol::*;
+pub use transmog_script_diagnostics::{
+    ConsoleEvent, ExceptionDiagnostic, ExceptionValue, LogContext, LogRecord, LogRun,
+    SourceLocation, StackFrame, stream,
+};
 
 /// A bounded extension failure, without captured values or source snippets.
 #[derive(Debug, thiserror::Error)]

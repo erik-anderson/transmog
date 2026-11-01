@@ -488,6 +488,8 @@ pub(super) async fn pick_trace_path(window: WebviewWindow) -> Option<String> {
 }
 fn error(message: &str) -> AppError {
     AppError {
+        exception: None,
+        logs: Vec::new(),
         category: ErrorCategory::Unavailable,
         message: message.into(),
         retryable: true,

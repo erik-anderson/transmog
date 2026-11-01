@@ -36,6 +36,7 @@ members = [
     "crates/proxy-script",
     "crates/script-compiler",
     "crates/js-runtime",
+    "crates/script-diagnostics",
     "crates/script-host",
     "crates/script-supervisor",
     "crates/preview-worker",

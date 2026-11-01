@@ -1,8 +1,10 @@
 import type { ExtensionContribution } from "../extension-settings/models.js";
+import type { LogRun } from "../script-diagnostics/models.js";
 import type { CopyAction } from "../inspection-copy.js";
 
 export type Presentation = "tree" | "table" | "text" | "hex";
 export interface VisualizerChoice {
+  entry?: string;
   extensionId: string;
   visualizerId: string;
   name: string;
@@ -106,6 +108,8 @@ export interface LiveUpdate {
   busy: boolean;
 }
 export interface VisualizerView {
+  logs?: LogRun[];
+  logRunsOmitted?: number;
   handle: VisualizerHandle;
   instance: {
     id: string;

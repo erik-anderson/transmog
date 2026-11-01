@@ -8,8 +8,9 @@ use std::{
 };
 use transmog_extensions::{
     Failure, FailureKind, HOST_PROTOCOL_VERSION, HostReply, HostRequest, PAYLOAD_CHUNK_BYTES,
-    Snapshot, decimal, read_frame, write_frame,
+    Snapshot, decimal, write_reply,
 };
+use transmog_js_runtime::debugger::{HostInput, Input, Routed};
 
 /// Disables alternate JavaScript string code-generation paths before creating isolates.
 pub fn configure_v8() {
@@ -55,7 +56,7 @@ pub fn run_process(args: &[std::ffi::OsString]) -> i32 {
         return 72;
     }
     configure_v8();
-    if run(std::io::stdin().lock(), std::io::stdout().lock()).is_err() {
+    if run(std::io::stdin(), std::io::stdout()).is_err() {
         return 70;
     }
     0
@@ -64,17 +65,48 @@ pub fn run_process(args: &[std::ffi::OsString]) -> i32 {
 /// Serves framed IPC after the executable has verified containment.
 /// # Errors
 /// Returns framing/authentication/transport failures; never logs source or captured input.
-#[allow(clippy::too_many_lines)] // Linear authenticated protocol setup avoids partial initialization states.
-pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
+pub fn run(
+    input: impl Read + Send + 'static,
+    mut output: impl Write + Send + 'static,
+) -> Result<(), String> {
+    let writer = transmog_extensions::stream::Output::new(move |reply: &HostReply| {
+        write_reply(&mut output, reply).is_ok()
+    });
+    let result = run_stream(input, &writer.sender());
+    if !writer.finish() {
+        return Err("Worker output transport failed".into());
+    }
+    result
+}
+
+fn send(
+    output: &transmog_extensions::stream::OutputSender<HostReply>,
+    reply: HostReply,
+) -> Result<(), String> {
+    output
+        .control(reply)
+        .then_some(())
+        .ok_or_else(|| "Worker output transport failed".into())
+}
+#[allow(clippy::too_many_lines)] // Authenticated setup and invocation framing remain sequential.
+fn run_stream(
+    input: impl Read + Send + 'static,
+    output: &transmog_extensions::stream::OutputSender<HostReply>,
+) -> Result<(), String> {
     transmog_process_sandbox::verify_current_process()
         .map_err(|_| "Worker containment is required")?;
-    let first =
-        read_frame::<HostRequest>(&mut input).map_err(|_| "Invalid initialization frame")?;
+    let mut input = HostInput::new(input, |input| {
+        transmog_extensions::read_request(input).map_err(|_| "Invalid worker input".into())
+    });
+    let Input::Message(first) = input.read_input()? else {
+        return Err("Initialization required".into());
+    };
     let HostRequest::Initialize {
         protocol_version,
         token,
         manifest,
         visualizer_id,
+        debug,
     } = first
     else {
         return Err("Initialization required".into());
@@ -92,9 +124,16 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
             .map(|f| (f.path.clone(), Vec::new()))
             .collect();
         loop {
-            match read_frame::<HostRequest>(&mut input)
-                .map_err(|_| Failure::new(FailureKind::Protocol, "Invalid source transfer frame"))?
-            {
+            let Input::Message(request) = input.read_input().map_err(|_| {
+                Failure::new(FailureKind::Protocol, "Invalid source transfer frame")
+            })?
+            else {
+                return Err(Failure::new(
+                    FailureKind::Protocol,
+                    "Invalid source transfer order",
+                ));
+            };
+            match request {
                 HostRequest::Payload {
                     token: supplied,
                     path,
@@ -152,14 +191,41 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
                 "Source revision verification failed",
             )
         })?;
-        runtime::Runtime::new(&snapshot, &visualizer_id)
+        let logs = output.clone();
+        let attachment = if debug.is_some() {
+            input
+                .enable(debug, debug_sink(output, token), move |request| {
+                    route_debug(request, token)
+                })
+                .map_err(|_| Failure::new(FailureKind::Unavailable, "Debugger input unavailable"))?
+        } else {
+            None
+        };
+        runtime::Runtime::new(
+            &snapshot,
+            &visualizer_id,
+            move |request_id, event| {
+                let control = matches!(event, transmog_extensions::ConsoleEvent::End { .. });
+                let reply = HostReply::Console {
+                    token,
+                    request_id,
+                    event,
+                };
+                if control {
+                    logs.event(reply)
+                } else {
+                    logs.log(reply)
+                }
+            },
+            attachment,
+        )
     })();
     let mut runtime = match initialized {
         Ok(value) => value,
         Err(failure) => {
-            write_frame(
-                &mut output,
-                &HostReply::Fatal {
+            send(
+                output,
+                HostReply::Fatal {
                     token: Some(token),
                     failure,
                 },
@@ -168,18 +234,50 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
             return Ok(());
         }
     };
-    write_frame(&mut output, &HostReply::Ready { token }).map_err(|_| "Ready reply failed")?;
+    send(output, HostReply::Ready { token })?;
     let mut last = 0_u64;
     loop {
-        let request = match read_frame::<HostRequest>(&mut input) {
-            Ok(value) => value,
-            Err(transmog_extensions::Error::Io(e))
-                if e.kind() == std::io::ErrorKind::UnexpectedEof =>
-            {
-                return Ok(());
+        let request = match input.read_input() {
+            Ok(Input::Message(value)) => value,
+            Ok(Input::Wake) => {
+                runtime.engine.poll_debugger();
+                if runtime.engine.debugger_stopped() {
+                    return Ok(());
+                }
+                continue;
             }
-            Err(_) => return Err("Invalid invocation frame".into()),
+            Ok(Input::Attach(attachment)) => {
+                let (options, transport, _) = attachment.into_parts();
+                runtime
+                    .engine
+                    .enable_debugger(options, transport)
+                    .map_err(|_| "Debugger unavailable")?;
+                continue;
+            }
+            Err(_) => return Ok(()),
         };
+        if let HostRequest::AttachDebugger {
+            protocol_version,
+            token: supplied,
+            request_id: _,
+            options,
+        } = request
+        {
+            if protocol_version != HOST_PROTOCOL_VERSION || supplied != token {
+                return Err("Invalid debugger authentication".into());
+            }
+            let attachment = input
+                .enable(Some(options), debug_sink(output, token), move |request| {
+                    route_debug(request, token)
+                })?
+                .ok_or("Debugger attachment missing")?;
+            let (options, transport, _) = attachment.into_parts();
+            runtime
+                .engine
+                .enable_debugger(options, transport)
+                .map_err(|_| "Debugger unavailable")?;
+            continue;
+        }
         let HostRequest::Invoke {
             token: supplied,
             request_id,
@@ -192,10 +290,12 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
             return Err("Invalid invocation token or sequence".into());
         }
         last = request_id;
+        runtime.begin_console(request_id);
         let result = runtime.invoke(&invocation);
-        write_frame(
-            &mut output,
-            &HostReply::Result {
+        runtime.finish_console();
+        send(
+            output,
+            HostReply::Result {
                 token,
                 request_id,
                 result,
@@ -203,4 +303,39 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
         )
         .map_err(|_| "Result reply failed")?;
     }
+}
+
+fn debug_sink(
+    output: &transmog_extensions::stream::OutputSender<HostReply>,
+    token: transmog_extensions::HostToken,
+) -> impl Fn(transmog_extensions::debugger::DebugEvent) -> bool + Send + Sync + 'static {
+    let output = output.clone();
+    move |event| output.event(HostReply::Debugger { token, event })
+}
+fn route_debug(
+    request: HostRequest,
+    token: transmog_extensions::HostToken,
+) -> Result<Routed<HostRequest>, String> {
+    Ok(match request {
+        HostRequest::AttachDebugger {
+            protocol_version,
+            token: supplied,
+            request_id,
+            options,
+        } if protocol_version == HOST_PROTOCOL_VERSION && supplied == token => Routed::Attach {
+            options,
+            request: request_id,
+        },
+        HostRequest::ControlDebugger {
+            protocol_version,
+            token: supplied,
+            command,
+        } if protocol_version == HOST_PROTOCOL_VERSION && supplied == token => {
+            Routed::Control(command)
+        }
+        value @ HostRequest::Invoke {
+            token: supplied, ..
+        } if supplied == token => Routed::Message(value),
+        _ => return Err("Invalid debugger authentication or order".into()),
+    })
 }

@@ -9,6 +9,209 @@ use transmog_script::{
     ScriptManifest, ScriptPrefilter, ScriptRequest, ScriptRunner, compile_typescript, source_hash,
 };
 use transmog_script_supervisor::{IsolationPolicy, ScriptHostConfig, SupervisedScriptRunner};
+#[path = "../../extension-host/tests/support/debugger.rs"]
+mod debugger;
+
+#[tokio::test]
+async fn live_reservation_preserves_actual_heap_and_rejects_competing_and_pinned_exchanges() {
+    use std::sync::Arc;
+    use transmog_script::debugger::DebugEventKind;
+    let source = "globalThis.starts=0;export function onRequestHead(event){const local=7;debugger;console.log('starts',++starts);return {decision:{action:'continue'},state:{token:starts}}}export function onRequestBody(event){const local=7;debugger;console.log('body',event.state.token);return {decision:{action:'continue'}}}export function onCompleted(event){const local=7;debugger;console.log('terminal',event.state.token);return {decision:{action:'continue'}}}";
+    let mut manifest = compile(
+        "export function onRequestHead(){return {decision:{action:'continue'}}}",
+        1000,
+    )
+    .manifest;
+    manifest.handlers.insert(ScriptHandler::Completed);
+    manifest.handlers.insert(ScriptHandler::RequestBody);
+    manifest.capabilities.read_bodies = true;
+    manifest.source_hash = source_hash(source.as_bytes());
+    let compiled = compile_typescript(manifest.clone(), source).unwrap();
+    let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
+    runner.invoke(invocation()).await.unwrap();
+    runner.exchange_open().unwrap();
+    let blocked = debugger::session('d');
+    assert!(
+        runner
+            .arm_debugger(&blocked, ScriptPrefilter::default())
+            .is_err()
+    );
+    blocked.stop("Busy arming test ended");
+    assert!(!runner.has_failed());
+    runner.exchange_closed("old", true);
+    let session = debugger::session('e');
+    runner
+        .arm_debugger(
+            &session,
+            ScriptPrefilter {
+                method: Some("GET".into()),
+                host: Some("example.test".into()),
+                path_prefix: Some("/".into()),
+            },
+        )
+        .unwrap();
+    assert!(
+        runner
+            .debug_admit("mismatch", "POST", "example.test", "/")
+            .is_err()
+    );
+    let request = invocation().request;
+    let scenario:transmog_script::ScriptScenario=serde_json::from_value(serde_json::json!({"request":request,"response":{"status":200,"headers":[]},"requestBody":[97,98,99],"responseBody":[],"localResponse":false,"failure":null,"httpVersion":"Http1","startedUnixMs":0,"durationMs":100})).unwrap();
+    let worker = Arc::clone(&runner);
+    let call =
+        tokio::spawn(
+            async move { transmog_script::test_scenario(manifest, worker, scenario).await },
+        );
+    let pause = debugger::pause(&session, 0).await;
+    assert!(session.page(0).exchange_id.is_some());
+    assert!(
+        runner
+            .debug_admit("competitor", "GET", "example.test", "/")
+            .is_err()
+    );
+    // Submission is eager in this runner. Reject before creating its cancellation
+    // guard, including when the competing future is never polled.
+    drop(runner.invoke(invocation()));
+    assert!(!runner.has_failed());
+    assert!(runner.invoke(invocation()).await.is_err());
+    assert!(!runner.has_failed());
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    debugger::local_seven(&session, pause).await;
+    debugger::resume(&session, pause);
+    let mut previous = pause;
+    for _ in 0..2 {
+        let next = debugger::pause(&session, previous).await;
+        tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+        debugger::local_seven(&session, next).await;
+        debugger::resume(&session, next);
+        previous = next;
+    }
+    let result = call.await.unwrap().unwrap();
+    assert_eq!(
+        result.verdict,
+        transmog_script::ScriptScenarioVerdict::Passed,
+        "{result:#?}"
+    );
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Detached)).await;
+    assert!(!runner.has_failed());
+    let logs = runner.logs();
+    assert!(
+        result.steps[0]
+            .result
+            .as_ref()
+            .unwrap()
+            .logs
+            .iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "starts 2")
+    );
+    assert!(
+        logs.iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "terminal 2")
+    );
+    assert!(
+        runner
+            .invoke(invocation())
+            .await
+            .unwrap()
+            .logs
+            .iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "starts 3")
+    );
+    let stop = debugger::session('f');
+    runner
+        .arm_debugger(&stop, ScriptPrefilter::default())
+        .unwrap();
+    stop.stop("Owner window disappeared");
+    assert!(runner.has_failed());
+    assert!(runner.invoke(invocation()).await.is_err());
+}
+
+#[tokio::test]
+async fn debugger_preserves_initializer_heap_locals_and_idle_detach_in_the_real_sandbox() {
+    use transmog_script::debugger::{DebugAction, DebugEventKind};
+    let session = debugger::session('a');
+    let owner = std::sync::Arc::clone(&session);
+    let compiled = compile(
+        "globalThis.starts=1; debugger;\nexport function onRequestHead(event){const local=7;debugger;console.log('starts',globalThis.starts++);return {decision:{action:'continue'}}}",
+        1000,
+    );
+    let startup = tokio::task::spawn_blocking(move || {
+        SupervisedScriptRunner::start_debug(&config(), compiled, Some(owner))
+    });
+    let init = debugger::pause(&session, 0).await;
+    tokio::time::sleep(std::time::Duration::from_millis(5200)).await;
+    debugger::resume(&session, init);
+    let runner = startup.await.unwrap().unwrap();
+    let worker = std::sync::Arc::clone(&runner);
+    let call = tokio::spawn(async move { worker.invoke(invocation()).await });
+    let pause = debugger::pause(&session, init).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    debugger::local_seven(&session, pause).await;
+    debugger::resume(&session, pause);
+    assert!(call.await.unwrap().is_ok());
+    session.command(DebugAction::Detach).unwrap();
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Detached)).await;
+    let next = runner.invoke(invocation()).await.unwrap();
+    assert!(
+        next.logs
+            .iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "starts 2")
+    );
+    let session = debugger::session('b');
+    runner
+        .attach_debugger(std::sync::Arc::clone(&session))
+        .unwrap();
+    let worker = std::sync::Arc::clone(&runner);
+    let call = tokio::spawn(async move { worker.invoke(invocation()).await });
+    let pause = debugger::pause(&session, 0).await;
+    debugger::local_seven(&session, pause).await;
+    debugger::resume(&session, pause);
+    assert!(
+        call.await
+            .unwrap()
+            .unwrap()
+            .logs
+            .iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "starts 3")
+    );
+    session.stop("Test ended");
+    assert!(runner.has_failed());
+}
+
+#[tokio::test]
+async fn native_stop_terminates_a_debugged_infinite_loop_without_an_engine_reply() {
+    let session = debugger::session('c');
+    let owner = std::sync::Arc::clone(&session);
+    let compiled = compile(
+        "export function onRequestHead(event):never{debugger;while(true){}}",
+        5000,
+    );
+    let runner = tokio::task::spawn_blocking(move || {
+        SupervisedScriptRunner::start_debug(&config(), compiled, Some(owner))
+    })
+    .await
+    .unwrap()
+    .unwrap();
+    let worker = std::sync::Arc::clone(&runner);
+    let call = tokio::spawn(async move { worker.invoke(invocation()).await });
+    let pause = debugger::pause(&session, 0).await;
+    debugger::resume(&session, pause);
+    tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+    session.stop("Test Stop");
+    assert!(
+        tokio::time::timeout(std::time::Duration::from_secs(2), call)
+            .await
+            .unwrap()
+            .unwrap()
+            .is_err()
+    );
+    assert!(runner.has_failed());
+}
 
 fn compile(source: &str, max_duration_ms: u64) -> transmog_script::CompiledScript {
     compile_typescript(
@@ -67,6 +270,245 @@ fn config() -> ScriptHostConfig {
     ScriptHostConfig {
         executable: std::path::PathBuf::from(env!("CARGO_BIN_EXE_transmog-script-host")),
         isolation: IsolationPolicy::RequireSandbox,
+    }
+}
+
+#[tokio::test]
+async fn console_streams_survive_throw_validation_and_timeout_without_changing_decisions() {
+    let source = r"
+        console.info('initializer');
+        export function onRequestHead(event) {
+            console.log('before', event.context.nowUnixMs);
+            console.trace('trace');
+            if(event.context.nowUnixMs===1) throw new Error('failure');
+            if(event.context.nowUnixMs===2) return {bad:true};
+            if(event.context.nowUnixMs===3) while(true) {}
+            if(event.context.nowUnixMs===4) for(let i=0;i<1000;i++) console.warn('flood'.repeat(512));
+            return {decision:{action:'continue'}};
+        }
+    ";
+    let runner = SupervisedScriptRunner::start(&config(), compile(source, 1000)).unwrap();
+    assert_eq!(runner.startup_logs()[0].records[0].text, "initializer");
+    for operation in [0, 1, 2, 4, 0, 3] {
+        let mut input = invocation();
+        input.context.now_unix_ms = operation;
+        let result = runner.invoke(input).await;
+        let logs = if matches!(operation, 1..=3) {
+            let error = result.unwrap_err();
+            if operation == 3 {
+                assert_eq!(
+                    error.category,
+                    transmog_script::ScriptFailureCategory::Timeout
+                );
+            }
+            error.logs
+        } else {
+            let result = result.unwrap();
+            assert_eq!(result.decision, ScriptAction::Continue);
+            result.logs
+        };
+        let call = logs.last().unwrap();
+        assert!(call.is_bounded());
+        assert_eq!(call.context.callback, "onRequestHead");
+        assert_eq!(call.context.exchange_id.as_deref(), Some("1"));
+        assert_eq!(call.records[0].text, format!("before {operation}"));
+        assert!(call.records[1].frames[0].original.is_some());
+        assert_eq!(call.incomplete, operation == 3);
+        if operation == 4 {
+            assert!(call.dropped > 0);
+        }
+    }
+}
+
+#[test]
+fn console_records_preceding_initializer_failure_remain_available() {
+    let source = "console.error('startup detail'); throw new Error('failed'); export function onRequestHead() { return {decision:{action:'continue'}}; }";
+    let error = SupervisedScriptRunner::start(&config(), compile(source, 1000))
+        .err()
+        .unwrap();
+    assert_eq!(error.logs[0].context.callback, "initializer");
+    assert_eq!(error.logs[0].records[0].text, "startup detail");
+    assert!(!error.logs[0].incomplete);
+    assert_eq!(error.logs[0].context.worker.len(), 64);
+    let another = SupervisedScriptRunner::start(&config(), compile(source, 1000))
+        .err()
+        .unwrap();
+    assert_eq!(
+        error.logs[0].context.revision,
+        another.logs[0].context.revision
+    );
+    assert_ne!(error.logs[0].context.worker, another.logs[0].context.worker);
+    let diagnostic = error.exception.as_ref().unwrap();
+    let artifact = diagnostic.artifact.as_ref().unwrap();
+    assert_eq!(Some(artifact), error.logs[0].context.artifact.as_ref());
+    let generated = transmog_script::diagnostic_sources::read(
+        artifact,
+        "file:///transmog-script/main.js",
+        1,
+        1,
+    )
+    .unwrap();
+    assert!(
+        generated
+            .lines
+            .iter()
+            .any(|line| line.text.contains("startup detail"))
+    );
+    let original = diagnostic
+        .exception
+        .frames
+        .iter()
+        .find_map(|frame| frame.original.as_ref())
+        .unwrap();
+    let page = transmog_script::diagnostic_sources::read(
+        artifact,
+        &original.source,
+        original.line,
+        original.column,
+    )
+    .unwrap();
+    assert!(
+        page.lines
+            .iter()
+            .any(|line| line.text.contains("startup detail"))
+    );
+    assert!(transmog_script::diagnostic_sources::read(artifact, "transmog:invoke", 1, 1).is_none());
+}
+
+#[test]
+fn identical_javascript_with_different_original_types_keeps_distinct_source_snapshots() {
+    let original = "const marker: number = 1; throw new Error('same generated code'); export function onRequestHead(){return {decision:{action:'continue'}};}";
+    let edited = original.replace("marker: number", "marker: 1");
+    let first = compile(original, 1000);
+    let second = compile(&edited, 1000);
+    assert_eq!(first.javascript, second.javascript);
+    let first = SupervisedScriptRunner::start(&config(), first)
+        .err()
+        .unwrap();
+    let second = SupervisedScriptRunner::start(&config(), second)
+        .err()
+        .unwrap();
+    let first = first.exception.unwrap();
+    let second = second.exception.unwrap();
+    assert_ne!(first.artifact, second.artifact);
+    let location = first
+        .exception
+        .frames
+        .iter()
+        .find_map(|frame| frame.original.as_ref())
+        .unwrap();
+    let page = transmog_script::diagnostic_sources::read(
+        first.artifact.as_ref().unwrap(),
+        &location.source,
+        location.line,
+        location.column,
+    )
+    .unwrap();
+    assert!(page.lines[0].text.contains("marker: number"));
+    let page = transmog_script::diagnostic_sources::read(
+        second.artifact.as_ref().unwrap(),
+        &location.source,
+        1,
+        1,
+    )
+    .unwrap();
+    assert!(page.lines[0].text.contains("marker: 1"));
+}
+
+#[tokio::test]
+async fn abandoning_a_logging_callback_keeps_accepted_output_in_worker_history() {
+    let runner=SupervisedScriptRunner::start(&config(),compile("export function onRequestHead(){console.error('accepted before cancellation');while(true){}}",1000)).unwrap();
+    let owned = runner.clone();
+    let task = tokio::spawn(async move { owned.invoke(invocation()).await });
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if runner.logs().iter().any(|run| {
+                run.records
+                    .iter()
+                    .any(|record| record.text == "accepted before cancellation")
+            }) {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    task.abort();
+    let _ = task.await;
+    let logs = runner.logs();
+    assert_eq!(
+        logs.last().unwrap().records[0].text,
+        "accepted before cancellation"
+    );
+    assert!(logs.last().unwrap().incomplete);
+    assert!(runner.has_failed());
+    runner.clear_logs();
+    assert!(runner.logs().iter().all(|run| run.records.is_empty()));
+}
+
+#[tokio::test]
+async fn every_callback_preserves_structured_exception_evidence() {
+    let handlers = [
+        ScriptHandler::RequestHead,
+        ScriptHandler::RequestBody,
+        ScriptHandler::ResponseHead,
+        ScriptHandler::ResponseBody,
+        ScriptHandler::Completed,
+        ScriptHandler::Failed,
+    ];
+    let source = handlers
+        .iter()
+        .map(|handler| {
+            format!(
+                "export function {}(){{throw new Error('{}');}}\n",
+                handler.export_name(),
+                handler.export_name()
+            )
+        })
+        .collect::<String>();
+    let mut manifest = compile(
+        "export function onRequestHead(){return {decision:{action:'continue'}};}",
+        1000,
+    )
+    .manifest;
+    manifest.handlers = BTreeSet::from(handlers);
+    manifest.capabilities.read_bodies = true;
+    manifest.source_hash = source_hash(source.as_bytes());
+    let runner =
+        SupervisedScriptRunner::start(&config(), compile_typescript(manifest, &source).unwrap())
+            .unwrap();
+    for handler in handlers {
+        let mut event = invocation();
+        event.context.handler = handler;
+        if matches!(
+            handler,
+            ScriptHandler::ResponseHead | ScriptHandler::ResponseBody | ScriptHandler::Completed
+        ) {
+            event.response = Some(transmog_script::ScriptResponse {
+                status: 200,
+                headers: vec![],
+            });
+        }
+        if matches!(
+            handler,
+            ScriptHandler::RequestBody | ScriptHandler::ResponseBody
+        ) {
+            event.body = Some(transmog_script::ScriptBody { bytes: vec![] });
+        }
+        if handler == ScriptHandler::Failed {
+            event.failure = Some(serde_json::from_str("\"Cancelled\"").unwrap());
+        }
+        let failure = runner.invoke(event).await.unwrap_err();
+        let diagnostic = failure.exception.unwrap();
+        assert!(diagnostic.is_bounded());
+        assert_eq!(diagnostic.exception.message, handler.export_name());
+        assert_eq!(
+            diagnostic.exception.frames[0].function,
+            handler.export_name()
+        );
+        assert!(diagnostic.exception.frames[0].original.is_some());
+        assert!(!runner.has_failed());
     }
 }
 
@@ -325,7 +767,6 @@ async fn serialization_and_exception_diagnostics_remain_under_the_callback_deadl
     for hostile in [
         "return {get then() {while(true) {}}};",
         "return {toJSON() {while(true) {}}};",
-        "throw {get stack() {while(true) {}}};",
     ] {
         let source = format!("export function onRequestHead() {{ {hostile} }}");
         let runner = SupervisedScriptRunner::start(&config(), compile(&source, 75)).unwrap();
@@ -339,6 +780,21 @@ async fn serialization_and_exception_diagnostics_remain_under_the_callback_deadl
             runner.invoke(invocation()).await.unwrap_err().category,
             transmog_script::ScriptFailureCategory::Unavailable
         );
+    }
+}
+
+#[tokio::test]
+async fn exception_accessors_are_not_executed_and_do_not_kill_the_worker() {
+    let source = "export function onRequestHead() {throw {get stack(){while(true){}}, get message(){while(true){}}};}";
+    let runner = SupervisedScriptRunner::start(&config(), compile(source, 100)).unwrap();
+    for _ in 0..2 {
+        let failure = runner.invoke(invocation()).await.unwrap_err();
+        assert_eq!(
+            failure.category,
+            transmog_script::ScriptFailureCategory::Exception
+        );
+        assert!(failure.exception.unwrap().exception.unavailable);
+        assert!(!runner.has_failed());
     }
 }
 
@@ -482,6 +938,78 @@ async fn handler_errors_map_to_original_typescript_positions() {
     );
     assert!(failure.message.contains("handler failure"));
     assert_eq!((failure.line, failure.column), (Some(6), Some(9)));
+    let diagnostic = failure.exception.unwrap();
+    assert!(diagnostic.is_bounded());
+    assert_eq!(
+        diagnostic.exception.frames[0]
+            .original
+            .as_ref()
+            .unwrap()
+            .line,
+        6
+    );
+}
+
+#[tokio::test]
+async fn every_nested_exception_frame_maps_to_the_executing_typescript() {
+    let source = concat!(
+        "interface Removed { value: string; }\n",
+        "type Marker = string;\n",
+        "function inner() {\n",
+        "  const message: Marker = 'nested failure';\n",
+        "  throw new Error(message, {cause: new TypeError('cause')});\n",
+        "}\n",
+        "export function onRequestHead() {\n",
+        "  return inner();\n",
+        "}\n",
+    );
+    let runner = SupervisedScriptRunner::start(&config(), compile(source, 500)).unwrap();
+    let failure = runner.invoke(invocation()).await.unwrap_err();
+    let diagnostic = failure.exception.unwrap();
+    assert!(diagnostic.is_bounded());
+    assert_eq!(
+        diagnostic.exception.frames[0]
+            .original
+            .as_ref()
+            .unwrap()
+            .line,
+        5
+    );
+    assert_eq!(
+        diagnostic.exception.frames[1]
+            .original
+            .as_ref()
+            .unwrap()
+            .line,
+        8
+    );
+    assert_eq!(
+        diagnostic.causes[0].frames[0]
+            .original
+            .as_ref()
+            .unwrap()
+            .line,
+        5
+    );
+    assert_eq!(diagnostic.causes[0].message, "cause");
+}
+
+#[tokio::test]
+async fn exception_source_columns_preserve_utf16_after_astral_characters() {
+    let source =
+        "export function onRequestHead() { const face: string = \"😀\"; throw new Error(face); }";
+    let runner = SupervisedScriptRunner::start(&config(), compile(source, 500)).unwrap();
+    let failure = runner.invoke(invocation()).await.unwrap_err();
+    assert_eq!((failure.line, failure.column), (Some(1), Some(68)));
+    let diagnostic = failure.exception.unwrap();
+    assert_eq!(
+        diagnostic.exception.frames[0]
+            .original
+            .as_ref()
+            .unwrap()
+            .column,
+        68
+    );
 }
 
 #[tokio::test]

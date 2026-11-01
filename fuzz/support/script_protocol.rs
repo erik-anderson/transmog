@@ -90,6 +90,50 @@ fn raw(bytes: &[u8], chunk: usize) {
     roundtrip::<ScriptHostReply>(Protocol::Script, bytes, chunk);
     roundtrip::<HostRequest>(Protocol::Extension, bytes, chunk);
     roundtrip::<HostReply>(Protocol::Extension, bytes, chunk);
+    stream_roundtrip(bytes, chunk);
+}
+
+fn stream_roundtrip(bytes: &[u8], chunk: usize) {
+    macro_rules! stream {
+        ($read:path,$write:path) => {
+            let mut input = Fragmented {
+                remaining: bytes,
+                chunk,
+            };
+            if let Ok(value) = $read(&mut input) {
+                let mut encoded = Vec::new();
+                $write(&mut encoded, &value).unwrap();
+                let mut fragmented = Fragmented {
+                    remaining: &encoded,
+                    chunk: 1,
+                };
+                let decoded = $read(&mut fragmented).unwrap();
+                assert_eq!(
+                    serde_json::to_value(&value).unwrap(),
+                    serde_json::to_value(decoded).unwrap()
+                );
+                // Changing the high-bit class must fail even with valid JSON.
+                encoded[3] ^= 0x80;
+                assert!($read(&mut Cursor::new(encoded)).is_err());
+            }
+        };
+    }
+    stream!(
+        transmog_script::read_host_request_frame,
+        transmog_script::write_host_request_frame
+    );
+    stream!(
+        transmog_script::read_host_reply_frame,
+        transmog_script::write_host_reply_frame
+    );
+    stream!(
+        transmog_extensions::read_request,
+        transmog_extensions::write_request
+    );
+    stream!(
+        transmog_extensions::read_reply,
+        transmog_extensions::write_reply
+    );
 }
 
 struct PrefixOnly {
@@ -110,7 +154,7 @@ pub fn check(data: &[u8]) {
     if data.len() > MAX_INPUT {
         return;
     }
-    let mode = data.first().copied().unwrap_or(0) % 8;
+    let mode = data.first().copied().unwrap_or(0) % 10;
     let payload = data.get(1..).unwrap_or_default();
     let chunk = usize::from(payload.first().copied().unwrap_or(0) % 17) + 1;
     let token = [payload.first().copied().unwrap_or(0); 32];
@@ -181,6 +225,41 @@ pub fn check(data: &[u8]) {
                     .is_none()
             );
         }
+        8 => {
+            use transmog_script::debugger::{DebugAction, DebugCommand};
+            let command = serde_json::from_slice::<DebugCommand>(payload).unwrap_or(DebugCommand {
+                session: "a".repeat(32),
+                request: 1,
+                action: DebugAction::Scopes { pause: 1, frame: 0 },
+            });
+            let request = ScriptHostRequest::ControlDebugger {
+                protocol_version: transmog_script::SCRIPT_HOST_PROTOCOL_VERSION,
+                token: transmog_script::ScriptHostToken(token),
+                command,
+            };
+            let mut bytes = Vec::new();
+            transmog_script::write_host_request_frame(&mut bytes, &request).unwrap();
+            stream_roundtrip(&bytes, chunk);
+        }
+        9 => {
+            use transmog_script::debugger::{DebugEvent, DebugEventKind};
+            let event = serde_json::from_slice::<DebugEvent>(payload).unwrap_or(DebugEvent {
+                session: "b".repeat(32),
+                invocation: u64::MAX,
+                request: 0,
+                event: DebugEventKind::Stopped {
+                    reason: text.into_owned(),
+                },
+            });
+            let reply = ScriptHostReply::Debugger {
+                protocol_version: transmog_script::SCRIPT_HOST_PROTOCOL_VERSION,
+                token: transmog_script::ScriptHostToken(token),
+                event,
+            };
+            let mut bytes = Vec::new();
+            transmog_script::write_host_reply_frame(&mut bytes, &reply).unwrap();
+            stream_roundtrip(&bytes, chunk);
+        }
         _ => {
             for length in [0, MAX_SCRIPT_HOST_FRAME_BYTES as u32 + 1, u32::MAX] {
                 let mut input = PrefixOnly {
@@ -194,6 +273,14 @@ pub fn check(data: &[u8]) {
                 };
                 assert!(read_frame::<HostReply>(&mut input).is_err());
             }
+            let mut input = PrefixOnly {
+                prefix: Cursor::new((0x8000_0000u32 | 65537).to_le_bytes()),
+            };
+            assert!(transmog_script::read_host_request_frame(&mut input).is_err());
+            let mut input = PrefixOnly {
+                prefix: Cursor::new((0x8000_0000u32 | 65537).to_le_bytes()),
+            };
+            assert!(transmog_extensions::read_reply(&mut input).is_err());
         }
     }
 }

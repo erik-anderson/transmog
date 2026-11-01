@@ -263,10 +263,24 @@ pub struct ScriptAnnotation {
 #[derive(Clone, Debug, Default, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptReport {
+    /// Ephemeral console evidence from the native supervisor.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<transmog_script_diagnostics::LogRun>,
     /// Durable findings, explicitly authorized by the script's capabilities.
     pub annotations: Vec<ScriptAnnotation>,
     /// Bounded diagnostic messages.
     pub diagnostics: Vec<String>,
+    /// Ephemeral authored exception evidence; omitted from saved traces.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exception: Option<Box<transmog_script_diagnostics::ExceptionDiagnostic>>,
+    /// Exception or console evidence was omitted or evicted at a native retention boundary.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub details_omitted: bool,
+}
+
+#[allow(clippy::trivially_copy_pass_by_ref)] // serde skip predicate receives a reference.
+fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 /// One immutable, ordered hook-effect audit record.

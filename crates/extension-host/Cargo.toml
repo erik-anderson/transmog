@@ -16,7 +16,7 @@ harness = false
 [dependencies]
 base64.workspace = true
 serde_json.workspace = true
-transmog-js-runtime = { version = "=0.1.18", path = "../js-runtime" }
+transmog-js-runtime = { version = "=0.1.18", path = "../js-runtime", features = ["debugger"] }
 transmog-script-compiler = { version = "=0.1.18", path = "../script-compiler" }
 url.workspace = true
 transmog-extensions = { version = "=0.1.18", path = "../extensions" }

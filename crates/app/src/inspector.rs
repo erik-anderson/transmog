@@ -33,6 +33,8 @@ pub(crate) const INSPECTION_DECODER_OPTIONS: ContentDecoderOptions =
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptReportView {
+    /// Ephemeral native console streams, local inspection only.
+    pub logs: Vec<transmog_script::LogRun>,
     /// Exact script ID and applied revision.
     pub script: String,
     /// Phase that produced the evidence.
@@ -41,6 +43,11 @@ pub struct ScriptReportView {
     pub annotations: Vec<transmog_core::intercept::ScriptAnnotation>,
     /// Bounded diagnostics available only in the live session.
     pub diagnostics: Vec<String>,
+    /// Ephemeral exception details; never included in ordinary trace persistence.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
+    /// Native retention omitted older detailed exception evidence.
+    pub details_omitted: bool,
 }
 
 // Findings have their own structured projection and disclosure policy. Never duplicate
@@ -904,10 +911,13 @@ pub(crate) fn detail_from_snapshot(
             .iter()
             .filter_map(|e| match &e.action {
                 HookEffectAction::ScriptReport(report) => Some(ScriptReportView {
+                    logs: report.logs.clone(),
                     script: e.interceptor.id.as_str().to_owned(),
                     phase: format!("{:?}", e.phase),
                     annotations: report.annotations.clone(),
                     diagnostics: report.diagnostics.clone(),
+                    exception: report.exception.clone(),
+                    details_omitted: report.details_omitted,
                 }),
                 _ => None,
             })

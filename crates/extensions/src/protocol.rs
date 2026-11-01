@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 /// Same-build worker protocol revision.
-pub const HOST_PROTOCOL_VERSION: u32 = 4;
+pub const HOST_PROTOCOL_VERSION: u32 = 7;
 /// Absolute framing ceiling, checked before allocating any incoming JSON.
 pub const MAX_HOST_FRAME_BYTES: usize = 12 * 1024 * 1024;
 /// Maximum raw payload bytes in one initialization chunk.
@@ -332,20 +332,38 @@ pub enum FailureKind {
     Protocol,
 }
 /// Failure text is host-controlled and never includes captured input or source snippets.
-#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+#[derive(Clone, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Failure {
+    /// Ephemeral supervisor-accepted native console output.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub logs: Vec<crate::LogRun>,
     /// Stable category.
     pub kind: FailureKind,
     /// Plain static explanation.
     pub message: String,
+    /// Optional ephemeral authored details, never part of the safe status text.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exception: Option<Box<transmog_script_diagnostics::ExceptionDiagnostic>>,
+}
+impl std::fmt::Debug for Failure {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Failure")
+            .field("log_runs", &self.logs.len())
+            .field("kind", &self.kind)
+            .field("message", &self.message)
+            .field("exception_available", &self.exception.is_some())
+            .finish()
+    }
 }
 impl Failure {
     /// Constructs a bounded host-controlled diagnostic.
     pub fn new(kind: FailureKind, message: &str) -> Self {
         Self {
             kind,
+            logs: Vec::new(),
             message: message.chars().take(256).collect(),
+            exception: None,
         }
     }
 }
@@ -370,6 +388,29 @@ pub enum HostRequest {
         manifest: Manifest,
         /// Selected contribution, not every package entry.
         visualizer_id: String,
+        /// Optional explicitly authorized native debugger, before module initialization.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        debug: Option<crate::debugger::DebugOptions>,
+    },
+    /// Attach to the actual idle worker, preserving its globals and continuation state.
+    AttachDebugger {
+        /// Same-build debugger transport revision.
+        protocol_version: u32,
+        /// Native channel authentication.
+        token: HostToken,
+        /// Correlated command identity.
+        request_id: u64,
+        /// Bounded native session configuration.
+        options: crate::debugger::DebugOptions,
+    },
+    /// Typed native debugger control, without expression evaluation or mutation.
+    ControlDebugger {
+        /// Same-build debugger transport revision.
+        protocol_version: u32,
+        /// Native channel authentication.
+        token: HostToken,
+        /// Exact native session and pause identities.
+        command: crate::debugger::DebugCommand,
     },
     /// Upload one bounded payload chunk.
     Payload {
@@ -401,6 +442,22 @@ pub enum HostRequest {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
 pub enum HostReply {
+    /// Bounded native debugger event, independent of document and console output.
+    Debugger {
+        /// Per-worker authentication.
+        token: HostToken,
+        /// Typed native reply or state transition.
+        event: crate::debugger::DebugEvent,
+    },
+    /// Independent native console event.
+    Console {
+        /// Per-process token.
+        token: HostToken,
+        /// Operation identity; zero denotes initialization.
+        request_id: u64,
+        /// Native snapshot or stream-end counter.
+        event: crate::ConsoleEvent,
+    },
     /// Source verification and initialization succeeded.
     Ready {
         /// Per-process token.
@@ -422,6 +479,70 @@ pub enum HostReply {
         /// Bounded safe failure.
         failure: Failure,
     },
+}
+
+/// Reads one classed reply, enforcing the small console-event ceiling first.
+/// # Errors
+/// Rejects malformed length/class, transport failure or invalid JSON.
+pub fn read_reply(input: &mut impl Read) -> Result<HostReply, Error> {
+    let (log, bytes) = crate::stream::read_payload(input, MAX_HOST_FRAME_BYTES)?;
+    let reply: HostReply = serde_json::from_slice(&bytes)?;
+    if matches!(
+        reply,
+        HostReply::Console { .. } | HostReply::Debugger { .. }
+    ) != log
+    {
+        return Err(invalid("Invalid worker reply class"));
+    }
+    Ok(reply)
+}
+/// Writes a classed reply through the one worker output writer.
+/// # Errors
+/// Rejects excessive output or transport failure.
+pub fn write_reply(output: &mut impl Write, reply: &HostReply) -> Result<(), Error> {
+    let bytes = serde_json::to_vec(reply)?;
+    crate::stream::write_payload(
+        output,
+        &bytes,
+        matches!(
+            reply,
+            HostReply::Console { .. } | HostReply::Debugger { .. }
+        ),
+        MAX_HOST_FRAME_BYTES,
+    )?;
+    Ok(())
+}
+
+/// Reads a typed request, applying the 64-KiB debug-control ceiling before allocation.
+/// # Errors
+/// Rejects malformed class/length, transport failure or invalid typed JSON.
+pub fn read_request(input: &mut impl Read) -> Result<HostRequest, Error> {
+    let (small, bytes) = crate::stream::read_payload(input, MAX_HOST_FRAME_BYTES)?;
+    let request: HostRequest = serde_json::from_slice(&bytes)?;
+    if matches!(
+        request,
+        HostRequest::AttachDebugger { .. } | HostRequest::ControlDebugger { .. }
+    ) != small
+    {
+        return Err(invalid("Invalid worker request class"));
+    }
+    Ok(request)
+}
+/// Writes one typed request with independent debug-control framing.
+/// # Errors
+/// Rejects excessive output or transport failure.
+pub fn write_request(output: &mut impl Write, request: &HostRequest) -> Result<(), Error> {
+    let bytes = serde_json::to_vec(request)?;
+    crate::stream::write_payload(
+        output,
+        &bytes,
+        matches!(
+            request,
+            HostRequest::AttachDebugger { .. } | HostRequest::ControlDebugger { .. }
+        ),
+        MAX_HOST_FRAME_BYTES,
+    )?;
+    Ok(())
 }
 
 /// Reads a length-prefixed frame, rejecting oversized lengths before allocation.

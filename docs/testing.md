@@ -451,6 +451,28 @@ redacted protocol evidence under `verification/`. See
 [verification artifacts](../verification/README.md). Installer and clean-machine
 qualification are in [the Windows release guide](windows-release.md).
 
+## Script diagnostics and debugging
+
+Run the script/extension host tests on Windows for actual AppContainer coverage.
+They cover initialization, exception policies, steps, inert locals, native Stop,
+idle detach/reattach, preserved globals, pause-aware header/body/terminal timing,
+competing live admissions and pinned exchanges. Browser coverage includes
+`npm run test:workspaces -- --script-debugger-only` from `apps/desktop/ui`.
+
+After building the desktop with its matching script and extension hosts, use
+`scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath <absolute-exe> -ScriptDebuggerChecks`
+for owned-profile WebView2 journeys, or `-ScriptDiagnosticsChecks` for exception,
+console and immutable-source journeys. The debugger fixture routes its clients
+manually over loopback with HTTPS decryption off; it does not install trust or
+change Windows proxy settings. Do not combine these checks with another harness
+mode. Retain the reported evidence folder and inspect the screenshots.
+
+The fixed `debugger-benchmark` js-runtime example (feature `debugger`) measures
+baseline, console idle, one record, saturated logs and attached execution. It is
+not a shipping command or a full proxy-throughput benchmark. Protocol fuzzing uses
+`python scripts/fuzz-content-docker.py --target script_protocol --runs 10000`;
+the ordinary `protocol_fuzz_seeds` test also replays its semantic seeds.
+
 ## Fuzzing, performance and Miri
 
 Content/WebSocket fuzz targets live in the independent `fuzz/` workspace so

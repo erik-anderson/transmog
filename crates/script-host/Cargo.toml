@@ -10,7 +10,7 @@ build = "build.rs"
 
 [dependencies]
 serde_json.workspace = true
-transmog-js-runtime = { version = "=0.1.18", path = "../js-runtime" }
+transmog-js-runtime = { version = "=0.1.18", path = "../js-runtime", features = ["debugger"] }
 url.workspace = true
 transmog-process-sandbox = { version = "=0.1.18", path = "../process-sandbox" }
 transmog-script = { version = "=0.1.18", path = "../proxy-script" }

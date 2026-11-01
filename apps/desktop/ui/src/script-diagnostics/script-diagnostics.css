@@ -1,0 +1,22 @@
+script-diagnostics { display: block; min-width: 0; }
+.developer-details { margin-block: 6px; min-width: 0; }
+.developer-details > summary { cursor: pointer; }
+.developer-actions { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-block: 8px; }
+.developer-actions label { display: flex; align-items: center; gap: 6px; }
+.developer-exception, .developer-record { border-block-start: 1px solid var(--line); padding-block: 8px; min-width: 0; }
+.developer-details pre { white-space: pre-wrap; overflow-wrap: anywhere; margin-block: 6px; max-height: 240px; overflow: auto; user-select: text; }
+.developer-frames { margin: 6px 0; padding-inline-start: 24px; }
+.developer-frames li { margin-block: 4px; overflow-wrap: anywhere; }
+.developer-frame { display: block; max-width: 100%; white-space: normal; text-align: start; overflow-wrap: anywhere; font: inherit; padding: 3px 6px; margin-block: 3px; }
+.developer-record > div { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px; }
+.developer-record details { min-width: 0; overflow-wrap: anywhere; }
+.developer-loss { overflow-wrap: anywhere; }
+.developer-source-dialog { width: min(960px, calc(100vw - 24px)); max-height: calc(100vh - 24px); box-sizing: border-box; }
+.developer-source-dialog header { display: flex; justify-content: space-between; gap: 12px; align-items: center; }
+.developer-source-identity { overflow-wrap: anywhere; user-select: text; }
+.developer-source-lines { max-height: 55vh; overflow: auto; margin-block-start: 8px; font: 13px/1.6 var(--font-mono, monospace); user-select: text; }
+.developer-source-lines > div { display: flex; min-width: max-content; padding-inline-end: 8px; }
+.developer-source-lines [data-current] { background: var(--accent-soft); outline: 1px solid currentColor; outline-offset: -1px; }
+.developer-source-lines code { white-space: pre; font: inherit; }
+.developer-line-number { display: inline-block; min-width: 5ch; text-align: end; padding-inline-end: 12px; user-select: none; }
+@media (forced-colors: active) { .developer-source-lines [data-current] { background: Highlight; color: HighlightText; } }

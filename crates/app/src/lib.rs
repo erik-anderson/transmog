@@ -33,7 +33,13 @@ mod context;
 mod inspection_sessions;
 mod replay_context;
 pub use context::{CompleteBodyContext, MAX_CONTEXT_DECODE_BYTES};
+mod debugging;
 mod diagnostics;
+pub use debugging::{
+    DebugConfiguration, DebugLiveRequest, DebugOutcome, DebugSessionInfo, DebugSessionView,
+    DebugTestRequest,
+};
+pub use transmog_script_diagnostics::debugger::DebugAction;
 mod experiment_pages;
 mod export_privacy;
 pub mod export_review;
@@ -68,9 +74,9 @@ mod visualizers;
 pub use transmog_extension_registry as extensions;
 pub use transmog_extensions::ReadRequest as VisualizerReadRequest;
 pub use visualizers::{
-    VisualizerActivation, VisualizerChoice, VisualizerHandle, VisualizerLiveStatus,
-    VisualizerLiveUpdate, VisualizerReload, VisualizerSelection, VisualizerSourceInfo,
-    VisualizerSourcePage, VisualizerView,
+    DebugVisualizerRequest, VisualizerActivation, VisualizerChoice, VisualizerHandle,
+    VisualizerLiveStatus, VisualizerLiveUpdate, VisualizerReload, VisualizerSelection,
+    VisualizerSourceInfo, VisualizerSourcePage, VisualizerView,
 };
 mod workspace;
 
@@ -186,8 +192,10 @@ pub use traces::{
 };
 pub use transmog_core::client_authentication::ClientCertificatePolicy;
 pub use transmog_core::connection_policy::AllowedHttpProtocols;
+pub use transmog_script::diagnostic_sources::SourcePage as ScriptSourcePage;
 pub use transmog_script::{
-    ScriptAction, ScriptInvocation, ScriptResult, ScriptScenario, ScriptScenarioResult,
+    ExceptionDiagnostic, LogRun, ScriptAction, ScriptInvocation, ScriptResult, ScriptScenario,
+    ScriptScenarioResult,
 };
 use transmog_session::{
     ApplicationSessionService, HostIntegration, ReplayExecutor, ServiceConfig, ServiceError,
@@ -226,7 +234,7 @@ pub enum ErrorCategory {
 }
 
 /// Bounded, redaction-safe application error.
-#[derive(Clone, Debug, Eq, Error, PartialEq, Serialize)]
+#[derive(Clone, Eq, Error, PartialEq, Serialize)]
 #[error("{message}")]
 #[serde(rename_all = "camelCase")]
 pub struct AppError {
@@ -236,6 +244,24 @@ pub struct AppError {
     pub message: String,
     /// Whether retrying the same action can be useful.
     pub retryable: bool,
+    /// Ephemeral authored evidence. Generic error serializers must not disclose it.
+    #[serde(skip)]
+    pub exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
+    /// Accepted console evidence. Only explicit local authoring DTOs may disclose it.
+    #[serde(skip)]
+    pub logs: Vec<LogRun>,
+}
+
+impl std::fmt::Debug for AppError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppError")
+            .field("category", &self.category)
+            .field("message", &self.message)
+            .field("retryable", &self.retryable)
+            .field("exception_available", &self.exception.is_some())
+            .field("log_runs", &self.logs.len())
+            .finish()
+    }
 }
 
 impl AppError {
@@ -249,7 +275,24 @@ impl AppError {
             category,
             message,
             retryable,
+            exception: None,
+            logs: Vec::new(),
         }
+    }
+
+    pub(crate) fn with_exception(
+        mut self,
+        exception: Option<Box<transmog_script::ExceptionDiagnostic>>,
+    ) -> Self {
+        self.exception = exception.filter(|diagnostic| diagnostic.is_bounded());
+        self
+    }
+
+    pub(crate) fn with_logs(mut self, logs: Vec<LogRun>) -> Self {
+        if logs.len() <= 9 && logs.iter().all(LogRun::is_bounded) {
+            self.logs = logs;
+        }
+        self
     }
 }
 
@@ -408,6 +451,7 @@ pub struct Application {
     response_assets: response_assets::ResponseAssetStore,
     saved_demos: saved_demos::SavedDemoRegistry,
     scripts: scripts::ScriptRegistry,
+    debuggers: debugging::Debuggers,
     previews: preview::PreviewService,
     traces: traces::TraceRegistry,
     searches: search::SearchRegistry,
@@ -597,6 +641,7 @@ impl Application {
             response_assets,
             saved_demos,
             scripts,
+            debuggers: debugging::Debuggers::default(),
             previews,
             traces: traces::TraceRegistry::default(),
             searches: search::SearchRegistry::default(),
@@ -1198,6 +1243,21 @@ impl Application {
     /// Returns lightweight availability for applied script sandboxes.
     pub fn script_runtime_status(&self) -> Vec<ScriptRuntimeStatus> {
         self.scripts.runtime_status()
+    }
+
+    /// Reads a bounded source preview from the immutable ephemeral execution cache.
+    /// This never resolves a path, fetches a URL, or substitutes a current draft.
+    /// # Errors
+    /// Returns unavailable when the exact artifact/source/position is no longer retained.
+    pub fn script_source(
+        &self,
+        artifact: &str,
+        source: &str,
+        line: u32,
+        column: u32,
+    ) -> Result<ScriptSourcePage, AppError> {
+        transmog_script::diagnostic_sources::read(artifact, source, line, column).ok_or_else(||
+            AppError::new(ErrorCategory::Unavailable, "The exact source snapshot or position is unavailable. Generated locations remain in the call stack.", false))
     }
 
     /// Retries an applied artifact while preserving all authored drafts.
@@ -2688,6 +2748,31 @@ impl Application {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn generic_application_errors_omit_authored_exception_evidence() {
+        let exception = serde_json::from_value(serde_json::json!({
+            "exception":{"name":"Error","message":"private-exception-canary","frames":[],"unavailable":false},
+            "causes":[],"truncated":false
+        })).unwrap();
+        let error = super::AppError::new(super::ErrorCategory::InvalidInput, "safe status", false)
+            .with_exception(Some(exception)).with_logs(serde_json::from_value(serde_json::json!([{
+"context":{"revision":"executed-build","callback":"onRequestHead","invocation":1,"exchangeId":"1"},
+"records":[{"sequence":1,"timeUnixMs":1,"level":"info","text":"private-console-canary","frames":[],"truncated":false}],"dropped":0,"incomplete":false
+}])).unwrap());
+        assert!(error.exception.is_some());
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("private-console-canary")
+        );
+        assert!(!format!("{error:?}").contains("private-console-canary"));
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("private-exception-canary")
+        );
+        assert!(!format!("{error:?}").contains("private-exception-canary"));
+    }
     use super::*;
 
     #[test]

@@ -646,6 +646,8 @@ fn validate_review_change(
         && matches!(change,transmog_app::HeaderRuleChange::Save{rule,..}|transmog_app::HeaderRuleChange::Restore{rule} if rule.enabled)
     {
         return Err(AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::InvalidInput,
             message:
                 "Private drafts stay disabled. Publish the saved rule to use it in live traffic."
@@ -823,6 +825,29 @@ fn script_status(state: State<'_, DesktopState>) -> ScriptStatus {
     state.application.script_status()
 }
 
+/// Authored exception details are serialized only on local authoring commands.
+#[derive(serde::Serialize)]
+pub(super) struct ScriptCommandError {
+    #[serde(flatten)]
+    error: AppError,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    exception: Option<Box<transmog_app::ExceptionDiagnostic>>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    logs: Vec<transmog_app::LogRun>,
+}
+
+impl From<AppError> for ScriptCommandError {
+    fn from(mut error: AppError) -> Self {
+        let exception = error.exception.take();
+        let logs = std::mem::take(&mut error.logs);
+        Self {
+            error,
+            exception,
+            logs,
+        }
+    }
+}
+
 #[tauri::command]
 fn script_help(state: State<'_, DesktopState>) -> serde_json::Value {
     state.application.script_help()
@@ -860,19 +885,23 @@ async fn test_script(
     candidate_id: String,
     invocation: ScriptInvocation,
     state: State<'_, DesktopState>,
-) -> Result<ScriptResult, AppError> {
+) -> Result<ScriptResult, ScriptCommandError> {
     state
         .application
         .test_script(&candidate_id, invocation)
         .await
+        .map_err(ScriptCommandError::from)
 }
 
 #[tauri::command]
 fn activate_script(
     candidate_id: String,
     state: State<'_, DesktopState>,
-) -> Result<ScriptStatus, AppError> {
-    state.application.activate_script(&candidate_id)
+) -> Result<ScriptStatus, ScriptCommandError> {
+    state
+        .application
+        .activate_script(&candidate_id)
+        .map_err(ScriptCommandError::from)
 }
 
 #[tauri::command]
@@ -880,11 +909,12 @@ async fn test_script_scenario(
     candidate_id: String,
     scenario: transmog_app::ScriptScenario,
     state: State<'_, DesktopState>,
-) -> Result<transmog_app::ScriptScenarioResult, AppError> {
+) -> Result<transmog_app::ScriptScenarioResult, ScriptCommandError> {
     state
         .application
         .test_script_scenario(&candidate_id, scenario)
         .await
+        .map_err(ScriptCommandError::from)
 }
 
 #[tauri::command]
@@ -900,10 +930,11 @@ fn resume_script(
     script_id: String,
     expected_generation: u64,
     state: State<'_, DesktopState>,
-) -> Result<ScriptStatus, AppError> {
+) -> Result<ScriptStatus, ScriptCommandError> {
     state
         .application
         .resume_script(&script_id, expected_generation)
+        .map_err(ScriptCommandError::from)
 }
 
 #[tauri::command]
@@ -911,20 +942,91 @@ fn script_runtime_status(state: State<'_, DesktopState>) -> Vec<transmog_app::Sc
     state.application.script_runtime_status()
 }
 
+/// Explicit local read of an immutable source already registered by a supervisor.
+#[tauri::command]
+fn script_source(
+    artifact: String,
+    source: String,
+    line: u32,
+    column: u32,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::ScriptSourcePage, AppError> {
+    state
+        .window_application(&window)?
+        .script_source(&artifact, &source, line, column)
+}
+
+#[tauri::command]
+async fn debug_next_script_exchange(
+    request: transmog_app::DebugLiveRequest,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::DebugSessionInfo, AppError> {
+    state
+        .window_application(&window)?
+        .debug_next_script_exchange(window.label(), &request)
+}
+#[tauri::command]
+async fn start_debug_test(
+    request: transmog_app::DebugTestRequest,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::DebugSessionInfo, AppError> {
+    state
+        .window_application(&window)?
+        .debug_script_test(window.label(), request)
+}
+#[tauri::command]
+fn debug_session(
+    session: String,
+    after: u64,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<transmog_app::DebugSessionView, AppError> {
+    state
+        .window_application(&window)?
+        .debug_session(window.label(), &session, after)
+}
+#[tauri::command]
+fn debug_command(
+    session: String,
+    action: transmog_app::DebugAction,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<u64, AppError> {
+    state
+        .window_application(&window)?
+        .debug_command(window.label(), &session, action)
+}
+#[tauri::command]
+fn close_debug_session(
+    session: String,
+    window: tauri::WebviewWindow,
+    state: State<'_, DesktopState>,
+) -> Result<(), AppError> {
+    state
+        .window_application(&window)?
+        .close_debug_session(window.label(), &session)
+}
+
 #[tauri::command]
 async fn retry_script(
     script_id: String,
     expected_generation: u64,
     state: State<'_, DesktopState>,
-) -> Result<ScriptStatus, AppError> {
+) -> Result<ScriptStatus, ScriptCommandError> {
     let application = state.application.clone();
     tokio::task::spawn_blocking(move || application.retry_script(&script_id, expected_generation))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Script retry could not complete. Your draft is preserved.".into(),
             retryable: true,
         })?
+        .map_err(ScriptCommandError::from)
 }
 
 #[tauri::command]
@@ -1001,6 +1103,8 @@ async fn response_body_file_info(
     })
     .await
     .map_err(|_| AppError {
+        exception: None,
+        logs: Vec::new(),
         category: transmog_app::ErrorCategory::Unavailable,
         message: "Response file check could not complete".into(),
         retryable: true,
@@ -1024,6 +1128,8 @@ async fn import_response_asset(
     tokio::task::spawn_blocking(move || application.import_response_asset(input))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Response file import could not complete".into(),
             retryable: true,
@@ -1474,6 +1580,8 @@ async fn traffic_facets(
     tauri::async_runtime::spawn_blocking(move || application.traffic_facets(&request))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Traffic facet worker failed".into(),
             retryable: true,
@@ -1490,6 +1598,8 @@ async fn query_traffic_view(
     tauri::async_runtime::spawn_blocking(move || application.query_traffic_view(&query))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Traffic query worker failed".into(),
             retryable: true,
@@ -1519,6 +1629,8 @@ async fn extension_traffic_facets(
     tauri::async_runtime::spawn_blocking(move || application.extension_traffic_facets(&request))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Extension filter counts could not be read".into(),
             retryable: true,
@@ -1546,6 +1658,8 @@ async fn classify_traffic_rows(
     tauri::async_runtime::spawn_blocking(move || application.classify_traffic_rows(&ids, &columns))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Header classification worker failed".into(),
             retryable: true,
@@ -1578,6 +1692,8 @@ async fn traffic_timeline_rows(
     })
     .await
     .map_err(|_| AppError {
+        exception: None,
+        logs: Vec::new(),
         category: transmog_app::ErrorCategory::Internal,
         message: "Timeline query worker failed".into(),
         retryable: true,
@@ -1646,6 +1762,8 @@ async fn converter_header_input(
     tokio::task::spawn_blocking(move || application.converter_header_input(&id, &boundary, index))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Converter header input is unavailable".into(),
             retryable: false,
@@ -1750,6 +1868,8 @@ async fn save_request_body(
         return Ok(None);
     };
     let path_text = destination.path().to_str().ok_or_else(|| AppError {
+        exception: None,
+        logs: Vec::new(),
         category: transmog_app::ErrorCategory::InvalidInput,
         message: "Choose a request body path that can be represented in a command".into(),
         retryable: false,
@@ -1761,6 +1881,8 @@ async fn save_request_body(
 
 fn request_action_error() -> AppError {
     AppError {
+        exception: None,
+        logs: Vec::new(),
         category: transmog_app::ErrorCategory::Unavailable,
         message: "Request action worker failed".into(),
         retryable: true,
@@ -1909,6 +2031,8 @@ async fn save_response_body(
     })
     .await
     .map_err(|_| AppError {
+        exception: None,
+        logs: Vec::new(),
         category: transmog_app::ErrorCategory::Internal,
         message: "Response save preparation failed".to_owned(),
         retryable: true,
@@ -1936,6 +2060,8 @@ async fn stream_page(
     tokio::task::spawn_blocking(move || app.stream_page(&query))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Stream query failed".into(),
             retryable: true,
@@ -1952,6 +2078,8 @@ async fn stream_message(
     tokio::task::spawn_blocking(move || app.stream_message(&id, sequence))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Stream read failed".into(),
             retryable: true,
@@ -1970,6 +2098,8 @@ async fn save_stream_message(
     let message = tokio::task::spawn_blocking(move || app.stream_message(&id, sequence))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Stream read failed".into(),
             retryable: true,
@@ -1998,6 +2128,8 @@ async fn save_stream_message(
     tokio::task::spawn_blocking(move || transmog_app::save_stream_content(file.path(), &bytes))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Internal,
             message: "Message save failed".into(),
             retryable: true,
@@ -2113,6 +2245,8 @@ async fn start_capture(
     let _certificate_operation = state.certificate_operation.lock().await;
     if !matches!(state.application.status().lifecycle, AppLifecycle::Stopped) {
         return Err(AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::InvalidInput,
             message: "Stop the proxy before starting a file-only recording.".into(),
             retryable: false,
@@ -2127,6 +2261,8 @@ async fn start_capture(
             .configure_system_proxy,
     )
     .map_err(|message| AppError {
+        exception: None,
+        logs: Vec::new(),
         category: transmog_app::ErrorCategory::InvalidInput,
         message,
         retryable: false,
@@ -2146,6 +2282,8 @@ async fn start_capture(
     {
         let _ = state.application.stop_capture().await;
         return Err(AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: error,
             retryable: true,
@@ -2583,6 +2721,12 @@ pub fn run() {
                 resume_script,
                 retry_script,
                 script_runtime_status,
+                script_source,
+                start_debug_test,
+                debug_next_script_exchange,
+                debug_session,
+                debug_command,
+                close_debug_session,
                 response_assets,
                 inspect_response_asset,
                 autoresponse_source_headers,
@@ -2657,6 +2801,9 @@ pub fn run() {
                 visualizers::visualizer_page,
                 visualizers::visualizer_choices,
                 visualizers::activate_visualizer,
+                visualizers::debug_visualizer,
+                visualizers::await_debug_visualizer,
+                visualizers::attach_visualizer_debugger,
                 visualizers::reload_visualizer,
                 visualizers::visualizer_reload_status,
                 visualizers::expand_visualizer,
@@ -2735,6 +2882,7 @@ pub fn run() {
                 && let Some(state) = webview.try_state::<DesktopState>()
                 && let Ok(application) = state.workspaces.application(&state.application, webview.label())
             {
+                application.release_debuggers(webview.label());
                 application.reset_visualizer_document();
                 let window = webview.window();
                 application.set_visualizers_visible(!matches!(window.is_minimized(), Ok(true)) && !matches!(window.is_visible(), Ok(false)));
@@ -2759,6 +2907,7 @@ pub fn run() {
                 }
             }
             if matches!(event, tauri::WindowEvent::Destroyed) {
+                window.state::<DesktopState>().application.release_debuggers(window.label());
                 window.state::<format_converter::ConverterWindows>().release(window.label());
                 portable_cases::release(window.label());
                 if window.label() == "main" {
@@ -2774,7 +2923,7 @@ pub fn run() {
                         .lock()
                         .unwrap_or_else(std::sync::PoisonError::into_inner)
                         .remove(window.label());
-                    if let Some(viewer) = removed { viewer.application.deactivate_visualizers(); if viewer.review.is_none(){viewer.application.cancel_composer_requests();} }
+                    if let Some(viewer) = removed { viewer.application.release_debuggers(window.label());viewer.application.deactivate_visualizers(); if viewer.review.is_none(){viewer.application.cancel_composer_requests();} }
                 }
             }
             if window.label() == "main"
@@ -3152,6 +3301,31 @@ fn into_tauri_response(result: Result<UiResponse, UiError>) -> Response<Vec<u8>>
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn script_command_errors_explicitly_project_local_exception_details() {
+        let exception = serde_json::from_value(serde_json::json!({
+            "exception":{"name":"Error","message":"local-detail-canary","frames":[],"unavailable":false},
+            "causes":[],"truncated":false
+        })).unwrap();
+        let error = transmog_app::AppError {
+            category: transmog_app::ErrorCategory::InvalidInput,
+            message: "safe status".into(),
+            retryable: false,
+            exception: Some(exception),
+            logs: Vec::new(),
+        };
+        assert!(
+            !serde_json::to_string(&error)
+                .unwrap()
+                .contains("local-detail-canary")
+        );
+        let view = serde_json::to_value(super::ScriptCommandError::from(error)).unwrap();
+        assert_eq!(view["message"], "safe status");
+        assert_eq!(
+            view["exception"]["exception"]["message"],
+            "local-detail-canary"
+        );
+    }
     use super::{
         OwnedCertificateRegistry, is_allowed_navigation, preview_handle, remove_owned_app_data,
         reset_managed_ca, validate_proxy_trust,

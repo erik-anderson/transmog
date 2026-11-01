@@ -6,11 +6,11 @@
 use std::io::{Read, Write};
 
 use std::collections::BTreeMap;
+use transmog_js_runtime::debugger::{DebugAttachment, HostInput, Input, Routed};
 use transmog_js_runtime::{ErrorKind, Runtime};
 use transmog_script::{
     SCRIPT_HOST_PROTOCOL_VERSION, ScriptFailure, ScriptFailureCategory, ScriptHostReply,
-    ScriptHostRequest, ScriptInvocation, ScriptManifest, ScriptResult, read_host_frame,
-    write_host_frame,
+    ScriptHostRequest, ScriptInvocation, ScriptManifest, ScriptResult, write_host_reply_frame,
 };
 use url::Url;
 
@@ -49,14 +49,46 @@ delete globalThis.Function;
 /// # Errors
 /// Returns only process-level framing or output failures. Script failures are
 /// sent as protocol values and do not expose script inputs.
-pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
-    let first: ScriptHostRequest =
-        read_host_frame(&mut input).map_err(|error| error.to_string())?;
+pub fn run(
+    input: impl Read + Send + 'static,
+    mut output: impl Write + Send + 'static,
+) -> Result<(), String> {
+    let writer = transmog_script::stream::Output::new(move |reply: &ScriptHostReply| {
+        write_host_reply_frame(&mut output, reply).is_ok()
+    });
+    let result = run_stream(input, &writer.sender());
+    if !writer.finish() {
+        return Err("script output transport failed".into());
+    }
+    result
+}
+
+fn send(
+    output: &transmog_script::stream::OutputSender<ScriptHostReply>,
+    reply: ScriptHostReply,
+) -> Result<(), String> {
+    output
+        .control(reply)
+        .then_some(())
+        .ok_or_else(|| "script output transport failed".into())
+}
+
+fn run_stream(
+    input: impl Read + Send + 'static,
+    output: &transmog_script::stream::OutputSender<ScriptHostReply>,
+) -> Result<(), String> {
+    let mut input = HostInput::new(input, |input| {
+        transmog_script::read_host_request_frame(input).map_err(|_| "Invalid host input".into())
+    });
+    let Input::Message(first) = input.read_input()? else {
+        return Err("Initialization required".into());
+    };
     let ScriptHostRequest::Initialize {
         protocol_version,
         token,
         manifest,
         javascript,
+        debug,
     } = first
     else {
         return Err("script host must be initialized first".to_owned());
@@ -64,7 +96,33 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
     if protocol_version != SCRIPT_HOST_PROTOCOL_VERSION {
         return Err("script host protocol version is unsupported".to_owned());
     }
-    let mut runtime = match ScriptRuntime::new(&manifest, javascript) {
+    let attachment = if debug.is_some() {
+        input.enable(debug, debug_sink(output, token), move |request| {
+            route_debug(request, token)
+        })?
+    } else {
+        None
+    };
+    let logs = output.clone();
+    let mut runtime = match ScriptRuntime::new_debug(
+        &manifest,
+        javascript,
+        move |request_id, event| {
+            let control = matches!(event, transmog_script::ConsoleEvent::End { .. });
+            let reply = ScriptHostReply::Console {
+                protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
+                token,
+                request_id,
+                event,
+            };
+            if control {
+                logs.event(reply)
+            } else {
+                logs.log(reply)
+            }
+        },
+        attachment,
+    ) {
         Ok(runtime) => runtime,
         Err(failure) => {
             let reply = ScriptHostReply::Fatal {
@@ -72,43 +130,67 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
                 token: Some(token),
                 failure,
             };
-            write_host_frame(&mut output, &reply).map_err(|error| error.to_string())?;
+            send(output, reply)?;
             return Ok(());
         }
     };
-    write_host_frame(
-        &mut output,
-        &ScriptHostReply::Ready {
+    send(
+        output,
+        ScriptHostReply::Ready {
             protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
             token,
         },
-    )
-    .map_err(|error| error.to_string())?;
+    )?;
 
     loop {
-        let request: ScriptHostRequest = match read_host_frame(&mut input) {
-            Ok(request) => request,
-            Err(error) if is_eof(&error) => return Ok(()),
-            Err(error) => return Err(error.to_string()),
+        let request = match input.read_input() {
+            Ok(Input::Message(request)) => request,
+            Ok(Input::Wake) => {
+                runtime.runtime.poll_debugger();
+                if runtime.runtime.debugger_stopped() {
+                    return Ok(());
+                }
+                continue;
+            }
+            Ok(Input::Attach(attachment)) => {
+                attach(&mut runtime.runtime, attachment)?;
+                continue;
+            }
+            Err(_) => return Ok(()),
         };
         match request {
+            ScriptHostRequest::AttachDebugger {
+                protocol_version,
+                token: supplied,
+                request_id: _,
+                options,
+            } if protocol_version == SCRIPT_HOST_PROTOCOL_VERSION && supplied == token => {
+                let attachment = input
+                    .enable(Some(options), debug_sink(output, token), move |request| {
+                        route_debug(request, token)
+                    })?
+                    .ok_or("Debugger attachment missing")?;
+                attach(&mut runtime.runtime, attachment)?;
+            }
             ScriptHostRequest::Invoke {
                 protocol_version,
                 token: supplied,
                 request_id,
                 invocation,
             } if protocol_version == SCRIPT_HOST_PROTOCOL_VERSION && supplied == token => {
+                runtime.runtime.begin_console(request_id);
+                runtime.runtime.begin_debug_operation(request_id);
                 let result = runtime.invoke(invocation);
-                write_host_frame(
-                    &mut output,
-                    &ScriptHostReply::Result {
+                runtime.runtime.finish_console();
+                send(
+                    output,
+                    ScriptHostReply::Result {
                         protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
                         token,
                         request_id,
                         result,
                     },
-                )
-                .map_err(|error| error.to_string())?;
+                )?;
             }
             ScriptHostRequest::Shutdown {
                 protocol_version,
@@ -121,8 +203,63 @@ pub fn run(mut input: impl Read, mut output: impl Write) -> Result<(), String> {
     }
 }
 
-fn is_eof(error: &transmog_script::ScriptProtocolError) -> bool {
-    matches!(error, transmog_script::ScriptProtocolError::Io(source) if source.kind() == std::io::ErrorKind::UnexpectedEof)
+fn debug_sink(
+    output: &transmog_script::stream::OutputSender<ScriptHostReply>,
+    token: transmog_script::ScriptHostToken,
+) -> impl Fn(transmog_script::debugger::DebugEvent) -> bool + Send + Sync + 'static {
+    let output = output.clone();
+    move |event| {
+        output.event(ScriptHostReply::Debugger {
+            protocol_version: SCRIPT_HOST_PROTOCOL_VERSION,
+            token,
+            event,
+        })
+    }
+}
+fn route_debug(
+    request: ScriptHostRequest,
+    token: transmog_script::ScriptHostToken,
+) -> Result<Routed<ScriptHostRequest>, String> {
+    Ok(match request {
+        ScriptHostRequest::AttachDebugger {
+            protocol_version,
+            token: supplied,
+            request_id,
+            options,
+        } if protocol_version == SCRIPT_HOST_PROTOCOL_VERSION && supplied == token => {
+            Routed::Attach {
+                options,
+                request: request_id,
+            }
+        }
+        ScriptHostRequest::ControlDebugger {
+            protocol_version,
+            token: supplied,
+            command,
+        } if protocol_version == SCRIPT_HOST_PROTOCOL_VERSION && supplied == token => {
+            Routed::Control(command)
+        }
+        value @ ScriptHostRequest::Invoke {
+            protocol_version,
+            token: supplied,
+            ..
+        } if protocol_version == SCRIPT_HOST_PROTOCOL_VERSION && supplied == token => {
+            Routed::Message(value)
+        }
+        value @ ScriptHostRequest::Shutdown {
+            protocol_version,
+            token: supplied,
+        } if protocol_version == SCRIPT_HOST_PROTOCOL_VERSION && supplied == token => {
+            Routed::Last(value)
+        }
+        _ => return Err("Invalid debug input authentication or order".into()),
+    })
+}
+fn attach(runtime: &mut Runtime, attachment: DebugAttachment) -> Result<(), String> {
+    let (options, transport, _) = attachment.into_parts();
+    runtime
+        .enable_debugger(options, transport)
+        .map_err(|_| "Debugger unavailable".into())
 }
 
 struct ScriptRuntime {
@@ -131,41 +268,69 @@ struct ScriptRuntime {
 }
 
 impl ScriptRuntime {
-    fn new(manifest: &ScriptManifest, javascript: String) -> Result<Self, ScriptFailure> {
+    #[cfg(test)]
+    fn new(
+        manifest: &ScriptManifest,
+        javascript: String,
+        sink: impl Fn(u64, transmog_script::ConsoleEvent) -> bool + 'static,
+    ) -> Result<Self, ScriptFailure> {
+        Self::new_debug(manifest, javascript, sink, None)
+    }
+    fn new_debug(
+        manifest: &ScriptManifest,
+        javascript: String,
+        sink: impl Fn(u64, transmog_script::ConsoleEvent) -> bool + 'static,
+        attachment: Option<DebugAttachment>,
+    ) -> Result<Self, ScriptFailure> {
         let mut runtime = Runtime::new(
             (manifest.limits.max_heap_bytes / 8).max(1024 * 1024),
             manifest.limits.max_heap_bytes,
         )
         .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
-        // Restrictions apply before any user top-level code executes.
         runtime
-            .execute_script("transmog:script-bootstrap", BOOTSTRAP)
+            .enable_console(sink)
             .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
-        let handlers = manifest
-            .handlers
-            .iter()
-            .map(|handler| {
-                let name = handler.export_name();
-                format!("{name}: typeof {name} === 'function' ? {name} : undefined")
-            })
-            .collect::<Vec<_>>()
-            .join(",");
-        let module =
-            format!("{javascript}\nglobalThis.__transmogHandlers = Object.freeze({{{handlers}}});");
-        let specifier = Url::parse("file:///transmog-script/main.js")
-            .expect("constant module specifier is valid");
-        runtime
-            .evaluate_modules(
-                &specifier,
-                BTreeMap::from([
-                    (specifier.clone(), module),
-                    (
-                        Url::parse("transmog:api").expect("constant API URL"),
-                        include_str!("api.mjs").to_owned(),
-                    ),
-                ]),
-            )
-            .map_err(|error| failure(ScriptFailureCategory::Exception, &error.to_string()))?;
+        runtime.begin_console(0);
+        if let Some(attachment) = attachment {
+            attach(&mut runtime, attachment)
+                .map_err(|_| failure(ScriptFailureCategory::Unavailable, "Debugger unavailable"))?;
+        }
+        runtime.begin_debug_operation(0);
+        let initialized = (|| -> Result<(), ScriptFailure> {
+            // Restrictions apply before any user top-level code executes.
+            runtime
+                .execute_script("transmog:script-bootstrap", BOOTSTRAP)
+                .map_err(|error| failure(ScriptFailureCategory::Unavailable, &error.to_string()))?;
+            let handlers = manifest
+                .handlers
+                .iter()
+                .map(|handler| {
+                    let name = handler.export_name();
+                    format!("{name}: typeof {name} === 'function' ? {name} : undefined")
+                })
+                .collect::<Vec<_>>()
+                .join(",");
+            let module = format!(
+                "{javascript}\nglobalThis.__transmogHandlers = Object.freeze({{{handlers}}});"
+            );
+            let specifier = Url::parse("file:///transmog-script/main.js")
+                .expect("constant module specifier is valid");
+            runtime
+                .evaluate_modules(
+                    &specifier,
+                    BTreeMap::from([
+                        (specifier.clone(), module),
+                        (
+                            Url::parse("transmog:api").expect("constant API URL"),
+                            include_str!("api.mjs").to_owned(),
+                        ),
+                    ]),
+                )
+                .map_err(|error| engine_failure(ScriptFailureCategory::Exception, error))?;
+            Ok(())
+        })();
+        runtime.finish_console();
+        initialized?;
         Ok(Self {
             runtime,
             manifest: manifest.clone(),
@@ -202,7 +367,7 @@ impl ScriptRuntime {
                     ErrorKind::NotString => ScriptFailureCategory::InvalidAction,
                     _ => ScriptFailureCategory::Exception,
                 };
-                failure(category, &error.to_string())
+                engine_failure(category, error)
             })?;
         let result = serde_json::from_str(&output)
             .map_err(|error| failure(ScriptFailureCategory::InvalidAction, &error.to_string()))?;
@@ -212,36 +377,47 @@ impl ScriptRuntime {
 }
 
 fn failure(category: ScriptFailureCategory, message: &str) -> ScriptFailure {
-    let (line, column) = generated_location(message).unwrap_or((None, None));
     ScriptFailure {
         category,
+        logs: Vec::new(),
         message: message.chars().take(512).collect(),
-        line,
-        column,
+        line: None,
+        column: None,
+        exception: None,
     }
 }
 
-fn generated_location(message: &str) -> Option<(Option<u32>, Option<u32>)> {
-    let suffix = message.split("main.js:").nth(1)?;
-    let mut parts = suffix.split(|character: char| !character.is_ascii_digit());
-    let line = parts.next()?.parse::<u32>().ok()?;
-    let column = parts.next()?.parse::<u32>().ok()?;
-    Some((Some(line), Some(column)))
+fn engine_failure(
+    category: ScriptFailureCategory,
+    error: transmog_js_runtime::Error,
+) -> ScriptFailure {
+    let mut failure = failure(category, &error.to_string());
+    failure.exception = error.exception;
+    if let Some(location) = failure.exception.as_ref().and_then(|diagnostic| {
+        diagnostic
+            .exception
+            .frames
+            .iter()
+            .filter_map(|frame| frame.generated.as_ref())
+            .find(|location| location.source == "file:///transmog-script/main.js")
+    }) {
+        failure.line = Some(location.line);
+        failure.column = Some(location.column);
+    }
+    failure
 }
 
 #[cfg(test)]
 mod location_tests {
-    use super::generated_location;
+    use super::*;
 
     #[test]
-    fn extracts_v8_module_stack_location() {
-        assert_eq!(
-            generated_location(
-                "Error: failed\n    at onRequestHead (file:///transmog-script/main.js:17:9)"
-            ),
-            Some((Some(17), Some(9)))
+    fn authored_message_cannot_forge_a_location() {
+        let failure = failure(
+            ScriptFailureCategory::Exception,
+            "Error: file:///transmog-script/main.js:17:9",
         );
-        assert_eq!(generated_location("bounded failure"), None);
+        assert_eq!((failure.line, failure.column), (None, None));
     }
 }
 
@@ -318,7 +494,7 @@ mod tests {
             return { decision: { action: "abort", reason: `${request.host}:${context.handler}` } };
           }
         "#;
-        let mut runtime = ScriptRuntime::new(&manifest(), source.to_owned()).unwrap();
+        let mut runtime = ScriptRuntime::new(&manifest(), source.to_owned(), |_, _| true).unwrap();
         let result = runtime
             .invoke(ScriptInvocation {
                 parameters: std::collections::BTreeMap::new(),

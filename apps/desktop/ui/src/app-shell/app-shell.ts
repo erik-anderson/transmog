@@ -729,6 +729,16 @@ export class AppShell extends WebUIElement {
       return false;
     }
   }
+  async openExtensionDebugger(
+    event: CustomEvent<{ extensionId: string; visualizerId: string }>,
+  ): Promise<void> {
+    if (await this.activateView("traffic")) {
+      await this.traffic.reviewExtensionDebugger(
+        event.detail.extensionId,
+        event.detail.visualizerId,
+      );
+    }
+  }
 
   async startProxy(event?: Event): Promise<void> {
     event?.preventDefault();

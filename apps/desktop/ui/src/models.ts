@@ -1,3 +1,5 @@
+import type { ExceptionDiagnostic, LogRun } from "./script-diagnostics/models.js";
+
 export type Lifecycle = "stopped" | "running" | "draining" | "stopping" | "failed";
 
 export interface AppStatus {
@@ -189,6 +191,9 @@ export interface SessionDetail {
   diagnostics: string[];
   hookEffects: string[];
   scriptReports?: Array<{
+    exception?: ExceptionDiagnostic | null;
+    logs?: LogRun[];
+    detailsOmitted?: boolean;
     script: string;
     phase: string;
     annotations: Array<{ note: string; tags: string[]; severity: string }>;
@@ -930,6 +935,10 @@ export interface ScriptStatus {
   historyCount: number;
 }
 export interface ScriptRuntimeStatus {
+  debugging?: boolean;
+  exception?: ExceptionDiagnostic | null;
+  logs?: LogRun[];
+  logRunsOmitted?: number;
   scriptId: string;
   revision: number;
   available: boolean;

@@ -959,9 +959,18 @@ impl CallbackGate {
         task: JoinHandle<T>,
         permit: OwnedSemaphorePermit,
     ) -> Result<T, HookExecutionError> {
+        self.await_task_debug(context, task, permit, None).await
+    }
+    pub(super) async fn await_task_debug<T: Send + 'static>(
+        &self,
+        context: &HookContext,
+        task: JoinHandle<T>,
+        permit: OwnedSemaphorePermit,
+        clock: Option<&Arc<transmog_script_diagnostics::supervision::PauseClock>>,
+    ) -> Result<T, HookExecutionError> {
         let mut task = AbortOnDrop::new(task);
         let result = tokio::select! {
-            joined = timeout(self.callback_timeout, task.handle()) => match joined {
+            joined = transmog_script_diagnostics::supervision::wait_budget(self.callback_timeout,clock, task.handle()) => match joined {
                 Ok(Ok(value)) => Ok(value),
                 Ok(Err(error)) if error.is_panic() => Err(HookExecutionError::Panicked),
                 Ok(Err(_)) => Err(HookExecutionError::Cancelled),
@@ -990,9 +999,16 @@ impl CallbackGate {
         &self,
         task: JoinHandle<T>,
         permit: OwnedSemaphorePermit,
+        clock: Option<&Arc<transmog_script_diagnostics::supervision::PauseClock>>,
     ) -> Result<T, HookExecutionError> {
         let mut task = AbortOnDrop::new(task);
-        let result = match timeout(self.terminal_timeout, task.handle()).await {
+        let result = match transmog_script_diagnostics::supervision::wait_budget(
+            self.terminal_timeout,
+            clock,
+            task.handle(),
+        )
+        .await
+        {
             Ok(Ok(value)) => Ok(value),
             Ok(Err(error)) if error.is_panic() => Err(HookExecutionError::Panicked),
             Ok(Err(_)) => Err(HookExecutionError::Cancelled),
@@ -1012,8 +1028,14 @@ impl CallbackGate {
         context: &HookContext,
     ) -> Result<RequestHeadAction, HookExecutionError> {
         let permit = self.permit(context).await?;
+        catch_unwind(AssertUnwindSafe(|| {
+            interceptor.prepare_debug_request(&event.head);
+        }))
+        .map_err(|_| HookExecutionError::Panicked)?;
+        let clock = interceptor.debug_pause_clock();
         let task = tokio::spawn(async move { interceptor.on_request_head(event).await });
-        self.await_task(context, task, permit).await
+        self.await_task_debug(context, task, permit, clock.as_ref())
+            .await
     }
 
     async fn request_body(
@@ -1023,8 +1045,10 @@ impl CallbackGate {
         context: &HookContext,
     ) -> Result<super::RequestBodyAction, HookExecutionError> {
         let permit = self.permit(context).await?;
+        let clock = interceptor.debug_pause_clock();
         let task = tokio::spawn(async move { interceptor.on_request_body(event).await });
-        self.await_task(context, task, permit).await
+        self.await_task_debug(context, task, permit, clock.as_ref())
+            .await
     }
 
     async fn response_head(
@@ -1034,8 +1058,10 @@ impl CallbackGate {
         context: &HookContext,
     ) -> Result<ResponseHeadAction, HookExecutionError> {
         let permit = self.permit(context).await?;
+        let clock = interceptor.debug_pause_clock();
         let task = tokio::spawn(async move { interceptor.on_response_head(event).await });
-        self.await_task(context, task, permit).await
+        self.await_task_debug(context, task, permit, clock.as_ref())
+            .await
     }
 
     async fn response_body(
@@ -1045,8 +1071,10 @@ impl CallbackGate {
         context: &HookContext,
     ) -> Result<super::ResponseBodyAction, HookExecutionError> {
         let permit = self.permit(context).await?;
+        let clock = interceptor.debug_pause_clock();
         let task = tokio::spawn(async move { interceptor.on_response_body(event).await });
-        self.await_task(context, task, permit).await
+        self.await_task_debug(context, task, permit, clock.as_ref())
+            .await
     }
 
     async fn completed(
@@ -1055,8 +1083,9 @@ impl CallbackGate {
         outcome: CompletedExchange,
     ) -> Result<(), HookExecutionError> {
         let permit = self.terminal_permit().await?;
+        let clock = interceptor.debug_pause_clock();
         let task = tokio::spawn(async move { interceptor.on_completed(outcome).await });
-        self.await_terminal(task, permit).await
+        self.await_terminal(task, permit, clock.as_ref()).await
     }
 
     async fn failed(
@@ -1065,8 +1094,9 @@ impl CallbackGate {
         failure: ExchangeFailure,
     ) -> Result<(), HookExecutionError> {
         let permit = self.terminal_permit().await?;
+        let clock = interceptor.debug_pause_clock();
         let task = tokio::spawn(async move { interceptor.on_failed(failure).await });
-        self.await_terminal(task, permit).await
+        self.await_terminal(task, permit, clock.as_ref()).await
     }
 }
 
@@ -1872,6 +1902,74 @@ mod tests {
     #[test]
     fn metadata_timestamp_is_populated() {
         assert!(metadata(1).started_at <= SystemTime::now());
+    }
+
+    #[tokio::test]
+    async fn native_debug_pause_is_excluded_from_callback_and_terminal_budgets_only_when_authorized()
+     {
+        use transmog_script_diagnostics::{
+            debugger::{DebugEvent, DebugEventKind, DebugOptions, ExceptionPolicy},
+            supervision::Session,
+        };
+        let session = Session::new(DebugOptions {
+            session: "a".repeat(32),
+            exceptions: ExceptionPolicy::None,
+            breakpoints: vec![],
+        })
+        .unwrap();
+        let context = HookContext::new(metadata(1), Duration::from_millis(10));
+        let gate = CallbackGate::new(limits(Duration::from_millis(10), 1));
+        for terminal in [false, true] {
+            assert!(session.begin(u64::from(terminal)));
+            let make = |event| DebugEvent {
+                session: session.id().into(),
+                invocation: u64::from(terminal),
+                request: 0,
+                event,
+            };
+            if !terminal {
+                session.accept(make(DebugEventKind::Attached)).unwrap();
+            }
+            session
+                .accept(make(DebugEventKind::Paused {
+                    pause: if terminal { 2 } else { 1 },
+                    reason: "breakpoint".into(),
+                    frames: vec![],
+                    exception: None,
+                    truncated: false,
+                }))
+                .unwrap();
+            let clock = session.clock();
+            let owner = Arc::clone(&session);
+            let task = tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(60)).await;
+                owner
+                    .accept(DebugEvent {
+                        session: owner.id().into(),
+                        invocation: u64::from(terminal),
+                        request: 0,
+                        event: DebugEventKind::Resumed,
+                    })
+                    .unwrap();
+                7
+            });
+            let permit = gate.permit(&context).await.unwrap();
+            let result = if terminal {
+                gate.await_terminal(task, permit, Some(&clock)).await
+            } else {
+                gate.await_task_debug(&context, task, permit, Some(&clock))
+                    .await
+            };
+            assert_eq!(result.unwrap(), 7);
+            session.completed();
+        }
+        let permit = gate.permit(&context).await.unwrap();
+        assert!(matches!(
+            gate.await_task(&context, tokio::spawn(std::future::pending::<()>()), permit)
+                .await,
+            Err(HookExecutionError::TimedOut)
+        ));
+        session.stop("Test ended");
     }
 
     #[tokio::test]

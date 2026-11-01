@@ -9,7 +9,7 @@ use transmog_script_compiler::{
         CallExpr, Callee, Decl, ExportSpecifier, Expr, Module, ModuleDecl, ModuleExportName,
         ModuleItem, NewExpr, Stmt,
     },
-    parse_module,
+    parse_module_detailed,
     visit::{Visit, VisitWith},
 };
 use url::Url as ModuleSpecifier;
@@ -45,11 +45,16 @@ const BOOTSTRAP: &str = r"
 ";
 
 pub(super) struct Runtime {
-    engine: Engine,
+    pub(super) engine: Engine,
     visualizer: Visualizer,
 }
 impl Runtime {
-    pub(super) fn new(snapshot: &Snapshot, visualizer_id: &str) -> Result<Self, Failure> {
+    pub(super) fn new(
+        snapshot: &Snapshot,
+        visualizer_id: &str,
+        sink: impl Fn(u64, transmog_extensions::ConsoleEvent) -> bool + 'static,
+        attachment: Option<transmog_js_runtime::debugger::DebugAttachment>,
+    ) -> Result<Self, Failure> {
         let visualizer = snapshot
             .manifest
             .visualizers
@@ -57,7 +62,6 @@ impl Runtime {
             .find(|v| v.id == visualizer_id)
             .ok_or_else(|| fail(FailureKind::Validation, "Unknown visualizer contribution"))?
             .clone();
-        let (entry, modules) = load_modules(snapshot, &visualizer)?;
         let mut runtime =
             Engine::new(8 * 1024 * 1024, visualizer.limits.heap_bytes).map_err(|_| {
                 fail(
@@ -65,26 +69,61 @@ impl Runtime {
                     "The visualizer runtime could not initialize",
                 )
             })?;
-        // Install capability restrictions before executing any extension module initializer.
-        runtime
-            .execute_script("transmog:extension-bootstrap", BOOTSTRAP)
-            .map_err(|_| {
-                fail(
-                    FailureKind::Unavailable,
-                    "Runtime restrictions could not initialize",
-                )
-            })?;
-        runtime.evaluate_modules(&entry, modules).map_err(|error| {
-            if error.kind == ErrorKind::Module {
-                fail(FailureKind::Validation, "Package module loading failed")
-            } else {
-                fail(FailureKind::Exception, "Extension initialization failed")
-            }
+        runtime.enable_console(sink).map_err(|_| {
+            fail(
+                FailureKind::Unavailable,
+                "Runtime console could not initialize",
+            )
         })?;
+        runtime.begin_console(0);
+        if let Some(attachment) = attachment {
+            let (options, transport, _) = attachment.into_parts();
+            runtime
+                .enable_debugger(options, transport)
+                .map_err(|_| fail(FailureKind::Unavailable, "Debugger unavailable"))?;
+        }
+        runtime.begin_debug_operation(0);
+        let initialized = (|| -> Result<(), Failure> {
+            let (entry, modules) = load_modules(snapshot, &visualizer)?;
+            // Install capability restrictions before executing any extension module initializer.
+            runtime
+                .execute_script("transmog:extension-bootstrap", BOOTSTRAP)
+                .map_err(|_| {
+                    fail(
+                        FailureKind::Unavailable,
+                        "Runtime restrictions could not initialize",
+                    )
+                })?;
+            runtime.evaluate_modules(&entry, modules).map_err(|error| {
+                if error.kind == ErrorKind::Module {
+                    engine_failure(
+                        FailureKind::Validation,
+                        "Package module loading failed",
+                        error,
+                    )
+                } else {
+                    engine_failure(
+                        FailureKind::Exception,
+                        "Extension initialization failed",
+                        error,
+                    )
+                }
+            })?;
+            Ok(())
+        })();
+        runtime.finish_console();
+        initialized?;
         Ok(Self {
             engine: runtime,
             visualizer,
         })
+    }
+    pub(super) fn begin_console(&mut self, invocation: u64) {
+        self.engine.begin_console(invocation);
+        self.engine.begin_debug_operation(invocation);
+    }
+    pub(super) fn finish_console(&mut self) {
+        self.engine.finish_console();
     }
     pub(super) fn invoke(&mut self, invocation: &Invocation) -> Result<VisualizationStep, Failure> {
         if matches!(invocation, Invocation::Traffic { .. })
@@ -99,9 +138,13 @@ impl Runtime {
             .map_err(|_| fail(FailureKind::Protocol, "Invocation serialization failed"))?;
         let literal = serde_json::to_string(&input)
             .map_err(|_| fail(FailureKind::Protocol, "Invocation encoding failed"))?;
-        self.engine
-            .poll_tasks()
-            .map_err(|_| fail(FailureKind::Exception, "The visualizer operation failed"))?;
+        self.engine.poll_tasks().map_err(|error| {
+            engine_failure(
+                FailureKind::Exception,
+                "The visualizer operation failed",
+                error,
+            )
+        })?;
         let output = self
             .engine
             .execute_string(
@@ -109,15 +152,18 @@ impl Runtime {
                 &format!("globalThis.__tmInvoke({literal})"),
                 self.visualizer.limits.output_bytes,
             )
-            .map_err(|error| match error.kind {
-                ErrorKind::OutputLimit => {
-                    fail(FailureKind::Limit, "Visualizer output exceeds its limit")
-                }
-                ErrorKind::NotString => fail(
-                    FailureKind::Validation,
-                    "Visualizer output must be serializable",
-                ),
-                _ => fail(FailureKind::Exception, "The visualizer operation failed"),
+            .map_err(|error| {
+                let (kind, message) = match error.kind {
+                    ErrorKind::OutputLimit => {
+                        (FailureKind::Limit, "Visualizer output exceeds its limit")
+                    }
+                    ErrorKind::NotString => (
+                        FailureKind::Validation,
+                        "Visualizer output must be serializable",
+                    ),
+                    _ => (FailureKind::Exception, "The visualizer operation failed"),
+                };
+                engine_failure(kind, message, error)
             })?;
         serde_json::from_str(&output).map_err(|_| {
             fail(
@@ -126,6 +172,12 @@ impl Runtime {
             )
         })
     }
+}
+
+fn engine_failure(kind: FailureKind, message: &str, error: transmog_js_runtime::Error) -> Failure {
+    let mut failure = fail(kind, message);
+    failure.exception = error.exception;
+    failure
 }
 
 type Modules = BTreeMap<ModuleSpecifier, String>;
@@ -174,8 +226,44 @@ fn load_modules_inner(
                     "Package module is missing or not UTF-8",
                 )
             })?;
-        let parsed = parse_module(specifier.clone(), source, ModuleSyntax::JavaScript)
-            .map_err(|_| fail(FailureKind::Validation, "JavaScript parsing failed"))?;
+        let parsed = parse_module_detailed(specifier.clone(), source, ModuleSyntax::JavaScript)
+            .map_err(|diagnostic| {
+                let mut failure = fail(FailureKind::Validation, "JavaScript parsing failed");
+                let message = diagnostic.message.chars().take(2048).collect::<String>();
+                let source_excess = diagnostic
+                    .location
+                    .as_ref()
+                    .is_some_and(|location| location.source.len() > 2048);
+                let unavailable = diagnostic.location.is_none() || source_excess;
+                let name = diagnostic
+                    .location
+                    .as_ref()
+                    .map(|_| "SyntaxError".to_owned());
+                let truncated = message.len() < diagnostic.message.len() || source_excess;
+                let frames = diagnostic
+                    .location
+                    .filter(|location| location.source.len() <= 2048)
+                    .map(|generated| transmog_extensions::StackFrame {
+                        function: String::new(),
+                        generated: Some(generated),
+                        original: None,
+                        mapping_issue: None,
+                    })
+                    .into_iter()
+                    .collect();
+                failure.exception = Some(Box::new(transmog_extensions::ExceptionDiagnostic {
+                    artifact: None,
+                    exception: transmog_extensions::ExceptionValue {
+                        name,
+                        message,
+                        frames,
+                        unavailable,
+                    },
+                    causes: vec![],
+                    truncated,
+                }));
+                failure
+            })?;
         for item in &parsed.module().body {
             let dependency = match item {
                 ModuleItem::ModuleDecl(ModuleDecl::Import(i)) if i.type_only => None,

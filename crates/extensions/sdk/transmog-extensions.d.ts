@@ -2,6 +2,20 @@
  * Use import type (or JSDoc import types); this declaration module has no runtime implementation.
  * Visualizers are read-only, synchronous and executed in an OS-isolated worker.
  */
+/** Native bounded console. Primitive text and inert object labels only;
+ * no getters, proxy traps, format substitution or custom conversion.
+ */
+interface Console {
+  log(...values: unknown[]): void;
+  debug(...values: unknown[]): void;
+  info(...values: unknown[]): void;
+  warn(...values: unknown[]): void;
+  error(...values: unknown[]): void;
+  trace(...values: unknown[]): void;
+}
+// eslint-disable-next-line no-var -- Ambient var merges with optional editor standard libraries.
+declare var console: Console;
+
 declare module "transmog:extensions/v1" {
   export type Direction = "request" | "response";
   export type BodyAccess = "none" | "optional" | "required";

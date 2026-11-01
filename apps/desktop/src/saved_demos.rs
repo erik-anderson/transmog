@@ -83,6 +83,8 @@ pub(super) async fn prepare_demo_save(
     {
         state.application.cancel_demo_save(&prepared.token);
         return Err(AppError {
+            exception: None,
+            logs: Vec::new(),
             category: ErrorCategory::Canceled,
             message: "Saving the demo was canceled".into(),
             retryable: false,
@@ -151,6 +153,8 @@ pub(super) async fn delete_saved_demo(
 
 fn error(message: &str) -> AppError {
     AppError {
+        exception: None,
+        logs: Vec::new(),
         category: ErrorCategory::Unavailable,
         message: message.into(),
         retryable: true,

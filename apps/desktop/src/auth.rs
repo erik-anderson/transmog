@@ -16,6 +16,8 @@ pub(super) async fn auth_converter_input(
     tokio::task::spawn_blocking(move || app.auth_converter_input(&handle, &finding))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Auth converter input is unavailable".into(),
             retryable: false,
@@ -43,6 +45,8 @@ pub(super) async fn auth_value(
     tokio::task::spawn_blocking(move || app.auth_value(&handle, &field))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Auth value worker unavailable".into(),
             retryable: false,
@@ -59,6 +63,8 @@ pub(super) async fn auth_values(
     tokio::task::spawn_blocking(move || app.auth_values(&handle, &fields))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Auth copy worker unavailable".into(),
             retryable: false,
@@ -85,6 +91,8 @@ pub(super) async fn related_auth(
     tokio::task::spawn_blocking(move || app.related_auth(&handle))
         .await
         .map_err(|_| AppError {
+            exception: None,
+            logs: Vec::new(),
             category: transmog_app::ErrorCategory::Unavailable,
             message: "Related auth worker unavailable".into(),
             retryable: false,

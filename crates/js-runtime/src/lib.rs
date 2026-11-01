@@ -2,11 +2,21 @@
 
 //! Direct V8 embedding for the isolated script and extension processes.
 //!
-//! This crate installs no system, network, console, or runtime ops. Callers own
+//! This crate installs no system or network ops. Hosts may opt into a bounded
+//! inert console snapshot sink. Callers own
 //! package validation, bootstrap restrictions and the external process watchdog.
 
 #[allow(unsafe_code)] // Only V8-provided callback arguments may create CallbackScopes.
 mod callbacks;
+mod console;
+#[cfg(feature = "debugger")]
+pub mod debugger;
+mod exception;
+
+/// Development-only native Inspector proof. Shipping hosts do not enable it.
+#[cfg(feature = "inspector-probe")]
+#[doc(hidden)]
+pub mod inspector_probe;
 
 use std::{cell::RefCell, collections::BTreeMap, fmt, rc::Rc, sync::Once};
 use url::Url;
@@ -52,6 +62,8 @@ pub struct Error {
     /// Stage of failure, independent of either host's wire protocol.
     pub kind: ErrorKind,
     message: String,
+    /// Bounded untrusted exception evidence, separate from host status.
+    pub exception: Option<Box<transmog_script_diagnostics::ExceptionDiagnostic>>,
 }
 
 impl Error {
@@ -59,6 +71,7 @@ impl Error {
         Self {
             kind,
             message: message.into(),
+            exception: None,
         }
     }
 }
@@ -75,16 +88,43 @@ struct State {
     entry: RefCell<Option<Url>>,
     rejected: RefCell<Vec<(v8::Global<v8::Promise>, v8::Global<v8::Value>)>>,
     uncaught: RefCell<Option<v8::Global<v8::Value>>>,
+    console: RefCell<console::Console>,
 }
 
 /// A single-threaded, capability-free JavaScript context.
 pub struct Runtime {
     // Persistent handles must be dropped before their isolate.
+    #[cfg(feature = "debugger")]
+    debugger: Option<debugger::Debugger>,
     context: v8::Global<v8::Context>,
     isolate: v8::OwnedIsolate,
 }
 
 impl Runtime {
+    /// Installs a host-owned console before any user module is evaluated.
+    /// The native sink must be bounded and nonblocking; false counts as dropped output.
+    /// # Errors
+    /// Returns an initialization error if the native console cannot be installed.
+    pub fn enable_console(
+        &mut self,
+        sink: impl Fn(u64, transmog_script_diagnostics::ConsoleEvent) -> bool + 'static,
+    ) -> Result<(), Error> {
+        v8::scope!(let scope, &mut self.isolate);
+        let context = v8::Local::new(scope, &self.context);
+        let scope = &mut v8::ContextScope::new(scope, context);
+        console::install(scope, Box::new(sink))
+    }
+
+    /// Starts a fresh bounded log stream for a native operation.
+    pub fn begin_console(&mut self, invocation: u64) {
+        state(&self.isolate).console.borrow_mut().begin(invocation);
+    }
+
+    /// Emits the ordered end marker, including calls omitted by budget or backpressure.
+    pub fn finish_console(&mut self) {
+        state(&self.isolate).console.borrow_mut().finish();
+    }
+
     /// Creates the engine with explicit microtasks and bounded V8 heap growth.
     /// External process limits remain required for native/ArrayBuffer memory.
     ///
@@ -102,7 +142,7 @@ impl Runtime {
             v8::CreateParams::default().heap_limits(initial_heap_bytes, max_heap_bytes),
         );
         isolate.set_microtasks_policy(v8::MicrotasksPolicy::Explicit);
-        isolate.set_capture_stack_trace_for_uncaught_exceptions(true, 10);
+        isolate.set_capture_stack_trace_for_uncaught_exceptions(true, 32);
         isolate.set_slot(Rc::new(State::default()));
         isolate.set_promise_reject_callback(callbacks::promise_rejected);
         isolate.add_message_listener(callbacks::uncaught_exception);
@@ -113,7 +153,12 @@ impl Runtime {
             context.set_allow_generation_from_strings(false);
             v8::Global::new(scope, context)
         };
-        Ok(Self { context, isolate })
+        Ok(Self {
+            #[cfg(feature = "debugger")]
+            debugger: None,
+            context,
+            isolate,
+        })
     }
 
     /// Executes trusted host bootstrap code before any user module initializer.
@@ -126,6 +171,10 @@ impl Runtime {
         let context = v8::Local::new(scope, &self.context);
         let scope = &mut v8::ContextScope::new(scope, context);
         v8::tc_scope!(let scope, scope);
+        // Verbose marks the embedding boundary as uncaught for Inspector's
+        // JavaScript catch prediction. The registered listener stays inert.
+        #[cfg(feature = "debugger")]
+        scope.set_verbose(self.debugger.is_some());
         run_script(scope, name, source).map(|_| ())
     }
 
@@ -144,6 +193,8 @@ impl Runtime {
         let context = v8::Local::new(scope, &self.context);
         let scope = &mut v8::ContextScope::new(scope, context);
         v8::tc_scope!(let scope, scope);
+        #[cfg(feature = "debugger")]
+        scope.set_verbose(self.debugger.is_some());
         let state = state(scope);
         if state.entry.borrow().is_some() {
             return Err(Error::new(
@@ -159,6 +210,12 @@ impl Runtime {
             let Some(module) = v8::script_compiler::compile_module(scope, &mut source) else {
                 return Err(caught(scope, ErrorKind::Module));
             };
+            #[cfg(feature = "debugger")]
+            if let Some(debugger) = &self.debugger
+                && let Some(script) = module.script_id()
+            {
+                debugger.register(script, name.as_str(), Some(code.len()));
+            }
             state
                 .modules
                 .borrow_mut()
@@ -173,6 +230,10 @@ impl Runtime {
         };
         if module.instantiate_module(scope, callbacks::resolve_module) != Some(true) {
             return Err(caught(scope, ErrorKind::Module));
+        }
+        #[cfg(feature = "debugger")]
+        if let Some(debugger) = &self.debugger {
+            debugger.modules_instantiated();
         }
         let Some(value) = module.evaluate(scope) else {
             return Err(caught(scope, ErrorKind::Exception));
@@ -213,6 +274,8 @@ impl Runtime {
         let context = v8::Local::new(scope, &self.context);
         let scope = &mut v8::ContextScope::new(scope, context);
         v8::tc_scope!(let scope, scope);
+        #[cfg(feature = "debugger")]
+        scope.set_verbose(self.debugger.is_some());
         pump_tasks(scope);
         scope.perform_microtask_checkpoint();
         check_rejections(scope)
@@ -233,6 +296,8 @@ impl Runtime {
         let context = v8::Local::new(scope, &self.context);
         let scope = &mut v8::ContextScope::new(scope, context);
         v8::tc_scope!(let scope, scope);
+        #[cfg(feature = "debugger")]
+        scope.set_verbose(self.debugger.is_some());
         let result = run_script(scope, name, source)?;
         let Some(output) = result.to_string(scope) else {
             return Err(Error::new(
@@ -252,6 +317,12 @@ impl Runtime {
 
 impl Drop for Runtime {
     fn drop(&mut self) {
+        #[cfg(feature = "debugger")]
+        if let Some(debugger) = self.debugger.take() {
+            v8::scope!(let scope, &mut self.isolate);
+            debugger.close(v8::Local::new(scope, &self.context));
+            drop(debugger);
+        }
         // Clear module and rejection handles while the isolate is still alive.
         // OwnedIsolate then notifies its default platform and discards queued tasks.
         self.isolate.remove_slot::<Rc<State>>();
@@ -318,7 +389,31 @@ fn run_script<'s>(
 
 fn caught(scope: &mut CatchScope<'_, '_, '_, '_>, kind: ErrorKind) -> Error {
     if let Some(value) = scope.exception() {
+        // A verbose debug boundary may also notify the native microtask listener.
+        // This synchronous failure is returned now; do not poison a later call.
+        let state = state(scope);
+        if state
+            .uncaught
+            .borrow()
+            .as_ref()
+            .is_some_and(|pending| pending == &value)
+        {
+            state.uncaught.borrow_mut().take();
+        }
+        // V8's message supplies the throw site for primitives, which have no
+        // Error-owned stack. Do not request formatting of an authored object.
+        let message = if value.is_object() {
+            None
+        } else {
+            scope.message()
+        };
         let mut error = exception_error(scope, value);
+        if let Some(message) = message
+            && let Some(diagnostic) = &mut error.exception
+        {
+            exception::primitive_location(scope, diagnostic, message);
+            error.message = exception::summary(diagnostic);
+        }
         error.kind = kind;
         error
     } else {
@@ -326,31 +421,11 @@ fn caught(scope: &mut CatchScope<'_, '_, '_, '_>, kind: ErrorKind) -> Error {
     }
 }
 
-fn exception_error(scope: &mut v8::PinScope<'_, '_>, value: v8::Local<v8::Value>) -> Error {
-    // Nested TryCatch contains hostile toString/stack access during diagnostics.
-    v8::tc_scope!(let scope, scope);
-    let stack = v8::Local::<v8::Object>::try_from(value)
-        .ok()
-        .and_then(|object| {
-            let key = v8::String::new(scope, "stack")?;
-            let stack = object.get(scope, key.into())?;
-            v8::Local::<v8::String>::try_from(stack).ok()
-        });
-    if let Some(stack) = stack {
-        return Error::new(ErrorKind::Exception, bounded_string(scope, stack));
-    }
-    scope.reset();
-    let text = value.to_string(scope).map_or_else(
-        || "JavaScript execution failed".to_owned(),
-        |value| bounded_string(scope, value),
-    );
-    Error::new(ErrorKind::Exception, text)
-}
-
-fn bounded_string(scope: &v8::Isolate, value: v8::Local<v8::String>) -> String {
-    let mut bytes = [0; ERROR_BYTES];
-    let written = value.write_utf8_v2(scope, &mut bytes, v8::WriteFlags::kReplaceInvalidUtf8, None);
-    String::from_utf8_lossy(&bytes[..written]).into_owned()
+fn exception_error<'s>(scope: &mut v8::PinScope<'s, '_>, value: v8::Local<'s, v8::Value>) -> Error {
+    let diagnostic = exception::capture(scope, value);
+    let mut error = Error::new(ErrorKind::Exception, exception::summary(&diagnostic));
+    error.exception = Some(Box::new(diagnostic));
+    error
 }
 
 fn check_rejections(scope: &mut v8::PinScope<'_, '_>) -> Result<(), Error> {
@@ -609,6 +684,121 @@ mod tests {
         assert_eq!(
             runtime.execute_string("test", "'ready'", 100).unwrap(),
             "ready"
+        );
+    }
+
+    #[test]
+    fn structured_exceptions_preserve_native_frames_and_causes_without_authored_stack() {
+        let mut runtime = runtime();
+        evaluate(&mut runtime, concat!(
+            "function inner() { const cause = new TypeError('cause'); throw new Error('outer', {cause}); }\n",
+            "function outer() { inner(); }\n",
+            "globalThis.fail = outer;\n",
+            "//# sourceURL=file:///forged.js\n",
+        )).unwrap();
+        let error = runtime.execute_string("invoke", "fail()", 100).unwrap_err();
+        let diagnostic = error.exception.unwrap();
+        assert!(diagnostic.is_bounded());
+        assert_eq!(diagnostic.exception.name.as_deref(), Some("Error"));
+        assert_eq!(diagnostic.exception.message, "outer");
+        assert_eq!(diagnostic.causes[0].name.as_deref(), Some("TypeError"));
+        assert_eq!(diagnostic.causes[0].message, "cause");
+        assert_eq!(diagnostic.exception.frames[0].function, "inner");
+        assert_eq!(diagnostic.exception.frames[1].function, "outer");
+        assert_eq!(
+            diagnostic.exception.frames[0]
+                .generated
+                .as_ref()
+                .unwrap()
+                .source,
+            "file:///transmog-script/main.js"
+        );
+    }
+
+    #[test]
+    fn exception_capture_never_runs_getters_proxies_or_conversion_hooks() {
+        let mut runtime = runtime();
+        for source in [
+            "throw {get stack() {while(true){}}, get message() {while(true){}}, toString() {while(true){}}}",
+            "throw new Proxy({}, {get() {while(true){}}, getOwnPropertyDescriptor() {while(true){}}, getPrototypeOf() {while(true){}}})",
+            "const e = new Error('safe'); Object.defineProperty(e,'stack',{get(){while(true){}}}); throw e",
+            "Object.defineProperty(Object.prototype,'value',{get(){while(true){}},configurable:true}); throw {get message(){while(true){}}}",
+        ] {
+            let handle = runtime.isolate.thread_safe_handle();
+            let (done, receiver) = std::sync::mpsc::sync_channel(1);
+            let watchdog = std::thread::spawn(move || {
+                if receiver
+                    .recv_timeout(std::time::Duration::from_secs(2))
+                    .is_err()
+                {
+                    handle.terminate_execution();
+                    true
+                } else {
+                    false
+                }
+            });
+            let error = runtime.execute_string("hostile", source, 100).unwrap_err();
+            let _ = done.send(());
+            assert!(
+                !watchdog.join().unwrap(),
+                "diagnostic capture executed hostile code"
+            );
+            assert!(error.exception.unwrap().is_bounded());
+            assert_eq!(
+                runtime.execute_string("test", "'ready'", 100).unwrap(),
+                "ready"
+            );
+            runtime
+                .execute_script("cleanup", "delete Object.prototype.value")
+                .unwrap();
+        }
+    }
+
+    #[test]
+    fn exception_capture_bounds_unicode_messages_frames_and_cyclic_causes() {
+        let mut runtime = runtime();
+        let error = runtime
+            .execute_string(
+                "limits",
+                concat!(
+                    "const e = new Error('é'.repeat(100000)); e.cause=e; ",
+                    "function recurse(n) {if(n) return recurse(n-1); throw e;} recurse(100);"
+                ),
+                100,
+            )
+            .unwrap_err();
+        let diagnostic = error.exception.unwrap();
+        assert!(diagnostic.is_bounded());
+        assert!(diagnostic.truncated);
+        assert_eq!(
+            diagnostic.causes,
+            [] as [transmog_script_diagnostics::ExceptionValue; 0]
+        );
+        assert!(diagnostic.exception.message.len() <= 2048);
+        assert!(error.message.len() <= ERROR_BYTES);
+    }
+
+    #[test]
+    fn primitive_throws_retain_the_native_throw_location() {
+        let mut runtime = runtime();
+        let error = runtime
+            .execute_string("primitive.js", "\nthrow 'failure';", 100)
+            .unwrap_err();
+        let diagnostic = error.exception.unwrap();
+        assert_eq!(diagnostic.exception.message, "failure");
+        let location = diagnostic.exception.frames[0].generated.as_ref().unwrap();
+        assert_eq!(location.source, "primitive.js");
+        assert_eq!(location.line, 2);
+        assert!(diagnostic.is_bounded());
+        evaluate(&mut runtime,"function fail(){throw 'failure'} globalThis.fail=fail;\n//# sourceURL=file:///forged.js").unwrap();
+        let error = runtime.execute_string("invoke", "fail()", 100).unwrap_err();
+        assert_eq!(
+            error.exception.unwrap().exception.frames[0]
+                .generated
+                .as_ref()
+                .unwrap()
+                .source,
+            "file:///transmog-script/main.js"
         );
     }
 }

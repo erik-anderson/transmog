@@ -16,8 +16,10 @@ use transmog_extensions::{
 };
 mod admission;
 mod context;
+mod debugging;
 pub(crate) mod decoding;
 mod evidence;
+pub use debugging::DebugVisualizerRequest;
 mod live;
 mod reload;
 use admission::Admission;
@@ -42,6 +44,8 @@ pub struct VisualizerSelection {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerChoice {
+    /// Declared entry path for explicit authoring breakpoint configuration.
+    pub entry: String,
     /// Installation identity.
     pub extension_id: String,
     /// Independent contribution identity.
@@ -88,6 +92,10 @@ impl VisualizerActivation {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct VisualizerView {
+    /// Bounded native console evidence for this exact instance.
+    pub logs: Vec<transmog_script::LogRun>,
+    /// Older callback streams evicted from the finite instance history.
+    pub log_runs_omitted: u64,
     /// Native notification hint after a validated development revision was published.
     #[serde(skip)]
     pub metadata_changed: bool,
@@ -186,6 +194,7 @@ struct Slot {
     candidate: Option<Arc<Ticket>>,
 }
 struct Ticket {
+    debug: Mutex<Option<std::sync::Weak<crate::debugging::Run>>>,
     registry: Registry,
     owner: String,
     canceled: AtomicBool,
@@ -211,6 +220,7 @@ impl Ticket {
         reload_contract: Option<transmog_extensions::Visualizer>,
     ) -> Arc<Self> {
         Arc::new(Self {
+            debug: Mutex::new(None),
             registry,
             owner,
             generation,
@@ -222,6 +232,14 @@ impl Ticket {
         })
     }
     fn cancel(&self) {
+        if let Some(run) = self
+            .debug
+            .lock()
+            .ok()
+            .and_then(|run| run.as_ref().and_then(std::sync::Weak::upgrade))
+        {
+            run.session.stop("Visualizer hidden, replaced or reloaded");
+        }
         self.canceled.store(true, Ordering::Release);
         let instance = self
             .instance
@@ -473,6 +491,7 @@ impl Application {
         for (extension_id, declaration) in declarations {
             if admission.applicable(&declaration, selection.surface) {
                 choices.push(VisualizerChoice {
+                    entry: declaration.entry,
                     extension_id,
                     visualizer_id: declaration.id,
                     name: declaration.name,
@@ -530,10 +549,21 @@ impl Application {
         let extension = request.extension_id.clone();
         let contribution = request.visualizer_id.clone();
         let startup = Arc::clone(ticket);
+        let debug = ticket
+            .debug
+            .lock()
+            .map_err(|_| unavailable())?
+            .as_ref()
+            .and_then(std::sync::Weak::upgrade)
+            .map(|run| (Arc::clone(&run.session), run.info.artifact.clone()));
         let instance = tokio::task::spawn_blocking(move || {
-            registry.activate_cancellable(&owner, &extension, &contribution, || {
-                startup.canceled.load(Ordering::Acquire)
-            })
+            registry.activate_cancellable_debug(
+                &owner,
+                &extension,
+                &contribution,
+                || startup.canceled.load(Ordering::Acquire),
+                debug,
+            )
         })
         .await
         .map_err(|_| unavailable())?
@@ -572,6 +602,15 @@ impl Application {
             selected,
             store.as_ref(),
         )?;
+        if let Some(feed) = &feed
+            && let Some(run) = ticket
+                .debug
+                .lock()
+                .ok()
+                .and_then(|run| run.as_ref().and_then(std::sync::Weak::upgrade))
+        {
+            feed.set_debug_clock(run.session.clock());
+        }
         let mut sources = BTreeMap::new();
         let input = project_input(
             &snapshot,
@@ -621,6 +660,8 @@ impl Application {
             return Err(invalid("Auto visualization requires a complete parse"));
         }
         Ok(VisualizerView {
+            logs: self.visualizer_logs(&instance),
+            log_runs_omitted: self.visualizer_log_runs_omitted(&instance),
             metadata_changed: false,
             handle: request.handle(&instance),
             instance,
@@ -652,6 +693,8 @@ impl Application {
                     .map_err(|_| unavailable())?;
                 let live = resources.finish_document(&mut document);
                 Ok(VisualizerView {
+                    logs: self.visualizer_logs(&instance),
+                    log_runs_omitted: self.visualizer_log_runs_omitted(&instance),
                     metadata_changed: false,
                     handle: handle.clone(),
                     instance,
@@ -688,6 +731,19 @@ impl Application {
             .try_lock()
             .map_err(|_| invalid("Another visualizer operation is still running"))?;
         self.invoke_visualizer(ticket, invocation).await
+    }
+
+    fn visualizer_logs(&self, instance: &Instance) -> Vec<transmog_script::LogRun> {
+        self.visualizers
+            .registry
+            .runner(&self.visualizers.owner, &instance.id)
+            .map_or_else(|_| Vec::new(), |runner| runner.logs())
+    }
+    fn visualizer_log_runs_omitted(&self, instance: &Instance) -> u64 {
+        self.visualizers
+            .registry
+            .runner(&self.visualizers.owner, &instance.id)
+            .map_or(0, |runner| runner.log_runs_omitted())
     }
     async fn invoke_visualizer(
         &self,
@@ -756,8 +812,16 @@ impl Application {
                 false,
             ))
         };
-        tokio::time::timeout(
+        let clock = ticket
+            .debug
+            .lock()
+            .ok()
+            .and_then(|run| run.as_ref().and_then(std::sync::Weak::upgrade))
+            .filter(|run| !run.session.is_closed())
+            .map(|run| run.session.clock());
+        transmog_script_diagnostics::supervision::wait_budget(
             std::time::Duration::from_millis(instance.declaration.limits.duration_ms),
+            clock.as_ref(),
             operation,
         )
         .await
@@ -881,4 +945,6 @@ fn worker_failure(error: transmog_extensions::Failure) -> AppError {
         _ => ErrorCategory::Unavailable,
     };
     AppError::new(category, error.message, false)
+        .with_exception(error.exception)
+        .with_logs(error.logs)
 }

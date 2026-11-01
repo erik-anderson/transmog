@@ -1,4 +1,18 @@
 // Bundled script contract. Runtime helpers are supplied only by this module.
+
+/** Native bounded console. Values use primitive text or inert object labels;
+ * getters, proxies and custom conversion are never evaluated. No format substitution.
+ */
+interface Console {
+  log(...values: unknown[]): void;
+  debug(...values: unknown[]): void;
+  info(...values: unknown[]): void;
+  warn(...values: unknown[]): void;
+  error(...values: unknown[]): void;
+  trace(...values: unknown[]): void;
+}
+// eslint-disable-next-line no-var -- Ambient var merges with optional editor standard libraries.
+declare var console: Console;
 declare module "transmog:api" {
   export type Bytes = readonly number[];
   export type Header = Readonly<{

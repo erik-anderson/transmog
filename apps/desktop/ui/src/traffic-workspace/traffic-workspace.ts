@@ -1,4 +1,6 @@
 import "../portable-case/portable-case.js";
+import "../script-diagnostics/script-diagnostics.js";
+import type { DeveloperEvidence } from "../script-diagnostics/models.js";
 import type { SavedDemo } from "../saved-demo-models.js";
 import "../action-submenu/action-submenu.js";
 import { ActionSubmenu } from "../action-submenu/action-submenu.js";
@@ -142,6 +144,20 @@ type AuthReturn = { id: string; boundary: string; interpretation: string; scroll
 export class TrafficWorkspace extends WorkspaceElement {
   requestMessage!: MessageInspector;
   responseMessage!: MessageInspector;
+  async reviewExtensionDebugger(extensionId: string, visualizerId: string): Promise<void> {
+    if (!this.selectedDetail) {
+      this.sessionText =
+        "Select a retained Traffic request, then choose the visualizer and open Developer debugging.";
+      return;
+    }
+    for (const message of [this.responseMessage, this.requestMessage]) {
+      if (await message.reviewExtensionDebugger(extensionId, visualizerId)) {
+        return;
+      }
+    }
+    this.sessionText =
+      "This visualizer does not match the selected retained message. Select a matching request and try again.";
+  }
   private authNavigation = 0;
   private authReturn: AuthReturn | null = null;
   @observable authReturnAvailable = false;
@@ -1744,6 +1760,7 @@ export class TrafficWorkspace extends WorkspaceElement {
   @observable private trafficUndo: Array<{ ids: string[]; expiresAt?: number | undefined }> = [];
   @observable private trafficRedo: Array<{ ids: string[] }> = [];
   @observable selectedDetail: SessionDetail | null = null;
+  @observable scriptDetails: DeveloperEvidence[] = [];
   @observable streamPanel = false;
   showStream(value: boolean): void {
     this.streamPanel = value;
@@ -5615,6 +5632,12 @@ export class TrafficWorkspace extends WorkspaceElement {
     }
   }
   private applyDetail(detail: SessionDetail, row?: SessionSummary | null): void {
+    this.scriptDetails = (detail.scriptReports ?? []).map((report) => ({
+      label: `${report.script} · ${report.phase}`,
+      exception: report.exception,
+      logs: report.logs,
+      detailsOmitted: report.detailsOmitted,
+    }));
     if (detail.id !== this.selectedDetail?.id || (!this.selectedDetail?.stream && detail.stream)) {
       this.streamPanel = !!detail.stream;
     }

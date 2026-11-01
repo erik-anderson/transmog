@@ -83,6 +83,9 @@ function row(entry: ExtensionEntry): ExtensionRow {
   };
 }
 export class ExtensionSettings extends WorkspaceElement {
+  debugContribution(extensionId: string, visualizerId: string): void {
+    this.$emit("extension-debug-request", { extensionId, visualizerId });
+  }
   @attr({ mode: "boolean" }) active = false;
   @observable extensionsEntries: ExtensionRow[] = [];
   @observable extensionsBusy = initialState.extensionsBusy;

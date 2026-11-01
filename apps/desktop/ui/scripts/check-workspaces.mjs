@@ -41,6 +41,9 @@ import { checkResponseBodyEditor } from "./check-response-body-editor.mjs";
 import { checkBinaryResponse } from "./check-binary-response.mjs";
 import { checkMatchingTests, checkMatchingSelectionRace } from "./check-matching-tests.mjs";
 import { checkScripts } from "./check-scripts.mjs";
+import { checkScriptDiagnostics } from "./check-script-diagnostics.mjs";
+import { checkScriptDebugger } from "./check-script-debugger.mjs";
+import { installDebuggerFixture } from "./debugger-fixture.mjs";
 import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 import { checkAutoResponseDragging } from "./check-autoresponse-dragging.mjs";
 import { checkTrafficFilters } from "./check-traffic-filters.mjs";
@@ -213,6 +216,7 @@ await page.exposeFunction(
   "__compileFixtureScript",
   (source) => transformSync(source, { loader: "ts", target: "es2022" }).code,
 );
+await page.addInitScript(installDebuggerFixture);
 await page.addInitScript(
   (configuration) => {
     const { workspace, networkProfiles, scriptDeclarations, scriptHelp, authConversions } =
@@ -4200,6 +4204,8 @@ await page.addInitScript(
               revision: item.manifest.revision,
               available: !state.scriptRuntimeError,
               error: state.scriptRuntimeError ?? null,
+              logs: state.scriptRuntimeLogs ?? [],
+              exception: state.scriptRuntimeException ?? null,
             }));
           case "retry_script": {
             if (args.expectedGeneration !== state.scriptGeneration)
@@ -4359,13 +4365,50 @@ await page.addInitScript(
               responseBody: args.scenario.responseBody,
             };
           }
+          case "start_debug_test":
+          case "debug_next_script_exchange":
+          case "debug_session":
+          case "debug_command":
+          case "close_debug_session":
+            return globalThis.__debuggerFixtureCommand(command, args);
+          case "script_source": {
+            state.lastScriptSource = structuredClone(args);
+            if (state.deferScriptSource)
+              await new Promise((resolve) => {
+                state.finishScriptSource = resolve;
+              });
+            if (state.scriptSourceError)
+              throw new Error("The exact source snapshot is unavailable");
+            return {
+              ...args,
+              totalLines: 3,
+              lines: [
+                {
+                  number: 1,
+                  startColumn: 1,
+                  text: "export function onRequestHead() {",
+                  shortened: false,
+                },
+                {
+                  number: 2,
+                  startColumn: 1,
+                  text: "  throw new Error('executed snapshot');",
+                  shortened: false,
+                },
+                { number: 3, startColumn: 1, text: "}", shortened: false },
+              ],
+            };
+          }
           case "test_script": {
             state.scriptTestInput = structuredClone(args.invocation);
             if (state.deferScriptTest) {
               state.scriptTestPending = true;
               await new Promise((resolve) => (state.finishScriptTest = resolve));
             }
+            if (state.scriptDeveloperError) throw structuredClone(state.scriptDeveloperError);
             return {
+              logs: state.scriptTestLogs ?? [],
+              diagnostics: state.scriptTestDiagnostics ?? [],
               decision: ["onCompleted", "onFailed"].includes(args.invocation.context.handler)
                 ? { action: "continue" }
                 : {
@@ -4794,14 +4837,24 @@ try {
     process.stdout.write("Traffic filtering and stream lifetime checks passed.\n");
     process.exit(0);
   }
-  if (process.argv.includes("--scripts-only")) {
+  if (
+    process.argv.includes("--scripts-only") ||
+    process.argv.includes("--script-diagnostics-only") ||
+    process.argv.includes("--script-debugger-only")
+  ) {
     await page.goto("https://workspace.test/");
     await view("automation");
     await page
       .locator(".workspace-tabs")
       .getByRole("button", { name: "Scripts", exact: true })
       .click();
-    await checkScripts(page, root);
+    if (process.argv.includes("--script-debugger-only")) await checkScriptDebugger(page, root);
+    else if (process.argv.includes("--script-diagnostics-only"))
+      await checkScriptDiagnostics(page, root);
+    else {
+      await checkScripts(page, root);
+      await checkScriptDiagnostics(page, root);
+    }
     assert.deepEqual(errors, []);
     await browser.close();
     process.stdout.write(
@@ -7815,6 +7868,7 @@ try {
     .getByRole("button", { name: "Scripts", exact: true })
     .click();
   await checkScripts(page, root);
+  await checkScriptDiagnostics(page, root);
   const editorsBefore = await page.evaluate(
     () =>
       document

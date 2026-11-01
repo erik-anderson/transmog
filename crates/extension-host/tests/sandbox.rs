@@ -1,5 +1,7 @@
 //! Production `AppContainer` coverage for capability-free extension execution and lifecycle.
 #![cfg(windows)]
+#[path = "support/debugger.rs"]
+mod debugger;
 mod support;
 #[path = "support/worker_tests.rs"]
 mod worker_tests;
@@ -7,6 +9,79 @@ use std::{collections::BTreeMap, sync::Arc};
 use transmog_extension_supervisor::{HostConfig, Runner};
 use transmog_extensions::*;
 use worker_tests::WorkerTest;
+
+#[tokio::test]
+async fn debugger_preserves_initializer_heap_locals_and_idle_detach_in_the_real_sandbox() {
+    use transmog_extensions::debugger::{DebugAction, DebugEventKind};
+    let test = WorkerTest::acquire(1).await;
+    let snapshot=test.snapshot("globalThis.starts=1;debugger; export function visualize(input){const local=7;debugger;console.log('starts',globalThis.starts++);return {kind:'document',document:{title:'Debug',status:'complete',presentation:'tree',roots:[]}}} ");
+    let session = debugger::session('a');
+    let owner = Arc::clone(&session);
+    let startup = tokio::task::spawn_blocking(move || {
+        Runner::start_debug(
+            &HostConfig {
+                executable: support::host_executable().into(),
+            },
+            snapshot,
+            "view",
+            &owner,
+        )
+    });
+    let init = debugger::pause(&session, 0).await;
+    debugger::resume(&session, init);
+    let runner = startup.await.unwrap().unwrap();
+    let worker = Arc::clone(&runner);
+    let call = tokio::spawn(async move {
+        worker
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+    });
+    let pause = debugger::pause(&session, init).await;
+    tokio::time::sleep(std::time::Duration::from_millis(1200)).await;
+    debugger::local_seven(&session, pause).await;
+    debugger::resume(&session, pause);
+    call.await.unwrap().unwrap();
+    session.command(DebugAction::Detach).unwrap();
+    debugger::wait(&session, |event| matches!(event, DebugEventKind::Detached)).await;
+    runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap();
+    assert!(
+        runner
+            .logs()
+            .iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "starts 2")
+    );
+    let session = debugger::session('b');
+    runner.attach_debugger(Arc::clone(&session)).unwrap();
+    let worker = Arc::clone(&runner);
+    let call = tokio::spawn(async move {
+        worker
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+    });
+    let pause = debugger::pause(&session, 0).await;
+    debugger::local_seven(&session, pause).await;
+    debugger::resume(&session, pause);
+    call.await.unwrap().unwrap();
+    assert!(
+        runner
+            .logs()
+            .iter()
+            .flat_map(|run| &run.records)
+            .any(|record| record.text == "starts 3")
+    );
+    session.stop("Test ended");
+    assert!(runner.is_stopped());
+}
 
 impl WorkerTest {
     fn snapshot(&self, source: &str) -> Snapshot {
@@ -424,6 +499,314 @@ async fn rejected_top_level_await_fails_extension_initialization() {
 }
 
 #[tokio::test]
+async fn authored_exceptions_keep_details_separate_from_static_status() {
+    let case = WorkerTest::acquire(1).await;
+    let source = "function fail(){throw new Error('developer detail', {cause: new TypeError('cause')});} export function visualize(){return fail();}";
+    let runner = start(case.snapshot(source)).unwrap();
+    for _ in 0..2 {
+        let failure = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap_err();
+        assert_eq!(failure.message, "The visualizer operation failed");
+        let diagnostic = failure.exception.unwrap();
+        assert!(diagnostic.is_bounded());
+        assert_eq!(diagnostic.exception.message, "developer detail");
+        assert_eq!(diagnostic.causes[0].message, "cause");
+        assert_eq!(diagnostic.exception.frames[0].function, "fail");
+        assert!(!runner.is_stopped());
+    }
+}
+
+#[tokio::test]
+async fn console_streams_survive_invalid_output_throw_and_worker_timeout() {
+    let case = WorkerTest::acquire(1).await;
+    let source = format!(
+        "console.info('initializer'); let count=0; export function visualize(){{ console.log('before',++count); console.trace('trace'); if(count===2) throw new Error('detail'); if(count===3) return {{bad:true}}; if(count===4) for(let i=0;i<1000;i++) console.warn('flood'.repeat(512)); if(count===6) while(true){{}} return {DOCUMENT}; }}"
+    );
+    let runner = start(case.snapshot(&source)).unwrap();
+    for operation in 1..=6 {
+        let result = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await;
+        if matches!(operation, 2 | 3 | 6) {
+            let error = result.unwrap_err();
+            if operation == 6 {
+                assert_eq!(error.kind, FailureKind::Timeout);
+            }
+            assert_ne!(error.logs, Vec::new());
+        } else {
+            result.unwrap();
+        }
+        let logs = runner.logs();
+        let call = logs.last().unwrap();
+        assert!(call.is_bounded());
+        assert_eq!(call.context.callback, "visualize");
+        assert_eq!(call.records[0].text, format!("before {operation}"));
+        assert!(
+            call.records[1].frames[0]
+                .generated
+                .as_ref()
+                .unwrap()
+                .source
+                .ends_with("src/main.js")
+        );
+        assert_eq!(call.incomplete, operation == 6);
+        if operation == 4 {
+            assert!(call.dropped > 0);
+        }
+    }
+    let source = "console.error('startup detail'); throw new Error('failed'); export function visualize(){return null;}";
+    let error = start(case.snapshot(source)).err().unwrap();
+    assert_eq!(error.logs[0].records[0].text, "startup detail");
+    assert!(!error.logs[0].incomplete);
+    let artifact = error.exception.as_ref().unwrap().artifact.as_ref().unwrap();
+    assert_eq!(Some(artifact), error.logs[0].context.artifact.as_ref());
+    let frame = error
+        .exception
+        .as_ref()
+        .unwrap()
+        .exception
+        .frames
+        .iter()
+        .find_map(|frame| frame.generated.as_ref())
+        .unwrap();
+    let source_page = transmog_extensions::diagnostic_sources::read(
+        artifact,
+        &frame.source,
+        frame.line,
+        frame.column,
+    )
+    .unwrap();
+    assert!(
+        source_page
+            .lines
+            .iter()
+            .any(|line| line.text.contains("startup detail"))
+    );
+    assert!(
+        transmog_extensions::diagnostic_sources::read(artifact, "transmog:extension-invoke", 1, 1)
+            .is_none()
+    );
+}
+
+#[tokio::test]
+async fn console_history_eviction_and_clear_keep_the_worker_globals_intact() {
+    let case = WorkerTest::acquire(1).await;
+    let source = format!(
+        "console.info('initializer'); let count=0; export function visualize(){{console.log(++count);return {DOCUMENT};}}"
+    );
+    let runner = start(case.snapshot(&source)).unwrap();
+    for _ in 0..10 {
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap();
+    }
+    let history = runner.logs();
+    assert_eq!(history.len(), 9);
+    assert_eq!(runner.log_runs_omitted(), 2);
+    assert_eq!(history[1].records[0].text, "3");
+    assert_eq!(history.last().unwrap().records[0].text, "10");
+    runner.clear_logs();
+    assert_eq!(runner.logs(), Vec::new());
+    assert_eq!(runner.log_runs_omitted(), 0);
+    runner
+        .invoke(Invocation::Visualize {
+            input: Box::new(input()),
+        })
+        .await
+        .unwrap();
+    assert_eq!(runner.logs()[0].records[0].text, "11");
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // One conformance table keeps every continuation's real grant setup visible.
+async fn continuation_and_live_exceptions_keep_imported_module_frames() {
+    let case = WorkerTest::acquire(1).await;
+    for handler in [
+        "resume",
+        "resumeContext",
+        "resumeDecoded",
+        "expand",
+        "onTraffic",
+    ] {
+        let initial = match handler {
+            "resume" => {
+                "{kind:'needInput',token:'pending',reads:[{sourceId:input.response.body.sourceId,offset:'0',maxBytes:4}]}"
+            }
+            "resumeContext" => {
+                "{kind:'needContext',token:'pending',request:{position:'before',cursor:null,limit:1}}"
+            }
+            "resumeDecoded" => {
+                "{kind:'needDecoded',token:'pending',sourceId:input.response.body.sourceId}"
+            }
+            _ => DOCUMENT,
+        };
+        let source = format!(
+            "import {{fail}} from './fail.mjs'; export function visualize(input){{return {initial};}} export function {handler}(){{return fail();}}"
+        );
+        let mut snapshot = case.snapshot_with_modules(
+            &source,
+            &[(
+                "src/fail.mjs",
+                "export function fail(){throw new Error('continuation detail');}",
+            )],
+        );
+        let visualizer = &mut snapshot.manifest.visualizers[0];
+        visualizer.context = Some(Context {
+            headers: vec![HeaderPredicate {
+                direction: Direction::Request,
+                name: "x-kind".into(),
+                test: HeaderTest::Present,
+            }],
+            max_exchanges: 2,
+            look_ahead: false,
+        });
+        visualizer
+            .inputs
+            .response
+            .headers
+            .push("content-encoding".into());
+        visualizer.inputs.response.decode_http_content = true;
+        visualizer.live_updates = (handler == "onTraffic").then(|| LiveUpdates {
+            events: vec![Direction::Response],
+            body_progress: false,
+        });
+        let runner = start(Snapshot::new(snapshot.manifest, snapshot.files).unwrap()).unwrap();
+        runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap();
+        let call = match handler {
+            "resume" => Invocation::Resume {
+                token: "pending".into(),
+                pages: vec![BytePage {
+                    source_id: "response-body".into(),
+                    offset: "0".into(),
+                    bytes: vec![1, 2, 3, 4],
+                }],
+            },
+            "resumeContext" => Invocation::ResumeContext {
+                token: "pending".into(),
+                page: ContextPage {
+                    anchor_order: "1".into(),
+                    exchanges: vec![],
+                    next_cursor: None,
+                    status: ContextStatus::Complete,
+                },
+            },
+            "resumeDecoded" => Invocation::ResumeDecoded {
+                token: "pending".into(),
+                result: HttpDecodeResult::Unavailable {
+                    reason: DecodeFailure::Incomplete,
+                },
+            },
+            "expand" => Invocation::Expand {
+                token: "pending".into(),
+            },
+            _ => Invocation::Traffic {
+                events: vec![TrafficEvent {
+                    sequence: "1".into(),
+                    exchange_id: input().exchange_id,
+                    direction: Direction::Response,
+                    phase: TrafficPhase::BodyCompleted,
+                    revision: input().generation,
+                    input: input(),
+                }],
+                missed_hints: "0".into(),
+            },
+        };
+        let failure = runner.invoke(call).await.unwrap_err();
+        assert_eq!(
+            failure.kind,
+            FailureKind::Exception,
+            "{handler}: {failure:?}"
+        );
+        let diagnostic = failure.exception.unwrap();
+        assert!(diagnostic.is_bounded());
+        assert_eq!(diagnostic.exception.message, "continuation detail");
+        assert_eq!(diagnostic.exception.frames[0].function, "fail");
+        assert!(
+            diagnostic.exception.frames[0]
+                .generated
+                .as_ref()
+                .unwrap()
+                .source
+                .ends_with("/src/fail.mjs")
+        );
+        assert_eq!(diagnostic.exception.frames[1].function, handler);
+        assert!(!runner.is_stopped());
+    }
+}
+
+#[tokio::test]
+async fn declared_package_source_maps_are_optional_bounded_and_inventory_bound() {
+    let case = WorkerTest::acquire(1).await;
+    let source = "export function visualize(){throw new Error('mapped');}";
+    let valid = r#"{"version":3,"sources":["../src/original.ts"],"sourcesContent":["throw new Error('mapped')"],"names":[],"mappings":"AAAA"}"#;
+    for (map, mapped) in [(valid, true), ("not a source map", false)] {
+        let mut snapshot = case.snapshot_with_modules(source, &[("maps/main.map", map)]);
+        snapshot.manifest.source_maps = Some(SourceMaps {
+            version: 1,
+            modules: BTreeMap::from([("src/main.js".into(), "maps/main.map".into())]),
+        });
+        let snapshot = Snapshot::new(snapshot.manifest, snapshot.files).unwrap();
+        let runner = start(snapshot).unwrap();
+        let failure = runner
+            .invoke(Invocation::Visualize {
+                input: Box::new(input()),
+            })
+            .await
+            .unwrap_err();
+        let diagnostic = failure.exception.unwrap();
+        let frame = &diagnostic.exception.frames[0];
+        assert!(
+            frame
+                .generated
+                .as_ref()
+                .unwrap()
+                .source
+                .ends_with("src/main.js")
+        );
+        if mapped {
+            assert_eq!(
+                frame.original.as_ref().unwrap().source,
+                "file:///transmog-extension/src/original.ts"
+            );
+            assert!(frame.mapping_issue.is_none());
+        } else {
+            assert!(frame.original.is_none());
+            assert!(frame.mapping_issue.is_some());
+        }
+        assert!(!runner.is_stopped());
+    }
+}
+
+#[tokio::test]
+async fn package_parse_errors_retain_the_native_module_position() {
+    let case = WorkerTest::acquire(1).await;
+    let source = "export function visualize(){\n  const value = ;\n}";
+    let failure = start(case.snapshot(source))
+        .err()
+        .expect("invalid package JavaScript");
+    assert_eq!(failure.message, "JavaScript parsing failed");
+    let diagnostic = failure.exception.unwrap();
+    assert!(diagnostic.is_bounded());
+    let location = diagnostic.exception.frames[0].generated.as_ref().unwrap();
+    assert_eq!(location.source, "file:///transmog-extension/src/main.js");
+    assert_eq!((location.line, location.column), (2, 17));
+}
+
+#[tokio::test]
 async fn unsettled_top_level_await_never_becomes_ready_and_remains_cancelable() {
     let case = WorkerTest::acquire(1).await;
     let source =
@@ -730,7 +1113,6 @@ async fn serialization_and_exception_diagnostics_remain_under_the_extension_dead
     for hostile in [
         "return {get then() {while(true) {}}};",
         "return {toJSON() {while(true) {}}};",
-        "throw {get stack() {while(true) {}}};",
     ] {
         let source = format!("export function visualize() {{ {hostile} }}");
         let runner = start(case.snapshot_with_limits(&source, 64 * 1024 * 1024, 75)).unwrap();

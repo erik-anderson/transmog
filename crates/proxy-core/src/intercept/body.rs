@@ -208,6 +208,12 @@ pub trait BodyFilter: Send {
 
 /// Completion callback for an explicitly bounded body buffer.
 pub trait BufferedBodyHandler: Send {
+    /// Exact native debugger pause clock for this buffered callback, if authorized.
+    fn debug_pause_clock(
+        &self,
+    ) -> Option<std::sync::Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        None
+    }
     /// Validated evidence from the completed invocation.
     fn script_report(&self) -> Option<super::ScriptReport> {
         None
@@ -849,11 +855,15 @@ impl BodyPipeline {
                     .take()
                     .expect("unfinished buffer retains its handler");
                 let permit = self.gate.permit(&self.context).await?;
+                let clock = owned.debug_pause_clock();
                 let task = tokio::spawn(async move {
                     let result = owned.on_body(body).await;
                     (owned, result)
                 });
-                let (owned, result) = self.gate.await_task(&self.context, task, permit).await?;
+                let (owned, result) = self
+                    .gate
+                    .await_task_debug(&self.context, task, permit, clock.as_ref())
+                    .await?;
                 if let Some(report) = owned.script_report()
                     && let Some(identity) = &identity
                 {
