@@ -2,7 +2,7 @@
 import argparse
 import json
 from pathlib import Path
-from build_cache import REGISTERED_TARGETS, checked, maintain, related_profiles
+from build_cache import maintain, registered_targets, related_profiles
 from repo_tools import ROOT, main_guard
 
 
@@ -16,7 +16,7 @@ def main():
                         help="Below this free space, trim excess recent variants too (default: 20 GiB).")
     parser.add_argument("--target-dir", type=Path,
                         help="A Cargo target directory inside this repository.")
-    parser.add_argument("--registered", action="store_true", help="Inspect the registered workspace, SDK and fuzz caches, including cross-target debug profiles.")
+    parser.add_argument("--registered", action="store_true", help="Inspect workspace, SDK and fuzz caches, independent Cargo caches inside target/, and cross-target profiles.")
     parser.add_argument("--profile", choices=("debug", "release"), default="debug",
                         help="Release cleanup requires this explicit selection.")
     parser.add_argument("--target-triple", help="Select a cross-target profile within --target-dir.")
@@ -33,8 +33,7 @@ def main():
                    profile_name=args.profile)
     if args.registered:
         reports = []
-        for name in REGISTERED_TARGETS:
-            target = checked(ROOT / name, ROOT)
+        for target in registered_targets(ROOT):
             for profile in related_profiles(target, ROOT):
                 if profile.name == args.profile:
                     triple = None if profile.parent == target else profile.parent.name

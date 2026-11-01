@@ -74,8 +74,15 @@ def tree_files(path: Path, root: Path) -> list[Path]:
     def failed(error):
         raise error
     for parent, directories, names in os.walk(path, followlinks=False, onerror=failed):
+        # Validate ancestors once per directory, then inspect each entry without
+        # following it. Rechecking every ancestor for every native object file
+        # made large build-output scans perform millions of redundant lstats.
+        checked(Path(parent), root)
         for name in directories + names:
-            checked(Path(parent) / name, root)
+            entry = Path(parent) / name
+            info = entry.lstat()
+            if stat.S_ISLNK(info.st_mode) or getattr(info, "st_file_attributes", 0) & 0x400:
+                raise ValueError(f"Cache links and reparse points are not supported: {entry}")
         files.extend(Path(parent) / name for name in names)
     return files
 
@@ -131,6 +138,36 @@ def file_lock(path: Path, root: Path):
             handle.close()
 
 
+def is_cargo_target(path: Path, root: Path) -> bool:
+    """Recognize an independently initialized Cargo cache, never just its name."""
+    path = checked(path, root)
+    if not path.is_dir():
+        return False
+    marker = checked(path / "CACHEDIR.TAG", root)
+    info = checked(path / ".rustc_info.json", root)
+    if not marker.is_file() or not info.is_file():
+        return False
+    with marker.open("rb") as stream:
+        return stream.read(43) == b"Signature: 8a477f597d28d172789f06886806bc55"
+
+
+def registered_targets(root: Path) -> list[Path]:
+    """Include independent Cargo experiments directly inside workspace target/."""
+    root = root.resolve()
+    targets = [checked(root / name, root) for name in REGISTERED_TARGETS]
+    parent = checked(root / "target", root)
+    if parent.is_dir():
+        for child in sorted(parent.iterdir()):
+            try:
+                if is_cargo_target(child, root) and related_profiles(child, root):
+                    targets.append(child)
+            except (OSError, ValueError):
+                # Unrecognized, linked or unreadable directories stay outside
+                # discovery. Explicit targets still receive strict validation.
+                continue
+    return sorted(set(targets))
+
+
 def related_profiles(target: Path, root: Path) -> list[Path]:
     """Only inspect Cargo layouts directly below a target root or target triple."""
     result = []
@@ -140,7 +177,7 @@ def related_profiles(target: Path, root: Path) -> list[Path]:
     for child in target.iterdir():
         if re.fullmatch(r"[A-Za-z0-9_]+(?:-[A-Za-z0-9_]+){2,}", child.name):
             checked(child, root)
-            if child.is_dir():
+            if child.is_dir() and not is_cargo_target(child, root):
                 parents.append(child)
     for parent in parents:
         for name in ("debug", "release"):
@@ -327,6 +364,7 @@ def build_script_variants(profile: Path, profiles: list[Path], root: Path):
     hashes = defaultdict(set)
     groups = defaultdict(list)
     unknown = []
+    candidates = []
     uses = successful_uses(profile, root)
     for owner in profiles:
         for directory in checked(owner / ".fingerprint", root).iterdir():
@@ -361,11 +399,19 @@ def build_script_variants(profile: Path, profiles: list[Path], root: Path):
                 build = checked(profile / "build" / directory.name, root)
                 if not build.is_dir():
                     continue
+                candidates.append((directory, build, stem))
+            except (OSError, ValueError, KeyError, TypeError, RecursionError):
+                unknown.append(str(directory.relative_to(root)))
+    # A single unknown unit prevents native pruning. Establish graph validity
+    # before walking potentially enormous native source/object trees for ages.
+    if not unknown:
+        for directory, build, stem in candidates:
+            try:
                 files = [*tree_files(directory, root), *tree_files(build, root)]
                 newest = max(last_use(directory, uses, root), *[p.stat().st_mtime for p in files])
                 package = FINGERPRINT.fullmatch(directory.name)[1]
                 groups[(package, stem)].append((newest, [directory, build]))
-            except (OSError, ValueError, KeyError, TypeError, RecursionError):
+            except (OSError, ValueError):
                 unknown.append(str(directory.relative_to(root)))
     return groups, nodes, hashes, unknown
 
@@ -410,7 +456,11 @@ def maintain(root: Path, target: Path | None = None, *, apply=False, daily=False
             if not stack.enter_context(cargo_locks(owner, root)):
                 report.update(status="busy", busyProfile=str(owner.relative_to(root)))
                 return report
-        if checked(target / PIN, root).exists() or checked(profile / PIN, root).exists():
+        # Independent caches discovered under target/ still inherit a pin on
+        # that containing scope. Explicit selection must respect it as well.
+        scopes = [ancestor for ancestor in (target, *target.parents)
+                  if ancestor == root or ancestor.is_relative_to(root)]
+        if any(checked(scope / PIN, root).exists() for scope in [*scopes, profile]):
             report["status"] = "pinned"
             return report
         report["freeBytesBefore"] = shutil.disk_usage(target).free

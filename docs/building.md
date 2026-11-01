@@ -51,6 +51,39 @@ build scripts cannot detect newly created untracked files.
 
 ## Development cache maintenance
 
+For a comprehensive disk cleanup, preview build caches and completed test-run
+bulk data together:
+
+```text
+python scripts/clean-disk.py
+python scripts/clean-disk.py --apply
+python scripts/clean-disk.py --conservative
+```
+
+By default, cleanup retains one compiled variant, removes older variants without
+an age delay, considers obsolete native build outputs with their dependency
+closure, and clears all eligible completed-run captures/profiles and unpinned
+incremental caches. Reports, logs, screenshots and diagnostic JSON remain,
+including failure evidence. Valid completed legacy load reports are recognized.
+Active, interrupted, unknown and pinned data remains protected. Release caches
+require `--include-release`; installed tools, signed bundles, arbitrary `.local`
+directories and unregistered artifact directories are outside this command.
+Aggressive cleanup can require rebuilding older configurations and rerunning
+fixtures. Pins on containing target directories also protect discovered
+independent caches.
+
+Use `--conservative` to retain three build variants and recent success/failure
+bulk data under the usual age and space budgets. Both policies clear unpinned
+incremental caches. `--deep` remains an explicit alias for the default aggressive
+policy. Deletion always requires
+`--apply`; without it either policy only previews the cleanup.
+
+The JSON report includes each build profile, test-output decisions, errors,
+estimated reclaimable bytes and the observed free-space change. Estimates exclude
+hardlinks outside each deletion plan and can undercount shared content released
+across several profiles. Data retained because a native fingerprint graph is
+incomplete remains listed explicitly; no native dependency is guessed obsolete.
+
 Configured Python Cargo commands and PowerShell environment setup check the
 development cache once per 24 hours. Cleanup retains the three newest complete
 variants for each Cargo target, removing older artifact sets with their matching
@@ -95,7 +128,10 @@ libraries. Interrupted staging is recovered under the same profile locks.
 
 `--registered` visits only the workspace, SDK, fuzz, SDK model-codegen and
 SDK Crubit target roots declared in `scripts/build_cache.py`, including their
-cross-target profiles. Other experiments require an explicit `--target-dir`.
+cross-target profiles. It also discovers independent Cargo caches immediately
+inside workspace `target/` using Cargo's cache signature, compiler metadata and
+profile layout. These are separate roots, not target triples, regardless of their
+names. Experiments elsewhere require an explicit `--target-dir`.
 Release cleanup additionally requires `--profile release`; signed bundles and
 other files outside recognized cache groups remain untouched. A file named
 `.transmog-cache-pin` in a target root, profile, fingerprint or incremental/build

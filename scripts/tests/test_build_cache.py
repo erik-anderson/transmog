@@ -155,6 +155,8 @@ class CacheTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
         with self.assertRaises(ValueError):
             build_cache.checked(link, self.root)
+        with self.assertRaises(ValueError):
+            build_cache.tree_files(self.profile / "deps", self.root)
 
     def test_parent_traversal_is_rejected_before_cache_mutation(self):
         entries = [self.variant(i) for i in range(5)]
@@ -264,6 +266,21 @@ class CacheTests(unittest.TestCase):
         (bad / "unknown.json").write_text("null")
         result = self.maintain(apply=True, keep=1, build_scripts=True)
         self.assertTrue(all(p.exists() for pair in units for p in pair))
+        self.assertTrue(any(row["reason"] == "incomplete fingerprint graph" for row in result["retained"]))
+
+    def test_incomplete_graph_does_not_walk_native_output_trees(self):
+        self.script_unit(1, age=3)
+        self.script_unit(2, age=3)
+        bad = self.profile / ".fingerprint/unknown-000000000000000a"
+        bad.mkdir()
+        (bad / "unknown.json").write_text("null")
+        original = build_cache.tree_files
+        def scan(path, root):
+            self.assertNotEqual(path.parent.name, "build", "An incomplete graph must skip native tree scans")
+            return original(path, root)
+        with patch.object(build_cache, "tree_files", side_effect=scan):
+            result = self.maintain(build_scripts=True)
+        self.assertFalse(result["errors"])
         self.assertTrue(any(row["reason"] == "incomplete fingerprint graph" for row in result["retained"]))
 
     def test_hardlink_accounting_distinguishes_external_links(self):
