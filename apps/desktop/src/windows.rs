@@ -2397,6 +2397,9 @@ fn unique_artifact_path(root: &std::path::Path, prefix: &str, extension: &str) -
 #[allow(clippy::too_many_lines)]
 pub fn run() {
     exit_for_maintenance_if_requested();
+    let Ok(_installation_guard) = crate::installed_updates::ready() else {
+        return;
+    };
     let state_root = std::env::var_os("LOCALAPPDATA")
         .map_or_else(std::env::temp_dir, PathBuf::from)
         .join("Transmog");
@@ -2468,6 +2471,7 @@ pub fn run() {
         ..AppConfig::default()
     })
     .expect("application must initialize");
+    crate::installed_updates::cleanup(application.clone());
     let renderer = AppRenderer::new().expect("embedded WebUI assets must be valid");
     let initial_window = application.product_state().window;
     let host = Arc::new(WindowsProxyIntegration::system(
@@ -3041,6 +3045,9 @@ fn exit_for_maintenance_if_requested() {
 }
 
 fn maintenance_exit_code() -> Option<i32> {
+    if let Some(code) = crate::installed_updates::maintenance_exit_code() {
+        return Some(code);
+    }
     if let Some(code) = crate::loopback::maintenance_exit_code() {
         return Some(code);
     }
@@ -3083,7 +3090,16 @@ fn run_maintenance(uninstall: bool) -> Result<(), ()> {
             .remove(&sha256)
             .map_err(|_| ())?;
     }
-    remove_owned_app_data(&state_root)
+    remove_owned_app_data(&state_root)?;
+    if let Some(root) = std::env::current_exe()
+        .ok()
+        .and_then(|path| path.parent().map(std::path::Path::to_owned))
+    {
+        // Retired binaries may still be mapped by an external MCP client. Their
+        // deletion is best effort, just as it is during updates and startup.
+        let _ = transmog_install_support::cleanup(&root);
+    }
+    Ok(())
 }
 
 fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {

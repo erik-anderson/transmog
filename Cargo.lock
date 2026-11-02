@@ -6612,6 +6612,7 @@ dependencies = [
  "transmog-content",
  "transmog-core",
  "transmog-host-windows",
+ "transmog-install-support",
  "transmog-key-protection",
  "transmog-mcp",
  "transmog-network",
@@ -6842,6 +6843,7 @@ dependencies = [
  "transmog-extensions",
  "transmog-host-windows",
  "transmog-http",
+ "transmog-install-support",
  "transmog-mcp",
  "transmog-portable",
  "transmog-session",
@@ -6975,6 +6977,16 @@ dependencies = [
  "transmog-network",
  "transmog-tls",
  "transmog-tls-native",
+]
+
+[[package]]
+name = "transmog-install-support"
+version = "0.1.18"
+dependencies = [
+ "serde",
+ "serde_json",
+ "sha2 0.11.1",
+ "tempfile",
 ]
 
 [[package]]

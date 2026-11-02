@@ -34,11 +34,15 @@ const MAX_REQUEST: usize = 1024 * 1024;
 const MAX_RESPONSE: usize = 2 * 1024 * 1024;
 const DEADLINE: Duration = Duration::from_secs(60);
 const DISCOVERY_FILE: &str = "mcp-endpoint.json";
+const VERSION_HEADER: &str = "x-transmog-version";
+const PRODUCT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Public instance discovery. It contains no client secrets or private TLS material.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Endpoint {
+    /// Exact product release required by this desktop.
+    pub product_version: String,
     /// Exact explicitly bound IPv4/IPv6 loopback address.
     pub address: SocketAddr,
     /// Fresh generation; retained handles from earlier runs are invalid.
@@ -49,6 +53,9 @@ pub struct Endpoint {
 
 impl Endpoint {
     fn validate(&self) -> Result<(), Error> {
+        if self.product_version != PRODUCT_VERSION {
+            return Err(version_mismatch());
+        }
         if !matches!(self.address.ip(), std::net::IpAddr::V4(ip) if ip == std::net::Ipv4Addr::LOCALHOST)
             && !matches!(self.address.ip(), std::net::IpAddr::V6(ip) if ip == std::net::Ipv6Addr::LOCALHOST)
         {
@@ -150,6 +157,7 @@ impl LocalServer {
         tls.check_private_key().map_err(|_| tls_error())?;
         let tls = Arc::new(tls.build());
         let endpoint = Endpoint {
+            product_version: PRODUCT_VERSION.into(),
             address: listener.local_addr().map_err(|_| tls_error())?,
             instance_id,
             certificate_sha256: leaf
@@ -269,6 +277,18 @@ async fn serve(
         return Ok(response(
             StatusCode::NOT_FOUND,
             &serde_json::json!({"error":{"code":"not_found","message":"Unknown local operation endpoint."}}),
+        ));
+    }
+    if request.headers().get_all(VERSION_HEADER).iter().count() != 1
+        || request
+            .headers()
+            .get(VERSION_HEADER)
+            .and_then(|value| value.to_str().ok())
+            != Some(PRODUCT_VERSION)
+    {
+        return Ok(response(
+            StatusCode::CONFLICT,
+            &serde_json::json!({"error":version_mismatch()}),
         ));
     }
     let key = if request
@@ -415,7 +435,7 @@ impl LocalClient {
         operation: &str,
         input: Value,
     ) -> Result<Value, Error> {
-        timeout(DEADLINE, Self::call_endpoint(endpoint, key, operation, input)).await
+        timeout(DEADLINE, Self::call_endpoint(endpoint, key, operation, input, Some(PRODUCT_VERSION))).await
             .map_err(|_| unavailable("The MCP operation timed out. Check Transmog before retrying a change or sending another request."))?
     }
 
@@ -424,7 +444,9 @@ impl LocalClient {
         key: &str,
         operation: &str,
         input: Value,
+        client_version: Option<&str>,
     ) -> Result<Value, Error> {
+        endpoint.validate()?;
         let socket = TcpStream::connect(endpoint.address)
             .await
             .map_err(|_| not_running())?;
@@ -464,12 +486,16 @@ impl LocalClient {
         let mut authorization = hyper::header::HeaderValue::from_str(&format!("Bearer {key}"))
             .map_err(|_| Error::new("unauthorized", "The supplied access key is malformed."))?;
         authorization.set_sensitive(true);
-        let request = Request::builder()
+        let mut request = Request::builder()
             .method(hyper::Method::POST)
             .uri("/call")
             .header(hyper::header::HOST, endpoint.address.to_string())
             .header(hyper::header::AUTHORIZATION, authorization)
-            .header(hyper::header::CONTENT_TYPE, "application/json")
+            .header(hyper::header::CONTENT_TYPE, "application/json");
+        if let Some(version) = client_version {
+            request = request.header(VERSION_HEADER, version);
+        }
+        let request = request
             .body(Full::new(Bytes::from(body)))
             .map_err(|_| unavailable("The local request could not be created."))?;
         let response = sender.send_request(request).await.map_err(|_| unavailable("The connection ended before the operation result arrived. Check its outcome before retrying a change."))?;
@@ -497,6 +523,7 @@ impl LocalClient {
                 "limit" => "limit",
                 "conflict" => "conflict",
                 "invalid_input" => "invalid_input",
+                "version_mismatch" => "version_mismatch",
                 "not_found" => "not_found",
                 _ => "operation_failed",
             };
@@ -577,29 +604,23 @@ fn lifetime_path(root: &Path, endpoint: &Endpoint) -> PathBuf {
 }
 
 /// An independently opened handle, never a clone of the server's locked handle.
-/// Older desktops have no lease; discovery still prevents rebinding to a new run.
+/// Exact-version desktops always publish a lifetime lease.
 #[cfg(feature = "connector")]
 pub(crate) struct InstanceBinding {
     pub(crate) endpoint: Endpoint,
-    lease: Option<std::fs::File>,
+    lease: std::fs::File,
 }
 
 #[cfg(feature = "connector")]
 impl InstanceBinding {
     pub(crate) fn new(client: &LocalClient, endpoint: Endpoint) -> Result<Self, Error> {
-        let lease = match std::fs::OpenOptions::new()
+        let lease = std::fs::OpenOptions::new()
             .read(true)
             .write(true)
             .open(lifetime_path(&client.root, &endpoint))
-        {
-            Ok(file) => Some(file),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(_) => {
-                return Err(unavailable(
+            .map_err(|_| unavailable(
                     "The desktop lifetime lease could not be opened. Check Transmog's user profile and reconnect.",
-                ));
-            }
-        };
+                ))?;
         Ok(Self { endpoint, lease })
     }
 
@@ -610,16 +631,14 @@ impl InstanceBinding {
         {
             return false;
         }
-        self.lease
-            .as_ref()
-            .is_none_or(|file| match file.try_lock() {
-                Err(std::fs::TryLockError::WouldBlock) => true,
-                Ok(()) => {
-                    let _ = file.unlock();
-                    false
-                }
-                Err(std::fs::TryLockError::Error(_)) => false,
-            })
+        match self.lease.try_lock() {
+            Err(std::fs::TryLockError::WouldBlock) => true,
+            Ok(()) => {
+                let _ = self.lease.unlock();
+                false
+            }
+            Err(std::fs::TryLockError::Error(_)) => false,
+        }
     }
 }
 
@@ -653,6 +672,13 @@ fn read_endpoint(root: &Path) -> Result<Endpoint, Error> {
     })?;
     endpoint.validate()?;
     Ok(endpoint)
+}
+
+fn version_mismatch() -> Error {
+    Error::new(
+        "version_mismatch",
+        "The Transmog CLI and desktop must have exactly matching product versions. Restart the agent's MCP connection using the installed CLI.",
+    )
 }
 
 fn unavailable(message: &str) -> Error {

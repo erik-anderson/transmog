@@ -124,6 +124,10 @@ selected-request scopes in the app. Turning **Allow MCP connections** off suspen
 all keys and ends temporary access and effects; still-valid keys work again when
 you re-enable it. Connected stdio servers exit when their desktop stops or MCP is
 disabled. Restart the agent's MCP connection after restarting or re-enabling it.
+Restart that connection after installing an update, too: CLI and desktop versions
+must match exactly. The installer can replace a running CLI, so closing the agent
+application is unnecessary. A retired executable still in use is cleaned up on
+a later Transmog start.
 
 See [CLI commands](cli.md#mcp-agent-connections), the
 [developer reference](mcp-reference.md) and [MCP verification](testing.md#local-mcp-access).

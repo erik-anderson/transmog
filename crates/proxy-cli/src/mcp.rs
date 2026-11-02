@@ -13,6 +13,20 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), Box<dyn Error>> 
         Some("serve") => {
             super::arguments::validate(&arguments[1..], &[], &["--start-app"])?;
             let client = ClientLifetime::capture();
+            let ended = client.ended();
+            tokio::pin!(ended);
+            let executable = std::env::current_exe()?;
+            let installation = tokio::select! {
+                result = tokio::time::timeout(std::time::Duration::from_secs(30), async {
+                    loop {
+                        match transmog_install_support::InstallationWatch::capture(&executable) {
+                            Err(error) if error.kind() == io::ErrorKind::WouldBlock => tokio::time::sleep(std::time::Duration::from_millis(100)).await,
+                            result => return result,
+                        }
+                    }
+                }) => result.map_err(|_| io::Error::other("Installation is still in progress. Retry the MCP connection after it finishes."))??,
+                () = &mut ended => return Ok(()),
+            };
             let connector = Connector::new(
                 root,
                 key.to_string(),
@@ -20,7 +34,13 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), Box<dyn Error>> 
             );
             tokio::select! {
                 result = connector.serve() => result?,
-                () = client.ended() => tracing::info!("MCP connector stopped: client process exited"),
+                () = &mut ended => tracing::info!("MCP connector stopped: client process exited"),
+                () = async {
+                    loop {
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                        if installation.replaced() { break; }
+                    }
+                } => tracing::info!("MCP connector stopped: installed CLI was replaced; reconnect using the updated executable"),
             }
         }
         Some("status") if arguments.len() == 1 => {

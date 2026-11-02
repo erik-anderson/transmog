@@ -39,6 +39,7 @@ Invoke-MaintenanceProcess -FilePath $cli -Arguments @('--version')
 if ($LASTEXITCODE -ne 0) { throw 'Signed CLI capture/lifecycle qualification failed.' }
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', '/TMCAP=1', '/SAZ=1', '/HAR=1', "/D=$installDirectory")
 if (-not (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe') -PathType Leaf)) { throw 'The MCP connector CLI must be installed beside the desktop.' }
+if ((Get-FileHash -LiteralPath (Join-Path $installDirectory 'transmog-cli.exe')).Hash -cne (Get-FileHash -LiteralPath $cli).Hash) { throw 'The installed CLI differs from the signed standalone release artifact.' }
 if (Test-Path -LiteralPath (Join-Path $installDirectory 'transmog-extension-host.exe')) { throw 'Extensions must use the shared script host instead of a duplicate installed runtime.' }
 foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     $openCommand = (Get-Item -LiteralPath "HKCU:\Software\Classes\Transmog.$kind\shell\open\command").GetValue('')
@@ -46,6 +47,8 @@ foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
 }
 # Install again in place, preserving choices without passing association flags.
 Invoke-MaintenanceProcess -FilePath $installer -Arguments @('/S', "/D=$installDirectory")
+& python (Join-Path $PSScriptRoot 'test-cli-update.py') --binaries $installDirectory --installer $installer --installed-directory $installDirectory --artifacts (Join-Path (Split-Path -Parent $ReportPath) "cli-update-$((Get-WindowsReleaseTarget $Target).Architecture)")
+if ($LASTEXITCODE -ne 0) { throw 'Running CLI update and retired-file cleanup qualification failed.' }
 foreach ($kind in @('Tmcap', 'Saz', 'Har')) {
     if ((Get-ItemPropertyValue -LiteralPath 'HKCU:\Software\Erik Anderson\Transmog' -Name ($kind + 'Registration')) -ne 1) { throw "$kind choice was not preserved during an in-place install." }
 }

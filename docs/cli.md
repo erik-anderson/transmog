@@ -68,6 +68,8 @@ These examples assume the key is already configured in the process environment.
 `mcp call` reads a JSON object from stdin. `mcp serve --start-app` lets the agent's
 explicit `transmog_connect` call launch the sibling desktop executable; it never
 enables MCP or starts collection. Status and direct calls require a running desktop.
+CLI and desktop product versions must match exactly. Restart the agent's MCP
+connection after an update to load the replacement CLI.
 
 ## Record a support trace
 

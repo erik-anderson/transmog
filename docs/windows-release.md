@@ -517,6 +517,17 @@ prevents creation of a publishable draft.
 ## Installer and lifecycle policy
 
 - Installation is per-current-user. Downgrades are blocked.
+- Executables are extracted privately, copied and hashed on the installation
+  volume, then replaced as one recoverable set. Existing binaries are moved into
+  `.transmog-retired` before their original paths are reused. Failed replacement
+  returns a failure and restores the previous set where possible; a later installer
+  run recovers an interrupted transaction before trying again. Startup waits for
+  an active replacement and explains when an interrupted update needs that repair.
+- After commit, retired-file deletion is best effort. Locked executables do not
+  block installation. App startup retries completed retirement transactions in the
+  background; subsequent updates and uninstall also retry cleanup. Pending rollback
+  copies and unknown files are retained. An installation-generation hint asks running
+  MCP connectors to exit; restart the agent's MCP connection to load the new CLI.
 - Evergreen WebView2 is an operating-system prerequisite and is never bundled.
   Diagnostics report the actual runtime version.
 - Tauri's single-instance plugin is registered first. A second launch focuses
@@ -558,6 +569,16 @@ creates a fresh CA and asks for Windows trust approval. Reset is blocked while
 the proxy is active.
 
 ## Desktop qualification gates
+
+Signed installer qualification includes `scripts/test-cli-update.py`: update with
+an initialized offline connector, verify all installed executable hashes, exercise
+rename failure and rollback/retry, and confirm deferred cleanup across app starts.
+Local fixture qualification uses the production NSIS extraction/replacement section
+without changing product registration:
+
+```powershell
+python scripts/test-cli-update.py --binaries target/debug --artifacts artifacts/cli-update --makensis "$env:LOCALAPPDATA/tauri/NSIS/makensis.exe"
+```
 
 Complete [local release qualification](#local-release-qualification-before-dispatch)
 on the candidate commit, including its three-minute WebView soak. The

@@ -29,12 +29,91 @@ fn input(name: &str) -> GrantInput {
     }
 }
 
+#[tokio::test]
+async fn old_and_missing_client_versions_are_rejected_without_dispatch_or_activity() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = AccessManager::open(None).unwrap();
+    let (_, key) = manager.create(input("version gate")).unwrap();
+    manager.set_enabled(true).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = LocalServer::start(
+        root.path().into(),
+        manager.clone(),
+        Arc::new(Echo(calls.clone())),
+    )
+    .await
+    .unwrap();
+    for version in [None, Some("0.0.0"), Some("999.0.0"), Some("")] {
+        let error = LocalClient::call_endpoint(
+            server.endpoint(),
+            key.expose(),
+            "echo",
+            Value::Null,
+            version,
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(error.code, "version_mismatch");
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+        assert_eq!(manager.active_agents().len(), 0);
+    }
+    LocalClient::call_endpoint(
+        server.endpoint(),
+        key.expose(),
+        "echo",
+        Value::Null,
+        Some(PRODUCT_VERSION),
+    )
+    .await
+    .unwrap();
+    assert_eq!(calls.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn incompatible_desktop_discovery_never_dispatches_a_call() {
+    let root = tempfile::tempdir().unwrap();
+    let manager = AccessManager::open(None).unwrap();
+    let (_, key) = manager.create(input("discovery version")).unwrap();
+    manager.set_enabled(true).unwrap();
+    let calls = Arc::new(AtomicUsize::new(0));
+    let server = LocalServer::start(root.path().into(), manager, Arc::new(Echo(calls.clone())))
+        .await
+        .unwrap();
+    let mut endpoint = server.endpoint().clone();
+    endpoint.product_version = "0.0.0".into();
+    publish(root.path(), &endpoint).unwrap();
+    let client = LocalClient::new(root.path().into());
+    assert_eq!(
+        client
+            .call(key.expose(), "echo", Value::Null)
+            .await
+            .unwrap_err()
+            .code,
+        "version_mismatch"
+    );
+    let mut legacy = serde_json::to_value(server.endpoint()).unwrap();
+    legacy.as_object_mut().unwrap().remove("productVersion");
+    std::fs::write(
+        root.path().join(DISCOVERY_FILE),
+        serde_json::to_vec(&legacy).unwrap(),
+    )
+    .unwrap();
+    assert!(
+        client
+            .call(key.expose(), "echo", Value::Null)
+            .await
+            .is_err()
+    );
+    assert_eq!(calls.load(Ordering::SeqCst), 0);
+}
+
 #[cfg(feature = "connector")]
 #[test]
 fn released_os_lease_ends_instance_even_with_stale_discovery_and_is_reclaimed() {
     let root = tempfile::tempdir().unwrap();
     let endpoint = Endpoint {
         address: "127.0.0.1:12345".parse().unwrap(),
+        product_version: PRODUCT_VERSION.into(),
         instance_id: "1".repeat(32),
         certificate_sha256: vec![1; 32],
     };
@@ -98,17 +177,17 @@ async fn replacing_listener_in_same_app_run_preserves_new_discovery_lease_and_ac
 
 #[cfg(feature = "connector")]
 #[test]
-fn only_missing_leases_use_legacy_compatibility() {
+fn missing_or_inaccessible_lifetime_leases_reject_association() {
     let root = tempfile::tempdir().unwrap();
     let endpoint = Endpoint {
         address: "127.0.0.1:12345".parse().unwrap(),
+        product_version: PRODUCT_VERSION.into(),
         instance_id: "2".repeat(32),
         certificate_sha256: vec![2; 32],
     };
     publish(root.path(), &endpoint).unwrap();
     let client = LocalClient::new(root.path().into());
-    let legacy = InstanceBinding::new(&client, endpoint.clone()).unwrap();
-    assert!(legacy.is_alive(&client));
+    assert!(InstanceBinding::new(&client, endpoint.clone()).is_err());
     // A present but unreadable lease must not silently disable crash detection.
     std::fs::create_dir(lifetime_path(root.path(), &endpoint)).unwrap();
     let error = InstanceBinding::new(&client, endpoint).err().unwrap();

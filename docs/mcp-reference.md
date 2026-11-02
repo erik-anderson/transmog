@@ -22,6 +22,12 @@ OAuth sign-in. The desktop authenticates against a SHA-256 verifier. On Windows,
 keys have a user-bound encrypted copy so the trusted settings UI can reopen
 configuration. Plaintext keys never enter the persisted store.
 
+CLI and desktop product versions must match exactly. Discovery requires
+`productVersion`, and every local HTTP call requires a matching
+`X-Transmog-Version` header. Missing or mismatched versions are rejected before
+operation dispatch. This uses the release version, not a separate MCP revision;
+it does not replace access-key authentication.
+
 Keys identify grants, not verified executables. Processes that can read the same
 user's private configuration are not isolated from each other.
 
@@ -56,6 +62,12 @@ This follows the [MCP stdio shutdown flow](https://modelcontextprotocol.io/speci
 there is no custom shutdown tool.
 Tests must use this cleanup in `finally` even when an assertion fails.
 
+The connector also exits when its installed executable generation changes,
+including while initialized offline. Installation publishes that hint only after
+the replacement binaries are committed. Restart the agent's MCP connection to
+load the updated CLI; automatic respawning is client-dependent and is not required
+for installation to succeed. The connector never replays pending calls on update.
+
 The connector also exits when a response write fails or its launching client
 process exits, including an unreaped Unix zombie. An absent or incomplete
 initialization has a 30-second deadline.
@@ -67,11 +79,9 @@ generation. Closing or crashing that desktop, disabling MCP, or replacing its
 discovery ends the connection. Restart the agent's MCP connection after restarting
 the desktop or re-enabling MCP. Calls never silently switch to another generation.
 A private OS file lock tracks listener lifetime without polling tools or renewing
-activity, grants or inspection sessions. With an older desktop lacking that lock,
-discovery removal/replacement still ends the connection; stale discovery after a
-crash requires client cleanup. Other lease-file access failures reject the call
-before dispatch instead of silently disabling crash detection. No lifetime monitor
-replaces per-call authentication.
+activity, grants or inspection sessions. A missing or inaccessible lifetime lease
+rejects the call before dispatch instead of silently disabling crash detection.
+No lifetime monitor replaces per-call authentication.
 
 The CLI bounds shutdown of its MCP runtime so an uncancellable OS stdin read
 cannot keep the process alive. Other CLI commands retain their normal runtime

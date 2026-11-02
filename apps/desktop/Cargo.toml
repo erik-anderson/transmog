@@ -22,6 +22,7 @@ name = "transmog"
 path = "src/main.rs"
 
 [dependencies]
+transmog-install-support = { version = "=0.1.18", path = "../../crates/install-support" }
 transmog-mcp = { version = "=0.1.18", path = "../../crates/mcp", features = ["desktop"] }
 transmog-app = { version = "=0.1.18", path = "../../crates/app" }
 transmog-portable = { version = "=0.1.18", path = "../../crates/portable" }

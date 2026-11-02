@@ -481,20 +481,40 @@ Section Install
 
   !insertmacro CheckIfAppIsRunning "$INSTDIR\${MAINBINARYNAME}.exe" "${PRODUCTNAME}"
 
-  ; Copy main executable
-  File "${MAINBINARYSRCPATH}"
+  ; Extract privately first. Never let NSIS silently skip a locked installed EXE.
+  InitPluginsDir
+  SetOutPath "$PLUGINSDIR\transmog-payload"
+  ClearErrors
+  File "/oname=transmog.exe" "${MAINBINARYSRCPATH}"
+  {{#each binaries}}
+    File /a "/oname={{this}}" "{{no-escape @key}}"
+  {{/each}}
+  ${If} ${Errors}
+    SetErrorLevel 2
+    Abort "The update payload could not be extracted. Application files have not been replaced."
+  ${EndIf}
+  ClearErrors
+  ExecWait '"$PLUGINSDIR\transmog-payload\transmog.exe" --apply-update-payload "$INSTDIR" "$PLUGINSDIR\transmog-payload"' $0
+  ${If} ${Errors}
+    StrCpy $0 2
+  ${EndIf}
+  ${If} $0 != 0
+    SetErrorLevel 2
+    Abort "Transmog executable replacement failed. Retry the installer to recover the previous files."
+  ${EndIf}
+  SetOutPath $INSTDIR
 
   ; Copy resources
   {{#each resources_dirs}}
     CreateDirectory "$INSTDIR\\{{this}}"
   {{/each}}
   {{#each resources}}
+    ClearErrors
     File /a "/oname={{this.[1]}}" "{{no-escape @key}}"
-  {{/each}}
-
-  ; Copy external binaries
-  {{#each binaries}}
-    File /a "/oname={{this}}" "{{no-escape @key}}"
+    ${If} ${Errors}
+      SetErrorLevel 2
+      Abort "An application resource could not be installed. Retry the installer."
+    ${EndIf}
   {{/each}}
 
   ; Create file associations
@@ -513,7 +533,12 @@ Section Install
   {{/each}}
 
   ; Create uninstaller
+  ClearErrors
   WriteUninstaller "$INSTDIR\uninstall.exe"
+  ${If} ${Errors}
+    SetErrorLevel 2
+    Abort "The uninstaller could not be updated. Close it and retry the installer."
+  ${EndIf}
 
   ; Save $INSTDIR in registry for future installations
   WriteRegStr SHCTX "${MANUPRODUCTKEY}" "" $INSTDIR
@@ -649,6 +674,10 @@ Section Uninstall
 
 
   ; Delete uninstaller
+  Delete "$INSTDIR\.transmog-installation.json"
+  Delete "$INSTDIR\.transmog-update.lock"
+  Delete "$INSTDIR\.transmog-retired\.cleanup.lock"
+  RMDir "$INSTDIR\.transmog-retired"
   Delete "$INSTDIR\uninstall.exe"
 
   {{#each resources_ancestors}}

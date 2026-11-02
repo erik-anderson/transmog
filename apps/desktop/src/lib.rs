@@ -24,6 +24,9 @@ mod update_policy;
 mod updates;
 
 #[cfg(windows)]
+mod installed_updates;
+
+#[cfg(windows)]
 mod loopback;
 
 /// Starts the Windows desktop shell.

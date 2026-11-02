@@ -12,6 +12,7 @@ name = "transmog-cli"
 path = "src/main.rs"
 
 [dependencies]
+transmog-install-support = { version = "=0.1.18", path = "../install-support" }
 transmog-mcp = { version = "=0.1.18", path = "../mcp", features = ["connector"] }
 rpassword.workspace = true
 zeroize.workspace = true
