@@ -74,6 +74,9 @@ export async function checkScriptDebugger(page, root) {
     globalThis.__workspaceFixture.debugPropertyPageSize = 37;
   });
   await panel.getByRole("button", { name: "local · nested", exact: true }).click();
+  // key-36 also exists on the previous 100-property page. Wait for that page to
+  // be replaced before treating it as evidence that the shorter page is ready.
+  await panel.getByRole("cell", { name: "key-99", exact: true }).waitFor({ state: "detached" });
   await panel.getByRole("cell", { name: "key-36", exact: true }).waitFor();
   await panel.getByRole("button", { name: "Next properties", exact: true }).click();
   await panel.getByRole("cell", { name: "key-73", exact: true }).waitFor();
