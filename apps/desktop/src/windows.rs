@@ -3132,6 +3132,7 @@ fn remove_owned_app_data(state_root: &std::path::Path) -> Result<(), ()> {
                     | "automation-v1.1.json"
                     | "scripts-v1.0.json"
                     | "scripts-v1.1.json"
+                    | "scripts-v1.lock"
             )
             || name.starts_with("certificate-ownership-v1.tmp-")
             || (name.starts_with(".transmog-state-") && name.ends_with(".tmp"));
@@ -3473,6 +3474,9 @@ mod tests {
             "diagnostics.jsonl",
             "diagnostics.jsonl.1",
             "certificate-ownership-v1.json",
+            "scripts-v1.0.json",
+            "scripts-v1.1.json",
+            "scripts-v1.lock",
             "interception-ca.pem",
             "interception-ca.key",
             "preferences.00000000000000000001.json",

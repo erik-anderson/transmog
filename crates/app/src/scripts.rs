@@ -1,7 +1,7 @@
 use std::{
     collections::VecDeque,
-    fs::OpenOptions,
-    io::Write,
+    fs::{File, OpenOptions},
+    io::{Read as _, Write},
     path::{Path, PathBuf},
     sync::{Arc, Mutex, RwLock},
 };
@@ -302,7 +302,7 @@ impl ScriptRegistry {
         host: Option<PathBuf>,
         assets: Arc<dyn ScriptResponseAssetResolver>,
     ) -> Result<Self, AppError> {
-        let loaded = path.as_deref().and_then(load_latest);
+        let loaded = path.as_deref().map(load_latest).transpose()?.flatten();
         if loaded.is_none()
             && path
                 .as_deref()
@@ -1235,7 +1235,48 @@ fn slot_path(path: &Path, slot: u64) -> PathBuf {
     PathBuf::from(value)
 }
 
-fn load_latest(path: &Path) -> Option<ScriptWorkspace> {
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct WorkspaceSchema {
+    schema_version: u32,
+}
+
+fn load_latest(path: &Path) -> Result<Option<ScriptWorkspace>, AppError> {
+    let observed = scan_workspace_slots(path, false);
+    if !observed.obsolete {
+        return Ok(observed.latest);
+    }
+    cleanup_and_load(path, observed.latest)
+}
+
+fn cleanup_and_load(
+    path: &Path,
+    fallback: Option<ScriptWorkspace>,
+) -> Result<Option<ScriptWorkspace>, AppError> {
+    let _lease = match workspace_lease(path) {
+        Ok(lease) => lease,
+        Err(error) => return fallback.map(Some).ok_or(error),
+    };
+    // A save may have completed since the first scan. Decide what to remove
+    // from fresh bytes while holding the same lease used by persistence.
+    let scanned = scan_workspace_slots(path, true);
+    if scanned.latest.is_none()
+        && let Some(error) = scanned.cleanup_error
+    {
+        return Err(error);
+    }
+    Ok(scanned.latest)
+}
+
+#[derive(Default)]
+struct WorkspaceScan {
+    latest: Option<ScriptWorkspace>,
+    obsolete: bool,
+    cleanup_error: Option<AppError>,
+}
+
+fn scan_workspace_slots(path: &Path, discard_obsolete: bool) -> WorkspaceScan {
+    let mut scanned = WorkspaceScan::default();
     let mut workspaces = Vec::new();
     for slot in 0..=1 {
         let candidate = slot_path(path, slot);
@@ -1245,9 +1286,37 @@ fn load_latest(path: &Path) -> Option<ScriptWorkspace> {
         if metadata.len() > MAX_SCRIPT_WORKSPACE_BYTES {
             continue;
         }
-        let Ok(bytes) = std::fs::read(candidate) else {
+        let Ok(file) = File::open(&candidate) else {
             continue;
         };
+        let mut bytes = Vec::new();
+        if file
+            .take(MAX_SCRIPT_WORKSPACE_BYTES + 1)
+            .read_to_end(&mut bytes)
+            .is_err()
+            || bytes.len() as u64 > MAX_SCRIPT_WORKSPACE_BYTES
+        {
+            continue;
+        }
+        // Only discard a complete JSON document declaring an older schema.
+        // Current, future and unrecognizable files retain the existing recovery
+        // behavior rather than being mistaken for disposable legacy state.
+        if serde_json::from_slice::<WorkspaceSchema>(&bytes)
+            .is_ok_and(|schema| schema.schema_version < SCRIPT_WORKSPACE_SCHEMA_VERSION)
+        {
+            scanned.obsolete = true;
+            if discard_obsolete
+                && let Err(error) = std::fs::remove_file(&candidate)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                scanned.cleanup_error = Some(AppError::new(
+                    ErrorCategory::Unavailable,
+                    "An older script workspace could not be removed. Close other Transmog instances and check access to the application state directory.",
+                    true,
+                ));
+            }
+            continue;
+        }
         if let Ok(workspace) = serde_json::from_slice::<ScriptWorkspace>(&bytes)
             && validate_workspace(&workspace).is_ok()
         {
@@ -1255,7 +1324,41 @@ fn load_latest(path: &Path) -> Option<ScriptWorkspace> {
         }
     }
     workspaces.sort_by_key(|workspace| workspace.generation);
-    workspaces.pop()
+    scanned.latest = workspaces.pop();
+    scanned
+}
+
+fn workspace_lease(path: &Path) -> Result<File, AppError> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "script workspace directory is unavailable",
+                true,
+            )
+        })?;
+    }
+    let mut lock_path = path.as_os_str().to_owned();
+    lock_path.push(".lock");
+    // Keep the lock file in place: removing it could give another process a
+    // different lock inode while the original lease is still held.
+    let file = OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .open(PathBuf::from(lock_path))
+        .map_err(|_| {
+            AppError::new(
+                ErrorCategory::Unavailable,
+                "script workspace lock is unavailable",
+                true,
+            )
+        })?;
+    file.try_lock().map_err(|_| {
+        AppError::new(ErrorCategory::Conflict, "Script workspace is busy in another process. Retry after its save or startup finishes.", true)
+    })?;
+    Ok(file)
 }
 
 fn persist(path: &Path, workspace: &ScriptWorkspace) -> Result<(), AppError> {
@@ -1274,15 +1377,7 @@ fn persist(path: &Path, workspace: &ScriptWorkspace) -> Result<(), AppError> {
             false,
         ));
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| {
-            AppError::new(
-                ErrorCategory::Unavailable,
-                "script workspace directory is unavailable",
-                true,
-            )
-        })?;
-    }
+    let _lease = workspace_lease(path)?;
     let destination = slot_path(path, workspace.generation % 2);
     let mut file = OpenOptions::new()
         .create(true)
@@ -1367,6 +1462,215 @@ mod tests {
             .unwrap()
             .revision
             .clone()
+    }
+
+    #[test]
+    fn startup_discards_older_schema_slots_without_compiling_or_restoring_scripts() {
+        for version in 0..SCRIPT_WORKSPACE_SCHEMA_VERSION {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("scripts");
+            for slot in 0..=1 {
+                std::fs::write(
+                    slot_path(&path, slot),
+                    serde_json::to_vec(&serde_json::json!({
+                        "schemaVersion":version, "generation":slot + 10,
+                        "active":[{"source":"old executable source must not be evaluated"}],
+                        "saved":[{"source":"obsolete draft"}]
+                    }))
+                    .unwrap(),
+                )
+                .unwrap();
+            }
+            let status = registry_with_path(path.clone()).status();
+            assert_eq!(status.generation, 0);
+            assert_eq!(status.saved.len(), 0);
+            assert_eq!(status.active.len(), 0);
+            assert_eq!(status.built.len(), 0);
+            assert_eq!(status.paused.len(), 0);
+            assert_eq!(status.runtimes.len(), 0);
+            assert!(!slot_path(&path, 0).exists());
+            assert!(!slot_path(&path, 1).exists());
+        }
+    }
+
+    #[test]
+    fn startup_preserves_current_workspace_when_other_slot_is_obsolete() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let workspace = ScriptWorkspace {
+            schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+            generation: 4,
+            saved: vec![draft(1)],
+            ..ScriptWorkspace::default()
+        };
+        persist(&path, &workspace).unwrap();
+        let current = std::fs::read(slot_path(&path, 0)).unwrap();
+        std::fs::write(
+            slot_path(&path, 1),
+            br#"{"schemaVersion":1,"generation":999,"active":[]}"#,
+        )
+        .unwrap();
+        let loaded = registry_with_path(path.clone()).status();
+        assert_eq!(loaded.generation, 4);
+        assert_eq!(loaded.saved[0].source, workspace.saved[0].source);
+        assert_eq!(std::fs::read(slot_path(&path, 0)).unwrap(), current);
+        assert!(!slot_path(&path, 1).exists());
+    }
+
+    #[test]
+    fn cleanup_reloads_slots_after_an_intervening_save() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        std::fs::write(
+            slot_path(&path, 0),
+            br#"{"schemaVersion":1,"generation":2,"active":[]}"#,
+        )
+        .unwrap();
+        let observed = scan_workspace_slots(&path, false);
+        assert!(observed.obsolete);
+        let current = ScriptWorkspace {
+            schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+            generation: 4,
+            saved: vec![draft(1)],
+            ..ScriptWorkspace::default()
+        };
+        persist(&path, &current).unwrap();
+        let bytes = std::fs::read(slot_path(&path, 0)).unwrap();
+        let loaded = cleanup_and_load(&path, observed.latest).unwrap().unwrap();
+        assert_eq!(loaded.generation, current.generation);
+        assert_eq!(std::fs::read(slot_path(&path, 0)).unwrap(), bytes);
+    }
+
+    #[test]
+    fn cleanup_and_saves_respect_another_workspace_lease() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let slot = slot_path(&path, 0);
+        let old = br#"{"schemaVersion":1,"generation":2,"active":[]}"#;
+        std::fs::write(&slot, old).unwrap();
+        let held = workspace_lease(&path).unwrap();
+        assert_eq!(
+            load_latest(&path).unwrap_err().category,
+            ErrorCategory::Conflict
+        );
+        let current = ScriptWorkspace {
+            schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+            generation: 4,
+            saved: vec![draft(1)],
+            ..ScriptWorkspace::default()
+        };
+        assert_eq!(
+            persist(&path, &current).unwrap_err().category,
+            ErrorCategory::Conflict
+        );
+        assert_eq!(std::fs::read(&slot).unwrap(), old);
+        drop(held);
+        persist(&path, &current).unwrap();
+        assert_eq!(
+            load_latest(&path).unwrap().unwrap().generation,
+            current.generation
+        );
+    }
+
+    #[test]
+    fn current_workspace_loads_when_the_cleanup_lease_is_unavailable() {
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let current = ScriptWorkspace {
+            schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+            generation: 4,
+            saved: vec![draft(1)],
+            ..ScriptWorkspace::default()
+        };
+        persist(&path, &current).unwrap();
+        let lock = root.path().join("scripts.lock");
+        std::fs::remove_file(&lock).unwrap();
+        std::fs::create_dir(&lock).unwrap();
+        assert_eq!(registry_with_path(path.clone()).status().generation, 4);
+        let old = slot_path(&path, 1);
+        std::fs::write(&old, br#"{"schemaVersion":1,"generation":3,"active":[]}"#).unwrap();
+        assert_eq!(registry_with_path(path).status().generation, 4);
+        assert!(old.exists());
+    }
+
+    #[test]
+    fn startup_preserves_unusable_current_future_and_unrecognizable_files() {
+        let current = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion":SCRIPT_WORKSPACE_SCHEMA_VERSION, "active":[]
+        }))
+        .unwrap();
+        let future = serde_json::to_vec(&serde_json::json!({
+            "schemaVersion":SCRIPT_WORKSPACE_SCHEMA_VERSION + 1, "generation":1, "active":[]
+        }))
+        .unwrap();
+        for bytes in [
+            current.as_slice(),
+            future.as_slice(),
+            br#"{"schemaVersion":1,"#.as_slice(),
+            br#"{"generation":1,"active":[]}"#.as_slice(),
+        ] {
+            let root = tempfile::tempdir().unwrap();
+            let path = root.path().join("scripts");
+            std::fs::write(slot_path(&path, 0), bytes).unwrap();
+            let error = ScriptRegistry::load(
+                Some(path.clone()),
+                None,
+                Arc::new(ResponseAssetStore::load(None).unwrap()),
+            )
+            .err()
+            .unwrap();
+            assert_eq!(error.category, ErrorCategory::InvalidInput);
+            assert_eq!(std::fs::read(slot_path(&path, 0)).unwrap(), bytes);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn locked_obsolete_slot_does_not_hide_a_valid_current_workspace() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let current = ScriptWorkspace {
+            schema_version: SCRIPT_WORKSPACE_SCHEMA_VERSION,
+            generation: 3,
+            saved: vec![draft(1)],
+            ..ScriptWorkspace::default()
+        };
+        persist(&path, &current).unwrap();
+        let old = slot_path(&path, 0);
+        std::fs::write(&old, br#"{"schemaVersion":1,"generation":2,"active":[]}"#).unwrap();
+        let _held = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&old)
+            .unwrap();
+        let loaded = registry_with_path(path).status();
+        assert_eq!(loaded.generation, current.generation);
+        assert_eq!(loaded.saved[0].source, current.saved[0].source);
+        assert!(old.exists());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn obsolete_workspace_delete_failure_preserves_bytes_and_can_be_retried() {
+        use std::os::windows::fs::OpenOptionsExt as _;
+        let root = tempfile::tempdir().unwrap();
+        let path = root.path().join("scripts");
+        let slot = slot_path(&path, 0);
+        let bytes = br#"{"schemaVersion":1,"generation":1,"active":[]}"#;
+        std::fs::write(&slot, bytes).unwrap();
+        let held = OpenOptions::new()
+            .read(true)
+            .share_mode(3)
+            .open(&slot)
+            .unwrap();
+        let error = load_latest(&path).unwrap_err();
+        assert_eq!(error.category, ErrorCategory::Unavailable);
+        assert!(error.retryable);
+        assert_eq!(std::fs::read(&slot).unwrap(), bytes);
+        drop(held);
+        assert_eq!(registry_with_path(path).status().generation, 0);
+        assert!(!slot.exists());
     }
 
     #[test]
@@ -1628,7 +1932,7 @@ mod tests {
         assert_eq!(reopened.status().active[0].source, active.source);
         assert_eq!(reopened.status().saved[0].revision, 1);
         assert_eq!(
-            load_latest(&path).unwrap().generation,
+            load_latest(&path).unwrap().unwrap().generation,
             reopened.status().generation
         );
         assert_eq!(

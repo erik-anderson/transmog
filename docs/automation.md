@@ -245,9 +245,10 @@ transpilation. Compiler provenance and declaration hashes do not require a
 rebuild. They also do not promise compatibility with future scripting API or
 JavaScript runtime changes; those remain separate contracts.
 
-Older source-only script workspaces are not migrated. If workspace files exist
-but none can be read as a valid supported workspace, loading reports an error and
-preserves the original files.
+Startup discards script workspace files declaring an older schema; it does not
+migrate their source or activation state. If no current workspace remains, scripts
+start empty. Current-schema, future-schema and malformed files are preserved;
+loading reports an error if none can be read as a valid current workspace.
 See [persisted state](product-state-and-support.md#persisted-state) for storage
 and recovery boundaries.
 

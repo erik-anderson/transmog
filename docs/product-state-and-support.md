@@ -33,12 +33,15 @@ for save, language-switch and conflict recovery actions.
 
 On Windows the script workspace uses `scripts-v1.0.json` and `scripts-v1.1.json`
 under `%LOCALAPPDATA%\Transmog`. The filename prefix is independent of the payload
-schema. Startup selects the newest readable supported generation. If files exist
-but neither slot is usable, loading reports an error and preserves them. Older
-source-only workspaces are not migrated. A loaded applied artifact can remain
-configured while its sandbox is unavailable; the editor exposes that state and
-can retry the exact artifact without applying a newer draft. Field and validation
-details belong to [the script workspace model](../crates/app/src/scripts.rs).
+schema. Startup deletes slots declaring an older schema, without migration, then
+selects the newest readable current generation. If only obsolete slots existed,
+it starts with an empty script workspace. Current-schema, future-schema and
+unrecognizable files are preserved; if none is usable, loading reports an error.
+A blocked obsolete-slot cleanup does not prevent loading a usable current slot.
+A loaded applied artifact can remain configured while its sandbox is unavailable;
+the editor exposes that state and can retry the exact artifact without applying a
+newer draft. Field and validation details belong to
+[the script workspace model](../crates/app/src/scripts.rs).
 
 Response sets persist one current response collection, notes, explicitly named
 versions, and an independent applied live snapshot. Saving current content does

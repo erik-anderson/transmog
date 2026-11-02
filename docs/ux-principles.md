@@ -159,6 +159,8 @@ when changing the experience.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.
+- Startup discards obsolete script workspace schemas rather than migrating them.
+  Never treat malformed data or a newer schema as obsolete.
 - Preserve explicit evidence associations independently of saved content revisions
   and live activation. Show unavailable evidence with its remembered identity;
   replacing it requires an explicit choice rather than matching a later URL.
