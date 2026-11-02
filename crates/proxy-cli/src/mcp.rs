@@ -12,13 +12,16 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), Box<dyn Error>> 
     match arguments.first().map(String::as_str) {
         Some("serve") => {
             super::arguments::validate(&arguments[1..], &[], &["--start-app"])?;
-            Connector::new(
+            let client = ClientLifetime::capture();
+            let connector = Connector::new(
                 root,
                 key.to_string(),
                 arguments.iter().any(|arg| arg == "--start-app"),
-            )
-            .serve()
-            .await?;
+            );
+            tokio::select! {
+                result = connector.serve() => result?,
+                () = client.ended() => tracing::info!("MCP connector stopped: client process exited"),
+            }
         }
         Some("status") if arguments.len() == 1 => {
             require_key(&key)?;
@@ -63,6 +66,61 @@ pub(crate) async fn command(arguments: &[String]) -> Result<(), Box<dyn Error>> 
         _ => return Err(super::invalid_input("use transmog-cli mcp --help").into()),
     }
     Ok(())
+}
+
+/// Process identity includes its creation time so PID reuse cannot extend a
+/// connector's lifetime. No command lines or environment secrets are inspected.
+struct ClientLifetime {
+    system: sysinfo::System,
+    identity: Option<(sysinfo::Pid, u64)>,
+}
+
+impl ClientLifetime {
+    fn capture() -> Self {
+        use sysinfo::{Pid, ProcessRefreshKind, ProcessesToUpdate, System};
+        let mut system = System::new();
+        let own_pid = Pid::from_u32(std::process::id());
+        system.refresh_processes_specifics(
+            ProcessesToUpdate::Some(&[own_pid]),
+            true,
+            ProcessRefreshKind::nothing(),
+        );
+        let parent = system.process(own_pid).and_then(sysinfo::Process::parent);
+        let identity = parent.and_then(|pid| {
+            system.refresh_processes_specifics(
+                ProcessesToUpdate::Some(&[pid]),
+                true,
+                ProcessRefreshKind::nothing(),
+            );
+            system
+                .process(pid)
+                .map(|process| (pid, process.start_time()))
+        });
+        Self { system, identity }
+    }
+
+    async fn ended(mut self) {
+        let Some((pid, started)) = self.identity else {
+            // Some restricted environments cannot inspect the parent. Stdio
+            // and desktop lifetime still apply; do not reject valid clients.
+            std::future::pending::<()>().await;
+            return;
+        };
+        loop {
+            tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            self.system.refresh_processes_specifics(
+                sysinfo::ProcessesToUpdate::Some(&[pid]),
+                true,
+                sysinfo::ProcessRefreshKind::nothing(),
+            );
+            if self.system.process(pid).is_none_or(|process| {
+                process.start_time() != started
+                    || process.status() == sysinfo::ProcessStatus::Zombie
+            }) {
+                return;
+            }
+        }
+    }
 }
 
 fn require_key(key: &str) -> io::Result<()> {

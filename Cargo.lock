@@ -7022,6 +7022,7 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "tokio-boring",
+ "tracing",
  "transmog-app",
  "transmog-automation",
  "transmog-core",

@@ -106,10 +106,18 @@ restart with a disposable profile:
 
 ```powershell
 python scripts/test-mcp-startup.py --executable target/debug/transmog-cli.exe --artifacts artifacts/mcp-startup
+python scripts/test-mcp-lifecycle.py --executable target/debug/transmog-cli.exe --artifacts artifacts/mcp-lifecycle
 ```
 
-This startup check requires no existing desktop process and closes only its own
-windows. See [MCP setup](mcp.md) and [connector contracts](mcp-reference.md).
+The startup check requires no existing desktop process. It closes and crashes
+only desktops it launches, keeps connector stdin open, and verifies exit and a
+fresh connector after restart. It also checks concurrent connect requests and
+that ending a connector preserves its independently launched desktop. The
+lifecycle check needs no desktop or key. It repeats EOF, broken-output and
+client-exit checks and verifies the 30-second initialization deadline with absent
+or partial input, plus trace logging with an undrained stderr pipe. Both checks own and
+clean up their subprocesses. See [MCP setup](mcp.md) and
+[connector contracts](mcp-reference.md#connector-lifetime).
 
 ## Desktop and capture workflows
 

@@ -122,7 +122,8 @@ Keys, permissions, redaction settings and expiry survive restarts. Temporary
 approvals and control sessions do not. Reconnect after restarting and refresh
 selected-request scopes in the app. Turning **Allow MCP connections** off suspends
 all keys and ends temporary access and effects; still-valid keys work again when
-you re-enable it.
+you re-enable it. Connected stdio servers exit when their desktop stops or MCP is
+disabled. Restart the agent's MCP connection after restarting or re-enabling it.
 
 See [CLI commands](cli.md#mcp-agent-connections), the
 [developer reference](mcp-reference.md) and [MCP verification](testing.md#local-mcp-access).

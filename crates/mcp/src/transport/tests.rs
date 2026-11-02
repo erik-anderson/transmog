@@ -29,6 +29,92 @@ fn input(name: &str) -> GrantInput {
     }
 }
 
+#[cfg(feature = "connector")]
+#[test]
+fn released_os_lease_ends_instance_even_with_stale_discovery_and_is_reclaimed() {
+    let root = tempfile::tempdir().unwrap();
+    let endpoint = Endpoint {
+        address: "127.0.0.1:12345".parse().unwrap(),
+        instance_id: "1".repeat(32),
+        certificate_sha256: vec![1; 32],
+    };
+    let mut lifetime = Lifetime::create(root.path(), &endpoint).unwrap();
+    publish(root.path(), &endpoint).unwrap();
+    let client = LocalClient::new(root.path().into());
+    let bound = InstanceBinding::new(&client, endpoint.clone()).unwrap();
+    assert!(bound.is_alive(&client));
+    // Model hard process exit: only the OS handle is closed; neither the
+    // discovery file nor the lease file receives normal destructor cleanup.
+    drop(lifetime.file.take());
+    assert!(client.endpoint().is_ok());
+    assert!(!bound.is_alive(&client));
+    let next = Endpoint {
+        certificate_sha256: vec![2; 32],
+        ..endpoint.clone()
+    };
+    let _next_lifetime = Lifetime::create(root.path(), &next).unwrap();
+    assert!(!lifetime_path(root.path(), &endpoint).exists());
+    publish(root.path(), &next).unwrap();
+    assert!(!bound.is_alive(&client));
+}
+
+#[cfg(feature = "connector")]
+#[tokio::test]
+async fn replacing_listener_in_same_app_run_preserves_new_discovery_lease_and_activity() {
+    let root = tempfile::tempdir().unwrap();
+    let access = AccessManager::open(None).unwrap();
+    let (_, key) = access.create(input("replacement lifecycle")).unwrap();
+    access.set_enabled(true).unwrap();
+    let instance = "a".repeat(32);
+    let handler = Arc::new(Echo(Arc::new(AtomicUsize::new(0))));
+    let first = LocalServer::start_for_instance(
+        root.path().into(),
+        instance.clone(),
+        access.clone(),
+        handler.clone(),
+    )
+    .await
+    .unwrap();
+    let client = LocalClient::new(root.path().into());
+    let first_binding = InstanceBinding::new(&client, first.endpoint().clone()).unwrap();
+    let second =
+        LocalServer::start_for_instance(root.path().into(), instance, access.clone(), handler)
+            .await
+            .unwrap();
+    let second_binding = InstanceBinding::new(&client, second.endpoint().clone()).unwrap();
+    assert!(!first_binding.is_alive(&client));
+    assert!(second_binding.is_alive(&client));
+    client
+        .call(key.expose(), "echo", Value::Null)
+        .await
+        .unwrap();
+    assert_eq!(access.active_agents().len(), 1);
+    drop(first);
+    tokio::task::yield_now().await;
+    assert_eq!(client.endpoint().unwrap(), *second.endpoint());
+    assert!(second_binding.is_alive(&client));
+    assert_eq!(access.active_agents().len(), 1);
+}
+
+#[cfg(feature = "connector")]
+#[test]
+fn only_missing_leases_use_legacy_compatibility() {
+    let root = tempfile::tempdir().unwrap();
+    let endpoint = Endpoint {
+        address: "127.0.0.1:12345".parse().unwrap(),
+        instance_id: "2".repeat(32),
+        certificate_sha256: vec![2; 32],
+    };
+    publish(root.path(), &endpoint).unwrap();
+    let client = LocalClient::new(root.path().into());
+    let legacy = InstanceBinding::new(&client, endpoint.clone()).unwrap();
+    assert!(legacy.is_alive(&client));
+    // A present but unreadable lease must not silently disable crash detection.
+    std::fs::create_dir(lifetime_path(root.path(), &endpoint)).unwrap();
+    let error = InstanceBinding::new(&client, endpoint).err().unwrap();
+    assert_eq!(error.code, "unavailable");
+}
+
 #[test]
 fn corrupt_discovery_is_unavailable_rather_than_an_auto_launch_signal() {
     let root = tempfile::tempdir().unwrap();

@@ -36,7 +36,7 @@ const DEADLINE: Duration = Duration::from_secs(60);
 const DISCOVERY_FILE: &str = "mcp-endpoint.json";
 
 /// Public instance discovery. It contains no client secrets or private TLS material.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Endpoint {
     /// Exact explicitly bound IPv4/IPv6 loopback address.
@@ -159,11 +159,15 @@ impl LocalServer {
                 .to_vec(),
         };
         endpoint.validate()?;
+        let lifetime = Lifetime::create(&root, &endpoint)?;
         publish(&root, &endpoint)?;
         let mut authority = access.subscribe();
         let server_access = access.clone();
         let address = endpoint.address;
         let task = tokio::spawn(async move {
+            // The OS releases this lock on crashes too. It ends with the listener,
+            // including MCP disablement, rather than with the activity indicator.
+            let _lifetime = lifetime;
             let slots = Arc::new(Semaphore::new(16));
             let mut tasks = JoinSet::new();
             loop {
@@ -215,10 +219,16 @@ impl LocalServer {
 impl Drop for LocalServer {
     fn drop(&mut self) {
         self.task.abort();
-        self.access.clear_activity();
-        if read_endpoint(&self.root)
-            .is_ok_and(|endpoint| endpoint.instance_id == self.endpoint.instance_id)
+        let discovered = read_endpoint(&self.root);
+        if discovered
+            .as_ref()
+            .is_ok_and(|endpoint| endpoint != &self.endpoint)
         {
+            // A replacement listener owns both discovery and current activity.
+            return;
+        }
+        self.access.clear_activity();
+        if discovered.is_ok() {
             let _ = std::fs::remove_file(self.root.join(DISCOVERY_FILE));
         }
     }
@@ -396,7 +406,16 @@ impl LocalClient {
     /// Returns safe connection/authentication/application errors. Mutations are never retried.
     pub async fn call(&self, key: &str, operation: &str, input: Value) -> Result<Value, Error> {
         let endpoint = self.endpoint()?;
-        timeout(DEADLINE, Self::call_endpoint(&endpoint, key, operation, input)).await
+        Self::call_at(&endpoint, key, operation, input).await
+    }
+
+    pub(crate) async fn call_at(
+        endpoint: &Endpoint,
+        key: &str,
+        operation: &str,
+        input: Value,
+    ) -> Result<Value, Error> {
+        timeout(DEADLINE, Self::call_endpoint(endpoint, key, operation, input)).await
             .map_err(|_| unavailable("The MCP operation timed out. Check Transmog before retrying a change or sending another request."))?
     }
 
@@ -493,6 +512,114 @@ impl LocalClient {
             .get_mut("result")
             .map(Value::take)
             .ok_or_else(|| unavailable("The local response contained no result."))
+    }
+}
+
+/// A private, generation-specific OS lease; it contains no credentials. Its path
+/// derives only from validated discovery, without changing the discovery schema.
+struct Lifetime {
+    file: Option<std::fs::File>,
+    path: PathBuf,
+}
+
+impl Lifetime {
+    fn create(root: &Path, endpoint: &Endpoint) -> Result<Self, Error> {
+        std::fs::create_dir_all(root)
+            .map_err(|_| unavailable("The MCP lifetime lease could not be created."))?;
+        // Reclaim only the previous published generation's abandoned lease.
+        if let Ok(previous) = read_endpoint(root) {
+            let path = lifetime_path(root, &previous);
+            if let Ok(file) = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .open(&path)
+                && file.try_lock().is_ok()
+            {
+                drop(file);
+                let _ = std::fs::remove_file(path);
+            }
+        }
+        let path = lifetime_path(root, endpoint);
+        let file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create_new(true)
+            .open(&path)
+            .map_err(|_| unavailable("The MCP lifetime lease could not be created."))?;
+        let lifetime = Self {
+            file: Some(file),
+            path,
+        };
+        lifetime
+            .file
+            .as_ref()
+            .expect("open lifetime lease")
+            .try_lock()
+            .map_err(|_| unavailable("The MCP lifetime lease could not be locked."))?;
+        Ok(lifetime)
+    }
+}
+
+impl Drop for Lifetime {
+    fn drop(&mut self) {
+        drop(self.file.take());
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+fn lifetime_path(root: &Path, endpoint: &Endpoint) -> PathBuf {
+    use std::fmt::Write as _;
+    let mut pin = String::with_capacity(64);
+    for byte in &endpoint.certificate_sha256 {
+        write!(pin, "{byte:02x}").expect("writing to a string");
+    }
+    root.join(format!("mcp-lifetime-{}-{pin}.lock", endpoint.instance_id))
+}
+
+/// An independently opened handle, never a clone of the server's locked handle.
+/// Older desktops have no lease; discovery still prevents rebinding to a new run.
+#[cfg(feature = "connector")]
+pub(crate) struct InstanceBinding {
+    pub(crate) endpoint: Endpoint,
+    lease: Option<std::fs::File>,
+}
+
+#[cfg(feature = "connector")]
+impl InstanceBinding {
+    pub(crate) fn new(client: &LocalClient, endpoint: Endpoint) -> Result<Self, Error> {
+        let lease = match std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(lifetime_path(&client.root, &endpoint))
+        {
+            Ok(file) => Some(file),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(_) => {
+                return Err(unavailable(
+                    "The desktop lifetime lease could not be opened. Check Transmog's user profile and reconnect.",
+                ));
+            }
+        };
+        Ok(Self { endpoint, lease })
+    }
+
+    pub(crate) fn is_alive(&self, client: &LocalClient) -> bool {
+        if !client
+            .endpoint()
+            .is_ok_and(|endpoint| endpoint == self.endpoint)
+        {
+            return false;
+        }
+        self.lease
+            .as_ref()
+            .is_none_or(|file| match file.try_lock() {
+                Err(std::fs::TryLockError::WouldBlock) => true,
+                Ok(()) => {
+                    let _ = file.unlock();
+                    false
+                }
+                Err(std::fs::TryLockError::Error(_)) => false,
+            })
     }
 }
 

@@ -41,9 +41,45 @@ explicit MCP support limits; the content is shared with in-app Script API help. 
 `transmog_connect`, with `--start-app` configured, may launch the sibling desktop
 executable. Status and ordinary calls never launch it. Every desktop run has a
 fresh instance ID; retained references and control handles must be rediscovered.
+Concurrent `transmog_connect` calls serialize startup and recheck readiness. Once launched,
+desktop readiness has one 30-second deadline, including any in-flight status call;
+permanent authorization, lease or transport errors are returned immediately.
 
 Activity indicators group authenticated calls by key. Their three-second quiet
 period is presentation state, excluded from persistence and authorization.
+
+### Connector lifetime
+
+The client owns the `mcp serve` process. To end a session, close its stdin, wait up
+to five seconds for exit, then terminate and reap that owned process if necessary.
+This follows the [MCP stdio shutdown flow](https://modelcontextprotocol.io/specification/2025-11-25/basic/lifecycle#shutdown);
+there is no custom shutdown tool.
+Tests must use this cleanup in `finally` even when an assertion fails.
+
+The connector also exits when a response write fails or its launching client
+process exits, including an unreaped Unix zombie. An absent or incomplete
+initialization has a 30-second deadline.
+Initialized offline sessions may remain idle while their client stays alive;
+there is no activity debounce or default idle shutdown.
+
+The first successful desktop call binds the connector to that exact endpoint
+generation. Closing or crashing that desktop, disabling MCP, or replacing its
+discovery ends the connection. Restart the agent's MCP connection after restarting
+the desktop or re-enabling MCP. Calls never silently switch to another generation.
+A private OS file lock tracks listener lifetime without polling tools or renewing
+activity, grants or inspection sessions. With an older desktop lacking that lock,
+discovery removal/replacement still ends the connection; stale discovery after a
+crash requires client cleanup. Other lease-file access failures reject the call
+before dispatch instead of silently disabling crash detection. No lifetime monitor
+replaces per-call authentication.
+
+The CLI bounds shutdown of its MCP runtime so an uncancellable OS stdin read
+cannot keep the process alive. Other CLI commands retain their normal runtime
+cleanup so recording and export work can finish.
+MCP diagnostics use a bounded, nonblocking stderr queue. An unread diagnostic
+pipe cannot stall requests or shutdown. Full queues and records over 8 KiB drop
+diagnostic records; exit flushing waits at most 100 ms. Required command errors
+bypass the `RUST_LOG` filter and use the same best effort queue.
 
 ## Inspection sessions and capture operations
 

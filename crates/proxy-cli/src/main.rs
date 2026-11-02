@@ -5,6 +5,7 @@ mod circular;
 mod context;
 mod help;
 mod mcp;
+mod mcp_logging;
 mod output;
 mod passwords;
 mod root_lifecycle;
@@ -59,10 +60,16 @@ use transmog_tls::{
     SystemTrustSource, TrustSnapshot, TrustSource,
 };
 
-#[tokio::main]
-async fn main() {
+fn main() {
+    let mcp_stdio = env::args().nth(1).as_deref() == Some("mcp")
+        && env::args().nth(2).as_deref() == Some("serve");
+    let diagnostics = mcp_stdio.then(mcp_logging::Diagnostics::new);
+    let writer = diagnostics.as_ref().map_or_else(
+        || tracing_subscriber::fmt::writer::BoxMakeWriter::new(std::io::stderr),
+        |diagnostics| tracing_subscriber::fmt::writer::BoxMakeWriter::new(diagnostics.clone()),
+    );
     tracing_subscriber::fmt()
-        .with_writer(std::io::stderr)
+        .with_writer(writer)
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
                 .unwrap_or_else(|_| "transmog=info".into()),
@@ -70,8 +77,33 @@ async fn main() {
         .with_target(false)
         .try_init()
         .ok();
-    if let Err(error) = run().await {
-        eprintln!("transmog-cli: {error}");
+    // Stdio uses blocking OS reads on Windows/macOS. Runtime Drop otherwise
+    // waits forever for an open input pipe, even after protocol cancellation.
+    let mut builder = if mcp_stdio {
+        tokio::runtime::Builder::new_current_thread()
+    } else {
+        tokio::runtime::Builder::new_multi_thread()
+    };
+    let result = builder.enable_all().build().map(|runtime| {
+        let result = runtime.block_on(run());
+        if mcp_stdio {
+            runtime.shutdown_timeout(std::time::Duration::from_secs(1));
+        }
+        result
+    });
+    let result = result.unwrap_or_else(|error| Err(error.into()));
+    let failed = result.is_err();
+    if let Err(error) = result {
+        if let Some(diagnostics) = &diagnostics {
+            diagnostics.error(&error);
+        } else {
+            eprintln!("transmog-cli: {error}");
+        }
+    }
+    if let Some(diagnostics) = &diagnostics {
+        diagnostics.finish();
+    }
+    if failed {
         std::process::exit(2);
     }
 }

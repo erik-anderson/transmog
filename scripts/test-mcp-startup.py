@@ -1,5 +1,6 @@
-"""Qualify offline MCP discovery, opt-in desktop launch and key reuse after restart."""
+"""Qualify offline discovery, opt-in launch and connector exit after desktop stop/crash."""
 import argparse
+from contextlib import ExitStack
 import hashlib
 import json
 import os
@@ -11,6 +12,7 @@ import subprocess
 import tempfile
 import threading
 import time
+from mcp_test_support import stop_connector
 
 
 def main():
@@ -65,30 +67,38 @@ def main():
                 raise RuntimeError("The owned desktop did not close normally.")
             time.sleep(0.1)
 
+    def cleanup_desktop(pid):
+        if alive(pid):
+            try:
+                close_owned(pid)
+            except Exception:
+                # Recheck ownership before the forced fallback. A missing window
+                # must not leave the fixture alive or target an unrelated process.
+                if connector is not None and pid in children(connector.pid):
+                    shell(f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue")
+                raise
+
     if shell("@(Get-Process -Name transmog -ErrorAction SilentlyContinue).Count") != "0":
         raise RuntimeError("Close the existing Transmog instance before isolated startup qualification.")
 
-    connector = subprocess.Popen([str(executable), "mcp", "serve", "--start-app"],
-                                 env=environment, stdin=subprocess.PIPE,
-                                 stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                                 text=True, encoding="utf-8", creationflags=hidden)
-    messages = queue.Queue()
+    connector = None
+    messages = None
+    pending_messages = {}
 
-    def read_messages():
-        for line in connector.stdout:
+    def read_messages(process, output):
+        for line in process.stdout:
             try:
-                messages.put(json.loads(line))
+                output.put(json.loads(line))
             except json.JSONDecodeError:
-                messages.put({"invalidProtocolOutput": True})
-
-    reader = threading.Thread(target=read_messages, daemon=True)
-    reader.start()
+                output.put({"invalidProtocolOutput": True})
 
     def send(message):
         connector.stdin.write(json.dumps(dict(jsonrpc="2.0", **message)) + "\n")
         connector.stdin.flush()
 
     def receive(identity, seconds):
+        if identity in pending_messages:
+            return pending_messages.pop(identity)
         deadline = time.monotonic() + seconds
         while True:
             message = messages.get(timeout=max(0.1, deadline - time.monotonic()))
@@ -96,52 +106,89 @@ def main():
                 raise RuntimeError("The MCP connector wrote non-protocol data to stdout.")
             if message.get("id") == identity:
                 return message
+            if "id" in message:
+                pending_messages[message["id"]] = message
             if time.monotonic() >= deadline:
                 raise RuntimeError("The MCP operation exceeded its qualification deadline.")
 
     owned = None
+    instances = []
+    shutdowns = []
     try:
-        send(dict(id=1, method="initialize", params=dict(protocolVersion="2025-11-25",
-                  capabilities={}, clientInfo=dict(name="startup-qualification", version="1"))))
-        initialized = receive(1, 10)
-        assert "result" in initialized, "Offline MCP initialization failed"
-        assert children(connector.pid) == [], "Discovery launched the desktop before explicit connect"
-        send(dict(method="notifications/initialized"))
-        instances = []
-        for operation in [2, 3]:
+        for operation, shutdown in enumerate(["normal", "crash", "normal", "connector-first"], start=2):
+            connector = subprocess.Popen([str(executable), "mcp", "serve", "--start-app"],
+                                         env=environment, stdin=subprocess.PIPE,
+                                         stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+                                         text=True, encoding="utf-8", creationflags=hidden)
+            messages = queue.Queue()
+            pending_messages.clear()
+            reader = threading.Thread(target=read_messages, args=(connector, messages), daemon=True)
+            reader.start()
+            send(dict(id=1, method="initialize", params=dict(protocolVersion="2025-11-25",
+                      capabilities={}, clientInfo=dict(name="startup-qualification", version="1"))))
+            initialized = receive(1, 10)
+            assert "result" in initialized, "Offline MCP initialization failed"
+            assert children(connector.pid) == [], "Discovery launched the desktop before explicit connect"
+            send(dict(method="notifications/initialized"))
             send(dict(id=operation, method="tools/call", params=dict(name="transmog_connect", arguments={})))
+            send(dict(id=operation + 100, method="tools/call", params=dict(name="transmog_connect", arguments={})))
             response = receive(operation, 45)
+            concurrent = receive(operation + 100, 45)["result"]
+            assert not concurrent.get("isError"), "Concurrent explicit connect failed"
             result = response["result"]
             assert not result.get("isError"), "Explicit connect failed to launch the authorized desktop"
             context = result["structuredContent"]
+            assert concurrent["structuredContent"]["instanceId"] == context["instanceId"], "Concurrent connects used different desktops"
             assert context["connected"] and context["grant"]["id"] == identity
             assert context["proxy"]["lifecycle"] == "stopped", "Startup started collection"
             assert context["recordingActive"] is False, "Startup started recording"
+            assert len(list(state.glob("mcp-lifetime-*.lock"))) == 1, "Stale lifetime lease was not reclaimed"
             instances.append(context["instanceId"])
             launched = children(connector.pid)
             assert len(launched) == 1, "The CLI did not launch one owned desktop"
             owned = launched[0]
-            close_owned(owned)
+            if shutdown == "connector-first":
+                started = time.monotonic()
+                connector.stdin.close()
+                assert connector.wait(timeout=5) == 0, "Connector did not end on client EOF"
+                assert alive(owned), "Ending the connector killed the independently launched desktop"
+                seconds = round(time.monotonic() - started, 3)
+                close_owned(owned)
+            elif shutdown == "crash":
+                # Kill only the desktop just launched by this owned connector.
+                shell(f"Stop-Process -Id {owned} -Force -ErrorAction Stop")
+                assert (state / "mcp-endpoint.json").exists(), "Crash did not leave stale discovery to test"
+            else:
+                close_owned(owned)
             owned = None
-        assert instances[0] != instances[1], "Restart reused a workspace instance"
+            if shutdown != "connector-first":
+                started = time.monotonic()
+                # Keep stdin open: the desktop lease must drive this shutdown.
+                assert connector.wait(timeout=5) == 0, "Connector did not end with its desktop"
+                seconds = round(time.monotonic() - started, 3)
+            shutdowns.append(dict(kind=shutdown, seconds=seconds))
+            connector.stdin.close()
+            reader.join(timeout=2)
+            connector.stdout.close()
+        assert len(set(instances)) == 4, "Restart reused a workspace instance"
         assert key not in (state / "mcp-access.json").read_text(encoding="utf-8")
         report = dict(offlineInitialization=True, explicitLaunch=True, persistentKeyReuse=True,
-                      freshRestartInstance=True, noImplicitCollection=True, profile=str(profile))
+                      freshRestartInstance=True, noImplicitCollection=True,
+                      connectorShutdowns=shutdowns, concurrentConnect=True,
+                      desktopSurvivesConnector=True, profile=str(profile))
         (args.artifacts / "startup-result.json").write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(json.dumps(report))
     finally:
-        if owned is not None and alive(owned):
-            close_owned(owned)
-        # Cover a failure that occurred after spawn but before its result arrived.
-        for pid in children(connector.pid):
-            if alive(pid):
-                close_owned(pid)
-        connector.stdin.close()
-        try:
-            connector.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            connector.terminate()
-            connector.wait(timeout=5)
+        with ExitStack() as cleanup:
+            if connector is not None:
+                cleanup.callback(stop_connector, connector)
+            # Also cover launch failure before a tool result identified the child.
+            if owned is not None:
+                cleanup.callback(cleanup_desktop, owned)
+            pending = set(children(connector.pid)) if connector is not None else set()
+            pending.discard(owned)
+            for pid in pending:
+                cleanup.callback(cleanup_desktop, pid)
 
 
 if __name__ == "__main__":
