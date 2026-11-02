@@ -21,6 +21,27 @@ HIDDEN = subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0
 ROOT = Path(__file__).resolve().parent.parent
 
 
+class ProbeTemporaryDirectory(tempfile.TemporaryDirectory):
+    """Allow WebView2 to release profile files after the desktop host exits."""
+    def __init__(self, *args, cleanup_timeout=30, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.cleanup_timeout = cleanup_timeout
+
+    def cleanup(self):
+        deadline = time.monotonic() + self.cleanup_timeout
+        while True:
+            try:
+                super().cleanup()
+                return
+            except OSError as error:
+                remaining = deadline - time.monotonic()
+                # Only retry Windows sharing violations, never hide a persistent
+                # lock or other cleanup error. No unrelated browser is stopped.
+                if getattr(error, "winerror", None) != 32 or remaining <= 0:
+                    raise
+                time.sleep(min(0.1, remaining))
+
+
 def hashes(directory):
     result = {}
     for name in BINARIES:
@@ -119,7 +140,7 @@ def main():
     evidence = args.artifacts.resolve()
     evidence.mkdir(parents=True, exist_ok=True)
     # Only this newly created directory is eligible for recursive fixture cleanup.
-    with tempfile.TemporaryDirectory(prefix="cli-update-", dir=evidence) as temporary:
+    with ProbeTemporaryDirectory(prefix="cli-update-", dir=evidence) as temporary:
         directory = Path(temporary).resolve()
         assert directory.is_relative_to(evidence) and directory != evidence
         install = args.installed_directory.resolve(strict=True) if args.installed_directory else directory / "installed"
@@ -279,8 +300,9 @@ def main():
             if desktop is not None:
                 desktop.kill()
                 desktop.wait(timeout=5)
-        (evidence / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
-        print(json.dumps(report))
+    report["temporaryDirectoryCleanup"] = True
+    (evidence / "result.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
+    print(json.dumps(report))
 
 
 if __name__ == "__main__":
