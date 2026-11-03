@@ -117,6 +117,26 @@ LangString failedToKillApp 1033 "Could not close owned desktop"
     return installer
 
 
+def start_desktop(arguments, environment, evidence, phase):
+    # Keep native panics and startup failures outside the disposable profile.
+    with (evidence / (phase + "-stderr.log")).open("wb") as stderr:
+        return subprocess.Popen(arguments, env=environment, stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL, stderr=stderr, creationflags=HIDDEN)
+
+
+def preserve_failure(directory, evidence, error, report):
+    diagnostic = directory / "profile/Transmog/diagnostics.jsonl"
+    if diagnostic.is_file():
+        shutil.copy2(diagnostic, evidence / "failed-desktop-diagnostics.jsonl")
+    failure = dict(status="failed", errorType=type(error).__name__, error=str(error),
+        checks=report, commit=os.environ.get("GITHUB_SHA"), runId=os.environ.get("GITHUB_RUN_ID"))
+    if isinstance(error, subprocess.CalledProcessError):
+        for name, value in [("stdout", error.stdout), ("stderr", error.stderr)]:
+            if value is not None:
+                failure[name] = value.decode("utf-8", errors="replace") if isinstance(value, bytes) else value
+    (evidence / "failure.json").write_text(json.dumps(failure, indent=2) + "\n", encoding="utf-8")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--binaries", type=Path, required=True)
@@ -205,8 +225,7 @@ def main():
             shutil.copy2(install / "transmog-cli.exe", recovery / "old/transmog-cli.exe")
             recovery_entries = [dict(name=name, previous=list(bytes.fromhex(expected[name])), replacement=list(bytes.fromhex(expected[name]))) for name in BINARIES]
             (recovery / "transaction.json").write_text(json.dumps(dict(state="prepared", entries=recovery_entries)), encoding="utf-8")
-            desktop = subprocess.Popen([str(install / "transmog.exe")], env=environment,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=HIDDEN)
+            desktop = start_desktop([str(install / "transmog.exe")], environment, evidence, "interrupted-startup")
             deadline = time.monotonic() + 20
             while time.monotonic() < deadline:
                 assert desktop.poll() is None, "Interrupted-update startup did not present recovery guidance"
@@ -262,8 +281,7 @@ def main():
                             replacement=list(bytes.fromhex(expected[name]))) for name in BINARIES]
             (transaction / "transaction.json").write_text(json.dumps(dict(state="committed", entries=entries)), encoding="utf-8")
             connector = initialize(retired, environment)
-            desktop = subprocess.Popen([str(install / "transmog.exe"), "--mcp-start"], env=environment,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=HIDDEN)
+            desktop = start_desktop([str(install / "transmog.exe"), "--mcp-start"], environment, evidence, "deferred-cleanup")
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 assert desktop.poll() is None, "Updated desktop exited during startup"
@@ -280,8 +298,7 @@ def main():
             desktop = None
             stop_connector(connector)
             connector = None
-            desktop = subprocess.Popen([str(install / "transmog.exe"), "--mcp-start"], env=environment,
-                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, creationflags=HIDDEN)
+            desktop = start_desktop([str(install / "transmog.exe"), "--mcp-start"], environment, evidence, "cleanup-retry")
             deadline = time.monotonic() + 30
             while time.monotonic() < deadline:
                 assert desktop.poll() is None, "Desktop exited during cleanup retry"
@@ -294,6 +311,13 @@ def main():
                 "-ProbeProcessId", str(desktop.pid), "-WindowTitle", "Transmog"], check=True, capture_output=True, creationflags=HIDDEN)
             assert desktop.wait(timeout=20) == 0
             desktop = None
+            report["desktopCloseVerified"] = True
+        except Exception as error:
+            try:
+                preserve_failure(directory, evidence, error, report)
+            except Exception as evidence_error:
+                error.add_note("Could not retain probe failure diagnostics: " + str(evidence_error))
+            raise
         finally:
             if connector is not None:
                 stop_connector(connector)

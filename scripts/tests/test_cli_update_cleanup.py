@@ -1,6 +1,7 @@
 """Exercise delayed Windows profile locks with real child-process file handles."""
 from contextlib import contextmanager
 import importlib.util
+import json
 import os
 from pathlib import Path
 import queue
@@ -117,6 +118,41 @@ class ProfileCleanupTests(unittest.TestCase):
                         release.join(timeout=5)
             finally:
                 probe.cleanup()
+
+
+class FailureEvidenceTests(unittest.TestCase):
+    def test_failure_evidence_survives_profile_cleanup_without_copying_credentials(self):
+        with tempfile.TemporaryDirectory(prefix="failure-evidence-") as parent:
+            evidence = Path(parent) / "evidence"
+            evidence.mkdir()
+            with cli_update.ProbeTemporaryDirectory(dir=parent) as directory:
+                profile = Path(directory) / "profile/Transmog"
+                profile.mkdir(parents=True)
+                diagnostic = '{"code":"startup","message":"owned probe"}\n'
+                (profile / "diagnostics.jsonl").write_text(diagnostic, encoding="utf-8")
+                (profile / "mcp-access.json").write_text("private-fixture-key", encoding="utf-8")
+                cli_update.preserve_failure(Path(directory), evidence, RuntimeError("owned shutdown failed"),
+                    {"desktopStartupCleanup": False})
+            self.assertFalse(Path(directory).exists())
+            self.assertEqual((evidence / "failed-desktop-diagnostics.jsonl").read_text(encoding="utf-8"), diagnostic)
+            report = json.loads((evidence / "failure.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status"], "failed")
+            self.assertEqual(report["error"], "owned shutdown failed")
+            self.assertIs(report["checks"]["desktopStartupCleanup"], False)
+            self.assertNotIn("private-fixture-key", "".join(path.read_text(encoding="utf-8") for path in evidence.iterdir()))
+
+
+    def test_failed_native_command_retains_utf8_byte_output(self):
+        with tempfile.TemporaryDirectory(prefix="failure-evidence-") as parent:
+            evidence = Path(parent) / "evidence"
+            evidence.mkdir()
+            error = subprocess.CalledProcessError(1, ["owned-probe"],
+                output=b"owned stdout", stderr="native error: \u03a9".encode("utf-8"))
+            cli_update.preserve_failure(Path(parent) / "profile", evidence, error, {})
+            report = json.loads((evidence / "failure.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["stdout"], "owned stdout")
+            self.assertEqual(report["stderr"], "native error: \u03a9")
+            self.assertEqual(report["status"], "failed")
 
 
 if __name__ == "__main__":
