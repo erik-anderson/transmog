@@ -14,9 +14,9 @@ serde_json.workspace = true
 sha2.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
-transmog-core = { version = "=0.1.19", path = "../proxy-core" }
-transmog-script-compiler = { version = "=0.1.19", path = "../script-compiler" }
-transmog-script-diagnostics = { version = "=0.1.19", path = "../script-diagnostics" }
+transmog-core = { version = "=0.1.20", path = "../proxy-core" }
+transmog-script-compiler = { version = "=0.1.20", path = "../script-compiler" }
+transmog-script-diagnostics = { version = "=0.1.20", path = "../script-diagnostics" }
 url.workspace = true
 
 [dev-dependencies]
