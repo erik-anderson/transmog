@@ -11,7 +11,7 @@
         <button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady || !scriptDirty}}" @click="{saveScript()}">Save draft</button><button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady || !scriptDirty}}" @click="{discardScript()}">Discard changes</button>
         <button type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady}}" @click="{testScript()}" ?hidden="{{reviewingTypeScript}}">Test in sandbox</button>
         <button w-ref="{debugButton}" type="button" class="secondary" ?disabled="{{scriptBusy || !scriptReady || debugInfo || reviewingTypeScript}}" @click="{debugTest()}">Debug test</button><if condition="debugInfo"><button w-ref="{showDebugButton}" type="button" class="secondary" @click="{showDebugger()}">Show debugger</button></if>
-        <button w-ref="{scriptHelpButton}" type="button" class="secondary" ?disabled="{{!apiRevision}}" @click="{openScriptHelp()}">Script API</button>
+        <button w-ref="{scriptHelpButton}" type="button" class="secondary" ?disabled="{{!apiRevision}}" @click="{openScriptHelp()}">Open API docs</button>
         <button w-ref="{scriptMore}" type="button" class="secondary" popovertarget="script-actions-menu" ?disabled="{{scriptBusy || !scriptReady}}">More</button>
         <div id="script-actions-menu" w-ref="{scriptMenu}" class="table-popover script-menu" popover="auto" @toggle="{menuClosed(e)}"><button type="button" ?disabled="{{reviewingTypeScript}}" @click="{validateScript()}">Validate only</button><if condition="scriptActive"><button type="button" ?disabled="{{reviewingTypeScript}}" @click="{compareActiveScript()}">Compare with active</button></if><if condition="language == 'typescript'"><button type="button" @click="{editJavaScript()}">Edit JavaScript</button></if><if condition="language == 'javascript'"><button type="button" ?disabled="{{reviewingTypeScript || retainedSource == null}}" @click="{reviewTypeScript()}">Return to TypeScript…</button></if><button type="button" ?disabled="{{!scriptActive && !canResume}}" @click="{viewAppliedJavaScript()}">View applied JavaScript</button></div>
       </div>
@@ -23,14 +23,16 @@
       <if condition="conflictVisible"><section class="script-recovery" role="alert"><p>The saved script changed in another window. Your draft is preserved. Compare both versions before replacing either.</p><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{compareSavedScript()}">Compare with saved script</button></section></if>
       <if condition="canUndoSavedLoad"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{restorePreviousDraft()}">Restore my previous draft</button></if>
       <p class="field-help">Changes are validated before they apply to new requests. Save draft keeps edits without enabling them.</p>
-      <p class="field-help" role="status">{{authoringStatus}}</p>
-      <if condition="typeScriptIssue"><section class="script-recovery" aria-label="TypeScript issues"><p>Choose an issue to jump to its source. All errors must be fixed before publishing TypeScript.</p><ul><for each="item in typeScriptIssues"><li><button type="button" class="script-issue" @click="{goToTypeScriptIssue(item)}">Line {{item.line}}:{{item.column}} - {{item.message}}</button></li></for></ul><div class="actions"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{retryTypeScriptCheck()}">Check TypeScript again</button><if condition="language == 'typescript'"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{editJavaScript()}">Edit JavaScript</button></if></div></section></if>
       <if condition="reviewingTypeScript"><div class="actions"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{compareTypeScriptOutput()}">Compare generated JavaScript</button><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{keepJavaScript()}">Keep JavaScript</button></div></if>
       <if condition="historyEntries.length"><details class="script-history" ?open="{{historyOpen}}" @toggle="{historyToggled(e)}"><summary>Previous JavaScript drafts ({{historyEntries.length}})</summary><for each="item in historyEntries"><details><summary>{{item.label}}</summary><pre tabindex="0" data-copy-surface>{{item.source}}</pre><div class="actions"><button type="button" class="secondary" ?disabled="{{scriptBusy || reviewingTypeScript}}" @click="{restoreJavaScriptDraft(item.index)}">Restore {{item.label}}</button><button type="button" class="secondary" ?disabled="{{scriptBusy || reviewingTypeScript}}" @click="{removeJavaScriptDraft(item.index)}">Remove {{item.label}}</button></div></details></for></details></if>
       <if condition="canUndoHistoryRemoval"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{undoJavaScriptRemoval()}">Undo draft removal</button></if>
       <output class="operation-status" data-kind="{{statusKind}}" aria-live="polite">{{scriptText}}</output>
     </div>
     <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
+    <div slot="feedback" class="script-authoring-feedback">
+      <p class="field-help" role="status">{{authoringStatus}}</p>
+      <if condition="typeScriptIssue"><section class="script-recovery" aria-label="TypeScript issues"><p>Choose an issue to jump to its source. All errors must be fixed before publishing TypeScript.</p><ul><for each="item in typeScriptIssues"><li><button type="button" class="script-issue" @click="{goToTypeScriptIssue(item)}">Line {{item.line}}:{{item.column}} - {{item.message}}</button></li></for></ul><div class="actions"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{retryTypeScriptCheck()}">Check TypeScript again</button><if condition="language == 'typescript'"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{editJavaScript()}">Edit JavaScript</button></if></div></section></if>
+    </div>
   </editor-surface>
   <details class="script-build"><summary>{{sourceAlignment}}</summary><pre tabindex="0" data-copy-surface>{{buildInfo}}</pre></details>
   <p class="editor-label">Ctrl+S saves the draft. Ctrl+M toggles Tab movement in the editor.</p>
@@ -112,11 +114,12 @@
     <label>Search Script API <input w-ref="{scriptHelpSearch}" type="search" value="{{helpSearch}}" @input="{searchScriptHelp(e)}"></label>
     <div w-ref="{scriptHelpContent}" class="script-help-content">
       <if condition="!helpSections.length"><p>No matching help. Try a handler, capability or helper name.</p></if>
-      <for each="section in helpSections"><details key="{{section.id}}" ?open="{{helpSearch != ''}}"><summary>{{section.title}}</summary>
+      <for each="section in helpSections"><details key="{{section.id}}" ?open="{{helpSearch != ''}}" @toggle="{syncApiReference(section.id)}"><summary>{{section.title}}</summary>
         <for each="paragraph in section.paragraphs"><p>{{paragraph}}</p></for>
         <if condition="section.phases.length"><div class="script-help-table" tabindex="0" aria-label="Handler contract"><table><thead><tr><th>Handler</th><th>Additional input</th><th>Decisions</th></tr></thead><tbody><for each="phase in section.phases"><tr><td><code>{{phase.handler}}</code></td><td>{{phase.input}}</td><td>{{phase.decisions}}</td></tr></for></tbody></table></div></if>
         <if condition="section.id == 'evidence'"><p>Failure categories:</p><ul><for each="category in failureCategories"><li><code>{{category}}</code></li></for></ul></if>
-        <for each="example in section.examples"><h3>{{example.title}}</h3><p>{{example.settings}}</p><pre tabindex="0" data-copy-surface>{{example.code}}</pre></for>
+        <if condition="section.id == 'api-reference'"><div w-ref="{scriptApiEditor}" class="script-api-editor" aria-label="API reference editor"></div></if>
+        <if condition="section.id != 'api-reference'"><for each="example in section.examples"><h3>{{example.title}}</h3><p>{{example.settings}}</p><pre tabindex="0" data-copy-surface>{{example.code}}</pre></for></if>
       </details></for>
     </div>
   </dialog>

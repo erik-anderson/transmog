@@ -1063,6 +1063,61 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_script() {
 }
 
 #[tokio::test]
+async fn body_sample_clear_switch_does_not_decode_headers_or_require_header_writes() {
+    let help = transmog_script::help();
+    let example = help["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["id"] == "examples")
+        .unwrap()["examples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|example| example["title"] == "Body helpers: text, JSON, forms and raw bytes")
+        .unwrap();
+    let source = example["code"].as_str().unwrap().replace(
+        "const shouldClearBody = false;",
+        "const shouldClearBody = true;",
+    );
+    let mut manifest = compile(
+        "export function onRequestHead() { return { decision: { action: 'continue' } }; }",
+        500,
+    )
+    .manifest;
+    manifest.handlers = BTreeSet::from([ScriptHandler::RequestBody, ScriptHandler::ResponseBody]);
+    manifest.capabilities = ScriptCapabilities {
+        read_bodies: true,
+        write_body: true,
+        ..ScriptCapabilities::default()
+    };
+    manifest.source_hash = source_hash(source.as_bytes());
+    let runner =
+        SupervisedScriptRunner::start(&config(), compile_typescript(manifest, &source).unwrap())
+            .unwrap();
+    let mut input = invocation();
+    input.context.handler = ScriptHandler::ResponseBody;
+    input.body = Some(transmog_script::ScriptBody {
+        bytes: vec![255, 0],
+    });
+    input.response = Some(transmog_script::ScriptResponse {
+        status: 200,
+        headers: vec![transmog_script::ScriptHeader {
+            name: "content-type".into(),
+            value: b"text/plain; note=\xff".to_vec(),
+            sensitive: false,
+            redacted: false,
+        }],
+    });
+    let result = runner.invoke(input).await.unwrap();
+    let ScriptAction::Edit { edits } = result.decision else {
+        panic!("The clear switch did not edit the body")
+    };
+    assert_eq!(edits.bytes, Some(Vec::new()));
+    assert!(edits.headers.is_empty());
+}
+
+#[tokio::test]
 async fn bundled_help_examples_execute_with_the_documented_permissions() {
     let help = transmog_script::help();
     let examples = help["sections"]
@@ -1086,12 +1141,29 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
         let mut input = invocation();
         match index {
             0 => {
+                manifest.handlers = BTreeSet::from([
+                    ScriptHandler::RequestHead,
+                    ScriptHandler::ResponseHead,
+                    ScriptHandler::Completed,
+                    ScriptHandler::Failed,
+                ]);
+            }
+            1 => {
+                manifest.handlers =
+                    BTreeSet::from([ScriptHandler::RequestBody, ScriptHandler::ResponseBody]);
+                manifest.capabilities.read_bodies = true;
+                input.context.handler = ScriptHandler::RequestBody;
+                input.body = Some(transmog_script::ScriptBody {
+                    bytes: b"arbitrary non-JSON bytes".to_vec(),
+                });
+            }
+            2 => {
                 manifest
                     .capabilities
                     .write_headers
                     .insert("user-agent".into());
             }
-            1 => {
+            3 => {
                 manifest.handlers = BTreeSet::from([ScriptHandler::ResponseBody]);
                 manifest.capabilities.read_bodies = true;
                 manifest.capabilities.write_body = true;
@@ -1109,24 +1181,47 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                     bytes: br#"{"value":42}"#.to_vec(),
                 });
             }
-            2 => {
+            4 => {
                 manifest.capabilities.respond = true;
                 manifest.prefilter.path_prefix = Some("/fixture".into());
                 input.request.path = "/fixture".into();
             }
-            3 => {
+            5 => {
                 manifest.handlers.insert(ScriptHandler::Completed);
                 manifest.capabilities.annotate = true;
                 input.context.now_unix_ms = 100;
             }
             _ => panic!("Add execution coverage for the new help example"),
         }
+        let handlers = manifest.handlers.clone();
         let compiled = compile_typescript(manifest, source).unwrap();
         let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
         let result = runner.invoke(input.clone()).await.unwrap();
         match index {
-            0 => assert!(matches!(result.decision, ScriptAction::Edit { .. })),
-            1 => {
+            0 | 1 => {
+                for handler in handlers {
+                    input.context.handler = handler;
+                    input.response = matches!(
+                        handler,
+                        ScriptHandler::ResponseHead
+                            | ScriptHandler::ResponseBody
+                            | ScriptHandler::Completed
+                    )
+                    .then(|| transmog_script::ScriptResponse {
+                        status: 200,
+                        headers: vec![],
+                    });
+                    input.failure = (handler == ScriptHandler::Failed)
+                        .then(|| serde_json::from_str("\"Upstream\"").unwrap());
+                    let result = runner.invoke(input.clone()).await.unwrap();
+                    assert_eq!(result.decision, ScriptAction::Continue);
+                    assert!(result.annotations.is_empty());
+                    assert!(result.diagnostics.is_empty());
+                    assert!(result.state.is_none());
+                }
+            }
+            2 => assert!(matches!(result.decision, ScriptAction::Edit { .. })),
+            3 => {
                 let ScriptAction::Edit { edits } = result.decision else {
                     panic!("JSON edit")
                 };
@@ -1135,7 +1230,7 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                     serde_json::json!({"original":{"value":42},"inspected":true})
                 );
             }
-            2 => {
+            4 => {
                 let ScriptAction::Respond {
                     response: transmog_script::ScriptResponseSource::Inline(response),
                 } = result.decision
@@ -1148,7 +1243,7 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                     serde_json::json!({"ready":true})
                 );
             }
-            3 => {
+            5 => {
                 input.state = result.state.unwrap();
                 input.context.handler = ScriptHandler::Completed;
                 input.context.now_unix_ms = 125;

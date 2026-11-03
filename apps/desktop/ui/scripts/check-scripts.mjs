@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
+import { checkScriptApiReference, checkScriptAuthoringLayout } from "./check-script-authoring.mjs";
 import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 
 export async function checkScripts(page, root) {
@@ -20,11 +21,12 @@ export async function checkScripts(page, root) {
     page.evaluate((values) => Object.assign(globalThis.__workspaceFixture, values), values);
   await waitIdle();
   assert.match(await scripts.locator(".script-scope").textContent(), /example.test/);
-  const helpButton = scripts.getByRole("button", { name: "Script API", exact: true });
+  const helpButton = scripts.getByRole("button", { name: "Open API docs", exact: true });
   const help = scripts.locator(".script-help-dialog");
   await helpButton.click();
   assert.equal(await help.evaluate((dialog) => dialog.matches(":modal")), true);
   assert.match(await help.textContent(), /revision 3/);
+  await checkScriptApiReference(page, scripts, resolve(root, "../../../target/ui-check"));
   await help.getByLabel("Search Script API", { exact: true }).fill("bypass");
   assert.match(
     await help.locator(".script-help-content").textContent(),
@@ -194,6 +196,12 @@ export function onFailed() { return pass(); }
   await scripts.evaluate((editor) => editor.checkTypeScript());
   await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), phaseSource);
   await scripts.evaluate((editor) => editor.checkTypeScript());
+  await checkScriptAuthoringLayout(
+    page,
+    scripts,
+    sourceSurface,
+    resolve(root, "../../../target/ui-check"),
+  );
   assert.ok(
     (await scripts.locator(".monaco-editor-host").first().boundingBox()).height >= 192,
     "Source editor has insufficient space",
@@ -342,10 +350,13 @@ export function onFailed() { return pass(); }
   await scripts.getByText("Test input and returned changes", { exact: true }).click();
   assert.match(await scripts.locator(".script-test-result pre").textContent(), /User-Agent/);
   const requestSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
-  await append(`
+  await scripts.evaluate((editor) =>
+    editor.sourceEditor.setValue(`
+export function onRequestHead() { return { decision: { action: "continue" as const } }; }
 export function onCompleted() { return { decision: { action: "continue" as const } }; }
 export function onFailed() { return { decision: { action: "continue" as const } }; }
-`);
+`),
+  );
   await scripts.getByRole("combobox", { name: "Handler", exact: true }).selectOption("onCompleted");
   await scripts.getByLabel("Response status", { exact: true }).fill("202");
   await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");

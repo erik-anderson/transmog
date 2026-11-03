@@ -114,6 +114,8 @@ when changing the experience.
   alternatives and Undo.
 - Long-form editors keep resize/expand controls and reachable actions. Formatting
   is explicit and undoable; closing releases editor resources and restores focus.
+  Live validation feedback appears after the editing surface so temporary errors
+  cannot move the input while the user types, including in expanded editors.
 - Scratch utilities preserve their draft when dismissed. Detaching transfers
   work only after its destination is ready; independent utility windows retain
   their own drafts and do not depend on the originating workspace's lifetime.

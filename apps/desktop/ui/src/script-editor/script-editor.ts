@@ -118,6 +118,11 @@ export class ScriptEditor extends WorkspaceElement {
   scriptHelpButton!: HTMLButtonElement;
   scriptHelpSearch!: HTMLInputElement;
   scriptHelpContent!: HTMLDivElement;
+  scriptApiEditor?: HTMLDivElement;
+  private apiReferenceEditor: Monaco.editor.IStandaloneCodeEditor | null = null;
+  private apiReferenceModel: Monaco.editor.ITextModel | null = null;
+  private apiReferenceViewState: Monaco.editor.ICodeEditorViewState | null = null;
+  private apiReferenceQuery: string | null = null;
   @observable language: ScriptLanguage = "typescript";
   @observable reviewingTypeScript = false;
   @observable authoringStatus = "";
@@ -240,6 +245,7 @@ export class ScriptEditor extends WorkspaceElement {
 
   openScriptHelp(): void {
     this.scriptHelpDialog.showModal();
+    this.syncApiReference();
     this.scriptHelpSearch.focus();
   }
   scriptHelpKeyboard(event: KeyboardEvent): void {
@@ -250,9 +256,11 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   closeScriptHelp(): void {
+    this.disposeApiReference();
     this.scriptHelpDialog.close();
   }
   scriptHelpClosed(): void {
+    this.disposeApiReference();
     if (this.active && this.isConnected) {
       this.scriptHelpButton.focus();
     }
@@ -273,6 +281,78 @@ export class ScriptEditor extends WorkspaceElement {
     });
     this.$flushUpdates();
     this.scriptHelpContent.scrollTop = 0;
+    this.syncApiReference(undefined, true);
+  }
+  syncApiReference(sectionId?: string, search = false): void {
+    if (sectionId && sectionId !== "api-reference") {
+      return;
+    }
+    const host = this.scriptApiEditor;
+    if (!this.scriptHelpDialog.open || !host?.isConnected || !host.closest("details")?.open) {
+      this.disposeApiReference();
+      return;
+    }
+    if (this.apiReferenceEditor?.getDomNode()?.parentElement !== host) {
+      this.disposeApiReference();
+    }
+    if (!this.apiReferenceEditor && this.monaco) {
+      const declarations = this.allHelpSections.find((section) => section.id === "api-reference")!
+        .examples[0]!.code;
+      // Share the extra library's URI so the language service sees one declaration file.
+      this.apiReferenceModel = this.monaco.editor.createModel(
+        declarations,
+        "typescript",
+        this.monaco.Uri.parse(`file:///transmog-script-api/v${this.apiRevision}.d.ts`),
+      );
+      this.apiReferenceEditor = this.monaco.editor.create(host, {
+        model: this.apiReferenceModel,
+        readOnly: true,
+        domReadOnly: true,
+        automaticLayout: true,
+        accessibilitySupport: "on",
+        ariaLabel: "Full transmog:api reference",
+        minimap: { enabled: false },
+        renderValidationDecorations: "off",
+        scrollBeyondLastLine: false,
+        wordWrap: "on",
+        tabFocusMode: true,
+        theme: this.monacoTheme(),
+      });
+      if (this.apiReferenceViewState) {
+        this.apiReferenceEditor.restoreViewState(this.apiReferenceViewState);
+      }
+    }
+    const model = this.apiReferenceModel;
+    const term = this.helpSearch.trim();
+    const queryChanged = term !== this.apiReferenceQuery;
+    if (model) {
+      this.apiReferenceQuery = term;
+    }
+    if (model && term && (search || queryChanged)) {
+      const source = model.getValue();
+      const declaration = [`export function ${term}`, `export type ${term}`]
+        .map((prefix) => source.indexOf(prefix))
+        .find((offset) => offset >= 0);
+      let match = model.findMatches(term, false, false, false, null, true, 1)[0]?.range;
+      if (declaration !== undefined) {
+        const start = model.getPositionAt(declaration);
+        match = new this.monaco!.Range(start.lineNumber, 1, start.lineNumber + 1, 1);
+      }
+      if (match) {
+        this.apiReferenceEditor!.setSelection(match);
+        this.apiReferenceEditor!.revealLineNearTop(match.startLineNumber);
+        host.scrollIntoView({ block: "nearest", inline: "nearest" });
+      }
+    }
+  }
+  private disposeApiReference(): void {
+    if (this.apiReferenceEditor) {
+      this.apiReferenceViewState = this.apiReferenceEditor.saveViewState();
+    }
+    this.apiReferenceEditor?.dispose();
+    this.apiReferenceEditor = null;
+    this.apiReferenceModel?.dispose();
+    this.apiReferenceModel = null;
   }
   markScriptChanged(): void {
     this.debugOutdated = Boolean(this.debugInfo);
@@ -702,6 +782,7 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   disconnectedCallback(): void {
+    this.disposeApiReference();
     this.scriptHelpDialog?.close();
     this.editVersion++;
     this.testVersion++;
@@ -742,8 +823,21 @@ export class ScriptEditor extends WorkspaceElement {
     }
     this.apiRevision = help.apiRevision;
     this.failureCategories = help.failureCategories;
-    this.helpSections = help.sections;
-    this.allHelpSections = help.sections;
+    this.allHelpSections = [
+      {
+        id: "api-reference",
+        title: "Full transmog:api namespace",
+        paragraphs: [
+          'Helpers are module exports, not globals. Import a helper by name, for example: import { utf8Decode } from "transmog:api";',
+          'To explore every helper through editor completion, use import * as api from "transmog:api"; then type api. Types use import type { RequestHeadEvent } from "transmog:api".',
+          "Browse the exact declarations used by the editor, including every helper, event field, result type and callback signature. This reference is read-only. Search a symbol above to reveal its declaration, or use Ctrl+F inside the reference.",
+        ],
+        phases: [],
+        examples: [{ title: "API declarations", settings: "", code: declarations }],
+      },
+      ...help.sections,
+    ];
+    this.helpSections = this.allHelpSections;
     this.editorLoaded = true;
     this.$flushUpdates();
     await waitForStyles(this.monacoStyles);

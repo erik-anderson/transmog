@@ -100,6 +100,15 @@ saved script source and settings without changing the active script.
 Open **Automation → Scripts**, edit the TypeScript example, and review **Filters, capabilities,
 and parameters** before choosing **Save & enable**. TypeScript is the default
 authoring language; exported handlers are checked against their phase contracts.
+The starter demonstrates helpers and callback decisions behind disabled local
+switches. Enable one example and its documented capabilities to try it. Body
+examples are separate so the starter does not buffer traffic.
+**Open API docs** includes searchable guides, complete examples and the full
+`transmog:api` namespace in a read-only Monaco editor with TypeScript highlighting.
+Search a symbol to reveal its declaration, or use Ctrl+F within the reference.
+Helpers are module exports: import them by name, or import the namespace and use
+`api.` completion. Live type-check feedback stays below the source editor so
+temporary errors do not move the typing surface.
 Traffic executes saved JavaScript. These scripts modify
 matching requests and responses. Packaged read-only visualizers use the separate
 [extension workflow](extensions.md).

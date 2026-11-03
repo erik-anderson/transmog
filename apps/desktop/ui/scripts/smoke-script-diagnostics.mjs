@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
+import { checkScriptApiReference, checkScriptAuthoringLayout } from "./check-script-authoring.mjs";
 
 // Run only through the owned-profile Windows desktop harness.
 const argument = (name) => process.argv[process.argv.indexOf(name) + 1];
@@ -13,6 +14,9 @@ const page = browser.contexts()[0].pages()[0];
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
 try {
+  await page.waitForFunction(
+    () => typeof document.querySelector("app-shell")?.activateView === "function",
+  );
   await page.evaluate(async () => {
     const shell = document.querySelector("app-shell");
     if (!(await shell.activateView("automation"))) throw new Error(shell.diagnosticText);
@@ -33,6 +37,14 @@ try {
     "}",
   ].join("\n");
   try {
+    await checkScriptApiReference(page, scripts, argument("--output"));
+    await page.keyboard.press("Escape");
+    await checkScriptAuthoringLayout(
+      page,
+      scripts,
+      scripts.locator("editor-surface").first(),
+      argument("--output"),
+    );
     await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), source);
     const input = scripts.locator(".script-test");
     await input.locator(":scope > summary").click();

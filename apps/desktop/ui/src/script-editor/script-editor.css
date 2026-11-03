@@ -10,6 +10,8 @@ script-editor { display: contents; }
 .script-toolbar .actions { margin:0; }
 .script-toolbar .field-help { margin:.35rem 0 0; }
 .script-toolbar .operation-status { margin:.4rem 0 0; min-height:0; white-space:pre-wrap; }
+.script-authoring-feedback { padding:.5rem .7rem; border-top:1px solid var(--line); }
+.script-authoring-feedback > p { margin:0; overflow-wrap:anywhere; }
 .script-workspace .editor-label { margin:.4rem 0; font-size:.75rem; color:var(--muted); }
 .script-settings, .script-test { margin-top:.5rem; padding:.5rem 0; border-top:1px solid var(--line); }
 .script-settings > summary, .script-test > summary { font-weight:600; cursor:pointer; }
@@ -63,6 +65,7 @@ script-editor { display: contents; }
 .script-help-content summary { cursor:pointer; font-weight:600; }
 .script-help-content p { line-height:1.5; }
 .script-help-content pre { max-height:none; user-select:text; }
+.script-api-editor { height:clamp(14rem,50dvh,36rem); min-width:0; border:1px solid var(--line); }
 .script-help-table { overflow:auto; }
 .script-help-table table { width:100%; min-width:0; table-layout:fixed; border-collapse:collapse; font-size:.8125rem; }
 .script-help-table th, .script-help-table td { height:auto; padding:.4rem; text-align:start; vertical-align:top; white-space:normal; text-overflow:clip; border-bottom:1px solid var(--line); }

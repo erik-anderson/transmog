@@ -183,7 +183,7 @@ await page.route("https://workspace.test/**", async (route) => {
       body: renderHtml(new URL(route.request().url()).searchParams.has("viewer")),
       headers: {
         "Content-Security-Policy":
-          "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' 'nonce-workspace-check'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'; require-trusted-types-for 'script'; trusted-types webui monaco",
+          "default-src 'none'; base-uri 'none'; object-src 'none'; script-src 'self' 'nonce-workspace-check'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data:; connect-src 'self'; require-trusted-types-for 'script'; trusted-types webui monaco dompurify",
       },
     });
   } else {

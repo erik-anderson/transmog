@@ -13,7 +13,7 @@ use webui_handler::plugin::webui::WebUIHydrationPlugin;
 
 mod assets;
 const DOCUMENT_CSP_PREFIX: &str = "default-src 'none'; base-uri 'none'; object-src 'none'; frame-ancestors 'none'; form-action 'none'; script-src 'self' 'nonce-";
-const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui monaco";
+const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsafe-inline'; font-src data:; img-src 'self' data: transmog-preview: http://transmog-preview.localhost; connect-src 'self' ipc: http://ipc.localhost; require-trusted-types-for 'script'; trusted-types webui monaco dompurify";
 
 /// Complete bounded state used to render the application shell.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -249,7 +249,7 @@ mod tests {
         assert!(html.contains("app-shell"));
         assert!(html.contains("id=\"webui-data\""));
         assert!(csp.contains("require-trusted-types-for 'script'"));
-        assert!(csp.contains("trusted-types webui monaco"));
+        assert!(csp.contains("trusted-types webui monaco dompurify"));
         assert!(csp.contains("style-src 'self' 'unsafe-inline'"));
         assert!(csp.contains("font-src data:"));
         assert!(csp.contains("transmog-preview:"));
