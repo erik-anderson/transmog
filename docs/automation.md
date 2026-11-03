@@ -148,7 +148,7 @@ a completed exchange. Unresolved assets are incomplete. Inspect phase selection 
 final messages to check your intent. Scenarios use decoded fixtures and controlled timing;
 they do not send traffic, authorize routes, resolve saved assets or verify transport.
 Both modes enforce live capabilities and use the candidate's parameter values.
-The draft’s native traffic scope stays visible beside the editor. **Script API**
+The draft’s native traffic scope stays visible beside the editor. **Open API docs**
 opens searchable bundled help and complete examples with required settings; the
 [repository reference](scripting.md) and MCP help use the same content.
 Changing source, capabilities or test input marks earlier test results outdated.

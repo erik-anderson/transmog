@@ -30,7 +30,7 @@ export async function checkScripts(page, root) {
   await help.getByLabel("Search Script API", { exact: true }).fill("bypass");
   assert.match(
     await help.locator(".script-help-content").textContent(),
-    /fresh host with empty exchange state/,
+    /bypasses the request and body filters/,
   );
   await page.keyboard.press("Escape");
   await page.waitForFunction(() =>

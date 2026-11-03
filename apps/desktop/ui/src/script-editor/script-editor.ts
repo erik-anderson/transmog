@@ -828,9 +828,7 @@ export class ScriptEditor extends WorkspaceElement {
         id: "api-reference",
         title: "Full transmog:api namespace",
         paragraphs: [
-          'Helpers are module exports, not globals. Import a helper by name, for example: import { utf8Decode } from "transmog:api";',
-          'To explore every helper through editor completion, use import * as api from "transmog:api"; then type api. Types use import type { RequestHeadEvent } from "transmog:api".',
-          "Browse the exact declarations used by the editor, including every helper, event field, result type and callback signature. This reference is read-only. Search a symbol above to reveal its declaration, or use Ctrl+F inside the reference.",
+          "Read-only signatures and types for the full API. Search for a symbol above, or use Ctrl+F in the reference.",
         ],
         phases: [],
         examples: [{ title: "API declarations", settings: "", code: declarations }],
