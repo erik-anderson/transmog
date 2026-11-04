@@ -856,6 +856,7 @@ export type ScriptHandler =
   | "onRequestBody"
   | "onResponseHead"
   | "onResponseBody"
+  | "onResponseChunk"
   | "onCompleted"
   | "onFailed";
 export type ScriptLanguage = "typescript" | "javascript";

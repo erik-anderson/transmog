@@ -6,6 +6,53 @@ export function edit(edits, evidence = {}) {
   return { ...evidence, decision: { action: "edit", edits } };
 }
 
+export function needMore(evidence = {}) {
+  return { ...evidence, decision: { action: "need-more" } };
+}
+
+export function forward(consumed, evidence = {}) {
+  return { ...evidence, decision: { action: "forward", consumed } };
+}
+
+export function emit(bytes, { consumed, headers = [], status } = {}, evidence = {}) {
+  return {
+    ...evidence,
+    decision: { action: "emit", bytes: checkedBytes(bytes), consumed, headers, status },
+  };
+}
+
+export function deferResponseHeaders(result = pass()) {
+  return { ...result, body: "stream", deferHeaders: true };
+}
+
+export function replaceTextChunk(event, search, replacement) {
+  const needle = utf8Encode(search);
+  if (!needle.length) throw new TypeError("Streaming search must not be empty");
+  const changed = utf8Encode(replacement);
+  const bytes = checkedBytes(event.bytes);
+  if (!bytes.length || search === replacement) return pass();
+  const output = [];
+  let consumed = 0;
+  while (consumed < bytes.length) {
+    const available = Math.min(needle.length, bytes.length - consumed);
+    let matches = true;
+    for (let i = 0; i < available; i++) {
+      if (bytes[consumed + i] !== needle[i]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches && available < needle.length && !event.end) break;
+    if (matches && available === needle.length) {
+      for (const byte of changed) output.push(byte);
+      consumed += needle.length;
+    } else {
+      output.push(bytes[consumed++]);
+    }
+  }
+  return consumed ? emit(output, { consumed }) : needMore();
+}
+
 function checkedBytes(bytes) {
   if (!Array.isArray(bytes) || bytes.some((b) => !Number.isInteger(b) || b < 0 || b > 255)) {
     throw new TypeError("Expected an array of bytes");

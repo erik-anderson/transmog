@@ -24,7 +24,12 @@ const __transmogDeepFreeze = (value, seen = new WeakSet()) => {
 globalThis.__transmogInvoke = (name, inputJson) => {
   const handler = globalThis.__transmogHandlers[name];
   if (typeof handler !== "function") throw new Error("declared handler is unavailable");
-  const input = __transmogDeepFreeze(JSON.parse(inputJson));
+  const input = JSON.parse(inputJson);
+  if (name !== "onResponseChunk") {
+    delete input.end;
+    delete input.canEditHeaders;
+  }
+  __transmogDeepFreeze(input);
   const result = handler(input);
   if (result !== null && (typeof result === "object" || typeof result === "function") && typeof result.then === "function") {
     throw new Error("handlers must return synchronously");
@@ -372,6 +377,7 @@ impl ScriptRuntime {
         let result = serde_json::from_str(&output)
             .map_err(|error| failure(ScriptFailureCategory::InvalidAction, &error.to_string()))?;
         transmog_script::validate_result(&self.manifest, phase, &request, &result)?;
+        transmog_script::validate_stream_result(&self.manifest, &invocation, &result)?;
         Ok(result)
     }
 }
@@ -497,6 +503,9 @@ mod tests {
         let mut runtime = ScriptRuntime::new(&manifest(), source.to_owned(), |_, _| true).unwrap();
         let result = runtime
             .invoke(ScriptInvocation {
+                bytes: None,
+                end: false,
+                can_edit_headers: false,
                 parameters: std::collections::BTreeMap::new(),
                 state: std::collections::BTreeMap::new(),
                 local_response: false,

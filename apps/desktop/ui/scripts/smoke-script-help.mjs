@@ -27,7 +27,7 @@ export async function smokeScriptHelp(call, evaluate, screenshotPath) {
     const contract = await evaluate(
       `(()=>{const editor=${editor};editor.scriptHelpButton.click();editor.scriptHelpSearch.value='onFailed';editor.scriptHelpSearch.dispatchEvent(new Event('input',{bubbles:true}));editor.$flushUpdates();return {revision:editor.apiRevision,failure:editor.scriptTestFailure.value,scope:editor.draftScope,modal:editor.scriptHelpDialog.matches(':modal'),content:editor.scriptHelpDialog.textContent};})()`,
     );
-    assert.equal(contract.revision, 3);
+    assert.equal(contract.revision, 4);
     assert.equal(contract.failure, "Upstream");
     assert.equal(contract.modal, true);
     assert.match(contract.content, /onFailed/);

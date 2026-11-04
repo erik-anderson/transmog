@@ -13,6 +13,110 @@ const browser = await chromium.connectOverCDP(`http://127.0.0.1:${argument("--po
 const page = browser.contexts()[0].pages()[0];
 const errors = [];
 page.on("pageerror", (error) => errors.push(error.message));
+
+async function checkNativeStreaming(scripts) {
+  const prior = await scripts.evaluate((editor) => ({
+    source: editor.sourceEditor.getValue(),
+    read: editor.scriptForm.elements.namedItem("readBodies").checked,
+    write: editor.scriptForm.elements.namedItem("writeBody").checked,
+    headers: editor.scriptForm.elements.namedItem("scriptHeaders").value,
+    mode: editor.testMode,
+    response: editor.scriptScenarioResponseBody.value,
+    sizes: editor.scriptScenarioChunkSizes.value,
+    delay: editor.scriptScenarioChunkDelay.value,
+    duration: editor.scriptScenarioDuration.value,
+  }));
+  const source = `import { pass, edit, needMore, deferResponseHeaders, replaceTextChunk, setHeader } from "transmog:api";
+import type { ResponseHeadEvent, ResponseHeadResult, ResponseChunkEvent, ResponseChunkResult } from "transmog:api";
+export function onResponseHead(event: ResponseHeadEvent): ResponseHeadResult { return deferResponseHeaders(); }
+export function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult {
+  console.info("native chunk window", event.bytes.length, event.end);
+  if (event.canEditHeaders) {
+    if (event.bytes.length < 4 && !event.end) return needMore();
+    return edit({headers:[setHeader("x-native-inspected", "yes")]});
+  }
+  return replaceTextChunk(event, "before", "after");
+}`;
+  try {
+    await page.setViewportSize({ width: 1440, height: 900 });
+    await scripts.evaluate((editor, source) => {
+      editor.scriptForm.elements.namedItem("readBodies").checked = true;
+      editor.scriptForm.elements.namedItem("writeBody").checked = true;
+      editor.scriptForm.elements.namedItem("scriptHeaders").value = "x-native-inspected";
+      editor.sourceEditor.setValue(source);
+    }, source);
+    await scripts
+      .getByRole("combobox", { name: "Test mode", exact: true })
+      .selectOption("scenario");
+    await scripts.getByLabel("Scenario duration (ms)", { exact: true }).fill("100");
+    await scripts.getByLabel("Response body", { exact: true }).fill("before-before");
+    await scripts
+      .getByLabel("Response chunk byte counts (optional)", { exact: true })
+      .fill("2, 5, 2, 4");
+    await scripts.getByLabel("Delay between chunks (ms, simulated)", { exact: true }).fill("5");
+    await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+    await page.waitForFunction(
+      () =>
+        !document.querySelector("app-shell").automation.querySelector("script-editor").scriptBusy,
+    );
+    assert.deepEqual(await scripts.evaluate((editor) => editor.typeScriptIssues), []);
+    assert.match(await scripts.locator(".script-test-result").textContent(), /Scenario passed/);
+    const result = await scripts.evaluate((editor) =>
+      JSON.parse(editor.testEvidence.split("Scenario evidence:\n")[1]),
+    );
+    assert.equal(new TextDecoder().decode(Uint8Array.from(result.responseBody)), "before-after");
+    assert.equal(result.headersReleasedAtMs, 55);
+    assert.equal(
+      result.response.headers.some((header) => header.name === "x-native-inspected"),
+      true,
+    );
+    assert.ok(result.streamCalls.some((call) => call.action === "need-more"));
+    assert.equal(result.streamCalls.at(-1).end, true);
+    const reports = result.steps.find((step) => step.handler === "onResponseChunk").reports;
+    const messages = reports.flatMap((report) =>
+      (report.logs ?? []).flatMap((run) => run.records.map((record) => record.text)),
+    );
+    assert.ok(messages.includes("native chunk window 2 false"));
+    assert.ok(messages.includes("native chunk window 0 true"));
+    const details = scripts.locator(".script-test-result script-diagnostics");
+    const wasOpen = (await details.locator(".developer-details").getAttribute("open")) !== null;
+    if (!wasOpen) await details.locator(".developer-details > summary").click();
+    await details.getByText("native chunk window 2 false", { exact: true }).first().waitFor();
+    await details.getByText("native chunk window 0 true", { exact: true }).waitFor();
+    assert.equal(
+      await details.getByText("native chunk window 2 false", { exact: true }).count(),
+      2,
+    );
+    for (const width of [1440, 800]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+      await details.scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: resolve(argument("--output"), `script-chunk-diagnostics-native-${width}.png`),
+      });
+    }
+    if (!wasOpen) await details.locator(".developer-details > summary").click();
+    await scripts.getByText("Streaming callbacks", { exact: true }).click();
+    for (const width of [1440, 800]) {
+      await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+      await scripts.locator(".script-test-result table").scrollIntoViewIfNeeded();
+      await page.screenshot({
+        path: resolve(argument("--output"), `script-streaming-native-${width}.png`),
+      });
+    }
+  } finally {
+    await scripts.evaluate((editor, prior) => {
+      editor.scriptForm.elements.namedItem("readBodies").checked = prior.read;
+      editor.scriptForm.elements.namedItem("writeBody").checked = prior.write;
+      editor.scriptForm.elements.namedItem("scriptHeaders").value = prior.headers;
+      editor.scriptScenarioResponseBody.value = prior.response;
+      editor.scriptScenarioChunkSizes.value = prior.sizes;
+      editor.scriptScenarioChunkDelay.value = prior.delay;
+      editor.scriptScenarioDuration.value = prior.duration;
+      editor.testMode = prior.mode;
+      editor.sourceEditor.setValue(prior.source);
+    }, prior);
+  }
+}
 try {
   await page.waitForFunction(
     () => typeof document.querySelector("app-shell")?.activateView === "function",
@@ -101,6 +205,7 @@ try {
       ),
       false,
     );
+    await checkNativeStreaming(scripts);
   } finally {
     await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), priorSource);
   }
@@ -154,6 +259,7 @@ try {
         keyboardReturnFocus: true,
         visualizerStartup: true,
         sourceSnapshots: true,
+        streamingScenario: true,
         pageErrors: errors,
       },
       null,

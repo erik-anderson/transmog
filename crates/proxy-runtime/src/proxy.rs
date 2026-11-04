@@ -1979,14 +1979,11 @@ impl ProxyState {
             response.head.status = status;
         }
         response.head.headers = headers;
-        let prepared_response_headers = prepare_headers(
-            &response.head.headers,
-            TranslationOptions {
-                destination: ingress_version,
-                kind: MessageKind::Response,
-                body_modified,
-                force_identity_encoding: false,
-            },
+        let prepared_response_headers = prepared_buffered_response_headers(
+            &response,
+            &request_head.method,
+            ingress_version,
+            body_modified,
         );
         response.head.headers = match prepared_response_headers {
             Ok(headers) => headers,
@@ -3309,14 +3306,11 @@ impl ProxyState {
             if body_semantics(&request.method, response.head.status) == BodySemantics::Forbidden {
                 response.body.clear();
             }
-            let prepared_headers = prepare_headers(
-                &response.head.headers,
-                TranslationOptions {
-                    destination: session.ingress_version,
-                    kind: MessageKind::Response,
-                    body_modified,
-                    force_identity_encoding: false,
-                },
+            let prepared_headers = prepared_buffered_response_headers(
+                &response,
+                &request.method,
+                session.ingress_version,
+                body_modified,
             );
             response.head.headers = match prepared_headers {
                 Ok(headers) => headers,
@@ -3574,13 +3568,27 @@ impl ProxyState {
             .map_or_else(ExchangeCancellation::new, |signal| signal.0.clone());
         let mut input = StreamingBodyTracker::new(limit);
         let mut output = BoundedBodyBuffer::new(limit);
+        let complete = pipeline.buffers_head();
+        let mut ended = false;
+        let mut body_discarded = false;
+        let mut waited = Duration::ZERO;
         loop {
+            let receiving = Instant::now();
+            let wait = if complete {
+                self.config.limits.body_idle_timeout
+            } else {
+                self.config.limits.body_idle_timeout.saturating_sub(waited)
+            };
             let next = tokio::select! {
                 () = manual.cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
                 () = chain.context().cancellation().cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
-                next = timeout(self.config.limits.body_idle_timeout, source.recv()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
+                next = timeout(wait, source.recv()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
             };
-            let Some(frame) = next else { break };
+            waited = waited.saturating_add(receiving.elapsed());
+            let Some(frame) = next else {
+                ended = true;
+                break;
+            };
             let frame = frame.map_err(BodyPipelineError::Input)?;
             input.accept(&frame).map_err(BodyPipelineError::Input)?;
             if !local {
@@ -3594,20 +3602,39 @@ impl ProxyState {
             for frame in pipeline.process(frame).await? {
                 output.push(frame)?;
             }
+            if !complete && !pipeline.head_pending() {
+                if matches!(pipeline.head(), Some(transmog_core::intercept::BufferedHead::Response(head)) if body_semantics("GET", head.status) == BodySemantics::Forbidden)
+                {
+                    ended = source.is_end_stream();
+                    body_discarded = true;
+                    break;
+                }
+                if !source.is_end_stream() {
+                    break;
+                }
+            }
         }
-        if !local {
+        if ended && !local {
             observe_complete_body(chain, ExchangeBoundary::UpstreamResponse, &[]).await;
             publish_performance(chain, Some(Milestone::UpstreamResponseDone)).await;
         }
-        for frame in pipeline.finish().await? {
-            output.push(frame)?;
+        if ended && !body_discarded {
+            for frame in pipeline.finish().await? {
+                output.push(frame)?;
+            }
         }
         let (data, trailers) = output.finish();
         let mut frames = vec![BodyFrame::Data(data)];
         if let Some(trailers) = trailers {
             frames.push(BodyFrame::Trailers(trailers));
         }
-        pipeline.retain_completed_output(frames);
+        if body_discarded {
+            pipeline.discard_completed_output();
+        } else if ended {
+            pipeline.retain_completed_output(frames);
+        } else {
+            pipeline.retain_initial_output(frames, input.bytes, input.trailers_seen);
+        }
         observe_hook_effects(chain).await;
         Ok(())
     }
@@ -3757,7 +3784,7 @@ impl ProxyState {
                 return Err(error);
             }
         };
-        if pipeline.buffers_head() {
+        if pipeline.head_pending() {
             if let Err(error) = self
                 .buffer_response_pipeline(chain, source, &mut pipeline, local_response)
                 .await
@@ -3770,11 +3797,10 @@ impl ProxyState {
                 *response_head = head.clone();
             }
         }
-        if pipeline.has_buffered_output()
-            && body_semantics(&request_head.method, response_head.status)
-                == BodySemantics::Forbidden
-        {
+        if body_semantics(&request_head.method, response_head.status) == BodySemantics::Forbidden {
             pipeline.discard_completed_output();
+            let (_, empty) = BodyStream::channel(NonZeroUsize::MIN);
+            *source = empty;
         }
         response_head.headers = pipeline.output_headers().clone();
         response_head.headers = match prepare_headers(
@@ -3799,6 +3825,9 @@ impl ProxyState {
                 return Err(error.into());
             }
         };
+        if let Some(frames) = pipeline.completed_output() {
+            finalize_response_length(response_head, frames, &request_head.method, destination);
+        }
         observe_response_head(chain, ExchangeBoundary::ClientResponse, response_head).await;
         Ok(pipeline)
     }
@@ -4819,6 +4848,19 @@ async fn stream_response_through_hooks(
         let limit = if event_stream { usize::MAX } else { limit };
         let mut input = StreamingBodyTracker::new(limit);
         let mut output = StreamingBodyTracker::new(limit);
+        if let Err(error) =
+            send_initial_response_output(&mut pipeline, &sender, &mut input, &mut output, &chain)
+                .await
+        {
+            emit_hook_failure(
+                &chain,
+                ExchangeStage::ResponseBody,
+                ExchangeFailureKind::Body,
+                error.to_string(),
+            )
+            .await;
+            return;
+        }
         loop {
             let frame = match if event_stream {
                 Ok(body.recv().await)
@@ -4862,6 +4904,7 @@ async fn stream_response_through_hooks(
                     return;
                 }
             };
+            observe_hook_effects(&chain).await;
             observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
             if send_streaming_frames(
                 &sender,
@@ -4960,6 +5003,19 @@ async fn stream_local_response_through_hooks(
         let limit = if event_stream { usize::MAX } else { limit };
         let mut input = StreamingBodyTracker::new(limit);
         let mut output = StreamingBodyTracker::new(limit);
+        if let Err(error) =
+            send_initial_response_output(&mut pipeline, &sender, &mut input, &mut output, &chain)
+                .await
+        {
+            emit_hook_failure(
+                &chain,
+                ExchangeStage::ResponseBody,
+                ExchangeFailureKind::Body,
+                error.to_string(),
+            )
+            .await;
+            return;
+        }
         loop {
             let frame = match if event_stream {
                 Ok(body.recv().await)
@@ -4997,6 +5053,7 @@ async fn stream_local_response_through_hooks(
                     return;
                 }
             };
+            observe_hook_effects(&chain).await;
             observe_body_frames(&chain, ExchangeBoundary::ClientResponse, &frames).await;
             if send_streaming_frames(
                 &sender,
@@ -5167,6 +5224,20 @@ async fn emit_hook_failure(
     if let Some(observer) = runtime_observer(chain) {
         observer.failed(failure).await;
     }
+}
+
+async fn send_initial_response_output(
+    pipeline: &mut ContentBodyPipeline,
+    sender: &BodyStreamSender,
+    input: &mut StreamingBodyTracker,
+    output: &mut StreamingBodyTracker,
+    chain: &ExchangeChain,
+) -> Result<(), BodyStreamError> {
+    let (frames, bytes, trailers) = pipeline.take_initial_output();
+    input.bytes = bytes;
+    input.trailers_seen = trailers;
+    observe_body_frames(chain, ExchangeBoundary::ClientResponse, &frames).await;
+    send_streaming_frames(sender, output, frames, chain, "Client response queue").await
 }
 
 async fn send_streaming_frames(
@@ -5624,6 +5695,68 @@ fn format_authority(host: &str, port: u16, default_port: u16) -> String {
     } else {
         format!("{bracketed}:{port}")
     }
+}
+
+fn prepared_buffered_response_headers(
+    response: &CanonicalResponse,
+    method: &str,
+    destination: HttpLegVersion,
+    body_modified: bool,
+) -> Result<HeaderBlock, transmog_core::TranslationError> {
+    let mut head = response.head.clone();
+    head.headers = prepare_headers(
+        &head.headers,
+        TranslationOptions {
+            destination,
+            kind: MessageKind::Response,
+            body_modified,
+            force_identity_encoding: false,
+        },
+    )?;
+    finalize_response_length(&mut head, &response.body, method, destination);
+    Ok(head.headers)
+}
+
+fn finalize_response_length(
+    head: &mut ResponseHead,
+    frames: &[BodyFrame],
+    method: &str,
+    destination: HttpLegVersion,
+) {
+    if (100..200).contains(&head.status)
+        || head.status == 204
+        || (method.eq_ignore_ascii_case("CONNECT") && (200..300).contains(&head.status))
+    {
+        head.headers.remove_all("content-length");
+        return;
+    }
+    if head.status == 205 {
+        head.headers
+            .replace_all(HeaderField::try_new("content-length", "0").expect("decimal length"));
+        return;
+    }
+    // These lengths describe a hypothetical representation, not the empty wire body.
+    if method.eq_ignore_ascii_case("HEAD") || head.status == 304 {
+        return;
+    }
+    if destination == HttpLegVersion::Http1
+        && frames
+            .iter()
+            .any(|frame| matches!(frame, BodyFrame::Trailers(_)))
+    {
+        head.headers.remove_all("content-length");
+        return;
+    }
+    let length: u64 = frames
+        .iter()
+        .map(|frame| match frame {
+            BodyFrame::Data(bytes) => u64::try_from(bytes.len()).expect("bounded body length"),
+            BodyFrame::Trailers(_) => 0,
+        })
+        .sum();
+    head.headers.replace_all(
+        HeaderField::try_new("content-length", length.to_string()).expect("decimal length"),
+    );
 }
 
 fn response_to_hyper(

@@ -242,6 +242,9 @@ fn compile(source: &str, max_duration_ms: u64) -> transmog_script::CompiledScrip
 
 fn invocation() -> ScriptInvocation {
     ScriptInvocation {
+        bytes: None,
+        end: false,
+        can_edit_headers: false,
         parameters: std::collections::BTreeMap::new(),
         state: std::collections::BTreeMap::new(),
         local_response: false,
@@ -569,6 +572,7 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
         manifest,
         runner,
         transmog_script::ScriptScenario {
+            response_chunks: None,
             request,
             response: Some(transmog_script::ScriptResponse {
                 status: 200,
@@ -602,9 +606,254 @@ async fn complete_scenario_uses_native_helpers_state_selection_and_timing() {
         serde_json::json!([["x", "one"], ["x", "two"]])
     );
     assert_eq!(
-        result.steps[4].result.as_ref().unwrap().diagnostics,
+        result.steps[5].result.as_ref().unwrap().diagnostics,
         ["scenario complete"]
     );
+}
+
+#[tokio::test]
+async fn streaming_scenario_uses_isolated_helpers_and_deferred_header_authority() {
+    let source = r#"
+      import {pass, edit, needMore, deferResponseHeaders, replaceTextChunk, setHeader} from 'transmog:api';
+      export function onResponseHead(event) { return event.parameters.defer ? deferResponseHeaders() : pass(); }
+      export function onResponseChunk(event) {
+        if (!Object.isFrozen(event.bytes) || typeof event.end !== 'boolean' || typeof event.canEditHeaders !== 'boolean') throw new Error('invalid streaming input');
+        console.info('chunk window', event.bytes.length, event.end);
+        if (event.end && event.parameters.failAtEnd) throw new Error('stream failed at EOF');
+        if (event.canEditHeaders) {
+          if (event.bytes.length < 4 && !event.end) return needMore();
+          return edit({headers:[setHeader('x-inspected','yes')]});
+        }
+        return replaceTextChunk(event,'before','after');
+      }
+    "#;
+    for (deferred, fail_at_end) in [(false, false), (true, false), (true, true)] {
+        let mut manifest = compile(
+            "export function onRequestHead() { return {decision:{action:'continue'}}; }",
+            1000,
+        )
+        .manifest;
+        manifest.source_hash = source_hash(source.as_bytes());
+        manifest.handlers =
+            BTreeSet::from([ScriptHandler::ResponseHead, ScriptHandler::ResponseChunk]);
+        manifest.capabilities.read_bodies = true;
+        manifest.capabilities.write_body = true;
+        manifest
+            .capabilities
+            .write_headers
+            .insert("x-inspected".into());
+        manifest.parameters.insert(
+            "defer".into(),
+            transmog_script::ScriptParameter::Boolean {
+                label: "Defer headers".into(),
+                default: deferred,
+                value: None,
+            },
+        );
+        manifest.parameters.insert(
+            "failAtEnd".into(),
+            transmog_script::ScriptParameter::Boolean {
+                label: "Fail at EOF".into(),
+                default: fail_at_end,
+                value: None,
+            },
+        );
+        let runner = SupervisedScriptRunner::start(
+            &config(),
+            compile_typescript(manifest.clone(), source).unwrap(),
+        )
+        .unwrap();
+        let result = transmog_script::test_scenario(
+            manifest,
+            runner,
+            transmog_script::ScriptScenario {
+                response_chunks: Some(vec![
+                    transmog_script::ScriptScenarioChunk {
+                        bytes: b"be".to_vec(),
+                        delay_ms: 0,
+                    },
+                    transmog_script::ScriptScenarioChunk {
+                        bytes: b"fore-".to_vec(),
+                        delay_ms: 5,
+                    },
+                    transmog_script::ScriptScenarioChunk {
+                        bytes: b"be".to_vec(),
+                        delay_ms: 5,
+                    },
+                    transmog_script::ScriptScenarioChunk {
+                        bytes: b"fore".to_vec(),
+                        delay_ms: 5,
+                    },
+                ]),
+                request: invocation().request,
+                response: Some(transmog_script::ScriptResponse {
+                    status: 200,
+                    headers: vec![],
+                }),
+                request_body: vec![],
+                response_body: b"before-before".to_vec(),
+                local_response: false,
+                failure: None,
+                http_version: invocation().context.http_version,
+                started_unix_ms: 1000,
+                duration_ms: 100,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(
+            result.verdict,
+            if fail_at_end {
+                transmog_script::ScriptScenarioVerdict::Failed
+            } else {
+                transmog_script::ScriptScenarioVerdict::Passed
+            },
+            "{:?}",
+            result.error
+        );
+        assert_eq!(
+            result.response_body,
+            if deferred {
+                b"before-after".as_slice()
+            } else {
+                b"after-after".as_slice()
+            }
+        );
+        assert_eq!(
+            result.headers_released_at_ms,
+            Some(if deferred { 55 } else { 50 })
+        );
+        assert!(result.stream_calls.last().unwrap().end);
+        let reports = &result
+            .steps
+            .iter()
+            .find(|step| step.handler == ScriptHandler::ResponseChunk)
+            .unwrap()
+            .reports;
+        let logs: Vec<_> = reports
+            .iter()
+            .flat_map(|report| &report.logs)
+            .flat_map(|run| &run.records)
+            .collect();
+        assert!(
+            logs.iter()
+                .any(|record| record.text == "chunk window 2 false")
+        );
+        assert!(
+            logs.iter()
+                .any(|record| record.text == "chunk window 0 true")
+        );
+        assert_eq!(logs.len(), result.stream_calls.len());
+        assert_eq!(
+            reports
+                .iter()
+                .filter(|report| report.exception.is_some())
+                .count(),
+            usize::from(fail_at_end)
+        );
+        assert_eq!(
+            result
+                .response
+                .unwrap()
+                .headers
+                .iter()
+                .any(|header| header.name == "x-inspected"),
+            deferred
+        );
+    }
+}
+
+#[tokio::test]
+async fn complete_body_observation_and_header_edits_use_the_input_limit() {
+    for handler in [ScriptHandler::RequestBody, ScriptHandler::ResponseBody] {
+        for (decision, replaces) in [
+            ("pass()", false),
+            ("edit({headers:[setHeader('x-inspected','yes')]})", false),
+            ("edit({bytes:[1,2]})", true),
+        ] {
+            let source = format!(
+                "import {{pass, edit, setHeader}} from 'transmog:api'; export function {}() {{ return {decision}; }}",
+                handler.export_name()
+            );
+            let mut manifest = compile(
+                "export function onRequestHead() { return {decision:{action:'continue'}}; }",
+                1000,
+            )
+            .manifest;
+            manifest.source_hash = source_hash(source.as_bytes());
+            manifest.handlers = BTreeSet::from([handler]);
+            manifest.capabilities.read_bodies = true;
+            manifest.capabilities.write_body = replaces;
+            manifest
+                .capabilities
+                .write_headers
+                .insert("x-inspected".into());
+            manifest.limits.max_input_body_bytes = 8;
+            manifest.limits.max_output_bytes = 1;
+            let runner = SupervisedScriptRunner::start(
+                &config(),
+                compile_typescript(manifest.clone(), &source).unwrap(),
+            )
+            .unwrap();
+            let result = transmog_script::test_scenario(
+                manifest,
+                runner,
+                transmog_script::ScriptScenario {
+                    response_chunks: None,
+                    request: invocation().request,
+                    response: Some(transmog_script::ScriptResponse {
+                        status: 200,
+                        headers: vec![],
+                    }),
+                    request_body: b"upload".to_vec(),
+                    response_body: b"reply".to_vec(),
+                    local_response: false,
+                    failure: None,
+                    http_version: invocation().context.http_version,
+                    started_unix_ms: 1000,
+                    duration_ms: 100,
+                },
+            )
+            .await
+            .unwrap();
+            assert_eq!(
+                result.verdict,
+                if replaces {
+                    transmog_script::ScriptScenarioVerdict::Failed
+                } else {
+                    transmog_script::ScriptScenarioVerdict::Passed
+                },
+                "{handler:?} {decision}: {:?}",
+                result.error
+            );
+            if replaces {
+                assert_eq!(
+                    result
+                        .steps
+                        .iter()
+                        .find(|step| step.handler == handler)
+                        .unwrap()
+                        .error
+                        .as_ref()
+                        .unwrap()
+                        .category,
+                    transmog_script::ScriptFailureCategory::InvalidAction
+                );
+            } else {
+                assert_eq!(result.request_body, b"upload");
+                assert_eq!(result.response_body, b"reply");
+                let headers = if handler == ScriptHandler::RequestBody {
+                    &result.request.headers
+                } else {
+                    &result.response.as_ref().unwrap().headers
+                };
+                assert_eq!(
+                    headers.iter().any(|header| header.name == "x-inspected"),
+                    decision.starts_with("edit(")
+                );
+            }
+        }
+    }
 }
 
 #[tokio::test]
@@ -1064,19 +1313,7 @@ async fn promises_and_thenables_are_rejected_without_poisoning_the_script() {
 
 #[tokio::test]
 async fn body_sample_clear_switch_does_not_decode_headers_or_require_header_writes() {
-    let help = transmog_script::help();
-    let example = help["sections"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|section| section["id"] == "examples")
-        .unwrap()["examples"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .find(|example| example["title"] == "Body helpers: text, JSON, forms and raw bytes")
-        .unwrap();
-    let source = example["code"].as_str().unwrap().replace(
+    let source = help_example("Body helpers: text, JSON, forms and raw bytes").replace(
         "const shouldClearBody = false;",
         "const shouldClearBody = true;",
     );
@@ -1115,6 +1352,178 @@ async fn body_sample_clear_switch_does_not_decode_headers_or_require_header_writ
     };
     assert_eq!(edits.bytes, Some(Vec::new()));
     assert!(edits.headers.is_empty());
+}
+
+fn help_example(title: &str) -> String {
+    let help = transmog_script::help();
+    help["sections"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|section| section["id"] == "examples")
+        .unwrap()["examples"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|example| example["title"] == title)
+        .unwrap()["code"]
+        .as_str()
+        .unwrap()
+        .into()
+}
+
+async fn streaming_help_scenario(
+    title: &str,
+    toggle: &str,
+    chunks: &[&[u8]],
+) -> transmog_script::ScriptScenarioResult {
+    let source = help_example(title);
+    let switch = format!("const {toggle} = false;");
+    assert!(source.contains(&switch));
+    let source = source.replace(&switch, &format!("const {toggle} = true;"));
+    let inspect = toggle == "shouldInspectInitialBytes";
+    let mut manifest = compile(
+        "export function onRequestHead() { return {decision:{action:'continue'}}; }",
+        500,
+    )
+    .manifest;
+    manifest.handlers = BTreeSet::from([ScriptHandler::ResponseChunk]);
+    manifest.capabilities = ScriptCapabilities {
+        read_bodies: true,
+        write_body: toggle == "shouldApplySampleChange",
+        ..ScriptCapabilities::default()
+    };
+    if inspect {
+        manifest.handlers.insert(ScriptHandler::ResponseHead);
+        manifest
+            .capabilities
+            .write_headers
+            .insert("x-sample-prefix".into());
+    }
+    manifest.response_body_filter.content_types = vec!["text/plain".into()];
+    manifest.source_hash = source_hash(source.as_bytes());
+    let runner = SupervisedScriptRunner::start(
+        &config(),
+        compile_typescript(manifest.clone(), &source).unwrap(),
+    )
+    .unwrap();
+    let result = transmog_script::test_scenario(
+        manifest,
+        runner,
+        transmog_script::ScriptScenario {
+            response_chunks: Some(
+                chunks
+                    .iter()
+                    .enumerate()
+                    .map(|(index, bytes)| transmog_script::ScriptScenarioChunk {
+                        bytes: bytes.to_vec(),
+                        delay_ms: if index == 0 { 0 } else { 5 },
+                    })
+                    .collect(),
+            ),
+            request: invocation().request,
+            response: Some(transmog_script::ScriptResponse {
+                status: 200,
+                headers: vec![transmog_script::ScriptHeader {
+                    name: "content-type".into(),
+                    value: b"text/plain; charset=utf-8".to_vec(),
+                    sensitive: false,
+                    redacted: false,
+                }],
+            }),
+            request_body: vec![],
+            response_body: chunks
+                .iter()
+                .flat_map(|bytes| bytes.iter().copied())
+                .collect(),
+            local_response: false,
+            failure: None,
+            http_version: invocation().context.http_version,
+            started_unix_ms: 1000,
+            duration_ms: 100,
+        },
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        result.verdict,
+        transmog_script::ScriptScenarioVerdict::Passed,
+        "{:?}",
+        result.error
+    );
+    assert!(result.stream_calls.last().unwrap().end);
+    result
+}
+
+#[tokio::test]
+async fn streaming_help_sample_switches_work_independently() {
+    for (title, toggle, expected) in [
+        (
+            "Queue complete lines before processing",
+            "shouldQueueCompleteLines",
+            b"before\nlast".as_slice(),
+        ),
+        (
+            "Queue complete lines before processing",
+            "shouldApplySampleChange",
+            b"after\nlast".as_slice(),
+        ),
+        (
+            "Streaming text replacement",
+            "shouldApplySampleChange",
+            b"after\nlast".as_slice(),
+        ),
+    ] {
+        let result = streaming_help_scenario(title, toggle, &[b"be", b"fore\nla", b"st"]).await;
+        assert_eq!(result.response_body, expected);
+        assert!(result.stream_calls.iter().any(|call| call.action
+            == if toggle == "shouldQueueCompleteLines" {
+                "forward"
+            } else {
+                "emit"
+            }));
+        assert!(
+            result
+                .stream_calls
+                .iter()
+                .any(|call| call.action == "need-more")
+        );
+    }
+}
+
+#[tokio::test]
+async fn header_inspection_help_sample_handles_split_utf8_and_empty_bodies() {
+    for (chunks, expected) in [
+        (vec![b"be".as_slice(), b"fore\nlast".as_slice()], "YmVmbw=="),
+        (
+            vec![b"\xf0\x9f".as_slice(), b"\x8c\x8dtext".as_slice()],
+            "8J+MjQ==",
+        ),
+        (vec![], ""),
+    ] {
+        let result = streaming_help_scenario(
+            "Inspect initial bytes before releasing headers",
+            "shouldInspectInitialBytes",
+            &chunks,
+        )
+        .await;
+        let original: Vec<u8> = chunks
+            .iter()
+            .flat_map(|bytes| bytes.iter().copied())
+            .collect();
+        assert_eq!(result.response_body, original);
+        assert_eq!(
+            result.headers_released_at_ms,
+            Some(if chunks.is_empty() { 75 } else { 55 })
+        );
+        let response = result.response.unwrap();
+        let header = response
+            .headers
+            .iter()
+            .find(|header| header.name == "x-sample-prefix")
+            .unwrap();
+        assert_eq!(header.value, expected.as_bytes());
+    }
 }
 
 #[tokio::test]
@@ -1191,6 +1600,25 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
                 manifest.capabilities.annotate = true;
                 input.context.now_unix_ms = 100;
             }
+            6..=8 => {
+                manifest.handlers = BTreeSet::from([ScriptHandler::ResponseChunk]);
+                if index == 8 {
+                    manifest.handlers.insert(ScriptHandler::ResponseHead);
+                    manifest
+                        .capabilities
+                        .write_headers
+                        .insert("x-sample-prefix".into());
+                }
+                manifest.capabilities.read_bodies = true;
+                manifest.capabilities.write_body = false;
+                input.context.handler = ScriptHandler::ResponseChunk;
+                input.bytes = Some(b"arbitrary streaming bytes".to_vec());
+                input.end = true;
+                input.response = Some(transmog_script::ScriptResponse {
+                    status: 200,
+                    headers: vec![],
+                });
+            }
             _ => panic!("Add execution coverage for the new help example"),
         }
         let handlers = manifest.handlers.clone();
@@ -1198,13 +1626,17 @@ async fn bundled_help_examples_execute_with_the_documented_permissions() {
         let runner = SupervisedScriptRunner::start(&config(), compiled).unwrap();
         let result = runner.invoke(input.clone()).await.unwrap();
         match index {
-            0 | 1 => {
+            0 | 1 | 6..=8 => {
                 for handler in handlers {
                     input.context.handler = handler;
+                    input.bytes = (handler == ScriptHandler::ResponseChunk)
+                        .then(|| b"arbitrary streaming bytes".to_vec());
+                    input.end = handler == ScriptHandler::ResponseChunk;
                     input.response = matches!(
                         handler,
                         ScriptHandler::ResponseHead
                             | ScriptHandler::ResponseBody
+                            | ScriptHandler::ResponseChunk
                             | ScriptHandler::Completed
                     )
                     .then(|| transmog_script::ScriptResponse {

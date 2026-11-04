@@ -178,7 +178,7 @@ pub(super) fn complete(tool: &mut ToolSpec) {
                 &["title", "settings", "code"],
             );
             let section = object(
-                json!({"id":text(64),"title":text(128),"paragraphs":array(text(4096),32),"phases":array(phase,6),"examples":array(example,16)}),
+                json!({"id":text(64),"title":text(128),"paragraphs":array(text(4096),32),"phases":array(phase,7),"examples":array(example,16)}),
                 &["id", "title", "paragraphs", "phases", "examples"],
             );
             tool.output_schema = object(

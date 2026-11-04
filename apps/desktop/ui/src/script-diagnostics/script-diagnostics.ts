@@ -115,7 +115,7 @@ export class ScriptDiagnostics extends WebUIElement {
     );
     this.losses = this.evidence.flatMap((item) => [
       ...(item.detailsOmitted
-        ? [`${item.label}: older exception or console details were evicted.`]
+        ? [`${item.label}: some developer details were omitted at the evidence limit.`]
         : []),
       ...(item.logRunsOmitted
         ? [`${item.label}: ${item.logRunsOmitted} older operation streams were evicted.`]

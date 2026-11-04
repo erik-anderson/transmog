@@ -55,6 +55,7 @@ const handlerContracts = [
   ["onRequestBody", "RequestBodyHandler"],
   ["onResponseHead", "ResponseHeadHandler"],
   ["onResponseBody", "ResponseBodyHandler"],
+  ["onResponseChunk", "ResponseChunkHandler"],
   ["onCompleted", "CompletedHandler"],
   ["onFailed", "FailedHandler"],
 ] as const;
@@ -78,7 +79,7 @@ function trafficScope(draft: ScriptDraft): string {
       `request bodies: ${draft.requestBodyFilter.contentTypes.join(", ") || "all media types"}`,
     );
   }
-  if (draft.handlers.includes("onResponseBody")) {
+  if (draft.handlers.includes("onResponseBody") || draft.handlers.includes("onResponseChunk")) {
     const body = draft.responseBodyFilter;
     scope.push(
       `response bodies: ${body.contentTypes.join(", ") || "all media types"}; ${body.statuses.join(", ") || "all statuses"}; ${body.includeLocal ? "including" : "excluding"} local responses`,
@@ -126,6 +127,7 @@ export class ScriptEditor extends WorkspaceElement {
   @observable language: ScriptLanguage = "typescript";
   @observable reviewingTypeScript = false;
   @observable authoringStatus = "";
+  @observable bodyProcessing = "";
   @observable buildInfo = "No successful build yet.";
   @observable sourceAlignment = "";
   private lastBuild: ScriptStatus["built"][number] | null = null;
@@ -199,10 +201,23 @@ export class ScriptEditor extends WorkspaceElement {
   @observable testMode = "callback";
   @observable testFailure = "Upstream";
   @observable scenarioOutcome = "response";
+  @observable testStream = false;
+  @observable scenarioHeaders = "";
+  @observable streamTimeline: Array<{
+    index: number;
+    time: string;
+    input: string;
+    action: string;
+    headers: string;
+  }> = [];
   scriptScenarioOutcome!: HTMLSelectElement;
   scriptScenarioResponseBody!: HTMLTextAreaElement;
   scriptScenarioDuration!: HTMLInputElement;
   scriptScenarioProtocol!: HTMLSelectElement;
+  scriptScenarioChunkSizes!: HTMLInputElement;
+  scriptScenarioChunkDelay!: HTMLInputElement;
+  scriptTestEnd!: HTMLInputElement;
+  scriptTestHeaderEdits!: HTMLInputElement;
   scriptTestUrl!: HTMLInputElement;
   scriptTestMethod!: HTMLInputElement;
   scriptTestHeaders!: HTMLTextAreaElement;
@@ -391,6 +406,9 @@ export class ScriptEditor extends WorkspaceElement {
     this.testMode = (event.target as HTMLSelectElement).value;
     this.markTestChanged();
   }
+  changeTestHandler(): void {
+    this.testStream = this.scriptTestHandler.value === "onResponseChunk";
+  }
   changeTestFailure(event: Event): void {
     this.testFailure = (event.target as HTMLSelectElement).value;
   }
@@ -417,6 +435,15 @@ export class ScriptEditor extends WorkspaceElement {
     this.scriptDirty = fingerprint !== this.savedFingerprint;
     this.scriptUnapplied = scriptExecutionFingerprint(draft) !== this.activeFingerprint;
     this.testHandlers = draft.handlers.map((name) => ({ name }));
+    const selectedHandler = this.scriptTestHandler?.value;
+    this.testStream =
+      (draft.handlers.find((name) => name === selectedHandler) ?? draft.handlers[0]) ===
+      "onResponseChunk";
+    this.bodyProcessing = draft.handlers.includes("onResponseBody")
+      ? "Response body: complete body; headers wait. onResponseHead can select another mode."
+      : draft.handlers.includes("onResponseChunk")
+        ? "Response body: incremental callbacks; headers are sent promptly unless explicitly deferred."
+        : "Response body: streams without body callbacks.";
     const visibleSource = this.sourceEditor!.getValue();
     const visibleLanguage = this.reviewingTypeScript ? "typescript" : this.language;
     const label = visibleLanguage === "typescript" ? "TypeScript" : "JavaScript";
@@ -1077,6 +1104,10 @@ export class ScriptEditor extends WorkspaceElement {
       responseBody: this.scriptScenarioResponseBody.value,
       durationMs: Number(this.scriptScenarioDuration.value),
       httpVersion: this.scriptScenarioProtocol.value,
+      chunkSizes: this.scriptScenarioChunkSizes.value,
+      chunkDelay: Number(this.scriptScenarioChunkDelay.value),
+      end: this.scriptTestEnd.checked,
+      canEditHeaders: this.scriptTestHeaderEdits.checked,
     };
     try {
       const candidate = this.candidate ?? (await this.validateDraft());
@@ -1097,6 +1128,13 @@ export class ScriptEditor extends WorkspaceElement {
       this.scriptText = "Running the sandbox for this input…";
       this.statusKind = "progress";
       const invocation = {
+        ...(handler === "onResponseChunk"
+          ? {
+              bytes: Array.from(new TextEncoder().encode(input.body)),
+              end: input.end,
+              canEditHeaders: input.canEditHeaders,
+            }
+          : {}),
         context: {
           exchangeId: "editor-test",
           nowUnixMs: 1700000000000,
@@ -1141,6 +1179,10 @@ export class ScriptEditor extends WorkspaceElement {
       };
       if (input.mode === "scenario") {
         const scenario = {
+          responseChunks:
+            input.outcome === "response"
+              ? this.scenarioChunks(input.responseBody, input.chunkSizes, input.chunkDelay)
+              : null,
           request: invocation.request,
           response: input.outcome === "response" ? invocation.response : null,
           requestBody: Array.from(new TextEncoder().encode(input.body)),
@@ -1162,11 +1204,21 @@ export class ScriptEditor extends WorkspaceElement {
           outcome: string;
           verdict: "passed" | "failed" | "incomplete";
           admitted: boolean;
+          headersReleasedAtMs?: number | null;
+          streamCalls?: Array<{
+            elapsedMs: number;
+            inputBytes: number;
+            action: string;
+            end: boolean;
+            canEditHeaders: boolean;
+          }>;
+          omittedStreamCalls?: number;
           steps: Array<{
             handler: string;
             selection: string;
             result?: { logs?: LogRun[]; diagnostics?: string[] };
             error?: { exception?: DeveloperEvidence["exception"]; logs?: LogRun[] };
+            reports?: Array<Omit<DeveloperEvidence, "label">>;
           }>;
         }>("test_script_scenario", {
           candidateId: candidate.token.candidateId,
@@ -1177,12 +1229,35 @@ export class ScriptEditor extends WorkspaceElement {
         }
         this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
         this.testResult = `Scenario ${result.verdict} · Exchange: ${result.outcome} · Request filter: ${result.admitted ? "matched" : "skipped"}`;
-        this.sandboxDetails = result.steps.map((step) => ({
-          label: `Scenario · ${step.handler}`,
-          exception: step.error?.exception,
-          logs: step.error?.logs ?? step.result?.logs,
-          diagnostics: step.result?.diagnostics,
+        this.scenarioHeaders =
+          result.headersReleasedAtMs == null
+            ? "Response headers were not released."
+            : `Response headers released at ${result.headersReleasedAtMs} ms (simulated).`;
+        this.streamTimeline = (result.streamCalls ?? []).map((call, index) => ({
+          index,
+          time: `${call.elapsedMs} ms`,
+          input: `${call.inputBytes} bytes`,
+          action: `${call.action}${call.end ? " (EOF)" : ""}`,
+          headers: call.canEditHeaders ? "Available" : "Unavailable",
         }));
+        if (result.omittedStreamCalls) {
+          this.scenarioHeaders += ` ${result.omittedStreamCalls} additional callbacks omitted from the timeline.`;
+        }
+        this.sandboxDetails = result.steps.flatMap((step) => {
+          const label = `Scenario · ${step.handler}`;
+          const reports = step.reports ?? [];
+          return [
+            ...reports.map((report) => ({ ...report, label })),
+            {
+              label,
+              exception: reports.some((report) => report.exception)
+                ? undefined
+                : step.error?.exception,
+              logs: step.error?.logs ?? (reports.length ? undefined : step.result?.logs),
+              diagnostics: reports.length ? undefined : step.result?.diagnostics,
+            },
+          ];
+        });
         this.testEvidence =
           result.steps.map((step) => `${step.handler}: ${step.selection}`).join("\n") +
           `\n\nScenario evidence:\n${JSON.stringify(result, null, 2)}`;
@@ -1216,6 +1291,8 @@ export class ScriptEditor extends WorkspaceElement {
       }
       this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
       this.testResult = `Callback completed · ${handler} · Action: ${result.decision.action} · Filters bypassed`;
+      this.scenarioHeaders = "";
+      this.streamTimeline = [];
       this.sandboxDetails = [
         { label: `Sandbox · ${handler}`, logs: result.logs, diagnostics: result.diagnostics },
       ];
@@ -1238,6 +1315,8 @@ export class ScriptEditor extends WorkspaceElement {
     } catch (error: unknown) {
       if (this.isConnected) {
         this.testResult = "Sandbox did not complete for this input";
+        this.scenarioHeaders = "";
+        this.streamTimeline = [];
         this.testEvidence = describeError(error);
         this.sandboxDetails = [errorEvidence(error, "Earlier sandbox run")];
         this.testOutdated = !this.current(version) || testVersion !== this.testVersion;
@@ -1250,6 +1329,42 @@ export class ScriptEditor extends WorkspaceElement {
         }
       }
     }
+  }
+  private scenarioChunks(
+    text: string,
+    sizesText: string,
+    delayMs: number,
+  ): Array<{ bytes: number[]; delayMs: number }> | null {
+    if (!sizesText.trim()) {
+      return null;
+    }
+    const sizes = sizesText
+      .split(/[\s,]+/)
+      .filter(Boolean)
+      .map(Number);
+    if (
+      sizes.length > 128 ||
+      sizes.some((size) => !Number.isSafeInteger(size) || size < 1) ||
+      !Number.isSafeInteger(delayMs) ||
+      delayMs < 0 ||
+      delayMs > 86400000
+    ) {
+      throw new Error("Use up to 128 positive chunk byte counts and a nonnegative delay.");
+    }
+    const bytes = Array.from(new TextEncoder().encode(text));
+    const chunks = [];
+    let offset = 0;
+    for (const size of sizes) {
+      if (offset + size > bytes.length) {
+        throw new Error("Chunk byte counts exceed the response body length.");
+      }
+      chunks.push({ bytes: bytes.slice(offset, offset + size), delayMs: offset ? delayMs : 0 });
+      offset += size;
+    }
+    if (offset < bytes.length) {
+      chunks.push({ bytes: bytes.slice(offset), delayMs: offset ? delayMs : 0 });
+    }
+    return chunks;
   }
   private async startDebug(
     candidate: ValidatedDraft,
@@ -1649,6 +1764,7 @@ export class ScriptEditor extends WorkspaceElement {
         "onRequestBody",
         "onResponseHead",
         "onResponseBody",
+        "onResponseChunk",
         "onCompleted",
         "onFailed",
       ] as const

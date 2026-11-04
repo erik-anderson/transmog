@@ -18,6 +18,8 @@ use crate::{
 /// coding stack before hooks and optionally restore it afterward.
 #[derive(Debug)]
 pub struct ContentBodyPipeline {
+    initial_output: Vec<BodyFrame>,
+    initial_input: (usize, bool),
     buffered_output: Option<Vec<BodyFrame>>,
     body: BodyPipeline,
     plan: Option<ContentPlan>,
@@ -121,6 +123,8 @@ impl ContentBodyPipeline {
             };
             body.set_head_headers(output_headers.clone());
             return Ok(Self {
+                initial_output: Vec::new(),
+                initial_input: (0, false),
                 buffered_output: None,
                 body,
                 plan: None,
@@ -165,6 +169,8 @@ impl ContentBodyPipeline {
         body.set_head_headers(hook_headers.clone());
 
         Ok(Self {
+            initial_output: Vec::new(),
+            initial_input: (0, false),
             buffered_output: None,
             body,
             plan: Some(plan),
@@ -180,6 +186,8 @@ impl ContentBodyPipeline {
 
     fn direct(body: BodyPipeline, source_headers: &HeaderBlock, limits: ContentLimits) -> Self {
         Self {
+            initial_output: Vec::new(),
+            initial_input: (0, false),
             buffered_output: None,
             body,
             plan: None,
@@ -208,9 +216,19 @@ impl ContentBodyPipeline {
         self.body.buffers_head()
     }
 
+    /// Whether initial or complete body inspection still holds message headers.
+    pub fn head_pending(&self) -> bool {
+        self.body.head_pending()
+    }
+
     /// Whether the source and all hooks completed before the transport pump began.
     pub const fn has_buffered_output(&self) -> bool {
         self.buffered_output.is_some()
+    }
+
+    /// Final encoded frames when the complete output is available before head commitment.
+    pub fn completed_output(&self) -> Option<&[BodyFrame]> {
+        self.buffered_output.as_deref()
     }
 
     /// Current message head; output headers are exposed separately after codec repair.
@@ -228,11 +246,28 @@ impl ContentBodyPipeline {
         self.buffered_output = Some(frames);
     }
 
-    /// Suppresses an already completed body for response statuses that forbid one.
+    /// Retains bounded initial output and source accounting until headers are released.
+    pub fn retain_initial_output(
+        &mut self,
+        frames: Vec<BodyFrame>,
+        input_bytes: usize,
+        trailers: bool,
+    ) {
+        self.initial_output = frames;
+        self.initial_input = (input_bytes, trailers);
+    }
+
+    /// Takes prepared initial frames and the input accounting carried into the stream pump.
+    pub fn take_initial_output(&mut self) -> (Vec<BodyFrame>, usize, bool) {
+        let (bytes, trailers) = std::mem::take(&mut self.initial_input);
+        (std::mem::take(&mut self.initial_output), bytes, trailers)
+    }
+
+    /// Stops body processing and suppresses prepared output when the response forbids a body.
     pub fn discard_completed_output(&mut self) {
-        if let Some(frames) = &mut self.buffered_output {
-            frames.clear();
-        }
+        self.initial_output.clear();
+        self.buffered_output = Some(Vec::new());
+        self.terminal = true;
     }
 
     /// Final aggregate representation after optional-policy resolution.
@@ -266,6 +301,12 @@ impl ContentBodyPipeline {
             self.budget.record_encoded(bytes.len())?;
         }
         let result = self.process_inner(frame).await;
+        if let Some(head) = self.body.head() {
+            self.output_headers = self.plan.as_ref().map_or_else(
+                || head.headers().clone(),
+                |plan| plan.headers_for_output(head.headers(), ContentLength::Streaming),
+            );
+        }
         if result.is_err() {
             self.terminal = true;
         }

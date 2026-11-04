@@ -24,9 +24,12 @@ can still contain mistakes or compromised dependencies.
 3. Built-in rules are the preferred path for common conditions and mutations.
    Scripts return phase-specific immutable results for advanced decisions. A
    result validates related edits, bounded evidence and exchange-local state
-   together. Native body filters select complete-message hooks before decoding;
-   those hooks finish before outgoing headers are committed. Unselected bodies
-   retain streaming behavior. The [script API](../scripting.md) owns the contract.
+   together. Native body filters select complete-message or incremental hooks
+   before decoding. Complete-message hooks finish before outgoing headers are
+   committed. Incremental hooks use exchange-local bounded pending input and
+   normally send headers promptly; explicit initial inspection holds headers
+   until that stage releases them. Unselected bodies retain streaming behavior.
+   The [script API](../scripting.md) owns the contract.
 4. JavaScript runs in a dedicated `transmog-script-host` process, normally one
    process per active script. The host has no filesystem, network, environment,
    process, UI, registry, clipboard, timer, WebAssembly, dynamic import, or

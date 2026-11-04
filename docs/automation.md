@@ -109,7 +109,16 @@ Search a symbol to reveal its declaration, or use Ctrl+F within the reference.
 Helpers are module exports: import them by name, or import the namespace and use
 `api.` completion. Live type-check feedback stays below the source editor so
 temporary errors do not move the typing surface.
-Traffic executes saved JavaScript. These scripts modify
+Export `onResponseBody` for complete-body edits and headers that depend on the
+full body; buffering is automatic. Export `onResponseChunk` for incremental
+processing. If both are exported, `onResponseBody` is the default.
+In streaming mode, `needMore()` retains pending bytes and `forward(consumed)`
+forwards an unchanged prefix without body-write permission. Return
+`deferResponseHeaders()` from `onResponseHead` to also hold headers for initial
+inspection. The editor shows the inferred default below the source.
+See [streaming callbacks](scripting.md#stream-or-wait-for-response-bytes) for
+conditional selection, boundary-safe helpers and the complete examples.
+Traffic executes the applied JavaScript build. These scripts modify
 matching requests and responses. Packaged read-only visualizers use the separate
 [extension workflow](extensions.md).
 
@@ -143,10 +152,18 @@ can start or that the script works for every input. Sandbox testing is optional.
 **Exchange scenario** runs native selection, related edits and shared state through
 completion or a simulated upstream failure. Each phase explains whether it ran or
 was skipped. The verdict reports callback/pipeline errors independently of the exchange
-outcome: an expected upstream failure can pass, while a terminal callback error fails
-a completed exchange. Unresolved assets are incomplete. Inspect phase selection and
-final messages to check your intent. Scenarios use decoded fixtures and controlled timing;
-they do not send traffic, authorize routes, resolve saved assets or verify transport.
+outcome: an expected upstream failure can pass, while a terminal callback error
+fails the test even if the exchange completed. Unresolved assets are incomplete.
+Inspect phase selection and resulting messages to check your intent. Failed
+streams retain output produced before the failure. Scenarios use
+decoded fixtures and simulated timing. They do not send traffic or resolve saved
+response assets; confirm behavior with matching proxy traffic.
+Optional response chunk byte counts split the UTF-8 fixture; remaining bytes form
+the last chunk. Total simulated chunk delays must fit the second half of the
+scenario duration. Results show header release time and a streaming callback
+timeline. Developer details includes earlier chunk logs and diagnostics within the
+live evidence limits; each phase's result records its last callback. Single
+callback tests can set EOF and simulate headers held for initial inspection.
 Both modes enforce live capabilities and use the candidate's parameter values.
 The draft’s native traffic scope stays visible beside the editor. **Open API docs**
 opens searchable bundled help and complete examples with required settings; the
@@ -795,8 +812,8 @@ Compilation enforces caller-selected finite limits for rule count, header
 operations, regular-expression size, and replacement-body bytes. Scripts return
 phase-specific decisions, validated edits and bounded evidence from the separately
 sandboxed script host described by [ADR 0008](adr/0008-traffic-workspace-and-script-isolation.md).
-Script errors abort the affected exchange and produce bounded remediation
-diagnostics.
+Errors in request or response callbacks abort the affected exchange. Terminal
+callback errors are reported as diagnostics.
 
 ## Captured-page experiments
 
@@ -883,5 +900,5 @@ Pauses expire after 60 seconds and sessions after 10 minutes; expiry, document
 reload or window loss stops active owned work. Console output is under **Console
 output and diagnostics**. Locals, console records and rich exceptions stay local
 and ephemeral, outside normal trace, case, support and MCP output. See the
-[Script API](scripting.md#debug-script-execution) for inspection limits and
-[console semantics](scripting.md#findings-and-failure-categories).
+[Script API](scripting.md#debug-a-script) for inspection limits and
+[console semantics](scripting.md#logs-annotations-and-failures).

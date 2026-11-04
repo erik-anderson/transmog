@@ -38,6 +38,144 @@ static WORKSPACE_SEQUENCE: AtomicU64 = AtomicU64::new(1);
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[ignore = "run through the interoperability driver with packaged helpers"]
+#[allow(clippy::too_many_lines)] // Exercise all body selections through the product and real proxy.
+async fn script_response_modes_preserve_wire_framing_and_deferred_headers() {
+    let environment = Environment::from_process();
+    let source = r#"
+import {pass, forward, edit, emit, needMore, deferResponseHeaders, replaceTextChunk, utf8Decode, utf8Encode, setHeader} from "transmog:api";
+export function onResponseHead(event) {
+  if (event.parameters.mode === "defer") return deferResponseHeaders();
+  return {...pass(), body:event.parameters.mode === "inspect" ? "stream" : event.parameters.mode};
+}
+export function onResponseBody(event) {
+  if (event.request.method === "HEAD") throw new Error("body callback ran for HEAD");
+  return edit({bytes:utf8Encode(utf8Decode(event.body.bytes).replace(/old/g,"buffered"))});
+}
+export function onResponseChunk(event) {
+  if (event.request.method === "HEAD") throw new Error("chunk callback ran for HEAD");
+  if (event.parameters.mode === "inspect") return event.bytes.length > 4 ? forward(4) : pass();
+  if (event.canEditHeaders && event.bytes.length < 4 && !event.end) return needMore();
+  const result = replaceTextChunk(event,"old","streamed");
+  if (!event.canEditHeaders || result.decision.action === "need-more") return result;
+  const headers = [setHeader("x-inspected","yes")];
+  return result.decision.action === "emit"
+    ? emit(result.decision.bytes,{consumed:result.decision.consumed,headers})
+    : edit({headers});
+}
+"#;
+    for mode in ["skip", "buffer", "stream", "defer", "inspect"] {
+        let workspace = TestWorkspace::new();
+        let app = Application::new(workspace.config(&environment)).unwrap();
+        let candidate = app
+            .validate_script(ScriptDraft {
+                parameters: std::collections::BTreeMap::from([(
+                    "mode".into(),
+                    transmog_script::ScriptParameter::String {
+                        label: "Processing".into(),
+                        default: mode.into(),
+                        value: None,
+                        choices: vec![
+                            "skip".into(),
+                            "buffer".into(),
+                            "stream".into(),
+                            "defer".into(),
+                            "inspect".into(),
+                        ],
+                    },
+                )]),
+                request_body_filter: transmog_script::ScriptBodyFilter::default(),
+                response_body_filter: transmog_script::ScriptBodyFilter::default(),
+                language: transmog_app::ScriptLanguage::TypeScript,
+                retained_source: None,
+                javascript_history: vec![],
+                id: "response-modes".into(),
+                revision: 1,
+                source: source.into(),
+                handlers: BTreeSet::from([
+                    ScriptHandler::ResponseHead,
+                    ScriptHandler::ResponseBody,
+                    ScriptHandler::ResponseChunk,
+                ]),
+                prefilter: ScriptPrefilter {
+                    path_prefix: Some("/text-edit/".into()),
+                    ..ScriptPrefilter::default()
+                },
+                capabilities: ScriptCapabilities {
+                    read_bodies: true,
+                    write_body: mode != "inspect",
+                    write_headers: BTreeSet::from(["x-inspected".into()]),
+                    ..ScriptCapabilities::default()
+                },
+                limits: ScriptLimits {
+                    max_duration_ms: 1000,
+                    ..ScriptLimits::default()
+                },
+                priority: 0,
+            })
+            .unwrap();
+        app.activate_script(&candidate.candidate_id).unwrap();
+        let listener = start(&app, &environment).await;
+        let output = curl(
+            &environment,
+            &workspace.root,
+            &listener,
+            &environment.origin("text-edit/changed/streaming"),
+            &["X-Fresh-Token: streaming"],
+        )
+        .await;
+        assert_success(&output);
+        let replacement = match mode {
+            "buffer" => "buffered",
+            "stream" | "defer" => "streamed",
+            _ => "old",
+        };
+        assert_eq!(
+            output.body,
+            format!("seed token=streaming {replacement}\n").as_bytes()
+        );
+        if mode == "buffer" {
+            assert_header(&output, "content-length", &output.body.len().to_string());
+        }
+        if matches!(mode, "stream" | "inspect") {
+            assert!(
+                !output
+                    .headers
+                    .to_ascii_lowercase()
+                    .contains("content-length:")
+            );
+        }
+        if mode == "defer" {
+            assert_header(&output, "x-inspected", "yes");
+        }
+        let detail = wait_for_session(&app, "/text-edit/changed/streaming", "completed").await;
+        assert_eq!(
+            app.inspect_body(inspection(&detail.id, "client-response"))
+                .await
+                .unwrap()
+                .display,
+            String::from_utf8(output.body).unwrap()
+        );
+        let head = curl_request(
+            environment.clone(),
+            workspace.root.clone(),
+            listener.clone(),
+            environment.origin("text-edit/changed/streaming"),
+            vec!["X-Fresh-Token: streaming".into()],
+            true,
+        )
+        .await;
+        assert_success(&head);
+        assert_header(
+            &head,
+            "content-length",
+            &b"seed token=streaming old\n".len().to_string(),
+        );
+        app.shutdown().await.unwrap();
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "run through the interoperability driver with packaged helpers"]
 #[allow(clippy::too_many_lines)] // One complete live transformation and historical-evidence workflow.
 async fn literal_response_edits_preserve_fresh_data_codings_and_actual_outcomes() {
     use std::sync::Arc;
@@ -2092,6 +2230,17 @@ async fn curl_owned(
     url: String,
     headers: Vec<String>,
 ) -> CurlOutput {
+    curl_request(environment, root, listener, url, headers, false).await
+}
+
+async fn curl_request(
+    environment: Environment,
+    root: PathBuf,
+    listener: String,
+    url: String,
+    headers: Vec<String>,
+    head_only: bool,
+) -> CurlOutput {
     let sequence = CURL_SEQUENCE.fetch_add(1, Ordering::Relaxed);
     let header_path = root.join(format!("curl-{sequence}.headers"));
     let body_path = root.join(format!("curl-{sequence}.body"));
@@ -2114,6 +2263,9 @@ async fn curl_owned(
         .arg(&body_path)
         .arg("--write-out")
         .arg("%{http_code}");
+    if head_only {
+        command.arg("--head");
+    }
     for header in headers {
         command.arg("--header").arg(header);
     }

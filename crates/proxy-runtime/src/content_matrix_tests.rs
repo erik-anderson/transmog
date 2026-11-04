@@ -1016,8 +1016,18 @@ async fn send_h1_browser_request(
     let head = String::from_utf8_lossy(&response[..head_end]).to_ascii_lowercase();
     assert!(head.contains("content-encoding: gzip, br, deflate, zstd"));
     assert!(!head.contains("etag:"));
-    assert!(!head.contains("content-length:"));
-    Bytes::from(http1_response_body(&response))
+    let body = http1_response_body(&response);
+    if let Some(length) = head
+        .lines()
+        .find_map(|line| line.strip_prefix("content-length:"))
+    {
+        assert_eq!(
+            length.trim().parse::<usize>().unwrap(),
+            body.len(),
+            "length must describe the final encoded body"
+        );
+    }
+    Bytes::from(body)
 }
 
 async fn send_h2_browser_request(

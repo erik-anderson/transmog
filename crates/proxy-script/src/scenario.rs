@@ -2,6 +2,7 @@
 
 use super::*;
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
 use transmog_core::intercept::{
     BodyPipeline, BodyPipelineError, BodyPipelineLimits, BufferedHead, CompletedExchange,
     ExchangeFailure, ExchangeFailureCategory, ExchangeFailureKind, ExchangeStage,
@@ -16,6 +17,9 @@ use transmog_core::{
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptScenario {
+    /// Optional decoded response chunks and simulated arrival delays. Bytes must match `response_body`.
+    #[serde(default)]
+    pub response_chunks: Option<Vec<ScriptScenarioChunk>>,
     /// Original client request.
     pub request: ScriptRequest,
     /// Simulated upstream or local response; absent for a failed upstream exchange.
@@ -34,6 +38,47 @@ pub struct ScriptScenario {
     pub started_unix_ms: u64,
     /// Controlled total duration; callbacks use evenly spaced phase times.
     pub duration_ms: u64,
+}
+
+/// One decoded input chunk with a controlled delay before arrival.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ScriptScenarioChunk {
+    /// Decoded input bytes, independent of HTTP frame boundaries.
+    pub bytes: Vec<u8>,
+    /// Simulated network wait; no wall-clock sleep or traffic occurs.
+    #[serde(default)]
+    pub delay_ms: u64,
+}
+
+/// Bounded incremental callback evidence without copying body payloads into the timeline.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptStreamCall {
+    /// Pending bytes supplied to the callback.
+    pub input_bytes: usize,
+    /// EOF was known during this callback.
+    pub end: bool,
+    /// This callback could edit the deferred response head.
+    pub can_edit_headers: bool,
+    /// Controlled elapsed time at invocation.
+    pub elapsed_ms: u64,
+    /// Returned action, or failed.
+    pub action: String,
+}
+
+/// Simulated source arrival, output and header release for one response processing step.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ScriptScenarioBodyStep {
+    /// Controlled elapsed time.
+    pub elapsed_ms: u64,
+    /// Newly arrived input bytes, excluding previously queued bytes.
+    pub input_bytes: usize,
+    /// Bytes released by the composed body pipeline.
+    pub output_bytes: usize,
+    /// Simulated response headers have been released.
+    pub headers_released: bool,
 }
 
 /// Sandbox execution verdict, independent of the fixture's exchange outcome.
@@ -70,6 +115,8 @@ pub enum ScriptScenarioSelection {
     InputLimit,
     /// Body planning or processing failed; a returned callback result may still be available.
     PipelineFailed,
+    /// A different body mode was selected for this response.
+    BodyMode,
 }
 
 /// One phase's selection and execution evidence.
@@ -80,10 +127,13 @@ pub struct ScriptScenarioStep {
     pub handler: ScriptHandler,
     /// Invoked, failed, or a concrete reason the callback was skipped.
     pub selection: ScriptScenarioSelection,
-    /// State seen by the callback, before its result.
+    /// State seen by this phase's last callback invocation, before its result.
     pub state: BTreeMap<String, serde_json::Value>,
-    /// Returned result, when successful.
+    /// Last invocation's result, when successful.
     pub result: Option<ScriptResult>,
+    /// Accepted streaming findings, including earlier calls, under the live evidence budget.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub reports: Vec<transmog_core::intercept::ScriptReport>,
     /// Bounded runtime error, when unsuccessful.
     pub error: Option<ScriptFailure>,
 }
@@ -92,6 +142,14 @@ pub struct ScriptScenarioStep {
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScriptScenarioResult {
+    /// Controlled time when response headers were released, absent if never reached.
+    pub headers_released_at_ms: Option<u64>,
+    /// Source and output timing for the response body.
+    pub body_steps: Vec<ScriptScenarioBodyStep>,
+    /// First bounded set of incremental callback invocations.
+    pub stream_calls: Vec<ScriptStreamCall>,
+    /// Additional callbacks omitted from the timeline, with final phase evidence retained.
+    pub omitted_stream_calls: usize,
     /// Whether sandbox execution succeeded; this is not an assertion about network behavior.
     pub verdict: ScriptScenarioVerdict,
     /// Completed, failed, or asset-unresolved.
@@ -106,7 +164,7 @@ pub struct ScriptScenarioResult {
     pub response: Option<ScriptResponse>,
     /// Effective decoded upload bytes.
     pub request_body: Vec<u8>,
-    /// Effective decoded response bytes.
+    /// Accepted decoded response output; may be partial if body processing failed.
     pub response_body: Vec<u8>,
     /// Whether the effective response is local.
     pub local_response: bool,
@@ -114,16 +172,20 @@ pub struct ScriptScenarioResult {
     pub error: Option<String>,
 }
 
-const PHASES: [ScriptHandler; 6] = [
+const PHASES: [ScriptHandler; 7] = [
     ScriptHandler::RequestHead,
     ScriptHandler::RequestBody,
     ScriptHandler::ResponseHead,
+    ScriptHandler::ResponseChunk,
     ScriptHandler::ResponseBody,
     ScriptHandler::Completed,
     ScriptHandler::Failed,
 ];
 
 struct RecordingRunner {
+    elapsed: AtomicU64,
+    calls: Mutex<Vec<ScriptStreamCall>>,
+    call_count: AtomicU64,
     inner: Arc<dyn ScriptRunner>,
     steps: Mutex<Vec<ScriptScenarioStep>>,
     start: u64,
@@ -159,12 +221,28 @@ impl ScriptRunner for RecordingRunner {
                 .iter()
                 .position(|p| *p == phase)
                 .expect("known phase");
-            let elapsed = self.duration * u64::try_from(index.min(4)).expect("small index") / 4;
+            let phase_time = match phase {
+                ScriptHandler::RequestHead => 0,
+                ScriptHandler::RequestBody => self.duration / 4,
+                ScriptHandler::ResponseHead => self.duration / 2,
+                ScriptHandler::ResponseBody => self.duration * 3 / 4,
+                ScriptHandler::ResponseChunk => self.elapsed.load(Ordering::Acquire),
+                ScriptHandler::Completed | ScriptHandler::Failed => self.duration,
+            };
+            let elapsed = self
+                .elapsed
+                .fetch_max(phase_time, Ordering::AcqRel)
+                .max(phase_time);
             event.context.source = ScriptSource::Sandbox;
             event.context.started_unix_ms = self.start;
             event.context.elapsed_ms = elapsed;
             event.context.now_unix_ms = self.start + elapsed;
             let state = event.state.clone();
+            let stream_window = (
+                event.bytes.as_ref().map_or(0, Vec::len),
+                event.end,
+                event.can_edit_headers,
+            );
             // Retain invocation evidence even if the outer hook gate cancels or contains a panic.
             {
                 let mut steps = self
@@ -173,14 +251,50 @@ impl ScriptRunner for RecordingRunner {
                     .unwrap_or_else(std::sync::PoisonError::into_inner);
                 steps[index].selection = ScriptScenarioSelection::Invoked;
                 steps[index].state = state.clone();
+                steps[index].result = None;
+                steps[index].error = None;
             }
             let result = match prepare_invocation(&self.manifest, &mut event) {
                 Ok(request) => self.inner.invoke(event).await.and_then(|result| {
                     validate_result(&self.manifest, phase, &request, &result)?;
+                    if phase == ScriptHandler::ResponseChunk {
+                        super::adapter::validate_stream_window(
+                            &self.manifest,
+                            &result,
+                            stream_window.0,
+                            stream_window.1,
+                            stream_window.2,
+                        )?;
+                    }
                     Ok(result)
                 }),
                 Err(error) => Err(error),
             };
+            if phase == ScriptHandler::ResponseChunk {
+                let count = self.call_count.fetch_add(1, Ordering::Relaxed);
+                if count < 256 {
+                    let action = match result.as_ref().map(|r| &r.decision) {
+                        Ok(ScriptAction::Continue) => "continue",
+                        Ok(ScriptAction::NeedMore) => "need-more",
+                        Ok(ScriptAction::Forward { .. }) => "forward",
+                        Ok(ScriptAction::Emit { .. }) => "emit",
+                        Ok(ScriptAction::Edit { .. }) => "edit",
+                        Ok(ScriptAction::Abort { .. }) => "abort",
+                        Ok(ScriptAction::Respond { .. }) => "respond",
+                        Err(_) => "failed",
+                    };
+                    self.calls
+                        .lock()
+                        .unwrap_or_else(std::sync::PoisonError::into_inner)
+                        .push(ScriptStreamCall {
+                            input_bytes: stream_window.0,
+                            end: stream_window.1,
+                            can_edit_headers: stream_window.2,
+                            elapsed_ms: elapsed,
+                            action: action.into(),
+                        });
+                }
+            }
             let mut steps = self
                 .steps
                 .lock()
@@ -194,6 +308,7 @@ impl ScriptRunner for RecordingRunner {
                 },
                 state,
                 result: result.as_ref().ok().cloned(),
+                reports: Vec::new(),
                 error: result.as_ref().err().cloned(),
             };
             result
@@ -211,6 +326,26 @@ pub async fn test_scenario(
     input: ScriptScenario,
 ) -> Result<ScriptScenarioResult, ScriptFailure> {
     validate_manifest(&manifest).map_err(|e| ScriptFailure::invalid(e.to_string()))?;
+    if let Some(chunks) = &input.response_chunks {
+        let bytes = chunks
+            .iter()
+            .try_fold(0usize, |sum, chunk| sum.checked_add(chunk.bytes.len()));
+        let delay = chunks
+            .iter()
+            .try_fold(0u64, |sum, chunk| sum.checked_add(chunk.delay_ms));
+        if chunks.len() > 1024
+            || bytes != Some(input.response_body.len())
+            || delay.is_none_or(|delay| delay > input.duration_ms / 2)
+            || !chunks
+                .iter()
+                .flat_map(|chunk| chunk.bytes.iter())
+                .eq(input.response_body.iter())
+        {
+            return Err(ScriptFailure::invalid(
+                "Response chunks must match the body, with up to 1024 chunks and delays fitting the second half of the scenario duration",
+            ));
+        }
+    }
     if input.request_body.len() > 16 * 1024 * 1024
         || input.response_body.len() > 16 * 1024 * 1024
         || input.duration_ms > 86_400_000
@@ -230,6 +365,9 @@ pub async fn test_scenario(
     validation.handlers.insert(ScriptHandler::RequestHead);
     validation.capabilities.read_sensitive_headers = true;
     let mut event = ScriptInvocation {
+        bytes: None,
+        end: false,
+        can_edit_headers: false,
         context: ScriptContext {
             exchange_id: "scenario".into(),
             http_version: input.http_version,
@@ -283,6 +421,9 @@ pub async fn test_scenario(
     }
     let admitted = manifest.prefilter.matches(&request);
     let recorder = Arc::new(RecordingRunner {
+        elapsed: AtomicU64::new(0),
+        calls: Mutex::new(Vec::new()),
+        call_count: AtomicU64::new(0),
         inner: runner,
         start: input.started_unix_ms,
         duration: input.duration_ms,
@@ -301,6 +442,7 @@ pub async fn test_scenario(
                     },
                     state: BTreeMap::new(),
                     result: None,
+                    reports: Vec::new(),
                     error: None,
                 })
                 .collect(),
@@ -329,7 +471,11 @@ pub async fn test_scenario(
     .create_exchange(metadata)
     .map_err(|e| ScriptFailure::invalid(e.to_string()))?;
     let mut request_body = input.request_body;
-    let mut response_body = input.response_body;
+    let mut response_input = input.response_body;
+    let mut response_body = Vec::new();
+    let mut response_chunks = input.response_chunks;
+    let mut headers_released_at_ms = None;
+    let mut body_steps = Vec::new();
     let mut local = input.local_response;
     let mut outcome = "completed";
     let mut error = None;
@@ -372,7 +518,8 @@ pub async fn test_scenario(
             } => {
                 request = request_head;
                 response = Some(supplied.head);
-                response_body = frames(supplied.body);
+                response_input = frames(supplied.body);
+                response_chunks = None;
                 local = true;
             }
             RequestHeadOutcome::RespondStreaming { .. } => {
@@ -405,7 +552,7 @@ pub async fn test_scenario(
             .response_head(
                 &request,
                 head,
-                local.then(|| vec![BodyFrame::Data(Bytes::from(response_body.clone()))]),
+                local.then(|| vec![BodyFrame::Data(Bytes::from(response_input.clone()))]),
                 local,
             )
             .await
@@ -417,7 +564,8 @@ pub async fn test_scenario(
                 local_response,
             } => {
                 if let Some(body) = replacement_body {
-                    response_body = frames(body);
+                    response_input = frames(body);
+                    response_chunks = None;
                 }
                 local = local_response;
                 response = Some(head);
@@ -427,9 +575,8 @@ pub async fn test_scenario(
         let head = response
             .as_ref()
             .ok_or_else(|| "No response fixture".to_owned())?;
-        if request.method.eq_ignore_ascii_case("HEAD")
-            || (100..200).contains(&head.status)
-            || matches!(head.status, 204 | 304)
+        if transmog_core::body_semantics(&request.method, head.status)
+            == transmog_core::BodySemantics::Forbidden
             || (request.method.eq_ignore_ascii_case("CONNECT") && (200..300).contains(&head.status))
         {
             mark_skip(
@@ -437,37 +584,73 @@ pub async fn test_scenario(
                 ScriptHandler::ResponseBody,
                 ScriptScenarioSelection::BodyForbidden,
             );
+            mark_skip(
+                &recorder,
+                ScriptHandler::ResponseChunk,
+                ScriptScenarioSelection::BodyForbidden,
+            );
+            headers_released_at_ms = Some(
+                recorder
+                    .elapsed
+                    .load(Ordering::Acquire)
+                    .max(input.duration_ms / 2),
+            );
             response_body.clear();
         } else {
             stage = ExchangeStage::ResponseBody;
-            mark_body(
-                &recorder,
-                &manifest,
-                ScriptHandler::ResponseBody,
-                &head.headers,
-                Some(head.status),
-                local,
-            );
+            let mode = recorder
+                .steps
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .find(|step| step.handler == ScriptHandler::ResponseHead)
+                .and_then(|step| step.result.as_ref())
+                .and_then(|result| result.body)
+                .unwrap_or_else(|| super::adapter::default_response_mode(&manifest));
+            let handler = if mode == ScriptBodyMode::Stream {
+                ScriptHandler::ResponseChunk
+            } else {
+                ScriptHandler::ResponseBody
+            };
+            for candidate in [ScriptHandler::ResponseBody, ScriptHandler::ResponseChunk] {
+                if candidate != handler || mode == ScriptBodyMode::Skip {
+                    mark_skip(&recorder, candidate, ScriptScenarioSelection::BodyMode);
+                }
+                mark_body(
+                    &recorder,
+                    &manifest,
+                    candidate,
+                    &head.headers,
+                    Some(head.status),
+                    local,
+                );
+            }
             let mut pipeline = chain
                 .response_body_pipeline(&request, head, local, BodyPipelineLimits::default())
                 .await
-                .map_err(|error| body_error(&recorder, ScriptHandler::ResponseBody, &error))?;
-            response_body = run_body(
+                .map_err(|error| body_error(&recorder, handler, &error))?;
+            response_body = std::mem::take(&mut response_input);
+            let result = run_response_body(
                 &recorder,
-                ScriptHandler::ResponseBody,
+                handler,
                 &mut pipeline,
-                &response_body,
+                &mut response_body,
+                response_chunks.as_deref(),
+                &mut headers_released_at_ms,
+                &mut body_steps,
             )
-            .await?;
+            .await;
             if let Some(BufferedHead::Response(head)) = pipeline.head() {
                 response = Some(head.clone());
             }
-            if response
-                .as_ref()
-                .is_some_and(|r| matches!(r.status, 204 | 304))
-            {
-                response_body.clear();
-            }
+            result?;
+        }
+        if let Some(head) = response.as_mut()
+            && transmog_core::body_semantics(&request.method, head.status)
+                == transmog_core::BodySemantics::Forbidden
+        {
+            response_body.clear();
+            repair_bodyless_headers(head);
         }
         let report = chain
             .completed(CompletedExchange {
@@ -530,18 +713,43 @@ pub async fn test_scenario(
                     stage,
                     kind,
                     request_committed: false,
-                    response_committed: false,
+                    response_committed: headers_released_at_ms.is_some(),
                     message: "Scenario stopped".into(),
                 })
                 .await;
             let _ = terminal_error(&recorder, ScriptHandler::Failed, &report);
         }
     }
-    let steps = recorder
+    let mut steps = recorder
         .steps
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner)
         .clone();
+    if let Some(step) = steps
+        .iter_mut()
+        .find(|step| step.handler == ScriptHandler::ResponseChunk)
+        && matches!(
+            step.selection,
+            ScriptScenarioSelection::Invoked
+                | ScriptScenarioSelection::Failed
+                | ScriptScenarioSelection::PipelineFailed
+        )
+    {
+        step.reports = chain
+            .hook_effects()
+            .into_iter()
+            .filter_map(|effect| {
+                if effect.phase == transmog_core::intercept::HookPhase::ResponseBody
+                    && let transmog_core::intercept::HookEffectAction::ScriptReport(report) =
+                        effect.action
+                {
+                    Some(report)
+                } else {
+                    None
+                }
+            })
+            .collect();
+    }
     let verdict = if steps.iter().any(|step| step.error.is_some())
         || (error.is_some() && outcome != "asset-unresolved")
     {
@@ -557,6 +765,16 @@ pub async fn test_scenario(
             .find_map(|step| step.error.as_ref().map(ToString::to_string));
     }
     Ok(ScriptScenarioResult {
+        headers_released_at_ms,
+        body_steps,
+        stream_calls: recorder
+            .calls
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone(),
+        omitted_stream_calls: usize::try_from(recorder.call_count.load(Ordering::Relaxed))
+            .unwrap_or(usize::MAX)
+            .saturating_sub(256),
         verdict,
         outcome: outcome.into(),
         admitted,
@@ -571,6 +789,138 @@ pub async fn test_scenario(
         local_response: local,
         error,
     })
+}
+
+fn repair_bodyless_headers(head: &mut ResponseHead) {
+    match head.status {
+        100..=199 | 204 => head.headers.remove_all("content-length"),
+        205 => head
+            .headers
+            .replace_all(HeaderField::try_new("content-length", "0").expect("decimal length")),
+        _ => {}
+    }
+}
+
+async fn run_response_body(
+    recorder: &RecordingRunner,
+    handler: ScriptHandler,
+    pipeline: &mut BodyPipeline,
+    body: &mut Vec<u8>,
+    chunks: Option<&[ScriptScenarioChunk]>,
+    released: &mut Option<u64>,
+    steps: &mut Vec<ScriptScenarioBodyStep>,
+) -> Result<(), String> {
+    // Retain only successfully processed output if a later chunk fails.
+    let default = [ScriptScenarioChunk {
+        bytes: std::mem::take(body),
+        delay_ms: 0,
+    }];
+    let chunks = chunks.unwrap_or(&default);
+    recorder
+        .elapsed
+        .fetch_max(recorder.duration / 2, Ordering::AcqRel);
+    if pipeline.modifies_body()
+        && let Some(head) = pipeline.head()
+    {
+        let mut headers = head.headers().clone();
+        headers.remove_all("content-length");
+        pipeline.set_head_headers(headers);
+    }
+    if !pipeline.head_pending() {
+        *released = Some(recorder.elapsed.load(Ordering::Acquire));
+    }
+    for chunk in chunks {
+        recorder.elapsed.fetch_add(chunk.delay_ms, Ordering::AcqRel);
+        let result = pipeline
+            .process(BodyFrame::Data(Bytes::copy_from_slice(&chunk.bytes)))
+            .await
+            .map_err(|error| body_error(recorder, handler, &error))?;
+        if released.is_none() && !pipeline.head_pending() {
+            *released = Some(recorder.elapsed.load(Ordering::Acquire));
+        }
+        let forbidden = response_body_forbidden(pipeline);
+        let generated = if forbidden { 0 } else { output_bytes(&result) };
+        steps.push(ScriptScenarioBodyStep {
+            elapsed_ms: recorder.elapsed.load(Ordering::Acquire),
+            input_bytes: chunk.bytes.len(),
+            output_bytes: generated,
+            headers_released: released.is_some(),
+        });
+        if forbidden {
+            body.clear();
+            return Ok(());
+        }
+        append_response_output(recorder, handler, body, result)?;
+    }
+    recorder
+        .elapsed
+        .fetch_max(recorder.duration * 3 / 4, Ordering::AcqRel);
+    let result = pipeline
+        .finish()
+        .await
+        .map_err(|error| body_error(recorder, handler, &error))?;
+    let held_until_eof = released.is_none();
+    if held_until_eof {
+        *released = Some(recorder.elapsed.load(Ordering::Acquire));
+    }
+    let forbidden = response_body_forbidden(pipeline);
+    let generated = if forbidden { 0 } else { output_bytes(&result) };
+    steps.push(ScriptScenarioBodyStep {
+        elapsed_ms: recorder.elapsed.load(Ordering::Acquire),
+        input_bytes: 0,
+        output_bytes: generated,
+        headers_released: true,
+    });
+    if forbidden {
+        body.clear();
+        return Ok(());
+    }
+    append_response_output(recorder, handler, body, result)?;
+    if held_until_eof && let Some(BufferedHead::Response(head)) = pipeline.head() {
+        let mut headers = head.headers.clone();
+        headers.replace_all(
+            HeaderField::try_new("content-length", body.len().to_string()).expect("decimal length"),
+        );
+        pipeline.set_head_headers(headers);
+    }
+    Ok(())
+}
+
+fn response_body_forbidden(pipeline: &BodyPipeline) -> bool {
+    matches!(pipeline.head(), Some(BufferedHead::Response(head))
+        if transmog_core::body_semantics("GET", head.status) == transmog_core::BodySemantics::Forbidden)
+}
+
+fn output_bytes(frames: &[BodyFrame]) -> usize {
+    frames
+        .iter()
+        .map(|frame| match frame {
+            BodyFrame::Data(bytes) => bytes.len(),
+            BodyFrame::Trailers(_) => 0,
+        })
+        .sum()
+}
+
+fn append_response_output(
+    recorder: &RecordingRunner,
+    handler: ScriptHandler,
+    output: &mut Vec<u8>,
+    frames_out: Vec<BodyFrame>,
+) -> Result<(), String> {
+    let bytes = frames(frames_out);
+    let attempted = output.len().saturating_add(bytes.len());
+    if attempted > 16 * 1024 * 1024 {
+        return Err(body_error(
+            recorder,
+            handler,
+            &BodyPipelineError::OutputByteLimit {
+                limit: 16 * 1024 * 1024,
+                attempted,
+            },
+        ));
+    }
+    output.extend(bytes);
+    Ok(())
 }
 
 fn terminal_error(

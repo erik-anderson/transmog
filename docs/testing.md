@@ -472,7 +472,9 @@ To run only that flow from the repository root, use
 After building the desktop with its matching packaged helpers, use
 `scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath <absolute-exe> -ScriptDebuggerChecks`
 for owned-profile WebView2 journeys, or `-ScriptDiagnosticsChecks` for exception,
-console and immutable-source journeys. The debugger fixture routes its clients
+console, immutable-source and streaming-scenario journeys. The latter verifies
+split input, deferred headers and the callback timeline through the real host.
+The debugger fixture routes its clients
 manually over loopback with HTTPS decryption off; it does not install trust or
 change Windows proxy settings. Do not combine these checks with another harness
 mode. Retain the reported evidence folder and inspect the screenshots.
@@ -482,6 +484,13 @@ baseline, console idle, one record, saturated logs and attached execution. It is
 not a shipping command or a full proxy-throughput benchmark. Protocol fuzzing uses
 `python scripts/fuzz-content-docker.py --target script_protocol --runs 10000`;
 the ordinary `protocol_fuzz_seeds` test also replays its semantic seeds.
+
+Script tests cover pending-byte retention, EOF, header-edit authority, queue and
+evidence bounds, and interleaved exchanges. The Docker interoperability gate
+also exercises skip, complete-body, streaming and deferred-header modes through
+the product service and packaged host, checking the resulting wire body and
+framing. Native transport tests cover both downstream HTTP versions and all
+three upstream HTTP versions with decoded transformations and compression.
 
 ## Fuzzing, performance and Miri
 

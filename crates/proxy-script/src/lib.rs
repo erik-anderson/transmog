@@ -9,15 +9,18 @@
 mod adapter;
 mod contract;
 mod scenario;
+#[cfg(test)]
+mod stream_tests;
 use adapter::ScriptFactory;
-pub use adapter::{prepare_invocation, validate_result};
+pub use adapter::{prepare_invocation, validate_result, validate_stream_result};
 pub use contract::{
-    ScriptAnnotation, ScriptBodyFilter, ScriptEdits, ScriptInlineResponse, ScriptParameter,
-    ScriptResult, ScriptSeverity,
+    ScriptAnnotation, ScriptBodyFilter, ScriptBodyMode, ScriptEdits, ScriptInlineResponse,
+    ScriptParameter, ScriptResult, ScriptSeverity,
 };
 pub use scenario::{
-    ScriptScenario, ScriptScenarioResult, ScriptScenarioSelection, ScriptScenarioStep,
-    ScriptScenarioVerdict, test_scenario,
+    ScriptScenario, ScriptScenarioBodyStep, ScriptScenarioChunk, ScriptScenarioResult,
+    ScriptScenarioSelection, ScriptScenarioStep, ScriptScenarioVerdict, ScriptStreamCall,
+    test_scenario,
 };
 pub use transmog_script_diagnostics::LogCapture;
 pub use transmog_script_diagnostics::debugger;
@@ -58,11 +61,11 @@ use transmog_script_compiler::{
 };
 
 /// Current script API revision.
-pub const SCRIPT_API_REVISION: u32 = 3;
+pub const SCRIPT_API_REVISION: u32 = 4;
 /// Maximum accepted source length.
 pub const MAX_SCRIPT_SOURCE_BYTES: usize = 1024 * 1024;
 /// Version of the private host/supervisor wire protocol.
-pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 6;
+pub const SCRIPT_HOST_PROTOCOL_VERSION: u32 = 7;
 /// Maximum one-way host protocol frame, including JavaScript source.
 pub const MAX_SCRIPT_HOST_FRAME_BYTES: usize = 68 * 1024 * 1024;
 
@@ -334,6 +337,9 @@ pub enum ScriptHandler {
     /// Complete bounded response body.
     #[serde(rename = "onResponseBody")]
     ResponseBody,
+    /// Incremental bounded decoded response bytes.
+    #[serde(rename = "onResponseChunk")]
+    ResponseChunk,
     /// Successful terminal outcome; traffic is no longer editable.
     #[serde(rename = "onCompleted")]
     Completed,
@@ -350,6 +356,7 @@ impl ScriptHandler {
             Self::RequestBody => "onRequestBody",
             Self::ResponseHead => "onResponseHead",
             Self::ResponseBody => "onResponseBody",
+            Self::ResponseChunk => "onResponseChunk",
             Self::Completed => "onCompleted",
             Self::Failed => "onFailed",
         }
@@ -425,9 +432,9 @@ pub struct ScriptCapabilities {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptLimits {
-    /// Maximum body input bytes supplied to a handler.
+    /// Maximum complete body or pending streaming window supplied to a handler.
     pub max_input_body_bytes: usize,
-    /// Maximum decoded replacement body bytes.
+    /// Maximum decoded replacement bytes per callback.
     pub max_output_bytes: usize,
     /// Maximum diagnostic log bytes.
     pub max_log_bytes: usize,
@@ -459,7 +466,7 @@ pub struct ScriptManifest {
     /// Native admission for complete request body hooks.
     #[serde(default)]
     pub request_body_filter: ScriptBodyFilter,
-    /// Native admission for complete response body hooks.
+    /// Native admission for complete and incremental response body hooks.
     #[serde(default)]
     pub response_body_filter: ScriptBodyFilter,
     /// Stable script ID.
@@ -592,6 +599,7 @@ fn compile_source(
         ScriptHandler::RequestBody,
         ScriptHandler::ResponseHead,
         ScriptHandler::ResponseBody,
+        ScriptHandler::ResponseChunk,
         ScriptHandler::Completed,
         ScriptHandler::Failed,
     ] {
@@ -778,6 +786,15 @@ impl Default for ScriptContext {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptInvocation {
+    /// Pending decoded input, present only for incremental response callbacks.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bytes: Option<Vec<u8>>,
+    /// Whether no more response input can arrive.
+    #[serde(default)]
+    pub end: bool,
+    /// Whether this script still holds its initial response-header inspection.
+    #[serde(default)]
+    pub can_edit_headers: bool,
     /// Immutable parameter values pinned to the applied revision.
     #[serde(default)]
     pub parameters: BTreeMap<String, serde_json::Value>,
@@ -837,6 +854,27 @@ impl ScriptHeaderOperation {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "action", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum ScriptAction {
+    /// Retain pending streaming bytes until additional input or EOF.
+    NeedMore,
+    /// Forward an unchanged input prefix, retaining the remaining streaming bytes.
+    Forward {
+        /// Number of pending input bytes to forward and consume.
+        consumed: usize,
+    },
+    /// Emit replacement bytes and consume a prefix of pending streaming input.
+    Emit {
+        /// Replacement decoded bytes.
+        bytes: Vec<u8>,
+        /// Consumed input prefix; absent consumes the entire window.
+        #[serde(default)]
+        consumed: Option<usize>,
+        /// Permitted header edits during initial header inspection.
+        #[serde(default)]
+        headers: Vec<ScriptHeaderOperation>,
+        /// Permitted status edit during initial header inspection.
+        #[serde(default)]
+        status: Option<u16>,
+    },
     /// Do not modify the current phase.
     Continue,
     /// Related edits to the current message, validated atomically.
@@ -1107,7 +1145,8 @@ fn validate_manifest(manifest: &ScriptManifest) -> Result<(), ScriptCompileError
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
         || manifest.revision == 0
-        || manifest.api_revision != SCRIPT_API_REVISION
+        || !(3..=SCRIPT_API_REVISION).contains(&manifest.api_revision)
+        || (manifest.api_revision < 4 && manifest.handlers.contains(&ScriptHandler::ResponseChunk))
         || manifest.handlers.is_empty()
     {
         return Err(ScriptCompileError::InvalidManifest(
@@ -1144,7 +1183,7 @@ fn validate_manifest(manifest: &ScriptManifest) -> Result<(), ScriptCompileError
     if manifest.handlers.iter().any(|handler| {
         matches!(
             handler,
-            ScriptHandler::RequestBody | ScriptHandler::ResponseBody
+            ScriptHandler::RequestBody | ScriptHandler::ResponseBody | ScriptHandler::ResponseChunk
         )
     }) && !manifest.capabilities.read_bodies
     {

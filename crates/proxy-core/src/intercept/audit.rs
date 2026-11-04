@@ -307,7 +307,8 @@ struct HookAuditState {
 /// Exchange-local authoritative hook-effect trail.
 ///
 /// Its maximum record count is finite: each configured interceptor can produce
-/// finitely many decisions and reports across head, body and terminal phases.
+/// finitely many decisions and bounded reports across head, body and terminal phases.
+/// Streaming script stages enforce a lifetime evidence budget before recording.
 #[derive(Clone, Debug, Default)]
 pub struct HookAuditTrail {
     state: Arc<Mutex<HookAuditState>>,

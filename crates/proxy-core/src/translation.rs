@@ -48,8 +48,7 @@ pub struct TranslationOptions {
 pub fn body_semantics(request_method: &str, response_status: u16) -> BodySemantics {
     if request_method.eq_ignore_ascii_case("HEAD")
         || (100..200).contains(&response_status)
-        || response_status == 204
-        || response_status == 304
+        || matches!(response_status, 204 | 205 | 304)
     {
         BodySemantics::Forbidden
     } else {
@@ -406,7 +405,7 @@ mod tests {
     fn response_body_semantics_cover_head_and_bodyless_statuses() {
         assert_eq!(body_semantics("GET", 200), BodySemantics::Allowed);
         assert_eq!(body_semantics("HEAD", 200), BodySemantics::Forbidden);
-        for status in [100, 101, 199, 204, 304] {
+        for status in [100, 101, 199, 204, 205, 304] {
             assert_eq!(
                 body_semantics("GET", status),
                 BodySemantics::Forbidden,

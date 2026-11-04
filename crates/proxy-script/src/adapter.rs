@@ -1,4 +1,5 @@
 //! Validation and per-exchange execution of the script contract.
+mod response_stream;
 
 use std::sync::{
     Mutex,
@@ -50,6 +51,8 @@ impl InterceptorFactory for ScriptFactory {
             assets: self.assets.clone(),
             report: Mutex::new(None),
             debug_admission: Mutex::new(None),
+            response_mode: Mutex::new(None),
+            defer_headers: AtomicBool::new(false),
         }))
     }
 }
@@ -82,6 +85,21 @@ impl Shared {
         local: bool,
         failure: Option<transmog_core::intercept::ExchangeFailureCategory>,
     ) -> Result<ScriptResult, ScriptFailure> {
+        self.invoke_input(handler, request, response, body, local, failure, None)
+            .await
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    async fn invoke_input(
+        &self,
+        handler: ScriptHandler,
+        request: &RequestHead,
+        response: Option<&ResponseHead>,
+        body: Option<&Bytes>,
+        local: bool,
+        failure: Option<transmog_core::intercept::ExchangeFailureCategory>,
+        chunk: Option<(&[u8], bool, bool)>,
+    ) -> Result<ScriptResult, ScriptFailure> {
         let mut state = self.state.lock().await;
         let mut event = invocation(
             &self.manifest,
@@ -94,6 +112,11 @@ impl Shared {
         event.state = state.clone();
         event.local_response = local;
         event.failure = failure;
+        if let Some((bytes, end, can_edit_headers)) = chunk {
+            event.bytes = Some(bytes.to_vec());
+            event.end = end;
+            event.can_edit_headers = can_edit_headers;
+        }
         event.context.source = super::ScriptSource::Proxy;
         event.context.http_version = self.metadata.ingress_version;
         event.context.started_unix_ms = u64::try_from(
@@ -108,6 +131,9 @@ impl Shared {
             u64::try_from(self.started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let result = self.runner.invoke(event).await?;
         validate_result(&self.manifest, handler, request, &result)?;
+        if let Some((bytes, end, editable)) = chunk {
+            validate_stream_window(&self.manifest, &result, bytes.len(), end, editable)?;
+        }
         if let Some(next) = &result.state {
             state.clone_from(next);
         }
@@ -116,6 +142,8 @@ impl Shared {
 }
 
 struct ScriptInterceptor {
+    response_mode: Mutex<Option<super::ScriptBodyMode>>,
+    defer_headers: AtomicBool,
     debug_admission: Mutex<Option<ScriptFailure>>,
     admitted: AtomicBool,
     local: AtomicBool,
@@ -283,6 +311,11 @@ impl ExchangeInterceptor for ScriptInterceptor {
             };
             *lock(&self.report) = report(&result);
             match result.decision {
+                ScriptAction::NeedMore
+                | ScriptAction::Forward { .. }
+                | ScriptAction::Emit { .. } => {
+                    unreachable!("validated request head")
+                }
                 ScriptAction::Continue => RequestHeadAction::Continue,
                 ScriptAction::Edit { edits } => {
                     let mut head = event.head;
@@ -361,7 +394,15 @@ impl ExchangeInterceptor for ScriptInterceptor {
                 }
             };
             *lock(&self.report) = report(&result);
+            *lock(&self.response_mode) = result.body;
+            self.defer_headers
+                .store(result.defer_headers, Ordering::Release);
             match result.decision {
+                ScriptAction::NeedMore
+                | ScriptAction::Forward { .. }
+                | ScriptAction::Emit { .. } => {
+                    unreachable!("validated response head")
+                }
                 ScriptAction::Continue => ResponseHeadAction::Continue,
                 ScriptAction::Edit { edits } => {
                     let mut head = event.head;
@@ -409,7 +450,19 @@ impl ExchangeInterceptor for ScriptInterceptor {
 
     fn on_response_body(&self, event: ResponseBodyEvent) -> BoxHookFuture<'_, ResponseBodyAction> {
         self.local.store(event.local_response, Ordering::Release);
-        let selected = self.selected(ScriptHandler::ResponseBody)
+        let mode = lock(&self.response_mode)
+            .unwrap_or_else(|| default_response_mode(&self.shared.manifest));
+        let handler = if mode == super::ScriptBodyMode::Stream {
+            ScriptHandler::ResponseChunk
+        } else {
+            ScriptHandler::ResponseBody
+        };
+        let selected = mode != super::ScriptBodyMode::Skip
+            && self.selected(handler)
+            && transmog_core::body_semantics(
+                &event.request_head.method,
+                event.response_head.status,
+            ) == transmog_core::BodySemantics::Allowed
             && admits(
                 &self.shared.manifest.response_body_filter,
                 &event.response_head.headers,
@@ -417,12 +470,22 @@ impl ExchangeInterceptor for ScriptInterceptor {
                 event.local_response,
             );
         let action = if selected {
-            ResponseBodyAction::decoded(self.body_handler(
-                ScriptHandler::ResponseBody,
-                event.request_head,
-                Some(event.response_head),
-                event.local_response,
-            ))
+            ResponseBodyAction::decoded(if mode == super::ScriptBodyMode::Stream {
+                BodyPlan::Transform(Box::new(response_stream::ScriptResponseStream::new(
+                    Arc::clone(&self.shared),
+                    event.request_head,
+                    event.response_head,
+                    event.local_response,
+                    self.defer_headers.load(Ordering::Acquire),
+                )))
+            } else {
+                self.body_handler(
+                    ScriptHandler::ResponseBody,
+                    event.request_head,
+                    Some(event.response_head),
+                    event.local_response,
+                )
+            })
         } else {
             ResponseBodyAction::pass_through()
         };
@@ -512,6 +575,11 @@ impl BufferedBodyHandler for ScriptBodyHandler {
             let mut data = body.data().clone();
             let mut trailers = body.trailers().cloned();
             match result.decision {
+                ScriptAction::NeedMore
+                | ScriptAction::Forward { .. }
+                | ScriptAction::Emit { .. } => {
+                    unreachable!("validated complete body")
+                }
                 ScriptAction::Continue => {}
                 ScriptAction::Edit { edits } => {
                     let mut headers = head.headers().clone();
@@ -536,14 +604,17 @@ impl BufferedBodyHandler for ScriptBodyHandler {
             if let BufferedHead::Request(request) = &head {
                 *lock(&self.shared.request) = Some(request.clone());
             }
-            Ok(
-                BufferedBody::try_new(
-                    self.shared.manifest.limits.max_output_bytes,
-                    data,
-                    trailers,
-                )?
-                .with_head(head),
-            )
+            Ok(BufferedBody::try_new(
+                // Unchanged input is bounded separately from replacement bytes.
+                self.shared
+                    .manifest
+                    .limits
+                    .max_output_bytes
+                    .max(self.shared.manifest.limits.max_input_body_bytes),
+                data,
+                trailers,
+            )?
+            .with_head(head))
         })
     }
 }
@@ -557,6 +628,9 @@ pub(super) fn invocation(
     body: Option<&Bytes>,
 ) -> ScriptInvocation {
     ScriptInvocation {
+        bytes: None,
+        end: false,
+        can_edit_headers: false,
         context: ScriptContext {
             exchange_id: exchange_id.to_owned(),
             now_unix_ms: u64::try_from(
@@ -731,13 +805,45 @@ pub fn validate_result(
     let terminal = matches!(handler, ScriptHandler::Completed | ScriptHandler::Failed);
     let body = matches!(
         handler,
-        ScriptHandler::RequestBody | ScriptHandler::ResponseBody
+        ScriptHandler::RequestBody | ScriptHandler::ResponseBody | ScriptHandler::ResponseChunk
     );
     let response = matches!(
         handler,
-        ScriptHandler::ResponseHead | ScriptHandler::ResponseBody
+        ScriptHandler::ResponseHead | ScriptHandler::ResponseBody | ScriptHandler::ResponseChunk
     );
     let invalid = || ScriptFailure::invalid("decision is not authorized for this phase");
+    if manifest.api_revision < 4
+        && matches!(
+            result.decision,
+            ScriptAction::NeedMore | ScriptAction::Forward { .. } | ScriptAction::Emit { .. }
+        )
+    {
+        return Err(invalid());
+    }
+    if result.body.is_some() || result.defer_headers {
+        if manifest.api_revision < 4
+            || handler != ScriptHandler::ResponseHead
+            || !matches!(
+                result.decision,
+                ScriptAction::Continue | ScriptAction::Edit { .. } | ScriptAction::Respond { .. }
+            )
+        {
+            return Err(invalid());
+        }
+        let mode = result
+            .body
+            .unwrap_or_else(|| default_response_mode(manifest));
+        if (mode == super::ScriptBodyMode::Buffer
+            && !manifest.handlers.contains(&ScriptHandler::ResponseBody))
+            || (mode == super::ScriptBodyMode::Stream
+                && !manifest.handlers.contains(&ScriptHandler::ResponseChunk))
+            || (result.defer_headers && mode != super::ScriptBodyMode::Stream)
+        {
+            return Err(ScriptFailure::invalid(
+                "body selection requires the corresponding callback",
+            ));
+        }
+    }
     if terminal && !matches!(result.decision, ScriptAction::Continue) {
         return Err(invalid());
     }
@@ -767,6 +873,28 @@ pub fn validate_result(
         return Err(ScriptFailure::invalid("exchange state exceeds 64 KiB"));
     }
     match &result.decision {
+        ScriptAction::NeedMore | ScriptAction::Forward { .. } => {
+            if handler != ScriptHandler::ResponseChunk {
+                return Err(invalid());
+            }
+        }
+        ScriptAction::Emit {
+            bytes,
+            headers,
+            status,
+            ..
+        } => {
+            if handler != ScriptHandler::ResponseChunk
+                || !manifest.capabilities.write_body
+                || bytes.len() > manifest.limits.max_output_bytes
+                || status.is_some_and(|s| {
+                    !manifest.capabilities.write_status || !(200..=599).contains(&s)
+                })
+            {
+                return Err(invalid());
+            }
+            validate_headers(manifest, headers)?;
+        }
         ScriptAction::Continue => {}
         ScriptAction::Edit { edits } => {
             validate_headers(manifest, &edits.headers)?;
@@ -850,6 +978,71 @@ pub fn validate_result(
     Ok(())
 }
 
+pub(crate) fn default_response_mode(manifest: &ScriptManifest) -> super::ScriptBodyMode {
+    if manifest.handlers.contains(&ScriptHandler::ResponseBody) {
+        super::ScriptBodyMode::Buffer
+    } else if manifest.handlers.contains(&ScriptHandler::ResponseChunk) {
+        super::ScriptBodyMode::Stream
+    } else {
+        super::ScriptBodyMode::Skip
+    }
+}
+
+/// Validates streaming decisions against the exact pending window and header lease.
+/// # Errors
+/// Rejects impossible consumption, waiting at EOF/at capacity, and late head edits.
+pub fn validate_stream_result(
+    manifest: &ScriptManifest,
+    event: &ScriptInvocation,
+    result: &ScriptResult,
+) -> Result<(), ScriptFailure> {
+    if event.context.handler != ScriptHandler::ResponseChunk {
+        return Ok(());
+    }
+    let len = event.bytes.as_ref().map_or(0, Vec::len);
+    validate_stream_window(manifest, result, len, event.end, event.can_edit_headers)
+}
+
+pub(super) fn validate_stream_window(
+    manifest: &ScriptManifest,
+    result: &ScriptResult,
+    len: usize,
+    end: bool,
+    editable: bool,
+) -> Result<(), ScriptFailure> {
+    let consumed = match &result.decision {
+        ScriptAction::Forward { consumed } => Some(*consumed),
+        ScriptAction::Emit { consumed, .. } => Some(consumed.unwrap_or(len)),
+        _ => None,
+    };
+    if consumed.is_some_and(|consumed| consumed > len || (consumed == 0 && len != 0)) {
+        return Err(ScriptFailure::invalid(
+            "streaming consumption must make progress within pending input",
+        ));
+    }
+    let (headers, status) = match &result.decision {
+        ScriptAction::Edit { edits } => (&edits.headers, edits.status),
+        ScriptAction::Emit {
+            headers, status, ..
+        } => (headers, *status),
+        ScriptAction::NeedMore => {
+            if end || len >= manifest.limits.max_input_body_bytes {
+                return Err(ScriptFailure::invalid(
+                    "cannot wait for more input at EOF or the pending-input limit",
+                ));
+            }
+            return Ok(());
+        }
+        _ => return Ok(()),
+    };
+    if (!headers.is_empty() || status.is_some()) && !editable {
+        return Err(ScriptFailure::invalid(
+            "response headers have already been released",
+        ));
+    }
+    Ok(())
+}
+
 /// Normalizes sandbox/test inputs and enforces phase, size and read authority.
 /// Parameters always come from the immutable manifest.
 ///
@@ -867,9 +1060,18 @@ pub fn prepare_invocation(
     );
     let response_phase = matches!(
         phase,
-        ScriptHandler::ResponseHead | ScriptHandler::ResponseBody | ScriptHandler::Completed
+        ScriptHandler::ResponseHead
+            | ScriptHandler::ResponseBody
+            | ScriptHandler::ResponseChunk
+            | ScriptHandler::Completed
     );
+    let chunk = phase == ScriptHandler::ResponseChunk;
     if !manifest.handlers.contains(&phase)
+        || chunk != event.bytes.is_some()
+        || (!chunk && (event.end || event.can_edit_headers))
+        || event.bytes.as_ref().is_some_and(|bytes| {
+            !manifest.capabilities.read_bodies || bytes.len() > manifest.limits.max_input_body_bytes
+        })
         || body_phase != event.body.is_some()
         || response_phase != event.response.is_some()
         || (phase == ScriptHandler::Failed) != event.failure.is_some()

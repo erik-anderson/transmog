@@ -26,9 +26,9 @@ agent names alone do not authorize connections. Enabling MCP does not start capt
 
 Bundled script guidance is available without connecting or starting the desktop:
 use `transmog_help` with `topic: "scripts"` and a section such as `examples`,
-`sandbox`, `debugging` or `types`. It includes the installed API revision and required settings.
+`streaming`, `sandbox`, `debugging` or `types`. It includes the installed API revision and required settings.
 MCP can inspect script effects but cannot author, test or activate scripts.
-Use **Automation → Scripts → Script API** for the same reference in the app.
+Use **Automation → Scripts → Open API docs** for the same reference in the app.
 
 The desktop must be running for traffic operations. Select **Start Transmog when
 needed** in the configuration dialog to let an explicit agent connection launch it.

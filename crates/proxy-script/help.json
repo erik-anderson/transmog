@@ -1,6 +1,6 @@
 {
   "topic": "scripts",
-  "apiRevision": 3,
+  "apiRevision": 4,
   "mcpSupport": "MCP can read this help and inspect script effects on traffic it has access to. It cannot read or edit script source, test scripts, or enable them. Use Automation → Scripts for those actions.",
   "failureCategories": [
     "HookInitialization",
@@ -23,7 +23,7 @@
       "paragraphs": [
         "Use scripts for conditional changes, JSON transformations, local responses, or logic shared between a request and its response. Rules handle fixed header and text replacements.",
         "Save draft keeps your work. Save & enable applies it to new requests; Save & apply updates an enabled script. Unsaved edits and failed builds leave the applied script unchanged.",
-        "Pause script stops selecting new requests. Requests already in progress finish with the version they started with. Scripts run on traffic received by the proxy; direct Composer sends and imported captures do not run scripts.",
+        "Pause script stops selecting new requests. Requests already in progress keep the version they started with. Scripts run on traffic received by the proxy; direct Composer sends and imported captures do not run scripts.",
         "Export synchronous handlers and import helpers and types from transmog:api. Browser and Node APIs, network access, files, and timers are unavailable. Handlers cannot return promises.",
         "If the applied script becomes unavailable, matching requests can fail. Choose Retry applied script, apply a fix, or Pause script."
       ],
@@ -35,10 +35,10 @@
       "title": "Callbacks, decisions and permissions",
       "paragraphs": [
         "Every callback receives the request, parameters, state, and context. The table shows its additional inputs and allowed decisions. These inputs are read-only.",
-        "Return a result with a decision: continue, edit, respond, or abort. Helpers such as pass(), edit(), and respondJson() build the result. Combine related header, status, and body changes in one edit. Empty bytes clear a body.",
+        "Return a decision with helpers such as pass(), edit(), and respondJson(). Combine related header, status, and body changes in one edit. Empty bytes clear a complete body. Streaming callbacks also support forward(), emit() and needMore().",
         "Enable the capabilities your changes need. List edited header names in Writable headers; Transmog manages Host, Content-Length, Content-Encoding, Transfer-Encoding, and connection headers. Sensitive values are hidden unless Read sensitive headers is enabled. Header helpers throw when a requested value is hidden.",
         "Method and URL changes need Rewrite request method and URL. A different origin also needs Allow cross-origin URL changes. URLs must be absolute HTTP(S), without credentials or fragments. Status changes need Change response status and accept 200–599. Local responses need Return responses or select assets; abort needs Abort requests.",
-        "Errors or unpermitted changes in request/response callbacks fail the request. onCompleted and onFailed only report findings; their errors become diagnostics."
+        "Errors or unpermitted edits in request/response callbacks fail the request. Once response headers reach the client, failures end the stream. Errors in onCompleted and onFailed become diagnostics."
       ],
       "phases": [
         {
@@ -54,7 +54,7 @@
         {
           "handler": "onResponseHead",
           "input": "response",
-          "decisions": "Continue; edit headers/status; inline response; abort"
+          "decisions": "Continue; edit headers/status; inline response; select body mode; defer headers; abort"
         },
         {
           "handler": "onResponseBody",
@@ -62,8 +62,13 @@
           "decisions": "Continue; edit headers/status/body; clear body with empty bytes; abort"
         },
         {
+          "handler": "onResponseChunk",
+          "input": "response, pending decoded bytes, EOF and header-edit availability",
+          "decisions": "Continue; forward or replace a prefix; wait for input; abort. Header/status edits only during initial inspection"
+        },
+        {
           "handler": "onCompleted",
-          "input": "Final response",
+          "input": "Final response headers/status",
           "decisions": "Continue with evidence"
         },
         {
@@ -78,10 +83,26 @@
       "id": "selection",
       "title": "Filters, buffering and limits",
       "paragraphs": [
-        "Host and method filters match exactly, ignoring case. The path-prefix filter is case-sensitive. Blank filters match all. Filters select a script before onRequestHead; source conditions do not change them, and URL rewrites do not remove later callbacks.",
-        "Body callbacks need Read bounded bodies; changing or clearing a body also needs Replace bodies. Set request body media types and response body media types/statuses to limit which messages are buffered. Blank lists match all. Local response bodies are excluded unless you include them.",
-        "Body callbacks receive complete, decoded bytes. Matching messages wait in memory before headers are forwarded, even when the callback returns pass(). Avoid unending streams such as SSE.",
-        "Default body limits are 1 MiB for input and output. Callbacks have 100 ms to run, with 64 MiB of JavaScript heap. Exceeding a limit fails the request."
+        "Host and method filters match exactly, ignoring case. The path-prefix filter is case-sensitive. Blank filters match all. Filters select a script before onRequestHead; URL rewrites do not remove later callbacks.",
+        "Body callbacks need Read bounded bodies; replacements also need Replace bodies. Response body filters apply to both complete-body and streaming callbacks. HEAD and bodyless statuses (1xx, 204, 205, 304) skip response body callbacks. Blank filters match all; local response bodies are excluded unless included.",
+        "Complete-body callbacks hold the message headers until processing finishes, even when returning pass(). Streaming sends headers promptly unless initial inspection or another body stage holds them.",
+        "By default, complete bodies and pending input windows are limited to 1 MiB; replacement output to 1 MiB per callback. A streaming body can be larger as input is consumed; proxy-wide content limits still apply. Callbacks have 100 ms and a 64 MiB heap. Limits during message processing fail the request."
+      ],
+      "phases": [],
+      "examples": []
+    },
+    {
+      "id": "streaming",
+      "title": "Stream or wait for response bytes",
+      "paragraphs": [
+        "Export onResponseBody for whole-body edits or headers that depend on the full body; it buffers automatically. Export onResponseChunk to process bytes as they arrive. If both are exported, onResponseBody is the default.",
+        "Select a mode per response with { ...pass(), body: \"stream\" } from onResponseHead. \"buffer\" requires onResponseBody; \"stream\" requires onResponseChunk; \"skip\" bypasses both. Filters and permissions still apply.",
+        "event.bytes is the pending decoded input. pass() forwards it all. forward(consumed) forwards an unchanged prefix without body-write permission. emit(bytes) replaces it all; emit(bytes, { consumed }) replaces that input prefix. Both prefix operations retain the rest; consumed counts input bytes and must be positive for nonempty input.",
+        "needMore() queues input until more bytes arrive or EOF. When event.end is true, consume the remaining input; waiting at EOF or a full pending queue fails. EOF stays true while retained bytes are consumed. A streamed body receives EOF on normal completion, including when empty.",
+        "Chunk boundaries can split text, UTF-8 characters or records. replaceTextChunk(event, \"before\", \"after\") handles split literal matches and preserves Content-Type; it needs Replace bodies. For record processing, use needMore() to wait and forward() or emit() to consume a complete record.",
+        "To hold headers for initial inspection, return deferResponseHeaders() from onResponseHead. It selects streaming. needMore() keeps headers held; forwarding or replacing input releases this script’s hold. Header/status edits are allowed only while event.canEditHeaders is true; later edits fail even if another stage still buffers. Header inspection has a finite network-wait budget.",
+        "Selecting a body callback removes the original Content-Length. Before sending headers, Transmog sets the final encoded length when known and permitted by HTTP; unknown-length output streams without it. Any complete-body stage holds the combined response, including output from streaming scripts.",
+        "For long streams, summarize findings in onCompleted. Retained chunk findings and diagnostics are bounded per request; omissions are reported."
       ],
       "phases": [],
       "examples": []
@@ -92,7 +113,7 @@
       "paragraphs": [
         "Declare text, boolean, or integer parameters in Filters, capabilities, and parameters; read them through event.parameters. They are saved with the script, so do not use them for secrets.",
         "Use event.state to carry this script’s JSON values between callbacks for one request. Returning state replaces it; omitting state keeps it. Module globals are shared across requests.",
-        "Use context.elapsedMs for durations and context.nowUnixMs for timestamps. context.source is proxy for proxy traffic and sandbox for tests."
+        "Use event.context.elapsedMs for durations and event.context.nowUnixMs for timestamps. event.context.source is proxy for proxy traffic and sandbox for tests."
       ],
       "phases": [],
       "examples": []
@@ -101,8 +122,8 @@
       "id": "helpers",
       "title": "Use API helpers",
       "paragraphs": [
-        "Import helpers by name, for example import { utf8Decode } from \"transmog:api\". For completion, use import * as api from \"transmog:api\" and type api. Open Full transmog:api namespace for signatures and types.",
-        "pass() leaves traffic unchanged; edit() changes a message. setHeader, appendHeader, and removeHeader build header operations. headerText and headerValues return all matching values, including duplicates. requestUrl and the query helpers work with URLs and query pairs.",
+        "Import helpers by name, for example import { utf8Decode } from \"transmog:api\". A namespace import (import * as api from \"transmog:api\") offers completion as you type. Open Full transmog:api namespace for signatures and types.",
+        "pass() makes no message edits; edit() changes a message. setHeader, appendHeader, and removeHeader build header operations. headerText and headerValues return all matching values, including duplicates. requestUrl and the query helpers work with URLs and query pairs.",
         "utf8Encode/utf8Decode convert between text and bytes. UTF-8 decoding rejects invalid bytes by default. base64Encode/base64Decode convert bytes and padded Base64.",
         "readText and readJson read UTF-8 bodies. replaceText, replaceJson, and replaceForm update the body and Content-Type together: enable Replace bodies and allow content-type in Writable headers. readForm/replaceForm support URL-encoded forms, including repeated fields; they do not support multipart forms.",
         "Cookie helpers preserve repeated Cookie pairs and separate Set-Cookie fields. Cookie values are not URL-decoded. Use null for flag attributes such as Secure.",
@@ -124,7 +145,7 @@
       "examples": [
         {
           "title": "Log a callback without changing its decision",
-          "settings": "No extra capabilities. Console output is temporary.",
+          "settings": "No extra capabilities.",
           "code": "import { pass } from 'transmog:api';\nimport type { RequestHeadEvent } from 'transmog:api';\nexport function onRequestHead(event: RequestHeadEvent) {\n  console.debug('Request', event.request.method, event.request.host);\n  console.trace('Selected callback');\n  return pass();\n}"
         }
       ]
@@ -147,8 +168,9 @@
       "title": "Test in the sandbox",
       "paragraphs": [
         "Single callback runs only the selected handler, starting with empty state. It bypasses the request and body filters. Use it to check a callback’s returned changes.",
-        "Exchange scenario tests filters, request/response callbacks, and carried state together. A pass means no script or processing errors. Inspect which callbacks ran and the final messages to confirm your changes. A simulated upstream failure can still pass.",
-        "Neither mode sends traffic or enables the script. Tests use the draft’s capabilities and parameters, but do not verify network behavior or resolve saved response assets. Supply decoded body fixtures without Content-Encoding. Confirm the result with matching proxy traffic."
+        "Exchange scenario tests filters, request/response callbacks, and carried state together. A pass means no script or processing errors. Inspect which callbacks ran and the resulting messages to confirm your changes. Failed streams retain output produced before the failure. A simulated upstream failure can still pass.",
+        "Neither mode sends traffic or enables the script. Tests use the draft’s capabilities and parameters, but do not verify network behavior or resolve saved response assets. Supply decoded body fixtures without Content-Encoding. Confirm the result with matching proxy traffic.",
+        "To test split input, enter response chunk byte counts; any remaining bytes form the last chunk. Byte counts can split UTF-8 characters. Chunk delays are simulated; their total must fit the second half of the scenario duration. Results show header-release time and a bounded callback timeline. Developer details includes earlier chunk logs and diagnostics; phase evidence records the last callback. Single callback tests let you set EOF and simulate held headers."
       ],
       "phases": [],
       "examples": []
@@ -157,7 +179,7 @@
       "id": "examples",
       "title": "Complete examples",
       "paragraphs": [
-        "Start with the disabled examples below, or copy a smaller example. Set its filters and capabilities before enabling it; changing source does not grant permissions."
+        "Each example lists its required settings. Exploratory samples start with changes switched off; focused examples apply the change shown. Set filters and capabilities before enabling a script."
       ],
       "phases": [],
       "examples": [
@@ -189,7 +211,22 @@
         {
           "title": "Correlate a request and its completion",
           "settings": "Host filter: example.test. Enable Add saved traffic annotations. Test with Exchange scenario or matching proxy traffic.",
-          "code": "import { pass } from \"transmog:api\";\nimport type { RequestHeadEvent, CompletedEvent, TerminalResult } from \"transmog:api\";\n\nexport function onRequestHead(event: RequestHeadEvent): TerminalResult {\n  return pass({ state: { started: event.context.elapsedMs } });\n}\nexport function onCompleted(event: CompletedEvent): TerminalResult {\n  const started = event.state.started;\n  if (typeof started !== \"number\") return pass();\n  return pass({ annotations: [{\n    note: `Completed after ${event.context.elapsedMs - started} ms`,\n    tags: [\"timing\"],\n  }] });\n}"
+          "code": "import { pass } from \"transmog:api\";\nimport type { RequestHeadEvent, RequestHeadResult, CompletedEvent, TerminalResult } from \"transmog:api\";\n\nexport function onRequestHead(event: RequestHeadEvent): RequestHeadResult {\n  return pass({ state: { started: event.context.elapsedMs } });\n}\nexport function onCompleted(event: CompletedEvent): TerminalResult {\n  const started = event.state.started;\n  if (typeof started !== \"number\") return pass();\n  return pass({ annotations: [{\n    note: `Completed after ${event.context.elapsedMs - started} ms`,\n    tags: [\"timing\"],\n  }] });\n}"
+        },
+        {
+          "title": "Streaming text replacement",
+          "settings": "Host filter: example.test. Response body media types: text/plain. Enable Read bounded bodies. To try the change, enable Replace bodies and set shouldApplySampleChange to true. Headers are sent promptly; partial matches are queued automatically.",
+          "code": "import { pass, replaceTextChunk } from \"transmog:api\";\nimport type { ResponseChunkEvent, ResponseChunkResult } from \"transmog:api\";\n\nexport function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult {\n  const shouldApplySampleChange = false;\n  if (shouldApplySampleChange) {\n    return replaceTextChunk(event, \"before\", \"after\");\n  }\n  return pass();\n}\n"
+        },
+        {
+          "title": "Queue complete lines before processing",
+          "settings": "Host filter: example.test. Response body media types: text/plain. Enable Read bounded bodies. Set shouldQueueCompleteLines to true to forward complete lines unchanged. To also replace text, set shouldApplySampleChange to true and enable Replace bodies; it queues lines automatically. Use UTF-8 input; try before followed by a newline, with chunk byte counts 2, 4, 1.",
+          "code": "import { pass, needMore, forward, emit, utf8Decode, utf8Encode } from \"transmog:api\";\nimport type { ResponseChunkEvent, ResponseChunkResult } from \"transmog:api\";\n\nexport function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult {\n  const shouldQueueCompleteLines = false;\n  const shouldApplySampleChange = false;\n  if ((!shouldQueueCompleteLines && !shouldApplySampleChange) || event.bytes.length === 0) {\n    return pass();\n  }\n  const newline = event.bytes.indexOf(10);\n  if (newline < 0 && !event.end) return needMore();\n  const consumed = newline < 0 ? event.bytes.length : newline + 1;\n  if (!shouldApplySampleChange) return forward(consumed);\n  const text = utf8Decode(event.bytes.slice(0, consumed));\n  return emit(utf8Encode(text.replace(/before/g, \"after\")), { consumed });\n}\n"
+        },
+        {
+          "title": "Inspect initial bytes before releasing headers",
+          "settings": "Host filter: example.test. Response body media types: text/plain. Enable Read bounded bodies. Writable headers: x-sample-prefix. Set shouldInspectInitialBytes to true to wait for four bytes (or EOF) and record their Base64 value in a header.",
+          "code": "import { pass, edit, needMore, deferResponseHeaders, setHeader, base64Encode } from \"transmog:api\";\nimport type { ResponseHeadEvent, ResponseHeadResult, ResponseChunkEvent, ResponseChunkResult } from \"transmog:api\";\n\nexport function onResponseHead(_event: ResponseHeadEvent): ResponseHeadResult {\n  const shouldInspectInitialBytes = false;\n  return shouldInspectInitialBytes ? deferResponseHeaders() : pass();\n}\n\nexport function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult {\n  if (!event.canEditHeaders) return pass();\n  if (event.bytes.length < 4 && !event.end) return needMore();\n  return edit({ headers: [setHeader(\"x-sample-prefix\", base64Encode(event.bytes.slice(0, 4)))] });\n}\n"
         }
       ]
     }

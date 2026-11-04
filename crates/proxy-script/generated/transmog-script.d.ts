@@ -31,13 +31,14 @@ declare module "transmog:api" {
     headers: readonly Header[];
   }>;
   export type Response = Readonly<{ status: number; headers: readonly Header[] }>;
-  /** Complete decoded bytes. Exceeded limits fail before this event is called. */
+  /** Complete decoded bytes. Oversized bodies fail before the callback runs. */
   export type Body = Readonly<{ bytes: Bytes }>;
   export type Handler =
     | "onRequestHead"
     | "onRequestBody"
     | "onResponseHead"
     | "onResponseBody"
+    | "onResponseChunk"
     | "onCompleted"
     | "onFailed";
   export type Context = Readonly<{
@@ -67,6 +68,18 @@ declare module "transmog:api" {
     Readonly<{ response: Response; body: null; failure: null }>;
   export type ResponseBodyEvent = EventBase &
     Readonly<{ response: Response; body: Body; failure: null }>;
+  /** Pending decoded input, including any suffix retained from the previous call. */
+  export type ResponseChunkEvent = EventBase &
+    Readonly<{
+      response: Response;
+      body: null;
+      failure: null;
+      bytes: Bytes;
+      /** No more input will arrive. Stays true while retained bytes are consumed. */
+      end: boolean;
+      /** Whether this invocation may edit response headers or status. */
+      canEditHeaders: boolean;
+    }>;
   export type CompletedEvent = EventBase &
     Readonly<{ response: Response; body: null; failure: null }>;
   /** Stable, case-sensitive terminal failure names; native descriptions are withheld. */
@@ -100,6 +113,15 @@ declare module "transmog:api" {
   }>;
   type Continue = Readonly<{ action: "continue" }>;
   type Abort = Readonly<{ action: "abort"; reason: string }>;
+  type NeedMore = Readonly<{ action: "need-more" }>;
+  type Forward = Readonly<{ action: "forward"; consumed: number }>;
+  type Emit = Readonly<{
+    action: "emit";
+    bytes: Bytes;
+    consumed?: number;
+    headers?: readonly HeaderOperation[];
+    status?: number;
+  }>;
   type InlineResponse = Readonly<{
     action: "respond";
     response: { status: number; headers: readonly (readonly [string, string])[]; bytes: Bytes };
@@ -130,6 +152,10 @@ declare module "transmog:api" {
     }>;
   export type ResponseHeadResult = Evidence &
     Readonly<{
+      /** Defaults to buffer if onResponseBody is exported, stream if onResponseChunk, otherwise skip. */
+      body?: "skip" | "buffer" | "stream";
+      /** Hold headers for initial body inspection; requires streaming mode. */
+      deferHeaders?: boolean;
       decision:
         | Continue
         | Abort
@@ -144,16 +170,29 @@ declare module "transmog:api" {
         | Edit<HeaderEdits & { status?: number; bytes?: Bytes; method?: never; url?: never }>;
     }>;
   export type TerminalResult = Evidence & Readonly<{ decision: Continue }>;
+  /** pass() and edit() consume the whole window; forward() and emit() can consume a prefix. */
+  export type ResponseChunkResult = Evidence &
+    Readonly<{
+      decision:
+        | Continue
+        | Abort
+        | NeedMore
+        | Forward
+        | Edit<HeaderEdits & { bytes?: Bytes; status?: number; method?: never; url?: never }>
+        | Emit;
+    }>;
   export type Result =
     | RequestHeadResult
     | RequestBodyResult
     | ResponseHeadResult
     | ResponseBodyResult
+    | ResponseChunkResult
     | TerminalResult;
   export type RequestHeadHandler = (event: RequestHeadEvent) => RequestHeadResult;
   export type RequestBodyHandler = (event: RequestBodyEvent) => RequestBodyResult;
   export type ResponseHeadHandler = (event: ResponseHeadEvent) => ResponseHeadResult;
   export type ResponseBodyHandler = (event: ResponseBodyEvent) => ResponseBodyResult;
+  export type ResponseChunkHandler = (event: ResponseChunkEvent) => ResponseChunkResult;
   export type CompletedHandler = (event: CompletedEvent) => TerminalResult;
   export type FailedHandler = (event: FailedEvent) => TerminalResult;
   export function pass(evidence?: Evidence): TerminalResult;
@@ -161,6 +200,37 @@ declare module "transmog:api" {
     edits: T,
     evidence?: Evidence,
   ): Evidence & Readonly<{ decision: Readonly<{ action: "edit"; edits: Readonly<T> }> }>;
+  /** Wait for additional input or EOF, retaining all pending bytes. Invalid at EOF/capacity. */
+  export function needMore(evidence?: Evidence): Evidence & Readonly<{ decision: NeedMore }>;
+  /** Forward and consume an unchanged input prefix, retaining the rest. Needs no body-write
+   * permission. consumed must be an integer within the window, positive for nonempty input.
+   */
+  export function forward(
+    consumed: number,
+    evidence?: Evidence,
+  ): Evidence & Readonly<{ decision: Forward }>;
+  /** Replace pending input. consumed counts input bytes (positive for nonempty input);
+   * omitting it consumes the entire window. Replacement length may differ.
+   */
+  export function emit(
+    bytes: Bytes,
+    options?: {
+      consumed?: number;
+      headers?: readonly HeaderOperation[];
+      status?: number;
+    },
+    evidence?: Evidence,
+  ): Evidence & Readonly<{ decision: Emit }>;
+  /** Select streaming and hold headers until a result forwards or replaces input. */
+  export function deferResponseHeaders(result?: ResponseHeadResult): ResponseHeadResult;
+  /** Literal UTF-8 replacement across windows, retaining incomplete matches automatically.
+   * Search must be nonempty. Preserves Content-Type.
+   */
+  export function replaceTextChunk(
+    event: ResponseChunkEvent,
+    search: string,
+    replacement: string,
+  ): Evidence & Readonly<{ decision: Continue | NeedMore | Emit }>;
   export function utf8Encode(text: string): number[];
   export function utf8Decode(bytes: Bytes, options?: { fatal?: boolean }): string;
   export function base64Encode(bytes: Bytes): string;

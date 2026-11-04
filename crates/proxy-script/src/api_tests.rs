@@ -424,8 +424,9 @@ fn help_failure_choices_and_types_match_the_runtime_contract() {
     assert!(serde_json::from_str::<ExchangeFailureCategory>("\"upstream\"").is_err());
 }
 
-fn scenario_fixture() -> ScriptScenario {
+pub(super) fn scenario_fixture() -> ScriptScenario {
     ScriptScenario {
+        response_chunks: None,
         request: script_request(&request(), true),
         response: Some(ScriptResponse {
             status: 200,
@@ -524,8 +525,13 @@ async fn scenario_applies_edits_state_filters_and_controlled_context_through_com
     assert_eq!(result.request_body, b"changed upload");
     assert_eq!(result.response_body, [] as [u8; 0]);
     assert!(
-        result.steps[..5]
+        result
+            .steps
             .iter()
+            .filter(|s| !matches!(
+                s.handler,
+                ScriptHandler::ResponseChunk | ScriptHandler::Failed
+            ))
             .all(|s| s.selection == ScriptScenarioSelection::Invoked)
     );
 }
@@ -542,7 +548,7 @@ async fn scenario_explains_native_selection_and_body_forbidden_responses() {
         .unwrap();
     assert!(!result.admitted);
     assert_eq!(
-        result.steps[3].selection,
+        result.steps[4].selection,
         ScriptScenarioSelection::RequestFilter
     );
     let mut fixture = scenario_fixture();
@@ -551,20 +557,45 @@ async fn scenario_explains_native_selection_and_body_forbidden_responses() {
         .await
         .unwrap();
     assert_eq!(
-        result.steps[3].selection,
+        result.steps[4].selection,
         ScriptScenarioSelection::BodyFilter
     );
-    for status in [204, 304] {
+    for status in [204, 205, 304] {
         let mut fixture = scenario_fixture();
         fixture.response.as_mut().unwrap().status = status;
+        fixture
+            .response
+            .as_mut()
+            .unwrap()
+            .headers
+            .push(ScriptHeader {
+                name: "content-length".into(),
+                value: b"123".to_vec(),
+                sensitive: false,
+                redacted: false,
+            });
         let result = test_scenario(manifest.clone(), runner.clone(), fixture)
             .await
             .unwrap();
         assert_eq!(
-            result.steps[3].selection,
+            result.steps[4].selection,
             ScriptScenarioSelection::BodyForbidden
         );
         assert_eq!(result.response_body, [] as [u8; 0]);
+        assert_eq!(
+            result
+                .response
+                .unwrap()
+                .headers
+                .iter()
+                .find(|header| header.name == "content-length")
+                .map(|header| header.value.as_slice()),
+            match status {
+                204 => None,
+                205 => Some(b"0".as_slice()),
+                _ => Some(b"123".as_slice()),
+            }
+        );
     }
 }
 
@@ -640,7 +671,7 @@ async fn scenario_handles_inline_responses_failures_and_unresolved_assets() {
     let result = test_scenario(manifest, runner, fixture).await.unwrap();
     assert_eq!(result.outcome, "failed");
     assert_eq!(result.verdict, ScriptScenarioVerdict::Passed);
-    assert_eq!(result.steps[5].selection, ScriptScenarioSelection::Invoked);
+    assert_eq!(result.steps[6].selection, ScriptScenarioSelection::Invoked);
 }
 
 #[test]
@@ -732,6 +763,7 @@ async fn scenario_body_input_limits_explain_the_selected_phase_without_invoking_
             .unwrap();
         assert_eq!(step.selection, ScriptScenarioSelection::InputLimit);
         assert!(step.result.is_none());
+        assert_eq!(result.response_body, [] as [u8; 0]);
         assert!(
             result
                 .error
@@ -743,6 +775,58 @@ async fn scenario_body_input_limits_explain_the_selected_phase_without_invoking_
             serde_json::to_value(step).unwrap()["selection"],
             "input-limit"
         );
+    }
+}
+
+#[tokio::test]
+async fn complete_body_observation_does_not_apply_the_replacement_limit() {
+    for handler in [ScriptHandler::RequestBody, ScriptHandler::ResponseBody] {
+        for edit_header in [false, true] {
+            let mut manifest = manifest("", &[handler]);
+            manifest.capabilities.read_bodies = true;
+            manifest
+                .capabilities
+                .write_headers
+                .insert("x-inspected".into());
+            manifest.limits.max_input_body_bytes = 8;
+            manifest.limits.max_output_bytes = 1;
+            let runner = Arc::new(Runner(move |_: ScriptInvocation| {
+                if edit_header {
+                    ScriptAction::Edit {
+                        edits: ScriptEdits {
+                            headers: vec![ScriptHeaderOperation::Set {
+                                name: "x-inspected".into(),
+                                value: "yes".into(),
+                            }],
+                            ..Default::default()
+                        },
+                    }
+                    .into()
+                } else {
+                    ScriptAction::Continue.into()
+                }
+            }));
+            let result = test_scenario(manifest, runner, scenario_fixture())
+                .await
+                .unwrap();
+            assert_eq!(
+                result.verdict,
+                ScriptScenarioVerdict::Passed,
+                "{handler:?}: {:?}",
+                result.error
+            );
+            assert_eq!(result.request_body, b"upload");
+            assert_eq!(result.response_body, b"{}");
+            let headers = if handler == ScriptHandler::RequestBody {
+                &result.request.headers
+            } else {
+                &result.response.as_ref().unwrap().headers
+            };
+            assert_eq!(
+                headers.iter().any(|header| header.name == "x-inspected"),
+                edit_header
+            );
+        }
     }
 }
 
@@ -766,11 +850,12 @@ async fn scenario_preserves_callback_evidence_when_body_output_processing_fails(
         .unwrap();
     assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
     assert_eq!(
-        result.steps[3].selection,
+        result.steps[4].selection,
         ScriptScenarioSelection::PipelineFailed
     );
-    assert!(result.steps[3].result.is_some());
-    assert!(result.steps[3].error.is_none());
+    assert!(result.steps[4].result.is_some());
+    assert!(result.steps[4].error.is_none());
+    assert_eq!(result.response_body, [] as [u8; 0]);
     assert!(result.error.as_ref().unwrap().contains("body hook emitted"));
 }
 
@@ -798,8 +883,8 @@ async fn scenario_reports_terminal_gate_panics_and_timeouts() {
         .unwrap();
         assert_eq!(result.outcome, "completed");
         assert_eq!(result.verdict, ScriptScenarioVerdict::Failed);
-        assert_eq!(result.steps[4].selection, ScriptScenarioSelection::Failed);
-        assert_eq!(result.steps[4].error.as_ref().unwrap().category, category);
+        assert_eq!(result.steps[5].selection, ScriptScenarioSelection::Failed);
+        assert_eq!(result.steps[5].error.as_ref().unwrap().category, category);
         assert!(result.error.is_some());
     }
 }

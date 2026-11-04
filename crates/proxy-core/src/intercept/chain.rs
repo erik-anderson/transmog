@@ -953,14 +953,6 @@ impl CallbackGate {
         }
     }
 
-    pub(super) async fn await_task<T: Send + 'static>(
-        &self,
-        context: &HookContext,
-        task: JoinHandle<T>,
-        permit: OwnedSemaphorePermit,
-    ) -> Result<T, HookExecutionError> {
-        self.await_task_debug(context, task, permit, None).await
-    }
     pub(super) async fn await_task_debug<T: Send + 'static>(
         &self,
         context: &HookContext,
@@ -1965,8 +1957,13 @@ mod tests {
         }
         let permit = gate.permit(&context).await.unwrap();
         assert!(matches!(
-            gate.await_task(&context, tokio::spawn(std::future::pending::<()>()), permit)
-                .await,
+            gate.await_task_debug(
+                &context,
+                tokio::spawn(std::future::pending::<()>()),
+                permit,
+                None
+            )
+            .await,
             Err(HookExecutionError::TimedOut)
         ));
         session.stop("Test ended");

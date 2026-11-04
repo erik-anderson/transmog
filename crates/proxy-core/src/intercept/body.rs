@@ -194,6 +194,31 @@ impl BufferedBody {
 
 /// Stateful bounded streaming body transformation.
 pub trait BodyFilter: Send {
+    /// Whether initial response inspection still prevents header commitment.
+    fn head_pending(&self) -> bool {
+        false
+    }
+
+    /// Supplies the effective head from preceding pipeline stages.
+    fn set_head(&mut self, _head: Option<BufferedHead>) {}
+
+    /// Takes the validated head edit from the last invocation.
+    fn take_head_edit(&mut self) -> Option<BufferedHead> {
+        None
+    }
+
+    /// Takes bounded invocation evidence, including evidence preceding a failure.
+    fn take_script_reports(&mut self) -> Vec<super::ScriptReport> {
+        Vec::new()
+    }
+
+    /// Native debugger clock for authorized pauses during streaming callbacks.
+    fn debug_pause_clock(
+        &self,
+    ) -> Option<std::sync::Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        None
+    }
+
     /// Processes one canonical body frame.
     fn on_frame(
         &mut self,
@@ -593,6 +618,13 @@ impl BodyPipeline {
         self.buffers_head
     }
 
+    /// Whether unfinished complete-body or initial-byte inspection holds headers.
+    pub fn head_pending(&self) -> bool {
+        !self.finished && (self.buffers_head || self.stages.iter().any(|stage| {
+            matches!(&stage.kind, BodyStageKind::Transform(Some(filter)) if filter.head_pending())
+        }))
+    }
+
     /// Effective head after all completed body stages.
     pub fn head(&self) -> Option<&BufferedHead> {
         self.head.as_ref()
@@ -685,6 +717,9 @@ impl BodyPipeline {
             let output = self.finish_stage(index).await?;
             final_output.extend(self.process_from(index + 1, output).await?);
         }
+        if self.stages.iter().any(|stage| matches!(&stage.kind, BodyStageKind::Transform(Some(filter)) if filter.head_pending())) {
+            return Err(BodyHookError::Failed("Streaming header inspection did not finish at EOF".into()).into());
+        }
         Ok(final_output)
     }
 
@@ -767,17 +802,37 @@ impl BodyPipeline {
         } else {
             super::HookPhase::ResponseBody
         };
+        let mut head_edit = None;
+        let mut may_edit_head = false;
+        let head = self.head.clone();
         let output = match &mut self.stages[index].kind {
             BodyStageKind::Transform(filter) => {
                 let mut owned = filter
                     .take()
                     .expect("unfinished transform retains its filter");
+                may_edit_head = owned.head_pending();
+                owned.set_head(head);
+                let clock = owned.debug_pause_clock();
                 let permit = self.gate.permit(&self.context).await?;
                 let task = tokio::spawn(async move {
                     let result = owned.on_frame(frame).await;
                     (owned, result)
                 });
-                let (owned, result) = self.gate.await_task(&self.context, task, permit).await?;
+                let (mut owned, result) = self
+                    .gate
+                    .await_task_debug(&self.context, task, permit, clock.as_ref())
+                    .await?;
+                for report in owned.take_script_reports() {
+                    if let Some(identity) = &identity {
+                        self.context.audit().record(
+                            identity.clone(),
+                            phase,
+                            super::HookEffectAction::ScriptReport(report),
+                            false,
+                        );
+                    }
+                }
+                head_edit = owned.take_head_edit();
                 *filter = Some(owned);
                 result?
             }
@@ -804,6 +859,7 @@ impl BodyPipeline {
             }
             BodyStageKind::Replace(_) | BodyStageKind::Discard => Vec::new(),
         };
+        self.accept_filter_head(head_edit, may_edit_head, identity.as_ref(), phase)?;
         Self::validate_output(
             &mut self.stages[index].output_sequence,
             &output,
@@ -827,17 +883,37 @@ impl BodyPipeline {
         } else {
             super::HookPhase::ResponseBody
         };
+        let mut head_edit = None;
+        let mut may_edit_head = false;
+        let head = self.head.clone();
         let output = match &mut self.stages[index].kind {
             BodyStageKind::Transform(filter) => {
                 let Some(mut owned) = filter.take() else {
                     return Ok(Vec::new());
                 };
+                may_edit_head = owned.head_pending();
+                owned.set_head(head);
+                let clock = owned.debug_pause_clock();
                 let permit = self.gate.permit(&self.context).await?;
                 let task = tokio::spawn(async move {
                     let result = owned.finish().await;
                     (owned, result)
                 });
-                let (owned, result) = self.gate.await_task(&self.context, task, permit).await?;
+                let (mut owned, result) = self
+                    .gate
+                    .await_task_debug(&self.context, task, permit, clock.as_ref())
+                    .await?;
+                for report in owned.take_script_reports() {
+                    if let Some(identity) = &identity {
+                        self.context.audit().record(
+                            identity.clone(),
+                            phase,
+                            super::HookEffectAction::ScriptReport(report),
+                            false,
+                        );
+                    }
+                }
+                head_edit = owned.take_head_edit();
                 *filter = Some(owned);
                 result?
             }
@@ -937,12 +1013,52 @@ impl BodyPipeline {
             }
             BodyStageKind::Discard => Vec::new(),
         };
+        self.accept_filter_head(head_edit, may_edit_head, identity.as_ref(), phase)?;
         Self::validate_output(
             &mut self.stages[index].output_sequence,
             &output,
             self.limits,
         )?;
         Ok(output)
+    }
+
+    fn accept_filter_head(
+        &mut self,
+        edit: Option<BufferedHead>,
+        allowed: bool,
+        identity: Option<&super::InterceptorIdentity>,
+        phase: super::HookPhase,
+    ) -> Result<(), BodyPipelineError> {
+        let Some(after) = edit else {
+            return Ok(());
+        };
+        if self.head.as_ref() == Some(&after) {
+            return Ok(());
+        }
+        match (&self.head, &after) {
+            (Some(BufferedHead::Response(before)), BufferedHead::Response(after))
+                if allowed && before.source_version == after.source_version =>
+            {
+                if let Some(identity) = identity {
+                    self.context.audit().record(
+                        identity.clone(),
+                        phase,
+                        super::HookEffectAction::ReplaceResponseHead(
+                            super::audit::response_changes(before, after),
+                        ),
+                        true,
+                    );
+                }
+            }
+            _ => {
+                return Err(BodyHookError::Failed(
+                    "Streaming head edit was not authorized before commitment".into(),
+                )
+                .into());
+            }
+        }
+        self.head = Some(after);
+        Ok(())
     }
 
     fn validate_output(

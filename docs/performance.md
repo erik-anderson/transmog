@@ -56,6 +56,24 @@ The Rust harness and Python runner support Windows, Linux and macOS memory
 sampling through their host APIs. Hosted performance coverage remains planned;
 see [CI policy](../ci/README.md#additional-hosted-coverage).
 
+## Isolated script callbacks
+
+Build matching release artifacts before measuring the sandbox round trip:
+
+```powershell
+python scripts/dev-env.py --run cargo build --locked --release -p transmog-script-supervisor --example roundtrip-benchmark
+python scripts/dev-env.py --run cargo build --locked --release -p transmog-script-host
+./target/release/examples/roundtrip-benchmark.exe ./target/release/transmog-script-host.exe --stream-bytes=16384 --iterations=100
+```
+
+Use the platform's executable names outside Windows. Omitting `--stream-bytes`
+measures a header callback; streaming accepts 1 byte to 1 MiB per invocation.
+`--iterations` controls warmup and batch size. Results report median batch cost
+and p95 invocation latency for five isolated processes; `--attached` includes an
+idle debugger attachment. Payload copying and protocol serialization are part of
+the measurement. This measures a no-op callback, not HTTP throughput or script
+work; compare payload sizes on the same idle host when assessing callback overhead.
+
 ## Post-quantum TLS handshakes
 
 ```powershell

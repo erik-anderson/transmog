@@ -4301,7 +4301,7 @@ await page.addInitScript(
               language === "javascript" ? source : await window.__compileFixtureScript(source);
             state.scriptBuilds = [
               {
-                manifest: { ...manifest, apiRevision: 3, sourceHash: "0".repeat(64) },
+                manifest: { ...manifest, apiRevision: 4, sourceHash: "0".repeat(64) },
                 source,
                 language,
                 retainedSource,
@@ -4337,7 +4337,26 @@ await page.addInitScript(
                     : "completed",
               verdict: state.scriptScenarioVerdict ?? "passed",
               admitted: true,
+              headersReleasedAtMs:
+                state.scriptHeadersReleasedAtMs ??
+                (args.scenario.failure ? null : args.scenario.durationMs / 2),
+              streamCalls: state.scriptStreamCalls ?? [],
+              omittedStreamCalls: 0,
               steps: [
+                ...(state.scriptStreamReports
+                  ? [
+                      {
+                        handler: "onResponseChunk",
+                        selection: "invoked",
+                        state: {},
+                        reports: state.scriptStreamReports,
+                        result: {
+                          decision: { action: "continue" },
+                          diagnostics: ["final chunk diagnostic"],
+                        },
+                      },
+                    ]
+                  : []),
                 {
                   handler: "onRequestHead",
                   selection: "invoked",

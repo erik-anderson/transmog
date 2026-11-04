@@ -25,7 +25,7 @@ export async function checkScripts(page, root) {
   const help = scripts.locator(".script-help-dialog");
   await helpButton.click();
   assert.equal(await help.evaluate((dialog) => dialog.matches(":modal")), true);
-  assert.match(await help.textContent(), /revision 3/);
+  assert.match(await help.textContent(), /revision 4/);
   await checkScriptApiReference(page, scripts, resolve(root, "../../../target/ui-check"));
   await help.getByLabel("Search Script API", { exact: true }).fill("bypass");
   assert.match(
@@ -138,13 +138,26 @@ export async function checkScripts(page, root) {
     await scripts.evaluate(async (editor) => {
       const { getTypeScriptWorker } = await import("/monaco.js");
       const model = editor.monaco.editor.createModel(
-        `import {edit} from 'transmog:api';
-import type {RequestHeadResult,ResponseHeadResult} from 'transmog:api';
+        `import {edit,forward,emit,needMore,replaceTextChunk} from 'transmog:api';
+import type {RequestHeadResult,ResponseHeadResult,ResponseChunkResult,ResponseChunkEvent} from 'transmog:api';
 const valid: RequestHeadResult=edit({method:'POST'});
 // @ts-expect-error response status cannot be changed at request head
 const invalid: RequestHeadResult=edit({headers:[],status:202});
 // @ts-expect-error body bytes cannot be changed at response head
-const body: ResponseHeadResult=edit({headers:[],bytes:[]});`,
+const body: ResponseHeadResult=edit({headers:[],bytes:[]});
+const consumed: number=forward(4).decision.consumed;
+const bytes: readonly number[]=emit([1,2]).decision.bytes;
+const waiting: 'need-more'=needMore().decision.action;
+const chunk: ResponseChunkResult=forward(4);
+// @ts-expect-error prefix forwarding is only allowed in a response-chunk callback
+const wrongPhase: RequestHeadResult=forward(4);
+function inspectTextChange(event: ResponseChunkEvent) {
+  const result=replaceTextChunk(event,'before','after');
+  switch(result.decision.action) {
+    case 'continue': case 'need-more': case 'emit': return;
+    default: { const unexpected: never=result.decision; return unexpected; }
+  }
+}`,
         "typescript",
         editor.monaco.Uri.parse("file:///script-help/phase-check.ts"),
       );
@@ -156,7 +169,7 @@ const body: ResponseHeadResult=edit({headers:[],bytes:[]});`,
       }
     }),
     0,
-    "Phase-specific edit restrictions failed",
+    "Helper return types or phase-specific edit restrictions failed",
   );
   const phaseSource = await scripts.evaluate((editor) => editor.sourceEditor.getValue());
   for (const [handler, edits] of [
@@ -382,6 +395,8 @@ export function onFailed() { return { decision: { action: "continue" as const } 
     .selectOption("Http3");
   await scripts.getByRole("textbox", { name: "Request body", exact: true }).fill("scenario upload");
   await scripts.getByLabel("Response body", { exact: true }).fill('{"ready":true}');
+  await scripts.getByLabel("Response chunk byte counts (optional)", { exact: true }).fill("2, 4");
+  await scripts.getByLabel("Delay between chunks (ms, simulated)", { exact: true }).fill("5");
   await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
   await waitIdle();
   assert.match(
@@ -401,6 +416,23 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   assert.match(
     await scripts.locator(".script-test-result pre").textContent(),
     /onCompleted: invoked/,
+  );
+  assert.deepEqual(
+    await page.evaluate(() =>
+      globalThis.__workspaceFixture.scriptScenarioInput.responseChunks.map((chunk) => ({
+        bytes: chunk.bytes.length,
+        delayMs: chunk.delayMs,
+      })),
+    ),
+    [
+      { bytes: 2, delayMs: 0 },
+      { bytes: 4, delayMs: 5 },
+      { bytes: 8, delayMs: 5 },
+    ],
+  );
+  assert.match(
+    await scripts.locator(".script-test-result").textContent(),
+    /headers released at 36.5 ms/,
   );
   await scripts
     .getByLabel("Response headers", { exact: true })
@@ -433,7 +465,7 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   assert.equal(await scripts.evaluate((editor) => editor.statusKind), "error");
   for (const width of [1440, 800]) {
     await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
-    await scripts.locator(".script-test-result > p").scrollIntoViewIfNeeded();
+    await scripts.locator(".script-test-result > p").first().scrollIntoViewIfNeeded();
     await page.screenshot({
       path: resolve(root, `../../../target/ui-check/script-scenario-failed-${width}.png`),
     });
@@ -469,6 +501,80 @@ export function onFailed() { return { decision: { action: "continue" as const } 
   await page.setViewportSize({ width: 1440, height: 900 });
   await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("callback");
   await scripts.getByLabel("Response headers", { exact: true }).fill("X-Fixture: completed");
+  await scripts.evaluate((editor) =>
+    editor.sourceEditor.setValue(
+      'import { pass } from "transmog:api";\nimport type { ResponseChunkEvent, ResponseChunkResult } from "transmog:api";\nexport function onResponseChunk(event: ResponseChunkEvent): ResponseChunkResult { return pass(); }',
+    ),
+  );
+  await scripts
+    .getByRole("combobox", { name: "Handler", exact: true })
+    .selectOption("onResponseChunk");
+  assert.equal(await scripts.getByLabel("End of response body", { exact: true }).isVisible(), true);
+  await scripts.getByLabel("End of response body", { exact: true }).uncheck();
+  await scripts.getByLabel("Headers held for initial inspection", { exact: true }).check();
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.deepEqual(
+    await page.evaluate(() => ({
+      body: globalThis.__workspaceFixture.scriptTestInput.body,
+      end: globalThis.__workspaceFixture.scriptTestInput.end,
+      editable: globalThis.__workspaceFixture.scriptTestInput.canEditHeaders,
+      input: new TextDecoder().decode(
+        Uint8Array.from(globalThis.__workspaceFixture.scriptTestInput.bytes),
+      ),
+    })),
+    { body: null, end: false, editable: true, input: "newer scenario input" },
+  );
+  await fixture({
+    scriptHeadersReleasedAtMs: 55,
+    scriptStreamReports: [
+      { diagnostics: ["earlier chunk diagnostic"] },
+      { diagnostics: ["final chunk diagnostic"] },
+      {
+        detailsOmitted: true,
+        diagnostics: ["Additional streaming findings omitted at the exchange limit"],
+      },
+    ],
+    scriptStreamCalls: [
+      { elapsedMs: 50, inputBytes: 2, action: "need-more", end: false, canEditHeaders: true },
+      { elapsedMs: 55, inputBytes: 6, action: "emit", end: false, canEditHeaders: true },
+      { elapsedMs: 60, inputBytes: 0, action: "continue", end: true, canEditHeaders: false },
+    ],
+  });
+  await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("scenario");
+  await scripts
+    .getByRole("combobox", { name: "Scenario outcome", exact: true })
+    .selectOption("response");
+  await scripts.getByRole("button", { name: "Test in sandbox", exact: true }).click();
+  await waitIdle();
+  assert.match(
+    await scripts.locator(".script-test-result").textContent(),
+    /headers released at 55 ms/,
+  );
+  const streamingDetails = scripts.locator(".script-test-result script-diagnostics");
+  await streamingDetails.locator(".developer-details > summary").click();
+  await streamingDetails.getByText("earlier chunk diagnostic").waitFor();
+  await streamingDetails.getByText("final chunk diagnostic").waitFor();
+  assert.equal(await streamingDetails.getByText("earlier chunk diagnostic").count(), 1);
+  assert.equal(await streamingDetails.getByText("final chunk diagnostic").count(), 1);
+  assert.match(await streamingDetails.textContent(), /Additional streaming findings omitted/);
+  await streamingDetails.locator(".developer-details > summary").click();
+  await fixture({ scriptStreamReports: null });
+  await scripts.getByText("Streaming callbacks", { exact: true }).click();
+  assert.match(
+    await scripts.getByRole("table", { name: "", exact: true }).last().textContent(),
+    /need-more.*emit.*EOF/s,
+  );
+  for (const width of [1440, 800]) {
+    await page.setViewportSize({ width, height: width === 1440 ? 900 : 600 });
+    await scripts.locator(".script-test-result table").scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: resolve(root, `../../../target/ui-check/script-streaming-${width}.png`),
+    });
+  }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await fixture({ scriptHeadersReleasedAtMs: null, scriptStreamCalls: [] });
+  await scripts.getByRole("combobox", { name: "Test mode", exact: true }).selectOption("callback");
   await scripts.evaluate((editor, source) => editor.sourceEditor.setValue(source), requestSource);
   await scripts
     .getByRole("combobox", { name: "Handler", exact: true })

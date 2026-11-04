@@ -30,6 +30,7 @@
     </div>
     <div w-ref="{scriptEditor}" class="monaco-editor-host" aria-label="Traffic script source editor"></div>
     <div slot="feedback" class="script-authoring-feedback">
+      <p class="field-help">{{bodyProcessing}}</p>
       <p class="field-help" role="status">{{authoringStatus}}</p>
       <if condition="typeScriptIssue"><section class="script-recovery" aria-label="TypeScript issues"><p>Choose an issue to jump to its source. All errors must be fixed before publishing TypeScript.</p><ul><for each="item in typeScriptIssues"><li><button type="button" class="script-issue" @click="{goToTypeScriptIssue(item)}">Line {{item.line}}:{{item.column}} - {{item.message}}</button></li></for></ul><div class="actions"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{retryTypeScriptCheck()}">Check TypeScript again</button><if condition="language == 'typescript'"><button type="button" class="secondary" ?disabled="{{scriptBusy}}" @click="{editJavaScript()}">Edit JavaScript</button></if></div></section></if>
     </div>
@@ -47,7 +48,7 @@
       <label>Response body media types <input name="responseTypes" placeholder="application/json" maxlength="4096" ?disabled="{{!scriptReady}}"></label>
       <label>Response body statuses <input name="responseStatuses" placeholder="200, 201" maxlength="2048" ?disabled="{{!scriptReady}}"></label>
       <label><input name="includeLocal" type="checkbox" ?disabled="{{!scriptReady}}"> Run response body handlers on local responses</label>
-      <p class="field-help script-filter-help">Body media types and statuses use comma-separated exact values; empty permits all. Body handlers receive complete decoded bytes before headers are sent. Unmatched bodies keep streaming.</p>
+      <p class="field-help script-filter-help">Body media types and statuses use comma-separated exact values; empty permits all. onResponseBody waits for the complete body; onResponseChunk processes incrementally. Unmatched bodies keep streaming.</p>
       <fieldset ?disabled="{{!scriptReady}}">
         <legend>Capabilities</legend>
         <label><input name="rewriteRequest" type="checkbox"> Rewrite request method and URL</label>
@@ -86,7 +87,9 @@
     <div class="script-test-fields">
       <label>Test URL <input w-ref="{scriptTestUrl}" type="url" value="https://example.test/" maxlength="8192"></label>
       <label>Method <input w-ref="{scriptTestMethod}" value="GET" maxlength="32"></label>
-      <label ?hidden="{{testMode != 'callback'}}">Handler <select w-ref="{scriptTestHandler}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label>
+      <label ?hidden="{{testMode != 'callback'}}">Handler <select w-ref="{scriptTestHandler}" @change="{changeTestHandler()}"><for each="item in testHandlers"><option key="{{item.name}}">{{item.name}}</option></for></select></label>
+      <label ?hidden="{{testMode != 'callback' || !testStream}}"><input w-ref="{scriptTestEnd}" type="checkbox" checked> End of response body</label>
+      <label ?hidden="{{testMode != 'callback' || !testStream}}"><input w-ref="{scriptTestHeaderEdits}" type="checkbox"> Headers held for initial inspection</label>
       <label ?hidden="{{testMode != 'scenario'}}">Scenario outcome <select w-ref="{scriptScenarioOutcome}" aria-label="Scenario outcome" @input="{changeScenarioOutcome(e)}"><option value="response">Response</option><option value="failure">Upstream failure</option></select></label>
       <label>Fixture protocol <select w-ref="{scriptScenarioProtocol}" aria-label="Fixture protocol"><option value="Http1">HTTP/1.1</option><option value="Http2">HTTP/2</option><option value="Http3">HTTP/3</option></select></label>
       <label ?hidden="{{testMode != 'scenario'}}">Scenario duration (ms) <input w-ref="{scriptScenarioDuration}" type="number" value="100" min="0" max="86400000"></label>
@@ -97,9 +100,11 @@
       <label ?hidden="{{testMode == 'scenario' && scenarioOutcome != 'failure'}}">Failure category (onFailed) <select w-ref="{scriptTestFailure}" aria-label="Failure category (onFailed)" @input="{changeTestFailure(e)}"><for each="category in failureCategories"><option value="{{category}}" ?selected="{{category == testFailure}}">{{category}}</option></for></select></label>
       <label><if condition="testMode == 'callback'">Body</if><if condition="testMode == 'scenario'">Request body</if> <textarea w-ref="{scriptTestBody}" rows="4" maxlength="1048576">editor test body</textarea></label>
       <label ?hidden="{{testMode != 'scenario' || scenarioOutcome == 'failure'}}">Response body <textarea w-ref="{scriptScenarioResponseBody}" rows="4" maxlength="1048576"></textarea></label>
+      <label ?hidden="{{testMode != 'scenario' || scenarioOutcome == 'failure'}}">Response chunk byte counts (optional) <input w-ref="{scriptScenarioChunkSizes}" maxlength="1024" placeholder="For example: 2, 4, 1"></label>
+      <label ?hidden="{{testMode != 'scenario' || scenarioOutcome == 'failure'}}">Delay between chunks (ms, simulated) <input w-ref="{scriptScenarioChunkDelay}" type="number" value="0" min="0" max="86400000"></label>
     </div>
     <div class="actions"><button type="button" class="secondary" @click="{useSelectedTestRequest()}" ?disabled="{{!selection}}">Use selected Traffic request</button><span class="field-help">Copies the URL, method, and nonsensitive headers. Body input is cleared.</span></div>
-    <if condition="testResult"><section class="script-test-result" aria-label="Sandbox result"><p>{{testResult}}<if condition="testOutdated"> · Outdated: source, settings, or input changed</if></p><script-diagnostics :evidence="{{sandboxDetails}}"></script-diagnostics><details><summary>Test input and returned changes</summary><pre tabindex="0" data-copy-surface>{{testEvidence}}</pre></details></section></if>
+    <if condition="testResult"><section class="script-test-result" aria-label="Sandbox result"><p>{{testResult}}<if condition="testOutdated"> · Outdated: source, settings, or input changed</if></p><if condition="scenarioHeaders"><p>{{scenarioHeaders}}</p></if><if condition="streamTimeline.length"><details><summary>Streaming callbacks</summary><div class="script-help-table" tabindex="0" aria-label="Streaming callback timeline"><table><thead><tr><th>Time</th><th>Pending input</th><th>Action</th><th>Header edits</th></tr></thead><tbody><for each="call in streamTimeline"><tr key="{{call.index}}"><td>{{call.time}}</td><td>{{call.input}}</td><td>{{call.action}}</td><td>{{call.headers}}</td></tr></for></tbody></table></div></details></if><script-diagnostics :evidence="{{sandboxDetails}}"></script-diagnostics><details><summary>Test input and returned changes</summary><pre tabindex="0" data-copy-surface>{{testEvidence}}</pre></details></section></if>
   </details>
   <if condition="testResult"><p class="script-test-summary" role="status">{{testResult}}<if condition="testOutdated"> · Outdated</if></p></if>
   <details class="debug-options"><summary>Debugger options</summary><label>Breakpoints before initialization (source line numbers) <input w-ref="{debugBreakpointLines}" value="{{debugLinesText}}" @input="{changeDebugLines(e)}" placeholder="For example: 4, 12" maxlength="1536"></label><label>Pause on exceptions <select w-ref="{debugExceptionPolicy}" value="{{debugPolicy}}" @change="{changeDebugPolicy(e)}"><option value="uncaught">Uncaught</option><option value="all">All exceptions</option><option value="none">Do not pause</option></select></label><p class="field-help">Click the editor gutter to set breakpoints before starting. Debug test uses this input and a fresh sandbox. Breakpoints and exception choices are kept for the next run. Source and variables in the debugger are read-only.</p></details>

@@ -2,6 +2,65 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import * as api from "../src/api.mjs";
 
+test("streaming text replacement handles every byte split and flushes incomplete suffixes", () => {
+  for (const [text, search, replacement, expected] of [
+    ["before-before-bef", "before", "after", "after-after-bef"],
+    ["雪🌍雪🌍終", "雪🌍", "changed", "changedchanged終"],
+    ["ababa", "aba", "x", "xba"],
+    ["aaaa", "aa", "", ""],
+    ["abc", "abc", "abc", "abc"],
+    ["", "x", "y", ""],
+  ]) {
+    const input = api.utf8Encode(text);
+    for (const chunks of [
+      ...input.map((_, split) => [input.slice(0, split), input.slice(split)]),
+      input.map((byte) => [byte]),
+      [input],
+    ]) {
+      let pending = [];
+      const output = [];
+      const run = (end) => {
+        do {
+          const result = api.replaceTextChunk(
+            { bytes: pending, end },
+            search,
+            replacement,
+          ).decision;
+          if (result.action === "need-more") {
+            assert.equal(end, false);
+            assert.ok(pending.length < api.utf8Encode(search).length);
+            return;
+          }
+          const consumed =
+            result.action === "continue" ? pending.length : (result.consumed ?? pending.length);
+          assert.ok(consumed > 0 || pending.length === 0);
+          output.push(...(result.action === "continue" ? pending : result.bytes));
+          pending = pending.slice(consumed);
+        } while (pending.length);
+      };
+      for (const chunk of chunks) {
+        pending.push(...chunk);
+        if (pending.length) run(false);
+      }
+      run(true);
+      assert.equal(api.utf8Decode(output), expected);
+    }
+  }
+  assert.throws(() => api.replaceTextChunk({ bytes: [], end: true }, "", "x"));
+});
+
+test("streaming helpers keep selection, head edits and consumption explicit", () => {
+  const head = api.edit({ headers: [api.setHeader("x-sample", "yes")] });
+  assert.deepEqual(api.deferResponseHeaders(head), { ...head, body: "stream", deferHeaders: true });
+  assert.equal(api.needMore().decision.action, "need-more");
+  assert.deepEqual(api.forward(3, { diagnostics: ["inspected"] }), {
+    decision: { action: "forward", consumed: 3 },
+    diagnostics: ["inspected"],
+  });
+  assert.equal(api.emit([1, 2], { consumed: 3 }).decision.consumed, 3);
+  assert.throws(() => api.emit([256]));
+});
+
 test("UTF-8 and base64 preserve bytes and reject ambiguous or invalid encodings", () => {
   for (const text of ["", "héllo 🌍", "\u0000\ufeff", "\ud800x\udfff"]) {
     const expected = Array.from(new TextEncoder().encode(text));

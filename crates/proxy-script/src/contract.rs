@@ -11,6 +11,12 @@ use crate::{ScriptAction, ScriptHeaderOperation};
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ScriptResult {
+    /// Optional response body selection, response-head phase only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub body: Option<ScriptBodyMode>,
+    /// Inspect initial streaming bytes before releasing response headers.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub defer_headers: bool,
     /// Native console evidence, supplied only by the supervisor.
     #[serde(skip_deserializing, skip_serializing_if = "Vec::is_empty")]
     pub logs: Vec<crate::LogRun>,
@@ -30,6 +36,8 @@ pub struct ScriptResult {
 impl From<ScriptAction> for ScriptResult {
     fn from(decision: ScriptAction) -> Self {
         Self {
+            body: None,
+            defer_headers: false,
             logs: Vec::new(),
             decision,
             annotations: Vec::new(),
@@ -37,6 +45,18 @@ impl From<ScriptAction> for ScriptResult {
             state: None,
         }
     }
+}
+
+/// Per-response body callback selection, within native admission and capabilities.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ScriptBodyMode {
+    /// Do not invoke a body callback for this script.
+    Skip,
+    /// Invoke the complete-body callback before committing headers.
+    Buffer,
+    /// Invoke the incremental callback with prompt headers unless deferred.
+    Stream,
 }
 
 pub use transmog_core::intercept::{ScriptAnnotation, ScriptSeverity};
@@ -88,7 +108,7 @@ pub struct ScriptEdits {
     pub url: Option<String>,
     /// Response status; response phases only.
     pub status: Option<u16>,
-    /// Complete decoded replacement bytes; body phases only.
+    /// Decoded replacement for a complete body or the entire pending streaming window.
     pub bytes: Option<Vec<u8>>,
 }
 

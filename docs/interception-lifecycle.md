@@ -21,6 +21,20 @@ synchronization for mutable state shared by its callbacks. State shared across
 exchanges must be explicit factory-owned synchronized state; the runtime does
 not provide a global registry.
 
+Complete-body handlers declaring head edits hold outgoing headers until the
+composed pipeline completes. A streaming filter can instead report
+`head_pending()` during bounded initial inspection and return a head edit before
+releasing it. Head availability belongs to that stage; a later stage buffering
+the response does not authorize an earlier stage to revise a released head.
+Streaming filters receive effective heads from preceding stages and use the same
+callback gates, cancellation and debugger pause clocks as complete-body hooks.
+
+The runtime retains initial output until headers are released, then sends it
+before reading more source frames. Source-byte accounting carries into the
+remaining pump. For complete encoded output available before commitment, the
+runtime installs the final length after header translation, subject to message
+semantics and trailer framing. Unknown-length output keeps streaming.
+
 ## Short circuits
 
 If B returns a local response, C is not entered. The response unwinds through B
