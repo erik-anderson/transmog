@@ -118,7 +118,7 @@ export function onRequestHead(event: RequestHeadEvent) {
 
 Choose Open debugger in Automation → Scripts or Settings → Extensions, or toggle it with F12. After the first open, the app toolbar keeps a Debugger shortcut until you quit. Browse saved scripts and installed extension files without activating them. Click beside a line number to toggle a breakpoint, or right-click for a condition or logpoint. A filled red circle is bound; an outline is pending. Logpoints use blue diamonds.
 
-While the workspace is open, normal script and visualizer workers honor breakpoints and debugger statements. Dock it beside Traffic or move it to a separate window. Closing continues paused work and detaches; saved breakpoints return next time.
+While the workspace is open, normal script and visualizer workers honor breakpoints and debugger statements. Dock it beside Traffic or move it to a separate window. Moving preserves Console history, filters, and cleared output. Closing continues paused work and detaches; saved breakpoints return next time.
 
 F8 or Ctrl+\ continues a paused worker, or schedules Pause next callback for a running or idle worker. Press again to cancel a scheduled pause. F5 also continues. Step over: F10. Step into: F11. Step out: Shift+F11. Stop: Shift+F5. Hover or focus toolbar icons for their shortcuts. Switch between mapped TypeScript and running JavaScript when a source map is available.
 

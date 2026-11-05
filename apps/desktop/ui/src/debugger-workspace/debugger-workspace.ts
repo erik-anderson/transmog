@@ -1,5 +1,6 @@
 import "../pane-divider/pane-divider.js";
 import "./debug-value.js";
+import { ConsoleOutput, consoleRuns, consoleRunKey, type ClearedLog } from "./console-output.js";
 import { breakpointGroups, type Point, type PointGroup } from "./breakpoints.js";
 import { debuggerToggleKey } from "./shortcuts.js";
 import { evidence } from "./models.js";
@@ -20,6 +21,7 @@ import {
   type InspectionScope,
   type ValueView,
   type ValueLease,
+  type ConsoleHistoryState,
 } from "./inspection.js";
 import type {
   ScriptDiagnostics,
@@ -60,6 +62,10 @@ interface View {
   layout?: DebuggerLayout;
 }
 interface SavedView {
+  consoleHistory?: ConsoleHistoryState;
+  consoleLevel?: string;
+  consoleFilter?: string;
+  clearedLogs?: ClearedLog[];
   valueLeases?: ValueLease[];
   logpoints?: ConsoleRow[];
   eventCursors?: Array<[string, number]>;
@@ -178,9 +184,9 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerFeed: ConsoleRow[] = [];
   @observable debuggerConsoleFilter = "all";
   @observable debuggerConsoleLevel = "all";
-  private clearedLogs = new Set<string>();
+  private readonly consoleLogs = new ConsoleOutput();
+  private pendingConsoleScroll: number | null = null;
   private logKeys = new Map<string, number>();
-  private logSerial = 0;
   private logpointRows: ConsoleRow[] = [];
   private eventCursors = new Map<string, number>();
   private pauseControl: { session: string; request: number } | null = null;
@@ -914,8 +920,16 @@ export class DebuggerWorkspace extends WebUIElement {
         this.pendingValueLeases = saved.valueLeases ?? [];
         this.logpointRows = saved.logpoints ?? [];
         this.eventCursors = new Map(saved.eventCursors ?? []);
-        this.commandHistory.entries = saved.commands ?? [];
-        this.commandHistory.reset();
+        this.commandHistory.restore(
+          saved.consoleHistory ?? {
+            entries: saved.commands ?? [],
+            index: saved.commands?.length ?? 0,
+            draft: "",
+          },
+        );
+        this.consoleLogs.restore(saved.clearedLogs ?? []);
+        this.debuggerConsoleLevel = saved.consoleLevel ?? "all";
+        this.debuggerConsoleFilter = saved.consoleFilter ?? "all";
         this.debuggerWatches = (saved.watches ?? []).map((expression) => ({
           id: ++this.watchSerial,
           expression,
@@ -939,7 +953,7 @@ export class DebuggerWorkspace extends WebUIElement {
         if (saved.diagnostics) {
           this.diagnostics?.restoreView(saved.diagnostics);
         }
-        this.consoleOutput.scrollTop = saved.scroll ?? 0;
+        this.pendingConsoleScroll = saved.scroll ?? 0;
       }
       const first =
         this.files.find(
@@ -1003,6 +1017,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.busy = true;
     const generation = this.generation;
     const pointRevision = this.pointEditRevision;
+    const consoleScroll = this.consoleOutput.scrollTop;
     const follow =
       this.consoleOutput.scrollHeight -
         this.consoleOutput.scrollTop -
@@ -1297,6 +1312,7 @@ export class DebuggerWorkspace extends WebUIElement {
       if (this.debuggerPaused && !this.views.get(this.debuggerTarget)?.stream.paused) {
         this.clearPause();
       }
+      this.consoleLogs.retain(this.views.values());
       if (!this.debuggerPaused) {
         this.debuggerStatus = this.debuggerTarget
           ? this.views.get(this.debuggerTarget)?.stream.closed
@@ -1371,7 +1387,10 @@ export class DebuggerWorkspace extends WebUIElement {
         mode.includes("Visualizer");
       this.trimConsole();
       this.$flushUpdates();
-      if (follow) {
+      if (this.pendingConsoleScroll !== null) {
+        this.consoleOutput.scrollTop = this.pendingConsoleScroll;
+        this.pendingConsoleScroll = null;
+      } else if (follow && this.consoleOutput.scrollTop === consoleScroll) {
         this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
       }
     } catch (error) {
@@ -1603,6 +1622,7 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   clearConsole(): void {
+    this.pendingConsoleScroll = null;
     for (const row of this.debuggerConsole) {
       this.inspection.remove(`console-${row.id}`);
     }
@@ -1610,8 +1630,11 @@ export class DebuggerWorkspace extends WebUIElement {
     this.requests.clear();
     this.logpointRows = [];
     this.diagnostics?.clearLogs();
-    this.clearedLogs = new Set([...this.clearedLogs, ...this.logKeys.keys()].slice(-2048));
+    this.consoleLogs.clear(this.views.values());
     this.updateConsoleFeed();
+  }
+  consoleInteracted(): void {
+    this.pendingConsoleScroll = null;
   }
   consoleFilter(event: Event, level = false): void {
     if (level) {
@@ -1630,17 +1653,15 @@ export class DebuggerWorkspace extends WebUIElement {
     const logs: ConsoleRow[] = [];
     const keys = new Map<string, number>();
     for (const view of this.views.values()) {
-      for (const run of view.stream.logs.length ? view.stream.logs : (view.outcome?.logs ?? [])) {
+      for (const run of consoleRuns(view)) {
         const context = run.context;
-        const base = `${view.info.session}/${context.worker}/${context.invocation}/${context.callback}`;
+        const base = consoleRunKey(view, run);
         const add = (key: string, row: Omit<ConsoleRow, "id">): void => {
-          const id = this.logKeys.get(key) ?? --this.logSerial;
+          const id = this.logKeys.get(key) ?? ++this.serial;
           keys.set(key, id);
-          if (!this.clearedLogs.has(key)) {
-            logs.push({ ...row, id });
-          }
+          logs.push({ ...row, id });
         };
-        for (const record of run.records) {
+        for (const record of this.consoleLogs.records(view, run)) {
           const frame = record.frames.find((frame) => frame.original ?? frame.generated);
           const location = frame?.original ?? frame?.generated;
           add(`${base}/${record.sequence}`, {
@@ -1657,15 +1678,13 @@ export class DebuggerWorkspace extends WebUIElement {
               : {}),
           });
         }
-        const incomplete =
-          run.incomplete &&
-          !(view.stream.active && view.stream.operation?.invocation === context.invocation);
-        if (run.dropped || incomplete) {
+        const loss = this.consoleLogs.loss(view, run);
+        if (loss.dropped || loss.incomplete) {
           add(`${base}/loss`, {
             input: "",
             output: [
-              run.dropped ? `${run.dropped} console records omitted` : "",
-              incomplete ? "Console capture incomplete" : "",
+              loss.dropped ? `${loss.dropped} console records omitted` : "",
+              loss.incomplete ? "Console capture incomplete" : "",
             ]
               .filter(Boolean)
               .join(" · "),
@@ -2160,6 +2179,7 @@ export class DebuggerWorkspace extends WebUIElement {
     const session = this.debuggerTarget;
     const generation = this.generation;
     const id = ++this.serial;
+    this.pendingConsoleScroll = null;
     this.debuggerSubmitting = true;
     this.closeCompletions();
     this.commandHistory.add(input);
@@ -2231,7 +2251,10 @@ export class DebuggerWorkspace extends WebUIElement {
         logpoints: this.logpointRows,
         eventCursors: [...this.eventCursors],
         watches: this.debuggerWatches.map((watch) => watch.expression),
-        commands: this.commandHistory.entries,
+        consoleHistory: this.commandHistory.snapshot(),
+        consoleFilter: this.debuggerConsoleFilter,
+        consoleLevel: this.debuggerConsoleLevel,
+        clearedLogs: this.consoleLogs.snapshot(),
         groups: [...this.sourceGroups],
         split: this.debuggerConsoleSplit,
         file: this.selected?.id,

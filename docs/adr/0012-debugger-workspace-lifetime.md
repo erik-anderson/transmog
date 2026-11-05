@@ -16,6 +16,8 @@ an expired handle or duplicate output.
 Paging and collapsing release hidden child values before another read, preserving
 inspection capacity without retaining every visited page. Pending releases remain
 part of a surface's handoff until native command submission succeeds.
+The snapshot also retains Console history navigation, filters, scroll position,
+and per-run clear positions; later output and loss reports remain visible.
 
 Opening subscribes to current and future worker lifetimes. It does not reserve an
 exchange or activate unloaded extensions. Closing continues and detaches healthy

@@ -27,7 +27,7 @@ export async function checkNativeDebuggerWorkspace({
   await wait(() => editor.evaluate((element) => element.scriptReady), "editor");
   await editor.evaluate((element) => {
     element.sourceEditor.setValue(
-      "import {pass} from 'transmog:api';\nlet count=0;\nexport function onRequestHead(event:any){\n const local=7;\n if(event.request.path==='/workspace')debugger;\n count++;Reflect.set(globalThis, 'workspaceCount',count);return pass();\n}",
+      "import {pass} from 'transmog:api';\nlet count=0;\nexport function onRequestHead(event:any){\n const local=7;console.log('workspace callback');\n if(event.request.path==='/workspace')debugger;\n count++;Reflect.set(globalThis, 'workspaceCount',count);return pass();\n}",
     );
     element.scriptForm.elements.namedItem("scriptHost").value = "127.0.0.1";
     element.scriptForm.elements.namedItem("scriptPath").value = "";
@@ -187,6 +187,8 @@ export async function checkNativeDebuggerWorkspace({
     "temporary continue to location",
   );
   await surface.locator(".command").getByText("workspace local: 7", { exact: true }).waitFor();
+  await surface.locator(".command").getByText("workspace callback", { exact: true }).waitFor();
+  await surface.getByRole("button", { name: "Clear", exact: true }).click();
   await prompt.fill("Array.from({length:64},(_,i)=>({i}))");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
   const fullBudget = surface.locator(".command").filter({ hasText: "› Array.from" });
@@ -200,6 +202,11 @@ export async function checkNativeDebuggerWorkspace({
   await fullBudget.getByRole("button", { name: "Previous properties", exact: true }).click();
   await fullBudget.getByRole("button", { name: "Next properties", exact: true }).waitFor();
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("preserved draft");
+  await surface.getByRole("textbox", { name: "Immediate expression" }).press("ArrowUp");
+  await surface
+    .getByRole("combobox", { name: "Console workers", exact: true })
+    .selectOption("selected");
+  await surface.getByRole("combobox", { name: "Console level", exact: true }).selectOption("warn");
   await surface.evaluate((element) => element.place("bottom"));
   const dock = page.locator("debugger-workspace");
   await wait(
@@ -208,14 +215,41 @@ export async function checkNativeDebuggerWorkspace({
   );
   assert.equal(
     await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
+    "Array.from({length:64},(_,i)=>({i}))",
+  );
+  await dock.getByRole("textbox", { name: "Immediate expression" }).press("ArrowDown");
+  assert.equal(
+    await dock.getByRole("textbox", { name: "Immediate expression" }).inputValue(),
     "preserved draft",
   );
   assert.equal(
+    await dock.getByRole("combobox", { name: "Console workers", exact: true }).inputValue(),
+    "selected",
+  );
+  assert.equal(
+    await dock.getByRole("combobox", { name: "Console level", exact: true }).inputValue(),
+    "warn",
+  );
+  await dock.getByRole("combobox", { name: "Console level", exact: true }).selectOption("all");
+  assert.equal(
+    await dock.locator(".command").getByText("workspace callback", { exact: true }).count(),
+    0,
+  );
+
+  assert.equal(
     await dock.locator(".command").getByText("workspace local: 7", { exact: true }).count(),
-    1,
-    "Moving the debugger must not replay logpoint output",
+    0,
+    "Moving the debugger must not replay cleared logpoint output",
   );
   await dock.locator(".watch").getByText("7", { exact: true }).waitFor();
+  await dock
+    .getByRole("complementary", { name: "Call stack and variables" })
+    .locator("details")
+    .filter({ has: page.getByText("Scopes", { exact: true }) })
+    .locator("debug-value")
+    .filter({ hasText: "local" })
+    .getByText("7", { exact: true })
+    .waitFor();
   const keptResult = dock.locator(".command").filter({ hasText: "› Array.from" });
   await keptResult
     .locator("debug-value")

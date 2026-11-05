@@ -9,12 +9,56 @@ const compiled = await build({
   format: "esm",
   write: false,
 });
-const { Inspection } = await import(
+const { Inspection, ConsoleHistory } = await import(
   "data:text/javascript;base64," + Buffer.from(compiled.outputFiles[0].text).toString("base64")
 );
 globalThis.window = globalThis;
 const tick = () => new Promise((resolve) => setImmediate(resolve));
 const value = (handle) => ({ kind: "object", display: "Object", handle, truncated: false });
+
+test("history navigation preserves the draft through a surface snapshot", () => {
+  const history = new ConsoleHistory();
+  history.add("first");
+  history.add("second");
+  assert.equal(history.move(-1, "unsent draft"), "second");
+  const restored = new ConsoleHistory();
+  restored.restore(history.snapshot());
+  assert.equal(restored.move(-1, "second"), "first");
+  assert.equal(restored.move(1, "first"), "second");
+  assert.equal(restored.move(1, "second"), "unsent draft");
+});
+
+test("scope reads wait for native acceptance of pending surface releases", async () => {
+  const sent = [];
+  let finishRelease;
+  const scope = { session: "s", pause: 1, frame: 0 };
+  const registry = new Inspection(
+    async (action) => {
+      const request = sent.push(action);
+      if (action.kind === "release")
+        await new Promise((resolve) => {
+          finishRelease = resolve;
+        });
+      return request;
+    },
+    () => true,
+    () => {},
+  );
+  registry.releaseLeases([{ scope, handles: [1, 2] }]);
+  const read = registry.request({ kind: "scopes", pause: 1, frame: 0 }, scope);
+  await tick();
+  assert.deepEqual(
+    sent.map((action) => action.kind),
+    ["release"],
+  );
+  finishRelease();
+  await tick();
+  assert.equal(sent[1].kind, "scopes");
+  registry.receive("s", 2, { kind: "scopes", pause: 1, frame: 0, scopes: [] });
+  assert.equal((await read).kind, "scopes");
+  registry.dispose();
+  await tick();
+});
 test("clearing a full handle budget sends one bounded release instead of flooding the control queue", async () => {
   const sent = [];
   const registry = new Inspection(

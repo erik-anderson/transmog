@@ -51,6 +51,10 @@ export class Inspection {
     this.registering++;
     let request: number | undefined;
     try {
+      await this.releasePending;
+      if (!this.valid(scope)) {
+        return;
+      }
       request = await this.send(action, scope.session);
     } finally {
       this.registering--;
@@ -302,10 +306,23 @@ export class Inspection {
 }
 
 /** Prompt history preserves a draft when moving back from the newest command. */
+export interface ConsoleHistoryState {
+  entries: string[];
+  index: number;
+  draft: string;
+}
 export class ConsoleHistory {
   entries: string[] = [];
   private index = 0;
   private draft = "";
+  snapshot(): ConsoleHistoryState {
+    return { entries: [...this.entries], index: this.index, draft: this.draft };
+  }
+  restore(state: ConsoleHistoryState): void {
+    this.entries = [...state.entries];
+    this.index = Math.max(0, Math.min(this.entries.length, state.index));
+    this.draft = state.draft;
+  }
   add(text: string): void {
     if (this.entries.at(-1) !== text) {
       this.entries.push(text);

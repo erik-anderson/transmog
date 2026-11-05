@@ -173,6 +173,11 @@ export function installDebuggerWorkspaceFixture() {
       debug.open = args.placement !== "closed";
       debug.viewState = args.viewState;
       const shell = document.querySelector("app-shell");
+      if (debug.recreateSurface && debug.open) {
+        shell.debuggerPlacement = "closed";
+        shell.debuggerDocked = false;
+        shell.$flushUpdates();
+      }
       shell.debuggerPlacement = args.placement === "window" ? "bottom" : args.placement;
       shell.debuggerDocked = debug.open;
       return;

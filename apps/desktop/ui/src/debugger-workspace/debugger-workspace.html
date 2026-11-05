@@ -507,7 +507,7 @@
       initial="70"
       @pane-resize="{resizeConsole(e)}"
     ></pane-divider>
-    <section class="console" aria-label="Console and immediate commands">
+    <section class="console" aria-label="Console and immediate commands" @pointerdown="{consoleInteracted()}" @keydown="{consoleInteracted()}" @wheel="{consoleInteracted()}">
       <header>
         <strong>Console</strong><span>{{debuggerScope}}</span
         ><select
