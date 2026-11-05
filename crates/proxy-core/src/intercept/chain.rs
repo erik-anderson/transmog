@@ -466,6 +466,30 @@ enum TerminalOutcome {
 }
 
 impl ExchangeChain {
+    /// Waits for dependent I/O without charging debugger pauses to its deadline.
+    /// # Errors
+    /// Returns a budget error when active execution exhausts the original duration.
+    pub async fn wait_debug_budget<T, F: std::future::Future<Output = T>>(
+        &self,
+        duration: Duration,
+        future: F,
+    ) -> Result<T, transmog_script_diagnostics::supervision::BudgetExpired> {
+        transmog_script_diagnostics::supervision::wait_budgets(
+            duration,
+            &self.debug_pause_clocks(),
+            future,
+        )
+        .await
+    }
+    /// Clocks of attached script workers that can block this exchange, including queued work.
+    pub fn debug_pause_clocks(
+        &self,
+    ) -> Vec<Arc<transmog_script_diagnostics::supervision::PauseClock>> {
+        self.interceptors
+            .iter()
+            .filter_map(|entry| entry.interceptor.debug_pause_clock())
+            .collect()
+    }
     /// Shared exchange-local hook context.
     pub fn context(&self) -> &HookContext {
         &self.context
@@ -1904,6 +1928,8 @@ mod tests {
             supervision::Session,
         };
         let session = Session::new(DebugOptions {
+            pause_on_start: false,
+            persistent: false,
             session: "a".repeat(32),
             exceptions: ExceptionPolicy::None,
             breakpoints: vec![],

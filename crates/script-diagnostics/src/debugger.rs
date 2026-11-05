@@ -1,4 +1,5 @@
-//! Native-only debugger contracts. No expression evaluation, mutation or Inspector wire API.
+//! Native-only debugger commands, including explicit bounded local evaluation.
+//! The Inspector wire protocol is never exposed to the UI.
 
 use crate::{ExceptionDiagnostic, SourceLocation};
 use serde::{Deserialize, Serialize};
@@ -45,6 +46,9 @@ pub enum ExceptionPolicy {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceBreakpoint {
+    /// Optional side-effect-free JavaScript predicate evaluated in the hit frame.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub condition: Option<String>,
     /// Client identity, unique within this finite breakpoint list.
     pub id: u32,
     /// Exact registered module identity, never a URL pattern or file-read permission.
@@ -55,6 +59,12 @@ pub struct SourceBreakpoint {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugOptions {
+    /// Fresh fixture runs can stop at the first executable statement in verified user modules.
+    #[serde(default)]
+    pub pause_on_start: bool,
+    /// A visible workspace owns this attachment until explicitly detached.
+    #[serde(default)]
+    pub persistent: bool,
     /// Native random 128-bit session identity, encoded as 32 lowercase hexadecimal digits.
     pub session: String,
     /// Initial pause-on-exception policy.
@@ -82,7 +92,11 @@ pub fn valid_breakpoints(values: &[SourceBreakpoint]) -> bool {
             .sum::<usize>()
             <= MAX_BREAKPOINT_TEXT_BYTES
         && values.iter().all(|value| {
-            !value.location.source.is_empty()
+            value
+                .condition
+                .as_ref()
+                .is_none_or(|text| !text.is_empty() && text.len() <= 4096)
+                && !value.location.source.is_empty()
                 && value.location.source.len() <= 2048
                 && !value.location.source.chars().any(char::is_control)
                 && value.location.line > 0
@@ -120,7 +134,7 @@ pub struct DebugCommand {
     pub session: String,
     /// Monotonic native request identity, independently correlated from invocations.
     pub request: u64,
-    /// Allowed operation; unknown fields, conditions and arbitrary protocol methods are rejected.
+    /// Allowed operation; unknown fields and arbitrary protocol methods are rejected.
     pub action: DebugAction,
 }
 impl DebugCommand {
@@ -142,6 +156,17 @@ impl DebugCommand {
                 }
                 DebugAction::Properties { pause, handle, .. } => *pause > 0 && *handle > 0,
                 DebugAction::Resume { pause, .. } => *pause > 0,
+                DebugAction::Evaluate {
+                    expression,
+                    pause,
+                    frame,
+                } => {
+                    !expression.trim().is_empty()
+                        && expression.len() <= 8192
+                        && ((*pause == 0 && frame.is_none())
+                            || (*pause > 0
+                                && frame.is_some_and(|frame| (frame as usize) < MAX_DEBUG_FRAMES)))
+                }
                 DebugAction::Exceptions { .. } | DebugAction::Stop | DebugAction::Detach => true,
             }
     }
@@ -151,6 +176,15 @@ impl DebugCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DebugAction {
+    /// Explicit local JavaScript, in a paused frame or an idle global context.
+    Evaluate {
+        /// Bounded command text, retained only in local developer memory.
+        expression: String,
+        /// Zero selects the idle global context.
+        pause: u64,
+        /// Required for a paused lexical scope.
+        frame: Option<u32>,
+    },
     /// Atomically replace source breakpoints, returning actual resolved positions.
     Breakpoints {
         /// Finite exact-source requests.
@@ -284,6 +318,9 @@ pub struct DebugEvent {
 impl std::fmt::Debug for DebugEvent {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let kind = match &self.event {
+            DebugEventKind::Output { .. } => "output",
+            DebugEventKind::Evaluating => "evaluating",
+            DebugEventKind::Evaluated { .. } => "evaluated",
             DebugEventKind::Attached => "attached",
             DebugEventKind::Detached => "detached",
             DebugEventKind::Sources { .. } => "sources",
@@ -306,6 +343,24 @@ impl std::fmt::Debug for DebugEvent {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case", deny_unknown_fields)]
 pub enum DebugEventKind {
+    /// Console calls made by an explicit Immediate command, separate from callback logs.
+    Output {
+        /// Native console level.
+        level: crate::LogLevel,
+        /// Bounded inert snapshot text.
+        text: String,
+    },
+    /// An explicit console command began running inside the selected isolate.
+    Evaluating,
+    /// Bounded console result, including an exception outcome.
+    Evaluated {
+        /// Requested frame generation, or zero for globals.
+        pause: u64,
+        /// Inert native preview, with handles scoped to this attachment.
+        value: DebugValue,
+        /// The command threw instead of returning.
+        thrown: bool,
+    },
     /// Session is attached; ordinary script activation remains independent.
     Attached,
     /// Idle debugger detached; script activation and worker globals are unchanged.
@@ -373,9 +428,12 @@ mod tests {
     #[test]
     fn configuration_rejects_ambiguous_breakpoint_identities_and_invalid_coordinates() {
         let mut config = super::DebugOptions {
+            pause_on_start: false,
+            persistent: false,
             session: "a".repeat(32),
             exceptions: super::ExceptionPolicy::None,
             breakpoints: vec![super::SourceBreakpoint {
+                condition: None,
                 id: 1,
                 location: crate::SourceLocation {
                     source: "file:///main.js".into(),

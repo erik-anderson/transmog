@@ -410,6 +410,7 @@ mod tests {
         .unwrap();
         cache_sources(&snapshot);
         let original_breakpoint = transmog_extensions::debugger::SourceBreakpoint {
+            condition: None,
             id: 1,
             location: SourceLocation {
                 source: format!("{ROOT}main.ts"),

@@ -50,9 +50,11 @@ impl PauseClock {
 struct Pending {
     since: Instant,
     inspection: bool,
+    started: bool,
     expected: Expected,
 }
 enum Expected {
+    Evaluate(u64),
     Configure,
     Resume,
     Release,
@@ -63,6 +65,7 @@ enum Expected {
 impl Expected {
     fn from_action(action: &DebugAction) -> Self {
         match action {
+            DebugAction::Evaluate { pause, .. } => Self::Evaluate(*pause),
             DebugAction::Scopes { pause, frame } => Self::Scopes(*pause, *frame),
             DebugAction::Properties {
                 pause,
@@ -77,6 +80,12 @@ impl Expected {
     }
     fn accepts(&self, event: &DebugEventKind) -> bool {
         match event {
+            DebugEventKind::Evaluating | DebugEventKind::Output { .. } => {
+                matches!(self, Self::Evaluate(_))
+            }
+            DebugEventKind::Evaluated { pause, .. } => {
+                matches!(self, Self::Evaluate(p) if p == pause)
+            }
             DebugEventKind::Rejected { .. } => true,
             DebugEventKind::Acknowledged => {
                 matches!(self, Self::Configure | Self::Resume | Self::Release)
@@ -116,6 +125,7 @@ impl Connection {
     }
 }
 struct State {
+    exceptions: crate::debugger::ExceptionPolicy,
     sources: BTreeMap<String, DebugSource>,
     breakpoints: BTreeMap<u32, BreakpointResolution>,
     breakpoint_request: u64,
@@ -128,6 +138,8 @@ struct State {
     invocation: u64,
     pause: u64,
     paused_at: Option<Instant>,
+    pause_snapshot: Option<DebugEvent>,
+    detach_requested: bool,
     request: u64,
     sequence: u64,
     bytes: usize,
@@ -149,6 +161,10 @@ pub struct Session {
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct SessionPage {
+    /// Current exception pause policy for this target.
+    pub exceptions: crate::debugger::ExceptionPolicy,
+    /// Current pause, retained even when transient inspection replies expire from history.
+    pub paused: Option<DebugEvent>,
     /// Complete bounded inventory on first read or after unseen history expired.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inventory: Option<DebugInventory>,
@@ -187,6 +203,7 @@ impl Session {
     /// Creates a controller after native code has generated the session ID.
     /// # Errors
     /// Rejects excessive/invalid initial configuration.
+    #[allow(clippy::too_many_lines)] // Initialize state and install its independent watchdog together.
     pub fn new(options: DebugOptions) -> Result<Arc<Self>, &'static str> {
         if !options.is_bounded() {
             return Err("Invalid debugger configuration");
@@ -206,11 +223,13 @@ impl Session {
                 )
             })
             .collect();
+        let exceptions = options.exceptions;
         let session = Arc::new(Self {
             options,
             created: Instant::now(),
             clock: Arc::default(),
             state: Mutex::new(State {
+                exceptions,
                 sources: BTreeMap::new(),
                 breakpoints,
                 breakpoint_request: 0,
@@ -223,6 +242,8 @@ impl Session {
                 invocation: 0,
                 pause: 0,
                 paused_at: None,
+                pause_snapshot: None,
+                detach_requested: false,
                 request: 0,
                 sequence: 0,
                 bytes: 0,
@@ -248,18 +269,23 @@ impl Session {
                         if state.connection.closed() {
                             break;
                         }
-                        let expired = session.created.elapsed()
-                            >= Duration::from_millis(SESSION_LEASE_MS)
-                            || state.paused_at.is_some_and(|start| {
-                                start.elapsed() >= Duration::from_millis(PAUSE_LEASE_MS)
-                            })
+                        let expired = (!session.options.persistent
+                            && (session.created.elapsed()
+                                >= Duration::from_millis(SESSION_LEASE_MS)
+                                || state.paused_at.is_some_and(|start| {
+                                    start.elapsed() >= Duration::from_millis(PAUSE_LEASE_MS)
+                                })))
                             || state.pending.values().any(|pending| {
-                                pending.since.elapsed()
-                                    >= Duration::from_millis(if pending.inspection {
-                                        100
-                                    } else {
-                                        1000
-                                    })
+                                (!session.options.persistent
+                                    || !state.active
+                                    || state.paused_at.is_some()
+                                    || pending.started)
+                                    && pending.since.elapsed()
+                                        >= Duration::from_millis(if pending.inspection {
+                                            100
+                                        } else {
+                                            1000
+                                        })
                             });
                         let arm_expired = state.armed_at.is_some_and(|start| {
                             start.elapsed() >= Duration::from_millis(ARM_LEASE_MS)
@@ -379,10 +405,16 @@ impl Session {
     }
     /// Ends an ordinary operation without manufacturing a successful debugger outcome.
     pub fn completed(&self) {
-        self.state
+        let mut state = self
+            .state
             .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-            .active = false;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        state.active = false;
+        for pending in state.pending.values_mut() {
+            if !pending.started {
+                pending.since = Instant::now();
+            }
+        }
     }
     /// Whether a session can still receive commands.
     pub fn is_closed(&self) -> bool {
@@ -392,6 +424,14 @@ impl Session {
             .connection
             .closed()
     }
+    /// Whether ordinary debugger commands can be sent at this attachment boundary.
+    pub fn ready_for_commands(&self) -> bool {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .connection
+            == Connection::Attached
+    }
     /// Whether native confirmation ended this session with an idle detach.
     pub fn detached(&self) -> bool {
         self.state
@@ -399,6 +439,21 @@ impl Session {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .connection
             == Connection::Detached
+    }
+    /// Continues and detaches, including an attachment queued behind ordinary work.
+    /// # Errors
+    /// Returns an error when the connected native control transport is unavailable.
+    pub fn request_detach(&self) -> Result<(), &'static str> {
+        let mut state = self.state.lock().map_err(|_| "Debugger unavailable")?;
+        if state.connection.closed() {
+            return Ok(());
+        }
+        if state.connection == Connection::Attaching {
+            state.detach_requested = true;
+            return Ok(());
+        }
+        drop(state);
+        self.command(DebugAction::Detach).map(|_| ())
     }
     /// Starts the independent bounded live arming interval.
     pub fn arm(&self) -> bool {
@@ -524,6 +579,7 @@ impl Session {
             return Err("Debugger session is unavailable");
         }
         let pause = match &action {
+            DebugAction::Evaluate { pause, .. } if *pause != 0 => Some(*pause),
             DebugAction::Resume { pause, .. }
             | DebugAction::Scopes { pause, .. }
             | DebugAction::Properties { pause, .. }
@@ -533,7 +589,10 @@ impl Session {
         if pause.is_some_and(|pause| state.paused_at.is_none() || pause != state.pause) {
             return Err("Pause has expired or resumed");
         }
-        if matches!(action, DebugAction::Detach) && (state.active || state.paused_at.is_some()) {
+        if matches!(action, DebugAction::Detach)
+            && !self.options.persistent
+            && (state.active || state.paused_at.is_some())
+        {
             return Err("Finish the current operation before detaching");
         }
         if state.pending.len() >= MAX_DEBUG_COMMANDS {
@@ -555,6 +614,7 @@ impl Session {
         state.pending.insert(
             request,
             Pending {
+                started: false,
                 since: Instant::now(),
                 expected: Expected::from_action(&command.action),
                 inspection: matches!(
@@ -566,6 +626,9 @@ impl Session {
             },
         );
         state.request = request;
+        if let DebugAction::Exceptions { policy } = command.action {
+            state.exceptions = policy;
+        }
         if let DebugAction::Breakpoints { values } = &command.action {
             state.breakpoint_request = request;
             state.breakpoints = values
@@ -610,7 +673,10 @@ impl Session {
         }
         let global = matches!(
             event.event,
-            DebugEventKind::Sources { .. }
+            DebugEventKind::Evaluating
+                | DebugEventKind::Output { .. }
+                | DebugEventKind::Evaluated { .. }
+                | DebugEventKind::Sources { .. }
                 | DebugEventKind::Acknowledged
                 | DebugEventKind::Rejected { .. }
                 | DebugEventKind::Stopped { .. }
@@ -640,6 +706,49 @@ impl Session {
             return Err("Debugger reply requires a request identity");
         }
         match &mut event.event {
+            DebugEventKind::Output { text, .. } => {
+                if text.len() > crate::MAX_LOG_RECORD_BYTES
+                    || !state
+                        .pending
+                        .get(&event.request)
+                        .is_some_and(|pending| pending.started)
+                {
+                    return Err("Invalid console output");
+                }
+            }
+            DebugEventKind::Evaluating => {
+                let pending = state
+                    .pending
+                    .get_mut(&event.request)
+                    .ok_or("Uncorrelated console start")?;
+                if pending.started {
+                    return Err("Duplicate console start");
+                }
+                pending.started = true;
+                pending.since = Instant::now();
+                if state.paused_at.is_none() {
+                    self.clock.pause();
+                }
+            }
+            DebugEventKind::Evaluated { pause, value, .. } => {
+                if !state
+                    .pending
+                    .get(&event.request)
+                    .is_some_and(|pending| pending.started)
+                {
+                    return Err("Console result arrived before evaluation started");
+                }
+                if *pause > 0 && (state.paused_at.is_none() || *pause != state.pause) {
+                    return Err("Stale console reply");
+                }
+                if value.display.len() > crate::debugger::MAX_VALUE_BYTES || value.kind.len() > 128
+                {
+                    return Err("Console result exceeds its budget");
+                }
+                if state.paused_at.is_none() {
+                    self.clock.resume();
+                }
+            }
             DebugEventKind::Attached => {
                 if state.connection.attached() {
                     return Err("Duplicate debugger attachment");
@@ -671,6 +780,11 @@ impl Session {
                     return Err("Invalid debugger pause transition");
                 }
                 state.pause = *pause;
+                for pending in state.pending.values_mut() {
+                    if !pending.started {
+                        pending.since = Instant::now();
+                    }
+                }
                 state.paused_at = Some(Instant::now());
                 self.clock.pause();
             }
@@ -720,10 +834,12 @@ impl Session {
                 }
             }
             DebugEventKind::Detached => {
-                if state.active || state.paused_at.is_some() {
+                if !self.options.persistent && (state.active || state.paused_at.is_some()) {
                     return Err("Detach during an operation");
                 }
                 state.connection = Connection::Detached;
+                state.paused_at = None;
+                self.clock.resume();
                 state.writer = None;
                 state.stop = None;
             }
@@ -779,7 +895,14 @@ impl Session {
             }
             DebugEventKind::Acknowledged => {}
         }
-        if event.request != 0 && !matches!(event.event, DebugEventKind::Sources { .. }) {
+        if event.request != 0
+            && !matches!(
+                event.event,
+                DebugEventKind::Sources { .. }
+                    | DebugEventKind::Evaluating
+                    | DebugEventKind::Output { .. }
+            )
+        {
             state.pending.remove(&event.request);
         }
         let stopped = matches!(event.event, DebugEventKind::Stopped { .. });
@@ -790,18 +913,32 @@ impl Session {
         } else {
             None
         };
+        match &event.event {
+            DebugEventKind::Paused { .. } => state.pause_snapshot = Some(event.clone()),
+            DebugEventKind::Resumed | DebugEventKind::Detached | DebugEventKind::Stopped { .. } => {
+                state.pause_snapshot = None;
+            }
+            _ => {}
+        }
         retain(&mut state, event, bytes);
         let finished = if state.connection.closed() {
             state.finished.take()
         } else {
             None
         };
+        let detach = state.detach_requested && state.connection == Connection::Attached;
+        if detach {
+            state.detach_requested = false;
+        }
         drop(state);
         if let Some(stop) = stop {
             stop();
         }
         if let Some(finished) = finished {
             finished();
+        }
+        if detach {
+            self.command(DebugAction::Detach)?;
         }
         Ok(())
     }
@@ -816,6 +953,7 @@ impl Session {
         }
         state.connection = Connection::Stopped;
         state.paused_at = None;
+        state.pause_snapshot = None;
         state.pending.clear();
         state.writer = None;
         self.clock.resume();
@@ -850,6 +988,8 @@ impl Session {
                 .front()
                 .is_none_or(|(sequence, ..)| after.saturating_add(1) < *sequence);
         SessionPage {
+            exceptions: state.exceptions,
+            paused: state.pause_snapshot.clone(),
             inventory: (after == 0 || omitted).then(|| DebugInventory {
                 sources: state.sources.values().cloned().collect(),
                 breakpoints: state.breakpoints.values().cloned().collect(),
@@ -1016,6 +1156,43 @@ pub fn wait_budget<T, F: std::future::Future<Output = T>>(
             Arc::clone(clock),
             Box::pin(future),
         )),
+    }
+}
+/// Waits on work that depends on several workers, excluding their combined debug blocking.
+/// Shared clocks are counted once; overlapping pauses never subtract more than wall time.
+/// # Errors
+/// Returns `BudgetExpired` when active execution exhausts the original budget.
+pub async fn wait_budgets<T, F: std::future::Future<Output = T>>(
+    duration: Duration,
+    clocks: &[Arc<PauseClock>],
+    future: F,
+) -> Result<T, BudgetExpired> {
+    if clocks.is_empty() {
+        return wait_budget(duration, None, future).await;
+    }
+    let mut unique: Vec<Arc<PauseClock>> = Vec::new();
+    for clock in clocks {
+        if !unique.iter().any(|previous| Arc::ptr_eq(previous, clock)) {
+            unique.push(Arc::clone(clock));
+        }
+    }
+    let mut snapshots: Vec<_> = unique.iter().map(|clock| clock.elapsed()).collect();
+    let mut previous = Instant::now();
+    let mut active = Duration::ZERO;
+    tokio::pin!(future);
+    loop {
+        let now = Instant::now();
+        let delta = now.duration_since(previous);
+        previous = now;
+        let mut paused = Duration::ZERO;
+        for (clock, snapshot) in unique.iter().zip(&mut snapshots) {
+            let elapsed = clock.elapsed();
+            paused = paused.saturating_add(elapsed.saturating_sub(*snapshot));
+            *snapshot = elapsed;
+        }
+        active = active.saturating_add(delta.saturating_sub(paused));
+        let remaining = duration.checked_sub(active).ok_or(BudgetExpired)?;
+        tokio::select! {value=&mut future=>return Ok(value),()=tokio::time::sleep(remaining.min(Duration::from_millis(10)))=>{}}
     }
 }
 async fn debug_budget<T, F: std::future::Future<Output = T>>(

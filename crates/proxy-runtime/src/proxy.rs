@@ -2567,13 +2567,14 @@ impl ProxyState {
         let trust_generation = plan.pool_key.trust_generation;
         let upstream =
             UpstreamExecutor::new(service, self.config.limits.application_upstream_timeout)
-                .execute(
+                .execute_debug(
                     StreamingRequest {
                         head: request_head.clone(),
                         body: request_body,
                     },
                     plan,
                     chain.context().cancellation(),
+                    &chain.debug_pause_clocks(),
                 )
                 .await;
         let mut upstream = match upstream {
@@ -3517,7 +3518,7 @@ impl ProxyState {
             let next = tokio::select! {
                 () = manual.cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
                 () = chain.context().cancellation().cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
-                next = timeout(self.config.limits.body_idle_timeout, source.frame()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
+                next = chain.wait_debug_budget(self.config.limits.body_idle_timeout, source.frame()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
             };
             let Some(frame) = next else { break };
             let Some(frame) = incoming_frame(frame).map_err(BodyPipelineError::Input)? else {
@@ -3582,7 +3583,7 @@ impl ProxyState {
             let next = tokio::select! {
                 () = manual.cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
                 () = chain.context().cancellation().cancelled() => return Err(BodyPipelineError::Execution(HookExecutionError::Cancelled).into()),
-                next = timeout(wait, source.recv()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
+                next = chain.wait_debug_budget(wait, source.recv()) => next.map_err(|_| ProxyRuntimeError::BodyIdleTimeout)?,
             };
             waited = waited.saturating_add(receiving.elapsed());
             let Some(frame) = next else {
@@ -4714,7 +4715,10 @@ async fn stream_incoming_through_hooks(
         let mut output = StreamingBodyTracker::new(limit);
         let mut client_body_completed = pipeline.has_buffered_output();
         loop {
-            let frame = match timeout(body_idle_timeout, body.frame()).await {
+            let frame = match chain
+                .wait_debug_budget(body_idle_timeout, body.frame())
+                .await
+            {
                 Ok(Some(frame)) => frame,
                 Ok(None) => break,
                 Err(_) => {
@@ -4865,7 +4869,9 @@ async fn stream_response_through_hooks(
             let frame = match if event_stream {
                 Ok(body.recv().await)
             } else {
-                timeout(body_idle_timeout, body.recv()).await
+                chain
+                    .wait_debug_budget(body_idle_timeout, body.recv())
+                    .await
             } {
                 Ok(Some(frame)) => frame,
                 Ok(None) => break,
@@ -5020,7 +5026,9 @@ async fn stream_local_response_through_hooks(
             let frame = match if event_stream {
                 Ok(body.recv().await)
             } else {
-                timeout(body_idle_timeout, body.recv()).await
+                chain
+                    .wait_debug_budget(body_idle_timeout, body.recv())
+                    .await
             } {
                 Ok(Some(frame)) => frame,
                 Ok(None) => break,

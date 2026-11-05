@@ -6,6 +6,8 @@ mod auth;
 mod captured_preview;
 #[path = "comparison.rs"]
 mod comparison;
+#[path = "debugger_workspace.rs"]
+mod debugger_workspace;
 #[path = "extension_management.rs"]
 mod extension_management;
 #[path = "format_converter.rs"]
@@ -973,9 +975,11 @@ async fn start_debug_test(
     window: tauri::WebviewWindow,
     state: State<'_, DesktopState>,
 ) -> Result<transmog_app::DebugSessionInfo, AppError> {
-    state
-        .window_application(&window)?
-        .debug_script_test(window.label(), request)
+    let _ = state;
+    debugger_workspace::ensure_ready(&window)
+        .await
+        .map_err(debugger_workspace::opening_error)?
+        .debug_workspace_test(request)
 }
 #[tauri::command]
 fn debug_session(
@@ -2552,15 +2556,18 @@ pub fn run() {
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(updates)
         .manage(format_converter::ConverterWindows::new())
+        .manage(debugger_workspace::DebuggerWindows::default())
         .manage(desktop_state)
         .manage(agent_state)
         .register_uri_scheme_protocol("transmog-ui", move |context, request: Request<Vec<u8>>| {
             let state = context.app_handle().state::<DesktopState>();
             let converter_mode = context.app_handle().state::<format_converter::ConverterWindows>().contains(context.webview_label());
+            let debugger_app = context.app_handle().state::<debugger_workspace::DebuggerWindows>().application(context.webview_label());
+            let debugger_mode = context.webview_label().starts_with("debugger-") && debugger_app.is_some();
             let application = state
                 .workspaces
                 .application(&state.application, context.webview_label());
-            let application = if converter_mode { Ok(state.application.clone()) } else { application };
+            let application = if debugger_mode { Ok(debugger_app.unwrap()) } else if converter_mode { Ok(state.application.clone()) } else { application };
             let Ok(application) = application else {
                 return Response::builder()
                     .status(404)
@@ -2569,6 +2576,8 @@ pub fn run() {
             };
             let mut view = ShellView::from(&application.status());
             view.converter_mode = converter_mode;
+            view.debugger_mode = debugger_mode;
+            if debugger_mode {view.page_title="Debugger — Transmog";}
             if converter_mode { view.page_title = "Format converter — Transmog"; }
             view.viewer_mode = context.webview_label() != "main";
             into_tauri_response(renderer.respond(
@@ -2731,6 +2740,18 @@ pub fn run() {
                 debug_session,
                 debug_command,
                 close_debug_session,
+                debugger_workspace::place_debugger,
+                debugger_workspace::open_debugger,
+                debugger_workspace::toggle_debugger,
+                debugger_workspace::debugger_seen,
+                debugger_workspace::acknowledge_debugger,
+                debugger_workspace::debugger_workspace,
+                debugger_workspace::debugger_file,
+            debugger_workspace::debugger_breakpoint_positions,
+                debugger_workspace::workspace_breakpoints,
+                debugger_workspace::workspace_debug_session,
+                debugger_workspace::workspace_debug_command,
+                debugger_workspace::workspace_restart,
                 response_assets,
                 inspect_response_asset,
                 autoresponse_source_headers,
@@ -2848,14 +2869,16 @@ pub fn run() {
                 let state = window.state::<DesktopState>();
                 let label = window.label();
                 let converters = window.state::<format_converter::ConverterWindows>();
-                let allowed = if converters.contains(label) { format_converter::command_allowed(invoke.message.command()) } else { state
+                let debugger_windows=window.state::<debugger_workspace::DebuggerWindows>();
+                let allowed = if debugger_windows.contains(label) {debugger_workspace::command_allowed(invoke.message.command())} else if converters.contains(label) { format_converter::command_allowed(invoke.message.command()) } else { state
                     .workspaces
                     .application(&state.application, label)
                     .is_ok()
                     && (label == "main"
                         || workspaces::viewer_command_allowed(invoke.message.command())
                         || (state.workspaces.review(label).is_some() && workspaces::agent_review_command_allowed(invoke.message.command()))
-                        || format_converter::command_allowed(invoke.message.command())) };
+                        || format_converter::command_allowed(invoke.message.command())
+                        || debugger_workspace::command_allowed(invoke.message.command())) };
                 if allowed {
                     #[cfg(feature = "desktop-test-fixtures")]
                     if matches!(invoke.message.command(), "certificate_test_info" | "delete_certificate_test_key" | "close_certificate_test_viewer" | "close_certificate_test_main") {
@@ -2882,6 +2905,9 @@ pub fn run() {
             Ok(())
         })
         .on_page_load(|webview, payload| {
+            if payload.event()==tauri::webview::PageLoadEvent::Started {
+                webview.state::<debugger_workspace::DebuggerWindows>().release(webview.label(),webview.app_handle());
+            }
             if payload.event() == tauri::webview::PageLoadEvent::Started
                 && let Some(state) = webview.try_state::<DesktopState>()
                 && let Ok(application) = state.workspaces.application(&state.application, webview.label())
@@ -2893,6 +2919,9 @@ pub fn run() {
             }
         })
         .on_window_event(move |window, event| {
+            if matches!(event,tauri::WindowEvent::Destroyed) {
+                window.state::<debugger_workspace::DebuggerWindows>().release(window.label(),window.app_handle());
+            }
             if matches!(event, tauri::WindowEvent::Resized(_) | tauri::WindowEvent::Focused(_)) {
                 let state = window.state::<DesktopState>();
                 if let Ok(application) = state.workspaces.application(&state.application, window.label()) {
@@ -3190,6 +3219,7 @@ fn create_main_window(
         .on_navigation(is_allowed_navigation)
         .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
         .build()?;
+    debugger_workspace::install_shortcut(&window);
     // WindowState stores physical pixels; builder geometry uses logical pixels.
     // Move to the saved monitor before sizing so its DPI applies, and finish
     // restoring the normal bounds before maximizing or showing the window.

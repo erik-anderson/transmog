@@ -741,47 +741,31 @@ the MAPI parity corpus before any compatibility promise.
 
 ## Debugging a visualizer
 
+Choose **Open debugger** in **Settings → Extensions**, or toggle it with **F12**.
+The app toolbar keeps a **Debugger** shortcut after the first open until you quit.
+Browse installed files without activating them, and set breakpoints before a
+visualizer loads. The debugger attaches to visualizers in the current capture
+window. It supports mapped TypeScript, running JavaScript and Console commands.
+See [Debug script execution](automation.md#debug-script-execution) for docking,
+shortcuts and breakpoint behavior.
+
 Select a retained message and matching visualizer in Traffic, then open
 **Developer debugging**. Extensions settings also offers **Debug in Traffic…**
-for a matching selected message. Inspecting installed extensions does not execute
-code.
+for a matching selected message.
 
-- **Debug fresh fixture** starts a new parser with breakpoints installed before
-  initialization. Enter the package-relative module and initial line numbers;
-  once attached, use the executing source gutter.
-- **Attach to this instance** attaches at an idle boundary to the actual parser,
-  preserving globals, the parsed document and continuation state. Trigger a new
-  operation, such as expansion, to reach a breakpoint in that operation.
+- **Debug fresh fixture** starts a new parser and pauses before the first user
+  statement. Set breakpoints in Sources, then continue initialization.
+- **Debug this instance** focuses the actual parser at an idle boundary,
+  preserving globals, the document and continuation state. Trigger an operation,
+  such as expansion, to reach its breakpoint.
 
-The controller covers initialization, input/context/decoded continuations,
-expansion and explicitly enabled live updates. Input authorization and document
-validation still apply. Source snapshots are immutable; original maps are tied
-to the package digest, with generated JavaScript as fallback. Reload or start a
-fresh fixture to run changed development files.
+Both use the shared debugger workspace. It covers initialization, input and
+decoded continuations, expansion and explicitly enabled live updates. Ordinary
+input authorization and document validation still apply. Verified maps connect
+TypeScript to the exact running JavaScript; restart or reload to run changed
+development files.
 
-Pauses reveal the executing statement and load Local variables when available.
-Expand properties in place and switch between **Source** and **Stack and
-variables** in narrow windows. Continue uses F8 or `Ctrl+\` (also F5), step over
-F10, into F11, out Shift+F11, and Stop Shift+F5. Shortcuts work throughout the
-debugger; toolbar buttons expose hover and focus tooltips.
-
-**Return to editor** or Escape hides the debugger without ending the session;
-**Show debugger** returns to it. **Continue and detach** lets current work finish
-without further pauses, then detaches while retaining a healthy parser. **Restart
-fresh fixture** stops the current instance and starts a new one with the retained
-breakpoint and exception choices. It does not preserve the old parser's globals.
-**Stop and close debugger** aborts active work. Stopped instances may leave their
-last valid result frozen; **Open visualizer** starts a new instance.
-
-Inspection is read-only: no evaluation, watches, mutation or conditional
-expressions. Getters, proxies and authored formatters are not run. A pause permits
-32 frames and 64 value handles, with up to 100 properties per page and 2 KiB
-primitive previews; unavailable values are labeled. Pauses expire after 60 seconds,
-sessions after 10 minutes, and native inspection commands after 100 ms. Expiry,
-window loss, selection changes and cancellation release owned work. Only native
-pause time is excluded from operation and live-retention timing.
-
-The process shares a limit of four active controllers and tracks up to 16 session
-records. Detailed source, values, exceptions and console output are ephemeral and
-excluded from normal support, trace, case and MCP output. Copying developer details
-is an explicit local action.
+**Restart** aborts the current parser and starts a fresh fixture. **Stop** aborts
+work and can leave the last valid result frozen; **Open visualizer** starts a new
+instance. Closing the debugger continues work and retains a healthy parser.
+Changing the selected message still releases its visualizer normally.

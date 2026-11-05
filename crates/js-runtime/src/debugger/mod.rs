@@ -57,6 +57,7 @@ pub(crate) struct Debugger {
     client: Rc<Client>,
 }
 struct Client {
+    runtime_state: Rc<super::State>,
     options: RefCell<DebugOptions>,
     commands: Receiver<DebugCommand>,
     sink: Sink,
@@ -72,16 +73,21 @@ struct Client {
     epoch: Cell<u64>,
     last_request: Cell<u64>,
     inspector_request: Cell<i32>,
+    context_id: Cell<i64>,
+    internal_resume: Cell<bool>,
+    condition_failed: Cell<bool>,
     response: RefCell<Option<Value>>,
     pending_pause: RefCell<Option<Value>>,
     frames: RefCell<Vec<Value>>,
     sources: RefCell<BTreeMap<i32, DebugSource>>,
     inspector_breakpoints: RefCell<BTreeMap<u32, String>>,
+    startup_breakpoints: RefCell<Vec<String>>,
+    startup_armed: Cell<bool>,
     values: RefCell<values::Values>,
 }
 
 impl Runtime {
-    /// Attaches the shared native debugger without evaluating any authored expressions.
+    /// Attaches the shared native debugger before module initialization or at an idle boundary.
     /// # Errors
     /// Rejects an existing connection, malformed options, or Inspector initialization failure.
     pub fn enable_debugger(
@@ -172,7 +178,9 @@ impl Debugger {
             let context = v8::Local::new(scope, &runtime.context);
             v8::Global::new(scope, context)
         };
+        let pause_on_start = options.pause_on_start;
         let client = Rc::new(Client {
+            runtime_state: super::state(&runtime.isolate),
             options: RefCell::new(options),
             commands: transport.commands,
             sink: transport.sink,
@@ -189,11 +197,16 @@ impl Debugger {
             epoch: Cell::new(0),
             last_request: Cell::new(0),
             inspector_request: Cell::new(0),
+            context_id: Cell::new(0),
+            internal_resume: Cell::new(false),
+            condition_failed: Cell::new(false),
             response: RefCell::new(None),
             pending_pause: RefCell::new(None),
             frames: RefCell::new(Vec::new()),
             sources: RefCell::new(BTreeMap::new()),
             inspector_breakpoints: RefCell::new(BTreeMap::new()),
+            startup_breakpoints: RefCell::new(Vec::new()),
+            startup_armed: Cell::new(pause_on_start),
             values: RefCell::new(values::Values::default()),
         });
         let inspector = V8Inspector::create(
@@ -219,6 +232,7 @@ impl Debugger {
         let configured = connection
             .client
             .dispatch("Debugger.enable", json!({}))
+            .and_then(|_| connection.client.dispatch("Runtime.enable", json!({})))
             .and_then(|_| connection.client.policy());
         if let Err(error) = configured {
             v8::scope!(let scope, &mut runtime.isolate);
@@ -252,9 +266,35 @@ impl Debugger {
     }
     pub(crate) fn modules_instantiated(&self) {
         self.client.resolve(None, 0);
+        if self.client.startup_armed.get() && self.client.startup_breakpoints.borrow().is_empty() {
+            let ids: Vec<_> = self
+                .client
+                .sources
+                .borrow()
+                .iter()
+                .filter(|(_, source)| source.source.starts_with("file:///"))
+                .map(|(id, _)| *id)
+                .collect();
+            for id in ids {
+                if let Ok(reply) = self.client.dispatch(
+                    "Debugger.setBreakpoint",
+                    json!({"location":{"scriptId":id.to_string(),"lineNumber":0,"columnNumber":0}}),
+                ) && let Some(id) = reply["breakpointId"].as_str()
+                {
+                    self.client.startup_breakpoints.borrow_mut().push(id.into());
+                }
+            }
+        }
     }
     fn poll(&self) {
-        if self.client.created.get().elapsed() >= Duration::from_millis(SESSION_LEASE_MS) {
+        // Detach retires the input router's sender. Its resulting EOF belongs
+        // to the old controller, not to the healthy execution context.
+        if self.client.detached.get() || self.client.stopped.get() {
+            return;
+        }
+        if !self.client.options.borrow().persistent
+            && self.client.created.get().elapsed() >= Duration::from_millis(SESSION_LEASE_MS)
+        {
             self.client.stop(0, "Debugger session lifetime expired");
             return;
         }
@@ -479,14 +519,23 @@ impl Client {
         match command.action {
             DebugAction::Stop => self.stop(request, "Debugger stopped by its owner"),
             DebugAction::Detach => {
-                if self.paused.get() {
+                if self.paused.get() && !self.options.borrow().persistent {
                     self.reject(
                         request,
                         "A paused debugger must resume or stop before detach",
                     );
                     return;
                 }
+                // Inspector can deliver its resumed notification after the detach
+                // acknowledgement. Retire notification delivery before resuming:
+                // the authenticated supervisor has closed this control stream.
                 self.detached.set(true);
+                let _ = self.dispatch("Debugger.setSkipAllPauses", json!({"skip":true}));
+                if self.paused.replace(false) {
+                    self.frames.borrow_mut().clear();
+                    self.values.borrow_mut().clear();
+                    let _ = self.dispatch("Debugger.resume", json!({}));
+                }
                 self.emit(request, DebugEventKind::Detached);
             }
             DebugAction::Breakpoints { values } => {
@@ -497,6 +546,17 @@ impl Client {
                 self.options.borrow_mut().breakpoints = values;
                 self.resolve(None, request);
                 self.emit(request, DebugEventKind::Acknowledged);
+            }
+            DebugAction::Evaluate {
+                expression,
+                pause,
+                frame,
+            } => {
+                if (pause == 0 && self.paused.get()) || (pause > 0 && !self.current_pause(pause)) {
+                    self.reject(request, "The selected console scope has changed");
+                    return;
+                }
+                self.evaluate(request, &expression, pause, frame);
             }
             DebugAction::Exceptions { policy } => {
                 self.options.borrow_mut().exceptions = policy;
@@ -570,6 +630,124 @@ impl Client {
     fn current_pause(&self, pause: u64) -> bool {
         self.paused.get() && self.epoch.get() == pause
     }
+    fn condition_matches(&self, pause: &Value) -> bool {
+        self.condition_failed.set(false);
+        let Some(hits) = pause["hitBreakpoints"]
+            .as_array()
+            .filter(|hits| !hits.is_empty())
+        else {
+            return true;
+        };
+        let Some(frame) = pause["callFrames"][0]["callFrameId"].as_str() else {
+            return true;
+        };
+        for hit in hits {
+            let condition = {
+                let bindings = self.inspector_breakpoints.borrow();
+                let id = bindings
+                    .iter()
+                    .find(|(_, value)| Some(value.as_str()) == hit.as_str())
+                    .map(|(id, _)| *id);
+                id.and_then(|id| {
+                    self.options
+                        .borrow()
+                        .breakpoints
+                        .iter()
+                        .find(|b| b.id == id)
+                        .and_then(|b| b.condition.clone())
+                })
+            };
+            let Some(condition) = condition else {
+                return true;
+            };
+            let result=self.dispatch("Debugger.evaluateOnCallFrame",json!({"callFrameId":frame,"expression":format!("!!(\n{condition}\n)"),"throwOnSideEffect":true,"silent":true,"returnByValue":true,"timeout":50}));
+            match result {
+                Ok(result) if result.get("exceptionDetails").is_none() => {
+                    if result["result"]["value"].as_bool() != Some(false) {
+                        return true;
+                    }
+                }
+                _ => {
+                    self.condition_failed.set(true);
+                    return true;
+                }
+            }
+        }
+        false
+    }
+    fn evaluate(&self, request: u64, expression: &str, pause: u64, frame: Option<u32>) {
+        let mut params = json!({"expression":expression,"silent":true,"generatePreview":false,"returnByValue":false,"timeout":500,"disableBreaks":true,"objectGroup":"transmog-console"});
+        let method = if let Some(frame) = frame {
+            let id = self
+                .frames
+                .borrow()
+                .get(frame as usize)
+                .and_then(|frame| frame["callFrameId"].as_str())
+                .map(str::to_owned);
+            let Some(id) = id else {
+                self.reject(request, "Console frame is unavailable");
+                return;
+            };
+            params["callFrameId"] = json!(id);
+            "Debugger.evaluateOnCallFrame"
+        } else {
+            params["contextId"] = json!(self.context_id.get());
+            "Runtime.evaluate"
+        };
+        self.emit(request, DebugEventKind::Evaluating);
+        let output = Rc::new(RefCell::new(Vec::new()));
+        let capture = Rc::clone(&output);
+        let dropped = Rc::new(Cell::new(0_u64));
+        let omitted = Rc::clone(&dropped);
+        let previous = self
+            .runtime_state
+            .console
+            .replace(super::console::Console::capture(move |_, event| {
+                if let transmog_script_diagnostics::ConsoleEvent::Record(record) = event {
+                    if capture.borrow().len() >= 16 {
+                        omitted.set(omitted.get().saturating_add(1));
+                        return false;
+                    }
+                    capture.borrow_mut().push(record);
+                }
+                true
+            }));
+        let _ = self.dispatch("Debugger.setSkipAllPauses", json!({"skip":true}));
+        let result = self.dispatch(method, params);
+        self.runtime_state.console.replace(previous);
+        for record in output.borrow_mut().drain(..) {
+            self.emit(
+                request,
+                DebugEventKind::Output {
+                    level: record.level,
+                    text: record.text,
+                },
+            );
+        }
+        if dropped.get() > 0 {
+            self.emit(
+                request,
+                DebugEventKind::Output {
+                    level: transmog_script_diagnostics::LogLevel::Warn,
+                    text: format!("{} additional console records omitted", dropped.get()),
+                },
+            );
+        }
+        let _ = self.dispatch("Debugger.setSkipAllPauses", json!({"skip":false}));
+        let (value, thrown) = console_value(result);
+        let _ = self.dispatch(
+            "Runtime.releaseObjectGroup",
+            json!({"objectGroup":"transmog-console"}),
+        );
+        self.emit(
+            request,
+            DebugEventKind::Evaluated {
+                pause,
+                value,
+                thrown,
+            },
+        );
+    }
     fn scopes(&self, scope: &mut v8::PinScope<'_, '_>, request: u64, pause: u64, frame: u32) {
         let chain = self
             .frames
@@ -627,6 +805,20 @@ impl Client {
             self.stop(0, "Inspector pause metadata unavailable");
             return;
         };
+        let startup = self.startup_armed.replace(false);
+        if startup {
+            let values = std::mem::take(&mut *self.startup_breakpoints.borrow_mut());
+            for id in values {
+                let _ = self.dispatch("Debugger.removeBreakpoint", json!({"breakpointId":id}));
+            }
+        }
+        if !startup && !self.condition_matches(&raw) {
+            self.internal_resume.set(true);
+            if self.dispatch("Debugger.resume", json!({})).is_ok() {
+                return;
+            }
+            self.internal_resume.set(false);
+        }
         let Some(epoch) = self.epoch.get().checked_add(1) else {
             self.stop(0, "Pause generation exhausted");
             return;
@@ -667,10 +859,15 @@ impl Client {
                 Some(Box::new(crate::exception::capture(scope, value)))
             });
         *self.frames.borrow_mut() = frames;
-        let reason = match raw["reason"].as_str() {
-            Some("exception" | "promiseRejection") => "exception",
-            Some("step") => "step",
-            _ => "breakpoint or debugger statement",
+        let reason = if self.condition_failed.replace(false) {
+            "Breakpoint condition failed"
+        } else {
+            match raw["reason"].as_str() {
+                Some("exception" | "promiseRejection") => "exception",
+                Some("step") => "step",
+                _ if startup => "first user statement",
+                _ => "breakpoint or debugger statement",
+            }
         }
         .to_owned();
         self.emit(
@@ -686,6 +883,48 @@ impl Client {
     }
 }
 
+fn console_value(
+    result: Result<Value, Error>,
+) -> (transmog_script_diagnostics::debugger::DebugValue, bool) {
+    match result {
+        Ok(result) => {
+            let raw = &result["result"];
+            let kind = raw["type"].as_str().unwrap_or("unavailable");
+            let display = if let Some(description) = raw["description"]
+                .as_str()
+                .filter(|_| result.get("exceptionDetails").is_some())
+            {
+                description.into()
+            } else if let Some(value) = raw.get("value") {
+                value
+                    .as_str()
+                    .map_or_else(|| value.to_string(), str::to_owned)
+            } else if let Some(value) = raw["unserializableValue"].as_str() {
+                value.into()
+            } else {
+                format!("[{kind}]")
+            };
+            (
+                transmog_script_diagnostics::debugger::DebugValue {
+                    kind: kind.into(),
+                    truncated: display.len() > MAX_VALUE_BYTES,
+                    display: short(&display, MAX_VALUE_BYTES),
+                    handle: None,
+                },
+                result.get("exceptionDetails").is_some(),
+            )
+        }
+        Err(_) => (
+            transmog_script_diagnostics::debugger::DebugValue {
+                kind: "unavailable".into(),
+                display: "Evaluation failed or exceeded its execution deadline".into(),
+                handle: None,
+                truncated: false,
+            },
+            true,
+        ),
+    }
+}
 fn short(value: &str, limit: usize) -> String {
     let mut end = value.len().min(limit);
     while !value.is_char_boundary(end) {
@@ -714,8 +953,9 @@ impl V8InspectorClientImpl for InspectorClient {
         client.paused(scope);
         let pause_started = Instant::now();
         while client.paused.get() && !client.stopped.get() {
-            if pause_started.elapsed() >= Duration::from_millis(PAUSE_LEASE_MS)
-                || client.created.get().elapsed() >= Duration::from_millis(SESSION_LEASE_MS)
+            if !client.options.borrow().persistent
+                && (pause_started.elapsed() >= Duration::from_millis(PAUSE_LEASE_MS)
+                    || client.created.get().elapsed() >= Duration::from_millis(SESSION_LEASE_MS))
             {
                 client.stop(0, "Debugger lease expired");
                 break;
@@ -770,14 +1010,25 @@ impl ChannelImpl for Output {
         *self.0.response.borrow_mut() = self.decode(&message);
     }
     fn send_notification(&self, message: v8::UniquePtr<StringBuffer>) {
+        if self.0.detached.get() {
+            return;
+        }
         let Some(event) = self.decode(&message) else {
             return;
         };
         match event["method"].as_str() {
+            Some("Runtime.executionContextCreated") => {
+                if let Some(id) = event["params"]["context"]["id"].as_i64() {
+                    self.0.context_id.set(id);
+                }
+            }
             Some("Debugger.paused") => {
                 *self.0.pending_pause.borrow_mut() = Some(event["params"].clone());
             }
             Some("Debugger.resumed") => {
+                if self.0.internal_resume.replace(false) {
+                    return;
+                }
                 self.0.paused.set(false);
                 self.0.frames.borrow_mut().clear();
                 self.0.values.borrow_mut().clear();

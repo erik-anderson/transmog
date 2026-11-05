@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { checkNativeDebuggerWorkspace } from "./smoke-debugger-workspace.mjs";
 import { createRequire } from "node:module";
 import { resolve } from "node:path";
 import { writeFile } from "node:fs/promises";
@@ -37,28 +38,37 @@ async function waitFor(check, label, timeout = 10000) {
 }
 async function paused(panel, after = 0) {
   await waitFor(
-    () => panel.evaluate((element, previous) => element.paused && element.pause > previous, after),
+    () =>
+      panel
+        .evaluate((element, previous) => element.debuggerPaused && element.pause > previous, after)
+        .catch(() => false),
     "native engine pause",
+    20000,
   );
   return panel.evaluate((element) => element.pause);
 }
 async function continueExecution(panel) {
   await panel.getByRole("button", { name: "Continue (F8)", exact: true }).click();
 }
-async function localSeven(panel) {
-  const variables = panel.getByRole("button", { name: "Stack and variables", exact: true });
-  if (await variables.isVisible()) {
-    await variables.click();
-  }
-  const local = panel.getByRole("button", { name: /^local(?: ·|$)/ }).first();
-  await local.waitFor();
-  await panel.getByRole("cell", { name: "7", exact: true }).first().waitFor();
+async function surface() {
+  let active;
+  await waitFor(
+    () => {
+      active = browser
+        .contexts()
+        .flatMap((context) => context.pages())
+        .find((candidate) => candidate !== page && !candidate.isClosed());
+      return !!active;
+    },
+    "debugger window",
+    20000,
+  );
+  const panel = active.locator("debugger-workspace");
+  await panel.locator(".monaco-editor").waitFor();
+  return panel;
 }
 async function closeDebugger(panel) {
-  await panel
-    .getByRole("button", { name: /^(?:Stop and close debugger|Close debugger)$/, exact: true })
-    .click();
-  await panel.waitFor({ state: "detached" });
+  await panel.getByRole("button", { name: "Close debugger and continue execution" }).click();
 }
 const invoke = (command, args = {}) =>
   page.evaluate(
@@ -95,125 +105,100 @@ function proxyGet(listener, url) {
   return operation;
 }
 try {
-  await page.waitForFunction(() => {
-    const shell = document.querySelector("app-shell");
-    return !!shell?.settings && typeof shell.activateView === "function";
-  });
-  await page.evaluate(async () => {
-    const shell = document.querySelector("app-shell");
-    if (!(await shell.activateView("automation"))) throw new Error(shell.diagnosticText);
-    await shell.automation.showAutomationSection("scripts");
-    shell.automation.$flushUpdates();
-  });
+  await page.waitForFunction(() => !!document.querySelector("app-shell")?.settings);
+  await page.locator("app-shell a[data-view='automation']").click();
+  await page
+    .locator("automation-workspace .workspace-tabs")
+    .getByRole("button", { name: "Scripts", exact: true })
+    .click();
   const editor = page.locator("script-editor");
   await waitFor(() => editor.evaluate((element) => element.scriptReady), "script editor");
-  const source = [
-    "import {pass} from 'transmog:api';",
-    "console.info('native debug initializer');",
-    "const initialized: number = 7; debugger;",
-    "function leaf(value: number) { return value + 1; }",
-    "function inner(input: number) {",
-    "  const local = input + 4;",
-    "  const object = {get unsafe() {throw new Error('getter must not run')}};",
-    "  debugger;",
-    "  const result = leaf(local);",
-    "  return result;",
-    "}",
-    "function outer(input: number) { return inner(input); }",
-    "export function onRequestHead() {const result = outer(3); console.log('native result', result); return pass();}",
-  ].join("\n");
-  await editor.evaluate((element, text) => element.sourceEditor.setValue(text), source);
-  await editor.getByRole("button", { name: "Debug test", exact: true }).click();
-  let panel = editor.locator("script-debugger");
-  let pause = await paused(panel);
-  assert.equal(await panel.evaluate((element) => element.invocation), 0);
-  await panel.locator(".debug-evidence > details > summary").click();
-  await panel.locator("script-diagnostics .developer-details > summary").first().click();
-  await panel
-    .getByText(/native debug initializer/)
-    .first()
-    .waitFor();
-  await panel.getByRole("combobox", { name: "Pause on exceptions", exact: true }).focus();
-  await page.keyboard.press("F8");
-  pause = await paused(panel, pause);
-  await localSeven(panel);
-  await panel.getByRole("button", { name: "object", exact: true }).click();
-  await panel.getByRole("cell", { name: /Accessor/ }).waitFor();
-  await editor.evaluate((element) =>
-    element.sourceEditor.setValue(
-      "// Newer draft remains untouched\n" + element.sourceEditor.getValue(),
+  const debuggerButton = page.getByRole("button", { name: "Debugger", exact: true });
+  assert.equal(
+    await debuggerButton.count(),
+    0,
+    "A new app session must start without a top debugger shortcut",
+  );
+  await editor.evaluate((element) => element.sourceEditor.focus());
+  const processId = Number(argument("--process-id"));
+  assert.ok(Number.isSafeInteger(processId) && processId > 0);
+  // Exercise WebView2's native accelerator, including on a headless input desktop.
+  evidence.nativeKey = JSON.parse(
+    execFileSync(
+      "pwsh.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-File",
+        resolve("../../../scripts/send-desktop-probe-key.ps1"),
+        "-ProbeProcessId",
+        String(processId),
+      ],
+      { encoding: "utf8", windowsHide: true },
     ),
   );
-  await panel.getByText(/Draft edits are newer/).waitFor();
-  for (const name of ["Step over", "Step into", "Step out"]) {
-    await panel.getByRole("button", { name: new RegExp(`^${name}`) }).click();
-    pause = await paused(panel, pause);
-  }
-  await localSeven(panel);
-  assert.ok(
-    await panel
-      .locator(".property-page")
-      .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
+  const initialDebugger = await surface();
+  await debuggerButton.waitFor();
+  await initialDebugger.evaluate((element) => element.editor.focus());
+  await initialDebugger.page().keyboard.press("F12");
+  await waitFor(() => initialDebugger.page().isClosed(), "F12 closes the debugger window");
+  await debuggerButton.waitFor();
+  await editor.evaluate((element) =>
+    element.sourceEditor.setValue(
+      [
+        "import {pass} from 'transmog:api';",
+        "console.info('native initializer');",
+        "export function onRequestHead(){",
+        " const local=7;",
+        " const object={nested:{value:42},get unsafe(){throw new Error('getter must not run')}};",
+        " debugger;",
+        " console.log('native callback',local);return pass();",
+        "}",
+      ].join("\n"),
+    ),
   );
-  for (const [name, width, height] of [
-    ["wide", 1440, 900],
-    ["compact", 960, 720],
-    ["small", 800, 600],
-  ]) {
-    await page.setViewportSize({ width, height });
-    await waitFor(
-      () =>
-        panel.locator(".source-code").evaluate((element) => {
-          const line = element.querySelector(".current").getBoundingClientRect();
-          const top = element.getBoundingClientRect().top + element.clientTop;
-          return line.top >= top && line.bottom <= top + element.clientHeight;
-        }),
-      "paused statement remains visible after resize",
-    );
-
-    assert.ok(
-      await panel
-        .locator(".debugger")
-        .evaluate((element) => element.scrollWidth <= element.clientWidth + 1),
-    );
-    await page.screenshot({
-      path: resolve(argument("--output"), `script-debugger-native-${name}.png`),
-    });
-  }
-  await continueExecution(panel);
-  await panel.getByText("Callback completed", { exact: true }).waitFor();
-  assert.equal(
-    await panel.getByRole("button", { name: "Continue (F8)", exact: true }).isDisabled(),
-    true,
+  await editor.getByRole("button", { name: "Debug test", exact: true }).click();
+  let panel = await surface();
+  let pause = await paused(panel);
+  await panel.getByRole("combobox", { name: "Pause on exceptions", exact: true }).focus();
+  await panel.page().keyboard.press("F8");
+  pause = await paused(panel, pause);
+  await panel.getByRole("cell", { name: "7", exact: true }).waitFor();
+  await panel.getByRole("button", { name: "▸ object", exact: true }).click();
+  await panel.getByRole("cell", { name: /Accessor/ }).waitFor();
+  await panel.getByRole("button", { name: "▸ nested", exact: true }).click();
+  await panel.getByRole("cell", { name: "42", exact: true }).waitFor();
+  await panel.getByRole("textbox", { name: "Immediate expression" }).fill("local");
+  await panel.getByRole("button", { name: "Run", exact: true }).click();
+  await panel.locator(".command pre").filter({ hasText: "7" }).waitFor();
+  const first = await panel.evaluate((element) => element.debuggerTarget);
+  await panel.getByRole("button", { name: "Restart", exact: true }).click();
+  await waitFor(
+    () =>
+      panel.evaluate(
+        (element, old) => element.debuggerTarget !== old && element.debuggerPaused,
+        first,
+      ),
+    "fixture restart",
   );
+  await panel.getByRole("textbox", { name: "Immediate expression" }).press("Shift+F5");
+  await waitFor(() => panel.evaluate((element) => element.debuggerClosed), "fixture stop");
   await closeDebugger(panel);
   evidence.sandbox = {
-    initializer: true,
-    localSeven: true,
+    firstStatement: true,
+    callback: true,
+    nestedValues: true,
     gettersInert: true,
-    allSteps: true,
-    immutableDraft: true,
+    immediate: true,
+    restart: true,
+    stopShortcut: true,
   };
 
-  // Real proxy traffic, manually routed over loopback with HTTPS decryption off.
   const state = await invoke("product_state");
   state.preferences.configureSystemProxy = false;
   state.preferences.decryptHttps = false;
   state.preferences.proxyPort = null;
   await invoke("save_product_state", { productState: state });
-  const liveSource =
-    "import {edit,setHeader} from 'transmog:api';let count=0;export function onRequestHead(event: any){const local=7;console.log('live',++count);if(event.request.path==='/debug')debugger;return edit({headers:[setHeader('x-debug-count',String(count))]})}";
-  await editor.evaluate((element, text) => {
-    element.sourceEditor.setValue(text);
-    element.scriptForm.elements.namedItem("scriptHost").value = "127.0.0.1";
-    element.scriptForm.elements.namedItem("scriptHeaders").value = "x-debug-count";
-    element.markScriptChanged();
-  }, liveSource);
-  await editor.getByRole("button", { name: "Save & enable", exact: true }).click();
-  await waitFor(
-    () => editor.evaluate((element) => element.scriptActive && !element.scriptBusy),
-    "applied live build",
-  );
   const bootstrap = await invoke("desktop_bootstrap");
   const status = await invoke("start_proxy", {
     request: {
@@ -224,82 +209,22 @@ try {
       allowRemoteClients: false,
     },
   });
-  assert.match(status.listener, /^127\.0\.0\.1:/);
   origin = createServer((request, response) => {
-    response.writeHead(200, {
-      "Content-Type": "text/plain",
-      "X-Debug-Observed": request.headers["x-debug-count"] ?? "missing",
-    });
+    response.writeHead(200, { "Content-Type": "text/plain" });
     response.end("native origin");
   });
   await new Promise((done) => origin.listen(0, "127.0.0.1", done));
   const base = `http://127.0.0.1:${origin.address().port}`;
-  assert.equal((await proxyGet(status.listener, `${base}/prime`)).body, "native origin");
-  await editor.locator(".debug-live>summary").click();
-  await editor.getByRole("button", { name: "Review applied revision", exact: true }).click();
-  await editor.getByRole("button", { name: "Arm for 60 seconds", exact: true }).click();
-  panel = editor.locator("script-debugger");
-  await panel
-    .getByText("Armed · waiting for the next matching exchange", { exact: true })
-    .waitFor();
-  const selected = proxyGet(status.listener, `${base}/debug`);
-  await paused(panel);
-  await localSeven(panel);
-  const competing = await proxyGet(status.listener, `${base}/competitor`).catch((error) => ({
-    status: 0,
-    body: error.message,
-  }));
-  assert.notEqual(competing.status, 200);
-  assert.equal(await panel.evaluate((element) => element.paused), true);
-  await continueExecution(panel);
-  assert.deepEqual(await selected, { status: 200, body: "native origin", observed: "2" });
-  await panel
-    .getByText("Selected exchange completed; debugger detached and worker retained", {
-      exact: true,
-    })
-    .waitFor();
-  assert.equal((await proxyGet(status.listener, `${base}/after`)).observed, "3");
-  const runtime = (await invoke("script_runtime_status"))[0];
-  assert.ok(runtime.available);
-  assert.ok(runtime.logs.flatMap((run) => run.records).some((record) => record.text === "live 3"));
-  await closeDebugger(panel);
-  // Applying a replacement while paused must end the old owner without restoring it.
-  await editor.getByRole("button", { name: "Review applied revision", exact: true }).click();
-  await editor.getByRole("button", { name: "Arm for 60 seconds", exact: true }).click();
-  panel = editor.locator("script-debugger");
-  await panel
-    .getByText("Armed · waiting for the next matching exchange", { exact: true })
-    .waitFor();
-  const replaced = proxyGet(status.listener, `${base}/debug`).catch((error) => ({
-    status: 0,
-    body: error.message,
-  }));
-  await paused(panel);
-  await editor.evaluate(
-    (element, text) => element.sourceEditor.setValue(text),
-    liveSource.replace("let count=0", "let count=100"),
-  );
-  await panel.getByRole("button", { name: "Return to editor", exact: true }).click();
-  await editor.getByRole("button", { name: "Save & apply", exact: true }).click();
-  await waitFor(
-    () => editor.evaluate((element) => !element.scriptBusy && !element.scriptUnapplied),
-    "replacement applied",
-  );
-  await waitFor(() => panel.evaluate((element) => element.closed), "replaced debugger ended");
-  await editor.getByRole("button", { name: "Show debugger", exact: true }).click();
-  assert.notEqual((await replaced).status, 200);
-  assert.equal((await proxyGet(status.listener, `${base}/replacement`)).observed, "101");
-  await closeDebugger(panel);
+  evidence.workspace = await checkNativeDebuggerWorkspace({
+    page,
+    browser,
+    invoke,
+    proxyGet,
+    listener: status.listener,
+    base,
+    output: argument("--output"),
+  });
   await invoke("stop_application");
-  evidence.live = {
-    actualGlobalsPreserved: true,
-    competingRejected: true,
-    continuePreservedResponse: true,
-    headerEditAfterContinue: true,
-    replacementEndsOldOwner: true,
-    detachedHealthy: true,
-    manualLoopbackOnly: true,
-  };
 
   await page.evaluate(async (trace) => {
     const shell = document.querySelector("app-shell");
@@ -321,91 +246,63 @@ try {
   await visualizer.getByText("Synthetic protocol", { exact: true }).first().waitFor();
   await visualizer.locator(".visualizer-debug-options>summary").click();
   await visualizer.getByRole("button", { name: "Debug fresh fixture", exact: true }).click();
-  panel = visualizer.locator("script-debugger");
-  pause = await paused(panel);
-  const firstVisualizerSession = await panel.evaluate((element) => element.sessionInfo.session);
-  await panel.getByRole("button", { name: "Restart fresh fixture", exact: true }).click();
+  panel = await surface();
+  await paused(panel);
+  const firstVisualizer = await panel.evaluate((element) => element.debuggerTarget);
+  await panel.getByRole("button", { name: "Restart", exact: true }).click();
   await waitFor(
     () =>
       panel.evaluate(
-        (element, previous) => !!element.sessionInfo && element.sessionInfo.session !== previous,
-        firstVisualizerSession,
+        (element, old) => element.debuggerTarget !== old && element.debuggerPaused,
+        firstVisualizer,
       ),
-    "fresh visualizer restart",
-  );
-  pause = await paused(panel);
-  await continueExecution(panel);
-  for (let index = 0; index < 2; index++) {
-    pause = await paused(panel, pause);
-    await localSeven(panel);
-    await continueExecution(panel);
-  }
-  await waitFor(
-    () => visualizer.evaluate((element) => !element.visualizerBusy && !!element.view),
-    "debugged visualizer continuation result",
-  );
-  await panel.getByRole("button", { name: "Continue and detach", exact: true }).click();
-  await waitFor(
-    () => panel.evaluate((element) => element.closed && element.detached),
-    "visualizer idle detach",
-  );
-  await closeDebugger(panel);
-  await visualizer.getByRole("button", { name: "Debug fresh fixture", exact: true }).click();
-  panel = visualizer.locator("script-debugger");
-  await paused(panel);
-  await panel.getByRole("button", { name: "Continue and detach", exact: true }).click();
-  await waitFor(
-    () => panel.evaluate((element) => element.closed && element.detached),
-    "detach continues through authored debugger statements",
+    "visualizer restart",
     20000,
   );
+  // Closing resumes initializer and every authored debugger statement, retaining the parser.
   await closeDebugger(panel);
-  await visualizer.getByRole("button", { name: "Attach to this instance", exact: true }).click();
-  panel = visualizer.locator("script-debugger");
-  await waitFor(() => panel.evaluate((element) => element.attached), "existing parser attachment");
+  await waitFor(
+    () => visualizer.evaluate((element) => !element.visualizerBusy && !!element.view),
+    "visualizer completion",
+    20000,
+  );
+  await visualizer.getByRole("button", { name: "Debug this instance", exact: true }).click();
+  panel = await surface();
+  await waitFor(
+    () => panel.evaluate((element) => element.debuggerTargets.length > 0),
+    "existing visualizer attachment",
+  );
   const expansion = visualizer.evaluate((element) => element.toggleNode("body-text"));
   await paused(panel);
-  await localSeven(panel);
   await continueExecution(panel);
   await expansion;
-  assert.equal(
-    await visualizer.evaluate((element) => element.view.document.roots[0].children[0].value.value),
-    "9007199254740993",
-  );
   await panel.getByRole("button", { name: "Stop (Shift+F5)", exact: true }).click();
   await visualizer
     .getByText("Debugger stopped. Open the visualizer to start a fresh instance.", { exact: true })
     .waitFor();
+  await closeDebugger(panel);
   evidence.visualizer = {
-    initializer: true,
-    inputContinuation: true,
-    existingHeapExpansion: true,
-    stopFrozenResult: true,
-    restartDuringInitializer: true,
-    continueAndDetachPastDebuggerStatements: true,
+    initialization: true,
+    restart: true,
+    closeContinues: true,
+    existingHeap: true,
+    expansion: true,
+    stopFrozen: true,
   };
-  await page.evaluate(async () => {
-    const shell = document.querySelector("app-shell");
-    await shell.activateView("automation");
-    await shell.automation.showAutomationSection("scripts");
-  });
-  await editor.evaluate((element) =>
-    element.sourceEditor.setValue(
-      "import {pass} from 'transmog:api';export function onRequestHead(){const local=7;debugger;console.info('soak');return pass()}",
-    ),
-  );
+
+  await page.locator("app-shell a[data-view='automation']").click();
+  await page
+    .locator("automation-workspace .workspace-tabs")
+    .getByRole("button", { name: "Scripts", exact: true })
+    .click();
   const samples = [];
   for (let iteration = 0; iteration < 10; iteration++) {
     await editor.getByRole("button", { name: "Debug test", exact: true }).click();
-    panel = editor.locator("script-debugger");
+    panel = await surface();
     await paused(panel);
-    await localSeven(panel);
     if (iteration % 2) {
       await panel.getByRole("button", { name: "Stop (Shift+F5)", exact: true }).click();
-      await waitFor(() => panel.evaluate((element) => element.closed), "native stop");
-    } else {
-      await continueExecution(panel);
-      await panel.getByText("Callback completed", { exact: true }).waitFor();
+      await waitFor(() => panel.evaluate((element) => element.debuggerClosed), "cycle stop");
     }
     await closeDebugger(panel);
     if (iteration === 1 || iteration === 9) {
@@ -418,23 +315,14 @@ try {
   assert.ok(final.handles <= warm.handles + 32, JSON.stringify(samples));
   assert.ok(final.threads <= warm.threads + 8, JSON.stringify(samples));
   assert.ok(final.privateBytes <= warm.privateBytes + 96 * 1024 * 1024, JSON.stringify(samples));
-  await editor.getByRole("button", { name: "Debug test", exact: true }).click();
-  panel = editor.locator("script-debugger");
-  await paused(panel);
-  const oldSession = await panel.evaluate((element) => element.sessionInfo.session);
+  evidence.lifecycle = { cycles: 10, warm, final };
   await page.reload();
-  await waitFor(
-    () => page.evaluate(() => !!document.querySelector("app-shell")?.settings),
-    "reloaded desktop document",
-  );
-  await assert.rejects(() => invoke("debug_session", { session: oldSession, after: 0 }));
-  await waitFor(() => resources().workers === final.workers, "reload releases paused worker");
-  evidence.lifecycle = {
-    cycles: 10,
-    alternatingContinueStop: true,
-    windowDocumentReloadReleasesOwner: true,
-    warm,
-    final,
+  await page.getByRole("button", { name: "Debugger", exact: true }).waitFor();
+  evidence.access = {
+    initiallyHidden: true,
+    F12FromMonaco: true,
+    F12InDetachedWindow: true,
+    retainedForSession: true,
   };
   assert.deepEqual(errors, []);
   await writeFile(
@@ -456,7 +344,7 @@ try {
           authoring: element.authoringStatus,
           issues: element.typeScriptIssues,
         })),
-        panels: await page.locator("script-debugger").allTextContents(),
+        panels: await page.locator("debugger-workspace").allTextContents(),
       },
       null,
       2,

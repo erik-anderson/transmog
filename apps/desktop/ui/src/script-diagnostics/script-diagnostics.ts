@@ -1,4 +1,4 @@
-import { WebUIElement, observable } from "@microsoft/webui-framework";
+import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
 import { describeError } from "../utilities.js";
 import type {
@@ -62,8 +62,28 @@ function frames(value: StackFrame[], artifact?: string | null): FrameView[] {
   }));
 }
 
+export interface DiagnosticViewState {
+  level: string;
+  page: number;
+  cleared: Array<[string, { sequence: number; dropped: number }]>;
+}
+
 /** Explicit developer disclosure shared by traffic tests, live findings and visualizers. */
 export class ScriptDiagnostics extends WebUIElement {
+  @attr({ mode: "boolean" }) expanded = false;
+  @attr({ mode: "boolean" }) navigateSources = false;
+  disclosureChanged(event: Event): void {
+    this.expanded = (event.target as HTMLDetailsElement).open;
+  }
+  saveView(): DiagnosticViewState {
+    return { level: this.level, page: this.page, cleared: [...this.cleared] };
+  }
+  restoreView(view: DiagnosticViewState): void {
+    this.level = view.level;
+    this.page = view.page;
+    this.cleared = new Map(view.cleared);
+    this.rebuild();
+  }
   @observable evidence: DeveloperEvidence[] = [];
   @observable exceptions: ExceptionView[] = [];
   @observable messages: Array<{ label: string; text: string }> = [];
@@ -229,6 +249,10 @@ export class ScriptDiagnostics extends WebUIElement {
   async openSource(frame: FrameView, generated: boolean, event: Event): Promise<void> {
     const location = generated ? frame.generated : frame.location;
     if (!location || !frame.artifact) {
+      return;
+    }
+    if (this.navigateSources) {
+      this.$emit("diagnostic-source", { artifact: frame.artifact, location });
       return;
     }
     const version = ++this.sourceVersion;

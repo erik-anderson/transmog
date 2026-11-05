@@ -158,6 +158,12 @@ when changing the experience.
   through reruns, and distinguish hiding the controller, stopping execution and
   detaching a healthy worker. Compact action icons retain accessible names and
   readable tooltips for pointer and keyboard use.
+  The dockable workspace stays usable beside Traffic. Moving its surface preserves
+  execution and drafts; closing it continues and detaches. Browsing unloaded
+  sources never activates them. Saved breakpoints retain intent across worker
+  lifetimes, and unresolved statements are cleaned up after verified source changes.
+  Keep debugger discovery beside Scripts and Extensions; reveal the top shortcut
+  after its first open in the current session. F12 toggles it, including from editors.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.

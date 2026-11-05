@@ -7,10 +7,326 @@ const SOURCE: &str = "file:///transmog-script/main.js";
 const FIXTURE: &str = "globalThis.touches=0;\nexport function inner(input) {\n  const local=input+4;\n  const object={get secret(){touches++;throw new Error('getter ran');}};\n  const proxy=new Proxy({}, {ownKeys(){touches++;throw 0;},get(){touches++;throw 0;}});\n  const result=local*2;\n  return result;\n}\nexport function outer(value){return inner(value);}\nglobalThis.entry=outer;\n//# sourceURL=file:///forged-source.js\n";
 fn options(breakpoints: Vec<SourceBreakpoint>) -> DebugOptions {
     DebugOptions {
+        pause_on_start: false,
+        persistent: false,
         session: SESSION.into(),
         exceptions: ExceptionPolicy::None,
         breakpoints,
     }
+}
+#[test]
+fn a_fresh_fixture_stops_before_user_initialization_once_and_can_detach_healthy() {
+    for detach in [false, true] {
+        let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+        let (output, events) = mpsc::sync_channel(32);
+        let engine = std::thread::spawn(move || {
+            let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+            let mut config = options(vec![]);
+            config.persistent = true;
+            config.pause_on_start = true;
+            runtime
+                .enable_debugger(
+                    config,
+                    DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+                )
+                .unwrap();
+            let entry = url::Url::parse(SOURCE).unwrap();
+            runtime
+                .evaluate_modules(
+                    &entry,
+                    BTreeMap::from([(
+                        entry.clone(),
+                        "globalThis.initialized=7;globalThis.entry=()=>++initialized;".into(),
+                    )]),
+                )
+                .unwrap();
+            assert_eq!(
+                runtime
+                    .execute_string("result", "String(entry())", 32)
+                    .unwrap(),
+                "8"
+            );
+        });
+        let DebugEventKind::Paused { pause, reason, .. } = event(&events, |event| {
+            matches!(event.event, DebugEventKind::Paused { .. })
+        })
+        .event
+        else {
+            unreachable!()
+        };
+        assert_eq!(reason, "first user statement");
+        command(
+            &commands,
+            1,
+            DebugAction::Evaluate {
+                expression: "typeof initialized".into(),
+                pause,
+                frame: Some(0),
+            },
+        );
+        assert!(
+            matches!(event(&events,|event|matches!(event.event,DebugEventKind::Evaluated{..})).event,DebugEventKind::Evaluated{value,thrown:false,..} if value.display=="undefined")
+        );
+        command(
+            &commands,
+            2,
+            if detach {
+                DebugAction::Detach
+            } else {
+                DebugAction::Resume {
+                    pause,
+                    action: ResumeAction::Continue,
+                }
+            },
+        );
+        event(&events, |event| {
+            matches!(
+                event.event,
+                DebugEventKind::Detached | DebugEventKind::Resumed
+            )
+        });
+        engine.join().unwrap();
+    }
+}
+
+#[test]
+fn conditional_breakpoints_skip_false_and_pause_on_true() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![SourceBreakpoint {
+                    id: 1,
+                    condition: Some("value === 3".into()),
+                    location: transmog_script_diagnostics::SourceLocation {
+                        source: SOURCE.into(),
+                        line: 4,
+                        column: 1,
+                    },
+                }]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime.evaluate_modules(&entry,BTreeMap::from([(entry.clone(),"globalThis.hits=0;\nfunction run(input){\n const value=input+1;\n hits++;\n return value;\n}\nglobalThis.entry=run;".into())])).unwrap();
+        assert_eq!(
+            runtime
+                .execute_string("invoke", "String(entry(0))", 32)
+                .unwrap(),
+            "1"
+        );
+        assert_eq!(
+            runtime
+                .execute_string("invoke", "String(entry(2))", 32)
+                .unwrap(),
+            "3"
+        );
+        assert_eq!(
+            runtime
+                .execute_string("result", "String(hits)", 32)
+                .unwrap(),
+            "2"
+        );
+    });
+    let DebugEventKind::Paused { pause, frames, .. } = event(&events, |e| {
+        matches!(e.event, DebugEventKind::Paused { .. })
+    })
+    .event
+    else {
+        unreachable!()
+    };
+    assert_eq!(frames[0].location.as_ref().unwrap().line, 4);
+    command(
+        &commands,
+        1,
+        DebugAction::Resume {
+            pause,
+            action: ResumeAction::Continue,
+        },
+    );
+    event(&events, |e| matches!(e.event, DebugEventKind::Resumed));
+    engine.join().unwrap();
+}
+
+#[test]
+fn conditional_breakpoints_reject_side_effects_without_running_them() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime
+            .enable_debugger(
+                options(vec![SourceBreakpoint {
+                    id: 1,
+                    condition: Some("++touches".into()),
+                    location: transmog_script_diagnostics::SourceLocation {
+                        source: SOURCE.into(),
+                        line: 3,
+                        column: 1,
+                    },
+                }]),
+                DebugTransport::new(input, move |event| output.try_send(event).is_ok()),
+            )
+            .unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime.evaluate_modules(&entry,BTreeMap::from([(entry.clone(),"globalThis.touches=0;\nfunction run(){\n return touches;\n}\nglobalThis.entry=run;".into())])).unwrap();
+        assert_eq!(
+            runtime
+                .execute_string("invoke", "String(entry())", 32)
+                .unwrap(),
+            "0"
+        );
+    });
+    let DebugEventKind::Paused { pause, reason, .. } = event(&events, |e| {
+        matches!(e.event, DebugEventKind::Paused { .. })
+    })
+    .event
+    else {
+        unreachable!()
+    };
+    assert_eq!(reason, "Breakpoint condition failed");
+    command(
+        &commands,
+        1,
+        DebugAction::Resume {
+            pause,
+            action: ResumeAction::Continue,
+        },
+    );
+    event(&events, |e| matches!(e.event, DebugEventKind::Resumed));
+    engine.join().unwrap();
+}
+
+#[test]
+#[allow(clippy::too_many_lines)] // One worker proves idle/frame budgets and healthy paused detach together.
+fn console_runs_in_idle_globals_and_paused_frames_and_detaches_cleanly() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let (output, events) = mpsc::sync_channel(32);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(1024 * 1024, 32 * 1024 * 1024).unwrap();
+        runtime
+            .enable_console(|_, _| {
+                panic!("Immediate output must not enter an ordinary completed log stream")
+            })
+            .unwrap();
+        let mut config = options(vec![]);
+        config.persistent = true;
+        runtime
+            .enable_debugger(
+                config,
+                DebugTransport::new(input, move |value| output.try_send(value).is_ok()),
+            )
+            .unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime.evaluate_modules(&entry, BTreeMap::from([(entry.clone(),"globalThis.answer=1; globalThis.entry=()=>{ const local=answer+2; debugger; return String(local); };".into())])).unwrap();
+        loop {
+            runtime.poll_debugger();
+            if runtime
+                .execute_string("probe", "String(answer)", 32)
+                .unwrap()
+                == "40"
+            {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert_eq!(
+            runtime.execute_string("invoke", "entry()", 32).unwrap(),
+            "42"
+        );
+        assert_eq!(
+            runtime
+                .execute_string("after", "debugger; 'continued'", 32)
+                .unwrap(),
+            "continued"
+        );
+    });
+    event(&events, |e| matches!(e.event, DebugEventKind::Attached));
+    command(
+        &commands,
+        1,
+        DebugAction::Evaluate {
+            expression: "while(true){}".into(),
+            pause: 0,
+            frame: None,
+        },
+    );
+    assert!(matches!(
+        event(&events, |e| matches!(
+            e.event,
+            DebugEventKind::Evaluated { .. }
+        ))
+        .event,
+        DebugEventKind::Evaluated { thrown: true, .. }
+    ));
+    command(
+        &commands,
+        2,
+        DebugAction::Evaluate {
+            expression: "console.log('idle output'); answer=40".into(),
+            pause: 0,
+            frame: None,
+        },
+    );
+    assert!(
+        matches!(event(&events,|e|matches!(e.event,DebugEventKind::Output{..})).event,DebugEventKind::Output{text,..} if text=="idle output")
+    );
+    let reply = event(&events, |e| {
+        matches!(e.event, DebugEventKind::Evaluated { .. })
+    });
+    assert!(
+        matches!(reply.event,DebugEventKind::Evaluated{value,thrown:false,..} if value.display=="40")
+    );
+    let pause = event(&events, |e| {
+        matches!(e.event, DebugEventKind::Paused { .. })
+    });
+    let DebugEventKind::Paused { pause, .. } = pause.event else {
+        unreachable!()
+    };
+    command(
+        &commands,
+        3,
+        DebugAction::Evaluate {
+            expression: "while(true){}".into(),
+            pause,
+            frame: Some(0),
+        },
+    );
+    assert!(matches!(
+        event(&events, |e| matches!(
+            e.event,
+            DebugEventKind::Evaluated { .. }
+        ))
+        .event,
+        DebugEventKind::Evaluated { thrown: true, .. }
+    ));
+    command(
+        &commands,
+        4,
+        DebugAction::Evaluate {
+            expression: "console.info('paused output'); local".into(),
+            pause,
+            frame: Some(0),
+        },
+    );
+    assert!(
+        matches!(event(&events,|e|matches!(e.event,DebugEventKind::Output{..})).event,DebugEventKind::Output{text,..} if text=="paused output")
+    );
+    let reply = event(&events, |e| {
+        matches!(e.event, DebugEventKind::Evaluated { .. })
+    });
+    assert!(
+        matches!(reply.event,DebugEventKind::Evaluated{value,thrown:false,..} if value.display=="42")
+    );
+    command(&commands, 5, DebugAction::Detach);
+    event(&events, |e| matches!(e.event, DebugEventKind::Detached));
+    engine.join().unwrap();
+    assert!(
+        events.try_iter().next().is_none(),
+        "A detached control stream must not emit late Inspector notifications"
+    );
 }
 fn command(sender: &SyncSender<DebugCommand>, request: u64, action: DebugAction) {
     sender
@@ -20,6 +336,67 @@ fn command(sender: &SyncSender<DebugCommand>, request: u64, action: DebugAction)
             action,
         })
         .unwrap();
+}
+
+#[test]
+fn paused_detach_retires_its_input_without_stopping_the_next_operation() {
+    let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
+    let control = std::sync::Arc::new(std::sync::Mutex::new(Some(commands)));
+    let retire = std::sync::Arc::clone(&control);
+    let (output, events) = mpsc::sync_channel(64);
+    let engine = std::thread::spawn(move || {
+        let mut runtime = Runtime::new(8 * 1024 * 1024, 32 * 1024 * 1024).unwrap();
+        let mut config = options(vec![]);
+        config.persistent = true;
+        runtime
+            .enable_debugger(
+                config,
+                DebugTransport::new(input, move |event| {
+                    if matches!(event.event, DebugEventKind::Detached) {
+                        // InputRouter retires the controller at this exact acknowledgement.
+                        retire.lock().unwrap().take();
+                    }
+                    output.try_send(event).is_ok()
+                }),
+            )
+            .unwrap();
+        let entry = url::Url::parse(SOURCE).unwrap();
+        runtime
+            .evaluate_modules(
+                &entry,
+                BTreeMap::from([(
+                    entry.clone(),
+                    "globalThis.entry=()=>{debugger;return 'first'}".into(),
+                )]),
+            )
+            .unwrap();
+        runtime.begin_debug_operation(1);
+        assert_eq!(
+            runtime.execute_string("invoke", "entry()", 32).unwrap(),
+            "first"
+        );
+        runtime.begin_debug_operation(2);
+        assert_eq!(
+            runtime
+                .execute_string("invoke", "debugger; 'next'", 32)
+                .unwrap(),
+            "next"
+        );
+        assert!(runtime.debugger.is_none());
+    });
+    event(&events, |event| {
+        matches!(event.event, DebugEventKind::Paused { .. })
+    });
+    command(
+        control.lock().unwrap().as_ref().unwrap(),
+        1,
+        DebugAction::Detach,
+    );
+    event(&events, |event| {
+        matches!(event.event, DebugEventKind::Detached)
+    });
+    engine.join().unwrap();
+    assert!(events.try_iter().next().is_none());
 }
 fn event(receiver: &Receiver<DebugEvent>, predicate: impl Fn(&DebugEvent) -> bool) -> DebugEvent {
     let mut observed = Vec::new();
@@ -104,6 +481,7 @@ fn registered_script_ids_steps_scopes_and_inert_properties_share_one_pause_epoch
         runtime
             .enable_debugger(
                 options(vec![SourceBreakpoint {
+                    condition: None,
                     id: 1,
                     location: SourceLocation {
                         source: SOURCE.into(),
@@ -406,6 +784,7 @@ fn source_breakpoints_pause_initializers_before_side_effects_and_step_into_and_o
             .enable_debugger(
                 options(vec![
                     SourceBreakpoint {
+                        condition: None,
                         id: 1,
                         location: SourceLocation {
                             source: SOURCE.into(),
@@ -414,6 +793,7 @@ fn source_breakpoints_pause_initializers_before_side_effects_and_step_into_and_o
                         },
                     },
                     SourceBreakpoint {
+                        condition: None,
                         id: 2,
                         location: SourceLocation {
                             source: SOURCE.into(),
@@ -549,12 +929,11 @@ fn controller_loss_stops_a_paused_engine_and_default_runtime_ignores_debugger_st
 }
 
 #[test]
-fn wire_contract_cannot_express_evaluation_mutation_or_conditional_breakpoints() {
+fn wire_contract_rejects_unscoped_evaluation_and_implicit_property_execution() {
     for action in [
         json!({"kind":"evaluate","expression":"secret"}),
         json!({"kind":"resume","pause":1,"action":"continue","expression":"touches++"}),
         json!({"kind":"properties","pause":1,"handle":1,"offset":0,"invokeGetters":true}),
-        json!({"kind":"breakpoints","values":[{"id":1,"location":{"source":SOURCE,"line":1,"column":1},"condition":"touches++"}]}),
     ] {
         assert!(
             serde_json::from_value::<DebugCommand>(

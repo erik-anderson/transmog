@@ -36,6 +36,7 @@ export interface DebugProperty {
 export interface SourceBreakpoint {
   id: number;
   location: SourceLocation;
+  condition?: string | undefined;
 }
 export interface DebugConfiguration {
   exceptions: string;
@@ -48,6 +49,7 @@ export interface BreakpointResolution {
   issue: string | null;
 }
 export type DebugAction =
+  | { kind: "evaluate"; expression: string; pause: number; frame: number | null }
   | { kind: "resume"; pause: number; action: "continue" | "into" | "over" | "out" }
   | { kind: "scopes"; pause: number; frame: number }
   | { kind: "properties"; pause: number; handle: number; offset: number }
@@ -56,6 +58,9 @@ export type DebugAction =
   | { kind: "breakpoints"; values: SourceBreakpoint[] }
   | { kind: "stop" | "detach" };
 export type DebugEvent =
+  | { kind: "output"; level: string; text: string }
+  | { kind: "evaluating" }
+  | { kind: "evaluated"; pause: number; value: DebugValue; thrown: boolean }
   | { kind: "attached" | "detached" | "resumed" | "acknowledged" }
   | {
       kind: "sources";
@@ -84,6 +89,8 @@ export type DebugEvent =
 export interface DebugSessionView {
   info: DebugSessionInfo;
   stream: {
+    exceptions?: "none" | "uncaught" | "all";
+    paused?: { session: string; invocation: number; request: number; event: DebugEvent } | null;
     inventory?: {
       sources: Array<{ source: string; bytes: number | null }>;
       breakpoints: BreakpointResolution[];

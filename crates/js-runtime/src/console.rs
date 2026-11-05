@@ -18,6 +18,13 @@ pub(super) struct Console {
     frames: usize,
 }
 impl Console {
+    #[cfg(feature = "debugger")]
+    pub(super) fn capture(sink: impl Fn(u64, ConsoleEvent) -> bool + 'static) -> Self {
+        Self {
+            sink: Some(Box::new(sink)),
+            ..Self::default()
+        }
+    }
     pub(super) fn begin(&mut self, invocation: u64) {
         self.invocation = invocation;
         self.sequence = 0;

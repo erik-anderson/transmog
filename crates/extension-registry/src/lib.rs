@@ -445,6 +445,22 @@ impl Registry {
         let entry = self.enabled_entry(id)?;
         self.entry_snapshot(&entry)
     }
+    /// Reads verified installed sources without activating or enabling an extension.
+    /// # Errors
+    /// Rejects missing packages and unsafe or unavailable developer files.
+    pub fn debugger_snapshot(&self, id: &str) -> Result<Snapshot, Error> {
+        let entry = self
+            .inner
+            .state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .entries
+            .iter()
+            .find(|entry| entry.catalog.manifest.id == id)
+            .cloned()
+            .ok_or_else(|| invalid("Extension is unavailable"))?;
+        self.entry_snapshot(&entry)
+    }
     fn entry_snapshot(&self, entry: &ExtensionEntry) -> Result<Snapshot, Error> {
         let id = &entry.catalog.manifest.id;
         let snapshot = match entry.catalog.origin {

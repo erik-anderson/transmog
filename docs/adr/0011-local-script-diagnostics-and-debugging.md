@@ -2,6 +2,9 @@
 
 Status: Accepted
 
+Workspace ownership, conditional breakpoints and explicit local evaluation are
+defined in [ADR 0012](0012-debugger-workspace-lifetime.md).
+
 ## Context
 
 Traffic scripts and visualizers execute in separate V8 worker processes. Authors
@@ -15,10 +18,8 @@ continuation state. A paused worker cannot serve ordinary queued work safely.
 Share runtime-neutral diagnostic/debugger contracts in `script-diagnostics`.
 Keep all Inspector and V8 value access on the worker's engine thread. Inspector
 is created only for an explicitly owned session and communicates over inherited,
-authenticated native pipes. No listening port or unrestricted protocol bridge
-exists. Public controls are typed: breakpoints, exception policy, continue/step,
-stack/scopes, own-property pages, handle release, idle detach and Stop. Evaluation,
-mutation, conditions, custom formatters and live replacement are excluded.
+authenticated native pipes. Expose only typed native commands, with no listening
+port or unrestricted Inspector bridge.
 
 Register actual compiled module IDs. Authored sourceURL labels never determine
 identity, and internal invocation strings containing input JSON are never cached
@@ -36,25 +37,15 @@ and thread start only with the first console/debug event; silent execution keeps
 the original synchronous result path. A validated result completes a completely
 silent stream. Any observed console prefix still requires its ordered end marker.
 
-Native supervisors own independent pause/session leases and inspection
-deadlines. Only authenticated pause transitions update cumulative clocks;
+Native supervisors own attachment, inspection and execution deadlines.
+Only authenticated pause transitions update cumulative clocks;
 execution budgets exclude that time while cancellation, process limits and
 client timeouts remain effective. Termination is bound as soon as an attachment
 is accepted, including before command transport initialization. Attach and
-detach confirmations are ordering barriers before the next callback. Hiding the
-debugger leaves ownership intact. Explicit stop-and-close, window destruction
-and document reload release ownership independently of UI polling.
-
-Live traffic debugging reserves the actual idle worker for one native-filtered
-exchange. Track outstanding exchange factory leases, including older pinned
-exchanges; an empty callback queue alone is insufficient. Reject competing work
-before queue submission and its cancellation guard. The selected exchange retains
-ownership through body and terminal callbacks. Keep admission reserved until the
-idle detach confirmation. Normal completion or idle arming expiry can retain the
-heap. Stop, owner loss or unsafe cancellation terminates the worker and uses the
-existing explicit Retry recovery. Registry generation/revision/hash checks and
-mutation locking prevent stale attachment. Replacement ends old ownership and
-never restores activation.
+detach confirmations are ordering barriers before the next callback. Window
+destruction and document reload release ownership independently of UI polling.
+Registry generation/revision/hash checks and mutation locking prevent stale
+attachment. Replacement ends old ownership and never restores activation.
 
 Fresh visualizer fixtures preserve ordinary retained-input authorization and
 document validation. Existing attachment uses the actual idle parser. The same
@@ -69,15 +60,11 @@ evidence. They are excluded from normal trace/case persistence, support errors a
 MCP projections. Desktop commands are scoped to the calling window and are not
 registered as MCP tools. An explicit copy action can copy local developer details.
 
-Each process permits up to four active controllers and tracks up to 16 session
-records across application instances. Each session retains 64 events/128 KiB
-plus separately bounded source and breakpoint inventory; property replies are at
-most 32 KiB. Sources share a 32 MiB cache, log captures a 12 MiB pool, and
-catalog snapshots an 8 MiB pool. Existing inputs/packages and worker memory
-retain their own independent budgets. These caps intentionally trade older
-evidence and unavailable locals for bounded resource use. UI state explains
-expiry, loss and explicit recovery.
+Session records, events, property replies, sources and logs have independent
+bounds. These caps trade older evidence and unavailable locals for bounded
+resource use; the UI exposes loss and recovery. Exact limits belong in the
+[native supervision contracts](../../crates/script-diagnostics/src/supervision.rs)
+and [application controller](../../crates/app/src/debugging.rs).
 
-Native AppContainer tests, production-template browser checks, WebView2 journeys,
-protocol fuzzing and lifecycle/resource measurements qualify the combined feature.
-An engine unit test alone cannot establish native ownership or UI correctness.
+Qualification covers the sandbox, worker protocol and desktop UI. See
+[Testing](../testing.md#script-diagnostics-and-debugging).

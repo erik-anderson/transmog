@@ -43,6 +43,12 @@ the editor exposes that state and can retry the exact artifact without applying 
 newer draft. Field and validation details belong to
 [the script workspace model](../crates/app/src/scripts.rs).
 
+Debugger breakpoints use the adjacent `scripts-v1.debugger.0.json` and
+`scripts-v1.debugger.1.json` generations. They retain file identities, statement
+anchors, enabled state and conditions. Capture windows share extension breakpoint
+preferences while keeping worker control separate. Console history, results,
+variables and runtime handles stay in memory and are excluded from support bundles.
+
 Response sets persist one current response collection, notes, explicitly named
 versions, and an independent applied live snapshot. Saving current content does
 not alter applied live traffic. Named versions, live pause and the global

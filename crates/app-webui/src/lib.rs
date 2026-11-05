@@ -19,6 +19,8 @@ const DOCUMENT_CSP_SUFFIX: &str = "'; worker-src 'self'; style-src 'self' 'unsaf
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ShellView {
+    /// Dedicated debugger surface with native scoped commands.
+    pub debugger_mode: bool,
     /// Independent scratch converter without traffic or proxy capabilities.
     pub converter_mode: bool,
     /// Saved-capture window without live proxy controls.
@@ -49,6 +51,7 @@ impl From<&AppStatus> for ShellView {
             AppLifecycle::Failed => ("Needs attention", "failed"),
         };
         Self {
+            debugger_mode: false,
             converter_mode: false,
             viewer_mode: false,
             language: "en",

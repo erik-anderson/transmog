@@ -206,6 +206,7 @@ struct CandidateEntry {
 /// Crash-safe validate/start/activate registry and registration provider.
 #[derive(Clone)]
 pub struct ScriptRegistry {
+    debug_factory: Arc<Mutex<Option<DebugFactory>>>,
     mutation: Arc<Mutex<()>>,
     active: Arc<RwLock<Arc<ActiveSnapshot>>>,
     candidates: Arc<Mutex<VecDeque<CandidateEntry>>>,
@@ -214,8 +215,64 @@ pub struct ScriptRegistry {
     host: Option<Arc<PathBuf>>,
     assets: Arc<dyn ScriptResponseAssetResolver>,
 }
+pub(crate) type DebugFactory = Arc<
+    dyn Fn(
+            &CompiledScript,
+        )
+            -> Result<Option<Arc<transmog_script_diagnostics::supervision::Session>>, AppError>
+        + Send
+        + Sync,
+>;
 
 impl ScriptRegistry {
+    pub(crate) fn debug_generation(&self) -> u64 {
+        self.active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .workspace
+            .generation
+    }
+    pub(crate) fn debug_sources(&self) -> (Vec<ScriptRevision>, Vec<ScriptDraft>) {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        (
+            active
+                .workspace
+                .built
+                .iter()
+                .chain(&active.workspace.active)
+                .chain(&active.workspace.paused)
+                .cloned()
+                .collect(),
+            active.workspace.saved.clone(),
+        )
+    }
+    pub(crate) fn debug_factory(&self, factory: Option<DebugFactory>) {
+        *self
+            .debug_factory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = factory;
+    }
+    pub(crate) fn debug_runners(&self) -> Vec<(ScriptRevision, Arc<SupervisedScriptRunner>)> {
+        let active = self
+            .active
+            .read()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        active
+            .workspace
+            .active
+            .iter()
+            .zip(&active.scripts)
+            .filter_map(|(revision, script)| {
+                script
+                    .runner
+                    .clone()
+                    .map(|runner| (revision.clone(), runner))
+            })
+            .collect()
+    }
     pub(crate) fn with_debug_revision<T>(
         &self,
         request: &crate::debugging::DebugLiveRequest,
@@ -320,6 +377,7 @@ impl ScriptRegistry {
         });
         validate_workspace(&workspace)?;
         let registry = Self {
+            debug_factory: Arc::default(),
             mutation: Arc::new(Mutex::new(())),
             active: Arc::new(RwLock::new(Arc::new(ActiveSnapshot {
                 workspace: ScriptWorkspace {
@@ -969,12 +1027,21 @@ impl ScriptRegistry {
                 true,
             )
         })?;
-        SupervisedScriptRunner::start(
+        let debug = self
+            .debug_factory
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+            .map(|factory| factory(&compiled))
+            .transpose()?
+            .flatten();
+        SupervisedScriptRunner::start_debug(
             &ScriptHostConfig {
                 executable: executable.clone(),
                 isolation: IsolationPolicy::RequireSandbox,
             },
             compiled,
+            debug,
         )
         .map_err(|error| {
             AppError::new(ErrorCategory::Unavailable, error.message, true)

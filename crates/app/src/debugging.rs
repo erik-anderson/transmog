@@ -19,10 +19,16 @@ mod live;
 pub use live::DebugLiveRequest;
 #[cfg(test)]
 mod tests;
-/// Explicit read-only debugger configuration. No authored expressions are accepted.
+/// Explicit local debugger configuration, independent of normal script capabilities.
 #[derive(Clone, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DebugConfiguration {
+    /// Stop a fresh fixture at its first executable user statement.
+    #[serde(default)]
+    pub pause_on_start: bool,
+    /// Keep a workspace attachment alive until its surface closes.
+    #[serde(default)]
+    pub persistent: bool,
     /// Pause on no, uncaught, or all exceptions.
     pub exceptions: ExceptionPolicy,
     /// Source positions requested by this local author.
@@ -87,6 +93,7 @@ pub struct DebugSessionView {
 #[derive(Clone, Default)]
 pub(crate) struct Debuggers(Arc<Mutex<BTreeMap<String, Arc<Run>>>>);
 pub(crate) struct Run {
+    persistent: bool,
     owner: String,
     pub(crate) session: Arc<Session>,
     pub(crate) info: DebugSessionInfo,
@@ -119,18 +126,28 @@ impl Debuggers {
         if owners
             .iter()
             .filter_map(Weak::upgrade)
-            .filter(|run| !run.session.is_closed())
+            .filter(|run| run.persistent == configuration.persistent && !run.session.is_closed())
             .count()
-            >= 4
+            >= if configuration.persistent { 64 } else { 4 }
         {
             return Err(invalid(
-                "Four debugger sessions are already active. Close one before starting another.",
+                "The debugger worker limit has been reached. Close a debugger before starting another.",
             ));
         }
-        while owners.len() >= 16 {
+        while owners
+            .iter()
+            .filter_map(Weak::upgrade)
+            .filter(|run| run.persistent == configuration.persistent)
+            .count()
+            >= if configuration.persistent { 80 } else { 16 }
+        {
             let index = owners
                 .iter()
-                .position(|run| run.upgrade().is_none_or(|run| run.session.is_closed()))
+                .position(|run| {
+                    run.upgrade().is_none_or(|run| {
+                        run.persistent == configuration.persistent && run.session.is_closed()
+                    })
+                })
                 .ok_or_else(|| invalid("Debugger history is full"))?;
             if let Some(run) = owners.remove(index).upgrade() {
                 run.expire();
@@ -141,6 +158,8 @@ impl Debuggers {
         getrandom::fill(&mut random).map_err(|_| invalid("Debugger identity unavailable"))?;
         info.session = format!("{:032x}", u128::from_le_bytes(random));
         let options = DebugOptions {
+            pause_on_start: configuration.pause_on_start,
+            persistent: configuration.persistent,
             session: info.session.clone(),
             exceptions: configuration.exceptions,
             breakpoints: translate(&configuration.breakpoints, map.as_deref()),
@@ -151,6 +170,7 @@ impl Debuggers {
         }
         let session = Session::new(options).map_err(invalid)?;
         let run = Arc::new(Run {
+            persistent: configuration.persistent,
             owner: owner.into(),
             session,
             info,
@@ -176,10 +196,17 @@ impl Debuggers {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         // At most eight closed histories plus the four active owners, per application.
-        while runs.len() >= 12 {
+        while runs
+            .values()
+            .filter(|run| run.persistent == configuration.persistent)
+            .count()
+            >= if configuration.persistent { 76 } else { 12 }
+        {
             let key = runs
                 .iter()
-                .find(|(_, run)| run.session.is_closed())
+                .find(|(_, run)| {
+                    run.persistent == configuration.persistent && run.session.is_closed()
+                })
                 .map(|(key, _)| key.clone())
                 .ok_or_else(|| invalid("Debugger history is full"))?;
             runs.remove(&key);
@@ -208,6 +235,8 @@ impl Debuggers {
             return Err(invalid("Invalid source breakpoints"));
         }
         let configuration = DebugConfiguration {
+            pause_on_start: configuration.pause_on_start,
+            persistent: configuration.persistent,
             exceptions: configuration.exceptions,
             breakpoints: transmog_extension_supervisor::map_debug_breakpoints(
                 &snapshot,
@@ -461,7 +490,7 @@ impl Application {
     ) -> Result<DebugSessionView, AppError> {
         let run = self.debuggers.owned(owner, id)?;
         let mut stream = run.session.page(after);
-        for event in &mut stream.events {
+        for event in stream.events.iter_mut().chain(stream.paused.iter_mut()) {
             if let DebugEventKind::Paused {
                 exception: Some(exception),
                 ..
@@ -484,7 +513,7 @@ impl Application {
             .unwrap_or_else(std::sync::PoisonError::into_inner)
             .as_ref()
         {
-            for event in &mut stream.events {
+            for event in stream.events.iter_mut().chain(stream.paused.iter_mut()) {
                 transmog_extension_supervisor::map_debug_event(snapshot, event);
             }
         }
@@ -646,12 +675,13 @@ fn map_events(page: &mut SessionPage, bytes: &[u8]) {
     if !page
         .events
         .iter()
+        .chain(page.paused.iter())
         .any(|event| matches!(event.event, DebugEventKind::Paused { .. }))
     {
         return;
     }
     let Some(map) = decode(bytes) else { return };
-    for event in &mut page.events {
+    for event in page.events.iter_mut().chain(page.paused.iter_mut()) {
         if let DebugEventKind::Paused { frames, .. } = &mut event.event {
             for frame in frames {
                 frame.original = None;

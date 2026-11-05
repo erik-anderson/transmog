@@ -3,7 +3,6 @@
 use std::{future::Future, pin::Pin, sync::Arc, time::Duration};
 
 use thiserror::Error;
-use tokio::time::timeout;
 
 use crate::{
     StreamingRequest, StreamingResponse, intercept::ExchangeCancellation, route::UpstreamPlan,
@@ -105,13 +104,25 @@ impl UpstreamExecutor {
         plan: UpstreamPlan,
         cancellation: &ExchangeCancellation,
     ) -> Result<StreamingResponse, UpstreamError> {
+        self.execute_debug(request, plan, cancellation, &[]).await
+    }
+    /// Executes an attempt while suspending its deadline for dependent debugger pauses.
+    /// # Errors
+    /// Returns a structured timeout, cancellation, panic or transport failure.
+    pub async fn execute_debug(
+        &self,
+        request: StreamingRequest,
+        plan: UpstreamPlan,
+        cancellation: &ExchangeCancellation,
+        clocks: &[Arc<transmog_script_diagnostics::supervision::PauseClock>],
+    ) -> Result<StreamingResponse, UpstreamError> {
         let service = Arc::clone(&self.service);
         let owned_cancellation = cancellation.clone();
         let mut task = AbortOnDrop::new(tokio::spawn(async move {
             service.execute(request, plan, owned_cancellation).await
         }));
         let result = tokio::select! {
-            joined = timeout(self.timeout, task.handle()) => match joined {
+            joined = transmog_script_diagnostics::supervision::wait_budgets(self.timeout,clocks, task.handle()) => match joined {
                 Ok(Ok(result)) => result,
                 Ok(Err(error)) if error.is_panic() => Err(boundary_error(UpstreamErrorKind::Panicked, "upstream service panicked")),
                 Ok(Err(_)) => Err(boundary_error(UpstreamErrorKind::Cancelled, "upstream task was cancelled")),

@@ -83,6 +83,13 @@ function row(entry: ExtensionEntry): ExtensionRow {
   };
 }
 export class ExtensionSettings extends WorkspaceElement {
+  async openDebugger(): Promise<void> {
+    try {
+      await invoke("open_debugger");
+    } catch (error) {
+      this.extensionsError = describeError(error);
+    }
+  }
   debugContribution(extensionId: string, visualizerId: string): void {
     this.$emit("extension-debug-request", { extensionId, visualizerId });
   }

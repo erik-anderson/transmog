@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::io::{Read, Write};
 
 /// Same-build worker protocol revision.
-pub const HOST_PROTOCOL_VERSION: u32 = 7;
+pub const HOST_PROTOCOL_VERSION: u32 = 8;
 /// Absolute framing ceiling, checked before allocating any incoming JSON.
 pub const MAX_HOST_FRAME_BYTES: usize = 12 * 1024 * 1024;
 /// Maximum raw payload bytes in one initialization chunk.

@@ -39,7 +39,9 @@ pub use debugging::{
     DebugConfiguration, DebugLiveRequest, DebugOutcome, DebugSessionInfo, DebugSessionView,
     DebugTestRequest,
 };
+pub use transmog_script_diagnostics::SourceLocation;
 pub use transmog_script_diagnostics::debugger::DebugAction;
+mod debugger_workspace;
 mod experiment_pages;
 mod export_privacy;
 pub mod export_review;
@@ -55,6 +57,7 @@ mod response_assets;
 mod response_file;
 mod response_filename;
 mod scripts;
+pub use debugger_workspace::{DebuggerFile, DebuggerWorkspaceView, WorkspaceBreakpoint};
 mod search;
 mod sessions;
 mod streams;
@@ -452,6 +455,7 @@ pub struct Application {
     saved_demos: saved_demos::SavedDemoRegistry,
     scripts: scripts::ScriptRegistry,
     debuggers: debugging::Debuggers,
+    debugger_workspace: debugger_workspace::Workspace,
     previews: preview::PreviewService,
     traces: traces::TraceRegistry,
     searches: search::SearchRegistry,
@@ -479,6 +483,8 @@ impl Application {
     /// Returns a bounded application error if the owned service cannot start.
     #[allow(clippy::too_many_lines)]
     pub fn new(config: AppConfig) -> Result<Self, AppError> {
+        let debugger_workspace =
+            debugger_workspace::Workspace::load(config.script_workspace_path.as_deref());
         let (product_state, mut warning) =
             product_state::ProductStateManager::load(config.product_state_path);
         let initial_state = product_state.snapshot();
@@ -642,6 +648,7 @@ impl Application {
             saved_demos,
             scripts,
             debuggers: debugging::Debuggers::default(),
+            debugger_workspace,
             previews,
             traces: traces::TraceRegistry::default(),
             searches: search::SearchRegistry::default(),

@@ -549,6 +549,26 @@ impl Application {
         let extension = request.extension_id.clone();
         let contribution = request.visualizer_id.clone();
         let startup = Arc::clone(ticket);
+        if self.debugger_workspace.is_open()
+            && ticket.debug.lock().map_err(|_| unavailable())?.is_none()
+        {
+            let snapshot = self
+                .visualizers
+                .registry
+                .snapshot(&extension)
+                .map_err(|_| unavailable())?;
+            let entry = snapshot
+                .manifest
+                .visualizers
+                .iter()
+                .find(|v| v.id == contribution)
+                .ok_or_else(unavailable)?
+                .entry
+                .clone();
+            if let Some(run) = self.debugger_workspace.extension(self, snapshot, &entry)? {
+                *ticket.debug.lock().map_err(|_| unavailable())? = Some(Arc::downgrade(&run));
+            }
+        }
         let debug = ticket
             .debug
             .lock()

@@ -1,12 +1,7 @@
 import "../draft-status/draft-status.js";
 import "../script-diagnostics/script-diagnostics.js";
-import "../script-debugger/script-debugger.js";
-import type {
-  DebugConfiguration,
-  DebugSessionInfo,
-  SourceBreakpoint,
-} from "../script-debugger/models.js";
-import type { ScriptDebugger } from "../script-debugger/script-debugger.js";
+import type { DebugSessionInfo } from "../debugger-workspace/models.js";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import {
   errorEvidence,
   type DeveloperEvidence,
@@ -181,23 +176,10 @@ export class ScriptEditor extends WorkspaceElement {
   @observable testOutdated = false;
   @observable debugInfo: DebugSessionInfo | null = null;
   @observable debugOutdated = false;
-  @observable debugBreakpoints: SourceBreakpoint[] = [];
   @observable debugPolicy = "uncaught";
-  @observable liveReview = false;
-  @observable liveTargetText = "";
-  @observable liveMethod = "";
-  @observable liveHost = "";
-  @observable livePath = "";
-  private liveTarget: { generation: number; revision: ScriptStatus["active"][number] } | null =
-    null;
-  debugBreakpointLines!: HTMLInputElement;
-  debugExceptionPolicy!: HTMLSelectElement;
-  debugPanel?: ScriptDebugger;
+  private debuggerUnlisten: UnlistenFn | null = null;
+  private readonly debugSessions = new Set<string>();
   debugButton!: HTMLButtonElement;
-  showDebugButton?: HTMLButtonElement;
-  @observable debugLinesText = "";
-  private breakpointDecorations: Monaco.editor.IEditorDecorationsCollection | null = null;
-  private decoratedLines: number[] = [];
   @observable testMode = "callback";
   @observable testFailure = "Upstream";
   @observable scenarioOutcome = "response";
@@ -543,140 +525,30 @@ export class ScriptEditor extends WorkspaceElement {
     await this.runScript("Checking source and running the sandbox…", () => this.testDraft());
   }
   async debugTest(): Promise<void> {
-    if (this.debugInfo) {
-      this.feedback("Close the current debugger before starting another snapshot.");
-      return;
-    }
     await this.runScript("Checking source and starting debugger…", () => this.testDraft(true));
   }
-  debugClosed(): void {
-    this.debugInfo = null;
-    this.debugOutdated = false;
-    this.$flushUpdates();
-    this.debugButton.focus();
+  async showDebugger(): Promise<void> {
+    try {
+      await invoke("open_debugger");
+    } catch (error) {
+      this.feedback(describeError(error));
+    }
   }
-  debugHidden(): void {
-    this.showDebugButton?.focus();
-  }
-  showDebugger(): void {
-    this.debugPanel?.show();
-  }
-  async restartDebug(): Promise<void> {
-    this.debugClosed();
-    this.$flushUpdates();
-    await this.debugTest();
-  }
-  debugConfigurationChanged(event: CustomEvent<DebugConfiguration>): void {
-    this.debugBreakpoints = event.detail.breakpoints;
-    this.debugPolicy = event.detail.exceptions;
-    this.debugLinesText = this.debugBreakpoints
-      .filter((value) => value.location.source === this.draftDebugSource())
-      .map((value) => value.location.line)
-      .join(", ");
-    this.$flushUpdates();
-    this.renderBreakpoints();
-  }
-  changeDebugLines(event: Event): void {
-    this.debugLinesText = (event.target as HTMLInputElement).value;
-    this.renderBreakpoints();
-  }
-  changeDebugPolicy(event: Event): void {
-    this.debugPolicy = (event.target as HTMLSelectElement).value;
-  }
-  private draftDebugSource(): string {
-    return this.language === "typescript"
-      ? "file:///transmog-scripts/user-script/main.ts"
-      : "file:///transmog-script/main.js";
-  }
-  private renderBreakpoints(): void {
-    if (!this.sourceEditor || !this.monaco) {
+  private async watchDebugger(): Promise<void> {
+    const unlisten = await listen<{ session: string; exceptions: string }>(
+      "debugger-restart",
+      (event) => {
+        if (this.debugSessions.has(event.payload.session)) {
+          this.debugPolicy = event.payload.exceptions;
+          void this.debugTest();
+        }
+      },
+    );
+    if (!this.isConnected) {
+      unlisten();
       return;
     }
-    const lines = [...new Set(this.debugLinesText.split(/[\s,]+/).map(Number))].filter(
-      (line) =>
-        Number.isSafeInteger(line) && line > 0 && line <= (this.draftModel?.getLineCount() ?? 0),
-    );
-    this.decoratedLines = lines;
-    this.breakpointDecorations ??= this.sourceEditor.createDecorationsCollection();
-    this.breakpointDecorations.set(
-      lines.map((line) => ({
-        range: new this.monaco!.Range(line, 1, line, 1),
-        options: {
-          glyphMarginClassName: "script-breakpoint",
-          glyphMarginHoverMessage: { value: "Breakpoint · click to remove" },
-          stickiness: this.monaco!.editor.TrackedRangeStickiness.NeverGrowsWhenTypingAtEdges,
-        },
-      })),
-    );
-  }
-  async reviewLiveDebug(): Promise<void> {
-    this.scriptMenu.hidePopover();
-    await this.runScript("Checking applied revision…", async () => {
-      const status = await invoke<ScriptStatus>("script_status");
-      const revision = status.active.find((item) => item.manifest.id === "user-script");
-      if (!revision) {
-        throw new Error("Enable an applied script before debugging live traffic.");
-      }
-      this.liveTarget = { generation: status.generation, revision };
-      this.liveTargetText = `Applied revision ${revision.manifest.revision} · ${trafficScope(activeDraft(revision))}`;
-      this.liveMethod = revision.manifest.prefilter.method ?? "";
-      this.liveHost = revision.manifest.prefilter.host ?? "";
-      this.livePath = revision.manifest.prefilter.pathPrefix ?? "";
-      this.liveReview = true;
-    });
-  }
-  changeLiveFilter(field: "method" | "host" | "path", event: Event): void {
-    const value = (event.target as HTMLInputElement).value;
-    if (field === "method") {
-      this.liveMethod = value;
-    } else if (field === "host") {
-      this.liveHost = value;
-    } else {
-      this.livePath = value;
-    }
-  }
-  cancelLiveReview(): void {
-    this.liveReview = false;
-    this.liveTarget = null;
-  }
-  async armLiveDebug(): Promise<void> {
-    if (!this.liveTarget || this.debugInfo) {
-      return;
-    }
-    const target = this.liveTarget;
-    await this.runScript("Arming the applied script debugger…", async () => {
-      const revision = target.revision;
-      const source =
-        revision.language === "typescript"
-          ? `file:///transmog-scripts/${revision.manifest.id}/main.ts`
-          : "file:///transmog-script/main.js";
-      const breakpoints = this.sourceBreakpoints(source);
-      const policy = this.debugExceptionPolicy.value;
-      const info = await invoke<DebugSessionInfo>("debug_next_script_exchange", {
-        request: {
-          expectedGeneration: target.generation,
-          scriptId: revision.manifest.id,
-          revision: revision.manifest.revision,
-          javascriptHash: revision.javascriptHash,
-          filter: {
-            method: this.liveMethod.trim() || null,
-            host: this.liveHost.trim() || null,
-            pathPrefix: this.livePath || null,
-          },
-          configuration: { exceptions: policy, breakpoints },
-        },
-      });
-      if (!this.isConnected) {
-        await invoke("close_debug_session", { session: info.session });
-        return;
-      }
-      this.debugBreakpoints = breakpoints;
-      this.debugPolicy = policy;
-      this.debugInfo = info;
-      this.debugOutdated = this.scriptUnapplied;
-      this.liveReview = false;
-      this.feedback("Debugger armed for the next matching exchange for 60 seconds.");
-    });
+    this.debuggerUnlisten = unlisten;
   }
   async primaryAction(): Promise<void> {
     if (!this.scriptActive || this.scriptUnapplied) {
@@ -755,6 +627,7 @@ export class ScriptEditor extends WorkspaceElement {
     this.markTestChanged();
   }
   protected hydratedCallback(): void {
+    void this.watchDebugger();
     this.systemTheme.addEventListener("change", this.systemThemeChanged);
     this.forcedColors.addEventListener("change", this.systemThemeChanged);
     if (this.active) {
@@ -809,6 +682,8 @@ export class ScriptEditor extends WorkspaceElement {
     }
   }
   disconnectedCallback(): void {
+    this.debuggerUnlisten?.();
+    this.debuggerUnlisten = null;
     this.disposeApiReference();
     this.scriptHelpDialog?.close();
     this.editVersion++;
@@ -917,7 +792,7 @@ export class ScriptEditor extends WorkspaceElement {
       accessibilitySupport: "on",
       ariaLabel: `Traffic script ${this.language === "typescript" ? "TypeScript" : "JavaScript"} source`,
       minimap: { enabled: false },
-      glyphMargin: true,
+      glyphMargin: false,
       tabFocusMode: true,
       theme: this.monacoTheme(),
     });
@@ -951,51 +826,12 @@ export class ScriptEditor extends WorkspaceElement {
       set("sensitive", draft.capabilities.readSensitiveHeaders);
       this.savedFingerprint = scriptFingerprint(draft);
     }
-    this.sourceEditor.onDidChangeModelContent(() => {
-      const moved = this.breakpointDecorations?.getRanges() ?? [];
-      if (moved.length) {
-        const unrendered = this.debugLinesText
-          .split(/[\s,]+/)
-          .map(Number)
-          .filter(
-            (line) => Number.isSafeInteger(line) && line > 0 && !this.decoratedLines.includes(line),
-          );
-        this.debugLinesText = [
-          ...new Set([...moved.map((range) => range.startLineNumber), ...unrendered]),
-        ]
-          .sort((a, b) => a - b)
-          .join(", ");
-        this.renderBreakpoints();
-      }
-      this.markScriptChanged();
-    });
-    this.sourceEditor.onMouseDown((event) => {
-      if (
-        event.target.type !== this.monaco!.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
-        !event.target.position
-      ) {
-        return;
-      }
-      const line = event.target.position.lineNumber;
-      const lines = this.debugLinesText
-        .split(/[\s,]+/)
-        .map(Number)
-        .filter((value) => Number.isSafeInteger(value) && value > 0);
-      this.debugLinesText = (
-        lines.includes(line)
-          ? lines.filter((value) => value !== line)
-          : [...lines, line].slice(0, 128)
-      )
-        .sort((a, b) => a - b)
-        .join(", ");
-      this.renderBreakpoints();
-    });
+    this.sourceEditor.onDidChangeModelContent(() => this.markScriptChanged());
     this.scriptReady = true;
     this.initialDraft = structuredClone(this.scriptDraft());
     this.savedDraft = draft ? structuredClone(draft) : null;
     this.$flushUpdates();
     this.renderScriptStatus(status);
-    this.renderBreakpoints();
     this.updateDraftState();
     void this.refreshAuthoringStatus();
     this.scheduleRuntimeRefresh();
@@ -1372,11 +1208,6 @@ export class ScriptEditor extends WorkspaceElement {
     invocation: unknown,
     scenario: unknown,
   ): Promise<void> {
-    const source =
-      candidate.draft.language === "typescript"
-        ? `file:///transmog-scripts/${candidate.draft.id}/main.ts`
-        : "file:///transmog-script/main.js";
-    this.debugBreakpoints = this.sourceBreakpoints(source);
     const info = await invoke<DebugSessionInfo>("start_debug_test", {
       request: {
         candidateId: candidate.token.candidateId,
@@ -1384,37 +1215,22 @@ export class ScriptEditor extends WorkspaceElement {
         scenario,
         configuration: {
           exceptions: this.debugPolicy,
-          breakpoints: this.debugBreakpoints,
+          breakpoints: [],
         },
       },
     });
     if (!this.isConnected) {
-      await invoke("close_debug_session", { session: info.session });
       return;
     }
     this.debugInfo = info;
+    this.debugSessions.add(info.session);
+    if (this.debugSessions.size > 16) {
+      this.debugSessions.delete(this.debugSessions.values().next().value!);
+    }
     this.debugOutdated = !this.current(version);
     this.scriptText =
       "Debugger started. Use its controls to continue, step, inspect values, or stop.";
     this.statusKind = "success";
-  }
-  private sourceBreakpoints(source: string): SourceBreakpoint[] {
-    const lines = this.debugLinesText
-      .split(/[\s,]+/)
-      .filter(Boolean)
-      .map(Number);
-    if (lines.length > 128 || lines.some((line) => !Number.isSafeInteger(line) || line < 1)) {
-      throw new Error("Use up to 128 positive source line numbers, separated by commas.");
-    }
-    const values = this.debugBreakpoints.filter((value) => value.location.source !== source);
-    let id = Math.max(0, ...values.map((value) => value.id));
-    return [
-      ...values,
-      ...[...new Set(lines)].map((line) => ({
-        id: ++id,
-        location: { source, line, column: 1 },
-      })),
-    ];
   }
   private trimTestEvidence(): void {
     if (this.testEvidence.length > 32768) {
@@ -1771,9 +1587,6 @@ export class ScriptEditor extends WorkspaceElement {
     ).filter((handler) => new RegExp(`\\bexport\\s+function\\s+${handler}\\b`).test(source));
   }
   private replaceSource(source: string, language: ScriptLanguage): void {
-    this.breakpointDecorations?.clear();
-    this.breakpointDecorations = null;
-    this.decoratedLines = [];
     const old = this.draftModel;
     this.sourceEditor!.setModel(null);
     old?.dispose();
@@ -1796,7 +1609,6 @@ export class ScriptEditor extends WorkspaceElement {
         ? "TypeScript source"
         : "JavaScript source";
     this.markScriptChanged();
-    this.renderBreakpoints();
   }
   private async checkTypeScript(): Promise<void> {
     if (this.language !== "typescript" && !this.reviewingTypeScript) {

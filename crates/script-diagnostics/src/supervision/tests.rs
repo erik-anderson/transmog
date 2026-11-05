@@ -3,11 +3,100 @@ use crate::debugger::{ExceptionPolicy, ResumeAction};
 use std::sync::atomic::{AtomicBool, Ordering};
 fn session() -> Arc<Session> {
     Session::new(DebugOptions {
+        pause_on_start: false,
+        persistent: false,
         session: "a".repeat(32),
         exceptions: ExceptionPolicy::None,
         breakpoints: vec![],
     })
     .unwrap()
+}
+#[test]
+fn workspace_detaches_after_a_queued_attachment_and_keeps_pause_snapshot() {
+    let session = Session::new(DebugOptions {
+        pause_on_start: false,
+        persistent: true,
+        session: "b".repeat(32),
+        exceptions: ExceptionPolicy::None,
+        breakpoints: vec![],
+    })
+    .unwrap();
+    let (sender, receiver) = std::sync::mpsc::channel();
+    session.bind(
+        move |command| sender.send(command).is_ok(),
+        || panic!("Healthy detach must not stop the worker"),
+    );
+    session.request_detach().unwrap();
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    let command = receiver.recv_timeout(Duration::from_secs(1)).unwrap();
+    assert!(matches!(command.action, DebugAction::Detach));
+    let mut detached = event(&session, DebugEventKind::Detached);
+    detached.request = command.request;
+    session.accept(detached).unwrap();
+    assert!(session.detached());
+}
+#[test]
+fn workspace_pause_survives_legacy_lease_and_history_eviction() {
+    let session = Session::new(DebugOptions {
+        pause_on_start: false,
+        persistent: true,
+        session: "c".repeat(32),
+        exceptions: ExceptionPolicy::None,
+        breakpoints: vec![],
+    })
+    .unwrap();
+    session.bind(|_| true, || {});
+    session.begin(0);
+    session
+        .accept(event(&session, DebugEventKind::Attached))
+        .unwrap();
+    session.accept(event(&session, paused())).unwrap();
+    session.state.lock().unwrap().paused_at =
+        Some(Instant::now().checked_sub(Duration::from_secs(90)).unwrap());
+    std::thread::sleep(Duration::from_millis(30));
+    assert!(!session.is_closed());
+    for _ in 0..80 {
+        let request = session
+            .command(DebugAction::Exceptions {
+                policy: ExceptionPolicy::None,
+            })
+            .unwrap();
+        let mut reply = event(&session, DebugEventKind::Acknowledged);
+        reply.request = request;
+        session.accept(reply).unwrap();
+    }
+    assert!(matches!(
+        session.page(0).paused.unwrap().event,
+        DebugEventKind::Paused { pause: 1, .. }
+    ));
+    session.stop("Test ended");
+}
+#[tokio::test]
+async fn dependent_budgets_exclude_separate_worker_pauses_and_keep_the_active_limit() {
+    let first = Arc::new(PauseClock::default());
+    let second = Arc::new(PauseClock::default());
+    let clocks = [Arc::clone(&first), Arc::clone(&first), Arc::clone(&second)];
+    wait_budgets(Duration::from_millis(40), &clocks, async move {
+        first.pause();
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        first.resume();
+        second.pause();
+        tokio::time::sleep(Duration::from_millis(70)).await;
+        second.resume();
+    })
+    .await
+    .unwrap();
+    assert!(
+        wait_budgets(
+            Duration::from_millis(20),
+            &clocks,
+            std::future::pending::<()>()
+        )
+        .await
+        .is_err()
+    );
 }
 fn event(session: &Session, event: DebugEventKind) -> DebugEvent {
     DebugEvent {

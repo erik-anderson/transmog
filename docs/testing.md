@@ -341,7 +341,7 @@ across their actual boundaries:
 | --- | --- |
 | UI check and full `test:workspaces` suite above | Production-template authoring, preserved drafts, failed/stale saves, ordered tests, variant activation, comparison, keyboard and wide/compact layouts under CSP/Trusted Types. |
 | `./scripts/test-windows-desktop.ps1 -ViewerChecks -CapturedPageChecks` | Real native commands and isolated previews: captured JavaScript → edit → compare → passive save → script-enabled HTML/CSS/image/API preview → supplied-response comparison → explicit activation/Baseline. Also qualifies linked-file update/frozen reload, script choice, network failures and independent browser state. |
-| `python scripts/test-response-file-modes.py` | Copy/link through the real proxy, including explicit copies above the former size cutoff, restart repair, coherent historical snapshots and zero requests to a deny origin. |
+| `python scripts/test-response-file-modes.py` | Copy/link through the real proxy, including large explicit copies, restart repair, coherent historical snapshots and zero requests to a deny origin. |
 | `python scripts/test-interop.py` | Live variant switching, header/script order, literal edits preserving fresh unrelated tokens, actual operation evidence, compressed/bounded failures, restart and native capture round trips against controlled origins. |
 
 Run scoped Rust tests and strict Clippy for the app/session/renderer/desktop and
@@ -467,7 +467,7 @@ idle detach/reattach, preserved globals, pause-aware header/body/terminal timing
 competing live admissions and pinned exchanges. The default
 `npm --prefix apps/desktop/ui run test:workspaces` includes the debugger flow.
 To run only that flow from the repository root, use
-`node apps/desktop/ui/scripts/check-workspaces.mjs --script-debugger-only`.
+`node apps/desktop/ui/scripts/check-workspaces.mjs --debugger-workspace-only`.
 
 After building the desktop with its matching packaged helpers, use
 `scripts/test-windows-desktop.ps1 -SkipReleaseBuild -ExecutablePath <absolute-exe> -ScriptDebuggerChecks`
@@ -476,7 +476,9 @@ console, immutable-source and streaming-scenario journeys. The latter verifies
 split input, deferred headers and the callback timeline through the real host.
 The debugger fixture routes its clients
 manually over loopback with HTTPS decryption off; it does not install trust or
-change Windows proxy settings. Do not combine these checks with another harness
+change Windows proxy settings. It covers fresh fixtures and visualizer restart,
+normal/queued traffic, paused dock transfers, idle commands, healthy close and
+repeated controller lifetimes. Do not combine these checks with another harness
 mode. Retain the reported evidence folder and inspect the screenshots.
 
 The fixed `debugger-benchmark` js-runtime example (feature `debugger`) measures

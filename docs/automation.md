@@ -861,44 +861,51 @@ representation, coverage, exclusion and processing limits.
 
 ## Debug script execution
 
+Choose **Open debugger** in **Automation → Scripts** or **Settings → Extensions**,
+or toggle it with **F12**, including from an editor. After the first open, the
+app toolbar keeps a **Debugger** shortcut until you quit the app.
+Sources lists saved scripts and installed extension files without activating
+them. Click beside a line number to toggle a breakpoint; right-click for a
+condition or to disable it. A filled red circle means a worker has bound the
+breakpoint; an outline is pending.
+
+The open workspace catches `debugger;` statements and attaches to newly created
+workers before initialization. Use **Dock** to move it beside Traffic or into a
+separate window. Moving preserves execution and the console draft.
+
+Switch between mapped TypeScript and running JavaScript when a verified source
+map is available. The Console runs JavaScript in the selected paused frame, or
+in the selected worker's global context when idle. Commands can change that
+worker's state. Scope/property inspection stays inert; conditions reject side
+effects. An invalid condition pauses with an explanation.
+
+Transmog suspends dependent callback, body-read and upstream-attempt budgets
+while a worker is debugger-blocked. Cancellation and shutdown remain effective;
+remote clients and servers still control their own timeouts. Workspace pauses
+last until continued or closed. Source changes rebind a uniquely identifiable
+statement; removed or ambiguous statements lose their saved breakpoints.
+
 Choose **Debug test** in Scripts to run the current callback or exchange-scenario
-fixture in a fresh sandbox without applying the draft. Click the editor gutter to
-set initializer breakpoints, or use **Debugger options** for line numbers and
-exception policy. When execution pauses, the debugger reveals the statement and
-loads an available scope, preferring Local unless you selected another scope.
-Select frames or scopes and expand properties in place; narrow windows
-switch between **Source** and **Stack and variables**. Executing source and values
-are read-only, and getters and proxies are not evaluated.
+input in a fresh worker without applying the draft. It opens this same workspace
+and pauses before the first user statement. Set breakpoints and exception policy,
+then continue. When paused, select a frame or scope and expand objects in place;
+getters and proxies stay inert. Completed fixtures retain their result and logs
+in the recent worker list.
 
-Continue uses F8 or `Ctrl+\` (also F5); step over uses F10, into F11, out
-Shift+F11, and Stop Shift+F5. Shortcuts work throughout the debugger, including
-selectors. Hover or focus a toolbar button for its action and shortcut.
+Continue uses F8 or `Ctrl+\` (also F5); step over F10, into F11,
+out Shift+F11, and Stop Shift+F5.
+Shortcuts work throughout the debugger, including Monaco and selectors. Hover or
+focus an icon for its action and shortcut.
 
-**Restart** stops the sandbox and runs the current draft and fixture.
-Breakpoints and exception choices survive reruns in the current workspace.
-**Return to editor** or Escape hides the debugger and preserves its running or
-paused state; **Show debugger** returns to it. **Stop and close debugger**
-aborts active work. **Continue and detach** lets current work finish without
-further pauses before detaching. Test sandboxes are released on completion.
+**Restart** aborts the selected worker. For script tests, it uses the current
+draft and test input; for applied scripts, it restarts the applied build. For
+visualizers, it starts a fresh fixture in the originating inspector. **Stop**
+aborts selected work. Closing the debugger, including **F12** or **Continue and
+detach**, continues paused work and detaches all workers. Saved breakpoints
+return on reopening. While closed, breakpoints and `debugger;` do not pause execution.
 
-For live traffic, open **Debug next matching exchange**, review the applied
-revision and method/host/path filter, then choose **Arm for 60 seconds**. This
-reserves the actual idle worker with its globals. Outstanding pinned exchanges
-or another owner prevent arming. Other requests requiring that worker can fail
-while it is reserved, even outside the debugger filter. Client and upstream
-timeouts still apply; the selected exchange keeps ownership through body and
-terminal callbacks.
-
-Normal live completion or **Continue and detach** releases the reservation and
-preserves a healthy worker. Stop, cancellation or window loss can terminate it;
-use **Retry applied script** if unavailable. Applying a replacement or pausing
-activation ends the previous debugger without restoring its revision. **Pause
-script** controls admission of new traffic; it is separate from a debugger pause
-and from HTTP editing breakpoints.
-
-Pauses expire after 60 seconds and sessions after 10 minutes; expiry, document
-reload or window loss stops active owned work. Console output is under **Console
-output and diagnostics**. Locals, console records and rich exceptions stay local
-and ephemeral, outside normal trace, case, support and MCP output. See the
-[Script API](scripting.md#debug-a-script) for inspection limits and
-[console semantics](scripting.md#logs-annotations-and-failures).
+The live proxy uses the main window's workspace; capture-window visualizers use
+their own workspace. Extension breakpoints are shared, but worker control stays
+with its owning window. Source, variables, exceptions and console output are
+local and temporary, outside normal trace, case, support and MCP output. See the
+[Script API](scripting.md#debug-a-script) for inspection and console semantics.

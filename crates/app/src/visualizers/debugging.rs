@@ -37,6 +37,163 @@ fn bind_lifetime(
     });
 }
 impl Application {
+    /// Starts an explicitly requested fresh visualizer in the shared workspace.
+    /// # Errors
+    /// Rejects unavailable workspaces, stale inputs and ordinary activation failures.
+    pub fn debug_workspace_visualizer(
+        &self,
+        mut request: DebugVisualizerRequest,
+    ) -> Result<DebugSessionInfo, AppError> {
+        if !self.debugger_workspace.is_open() {
+            return Err(invalid("Open the debugger before starting a debug fixture"));
+        }
+        let configuration = self
+            .debugger_workspace
+            .configuration(&format!("extension/{}/", request.activation.extension_id));
+        request.configuration.breakpoints = configuration.breakpoints;
+        request.configuration.persistent = true;
+        request.configuration.pause_on_start = true;
+        let info = self.debug_visualizer(crate::debugger_workspace::OWNER, request)?;
+        self.register_workspace_target(info.clone())?;
+        Ok(info)
+    }
+    /// Focuses the actual current instance without creating a second parser or controller.
+    /// # Errors
+    /// Rejects stale views, closed workspaces and an instance that never reaches a safe boundary.
+    pub async fn debug_workspace_existing_visualizer(
+        &self,
+        handle: &VisualizerHandle,
+    ) -> Result<DebugSessionInfo, AppError> {
+        let started = std::time::Instant::now();
+        loop {
+            if !self.debugger_workspace.is_open() {
+                return Err(invalid("Debugger opening was canceled"));
+            }
+            self.attach_workspace_visualizers()?;
+            let ticket = self.visualizers.ticket_binding(handle)?;
+            let run = ticket
+                .debug
+                .lock()
+                .map_err(|_| unavailable())?
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade);
+            if let Some(run) = run.filter(|run| {
+                !run.session.is_closed()
+                    && self
+                        .debuggers
+                        .owned(crate::debugger_workspace::OWNER, &run.info.session)
+                        .is_ok()
+            }) {
+                self.register_workspace_target(run.info.clone())?;
+                return Ok(run.info.clone());
+            }
+            if started.elapsed() >= std::time::Duration::from_secs(10) {
+                return Err(invalid(
+                    "Visualizer is busy. Try again when its operation finishes.",
+                ));
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+        }
+    }
+    /// Finds the window's current visualizer instance for a selected debugger target.
+    pub fn workspace_visualizer_instance(&self, session: &str) -> Option<String> {
+        self.visualizers
+            .slots
+            .lock()
+            .ok()?
+            .values()
+            .filter_map(|slot| slot.ticket.as_ref())
+            .find_map(|ticket| {
+                let run = ticket.debug.lock().ok()?.as_ref()?.upgrade()?;
+                (run.info.session == session)
+                    .then(|| ticket.current().ok().map(|instance| instance.id))
+                    .flatten()
+            })
+    }
+    /// Locates an owned initializer before its first valid document/instance is published.
+    pub fn workspace_visualizer_binding(&self, session: &str) -> Option<(String, String, String)> {
+        self.visualizers
+            .slots
+            .lock()
+            .ok()?
+            .values()
+            .filter_map(|slot| slot.ticket.as_ref())
+            .find_map(|ticket| {
+                let run = ticket.debug.lock().ok()?.as_ref()?.upgrade()?;
+                if run.info.session != session {
+                    return None;
+                }
+                ticket.activation.lock().ok()?.as_ref().map(|activation| {
+                    (
+                        activation.slot.clone(),
+                        activation.generation.clone(),
+                        activation.page_id.clone(),
+                    )
+                })
+            })
+    }
+    pub(crate) fn attach_workspace_visualizers(&self) -> Result<(), AppError> {
+        if !self.debugger_workspace.is_open() {
+            return Ok(());
+        }
+        let handles: Vec<_> = {
+            let slots = self.visualizers.slots.lock().map_err(|_| unavailable())?;
+            slots
+                .values()
+                .filter_map(|slot| slot.ticket.as_ref())
+                .filter_map(|ticket| {
+                    ticket
+                        .activation
+                        .lock()
+                        .ok()?
+                        .clone()
+                        .zip(ticket.current().ok())
+                })
+                .map(|(activation, instance)| activation.handle(&instance))
+                .collect()
+        };
+        for handle in handles {
+            let ticket = self.visualizers.ticket_binding(&handle)?;
+            if ticket
+                .debug
+                .lock()
+                .map_err(|_| unavailable())?
+                .as_ref()
+                .and_then(std::sync::Weak::upgrade)
+                .is_some_and(|run| !run.session.is_closed())
+            {
+                continue;
+            }
+            let Ok(_operation) = ticket.operation.try_lock() else {
+                continue;
+            };
+            let instance = ticket.current()?;
+            let runner = self
+                .visualizers
+                .registry
+                .runner(&self.visualizers.owner, &instance.id)
+                .map_err(|_| unavailable())?;
+            if let Some(run) = self.debugger_workspace.extension(
+                self,
+                runner.snapshot(),
+                &instance.declaration.entry,
+            )? {
+                runner
+                    .attach_debugger(Arc::clone(&run.session))
+                    .map_err(worker_failure)?;
+                if let Ok(resources) = self
+                    .visualizers
+                    .registry
+                    .resources::<super::Resources>(&self.visualizers.owner, &instance.id)
+                    && let Some(feed) = resources.live.lock().map_err(|_| unavailable())?.as_ref()
+                {
+                    feed.set_debug_clock(run.session.clock());
+                }
+                *ticket.debug.lock().map_err(|_| unavailable())? = Some(Arc::downgrade(&run));
+            }
+        }
+        Ok(())
+    }
     /// Starts a fresh fixture controller before module initialization or selected-message parsing.
     /// # Errors
     /// Rejects unmatched declarations, stale views, unavailable packages or excessive controllers.

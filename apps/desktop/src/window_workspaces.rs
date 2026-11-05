@@ -266,6 +266,7 @@ pub(super) fn create_viewer(
         extensions: Some(state.application.extensions()),
         ..AppConfig::default()
     })?;
+    application.inherit_debugger_preferences(&state.application)?;
     application.save_product_state(state.application.product_state())?;
     application.prepare_replay_network_profile(
         state
@@ -302,7 +303,8 @@ pub(super) fn create_viewer(
     .data_directory(profile)
     .on_navigation(is_allowed_navigation)
     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
-    .build();
+    .build()
+    .inspect(super::debugger_workspace::install_shortcut);
     if result.is_err() {
         state
             .workspaces
@@ -370,6 +372,9 @@ pub(super) fn review_agent_session(
     .on_navigation(is_allowed_navigation)
     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
     .build();
+    if let Ok(window) = &result {
+        super::debugger_workspace::install_shortcut(window);
+    }
     if result.is_err() {
         state
             .workspaces

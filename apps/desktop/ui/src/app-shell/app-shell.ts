@@ -18,6 +18,10 @@ import type { ResponseSetIntakeRequest } from "../models.js";
 import type { SavedDemoPreviewIntent } from "../saved-demo-models.js";
 import { WebUIElement, attr, observable } from "@microsoft/webui-framework";
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import "../debugger-workspace/debugger-workspace.js";
+import type { DebuggerWorkspace } from "../debugger-workspace/debugger-workspace.js";
+import { debuggerToggleKey } from "../debugger-workspace/shortcuts.js";
 import type {
   TrafficRuleRequest,
   AppStatus,
@@ -51,6 +55,77 @@ const loaders = {
 
 /** Composition, shared status, and local workspace selection. */
 export class AppShell extends WebUIElement {
+  @observable debuggerPlacement = "closed";
+  @observable debuggerDocked = false;
+  @observable debuggerSplit = "40";
+  @observable debuggerShare = "40%";
+  private debuggerListener?: UnlistenFn;
+  private debuggerPauseListener?: UnlistenFn;
+  @observable debuggerButtonLabel = "Debugger";
+  @observable debuggerSeen = false;
+  private debuggerAccessListener?: UnlistenFn;
+  private debuggerNativeShortcut?: UnlistenFn;
+  private debuggerAccessError?: UnlistenFn;
+  private debuggerToggling = false;
+  debuggerDock!: DebuggerWorkspace;
+  async openDebugger(): Promise<void> {
+    try {
+      await invoke("open_debugger");
+    } catch (error) {
+      this.diagnosticText = describeError(error);
+    }
+  }
+  resizeDebugger(event: CustomEvent<{ value: number }>): void {
+    this.debuggerSplit = String(event.detail.value);
+    this.debuggerShare = `${event.detail.value}%`;
+  }
+  private async toggleDebugger(): Promise<void> {
+    if (this.debuggerToggling) {
+      return;
+    }
+    this.debuggerToggling = true;
+    try {
+      await invoke("toggle_debugger");
+    } catch (error) {
+      this.diagnosticText = describeError(error);
+    } finally {
+      this.debuggerToggling = false;
+    }
+  }
+  private async watchDebuggerAccess(): Promise<void> {
+    try {
+      const unlisten = await listen<boolean>("debugger-opened", () => {
+        this.debuggerSeen = true;
+      });
+      if (!this.isConnected) {
+        unlisten();
+        return;
+      }
+      this.debuggerAccessListener = unlisten;
+      const native = await listen("debugger-toggle", () => {
+        void this.toggleDebugger();
+      });
+      if (!this.isConnected) {
+        native();
+        return;
+      }
+      this.debuggerNativeShortcut = native;
+      const errors = await listen<string>("debugger-access-error", (event) => {
+        this.diagnosticText = event.payload;
+      });
+      if (!this.isConnected) {
+        errors();
+        return;
+      }
+      this.debuggerAccessError = errors;
+      const seen = await invoke<boolean>("debugger_seen");
+      if (this.isConnected) {
+        this.debuggerSeen ||= seen;
+      }
+    } catch (error) {
+      this.diagnosticText = describeError(error);
+    }
+  }
   comparison!: ComparisonWorkspace;
   onComparison(event: CustomEvent<ComparisonOpen>): void {
     event.stopPropagation();
@@ -373,6 +448,9 @@ export class AppShell extends WebUIElement {
       this.traffic.inspectorKeyboard(event);
     }
   };
+  private readonly debuggerShortcut = (event: KeyboardEvent): void => {
+    debuggerToggleKey(event, () => this.toggleDebugger());
+  };
   private readonly shortcutListener = (event: KeyboardEvent): void => {
     if (
       event.defaultPrevented ||
@@ -446,6 +524,38 @@ export class AppShell extends WebUIElement {
   }
   connectedCallback(): void {
     super.connectedCallback();
+    void this.watchDebuggerAccess();
+    document.addEventListener("keydown", this.debuggerShortcut, true);
+    void listen<string>("debugger-placement", (event) => {
+      this.debuggerPlacement = event.payload;
+      this.debuggerDocked = event.payload === "bottom" || event.payload === "right";
+      if (event.payload === "closed") {
+        this.debuggerButtonLabel = "Debugger";
+      }
+    })
+      .then((unlisten) => {
+        if (this.isConnected) {
+          this.debuggerListener = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch((error) => {
+        this.diagnosticText = describeError(error);
+      });
+    void listen<number>("debugger-paused", (event) => {
+      this.debuggerButtonLabel = event.payload ? `Debugger · ${event.payload} paused` : "Debugger";
+    })
+      .then((unlisten) => {
+        if (this.isConnected) {
+          this.debuggerPauseListener = unlisten;
+        } else {
+          unlisten();
+        }
+      })
+      .catch((error) => {
+        this.diagnosticText = describeError(error);
+      });
     this.addEventListener("keydown", this.inspectorShortcut, true);
   }
   protected hydratedCallback(): void {
@@ -1084,6 +1194,12 @@ export class AppShell extends WebUIElement {
     }
   }
   disconnectedCallback(): void {
+    this.debuggerListener?.();
+    this.debuggerPauseListener?.();
+    this.debuggerAccessListener?.();
+    this.debuggerNativeShortcut?.();
+    this.debuggerAccessError?.();
+    document.removeEventListener("keydown", this.debuggerShortcut, true);
     this.removeEventListener("keydown", this.inspectorShortcut, true);
     document.removeEventListener("keydown", this.shortcutListener);
     window.clearTimeout(this.saveTimer);

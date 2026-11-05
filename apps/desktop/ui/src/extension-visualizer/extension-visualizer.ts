@@ -3,13 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { describeError } from "../utilities.js";
 import "../script-diagnostics/script-diagnostics.js";
-import "../script-debugger/script-debugger.js";
-import type {
-  DebugConfiguration,
-  DebugSessionInfo,
-  SourceBreakpoint,
-} from "../script-debugger/models.js";
-import type { ScriptDebugger } from "../script-debugger/script-debugger.js";
+import type { DebugSessionInfo } from "../debugger-workspace/models.js";
 import { errorEvidence, type DeveloperEvidence } from "../script-diagnostics/models.js";
 import { decodeBytes } from "../hex-viewer/hex-formats.js";
 import type { HexPreview } from "../hex-viewer/hex-viewer.js";
@@ -71,14 +65,9 @@ export class ExtensionVisualizer extends WebUIElement {
   @observable visualizerError = "";
   @observable developerDetails: DeveloperEvidence[] = [];
   @observable debugInfo: DebugSessionInfo | null = null;
-  @observable debugBreakpoints: SourceBreakpoint[] = [];
   @observable debugPolicy = "uncaught";
-  debugPanel?: ScriptDebugger;
-  showDebugButton?: HTMLButtonElement;
-  @observable debugLinesText = "";
-  debugModule!: HTMLInputElement;
-  debugLines!: HTMLInputElement;
-  debugExceptions!: HTMLSelectElement;
+  private debuggerListeners: UnlistenFn[] = [];
+  private readonly debugSessions = new Set<string>();
   debugOptions?: HTMLDetailsElement;
   debugOptionsSummary?: HTMLElement;
   showDebuggerOptions(): void {
@@ -182,8 +171,6 @@ export class ExtensionVisualizer extends WebUIElement {
   choiceChanged(previous: VisualizerChoice | null | undefined): void {
     if (previous?.key !== this.choice?.key) {
       this.paused = false;
-      this.debugBreakpoints = [];
-      this.debugLinesText = "";
       this.debugPolicy = "uncaught";
     }
     this.schedule();
@@ -196,6 +183,7 @@ export class ExtensionVisualizer extends WebUIElement {
     this.schedule();
   }
   protected hydratedCallback(): void {
+    void this.watchDebugger();
     this.observer = new IntersectionObserver((entries) => {
       this.inViewport = entries.some((entry) => entry.isIntersecting);
       this.schedule();
@@ -382,7 +370,6 @@ export class ExtensionVisualizer extends WebUIElement {
   }
   private stop(preserveResult = false): void {
     if (this.debugInfo) {
-      void invoke("close_debug_session", { session: this.debugInfo.session }).catch(() => {});
       this.debugInfo = null;
     }
     this.revision++;
@@ -506,11 +493,10 @@ export class ExtensionVisualizer extends WebUIElement {
           request: { activation: { ...activation, automatic: false }, configuration },
         });
         if (revision !== this.revision || !this.visible) {
-          void invoke("close_debug_session", { session: info.session }).catch(() => {});
           return;
         }
         this.debugPolicy = configuration.exceptions;
-        this.debugInfo = info;
+        this.rememberDebug(info);
         view = await invoke<VisualizerView>("await_debug_visualizer", { session: info.session });
       } else {
         view = await invoke<VisualizerView>("activate_visualizer", { request: activation });
@@ -542,53 +528,60 @@ export class ExtensionVisualizer extends WebUIElement {
       }
     }
   }
-  private debugConfiguration(): { exceptions: string; breakpoints: SourceBreakpoint[] } {
-    const lines = this.debugLinesText
-      .split(/[\s,]+/)
-      .filter(Boolean)
-      .map(Number);
-    if (lines.length > 128 || lines.some((line) => !Number.isSafeInteger(line) || line < 1)) {
-      throw new Error("Use up to 128 positive source line numbers.");
+  private debugConfiguration(): { exceptions: string; breakpoints: never[] } {
+    return { exceptions: this.debugPolicy, breakpoints: [] };
+  }
+  private rememberDebug(info: DebugSessionInfo): void {
+    this.debugInfo = info;
+    this.debugSessions.add(info.session);
+    if (this.debugSessions.size > 16) {
+      this.debugSessions.delete(this.debugSessions.values().next().value!);
     }
-    const source = new URL(
-      this.debugModule.value ||
-        this.choice?.entry ||
-        this.view?.instance.declaration.entry ||
-        "main.js",
-      "file:///transmog-extension/",
-    ).href;
-    const other = this.debugBreakpoints.filter((value) => value.location.source !== source);
-    let id = Math.max(0, ...other.map((value) => value.id));
-    this.debugBreakpoints = [
-      ...other,
-      ...[...new Set(lines)].map((line) => ({
-        id: ++id,
-        location: { source, line, column: 1 },
-      })),
-    ];
-    return { exceptions: this.debugPolicy, breakpoints: this.debugBreakpoints };
   }
-  showDebugger(): void {
-    this.debugPanel?.show();
+  async showDebugger(): Promise<void> {
+    try {
+      await invoke("open_debugger");
+    } catch (error) {
+      this.visualizerError = describeError(error);
+    }
   }
-  debugHidden(): void {
-    this.showDebugButton?.focus();
-  }
-  debugConfigurationChanged(event: CustomEvent<DebugConfiguration>): void {
-    this.debugBreakpoints = event.detail.breakpoints;
-    this.debugPolicy = event.detail.exceptions;
-    const source = new URL(
-      this.debugModule.value || this.choice?.entry || "main.js",
-      "file:///transmog-extension/",
-    ).href;
-    this.debugLinesText = this.debugBreakpoints
-      .filter((value) => value.location.source === source)
-      .map((value) => value.location.line)
-      .join(", ");
-  }
-  editDebugOptions(): void {
-    this.debugLinesText = this.debugLines.value;
-    this.debugPolicy = this.debugExceptions.value;
+  private async watchDebugger(): Promise<void> {
+    for (const name of ["debugger-restart", "debugger-stopped"]) {
+      const unlisten = await listen<{
+        session: string;
+        instance: string | null;
+        binding?: [string, string, string] | null;
+        exceptions: string;
+      }>(name, (event) => {
+        if (
+          !this.visible ||
+          !(
+            this.debugSessions.has(event.payload.session) ||
+            (event.payload.binding &&
+              this.pending?.slot === event.payload.binding[0] &&
+              this.pending.generation === event.payload.binding[1] &&
+              this.pending.pageId === event.payload.binding[2]) ||
+            (event.payload.instance && this.view?.instance.id === event.payload.instance)
+          )
+        ) {
+          return;
+        }
+        if (name === "debugger-restart") {
+          this.debugPolicy = event.payload.exceptions;
+          void this.restartDebug();
+        } else if (this.view) {
+          this.visualizerFrozen = true;
+          this.visualizerPaused = true;
+          this.visualizerError = "Debugger stopped. Open the visualizer to start a fresh instance.";
+          this.stopPolling();
+        }
+      });
+      if (!this.isConnected) {
+        unlisten();
+        return;
+      }
+      this.debuggerListeners.push(unlisten);
+    }
   }
   async restartDebug(): Promise<void> {
     // The previous start may still be awaiting a paused initializer. Its late
@@ -601,13 +594,13 @@ export class ExtensionVisualizer extends WebUIElement {
     await this.debugFresh();
   }
   async debugFresh(): Promise<void> {
-    if (this.debugInfo || this.visualizerBusy) {
+    if (this.visualizerBusy) {
       return;
     }
     await this.start(false, true);
   }
   async debugExisting(): Promise<void> {
-    if (this.debugInfo || this.visualizerBusy || !this.view) {
+    if (this.visualizerBusy || !this.view) {
       return;
     }
     const revision = this.revision;
@@ -618,28 +611,13 @@ export class ExtensionVisualizer extends WebUIElement {
         configuration,
       });
       if (revision !== this.revision || !this.visible) {
-        await invoke("close_debug_session", { session: info.session });
         return;
       }
       this.debugPolicy = configuration.exceptions;
-      this.debugInfo = info;
+      this.rememberDebug(info);
     } catch (error: unknown) {
       this.visualizerError = describeError(error);
     }
-  }
-  debugEnded(event: CustomEvent<{ detached: boolean }>): void {
-    if (!event.detail.detached && this.view) {
-      this.visualizerFrozen = true;
-      this.visualizerPaused = true;
-      this.visualizerError = "Debugger stopped. Open the visualizer to start a fresh instance.";
-      this.stopPolling();
-    }
-  }
-  debugClosed(event: CustomEvent<{ detached: boolean }>): void {
-    this.debugEnded(event);
-    this.debugInfo = null;
-    this.$flushUpdates();
-    this.debugOptionsSummary?.focus();
   }
   private async reload(): Promise<void> {
     const previous = this.view;
@@ -1381,6 +1359,10 @@ export class ExtensionVisualizer extends WebUIElement {
     }
   }
   disconnectedCallback(): void {
+    for (const unlisten of this.debuggerListeners) {
+      unlisten();
+    }
+    this.debuggerListeners = [];
     this.stop();
     this.observer?.disconnect();
     this.resize?.disconnect();

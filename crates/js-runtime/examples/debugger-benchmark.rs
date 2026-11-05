@@ -28,6 +28,8 @@ fn main() {
             runtime
                 .enable_debugger(
                     DebugOptions {
+                        pause_on_start: false,
+                        persistent: false,
                         session: "a".repeat(32),
                         exceptions: ExceptionPolicy::None,
                         breakpoints: vec![],

@@ -1,0 +1,240 @@
+export function installDebuggerWorkspaceFixture() {
+  globalThis.__debuggerWorkspaceCommand = async (command, args = {}) => {
+    const state = globalThis.__workspaceFixture;
+    const debug = (state.workspaceDebug ??= {
+      open: false,
+      seen: false,
+      points: [],
+      events: [],
+      request: 0,
+      paused: null,
+      epoch: 0,
+      closed: false,
+      policy: "none",
+      actions: [],
+      info: {
+        session: "workspace-worker",
+        mode: "Workspace script",
+        label: "sample · revision 1",
+        artifact: "sample:1:exact",
+        source: "file:///transmog-script/main.js",
+      },
+    });
+    const ts = "file:///transmog-scripts/sample/main.ts";
+    const js = "file:///transmog-script/main.js";
+    const files = [
+      {
+        id: "script/sample/main.ts",
+        group: "User scripts",
+        package: "sample",
+        path: "main.ts",
+        artifact: debug.info.artifact,
+        source: ts,
+        language: "typescript",
+        state: "Loaded",
+        counterpart: "script/sample/main.js",
+      },
+      {
+        id: "script/sample/main.js",
+        group: "User scripts",
+        package: "sample",
+        path: "main.js",
+        artifact: debug.info.artifact,
+        source: js,
+        language: "javascript",
+        state: "Loaded",
+        counterpart: "script/sample/main.ts",
+      },
+      {
+        id: "extension/example/src/view.ts",
+        group: "Extensions",
+        package: "example",
+        path: "src/view.ts",
+        artifact: "unloaded-package",
+        source: "file:///transmog-extension/src/view.ts",
+        language: "typescript",
+        state: "Unloaded",
+        counterpart: null,
+      },
+    ];
+    const view = () => ({
+      open: debug.open,
+      files,
+      targets: debug.open ? [debug.info, ...(debug.extraTargets ?? [])] : [],
+      breakpoints: debug.points,
+      viewState: debug.viewState ?? null,
+    });
+    const emit = (event, request = 0) =>
+      debug.events.push({ session: debug.info.session, invocation: 1, request, event });
+    debug.pause = (exception = null) => {
+      const event = {
+        kind: "paused",
+        pause: ++debug.epoch,
+        reason: exception ? "exception" : "breakpoint",
+        frames: [
+          {
+            index: 0,
+            function: "run",
+            location: { source: js, line: 2, column: 3 },
+            original: { source: ts, line: 2, column: 3 },
+            unavailable: false,
+          },
+        ],
+        exception,
+        truncated: false,
+      };
+      emit(event);
+      debug.paused = debug.events.at(-1);
+    };
+    if (command === "debugger_seen") return debug.seen;
+    if (command === "toggle_debugger")
+      return globalThis.__debuggerWorkspaceCommand("place_debugger", {
+        placement: debug.open ? "closed" : "bottom",
+      });
+    if (command === "open_debugger") {
+      if (!debug.open)
+        await globalThis.__debuggerWorkspaceCommand("place_debugger", { placement: "bottom" });
+      return;
+    }
+    if (command === "workspace_restart") {
+      debug.closed = false;
+      debug.pause();
+      return;
+    }
+    if (command === "debugger_breakpoint_positions" && args.id.startsWith("extension/")) return [];
+    if (command === "debugger_breakpoint_positions")
+      return debug.points.map((point) => [
+        point.breakpoint.id,
+        { ...point.breakpoint.location, source: args.id.endsWith(".js") ? js : ts },
+      ]);
+    if (command === "place_debugger") {
+      debug.open = args.placement !== "closed";
+      debug.viewState = args.viewState;
+      const shell = document.querySelector("app-shell");
+      shell.debuggerPlacement = args.placement === "window" ? "bottom" : args.placement;
+      shell.debuggerDocked = debug.open;
+      return;
+    }
+    if (command === "acknowledge_debugger") {
+      debug.open = true;
+      debug.seen = true;
+      document.querySelector("app-shell").debuggerSeen = true;
+      return view();
+    }
+    if (command === "debugger_workspace") return view();
+    if (command === "debugger_file")
+      return args.id.endsWith(".js")
+        ? "function run() {\n  const value = 42;\n  return value;\n}"
+        : "export function run(): number {\n  const value: number = 42;\n  return value;\n}";
+    if (command === "workspace_breakpoints") {
+      debug.points = debug.points.filter(
+        (point) => !args.removed.some((removed) => removed.breakpoint.id === point.breakpoint.id),
+      );
+      for (const point of args.points) {
+        const index = debug.points.findIndex(
+          (previous) => previous.breakpoint.id === point.breakpoint.id,
+        );
+        if (index < 0) debug.points.push(structuredClone(point));
+        else debug.points[index] = structuredClone(point);
+      }
+      return structuredClone(debug.points);
+    }
+    if (command === "workspace_debug_session")
+      return {
+        info:
+          args.session === debug.info.session
+            ? debug.info
+            : debug.extraTargets.find((target) => target.session === args.session),
+        outcome: null,
+        stream: {
+          active: !!debug.paused,
+          paused: args.session === debug.info.session ? debug.paused : null,
+          closed: debug.closed,
+          exceptions: debug.policy,
+          cursor: debug.events.length,
+          omitted: false,
+          inventory: {
+            sources: [{ source: js, bytes: 80 }],
+            breakpoints: debug.points.map((point) => ({
+              id: point.breakpoint.id,
+              requested: point.breakpoint.location,
+              resolved: { source: js, line: point.breakpoint.location.line, column: 3 },
+              issue: null,
+            })),
+          },
+          events: debug.events.slice(args.after).filter((item) => item.session === args.session),
+          logs: [],
+          sessionRemainingMs: 0,
+          pauseRemainingMs: null,
+        },
+      };
+    if (command === "workspace_debug_command") {
+      const request = ++debug.request;
+      const action = args.action;
+      debug.actions.push(structuredClone(action));
+      if (action.kind === "exceptions") debug.policy = action.policy;
+      if (action.kind === "stop") {
+        debug.closed = true;
+        debug.paused = null;
+        emit({ kind: "stopped", reason: "Stopped" });
+      }
+      if (action.kind === "evaluate" && action.expression.includes("console.log"))
+        emit({ kind: "output", level: "info", text: "<img src=x onerror=alert(1)>" }, request);
+      if (action.kind === "evaluate")
+        emit(
+          {
+            kind: "evaluated",
+            pause: action.pause,
+            value: {
+              kind: "number",
+              display: action.expression === "value" ? "42" : "7",
+              handle: null,
+              truncated: false,
+            },
+            thrown: false,
+          },
+          request,
+        );
+      else if (action.kind === "scopes")
+        emit(
+          {
+            kind: "scopes",
+            pause: action.pause,
+            frame: 0,
+            scopes: [{ kind: "local", name: "Local", handle: 1 }],
+          },
+          request,
+        );
+      else if (action.kind === "properties")
+        emit(
+          {
+            kind: "properties",
+            pause: action.pause,
+            handle: action.handle,
+            offset: action.offset,
+            properties: [
+              {
+                name: "value",
+                value: { kind: "number", display: "42", handle: null, truncated: false },
+              },
+            ],
+            next: null,
+          },
+          request,
+        );
+      else if (action.kind === "resume") {
+        debug.paused = null;
+        emit({ kind: "resumed" });
+        if (action.action !== "continue") debug.pause();
+      }
+      if (action.kind === "evaluate" && debug.holdEvaluation) {
+        await new Promise((done) => {
+          debug.finishEvaluation = done;
+        });
+        delete debug.finishEvaluation;
+      }
+      return request;
+    }
+    throw new Error("Unexpected debugger workspace command: " + command);
+  };
+}

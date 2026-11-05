@@ -116,15 +116,17 @@ export function onRequestHead(event: RequestHeadEvent) {
 
 ## Debug a script
 
-Set breakpoints in the editor gutter, then choose Debug test. It runs the current test input without enabling the script. Use Debugger options to choose when to pause on exceptions.
+Choose Open debugger in Automation → Scripts or Settings → Extensions, or toggle it with F12. After the first open, the app toolbar keeps a Debugger shortcut until you quit. Browse saved scripts and installed extension files without activating them. Click beside a line number to toggle a breakpoint, or right-click for a condition. A filled red circle is bound; an outline is pending.
 
-When paused, inspect the call stack and local variables. Inspection is read-only; expressions and getters are not evaluated. Draft edits take effect on Restart.
+While the workspace is open, normal script and visualizer workers honor breakpoints and debugger statements. Dock it beside Traffic or move it to a separate window. Closing continues paused work and detaches; saved breakpoints return next time.
 
-Use F8 to continue, F10 to step over, F11 to step into, and Shift+F11 to step out. Return to editor or Escape hides the debugger; Stop ends the run. Pauses expire after 60 seconds and sessions after 10 minutes.
+Continue: F8 or Ctrl+\ (also F5). Step over: F10. Step into: F11. Step out: Shift+F11. Stop: Shift+F5. Hover or focus toolbar icons for their shortcuts. Switch between mapped TypeScript and running JavaScript when a source map is available.
 
-Debug next matching exchange uses the applied script on real traffic. Review its version and filters, then arm it. Other requests using that script may fail while it is reserved, and client/server timeouts still apply.
+Console commands run JavaScript in the selected paused frame or an idle worker global context, and can change its state. Scope inspection does not execute getters. Conditions reject side effects; a failed condition pauses with an explanation.
 
-Continue and detach lets the request finish without further pauses. If stopping leaves the script unavailable, choose Retry applied script.
+Transmog suspends dependent execution deadlines while debugging blocks a worker. Cancellation remains available. Remote client and server timeouts still apply.
+
+Debug test runs the current draft and callback or scenario input in a fresh worker, paused before its first user statement. Restart reruns the test with the current draft and input without applying them to traffic. Stop aborts selected work. Closing, including F12 or Continue and detach, continues paused work and detaches all workers.
 
 ## Test in the sandbox
 

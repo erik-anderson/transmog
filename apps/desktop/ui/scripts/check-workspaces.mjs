@@ -42,8 +42,9 @@ import { checkBinaryResponse } from "./check-binary-response.mjs";
 import { checkMatchingTests, checkMatchingSelectionRace } from "./check-matching-tests.mjs";
 import { checkScripts } from "./check-scripts.mjs";
 import { checkScriptDiagnostics } from "./check-script-diagnostics.mjs";
-import { checkScriptDebugger } from "./check-script-debugger.mjs";
 import { installDebuggerFixture } from "./debugger-fixture.mjs";
+import { installDebuggerWorkspaceFixture } from "./debugger-workspace-fixture.mjs";
+import { checkDebuggerWorkspace } from "./check-debugger-workspace.mjs";
 import { checkMonacoIcons } from "./check-monaco-icons.mjs";
 import { checkAutoResponseDragging } from "./check-autoresponse-dragging.mjs";
 import { checkTrafficFilters } from "./check-traffic-filters.mjs";
@@ -217,6 +218,7 @@ await page.exposeFunction(
   (source) => transformSync(source, { loader: "ts", target: "es2022" }).code,
 );
 await page.addInitScript(installDebuggerFixture);
+await page.addInitScript(installDebuggerWorkspaceFixture);
 await page.addInitScript(
   (configuration) => {
     const { workspace, networkProfiles, scriptDeclarations, scriptHelp, authConversions } =
@@ -4384,6 +4386,19 @@ await page.addInitScript(
               responseBody: args.scenario.responseBody,
             };
           }
+          case "place_debugger":
+          case "acknowledge_debugger":
+          case "debugger_workspace":
+          case "debugger_file":
+          case "debugger_breakpoint_positions":
+          case "workspace_restart":
+          case "open_debugger":
+          case "toggle_debugger":
+          case "debugger_seen":
+          case "workspace_breakpoints":
+          case "workspace_debug_session":
+          case "workspace_debug_command":
+            return globalThis.__debuggerWorkspaceCommand(command, args);
           case "start_debug_test":
           case "debug_next_script_exchange":
           case "debug_session":
@@ -4869,10 +4884,19 @@ try {
     process.stdout.write("Traffic filtering and stream lifetime checks passed.\n");
     process.exit(0);
   }
+  if (process.argv.includes("--debugger-workspace-only")) {
+    await page.goto("https://workspace.test/");
+    await checkDebuggerWorkspace(page, root);
+    assert.deepEqual(errors, []);
+    await browser.close();
+    process.stdout.write(
+      "Debugger workspace sources, breakpoints, conditions and console verified.\n",
+    );
+    process.exit(0);
+  }
   if (
     process.argv.includes("--scripts-only") ||
-    process.argv.includes("--script-diagnostics-only") ||
-    process.argv.includes("--script-debugger-only")
+    process.argv.includes("--script-diagnostics-only")
   ) {
     await page.goto("https://workspace.test/");
     await view("automation");
@@ -4880,8 +4904,7 @@ try {
       .locator(".workspace-tabs")
       .getByRole("button", { name: "Scripts", exact: true })
       .click();
-    if (process.argv.includes("--script-debugger-only")) await checkScriptDebugger(page, root);
-    else if (process.argv.includes("--script-diagnostics-only"))
+    if (process.argv.includes("--script-diagnostics-only"))
       await checkScriptDiagnostics(page, root);
     else {
       await checkScripts(page, root);
@@ -10408,6 +10431,19 @@ try {
           diagnostics: document
             .querySelector("app-shell")
             ?.shadowRoot?.querySelector(".global-diagnostics")?.textContent,
+          debugger: (() => {
+            const element = document
+              .querySelector("app-shell")
+              ?.shadowRoot?.querySelector("debugger-workspace");
+            return element
+              ? {
+                  html: element.outerHTML,
+                  shadow: element.shadowRoot?.innerHTML,
+                  error: element.debuggerError,
+                  sourceHost: !!element.sourceHost,
+                }
+              : null;
+          })(),
           definitions: ["app-shell", "traffic-workspace", "settings-workspace"].map((tag) => [
             tag,
             Boolean(customElements.get(tag)),
