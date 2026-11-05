@@ -101,10 +101,10 @@ export async function checkStreams(page, root) {
       stream: { ...t.selectedDetail.stream, clientBytes: null, serverBytes: 0 },
     });
   });
-  assert.match(
-    await inspector.locator(".stream-status").textContent(),
-    /Sent Unavailable · Received 0 B/,
-  );
+  await inspector
+    .locator(".stream-status")
+    .filter({ hasText: /Sent Unavailable · Received 0 B/ })
+    .waitFor();
   await page.evaluate(() => {
     const t = document.querySelector("app-shell").traffic;
     t.applyDetail({
