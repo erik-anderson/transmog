@@ -11,7 +11,6 @@ use v8::inspector::{StringView, V8InspectorSession};
 pub(super) struct Values {
     next: u32,
     handles: BTreeMap<u32, v8::Global<v8::Value>>,
-    scopes: BTreeMap<(u32, usize), u32>,
 }
 impl Values {
     pub(super) fn remote(
@@ -27,15 +26,12 @@ impl Values {
     }
     pub(super) fn clear(&mut self) {
         self.handles.clear();
-        self.scopes.clear();
         // Never reuse a released handle within one connection, even after resume.
     }
     pub(super) fn release(&mut self, handles: &[u32]) {
         for handle in handles {
             self.handles.remove(handle);
         }
-        self.scopes
-            .retain(|_, handle| self.handles.contains_key(handle));
     }
     fn retain(
         &mut self,
@@ -54,19 +50,14 @@ impl Values {
         &mut self,
         scope: &mut v8::PinScope<'_, '_>,
         session: &V8InspectorSession,
-        frame: u32,
-        index: usize,
         id: &str,
     ) -> Option<u32> {
-        if let Some(handle) = self.scopes.get(&(frame, index)) {
-            return Some(*handle);
-        }
         let (value, _, _) = session
             .unwrap_object(scope, StringView::from(id.as_bytes()))
             .ok()?;
-        let handle = self.retain(scope, value)?;
-        self.scopes.insert((frame, index), handle);
-        Some(handle)
+        // Each read owns its handles. An old surface may release its values
+        // while its docked/detached replacement is reading the same frame.
+        self.retain(scope, value)
     }
     pub(super) fn properties(
         &mut self,

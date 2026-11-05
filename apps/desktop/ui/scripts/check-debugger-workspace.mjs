@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { resolve } from "node:path";
 import { checkDebuggerNavigation } from "./check-debugger-navigation.mjs";
+import { checkDebuggerInspection } from "./check-debugger-inspection.mjs";
 
 export async function checkDebuggerWorkspace(page, root) {
   const shortcut = page.getByRole("button", { name: "Debugger", exact: true });
@@ -172,7 +173,8 @@ export async function checkDebuggerWorkspace(page, root) {
     "Finishing IME composition must not execute the console command",
   );
   await workspace.getByRole("button", { name: "Run", exact: true }).click();
-  await workspace.locator(".command pre").filter({ hasText: "42" }).waitFor();
+  await workspace.locator(".command > pre").filter({ hasText: "42" }).waitFor();
+  await checkDebuggerInspection(page, workspace, root);
   await page.evaluate(() => {
     const debug = globalThis.__workspaceFixture.workspaceDebug;
     debug.extraTargets = [{ ...debug.info, session: "other-worker", label: "Other worker" }];
@@ -217,9 +219,9 @@ export async function checkDebuggerWorkspace(page, root) {
     .getByRole("textbox", { name: "Immediate expression" })
     .fill("console.log('fixture output'); 3 + 4");
   await workspace.getByRole("button", { name: "Run", exact: true }).click();
-  await workspace.locator(".command pre").filter({ hasText: "7" }).waitFor();
+  await workspace.locator(".command > pre").filter({ hasText: "7" }).waitFor();
   await workspace
-    .locator(".command pre")
+    .locator(".command > pre")
     .filter({ hasText: "<img src=x onerror=alert(1)>" })
     .waitFor();
   assert.equal(await workspace.locator(".console img").count(), 0);
@@ -252,6 +254,12 @@ export async function checkDebuggerWorkspace(page, root) {
   }
   await workspace.getByRole("combobox", { name: "Pause on exceptions" }).selectOption("all");
   await page.waitForFunction(() => globalThis.__workspaceFixture.workspaceDebug.policy === "all");
+  await page.evaluate(() => globalThis.__workspaceFixture.workspaceDebug.pause());
+  await page.waitForFunction(
+    () =>
+      document.querySelector("app-shell").shadowRoot.querySelector("debugger-workspace")
+        .debuggerPaused,
+  );
   await workspace.getByRole("button", { name: "Continue (F8)", exact: true }).focus();
   await workspace.getByRole("tooltip").filter({ hasText: "Ctrl+" }).waitFor();
   assert.equal(await workspace.locator('debug-icon[name="continue"] svg').count(), 1);

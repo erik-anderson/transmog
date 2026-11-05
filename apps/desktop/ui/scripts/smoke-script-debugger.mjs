@@ -174,7 +174,7 @@ try {
   await panel.getByRole("cell", { name: "42", exact: true }).waitFor();
   await panel.getByRole("textbox", { name: "Immediate expression" }).fill("local");
   await panel.getByRole("button", { name: "Run", exact: true }).click();
-  await panel.locator(".command pre").filter({ hasText: "7" }).waitFor();
+  await panel.locator(".command > pre").filter({ hasText: "7" }).waitFor();
   const first = await panel.evaluate((element) => element.debuggerTarget);
   await panel.getByRole("button", { name: "Restart", exact: true }).click();
   await waitFor(

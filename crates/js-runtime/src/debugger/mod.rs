@@ -833,16 +833,11 @@ impl Client {
         let scopes = chain
             .iter()
             .take(MAX_SCOPE_CHAIN)
-            .enumerate()
-            .map(|(index, entry)| {
+            .map(|entry| {
                 let handle = entry["object"]["objectId"]
                     .as_str()
                     .filter(|id| id.len() <= 2048)
-                    .and_then(|id| {
-                        self.values
-                            .borrow_mut()
-                            .scope(scope, &session, frame, index, id)
-                    });
+                    .and_then(|id| self.values.borrow_mut().scope(scope, &session, id));
                 DebugScope {
                     kind: short(entry["type"].as_str().unwrap_or("unavailable"), 64),
                     name: short(entry["name"].as_str().unwrap_or(""), 256),

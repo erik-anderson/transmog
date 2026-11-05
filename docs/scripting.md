@@ -122,7 +122,9 @@ While the workspace is open, normal script and visualizer workers honor breakpoi
 
 Continue: F8 or Ctrl+\ (also F5). Step over: F10. Step into: F11. Step out: Shift+F11. Stop: Shift+F5. Hover or focus toolbar icons for their shortcuts. Switch between mapped TypeScript and running JavaScript when a source map is available.
 
-Console commands run JavaScript in the selected paused frame or an idle worker global context, and can change its state. Scope inspection does not execute getters. Conditions reject side effects; a failed condition pauses with an explanation.
+Select a call-stack frame to inspect its scopes. Each scope expands independently. Watch expressions refresh when you pause, step, or select another frame; hover a variable for its current value. Watches and hover previews reject side effects. Property expansion and completion never invoke getters or proxy traps. Values expire when execution resumes or pauses again.
+
+Console commands run JavaScript in the selected paused frame or an idle worker global context, and can change its state. Use Up/Down for command history, Ctrl+Space for runtime completion, and Tab to accept a suggestion. Expand object results to inspect their data properties. Callback output and command results share the Console; filter by worker or level and open Details for technical identifiers. Conditions reject side effects; a failed condition pauses with an explanation.
 
 Transmog suspends dependent execution deadlines while debugging blocks a worker. Cancellation remains available. Remote client and server timeouts still apply.
 

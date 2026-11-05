@@ -88,6 +88,13 @@ export function installDebuggerWorkspaceFixture() {
             original: { source: ts, line: 2, column: 3 },
             unavailable: false,
           },
+          {
+            index: 1,
+            function: "outer",
+            location: { source: js, line: 3, column: 3 },
+            original: { source: ts, line: 3, column: 3 },
+            unavailable: false,
+          },
         ],
         exception,
         truncated: false,
@@ -192,7 +199,7 @@ export function installDebuggerWorkspaceFixture() {
             })),
           },
           events: debug.events.slice(args.after).filter((item) => item.session === args.session),
-          logs: [],
+          logs: debug.logs ?? [],
           sessionRemainingMs: 0,
           pauseRemainingMs: null,
         },
@@ -209,15 +216,36 @@ export function installDebuggerWorkspaceFixture() {
       }
       if (action.kind === "evaluate" && action.expression.includes("console.log"))
         emit({ kind: "output", level: "info", text: "<img src=x onerror=alert(1)>" }, request);
-      if (action.kind === "evaluate")
+      if (action.kind === "complete") {
+        const prefix = action.expression.split(".").at(-1);
+        emit(
+          {
+            kind: "completions",
+            pause: action.pause,
+            matches: ["value", "sample", "nested", "answer"].filter((name) =>
+              name.startsWith(prefix),
+            ),
+            omitted: false,
+          },
+          request,
+        );
+      }
+      if (action.kind === "evaluate" || action.kind === "inspect")
         emit(
           {
             kind: "evaluated",
             pause: action.pause,
             value: {
-              kind: "number",
-              display: action.expression === "value" ? "42" : "7",
-              handle: null,
+              kind: action.expression === "sample" ? "object" : "number",
+              display:
+                action.expression === "sample"
+                  ? "[Object]"
+                  : action.expression === "value"
+                    ? action.frame === 1
+                      ? "21"
+                      : "42"
+                    : "7",
+              handle: action.expression === "sample" ? 2 : null,
               truncated: false,
             },
             thrown: false,
@@ -229,8 +257,12 @@ export function installDebuggerWorkspaceFixture() {
           {
             kind: "scopes",
             pause: action.pause,
-            frame: 0,
-            scopes: [{ kind: "local", name: "Local", handle: 1 }],
+            frame: action.frame,
+            scopes: [
+              { kind: "local", name: "", handle: action.frame === 1 ? 4 : 1 },
+              { kind: "closure", name: "outer", handle: 3 },
+              { kind: "global", name: "", handle: 5 },
+            ],
           },
           request,
         );
@@ -241,12 +273,41 @@ export function installDebuggerWorkspaceFixture() {
             pause: action.pause,
             handle: action.handle,
             offset: action.offset,
-            properties: [
-              {
-                name: "value",
-                value: { kind: "number", display: "42", handle: null, truncated: false },
-              },
-            ],
+            properties:
+              action.handle === 2
+                ? [
+                    {
+                      name: "nested",
+                      value: { kind: "object", display: "[Object]", handle: 6, truncated: false },
+                    },
+                    {
+                      name: "secret",
+                      value: {
+                        kind: "unavailable",
+                        display: "Accessor; not evaluated",
+                        handle: null,
+                        truncated: false,
+                      },
+                    },
+                  ]
+                : action.handle === 6
+                  ? [
+                      {
+                        name: "answer",
+                        value: { kind: "number", display: "42", handle: null, truncated: false },
+                      },
+                    ]
+                  : [
+                      {
+                        name: "value",
+                        value: {
+                          kind: "number",
+                          display: action.handle === 4 ? "21" : "42",
+                          handle: null,
+                          truncated: false,
+                        },
+                      },
+                    ],
             next: null,
           },
           request,

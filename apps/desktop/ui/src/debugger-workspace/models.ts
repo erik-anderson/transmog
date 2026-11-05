@@ -49,7 +49,12 @@ export interface BreakpointResolution {
   issue: string | null;
 }
 export type DebugAction =
-  | { kind: "evaluate"; expression: string; pause: number; frame: number | null }
+  | {
+      kind: "evaluate" | "inspect" | "complete";
+      expression: string;
+      pause: number;
+      frame: number | null;
+    }
   | { kind: "resume"; pause: number; action: "continue" | "into" | "over" | "out" }
   | { kind: "scopes"; pause: number; frame: number }
   | { kind: "properties"; pause: number; handle: number; offset: number }
@@ -58,6 +63,7 @@ export type DebugAction =
   | { kind: "breakpoints"; values: SourceBreakpoint[] }
   | { kind: "stop" | "detach" };
 export type DebugEvent =
+  | { kind: "completions"; pause: number; matches: string[]; omitted: boolean }
   | { kind: "output"; level: string; text: string }
   | { kind: "evaluating" }
   | { kind: "evaluated"; pause: number; value: DebugValue; thrown: boolean }

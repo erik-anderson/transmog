@@ -21,10 +21,24 @@ export class PropertyTree {
   private branches = new Map<string, Branch>();
   private expanded = new Set<string>();
   private root = "";
+  private retained = new Set<number>();
   reset(): void {
     this.branches.clear();
     this.expanded.clear();
     this.root = "";
+    this.retained.clear();
+  }
+  handles(): Set<number> {
+    const handles = new Set(this.retained);
+    for (const branch of this.branches.values()) {
+      handles.add(branch.handle);
+      for (const property of branch.properties) {
+        if (property.value.handle) {
+          handles.add(property.value.handle);
+        }
+      }
+    }
+    return handles;
   }
   select(handle: number): { key: string; handle: number; offset: number } {
     this.reset();
@@ -45,6 +59,11 @@ export class PropertyTree {
       return;
     }
     branch.properties = properties;
+    for (const property of properties) {
+      if (property.value.handle) {
+        this.retained.add(property.value.handle);
+      }
+    }
     branch.offset = offset;
     branch.next = next;
     if (!branch.pages.includes(offset)) {

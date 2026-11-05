@@ -167,6 +167,11 @@ when changing the experience.
   Preserve debugger placement and pane choices through close/reopen. Keep source
   navigation searchable without activating workers, and let compact docks switch
   panes instead of squeezing the editor between fixed sidebars.
+  Keep the call stack visible and scopes independently expandable. Automatic
+  previews and watches reject side effects; property inspection and completion
+  never run getters or proxy traps. Explicit Console commands may change the worker.
+  Expire values when their execution scope changes, and keep ordinary Console
+  output readable with technical identifiers behind details.
 - Keep inspection and repair available when a saved configuration becomes invalid.
   Preserve authored choices and explain recovery instead of silently substituting
   a configuration with different trust, privacy or authorization consequences.

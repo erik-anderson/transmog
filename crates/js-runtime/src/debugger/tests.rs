@@ -469,6 +469,7 @@ fn idle_console_values_are_expandable_and_completion_never_invokes_accessors_or_
 }
 
 #[test]
+#[allow(clippy::too_many_lines)] // One pause covers read-only inspection and overlapping surface handle lifetimes.
 fn paused_inspection_refreshes_lexical_values_without_mutation() {
     let (commands, input) = mpsc::sync_channel(MAX_DEBUG_COMMANDS);
     let (output, events) = mpsc::sync_channel(32);
@@ -533,15 +534,60 @@ fn paused_inspection_refreshes_lexical_values_without_mutation() {
             assert_eq!(value.display, "43");
         }
     }
+    command(&commands, 5, DebugAction::Scopes { pause, frame: 0 });
+    let DebugEventKind::Scopes { scopes: old, .. } = reply(&events, 5).event else {
+        unreachable!()
+    };
+    command(&commands, 6, DebugAction::Scopes { pause, frame: 0 });
+    let DebugEventKind::Scopes {
+        scopes: current, ..
+    } = reply(&events, 6).event
+    else {
+        unreachable!()
+    };
+    let local = current
+        .iter()
+        .find(|scope| scope.kind == "local")
+        .unwrap()
+        .handle
+        .unwrap();
+    assert_ne!(
+        Some(local),
+        old.iter()
+            .find(|scope| scope.kind == "local")
+            .unwrap()
+            .handle
+    );
     command(
         &commands,
-        5,
+        7,
+        DebugAction::Release {
+            pause,
+            handles: old.iter().filter_map(|scope| scope.handle).collect(),
+        },
+    );
+    reply(&events, 7);
+    command(
+        &commands,
+        8,
+        DebugAction::Properties {
+            pause,
+            handle: local,
+            offset: 0,
+        },
+    );
+    assert!(
+        matches!(reply(&events, 8).event, DebugEventKind::Properties { properties, .. } if properties.iter().any(|property| property.name == "local" && property.value.display == "42"))
+    );
+    command(
+        &commands,
+        9,
         DebugAction::Resume {
             pause,
             action: ResumeAction::Continue,
         },
     );
-    reply(&events, 5);
+    reply(&events, 9);
     engine.join().unwrap();
 }
 

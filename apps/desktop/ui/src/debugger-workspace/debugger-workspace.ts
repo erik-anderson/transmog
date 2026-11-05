@@ -1,4 +1,5 @@
 import "../pane-divider/pane-divider.js";
+import "./debug-value.js";
 import { debuggerToggleKey } from "./shortcuts.js";
 import { evidence } from "./models.js";
 import {
@@ -11,7 +12,8 @@ import {
   type SourceResult,
 } from "./navigation.js";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
-import { PropertyTree, type PropertyRow } from "./properties.js";
+import type { PropertyRow } from "./properties.js";
+import { Inspection, ConsoleHistory, type InspectionScope, type ValueView } from "./inspection.js";
 import type {
   ScriptDiagnostics,
   DiagnosticViewState,
@@ -27,7 +29,6 @@ import type {
   DebugSessionView,
   DebugAction,
   DebugFrame,
-  DebugScope,
   SourceBreakpoint,
 } from "../debugger-workspace/models.js";
 import type { DeveloperEvidence } from "../script-diagnostics/models.js";
@@ -59,6 +60,8 @@ interface View {
   layout?: DebuggerLayout;
 }
 interface SavedView {
+  watches?: string[];
+  commands?: string[];
   groups?: Array<[string, boolean]>;
   split?: string;
   diagnostics?: DiagnosticViewState | undefined;
@@ -70,11 +73,31 @@ interface SavedView {
   target: string;
   frame: number;
   input: string;
-  console: Array<{ id: number; input: string; output: string; thrown: boolean }>;
+  console: ConsoleRow[];
   states: Array<[string, Monaco.editor.ICodeEditorViewState | null]>;
   tabs?: string[];
   history?: string[];
   historyIndex?: number;
+}
+interface ConsoleRow {
+  id: number;
+  input: string;
+  output: string;
+  thrown: boolean;
+  value?: ValueView;
+  session?: string;
+  pause?: number;
+  time?: number;
+  label?: string;
+  technical?: string;
+  level?: string;
+  source?: { artifact: string; location: SourceLocation };
+}
+interface Watch {
+  id: number;
+  expression: string;
+  output: string;
+  value?: ValueView;
 }
 export class DebuggerWorkspace extends WebUIElement {
   @attr({ attribute: "data-theme" }) theme = "system";
@@ -123,16 +146,22 @@ export class DebuggerWorkspace extends WebUIElement {
   @observable debuggerRestartable = false;
   @observable debuggerFrames: DebugFrame[] = [];
   @observable debuggerFrame = 0;
-  @observable debuggerScopes: DebugScope[] = [];
-  @observable debuggerProperties: PropertyRow[] = [];
+  @observable debuggerScopeValues: ValueView[] = [];
+  @observable debuggerStack: Array<DebugFrame & { label: string; selected: boolean }> = [];
+  @observable debuggerWatches: Watch[] = [];
+  @observable debuggerWatchInput = "";
+  @observable debuggerCompletions: Array<{ name: string; selected: boolean }> = [];
+  @observable debuggerCompletionIndex = 0;
+  @observable debuggerCompletionActive = "";
   @observable debuggerPoints: Array<Point & { label: string }> = [];
   @observable debuggerEvidence: DeveloperEvidence[] = [];
-  @observable debuggerConsole: Array<{
-    id: number;
-    input: string;
-    output: string;
-    thrown: boolean;
-  }> = [];
+  @observable debuggerConsole: ConsoleRow[] = [];
+  @observable debuggerFeed: ConsoleRow[] = [];
+  @observable debuggerConsoleFilter = "all";
+  @observable debuggerConsoleLevel = "all";
+  private clearedLogs = new Set<string>();
+  private logKeys = new Map<string, number>();
+  private logSerial = 0;
   @observable debuggerInput = "";
   @observable debuggerSubmitting = false;
   @observable debuggerScope = "Global";
@@ -408,8 +437,282 @@ export class DebuggerWorkspace extends WebUIElement {
   diagnostics?: ScriptDiagnostics;
   consoleOutput!: HTMLElement;
   @observable debuggerStackTruncated = false;
-  private readonly propertyTree = new PropertyTree();
-  private propertyBranches = new Map<number, string>();
+  private readonly commandHistory = new ConsoleHistory();
+  private watchSerial = 0;
+  private watchGeneration = 0;
+  private inspectionGeneration = 0;
+  private completionGeneration = 0;
+  private completionStart = 0;
+  private completionEnd = 0;
+  private completionTimer = 0;
+  private hoverProviders: Monaco.IDisposable[] = [];
+  private readonly inspection = new Inspection(
+    (action, session) => this.action(action, session),
+    (scope) => this.validInspection(scope),
+    () => this.inspectionChanged(),
+  );
+  private inspectionScope(): InspectionScope {
+    return {
+      session: this.debuggerTarget,
+      pause: this.pause,
+      frame: this.debuggerPaused ? this.debuggerFrame : null,
+    };
+  }
+  private validInspection(scope: InspectionScope): boolean {
+    const stream = this.views.get(scope.session)?.stream;
+    const event = stream?.paused?.event;
+    return (
+      !!stream &&
+      !stream.closed &&
+      (scope.pause === 0 ? !stream.paused : event?.kind === "paused" && event.pause === scope.pause)
+    );
+  }
+  private inspectionChanged(): void {
+    this.debuggerScopeValues = this.debuggerScopeValues.map((value) => ({
+      ...this.inspection.get(value.key)!,
+    }));
+    this.debuggerWatches = this.debuggerWatches.map((watch) =>
+      watch.value ? { ...watch, value: { ...this.inspection.get(watch.value.key)! } } : watch,
+    );
+    this.debuggerConsole = this.debuggerConsole.map((row) =>
+      row.value && this.inspection.get(row.value.key)
+        ? { ...row, value: { ...this.inspection.get(row.value.key)! } }
+        : row,
+    );
+    this.updateConsoleFeed();
+    this.renderPoints();
+  }
+  async inspectionToggled(event: CustomEvent<{ key: string; row?: PropertyRow }>): Promise<void> {
+    await this.toggleValue(event.detail.key, event.detail.row);
+  }
+  async toggleValue(key: string, row?: PropertyRow): Promise<void> {
+    await this.inspection.toggle(key, row);
+  }
+  private updateStack(): void {
+    this.debuggerStack = this.debuggerFrames.map((frame) => {
+      const location = frame.original ?? frame.location;
+      return {
+        ...frame,
+        function: frame.function || "(anonymous)",
+        selected: frame.index === this.debuggerFrame,
+        label: location
+          ? `${location.source.split("/").at(-1)}:${location.line}:${location.column}`
+          : "Source unavailable",
+      };
+    });
+  }
+  private resetInspection(): void {
+    this.inspectionGeneration++;
+    this.closeCompletions();
+    for (const scope of this.debuggerScopeValues) {
+      this.inspection.remove(scope.key);
+    }
+    this.debuggerScopeValues = [];
+    this.debuggerWatches = this.debuggerWatches.map((watch) => {
+      this.inspection.remove(`watch-${watch.id}`);
+      return {
+        id: watch.id,
+        expression: watch.expression,
+        output: this.debuggerPaused ? "Waiting…" : "Not paused",
+      };
+    });
+  }
+  watchInput(event: Event): void {
+    this.debuggerWatchInput = (event.target as HTMLInputElement).value;
+  }
+  addWatch(event: Event): void {
+    event.preventDefault();
+    const expression = this.debuggerWatchInput.trim();
+    if (!expression || expression.length > 1024 || this.debuggerWatches.length >= 16) {
+      return;
+    }
+    if (!this.debuggerWatches.some((watch) => watch.expression === expression)) {
+      this.debuggerWatches = [
+        ...this.debuggerWatches,
+        { id: ++this.watchSerial, expression, output: "Not paused" },
+      ];
+    }
+    this.debuggerWatchInput = "";
+    void this.refreshWatches();
+  }
+  removeWatch(id: number): void {
+    this.inspection.remove(`watch-${id}`);
+    this.debuggerWatches = this.debuggerWatches.filter((watch) => watch.id !== id);
+  }
+  async refreshWatches(): Promise<void> {
+    if (!this.debuggerPaused) {
+      return;
+    }
+    const generation = this.inspectionGeneration;
+    const watchGeneration = ++this.watchGeneration;
+    const scope = this.inspectionScope();
+    await Promise.all(
+      this.debuggerWatches.map(async (watch) => {
+        const event = await this.inspection.request(
+          { kind: "inspect", expression: watch.expression, pause: scope.pause, frame: scope.frame },
+          scope,
+        );
+        if (
+          generation !== this.inspectionGeneration ||
+          watchGeneration !== this.watchGeneration ||
+          !this.debuggerWatches.some((current) => current.id === watch.id)
+        ) {
+          if (event?.kind === "evaluated" && event.value.handle && this.validInspection(scope)) {
+            void this.action(
+              { kind: "release", pause: scope.pause, handles: [event.value.handle] },
+              scope.session,
+            );
+          }
+          return;
+        }
+        const value =
+          event?.kind === "evaluated"
+            ? this.inspection.set(`watch-${watch.id}`, watch.expression, event.value, scope)
+            : undefined;
+        this.debuggerWatches = this.debuggerWatches.map((current) =>
+          current.id === watch.id
+            ? {
+                ...current,
+                output:
+                  event?.kind === "evaluated"
+                    ? event.value.display
+                    : event?.kind === "rejected"
+                      ? event.message
+                      : "Inspection unavailable",
+                ...(value ? { value } : {}),
+              }
+            : current,
+        );
+      }),
+    );
+  }
+  private closeCompletions(): void {
+    this.completionGeneration++;
+    this.debuggerCompletions = [];
+    this.debuggerCompletionActive = "";
+  }
+  async completePrompt(): Promise<void> {
+    const generation = ++this.completionGeneration;
+    if (
+      this.consolePrompt.getRootNode() instanceof ShadowRoot &&
+      (this.consolePrompt.getRootNode() as ShadowRoot).activeElement !== this.consolePrompt
+    ) {
+      return;
+    }
+    const input = this.debuggerInput;
+    const end = this.consolePrompt.selectionStart;
+    const match = /[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*\.?$/.exec(input.slice(0, end));
+    if (!match || match[0].length > 1024 || match[0].split(".").length > 8) {
+      this.debuggerCompletions = [];
+      return;
+    }
+    const scope = this.inspectionScope();
+    const event = await this.inspection.request(
+      { kind: "complete", expression: match[0], pause: scope.pause, frame: scope.frame },
+      scope,
+    );
+    if (
+      generation !== this.completionGeneration ||
+      input !== this.debuggerInput ||
+      end !== this.consolePrompt.selectionStart ||
+      scope.session !== this.debuggerTarget ||
+      scope.frame !== this.inspectionScope().frame
+    ) {
+      return;
+    }
+    this.completionStart = end - match[0].split(".").at(-1)!.length;
+    this.completionEnd = end;
+    this.debuggerCompletionIndex = 0;
+    this.debuggerCompletions =
+      event?.kind === "completions"
+        ? event.matches
+            .filter((name) => name !== match[0])
+            .map((name, index) => ({ name, selected: index === 0 }))
+        : [];
+    this.debuggerCompletionActive = this.debuggerCompletions[0]
+      ? `completion-${this.debuggerCompletions[0].name}`
+      : "";
+  }
+  acceptCompletion(name: string): void {
+    this.debuggerInput =
+      this.debuggerInput.slice(0, this.completionStart) +
+      name +
+      this.debuggerInput.slice(this.completionEnd);
+    this.closeCompletions();
+    this.$flushUpdates();
+    this.consolePrompt.focus();
+    this.consolePrompt.setSelectionRange(
+      this.completionStart + name.length,
+      this.completionStart + name.length,
+    );
+  }
+  completionMouse(event: MouseEvent): void {
+    event.preventDefault();
+  }
+  private matchesFrameSource(): boolean {
+    const frame = this.debuggerFrames.find((frame) => frame.index === this.debuggerFrame);
+    const position = this.selected?.language === "javascript" ? frame?.location : frame?.original;
+    return (
+      this.debuggerPaused &&
+      this.selected?.artifact === this.views.get(this.debuggerTarget)?.info.artifact &&
+      position?.source === this.selected?.source
+    );
+  }
+  private installHover(): void {
+    for (const language of ["typescript", "javascript"]) {
+      this.hoverProviders.push(
+        this.monaco!.languages.registerHoverProvider(language, {
+          provideHover: async (model, position, token) => {
+            if (model !== this.model || !this.matchesFrameSource()) {
+              return;
+            }
+            const generation = this.inspectionGeneration;
+            const line = model.getLineContent(position.lineNumber);
+            const match = [...line.matchAll(/[A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*/g)].find(
+              (match) =>
+                match.index < position.column && match.index + match[0].length >= position.column,
+            );
+            if (!match || match[0].length > 1024) {
+              return;
+            }
+            const scope = this.inspectionScope();
+            const event = await this.inspection.request(
+              { kind: "inspect", expression: match[0], pause: scope.pause, frame: scope.frame },
+              scope,
+            );
+            if (event?.kind === "evaluated" && event.value.handle && this.validInspection(scope)) {
+              void this.action(
+                { kind: "release", pause: scope.pause, handles: [event.value.handle] },
+                scope.session,
+              );
+            }
+            if (
+              token.isCancellationRequested ||
+              generation !== this.inspectionGeneration ||
+              model !== this.model ||
+              !this.matchesFrameSource()
+            ) {
+              return;
+            }
+            if (event?.kind !== "evaluated") {
+              return;
+            }
+            return {
+              range: new this.monaco!.Range(
+                position.lineNumber,
+                match.index + 1,
+                position.lineNumber,
+                match.index + match[0].length + 1,
+              ),
+              contents: [
+                { value: `\`\`\`text\n${event.value.display.replaceAll("```", "ʼʼʼ")}\n\`\`\`` },
+              ],
+            };
+          },
+        }),
+      );
+    }
+  }
   private focusUnlisten: UnlistenFn | null = null;
   private toggleUnlisten: UnlistenFn | null = null;
   private async watchNativeToggle(): Promise<void> {
@@ -503,6 +806,7 @@ export class DebuggerWorkspace extends WebUIElement {
         tabFocusMode: true,
       });
       this.decorations = this.editor.createDecorationsCollection();
+      this.installHover();
       this.editor.onMouseDown((event) => {
         if (
           (event.target.type === monaco.editor.MouseTargetType.GUTTER_GLYPH_MARGIN ||
@@ -557,6 +861,21 @@ export class DebuggerWorkspace extends WebUIElement {
         this.lastFocus = saved.focus ?? null;
         this.debuggerInput = saved.input;
         this.debuggerConsole = saved.console;
+        this.commandHistory.entries = saved.commands ?? [];
+        this.commandHistory.reset();
+        this.debuggerWatches = (saved.watches ?? []).map((expression) => ({
+          id: ++this.watchSerial,
+          expression,
+          output: "Not paused",
+        }));
+        // Native handles do not transfer between mounted inspection registries.
+        for (const row of this.debuggerConsole) {
+          if (row.value) {
+            row.value.expired = true;
+            row.value.expanded = false;
+            row.value.rows = [];
+          }
+        }
         this.serial = Math.max(0, ...saved.console.map((row) => row.id));
         this.states = new Map(saved.states);
         this.history = saved.history ?? [];
@@ -626,7 +945,7 @@ export class DebuggerWorkspace extends WebUIElement {
     this.renderPoints();
   }
   private async refresh(): Promise<void> {
-    if (this.busy || this.debuggerSubmitting || !this.isConnected) {
+    if (this.busy || this.debuggerSubmitting || this.inspection.registering || !this.isConnected) {
       return;
     }
     this.busy = true;
@@ -648,7 +967,12 @@ export class DebuggerWorkspace extends WebUIElement {
         })),
       );
       // Keep evaluation events unread until the submission's request ID is known.
-      if (!this.isConnected || generation !== this.generation || this.debuggerSubmitting) {
+      if (
+        !this.isConnected ||
+        generation !== this.generation ||
+        this.debuggerSubmitting ||
+        this.inspection.registering
+      ) {
         return;
       }
       this.apply(workspace);
@@ -683,6 +1007,9 @@ export class DebuggerWorkspace extends WebUIElement {
         }
         for (const item of view.stream.events) {
           const event = item.event;
+          if (this.inspection.receive(target.session, item.request, event)) {
+            continue;
+          }
           if (
             event.kind === "paused" &&
             (!this.debuggerPaused || target.session === this.debuggerTarget)
@@ -690,8 +1017,7 @@ export class DebuggerWorkspace extends WebUIElement {
             this.debuggerTarget = target.session;
             this.pause = event.pause;
             this.debuggerPaused = true;
-            this.propertyTree.reset();
-            this.propertyBranches.clear();
+            this.resetInspection();
             this.debuggerStackTruncated = event.truncated;
             this.debuggerFrames = event.frames;
             this.debuggerFrame =
@@ -699,6 +1025,7 @@ export class DebuggerWorkspace extends WebUIElement {
               event.frames[0]?.index ??
               0;
             this.restoreFrame = null;
+            this.updateStack();
             this.debuggerScope = "Selected frame";
             this.debuggerStatus = event.reason;
             await this.revealFrame(
@@ -710,6 +1037,7 @@ export class DebuggerWorkspace extends WebUIElement {
               this.pause === event.pause
             ) {
               await this.action({ kind: "scopes", pause: this.pause, frame: this.debuggerFrame });
+              void this.refreshWatches();
             }
           } else if (event.kind === "resumed" && target.session === this.debuggerTarget) {
             this.clearPause();
@@ -719,23 +1047,26 @@ export class DebuggerWorkspace extends WebUIElement {
             event.frame === this.debuggerFrame &&
             event.pause === this.pause
           ) {
-            this.debuggerScopes = event.scopes;
-            const scope =
-              event.scopes.find((s) => s.kind === "local" && s.handle) ??
-              event.scopes.find((s) => s.handle);
-            if (scope?.handle) {
-              await this.selectScope(scope.handle);
+            const context = this.inspectionScope();
+            this.debuggerScopeValues = event.scopes.map((scope, index) =>
+              this.inspection.set(
+                `scope-${index}`,
+                scope.name ? `${scope.kind} · ${scope.name}` : scope.kind,
+                {
+                  kind: "object",
+                  display: scope.handle ? "" : "Unavailable",
+                  handle: scope.handle,
+                  truncated: false,
+                },
+                context,
+              ),
+            );
+            const local =
+              this.debuggerScopeValues.find((scope) => scope.label === "local") ??
+              this.debuggerScopeValues[0];
+            if (local?.value.handle) {
+              void this.inspection.toggle(local.key);
             }
-          } else if (
-            event.kind === "properties" &&
-            target.session === this.debuggerTarget &&
-            this.propertyBranches.has(item.request) &&
-            event.pause === this.pause
-          ) {
-            const key = this.propertyBranches.get(item.request)!;
-            this.propertyBranches.delete(item.request);
-            this.propertyTree.receive(key, event.properties, event.offset, event.next);
-            this.debuggerProperties = this.propertyTree.rows();
           } else if (event.kind === "output") {
             const id = this.requests.get(`${target.session}/${item.request}`);
             this.debuggerConsole = this.debuggerConsole.map((row) =>
@@ -749,18 +1080,32 @@ export class DebuggerWorkspace extends WebUIElement {
           } else if (event.kind === "evaluated") {
             const key = `${target.session}/${item.request}`;
             const id = this.requests.get(key);
+            if (
+              id === undefined &&
+              event.value.handle &&
+              this.validInspection({ session: target.session, pause: event.pause, frame: null })
+            ) {
+              void this.action(
+                { kind: "release", pause: event.pause, handles: [event.value.handle] },
+                target.session,
+              );
+            }
             this.debuggerConsole = this.debuggerConsole.map((row) =>
               row.id === id
                 ? {
                     ...row,
                     output: `${row.output === "Running…" ? "" : row.output + "\n"}${event.value.display}`,
                     thrown: event.thrown,
+                    value: this.inspection.set(`console-${row.id}`, "Result", event.value, {
+                      session: target.session,
+                      pause: event.pause,
+                      frame: null,
+                    }),
                   }
                 : row,
             );
             this.requests.delete(key);
           } else if (event.kind === "rejected") {
-            this.propertyBranches.delete(item.request);
             this.debuggerError = event.message;
             const key = `${target.session}/${item.request}`;
             const id = this.requests.get(key);
@@ -773,8 +1118,13 @@ export class DebuggerWorkspace extends WebUIElement {
       }
       this.debuggerEvidence = replies.flatMap(({ view }) => {
         const paused = view.stream.paused?.event;
-        return evidence(view, paused?.kind === "paused" ? paused.exception : null);
+        return evidence(view, paused?.kind === "paused" ? paused.exception : null).map((item) => ({
+          ...item,
+          logs: [],
+        }));
       });
+      this.inspection.expire();
+      this.inspectionChanged();
       for (const id of this.views.keys()) {
         if (!workspace.targets.some((target) => target.session === id)) {
           this.views.delete(id);
@@ -788,7 +1138,9 @@ export class DebuggerWorkspace extends WebUIElement {
         this.debuggerStatus = this.debuggerTarget
           ? this.views.get(this.debuggerTarget)?.stream.closed
             ? "Worker ended"
-            : "Running · breakpoints armed"
+            : this.views.get(this.debuggerTarget)?.stream.active
+              ? "Running · breakpoints armed"
+              : "Idle · breakpoints armed"
           : "Waiting for a worker";
         this.debuggerScope = this.views.get(this.debuggerTarget)?.stream.closed
           ? "Worker ended"
@@ -830,11 +1182,9 @@ export class DebuggerWorkspace extends WebUIElement {
     this.debuggerPaused = false;
     this.pause = 0;
     this.debuggerFrames = [];
-    this.debuggerScopes = [];
-    this.debuggerProperties = [];
     this.debuggerStackTruncated = false;
-    this.propertyTree.reset();
-    this.propertyBranches.clear();
+    this.resetInspection();
+    this.updateStack();
     this.renderPoints();
   }
   private line(): number {
@@ -920,6 +1270,7 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   private async revealFrame(frame: DebugFrame | undefined): Promise<void> {
+    const generation = this.inspectionGeneration;
     const location =
       this.preferredRepresentation === "javascript"
         ? frame?.location
@@ -933,7 +1284,7 @@ export class DebuggerWorkspace extends WebUIElement {
     );
     if (file) {
       await this.openFile(file, false);
-      if (!this.isSelected(file)) {
+      if (!this.isSelected(file) || generation !== this.inspectionGeneration) {
         return;
       }
     } else {
@@ -942,13 +1293,20 @@ export class DebuggerWorkspace extends WebUIElement {
     }
     this.editor?.revealPositionInCenter({ lineNumber: location.line, column: location.column });
   }
-  async frameChanged(event: Event): Promise<void> {
-    this.propertyTree.reset();
-    this.propertyBranches.clear();
-    this.debuggerProperties = [];
-    this.debuggerFrame = Number((event.target as HTMLSelectElement).value);
+  async selectFrame(index: number): Promise<void> {
+    if (!this.debuggerPaused || !this.debuggerFrames.some((frame) => frame.index === index)) {
+      return;
+    }
+    this.resetInspection();
+    this.debuggerFrame = index;
+    const generation = this.inspectionGeneration;
+    this.updateStack();
     await this.revealFrame(this.debuggerFrames.find((frame) => frame.index === this.debuggerFrame));
+    if (generation !== this.inspectionGeneration || !this.debuggerPaused) {
+      return;
+    }
     await this.action({ kind: "scopes", pause: this.pause, frame: this.debuggerFrame });
+    void this.refreshWatches();
   }
   async targetChanged(event: Event): Promise<void> {
     this.sourceGeneration++;
@@ -956,37 +1314,6 @@ export class DebuggerWorkspace extends WebUIElement {
     this.clearPause();
     this.cursors.delete(this.debuggerTarget);
     await this.refresh();
-  }
-  async selectScope(handle: number | null): Promise<void> {
-    if (!handle) {
-      return;
-    }
-    this.propertyBranches.clear();
-    await this.readProperties(this.propertyTree.select(handle));
-  }
-  async expandProperty(row: PropertyRow): Promise<void> {
-    const request = this.propertyTree.toggle(row);
-    this.debuggerProperties = this.propertyTree.rows();
-    if (request) {
-      await this.readProperties(request);
-    }
-  }
-  private async readProperties(branch: {
-    key: string;
-    handle: number;
-    offset: number;
-  }): Promise<void> {
-    const pause = this.pause;
-    const frame = this.debuggerFrame;
-    const request = await this.action({
-      kind: "properties",
-      pause,
-      handle: branch.handle,
-      offset: branch.offset,
-    });
-    if (request !== undefined && pause === this.pause && frame === this.debuggerFrame) {
-      this.propertyBranches.set(request, branch.key);
-    }
   }
   async navigateSource(
     event: CustomEvent<{ artifact: string; location: SourceLocation }>,
@@ -1029,11 +1356,91 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   clearConsole(): void {
+    for (const row of this.debuggerConsole) {
+      this.inspection.remove(`console-${row.id}`);
+    }
     this.debuggerConsole = [];
     this.requests.clear();
     this.diagnostics?.clearLogs();
+    this.clearedLogs = new Set([...this.clearedLogs, ...this.logKeys.keys()].slice(-2048));
+    this.updateConsoleFeed();
+  }
+  consoleFilter(event: Event, level = false): void {
+    if (level) {
+      this.debuggerConsoleLevel = (event.target as HTMLSelectElement).value;
+    } else {
+      this.debuggerConsoleFilter = (event.target as HTMLSelectElement).value;
+    }
+    this.updateConsoleFeed();
+  }
+  async consoleSource(row: ConsoleRow): Promise<void> {
+    if (row.source) {
+      await this.navigateSource(new CustomEvent("diagnostic-source", { detail: row.source }));
+    }
+  }
+  private updateConsoleFeed(): void {
+    const logs: ConsoleRow[] = [];
+    const keys = new Map<string, number>();
+    for (const view of this.views.values()) {
+      for (const run of view.stream.logs.length ? view.stream.logs : (view.outcome?.logs ?? [])) {
+        const context = run.context;
+        const base = `${view.info.session}/${context.worker}/${context.invocation}/${context.callback}`;
+        const add = (key: string, row: Omit<ConsoleRow, "id">): void => {
+          const id = this.logKeys.get(key) ?? --this.logSerial;
+          keys.set(key, id);
+          if (!this.clearedLogs.has(key)) {
+            logs.push({ ...row, id });
+          }
+        };
+        for (const record of run.records) {
+          const frame = record.frames.find((frame) => frame.original ?? frame.generated);
+          const location = frame?.original ?? frame?.generated;
+          add(`${base}/${record.sequence}`, {
+            input: "",
+            output: record.text + (record.truncated ? "\n[Shortened]" : ""),
+            thrown: record.level === "error",
+            level: record.level,
+            session: view.info.session,
+            time: record.timeUnixMs,
+            label: `${view.info.label} · ${context.callback}`,
+            technical: `Worker: ${context.worker}\nRevision: ${context.revision}\nInvocation: ${context.invocation}${context.exchangeId ? `\nRequest: ${context.exchangeId}` : ""}`,
+            ...(location && context.artifact
+              ? { source: { location, artifact: context.artifact } }
+              : {}),
+          });
+        }
+        if (run.dropped || run.incomplete) {
+          add(`${base}/loss`, {
+            input: "",
+            output: [
+              run.dropped ? `${run.dropped} console records omitted` : "",
+              run.incomplete ? "Console capture incomplete" : "",
+            ]
+              .filter(Boolean)
+              .join(" · "),
+            thrown: false,
+            level: "warn",
+            session: view.info.session,
+            time: run.records.at(-1)?.timeUnixMs ?? 0,
+            label: view.info.label,
+          });
+        }
+      }
+    }
+    this.logKeys = keys;
+    this.debuggerFeed = [...logs, ...this.debuggerConsole]
+      .filter(
+        (row) =>
+          (this.debuggerConsoleFilter === "all" || row.session === this.debuggerTarget) &&
+          (this.debuggerConsoleLevel === "all" ||
+            !row.level ||
+            row.level === this.debuggerConsoleLevel),
+      )
+      .sort((a, b) => (a.time ?? 0) - (b.time ?? 0) || a.id - b.id)
+      .slice(-200);
   }
   private trimConsole(): void {
+    const previous = this.debuggerConsole;
     let remaining = 128 * 1024;
     this.debuggerConsole = this.debuggerConsole
       .slice(-100)
@@ -1051,11 +1458,17 @@ export class DebuggerWorkspace extends WebUIElement {
       })
       .reverse();
     const retained = new Set(this.debuggerConsole.map((row) => row.id));
+    for (const row of previous) {
+      if (!retained.has(row.id)) {
+        this.inspection.remove(`console-${row.id}`);
+      }
+    }
     for (const [key, id] of this.requests) {
       if (!retained.has(id)) {
         this.requests.delete(key);
       }
     }
+    this.updateConsoleFeed();
   }
   async submitConsole(event: Event): Promise<void> {
     event.preventDefault();
@@ -1233,8 +1646,71 @@ export class DebuggerWorkspace extends WebUIElement {
   }
   consoleInput(event: Event): void {
     this.debuggerInput = (event.target as HTMLTextAreaElement).value;
+    this.commandHistory.reset();
+    this.closeCompletions();
+    window.clearTimeout(this.completionTimer);
+    this.completionTimer = window.setTimeout(() => {
+      void this.completePrompt();
+    }, 120);
   }
   async consoleKey(event: KeyboardEvent): Promise<void> {
+    if (event.isComposing) {
+      return;
+    }
+    if (this.debuggerCompletions.length) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        this.closeCompletions();
+        return;
+      }
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        event.preventDefault();
+        this.debuggerCompletionIndex =
+          (this.debuggerCompletionIndex +
+            (event.key === "ArrowDown" ? 1 : -1) +
+            this.debuggerCompletions.length) %
+          this.debuggerCompletions.length;
+        this.debuggerCompletions = this.debuggerCompletions.map((item, index) => ({
+          ...item,
+          selected: index === this.debuggerCompletionIndex,
+        }));
+        this.debuggerCompletionActive = `completion-${this.debuggerCompletions[this.debuggerCompletionIndex]!.name}`;
+        return;
+      }
+      if (event.key === "Tab") {
+        event.preventDefault();
+        this.acceptCompletion(this.debuggerCompletions[this.debuggerCompletionIndex]!.name);
+        return;
+      }
+    }
+    if (event.ctrlKey && event.key === " ") {
+      event.preventDefault();
+      await this.completePrompt();
+      return;
+    }
+    const prompt = this.consolePrompt;
+    if (
+      (event.key === "ArrowUp" && !prompt.value.slice(0, prompt.selectionStart).includes("\n")) ||
+      (event.key === "ArrowDown" && !prompt.value.slice(prompt.selectionEnd).includes("\n"))
+    ) {
+      if (
+        !event.ctrlKey &&
+        !event.altKey &&
+        !event.shiftKey &&
+        prompt.selectionStart === prompt.selectionEnd
+      ) {
+        event.preventDefault();
+        this.closeCompletions();
+        this.debuggerInput = this.commandHistory.move(
+          event.key === "ArrowUp" ? -1 : 1,
+          this.debuggerInput,
+        );
+        this.$flushUpdates();
+        prompt.setSelectionRange(prompt.value.length, prompt.value.length);
+        return;
+      }
+    }
     if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
       event.preventDefault();
       await this.evaluate();
@@ -1250,10 +1726,21 @@ export class DebuggerWorkspace extends WebUIElement {
     const generation = this.generation;
     const id = ++this.serial;
     this.debuggerSubmitting = true;
+    this.closeCompletions();
+    this.commandHistory.add(input);
     this.debuggerConsole = [
-      ...this.debuggerConsole.slice(-99),
-      { id, input, output: "Running…", thrown: false },
+      ...this.debuggerConsole,
+      {
+        id,
+        input,
+        output: "Running…",
+        thrown: false,
+        session,
+        pause: this.pause,
+        time: Date.now(),
+      },
     ];
+    this.trimConsole();
     this.$flushUpdates();
     this.consoleOutput.scrollTop = this.consoleOutput.scrollHeight;
     try {
@@ -1304,6 +1791,8 @@ export class DebuggerWorkspace extends WebUIElement {
         );
       }
       const viewState: SavedView = {
+        watches: this.debuggerWatches.map((watch) => watch.expression),
+        commands: this.commandHistory.entries,
         groups: [...this.sourceGroups],
         split: this.debuggerConsoleSplit,
         file: this.selected?.id,
@@ -1327,6 +1816,12 @@ export class DebuggerWorkspace extends WebUIElement {
     }
   }
   keyboard(event: KeyboardEvent): void {
+    if (event.key === "Escape" && this.debuggerCompletions.length && !event.isComposing) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.closeCompletions();
+      return;
+    }
     if (
       !event.defaultPrevented &&
       !event.isComposing &&
@@ -1461,10 +1956,48 @@ export class DebuggerWorkspace extends WebUIElement {
           glyphMarginClassName: "debug-execution",
         },
       });
+      const text = this.model?.getLineContent(position.line) ?? "";
+      const locals =
+        this.debuggerScopeValues.find((scope) => scope.label.startsWith("local"))?.rows ?? [];
+      const values = locals
+        .filter(
+          (row) =>
+            row.depth === 0 &&
+            !row.value.handle &&
+            ["number", "boolean", "string", "null", "undefined"].includes(row.value.kind) &&
+            /^[A-Za-z_$][\w$]*$/.test(row.name) &&
+            new RegExp(`\\b${row.name.replaceAll("$", "\\$")}\\b`).test(text),
+        )
+        .slice(0, 3)
+        .map((row) => `${row.name} = ${row.value.display.slice(0, 60)}`);
+      if (values.length) {
+        decorations.push({
+          range: new this.monaco.Range(
+            position.line,
+            text.length + 1,
+            position.line,
+            text.length + 1,
+          ),
+          options: {
+            showIfCollapsed: true,
+            after: {
+              content: `  ${values.join(" · ").replace(/[\r\n]/g, " ")}`,
+              inlineClassName: "debug-inline-value",
+            },
+          },
+        });
+      }
     }
     this.decorations?.set(decorations);
   }
   disconnectedCallback(): void {
+    this.inspection.dispose();
+    this.inspectionGeneration++;
+    this.closeCompletions();
+    window.clearTimeout(this.completionTimer);
+    for (const provider of this.hoverProviders) {
+      provider.dispose();
+    }
     this.resizeObserver?.disconnect();
     window.clearTimeout(this.navigationTimer);
     this.navigationGeneration++;

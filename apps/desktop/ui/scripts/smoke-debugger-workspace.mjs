@@ -83,7 +83,27 @@ export async function checkNativeDebuggerWorkspace({
   await surface.getByRole("button", { name: "Cancel", exact: true }).click();
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("local");
   await surface.getByRole("button", { name: "Run", exact: true }).click();
-  await surface.locator(".command pre").filter({ hasText: "7" }).waitFor();
+  await surface.locator(".command > pre").filter({ hasText: "7" }).waitFor();
+  const inspector = surface.getByRole("complementary", { name: "Call stack and variables" });
+  await inspector.locator(".call-stack button").filter({ hasText: "onRequestHead" }).waitFor();
+  await inspector.getByRole("textbox", { name: "Watch expression" }).fill("local");
+  await inspector.getByRole("button", { name: "Add watch", exact: true }).click();
+  await inspector.locator(".watch").getByText("7", { exact: true }).waitFor();
+  const prompt = surface.getByRole("textbox", { name: "Immediate expression" });
+  await prompt.fill("loc");
+  await prompt.press("Control+Space");
+  await surface.getByRole("option", { name: "local", exact: true }).waitFor();
+  await prompt.press("Tab");
+  assert.equal(await prompt.inputValue(), "local");
+  await prompt.fill("({nested:{answer:42},get secret(){throw Error('getter ran')}})");
+  await surface.getByRole("button", { name: "Run", exact: true }).click();
+  const object = surface.locator(".command").filter({ hasText: "› ({nested:" });
+  await object.locator("debug-value").getByRole("button", { name: "Result", exact: false }).click();
+  await object
+    .getByText("Accessor or unavailable property; not evaluated", { exact: true })
+    .waitFor();
+  await object.getByRole("button", { name: "nested", exact: false }).click();
+  await object.getByText("answer", { exact: true }).waitFor();
   await surface.getByRole("textbox", { name: "Immediate expression" }).fill("preserved draft");
   await surface.evaluate((element) => element.place("bottom"));
   const dock = page.locator("debugger-workspace");
@@ -131,7 +151,7 @@ export async function checkNativeDebuggerWorkspace({
     .getByRole("textbox", { name: "Immediate expression" })
     .fill("Reflect.get(globalThis, 'workspaceCount')");
   await dock.getByRole("button", { name: "Run", exact: true }).click();
-  await dock.locator(".command pre").filter({ hasText: "3" }).waitFor();
+  await dock.locator(".command > pre").filter({ hasText: "3" }).waitFor();
   await dock.getByRole("combobox", { name: "Pause on exceptions" }).selectOption("all");
   const previousWorker = await dock.evaluate((element) => element.debuggerTarget);
   await dock.getByRole("button", { name: "Restart", exact: true }).click();
